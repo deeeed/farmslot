@@ -4,10 +4,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
-import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
+import { TaskAcceptancePanel, TaskAcceptanceSkeleton } from '../../components/TaskAcceptancePanel';
 import { baseStyles } from '../../lib/theme';
 
 import { GateActions, GateReviewVerdicts, GateSummaryCard } from './components/gate-review-panels';
+import { GateReviewSkeleton } from './components/GateReviewSkeleton';
 import { gateReviewStyles as styles } from './styles/gate-review.styles';
 import type { GateReviewActions, GateReviewScreenState } from './use-gate-review-controller';
 
@@ -36,20 +37,15 @@ export function GateReviewScreen({
   }, [initialClaimId]);
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollView>(null);
-  if (state.status !== 'ready') {
+  if (state.status !== 'ready')
     return (
-      <View style={[baseStyles.container, styles.center]} testID="companion-screen-gate-review">
-        <Text style={baseStyles.textSecondary}>
-          {state.status === 'error' ? state.message : 'Loading gate...'}
-        </Text>
-        {state.status === 'error' ? (
-          <Pressable onPress={actions.refresh}>
-            <Text style={baseStyles.textSecondary}>Retry</Text>
-          </Pressable>
-        ) : null}
+      <View style={[baseStyles.container, { padding: 16 }]} testID="companion-screen-gate-review">
+        <GateReviewSkeleton
+          error={state.status === 'error' ? state.message : undefined}
+          retry={actions.refresh}
+        />
       </View>
     );
-  }
   const { viewModel } = state;
   const { acceptance } = viewModel;
   return (
@@ -65,6 +61,7 @@ export function GateReviewScreen({
       {viewModel.error ? <Text style={styles.error}>{viewModel.error}</Text> : null}
       <View style={styles.section}>
         <GateActions
+          loading={!acceptance.view && !acceptance.error}
           reviewPicker={viewModel.reviewPicker}
           decision={viewModel.decision}
           actions={viewModel.actions}
@@ -119,16 +116,26 @@ export function GateReviewScreen({
                 acceptanceCriteria={acceptance.acceptanceCriteria}
                 acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
                 error={acceptance.error}
+                onRetry={actions.refresh}
                 onOpenEvidence={actions.openEvidence}
               />
             ) : (
-              <Text style={styles.muted}>Loading acceptance criteria...</Text>
+              <TaskAcceptanceSkeleton
+                rows={
+                  viewModel.decision.payload?.kind === 'ready'
+                    ? viewModel.decision.payload.acceptanceCriteria?.length
+                    : undefined
+                }
+              />
             )}
             {acceptance.view?.rows.length === 0 && !acceptance.error ? (
               <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
             ) : null}
           </View>
           <EvidenceReviewWorkspace
+            loading={!acceptance.evidenceModel && !acceptance.error}
+            error={!acceptance.evidenceModel ? acceptance.error : null}
+            retry={actions.refresh}
             runId={viewModel.run.id}
             gatewayUrl={viewModel.gatewayUrl}
             artifacts={viewModel.artifacts}

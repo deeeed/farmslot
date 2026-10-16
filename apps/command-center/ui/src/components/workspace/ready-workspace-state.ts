@@ -35,6 +35,8 @@ export abstract class ReadyWorkspaceState extends LitElement {
   }
 
   @property() runId = '';
+  @property({ type: Boolean }) actionsBlocked = false;
+  @property() loadError = '';
   @property({ attribute: false }) decision!: RunDecision;
   @property({ attribute: false }) run: Run | null = null;
   @property() slotId = '';

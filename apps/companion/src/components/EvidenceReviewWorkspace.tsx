@@ -1,5 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Image,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import type {
   EvidenceReviewComparisonFilter,
@@ -27,9 +36,13 @@ import { recordedEvidenceArtifactUrl } from '../lib/evidence-media-items';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
 import { BeforeAfterPreview, CompareMedia } from './BeforeAfterPreview';
+import { EvidenceReviewSkeleton } from './EvidenceReviewSkeleton';
 import { VisualClaimJudgment } from './VisualClaimJudgment';
 
 interface EvidenceReviewWorkspaceProps {
+  loading?: boolean;
+  error?: string | null;
+  retry?: () => void;
   runId: string;
   gatewayUrl: string;
   artifacts: ArtifactManifestEntry[];
@@ -89,7 +102,11 @@ export function EvidenceReviewWorkspace({
   onOpenArtifactWorkspace,
   onOpenCompareArtifactWorkspace,
   authHeaders,
+  loading,
+  error,
+  retry,
 }: EvidenceReviewWorkspaceProps) {
+  const viewport = useWindowDimensions();
   const open = (path: string) =>
     evidenceModel && onOpenRecordedEvidence
       ? onOpenRecordedEvidence(evidenceModel, path)
@@ -99,7 +116,12 @@ export function EvidenceReviewWorkspace({
             : artifactUrlForEntry(gatewayUrl, runId, { path, purpose: 'evidence' }),
         );
   const [, refreshComparisons] = useState(0);
+  const workspaceScroll = useRef<ScrollView>(null);
   const layouts = useRef<ComparisonLayouts>({ workspace: 0, rail: 0, rows: {} });
+  const focusRow = (offset: number) => {
+    workspaceScroll.current?.scrollTo({ y: offset, animated: true });
+    onFocusClaim?.(layouts.current.workspace);
+  };
   const [evidenceFilter, setEvidenceFilter] = useState<ArtifactWorkspaceFilter>('all');
   const [showRawArtifacts, setShowRawArtifacts] = useState(false);
   useEffect(() => setShowRawArtifacts(false), [runId]);
@@ -147,7 +169,7 @@ export function EvidenceReviewWorkspace({
     const id = focusClaim.claimId;
     const offset = layouts.current.rows[id];
     if (evidenceModel.comparisonFilter === 'all' && typeof offset === 'number')
-      onFocusClaim?.(layouts.current.workspace + layouts.current.rail + offset);
+      focusRow(layouts.current.rail + offset);
     else {
       layouts.current.pending = id;
       evidenceModel.setComparisonFilter('all');
@@ -155,9 +177,12 @@ export function EvidenceReviewWorkspace({
     }
   }, [focusClaim, evidenceModel]);
 
+  if (loading || error) return <EvidenceReviewSkeleton error={error ?? undefined} retry={retry} />;
   return (
-    <View
-      style={styles.workspace}
+    <ScrollView
+      ref={workspaceScroll}
+      nestedScrollEnabled
+      style={[styles.workspace, { height: Math.min(640, viewport.height * 0.65) }]}
       onLayout={(event) => {
         layouts.current.workspace = event.nativeEvent.layout.y;
       }}
@@ -274,9 +299,7 @@ export function EvidenceReviewWorkspace({
                   layouts.current.rows[row.claim.id] = event.nativeEvent.layout.y;
                   if (layouts.current.pending === row.claim.id) {
                     layouts.current.pending = undefined;
-                    onFocusClaim?.(
-                      layouts.current.workspace + layouts.current.rail + event.nativeEvent.layout.y,
-                    );
+                    focusRow(layouts.current.rail + event.nativeEvent.layout.y);
                   }
                 }}
               >
@@ -572,7 +595,7 @@ export function EvidenceReviewWorkspace({
           </>
         ) : null}
       </View>
-    </View>
+    </ScrollView>
   );
 }
 

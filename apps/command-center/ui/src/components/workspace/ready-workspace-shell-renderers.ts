@@ -15,6 +15,7 @@ import type { DiffTestFilterController } from '../shared/diff-test-filter-contro
 
 import { renderPublicationGatePanel } from './publication-gate-panel.js';
 import { readyReviewBlockingReason } from './ready-workspace-renderers.js';
+import { renderPrPreviewSkeleton } from './ready-workspace-tab-renderers.js';
 import { workspaceArtifactBasename } from './workspace-artifacts.js';
 import type { ReadyWorkspaceTab } from './workspace-url-state.js';
 
@@ -28,6 +29,9 @@ export function renderReadyTopBar(input: {
   chooseAttestation?: () => void;
   setAttestationReason?: (value: string) => void;
   acting: boolean;
+  loading?: boolean;
+  loadError?: string;
+  retry?: () => void;
   recovering: boolean;
   diffArtifact?: ArtifactRef;
   fileDiffAvailable: boolean;
@@ -58,6 +62,9 @@ export function renderReadyTopBar(input: {
   return html`
     ${renderPublicationGatePanel({
       actions,
+      loading: input.loading,
+      loadError: input.loadError,
+      retry: input.retry,
       claims: input.claims,
       judgmentRows: input.judgmentRows,
       reviewReason: input.reviewReason,
@@ -222,6 +229,7 @@ export function renderReadyDiffTab(input: {
   slotId: string;
   diffLoading: boolean;
   diffError: string;
+  retryDiff?: () => void;
   diffFiles: GitBranchDiffFile[];
   testFilter: DiffTestFilterController;
   selectedFile: string;
@@ -231,8 +239,8 @@ export function renderReadyDiffTab(input: {
   selectFile: (path: string) => void;
 }) {
   if (!input.slotId) return html`<div class="rdy-tab-empty">No slot — diff not available</div>`;
-  if (input.diffLoading) return html`<div class="rdy-tab-empty">Loading diff...</div>`;
-  if (input.diffError) return html`<div class="rdy-tab-empty">${input.diffError}</div>`;
+  if (input.diffLoading) return renderPrPreviewSkeleton();
+  if (input.diffError) return renderPrPreviewSkeleton(input.diffError, input.retryDiff);
   if (input.diffFiles.length === 0) return html`<div class="rdy-tab-empty">No changed files</div>`;
   const split = input.testFilter.split(input.diffFiles);
   const allHidden = split.visible.length === 0;
@@ -275,7 +283,7 @@ export function renderReadyDiffTab(input: {
               Only test files changed — show tests to review them
             </div>`
           : input.fileDiffLoading
-            ? html`<div class="rdy-tab-empty">Loading file diff...</div>`
+            ? renderPrPreviewSkeleton()
             : input.fileDiff
               ? html`
                   <diff-review

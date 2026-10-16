@@ -86,6 +86,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _claimOverrideReason = '';
   @state() private _visualReviewReasons: Record<string, string> = {};
   @state() private _attestingDecisionId: string | null = null;
+  @state() private _evidenceLoading = true;
+  @state() private _evidenceError = '';
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
   private _evidenceRequest = 0;
   private _evidenceScope = '';
@@ -107,7 +109,12 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._evidenceItems = null;
       this._lightboxOpen = false;
     }
-    if (!this.runId || this.mockData) return;
+    if (!this.runId || this.mockData) {
+      this._evidenceLoading = false;
+      return;
+    }
+    this._evidenceLoading = true;
+    this._evidenceError = '';
     try {
       const source = await gateway.request<RunRecipeRunsForRunResult>(
         'run.recipeRunsForRun',
@@ -123,10 +130,14 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._evidenceModel = this._reviewEvidenceModel(source.recordedEvidence);
       this._evidenceRecipeRunId = source.selectedRecipeRunId;
     } catch (error) {
-      if (request === this._evidenceRequest && this.isConnected)
+      if (request === this._evidenceRequest && this.isConnected) {
+        this._evidenceError = error instanceof Error ? error.message : String(error);
         this._evidenceModel = this._reviewEvidenceModel(undefined, [
           error instanceof Error ? error.message : String(error),
         ]);
+      }
+    } finally {
+      if (request === this._evidenceRequest) this._evidenceLoading = false;
     }
   }
   private _reviewEvidenceModel(
@@ -368,7 +379,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     return renderReadyReviewRequestModal({
       open: this._reviewModalOpen,
       viewModel: this._reviewPicker,
-      acting: this._acting,
+      acting: this._acting || this.actionsBlocked,
       close: () => this._closeReviewRequestModal(),
       changed: () => this.requestUpdate(),
       submit: () => this._submitReviewRequest(),
@@ -433,7 +444,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         this._attestingDecisionId = this.decision?.id ?? null;
       },
       setAttestationReason: (value) => this._setEvidenceAttestationReason(value),
-      acting: this._acting,
+      acting: this._acting || this.actionsBlocked,
       recovering: this._isRecovering,
       diffArtifact,
       fileDiffAvailable: Boolean(this._fileDiff),
@@ -443,7 +454,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       openDiff: (title, artifact) => this._openDiffModal(title, artifact),
       openReviewRequestModal: () => this._openReviewRequestModal(),
       confirmAction: (actionId) => this._confirmAction(actionId),
-      claims: this._evidenceModel?.claims,
+      loading: this.actionsBlocked || (this._evidenceLoading && !this.mockData),
+      loadError: this.loadError || this._evidenceError,
+      retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence()),
+      claims: (this._evidenceModel ?? this._reviewEvidenceModel()).claims,
       judgmentRows: this._evidenceModel?.judgmentRows(gateway.authenticatedPrincipal),
       reviewReason: (id) => this._visualReviewReasons[id] ?? '',
       changeReviewReason: (id, reason) => {
@@ -479,7 +493,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       expanded: this._packagePanelExpanded,
       resolved: Boolean(this.decision?.resolvedAt),
       refreshingPackage: this._refreshingPackage,
-      acting: this._acting,
+      acting: this._acting || this.actionsBlocked,
       recovering: this._isRecovering,
       publicationTarget: this._publicationTarget,
       openPackageArtifact: (artifact) => this._openArtifact(payload, artifact),
@@ -590,6 +604,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       slotId: this.slotId,
       diffLoading: this._diffLoading,
       diffError: this._diffError,
+      retryDiff: () => void this._loadBranchDiff(),
       diffFiles: this._diffFiles,
       testFilter: this._testFilter,
       selectedFile: this._selectedFile,
@@ -659,6 +674,9 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     return renderReadyEvidenceTab({
       payload,
       artifacts,
+      loading: this.actionsBlocked || (this._evidenceLoading && !this.mockData),
+      error: this._evidenceError,
+      retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence()),
       selectionToolbar: this._renderEvidenceSelectionToolbar(payload),
       artifactGroups: this._evidenceModel
         ? html`${renderWorkspaceEvidencePreview({
@@ -671,7 +689,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
               changeReviewReason: (id, reason) => {
                 this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
               },
-              reviewing: this._acting,
+              reviewing: this._acting || this.actionsBlocked,
               recordReview: (id, verdict) => this._recordVisualReview(id, verdict),
               artifactUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
               changed: () => this.requestUpdate(),

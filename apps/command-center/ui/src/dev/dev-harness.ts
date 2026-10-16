@@ -94,6 +94,7 @@ import '../components/work-graph/work-graph-panel.js';
 import '../components/resources/resource-panel.js';
 import '../components/device-grid/device-grid.js';
 import './chat-dev.js';
+import './async-section-fixtures.js';
 import './native-session-dev.js';
 import './terminal-attachment-dev.js';
 import './machine-health-dev.js';
@@ -153,6 +154,7 @@ import { MockH264Source } from './mock-h264-source.js';
 import { mockWorkGraphBacklogItems, mockWorkGraphs } from './mock-work-graph-data.js';
 
 type DevRoute =
+  | 'async-sections'
   | 'slot-card'
   | 'fleet-map'
   | 'slot-actions'
@@ -228,6 +230,7 @@ const DEV_ROUTE_GROUP_LABELS: Record<DevHarnessGroup, string> = {
 };
 
 const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup }> = [
+  { route: 'async-sections', label: 'Async section states', group: 'components' },
   { route: 'choice-picker', label: 'Searchable Choice Picker', group: 'components' },
   { route: 'pr-execution', label: 'PR Execution Configuration', group: 'components' },
   { route: 'fleet-map', label: 'Fleet Map', group: 'screens' },
@@ -501,6 +504,8 @@ export class DevHarness extends LitElement {
         return this.renderStreamFeed();
       case 'runs':
         return this.renderRuns();
+      case 'async-sections':
+        return html`<async-section-fixtures></async-section-fixtures>`;
       case 'run-detail':
         return this.renderRunDetail();
       case 'run-tag-editor':

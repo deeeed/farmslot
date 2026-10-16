@@ -19,7 +19,7 @@ import {
   type ReviewDispatchViewModel,
   visualPrevalidationLabel,
 } from '@farmslot/review-dispatch';
-import { publicationGateColors } from '@farmslot/theme';
+import { gateClaimsHeight, publicationGateColors } from '@farmslot/theme';
 
 import { VisualClaimJudgment } from '../../../components/VisualClaimJudgment';
 import type {
@@ -30,6 +30,8 @@ import type {
 import { fonts, radii, spacing } from '../../../lib/theme';
 import { ReviewDispatchPicker } from '../../review-dispatch/ReviewDispatchPicker';
 import { gateReviewStyles as styles } from '../styles/gate-review.styles';
+
+import { GateClaimSkeleton } from './GateReviewSkeleton';
 
 /** Entry from run detail and the decision workspace into the gate review. */
 export function GateReviewEntryCard({ onOpen, testID }: { onOpen: () => void; testID: string }) {
@@ -151,9 +153,11 @@ export function GateActions({
   pendingVisualClaimIds,
   readiness,
   onFocusClaim,
+  loading = false,
   disabled = false,
   reviewDisabled = false,
 }: {
+  loading?: boolean;
   disabled?: boolean;
   reviewDisabled?: boolean;
   claims?: readonly PublicationGateClaim[];
@@ -198,6 +202,13 @@ export function GateActions({
     attestationReason,
     attesting: attestingDecisionId === decision.id,
   });
+  const declaredRows =
+    decision.payload?.kind === 'ready'
+      ? (decision.payload.acceptanceStatus?.criteria.length ??
+        decision.payload.acceptanceCriteria?.length ??
+        0)
+      : 0;
+  const rowCount = Math.max(view.claims.length, declaredRows);
   const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
   const renderAction = (action: PublicationGateAction, primary = false) => {
     const actionDisabled =
@@ -254,14 +265,24 @@ export function GateActions({
       <Text
         testID="companion-gate-review-approve-reason"
         accessibilityRole="header"
+        accessibilityLabel={view.status}
+        numberOfLines={2}
         style={[gateStyles.status, { color: palette.text }]}
       >
         {view.status}
       </Text>
-      {view.claims.length ? (
+      {rowCount ? (
         <View accessibilityLabel="Acceptance judgments">
-          <Text style={[gateStyles.label, { color: palette.text }]}>Acceptance judgments</Text>
-          <ScrollView nestedScrollEnabled style={{ maxHeight: viewport.height * 0.4 }}>
+          <Text style={[gateStyles.label, { color: palette.text, height: 24 }]}>
+            Acceptance judgments
+          </Text>
+          <ScrollView
+            nestedScrollEnabled
+            style={{ height: gateClaimsHeight(rowCount, viewport.height) }}
+          >
+            {!view.claims.length && loading
+              ? Array.from({ length: rowCount }, (_, index) => <GateClaimSkeleton key={index} />)
+              : null}
             {view.claims.map((claim) => (
               <View
                 key={claim.id}
@@ -336,7 +357,13 @@ export function GateActions({
           />
         </View>
       ) : null}
-      <View style={gateStyles.section} accessibilityLabel="Publication actions">
+      <View
+        style={[
+          gateStyles.section,
+          { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' },
+        ]}
+        accessibilityLabel="Publication actions"
+      >
         {view.refreshRequired && onRefreshPackage ? (
           <Pressable
             accessibilityRole="button"
@@ -392,7 +419,7 @@ export function GateActions({
 
 const gateStyles = StyleSheet.create({
   panel: { padding: spacing.lg, borderWidth: 1, borderRadius: radii.md, gap: spacing.lg },
-  status: { fontSize: fonts.sizeMd, fontWeight: '600' },
+  status: { fontSize: fonts.sizeMd, fontWeight: '600', minHeight: 44, textAlignVertical: 'center' },
   label: { fontSize: fonts.sizeSm, fontWeight: '600' },
   claim: {
     flexDirection: 'row',
