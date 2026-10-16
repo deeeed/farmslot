@@ -10,6 +10,7 @@ import {
 
 import { execLocal, farmslotRoot, isLocal, loadSlotVars, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
+import { ensureNodeSupportBundle, loadProjectVarsIfAny } from '../../node-support/ensure.js';
 
 import type { EventEmitter, PrepareCommandError } from './shared.js';
 
@@ -70,11 +71,13 @@ export function buildFixtureSyncCommand(
   flowType?: string,
   selectedApp?: string,
   domain?: string,
+  nodeSupportDir?: string,
 ): string {
   const syncArgs = ['--slot', slotId];
   if (flowType) syncArgs.push('--flow-type', flowType);
   if (selectedApp) syncArgs.push('--app', selectedApp);
   if (domain) syncArgs.push('--domain', domain);
+  if (nodeSupportDir) syncArgs.push('--node-support-dir', nodeSupportDir);
   return `bash ${shellQuote(`${farmslotRoot}/scripts/sync-fixtures.sh`)} ${syncArgs.map(shellQuote).join(' ')}`;
 }
 
@@ -126,6 +129,8 @@ export async function runFixtureSync(
     selectedApp?: string;
     domain?: string;
     prepareProfile?: string;
+    /** The slot's selected node-support bundle, rendered as {{node_support_dir}}. */
+    nodeSupportDir?: string;
   },
 ): Promise<void> {
   const syncCmd = buildFixtureSyncCommand(
@@ -133,6 +138,7 @@ export async function runFixtureSync(
     opts.flowType,
     opts.selectedApp,
     opts.domain,
+    opts.nodeSupportDir,
   );
   const timeout = resolveFixtureSyncTimeoutMs(vars);
   const startedAt = Date.now();
@@ -189,12 +195,17 @@ export async function slotFixtureRefresh(
 
   out(`[fixture-refresh] Syncing fixtures for ${params.slotId} (log: ${logPath})`);
   try {
+    const projectVars = await loadProjectVarsIfAny(vars.projectName);
+    const support = projectVars
+      ? await ensureNodeSupportBundle(vars, projectVars.runtimeDir || '.agent', { projectVars })
+      : null;
     await runFixtureSync(vars, {
       slotId: params.slotId,
       logPath,
       flowType: params.flowType,
       selectedApp: params.app,
       domain: params.domain ?? vars.domain,
+      nodeSupportDir: support?.supportDir,
     });
     out(`[fixture-refresh] Fixture refresh complete for ${params.slotId}`);
     complete(0);

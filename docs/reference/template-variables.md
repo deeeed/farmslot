@@ -10,7 +10,7 @@ Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip 
 
 ## Worker TASK.md (double-brace VAR)
 
-- **all flows:** `SLOT (=SLOT_ID), TICKET (=TICKET_ID), TICKET_URL, TITLE (=TICKET_TITLE), BRANCH, PR_NUMBER (empty unless PR flow), TASK_DIR, SESSION, REPO, PLATFORM, ADB_SERIAL, IOS_SIMULATOR, WATCHER_PORT, CDP_PORT, RUNTIME_DIR, RECIPE_DIR, ARTIFACT_DIR, DESCRIPTION, ACCEPTANCE_CRITERIA, AFFECTED_AREA, SCREENSHOTS, COMMENTS, PR_LABELS, PR_TITLE_SUFFIX, DEFAULT_BRANCH, FARMSLOT_DIR (=farmslot_dir), LINKED_TICKETS, LINKED_DESCRIPTIONS, MOBILE_REPO`
+- **all flows:** `SLOT (=SLOT_ID), TICKET (=TICKET_ID), TICKET_URL, TITLE (=TICKET_TITLE), BRANCH, PR_NUMBER (empty unless PR flow), TASK_DIR, SESSION, REPO, PLATFORM, ADB_SERIAL, IOS_SIMULATOR, WATCHER_PORT, CDP_PORT, RUNTIME_DIR, RECIPE_DIR, ARTIFACT_DIR, DESCRIPTION, ACCEPTANCE_CRITERIA, AFFECTED_AREA, SCREENSHOTS, COMMENTS, PR_LABELS, PR_TITLE_SUFFIX, DEFAULT_BRANCH, FARMSLOT_DIR (=farmslot_dir), NODE_SUPPORT_DIR (=node_support_dir), LINKED_TICKETS, LINKED_DESCRIPTIONS, MOBILE_REPO`
 - **review-pr, pr-complete, update-branch:** `PR_NUMBER, PR_TITLE, PR_BRANCH, GH_REPO, PR_URL, PR_BODY, REVIEW_TIER, PR_MERGEABLE, PR_MERGE_STATE, PR_INTEGRATION_NOTE` (PR_INTEGRATION_NOTE is informational merge state; never blocks prepare.)
 - **review-pr:** `RECIPE_STRATEGY` (From dispatch extraVars when set.)
 - **pr-complete:** `COMMENT_SUMMARY, HAS_RECIPE, RECIPE_SOURCE`
@@ -22,6 +22,7 @@ Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip 
 
 - **slot resources:** `port, metro_port, cdp_port, simulator, avd, adb_serial, headless, snapshot, app, platform` (Missing optional resources render empty.)
 - **auto-injected:** `runtime_dir, artifact_dir, recipe_dir, farmslot_dir, slot_id, session, repo, primary_repo, recipe_path, artifacts_dir`
+- **hooks, fixtures:** `node_support_dir` (The slot's selected node-support bundle (ADR-035): the Farmslot checkout for local slots. Pack scripts run from here, never from farmslot_dir on a node.)
 - **reference_repos:** `key_repo per entry (e.g. mobile_repo)`
 - **project.json vars:** `same as worker TASK extension`
 

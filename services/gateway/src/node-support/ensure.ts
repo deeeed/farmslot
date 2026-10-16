@@ -19,7 +19,6 @@ import {
 } from '@farmslot/protocol/node/pack-portability';
 import { currentProjectSources } from '@farmslot/slot-config';
 
-import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { execOnSlot } from '../core/exec.js';
 import {
   farmslotRoot,
@@ -37,7 +36,7 @@ import {
 } from '../core/index.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import {
-  NODE_SUPPORT_HASH_FILENAME,
+  nodeSupportHashPath,
   RUNNER_OBSERVABILITY_SUPPORT_PATHS,
 } from '../runners/runner-observability.js';
 
@@ -238,17 +237,14 @@ export async function ensureNodeSupportBundle(
   // Always rewritten: another gateway or a prepare may have repointed the slot
   // since this process last looked, and the write is one small file.
   const persistSelection = async (how: 'published' | 'current') => {
-    await io.writeFiles(
-      vars,
-      path.posix.join(runnerRuntimeDir(vars.remoteRepo, runtimeDir), '.observability'),
-      [
-        {
-          path: NODE_SUPPORT_HASH_FILENAME,
-          content: Buffer.from(`${manifest.hash}\n`).toString('base64'),
-          mode: 0o644,
-        },
-      ],
-    );
+    const selection = nodeSupportHashPath(vars.remoteRepo, runtimeDir);
+    await io.writeFiles(vars, path.posix.dirname(selection), [
+      {
+        path: path.posix.basename(selection),
+        content: Buffer.from(`${manifest.hash}\n`).toString('base64'),
+        mode: 0o644,
+      },
+    ]);
     console.log(
       `[node-support] ${vars.slotId} now on bundle ${manifest.hash.slice(0, 8)} (${how}, ${files.length} files)`,
     );
@@ -353,4 +349,26 @@ export async function ensureNodeSupportBundle(
   if (options.selectSlot !== false) await persistSelection('published');
   step('support', `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`);
   return { supportDir, hash: manifest.hash, published: true, paths: supportPaths };
+}
+
+/**
+ * The bundle directory the slot currently selects, read without publishing or
+ * repointing: what a prepare rendered into `{{node_support_dir}}` fixtures.
+ * Undefined when a remote slot has no valid selection yet.
+ */
+export async function selectedNodeSupportDir(
+  vars: SlotVars,
+  runtimeDir: string,
+  projectVars?: ProjectVars,
+  io: Pick<NodeSupportIo, 'exec'> = defaultIo,
+): Promise<string | undefined> {
+  if (isLocal(vars.host, vars.machine)) return farmslotRoot;
+  if (currentProjectSources() ?? projectVars?.sourceContext) return '~/farmslot-node';
+  const selection = shellExpressionForRemotePath(nodeSupportHashPath(vars.remoteRepo, runtimeDir));
+  const result = await io.exec(
+    vars,
+    `hash="$(cat ${selection} 2>/dev/null)" && [ \${#hash} -eq 64 ] && case "$hash" in *[!0-9a-f]*) exit 1 ;; esac && printf '%s\\n' ${shellExpressionForRemotePath(REMOTE_SUPPORT_ROOT)}/"$hash"`,
+  );
+  const directory = result.stdout.trim();
+  return result.exitCode === 0 && path.posix.isAbsolute(directory) ? directory : undefined;
 }

@@ -26,6 +26,15 @@ export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
   ...RUNNER_OBSERVABILITY_COPY_PATHS,
 ] as const;
 export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';
+
+/** The slot's node-support bundle selection, outside the checkout (ADR-035). */
+export function nodeSupportHashPath(repo: string, runtimeDir: string): string {
+  return path.posix.join(
+    runnerRuntimeDir(repo, runtimeDir),
+    '.observability',
+    NODE_SUPPORT_HASH_FILENAME,
+  );
+}
 const localHostname = os.hostname().replace(/\.local$/, '');
 
 export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string): string {
@@ -89,11 +98,7 @@ export function buildRunnerObservabilityInstallCommand(
     return `node ${shellExpressionForRemotePath(localInstaller)} ${parts.join(' ')}`;
   }
 
-  const supportHashPath = path.posix.join(
-    runnerRuntimeDir(repo, runtimeDir),
-    '.observability',
-    NODE_SUPPORT_HASH_FILENAME,
-  );
+  const supportHashPath = nodeSupportHashPath(repo, runtimeDir);
   const fallbackInstaller = '${HOME}/farmslot-node/' + INSTALLER_RELATIVE_PATH;
   const supportRoot = '${HOME}/farmslot-node/support/${support_hash}';
   const supportInstaller = `${supportRoot}/${INSTALLER_RELATIVE_PATH}`;

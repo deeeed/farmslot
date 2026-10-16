@@ -24,6 +24,7 @@ import {
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
+import { selectedNodeSupportDir } from '../../node-support/ensure.js';
 import {
   resolveClaudeBinary,
   resolveCodexBinary,
@@ -425,6 +426,13 @@ async function checkFixtures(
 
   const templates = projectJson.fixtures.templates ?? [];
   let mismatches = 0;
+  // Fixture sync renders {{node_support_dir}} from the slot's selected bundle.
+  const nodeSupportDir = await selectedNodeSupportDir(
+    vars,
+    projectVars.runtimeDir || '.agent',
+    projectVars,
+  );
+  const extraVars = nodeSupportDir ? { node_support_dir: nodeSupportDir } : undefined;
 
   // Check templates (skip compose entries without src)
   for (const tpl of templates) {
@@ -449,7 +457,7 @@ async function checkFixtures(
       mismatches++;
       continue;
     }
-    const rendered = await renderFixtureTemplate(localPath, vars, projectVars);
+    const rendered = await renderFixtureTemplate(localPath, vars, projectVars, extraVars);
     const localMd5 = md5(rendered);
     const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${dst}`);
     let matches = localMd5 === remoteMd5;

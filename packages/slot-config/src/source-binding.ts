@@ -115,7 +115,7 @@ export function expandSourceBindings(value: string, sources?: ProjectSourceConte
     const materialization = sources.execution ?? sources.materialization;
     const packs = { ...sources.packs, [sources.project]: sources.pack };
     result = result.replace(
-      /\{\{(?:farmslot_dir|FARMSLOT_DIR)\}\}\/projects\/([a-zA-Z0-9._-]+)/g,
+      /\{\{(?:farmslot_dir|FARMSLOT_DIR|node_support_dir|NODE_SUPPORT_DIR)\}\}\/projects\/([a-zA-Z0-9._-]+)/g,
       (_match, project: string) => {
         const binding = packs[project];
         if (!binding || !materialization.roots[binding.sourceId])

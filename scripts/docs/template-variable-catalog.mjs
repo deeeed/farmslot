@@ -13,7 +13,7 @@ export const WORKER_TASK = {
   groups: [
     {
       scope: 'all flows',
-      vars: 'SLOT (=SLOT_ID), TICKET (=TICKET_ID), TICKET_URL, TITLE (=TICKET_TITLE), BRANCH, PR_NUMBER (empty unless PR flow), TASK_DIR, SESSION, REPO, PLATFORM, ADB_SERIAL, IOS_SIMULATOR, WATCHER_PORT, CDP_PORT, RUNTIME_DIR, RECIPE_DIR, ARTIFACT_DIR, DESCRIPTION, ACCEPTANCE_CRITERIA, AFFECTED_AREA, SCREENSHOTS, COMMENTS, PR_LABELS, PR_TITLE_SUFFIX, DEFAULT_BRANCH, FARMSLOT_DIR (=farmslot_dir), LINKED_TICKETS, LINKED_DESCRIPTIONS, MOBILE_REPO',
+      vars: 'SLOT (=SLOT_ID), TICKET (=TICKET_ID), TICKET_URL, TITLE (=TICKET_TITLE), BRANCH, PR_NUMBER (empty unless PR flow), TASK_DIR, SESSION, REPO, PLATFORM, ADB_SERIAL, IOS_SIMULATOR, WATCHER_PORT, CDP_PORT, RUNTIME_DIR, RECIPE_DIR, ARTIFACT_DIR, DESCRIPTION, ACCEPTANCE_CRITERIA, AFFECTED_AREA, SCREENSHOTS, COMMENTS, PR_LABELS, PR_TITLE_SUFFIX, DEFAULT_BRANCH, FARMSLOT_DIR (=farmslot_dir), NODE_SUPPORT_DIR (=node_support_dir), LINKED_TICKETS, LINKED_DESCRIPTIONS, MOBILE_REPO',
     },
     {
       scope: 'review-pr, pr-complete, update-branch',
@@ -60,6 +60,11 @@ export const HOOKS_AND_RECIPE = {
     {
       scope: 'auto-injected',
       vars: 'runtime_dir, artifact_dir, recipe_dir, farmslot_dir, slot_id, session, repo, primary_repo, recipe_path, artifacts_dir',
+    },
+    {
+      scope: 'hooks, fixtures',
+      vars: 'node_support_dir',
+      note: "The slot's selected node-support bundle (ADR-035): the Farmslot checkout for local slots. Pack scripts run from here, never from farmslot_dir on a node.",
     },
     {
       scope: 'reference_repos',

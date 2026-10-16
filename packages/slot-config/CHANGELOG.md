@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Resolve `{{node_support_dir}}/projects/<pack>` through verified pack sources, like `{{farmslot_dir}}`.
+
 - Expose provider CLI checks through a standalone entry that does not require a checkout.
 
 - Detect pinned provider CLI drift across shell paths, distinguish timed-out probes from version mismatches, and verify exact-version global rollout.

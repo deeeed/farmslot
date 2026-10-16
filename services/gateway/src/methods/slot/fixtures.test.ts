@@ -23,6 +23,18 @@ test('buildFixtureSyncCommand omits --domain when no domain is set', () => {
   const cmd = buildFixtureSyncCommand('macwork-mm-1', 'fix-bug');
   assert.doesNotMatch(cmd, /--domain/);
   assert.doesNotMatch(cmd, /--app/);
+  assert.doesNotMatch(cmd, /--node-support-dir/);
+});
+
+test('buildFixtureSyncCommand forwards the selected node-support bundle', () => {
+  const cmd = buildFixtureSyncCommand(
+    'macpro-mm-1',
+    undefined,
+    undefined,
+    undefined,
+    '/Users/x/farmslot-node/support/abc',
+  );
+  assert.match(cmd, /'--node-support-dir' '\/Users\/x\/farmslot-node\/support\/abc'/);
 });
 
 test('local fixture-sync backstop clears real ~60s single-domain runtime', () => {

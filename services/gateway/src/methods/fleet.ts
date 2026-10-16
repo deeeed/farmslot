@@ -40,6 +40,7 @@ import {
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { selectedNodeSupportDir } from '../node-support/ensure.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { listRuns } from '../runs/store.js';
@@ -1041,6 +1042,8 @@ async function checkFixtures(
   const templates = pj.fixtures.templates ?? [];
   let total = 0;
   let ok = 0;
+  const nodeSupportDir = await selectedNodeSupportDir(vars, pv.runtimeDir || '.agent', pv);
+  const extraVars = nodeSupportDir ? { node_support_dir: nodeSupportDir } : undefined;
 
   for (const tpl of templates) {
     if (!tpl.src) continue; // compose entries have no src — skip for fixture check
@@ -1048,7 +1051,7 @@ async function checkFixtures(
     if (!existsSync(localPath)) continue;
     total++;
     try {
-      const rendered = await renderFixtureTemplate(localPath, vars, pv);
+      const rendered = await renderFixtureTemplate(localPath, vars, pv, extraVars);
       const localMd5 = md5(rendered);
       const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${tpl.dst}`);
       if (remoteMd5 && localMd5 === remoteMd5) ok++;
