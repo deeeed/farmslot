@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Use bounded filesystem-safe still filenames for nested recipe nodes, preserving their distinct artifact identities.
+
 - Coordinate MetaMask provider 0.92.12 checkout-scoped iOS companion shutdown; runtime contracts are unchanged.
 - Accept reasonless person confirmations only from qualified visual-review receipts, preserving raw evidence validation.
 
