@@ -34,6 +34,7 @@ let archived: number;
 let liveRun: boolean;
 let workerBlocker: string | null;
 let providerCleanups: number;
+let workspaceHelperAlive = false;
 
 function reapIdentity(cmd: string) {
   const expected = /if \[ "\$scope" != '([0-9a-f]+)' \]/.exec(cmd)?.[1];
@@ -97,6 +98,14 @@ mock.module('../core/index.js', {
     },
     execOnSlot: async (_vars: unknown, cmd: string) => {
       commands.push(cmd);
+      if (cmd.startsWith('lsof -a -d cwd'))
+        return { stdout: workspaceHelperAlive ? 'p999\nn/slot\n' : '', stderr: '', exitCode: 0 };
+      if (cmd.startsWith('ps -axo'))
+        return {
+          stdout: workspaceHelperAlive ? '999 1 999 Fri Oct 9 01:00:00 2026 node\n' : '',
+          stderr: '',
+          exitCode: 0,
+        };
       if (cmd.startsWith(`cat '${IDENTITY}'`)) {
         onIdentityRead?.();
         return {
@@ -143,6 +152,7 @@ mock.module('../methods/runtime-posture.js', {
     getRunResourcePostureReconciler: () => ({
       apply: async () => {
         providerCleanups += 1;
+        workspaceHelperAlive = false;
         return { ok: true, transition: { failures: [] } };
       },
     }),
@@ -158,6 +168,7 @@ mock.module('../methods/runtime-capabilities.js', {
       settledStatus: async () => ({ catalog: [], leases: [] }),
       releaseRunTerminal: async () => {
         providerCleanups += 1;
+        workspaceHelperAlive = false;
         return { ok: true, failures: [] };
       },
     }),
@@ -190,6 +201,7 @@ beforeEach(() => {
   liveRun = true;
   workerBlocker = null;
   providerCleanups = 0;
+  workspaceHelperAlive = false;
 });
 
 test('cancel during or after prepare stops the run prepare-scope holder', async () => {
@@ -379,4 +391,13 @@ test('a successor claiming during a retry preserves its owner and epoch', async 
   assert.equal(result, false);
   assert.equal(slotRow?.current_run_id, 'successor');
   assert.equal(slotRow?.slot_epoch, 5);
+});
+
+test('terminal provider shutdown precedes the workspace occupancy census', async () => {
+  workspaceHelperAlive = true;
+  const result = await releaseCompletedRunSlot(run);
+  assert.equal(result.released, true);
+  assert.equal(workspaceHelperAlive, false);
+  assert.equal(providerCleanups, 1);
+  assert.equal(slotRow?.lifecycle, 'ready');
 });

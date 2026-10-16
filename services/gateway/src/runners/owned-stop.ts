@@ -1,4 +1,4 @@
-import type { Run } from '@farmslot/protocol';
+import { type AgentContext, isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
 import { execOnSlot, loadSlotVars, ownsRunSlotCleanup, readSlotRow } from '../core/index.js';
 import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
@@ -79,6 +79,50 @@ async function exitPublishedRunWorker(
   return `runner did not exit within ${timeoutMs}ms`;
 }
 
+/** Missing historical metadata can prove quiescence, never authority to stop a live worker. */
+export async function quiescentHistoricalWorkerPanes(
+  vars: SlotVars,
+  run: Run,
+  context: AgentContext,
+): Promise<string[] | null> {
+  const target = context.target;
+  if (!isTerminalRunStatus(run.status) || !target) return null;
+  if (!target.window && !target.target.includes(':') && !/^@\d+$/.test(target.target)) return null;
+  const listed = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      "list-panes -a -F '#{session_name}\t#{window_name}\t#{window_id}\t#{pane_id}\t#{pane_pid}'",
+    ),
+    { cwd: '/' },
+  );
+  if (listed.exitCode === 1) {
+    const session = await execOnSlot(
+      vars,
+      tmuxShellSnippet(`has-session -t ${shellQuote(`=${target.session}`)}`),
+      { cwd: '/' },
+    );
+    return session.exitCode === 1 ? [] : null;
+  }
+  if (listed.exitCode !== 0) return null;
+  const panes: string[] = [];
+  for (const line of listed.stdout.split('\n').filter(Boolean)) {
+    const [session, window, windowId, paneId, panePid] = line.split('\t');
+    if (!/^%\d+$/.test(paneId ?? '') || !/^\d+$/.test(panePid ?? '')) return null;
+    if (
+      session !== target.session ||
+      !(
+        windowId === target.target ||
+        `${session}:${window}` === target.target ||
+        (target.window && window === target.window)
+      )
+    )
+      continue;
+    if ((await probeRunnerDescendantPid(vars, panePid)).state !== 'absent') return null;
+    panes.push(paneId);
+  }
+  return panes;
+}
+
 /** Stop this run's exact saved conversations (any of its workers once published); sessions stay. */
 export async function stopRunOwnedTmuxWorkers(
   run: Run,
@@ -95,10 +139,13 @@ export async function stopRunOwnedTmuxWorkers(
       return 'Another native handoff owns this slot reservation; worker cleanup deferred';
     if (!slotId) return `Worker ${context.id} has no slot ownership evidence`;
     const vars = await loadSlotVars(slotId);
+    const recoveryAction = `Verify its window, then use farmslot slot release --keep-work ${slotId}`;
     const ownedTarget = runnerSessionContextTarget(run, context);
     const targetPaneId = ownedTarget && contextPaneId(ownedTarget);
-    if (!ownedTarget || !targetPaneId)
-      return `Worker ${context.id} has no exact pane identity; cleanup deferred`;
+    if (!ownedTarget || !targetPaneId) {
+      if ((await quiescentHistoricalWorkerPanes(vars, run, context)) !== null) continue;
+      return `Worker ${context.id} has no exact pane identity; cleanup deferred. ${recoveryAction}`;
+    }
     const pane = await execOnSlot(
       vars,
       tmuxShellSnippet(
@@ -155,7 +202,8 @@ export async function stopRunOwnedTmuxWorkers(
         assertOwned,
         exitTimeoutMs,
       );
-      if (failure) return `Worker ${context.id} stop was not confirmed: ${failure}`;
+      if (failure)
+        return `Worker ${context.id} stop was not confirmed: ${failure}. ${recoveryAction}`;
       continue;
     }
     if (!context.runner || !context.runnerSessionId || !context.runnerSessionPath)
@@ -175,7 +223,8 @@ export async function stopRunOwnedTmuxWorkers(
         capturedAt: run.createdAt,
       },
     });
-    if (!result.ok) return `Worker ${context.id} stop was not confirmed: ${result.error}`;
+    if (!result.ok)
+      return `Worker ${context.id} stop was not confirmed: ${result.error}. ${recoveryAction}`;
   }
   return null;
 }
