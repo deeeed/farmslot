@@ -5,7 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Keep generated runner executables outside product lint scans while preserving runtime observations and installed hook paths.
-
+- Read native parent interruption receipts when hooks retain an active turn, preserving child-stop and later-parent activity guards.
 - Encode artifact URL path segments so publication verifies and embeds filenames containing literal percent escapes and other URL characters.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
