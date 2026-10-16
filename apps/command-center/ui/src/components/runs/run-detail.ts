@@ -26,6 +26,7 @@ import type {
   TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import { validVisualJudgmentReason } from '@farmslot/protocol';
 import {
   buildRunResolveDecisionParams,
   Events,
@@ -1283,7 +1284,12 @@ export class RunDetail extends RunDetailState {
         claimId,
         gateway.authenticatedPrincipal,
         verdict,
-        this._visualReviewReasons[claimId] ?? '',
+        validVisualJudgmentReason(
+          model.visualReviewKind(claimId, gateway.authenticatedPrincipal) ?? undefined,
+          verdict,
+        )
+          ? undefined
+          : this._visualReviewReasons[claimId],
       );
       if (request.runId !== run.id)
         throw new Error('The evidence selection changed. Refresh the run.');

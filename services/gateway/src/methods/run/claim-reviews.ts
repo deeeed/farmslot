@@ -18,6 +18,7 @@ import {
   type RunReviewVisualClaimParams,
   type RunReviewVisualClaimResult,
   sameEvidenceAttestationApprover,
+  validVisualJudgmentReason,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
@@ -56,8 +57,11 @@ export async function runReviewVisualClaim(
     throw new Error('Unknown visual judgment kind.');
   const delegated = kind === 'lead-agent-reviewed';
   const reason = params.reason?.trim();
-  if (!reason || !['confirmed', 'rejected'].includes(params.verdict))
-    throw new Error('Visual review requires confirmed/rejected and a written reason.');
+  if (
+    !['confirmed', 'rejected'].includes(params.verdict) ||
+    !validVisualJudgmentReason(kind, params.verdict, reason)
+  )
+    throw new Error('Rejections and delegated visual reviews require a written reason.');
   if (
     [
       'actor',
@@ -123,7 +127,7 @@ export async function runReviewVisualClaim(
     ...(delegated && delegator
       ? { delegation: { ...delegator, policyDigest: digestRecipeDocument(policy) } }
       : {}),
-    reason,
+    ...(reason ? { reason } : {}),
     judgedAt: new Date().toISOString(),
   };
   const projected = deriveReviewedRecipeClaims(input, {

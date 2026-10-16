@@ -3033,6 +3033,35 @@ All checks passed.`;
       ],
       gateSummary: mockGateSummaryWithSubtasks(),
     };
+    const judgmentCriteria = [
+      'Place a limit order at the selected chart price.',
+      'Drag an order line to edit its limit price.',
+      'Cancel a resting order from its chart line.',
+      'Keep the extension confirmation panel visible.',
+      'Show pending changes until the venue confirms.',
+      'Reject order sizes outside the account limits.',
+      'Keep the chart and account tables synchronized.',
+    ].map((text, index) => ({
+      id: `AC-${index + 1}`,
+      text,
+      verdict: 'awaiting-review' as const,
+      proofMode: 'visual' as const,
+      evidence: [],
+      recipeNodes: [],
+    }));
+    mockPayload.acceptanceStatus = { schemaVersion: 1, criteria: judgmentCriteria };
+    mockPayload.gateReadiness = {
+      state: 'not-ready',
+      identity: { runId: 'mock-run-2', generation: 1 },
+      reasons: [
+        {
+          code: 'evidence-policy-unsatisfied',
+          prerequisite: 'evidence',
+          evidencePolicy: 'claim-verdict',
+          message: 'Visual judgment required.',
+        },
+      ],
+    };
     const mockDecision: RunDecision = {
       id: 'mock-ready-decision-1',
       type: 'engine_human_gate',

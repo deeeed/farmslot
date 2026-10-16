@@ -1,17 +1,33 @@
-import { Pressable, Text, TextInput, View } from 'react-native';
-
+import { useState } from 'react';
 import {
-  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
-  isValidEvidenceAttestationReason,
-  type RunDecision,
-} from '@farmslot/protocol';
-import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  useColorScheme,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
+import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
+import { type RunDecision, type RunGateReadiness } from '@farmslot/protocol';
+import {
+  type PublicationGateAction,
+  type PublicationGateClaim,
+  publicationGateView,
+  type ReviewDispatchViewModel,
+  visualPrevalidationLabel,
+} from '@farmslot/review-dispatch';
+import { publicationGateColors } from '@farmslot/theme';
+
+import { VisualClaimJudgment } from '../../../components/VisualClaimJudgment';
 import type {
   GateReviewAction,
   GateReviewSummary,
   GateReviewVerdict,
 } from '../../../lib/gate-review';
+import { fonts, radii, spacing } from '../../../lib/theme';
 import { ReviewDispatchPicker } from '../../review-dispatch/ReviewDispatchPicker';
 import { gateReviewStyles as styles } from '../styles/gate-review.styles';
 
@@ -120,47 +136,6 @@ export function GateReviewVerdicts({ reviews }: { reviews: GateReviewVerdict[] }
   );
 }
 
-export function PublishGuardNotice({
-  actions,
-  testID,
-  attestationReason = '',
-  onAttestationReason,
-}: {
-  actions: GateReviewAction[];
-  testID: string;
-  attestationReason?: string;
-  onAttestationReason?: (reason: string) => void;
-}) {
-  const withheld = actions.filter((action) => action.disabledReason);
-  const attestation =
-    onAttestationReason &&
-    actions.some((action) => action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION);
-  if (withheld.length === 0 && !attestation) return null;
-  return (
-    <View style={styles.guardCard} testID={testID}>
-      {attestation ? (
-        <>
-          <Text style={styles.guardText}>Reason for evidence policy attestation</Text>
-          <TextInput
-            testID="companion-evidence-attestation-reason"
-            accessibilityLabel="Reason for evidence policy attestation"
-            multiline
-            value={attestationReason}
-            onChangeText={onAttestationReason}
-            style={[styles.guardText, { borderWidth: 1, padding: 8 }]}
-          />
-        </>
-      ) : null}
-      {withheld.length ? <Text style={styles.guardTitle}>Publish approval is disabled</Text> : null}
-      {withheld.map((action) => (
-        <Text key={action.id} style={styles.guardText}>
-          • {action.label}: {action.disabledReason}
-        </Text>
-      ))}
-    </View>
-  );
-}
-
 export function GateActions({
   decision,
   actions,
@@ -169,7 +144,29 @@ export function GateActions({
   reviewPicker,
   attestationReason,
   onAttestationReason,
+  claims,
+  judgmentRows,
+  onRecordVisualReview,
+  onRefreshPackage,
+  pendingVisualClaimIds,
+  readiness,
+  onFocusClaim,
+  disabled = false,
+  reviewDisabled = false,
 }: {
+  disabled?: boolean;
+  reviewDisabled?: boolean;
+  claims?: readonly PublicationGateClaim[];
+  judgmentRows?: readonly EvidenceReviewJudgmentRow[];
+  onRecordVisualReview?: (
+    id: string,
+    verdict: 'confirmed' | 'rejected',
+    reason?: string,
+  ) => Promise<void>;
+  onRefreshPackage?: () => void;
+  pendingVisualClaimIds?: readonly string[];
+  readiness?: RunGateReadiness;
+  onFocusClaim?: (id: string) => void;
   attestationReason: string;
   onAttestationReason: (reason: string) => void;
   reviewPicker: ReviewDispatchViewModel;
@@ -178,6 +175,10 @@ export function GateActions({
   sendingActionId: string | null;
   onResolve: (action: GateReviewAction, selectionData?: Record<string, unknown>) => void;
 }) {
+  const appearance = useColorScheme();
+  const viewport = useWindowDimensions();
+  const [attestingDecisionId, setAttestingDecisionId] = useState<string | null>(null);
+  const [moreActions, setMoreActions] = useState(false);
   if (decision.resolvedAt) {
     return (
       <View style={styles.resolvedCard} testID="companion-gate-review-resolved">
@@ -188,57 +189,237 @@ export function GateActions({
       </View>
     );
   }
+  const view = publicationGateView({
+    actions,
+    claims,
+    judgmentRows,
+    pendingVisualClaimIds,
+    readiness,
+    attestationReason,
+    attesting: attestingDecisionId === decision.id,
+  });
+  const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
+  const renderAction = (action: PublicationGateAction, primary = false) => {
+    const actionDisabled =
+      disabled ||
+      Boolean(action.disabledReason) ||
+      sendingActionId !== null ||
+      (primary && Boolean(view.blockedReason)) ||
+      (action.id === 'request-review' && reviewDisabled);
+    const guarded = { ...action, disabledReason: action.disabledReason ?? null };
+    if (action.id === 'request-review')
+      return (
+        <ReviewDispatchPicker
+          key={action.id}
+          model={reviewPicker}
+          disabled={actionDisabled}
+          testID="companion-publish-gate-review"
+          action="request-review"
+          actionLabel={action.label}
+          onInvoke={(_id, payload) => onResolve(guarded, { reviewRequest: payload })}
+        />
+      );
+    return (
+      <Pressable
+        key={action.id}
+        testID={`companion-gate-review-action-${action.id}`}
+        accessibilityRole="button"
+        accessibilityLabel={action.label}
+        accessibilityState={{ disabled: actionDisabled }}
+        disabled={actionDisabled}
+        onPress={() => onResolve(guarded)}
+        style={[
+          gateStyles.button,
+          {
+            borderColor: palette.border,
+            backgroundColor: primary ? palette.accent : palette.surface,
+          },
+          actionDisabled && gateStyles.disabled,
+        ]}
+      >
+        <Text style={{ color: primary ? palette.onAccent : palette.text, fontWeight: '600' }}>
+          {sendingActionId === action.id ? 'Submitting…' : action.label}
+        </Text>
+      </Pressable>
+    );
+  };
   return (
-    <View testID="companion-gate-review-actions">
-      <PublishGuardNotice
-        actions={actions}
+    <View
+      testID="companion-gate-review-actions"
+      style={[
+        gateStyles.panel,
+        { backgroundColor: palette.background, borderColor: palette.border },
+      ]}
+    >
+      <Text
         testID="companion-gate-review-approve-reason"
-        attestationReason={attestationReason}
-        onAttestationReason={onAttestationReason}
-      />
-      {actions.map((action) => {
-        const disabled =
-          Boolean(action.disabledReason) ||
-          sendingActionId !== null ||
-          (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
-            !isValidEvidenceAttestationReason(attestationReason));
-        if (action.id === 'request-review')
-          return (
-            <ReviewDispatchPicker
-              key={action.id}
-              model={reviewPicker}
-              disabled={disabled}
-              testID="companion-publish-gate-review"
-              action="request-review"
-              actionLabel={action.label}
-              onInvoke={(_actionId, payload) => onResolve(action, { reviewRequest: payload })}
-            />
-          );
-        return (
-          <Pressable
-            key={action.id}
-            testID={`companion-gate-review-action-${action.id}`}
-            accessibilityRole="button"
-            accessibilityLabel={action.label}
-            accessibilityState={{ disabled }}
-            disabled={disabled}
-            onPress={() => onResolve(action)}
+        accessibilityRole="header"
+        style={[gateStyles.status, { color: palette.text }]}
+      >
+        {view.status}
+      </Text>
+      {view.claims.length ? (
+        <View accessibilityLabel="Acceptance judgments">
+          <Text style={[gateStyles.label, { color: palette.text }]}>Acceptance judgments</Text>
+          <ScrollView nestedScrollEnabled style={{ maxHeight: viewport.height * 0.4 }}>
+            {view.claims.map((claim) => (
+              <View
+                key={claim.id}
+                testID={`gate-ac-${claim.id}`}
+                style={[gateStyles.claim, { borderColor: palette.border }]}
+              >
+                <Text style={[gateStyles.label, { color: palette.text }]}>{claim.id}</Text>
+                <Text numberOfLines={2} style={[gateStyles.claimText, { color: palette.text }]}>
+                  {claim.text}
+                </Text>
+                <Text
+                  style={[
+                    gateStyles.chip,
+                    {
+                      borderColor: palette.border,
+                      color: claim.pending ? palette.warning : palette.text,
+                    },
+                  ]}
+                >
+                  {claim.state}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Review evidence for ${claim.id}`}
+                  onPress={() => onFocusClaim?.(claim.id)}
+                  style={[
+                    gateStyles.button,
+                    { backgroundColor: palette.surface, borderColor: palette.border },
+                  ]}
+                >
+                  <Text style={{ color: palette.text }}>
+                    Review evidence
+                    {claim.judgment?.media.clip
+                      ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
+                      : ''}
+                  </Text>
+                </Pressable>
+                {claim.judgment ? (
+                  <VisualClaimJudgment
+                    row={claim.judgment}
+                    onRecord={onRecordVisualReview}
+                    disabled={disabled || sendingActionId !== null}
+                  />
+                ) : (
+                  <Text style={{ color: palette.secondary }}>{visualPrevalidationLabel()}</Text>
+                )}
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
+      {view.attestation && attestingDecisionId === decision.id ? (
+        <View style={gateStyles.section} accessibilityLabel="Evidence attestation">
+          <Text style={[gateStyles.label, { color: palette.text }]}>
+            Reason for evidence policy attestation
+          </Text>
+          <TextInput
+            testID="companion-evidence-attestation-reason"
+            accessibilityLabel="Reason for evidence policy attestation"
+            multiline
+            value={attestationReason}
+            editable={!disabled && sendingActionId === null}
+            onChangeText={onAttestationReason}
             style={[
-              styles.actionButton,
-              action.style === 'primary' && styles.actionPrimary,
-              action.style === 'danger' && styles.actionDanger,
-              disabled && styles.actionDisabled,
+              gateStyles.input,
+              {
+                color: palette.text,
+                borderColor: palette.border,
+                backgroundColor: palette.surface,
+              },
             ]}
+          />
+        </View>
+      ) : null}
+      <View style={gateStyles.section} accessibilityLabel="Publication actions">
+        {view.refreshRequired && onRefreshPackage ? (
+          <Pressable
+            accessibilityRole="button"
+            style={gateStyles.button}
+            onPress={onRefreshPackage}
+            disabled={disabled || sendingActionId !== null}
           >
-            <Text style={styles.actionText}>
-              {sendingActionId === action.id ? `Sending ${action.label}…` : action.label}
-            </Text>
-            {action.description ? (
-              <Text style={styles.actionDescription}>{action.description}</Text>
-            ) : null}
+            <Text style={{ color: palette.text }}>Refresh package</Text>
           </Pressable>
-        );
-      })}
+        ) : null}
+        {view.approval ? (
+          renderAction(view.approval, true)
+        ) : (
+          <Pressable
+            disabled
+            accessibilityRole="button"
+            accessibilityState={{ disabled: true }}
+            style={[gateStyles.button, gateStyles.disabled, { backgroundColor: palette.accent }]}
+          >
+            <Text style={{ color: palette.onAccent }}>Approve publish</Text>
+          </Pressable>
+        )}
+        {view.attestation || view.secondaryActions.length ? (
+          <Pressable
+            style={gateStyles.button}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: moreActions }}
+            testID="companion-gate-review-more-actions"
+            onPress={() => setMoreActions(!moreActions)}
+          >
+            <Text style={{ color: palette.secondary }}>More actions</Text>
+          </Pressable>
+        ) : null}
+        {moreActions ? (
+          <View style={gateStyles.section}>
+            {view.attestation && attestingDecisionId !== decision.id ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityHint={view.attestation.description}
+                style={gateStyles.button}
+                onPress={() => setAttestingDecisionId(decision.id)}
+              >
+                <Text style={{ color: palette.text }}>Attest evidence</Text>
+              </Pressable>
+            ) : null}
+            {view.secondaryActions.map((action) => renderAction(action))}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
+
+const gateStyles = StyleSheet.create({
+  panel: { padding: spacing.lg, borderWidth: 1, borderRadius: radii.md, gap: spacing.lg },
+  status: { fontSize: fonts.sizeMd, fontWeight: '600' },
+  label: { fontSize: fonts.sizeSm, fontWeight: '600' },
+  claim: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    borderTopWidth: 1,
+  },
+  claimText: { flex: 1, minWidth: 160, fontSize: fonts.sizeSm, lineHeight: 18 },
+  chip: { borderWidth: 1, borderRadius: radii.sm, padding: spacing.sm, fontSize: fonts.sizeSm },
+  button: {
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    alignItems: 'center',
+  },
+  disabled: { opacity: 0.65 },
+  section: { gap: spacing.md },
+  input: {
+    minHeight: 72,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    textAlignVertical: 'top',
+  },
+});

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Separate publication status, AC judgments, attestation and actions into readable sections.
+
 - Load inline Markdown evidence through authenticated headers in PR previews, reports and other review views, without credentials in media URLs.
 
 - Remember person sign-ins through gateway device sessions, list signed-in devices and revoke confirmed sign-outs without storing access tokens. Existing person logins require one fresh sign-in after this upgrade; the existing unrevoked credential still works.

@@ -1,8 +1,10 @@
 import { css, unsafeCSS } from 'lit';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { visualClaimJudgmentStyles } from '../workspace/visual-claim-judgment.js';
 
 export const runDetailStyles = css`
+  ${unsafeCSS(visualClaimJudgmentStyles())}
   :host {
     display: flex;
     flex-direction: column;

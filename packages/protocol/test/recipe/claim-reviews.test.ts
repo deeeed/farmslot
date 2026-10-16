@@ -10,6 +10,7 @@ import {
   type RecordedEvidencePackageInput,
   recordedVisualJudgments,
   reviewedVisualFiles,
+  validVisualJudgmentReason,
 } from '../../src/recipe/index.js';
 
 const input: RecordedEvidencePackageInput = JSON.parse(
@@ -170,7 +171,7 @@ test('unrelated identity, moments, bytes or incomplete person fields grant no ju
     { ...receipt, closureIdentity: 'other-bytes' },
     { ...receipt, moments: [] },
     { ...receipt, approver: { ...receipt.approver, credentialId: '' } },
-    { ...receipt, reason: '' },
+    { ...receipt, reason: '', verdict: 'rejected' as const },
   ])
     assert.deepEqual(recordedVisualJudgments(input, authority([invalid])), []);
   assert.deepEqual(
@@ -209,4 +210,37 @@ test('person device receipts retain visual judgments while delegated services st
     recordedVisualJudgments(input, { ...authority([delegated]), historical: true }),
     [],
   );
+});
+
+test('only qualified person confirmation may omit its rationale', () => {
+  const { reason: _reason, ...confirmation } = receipt;
+  assert.equal(recordedVisualJudgments(input, authority([confirmation])).length, 1);
+  assert.equal('reason' in recordedVisualJudgments(input, authority([confirmation]))[0]!, false);
+  assert.deepEqual(
+    recordedVisualJudgments(input, authority([{ ...confirmation, verdict: 'rejected' }])),
+    [],
+  );
+  assert.deepEqual(
+    recordedVisualJudgments(
+      input,
+      authority([{ ...confirmation, kind: 'lead-agent-reviewed', reviewerSubjectKind: 'service' }]),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    recordedVisualJudgments(input, authority([{ ...confirmation, closureIdentity: 'other' }])),
+    [],
+  );
+});
+
+test('all consumers share the person-confirmation rationale rule', () => {
+  for (const kind of [undefined, 'person-reviewed', 'lead-agent-reviewed'] as const) {
+    for (const verdict of ['confirmed', 'rejected'] as const) {
+      assert.equal(
+        validVisualJudgmentReason(kind, verdict),
+        kind === 'person-reviewed' && verdict === 'confirmed',
+      );
+      assert.equal(validVisualJudgmentReason(kind, verdict, 'Observed the clip.'), true);
+    }
+  }
 });

@@ -31,7 +31,7 @@ const { computeReadyGatePackageHash } = await import('../../run-completion/ready
 const { collectRunGateReadiness } = await import('../../run-engine/gate-prerequisites.js');
 const { readRunRecordedEvidence } = await import('./evidence-review.js');
 
-async function fixture(t: TestContext) {
+export async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'visual-claim-review-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const { files } = JSON.parse(
@@ -299,7 +299,7 @@ test('unauthenticated, spoofed, stale, wrong-execution and derived-parent reques
     /Service credentials/,
   );
   for (const patch of [
-    { reason: ' ' },
+    { reason: ' ', verdict: 'rejected' as const },
     { snapshotIdentity: 'old' },
     { recipeRunId: 'other' },
     { claimId: 'case-1' },
@@ -580,4 +580,43 @@ test('QA review consumes only frozen case registration, even when another retain
     f.dependencies,
   );
   assert.deepEqual(await readFile(indexPath), originalIndex);
+});
+
+test('one-tap confirmation has no invented reason, retains identity and requires refresh', async (t) => {
+  const f = await fixture(t);
+  const { reason: _reason, ...params } = f.params;
+  const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
+  const result = await runReviewVisualClaim(params, () => {}, f.dependencies);
+  assert.equal('reason' in result.receipt, false);
+  assert.equal(result.receipt.approver.principalId, f.person.principalId);
+  assert.equal(
+    (await runReviewVisualClaim(params, () => {}, f.dependencies)).receipt.id,
+    result.receipt.id,
+  );
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(f.input, visualReviewAuthority(f.run, f.input)).map(
+      ({ verdict }) => verdict,
+    ),
+    ['proven', 'proven'],
+  );
+  await assert.rejects(
+    runReviewVisualClaim({ ...params, verdict: 'rejected' }, () => {}, f.dependencies),
+    /written reason/,
+  );
+  await assert.rejects(
+    runReviewVisualClaim({ ...params, kind: 'lead-agent-reviewed' }, () => {}, f.dependencies),
+    /written reason/,
+  );
+  const written = await runReviewVisualClaim(
+    {
+      ...params,
+      snapshotIdentity: visualReviewSnapshotIdentity(f.run, f.decision.id),
+      reason: 'Inspected the retained clip.',
+    },
+    () => {},
+    f.dependencies,
+  );
+  assert.notEqual(written.receipt.id, result.receipt.id);
+  assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
+  assert.equal(f.decision.resolvedAt, undefined);
 });
