@@ -26,7 +26,7 @@ function mount(request: (method: string) => Promise<unknown>) {
   let cell = 0;
   let effect = 0;
   let pending: Array<() => void> = [];
-  const connection = {};
+  let connection: number | null = 1;
   const client = { request, subscribe: () => () => undefined, authenticatedPrincipal: null };
   const react = {
     useState(initial: unknown) {
@@ -117,6 +117,9 @@ function mount(request: (method: string) => Promise<unknown>) {
       if (typeof result !== 'object' || result === null) throw new Error('Invalid hook result');
       return Object.fromEntries(Object.entries(result));
     },
+    setConnected(connected: boolean) {
+      connection = connected ? 1 : null;
+    },
     cleanup() {
       for (const entry of effects) entry.cleanup?.();
     },
@@ -130,13 +133,17 @@ function retry(result: Record<string, unknown>) {
   result.retry();
 }
 
-test('retry re-reads an idle acceptance failure without changing run identity or updatedAt', async (t) => {
+test('cold Retry shows loading until the unchanged run acceptance read arrives', async (t) => {
   let reads = 0;
   let evidenceReads = 0;
+  let finish: (result: unknown) => void = () => assert.fail('retry did not start');
+  const pending = new Promise<unknown>((resolve) => {
+    finish = resolve;
+  });
   const mounted = mount(async (method) => {
     if (method === Methods.TASK_PROGRESS) {
       if (++reads === 1) throw new Error('temporary read failure');
-      return progress;
+      return pending;
     }
     assert.equal(method, Methods.RUN_RECIPE_RUNS_FOR_RUN);
     evidenceReads++;
@@ -152,9 +159,54 @@ test('retry re-reads an idle acceptance failure without changing run identity or
   assert.equal(reads, 1);
   retry(failed);
   mounted.render();
+  const waiting = mounted.render();
+  assert.equal(waiting.error, null, 'A cold Retry must clear its old request error while loading');
+  assert.equal(waiting.view, null);
+  assert.equal(waiting.evidenceModel, null);
   await settle();
   assert.equal(reads, 2);
+  finish(progress);
+  await settle();
   assert.equal(evidenceReads, 1);
+  assert.equal(mounted.render().error, null);
+  assert.notEqual(mounted.render().view, null);
+});
+
+test('Retry preserves a cached acceptance read and its error until the refresh arrives', async (t) => {
+  let reads = 0;
+  let finish: (result: unknown) => void = () => assert.fail('retry did not start');
+  const pending = new Promise<unknown>((resolve) => {
+    finish = resolve;
+  });
+  const mounted = mount(async (method) => {
+    if (method === Methods.TASK_PROGRESS) {
+      if (++reads === 1) return progress;
+      if (reads === 2) throw new Error('temporary refresh failure');
+      return pending;
+    }
+    assert.equal(method, Methods.RUN_RECIPE_RUNS_FOR_RUN);
+    return { recipeRuns: [], selectedRecipeRunId: null };
+  });
+  t.after(mounted.cleanup);
+  mounted.render();
+  await settle();
+  const loaded = mounted.render();
+  assert.notEqual(loaded.view, null);
+  retry(loaded);
+  mounted.render();
+  await settle();
+  const failed = mounted.render();
+  assert.match(String(failed.error), /temporary refresh failure/);
+  retry(failed);
+  mounted.render();
+  const waiting = mounted.render();
+  assert.equal(waiting.error, failed.error);
+  assert.equal(waiting.acceptanceStatus, progress.acceptanceStatus);
+  assert.notEqual(waiting.view, null);
+  await settle();
+  assert.equal(reads, 3);
+  finish(progress);
+  await settle();
   assert.equal(mounted.render().error, null);
 });
 
@@ -177,4 +229,40 @@ test('retry fences a response that began before the latest failed read', async (
   finish(progress);
   await settle();
   assert.match(String(mounted.render().error), /current read failure/);
+});
+
+test('a disconnected cold Retry keeps its error until a connected read starts', async (t) => {
+  let reads = 0;
+  let finish: (result: unknown) => void = () => assert.fail('connected read did not start');
+  const pending = new Promise<unknown>((resolve) => {
+    finish = resolve;
+  });
+  const mounted = mount(async (method) => {
+    if (method === Methods.TASK_PROGRESS) {
+      if (++reads === 1) throw new Error('temporary read failure');
+      return pending;
+    }
+    assert.equal(method, Methods.RUN_RECIPE_RUNS_FOR_RUN);
+    return { recipeRuns: [], selectedRecipeRunId: null };
+  });
+  t.after(mounted.cleanup);
+  mounted.render();
+  await settle();
+  const failed = mounted.render();
+  assert.match(String(failed.error), /temporary read failure/);
+  mounted.setConnected(false);
+  mounted.render();
+  retry(failed);
+  mounted.render();
+  assert.equal(mounted.render().error, failed.error);
+  assert.equal(reads, 1);
+  mounted.setConnected(true);
+  mounted.render();
+  const waiting = mounted.render();
+  assert.equal(waiting.error, null);
+  assert.equal(waiting.view, null);
+  assert.equal(reads, 2);
+  finish(progress);
+  await settle();
+  assert.notEqual(mounted.render().view, null);
 });

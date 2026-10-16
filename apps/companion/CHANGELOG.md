@@ -5,7 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand.
-- Reserve loading layouts for gate, evidence and run views with shared skeleton shapes and retries.
+- Reserve loading layouts for gate, evidence and run views with shared skeleton shapes, including retries before acceptance data loads.
 
 - Use one publication decision panel for gate and decision workspaces with explicit AC evidence actions.
 
