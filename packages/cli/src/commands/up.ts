@@ -680,6 +680,7 @@ async function up(
     stdio: ['ignore', logFd, logFd],
     env: {
       ...process.env,
+      TSX_TSCONFIG_PATH: join(repoRoot, 'services', 'gateway', 'tsconfig.json'),
       GATEWAY_PORT: String(port),
       GATEWAY_HOST: '0.0.0.0',
       // Hand the gateway the resolved cert so it serves wss:// on tls.port too.

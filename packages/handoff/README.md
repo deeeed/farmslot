@@ -80,6 +80,10 @@ Deliberate detection choices and known limits:
 - Recovery-phrase detection blocks ANY run of 12+ consecutive wordlist words,
   not only exact mnemonic lengths — a fail-closed trade (wallet dumps carry
   adjacent wordlist words; 12+ in genuine prose is practically nonexistent).
+  Underscore-bearing identifiers remain single tokens so separate recipe node
+  IDs cannot compose a recovery phrase.
+- Opaque session IDs alone do not identify credentials. Session/auth-token
+  labels and cookie contexts still block their values.
 - Structured cookie-jar detection matches the common `{"name":...,"value":...}`
   adjacent-ordered shape; reordered or intervening-field variants are a known,
   accepted limit of the heuristic backstop.

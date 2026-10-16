@@ -22,6 +22,7 @@ import {
   postProcessPRBody,
   publishSelectedEvidence,
 } from './publication-artifacts.js';
+import { assertPublicationTextSafe } from './publication-secrets.js';
 import {
   resolveSelectedEvidenceRef,
   sha256Text,
@@ -168,6 +169,7 @@ async function refreshPublishedEvidenceLocked(
       );
   };
   const before = await readPr();
+  assertPublicationTextSafe(before.title, before.body);
   if (!run.branch || before.headRefName !== run.branch || before.state === 'CLOSED') {
     throw new Error('Published PR no longer matches the run branch');
   }

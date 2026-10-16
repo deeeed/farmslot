@@ -95,6 +95,34 @@ test('cookie headers, OAuth tokens, and session-token assignments are floor hits
   }
 });
 
+test('session identifiers still block in credential-bearing cookie and token contexts', () => {
+  const value = '550e8400-e29b-41d4-a716-446655440000';
+  for (const text of [
+    `Cookie: session_id=${value}`,
+    JSON.stringify({ session_token: value }),
+    JSON.stringify({ authToken: value }),
+  ]) {
+    assert.ok(
+      scanForFloorSecrets(text).some(({ kind }) => kind === 'cookie' || kind === 'session-token'),
+    );
+  }
+  const words =
+    'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(
+      ' ',
+    );
+  assert.ok(scanForFloorSecrets(JSON.stringify(words)).some(({ kind }) => kind === 'srp'));
+});
+
+test('Markdown emphasis cannot hide a twelve-word recovery phrase', () => {
+  const phrase =
+    'abandon ability able about above absent absorb abstract absurd abuse access accident';
+  for (const marker of ['_', '__']) {
+    assert.ok(
+      scanForFloorSecrets(`${marker}${phrase}${marker}`).some(({ kind }) => kind === 'srp'),
+    );
+  }
+});
+
 test('UNION-only: farm extra patterns ADD blocks and can never loosen the floor', () => {
   const farmPattern = { kind: 'farm-fixture-tag', pattern: /FARM-FIXTURE-SECRET-[0-9]+/g };
 
