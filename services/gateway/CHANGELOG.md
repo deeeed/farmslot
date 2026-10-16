@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep failed dev worker CLI verification visible as critical node and fleet health.
+
 - Reuse verified parent acceptance for PR follow-up completion, retain proof provenance in completion and PR comments, and keep current-checkout CI independent.
 
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.

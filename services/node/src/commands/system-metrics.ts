@@ -12,6 +12,7 @@ import type {
 import { getProviderCliHealth } from './provider-cli-health.js';
 import { getCachedResourceWatchPids, getResourceWatchRuntimeStats } from './resource-watch.js';
 import { getCachedTmuxPanePids } from './tmux.js';
+import { readWorkerCliHealth } from './worker-cli-health.js';
 
 export type SystemMetrics = NodeMetricsSample;
 
@@ -367,6 +368,7 @@ export async function collectMetrics(
   const cpuCores = os.cpus().length;
   const cpuPercent = getCpuPercent();
   const providerCliHealth = options.machine ? getProviderCliHealth(options.machine) : undefined;
+  const workerCliHealth = await readWorkerCliHealth();
   const memoryPercent = Math.round((usedMem / totalMem) * 100);
   const diskPercent = getDiskPercent();
   const thermalPressure = getThermalPressure();
@@ -431,6 +433,7 @@ export async function collectMetrics(
     },
     ...(processInventory ? { processInventory } : {}),
     providerCliHealth,
+    workerCliHealth,
     thermalPressure,
     resourceWatches: getResourceWatchRuntimeStats(),
     collectedAt: new Date().toISOString(),

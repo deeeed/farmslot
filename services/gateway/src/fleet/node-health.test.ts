@@ -271,3 +271,33 @@ test('provider PATH drift remains a node health failure visible to fleet readers
   updateMachineMetrics(machine, metrics);
   assert.equal(getMachineHealth(machine)?.headroom, 'red', 'confirmed drift survives a timeout');
 });
+
+test('failed dev worker verification is a fleet health failure until a successful probe', () => {
+  const machine = 'worker-verify-fixture';
+  const metrics: NodeMetricsSample = {
+    cpuPercent: 1,
+    memoryPercent: 2,
+    memoryUsedGb: 1,
+    memoryTotalGb: 16,
+    diskPercent: 3,
+    loadAvg1: 0,
+    loadAvg5: 0,
+    collectedAt: new Date().toISOString(),
+    workerCliHealth: {
+      ok: false,
+      checkedAt: new Date().toISOString(),
+      reason: 'tmux server unresponsive on fixture',
+    },
+  };
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'red');
+  assert.equal(
+    getAllMachineHealth().find((item) => item.machine === machine)?.workerCliHealth?.reason,
+    metrics.workerCliHealth?.reason,
+  );
+  assert(!('workerCliHealth' in getMachineHealth(machine)!.system!));
+  metrics.workerCliHealth!.ok = true;
+  metrics.workerCliHealth!.reason = undefined;
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'green');
+});

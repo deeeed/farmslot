@@ -446,3 +446,26 @@ test('provider timeouts are warnings while confirmed drift stays critical', asyn
     ),
   );
 });
+
+test('worker CLI deployment failure is visible as a critical pressure concern', async (t) => {
+  t.after(() => {
+    providerHealth = undefined;
+  });
+  providerHealth = {
+    machine: 'macpro',
+    online: true,
+    headroom: 'red',
+    workerCliHealth: {
+      ok: false,
+      checkedAt: collectedAt,
+      reason: 'tmux server unresponsive on fixture',
+    },
+  };
+  const result = await resourcePressureSnapshot({ machines: ['macpro'] });
+  assert(
+    result.machines[0].concerns.some(
+      (concern) =>
+        concern.severity === 'critical' && concern.reason === 'tmux server unresponsive on fixture',
+    ),
+  );
+});

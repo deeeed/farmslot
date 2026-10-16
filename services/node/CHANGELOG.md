@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Report failed dev worker CLI verification as node health until a later successful verification.
+
 - Load provider health in standalone node deployments without checkout discovery.
 
 - Detect pinned provider CLI drift across shell paths and retry timed-out probes once after load drops without increasing deadlines.

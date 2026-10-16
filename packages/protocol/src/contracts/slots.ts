@@ -248,15 +248,23 @@ export interface ProviderCliHealth {
   binaries: Array<{ name: string; path: string; scope: string; version: string }>;
 }
 
+export interface WorkerCliHealth {
+  ok: boolean;
+  checkedAt: string;
+  reason?: string;
+}
+
 /** Private node→gateway sample; process census is never part of MachineHealth.system. */
 export interface NodeMetricsSample extends NodeSystemMetrics {
   processInventory?: NodeProcessInventory;
   providerCliHealth?: ProviderCliHealth[];
+  workerCliHealth?: WorkerCliHealth;
 }
 
 export interface MachineHealth {
   machine: string;
   providerCliHealth?: ProviderCliHealth[];
+  workerCliHealth?: WorkerCliHealth;
   online: boolean;
   capabilities?: RecipeRuntimeCapabilityDeclaration[];
   system?: NodeSystemMetrics;
