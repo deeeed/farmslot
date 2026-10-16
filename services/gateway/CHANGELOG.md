@@ -8,6 +8,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## 0.22.0 - 2026-10-16
 
+- Refresh stale fleet snapshots from the monitor, stop leftover service helpers when their health is down, and re-probe retired worker targets before retaining cleanup holds.
 - Record one-tap person visual confirmations without invented prose, preserving receipt identity and package refresh requirements.
 - Preserve the task marker and its frozen tooling when switching between worker and review checklists.
 - Refuse publication and evidence refresh when frozen text or PR prose contains detected secret values, preserving retained bytes and reporting only fingerprints.

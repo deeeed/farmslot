@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Coordinate MetaMask provider 0.92.12 checkout-scoped iOS companion shutdown; runtime contracts are unchanged.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.38.0 - 2026-10-16

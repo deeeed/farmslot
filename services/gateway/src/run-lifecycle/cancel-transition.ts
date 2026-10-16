@@ -264,9 +264,9 @@ export function defaultCancelCollaborators(): CancelCollaborators {
       if (run.transport === 'native')
         await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
       const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
+      await releaseRunOwnedCapabilities(run);
       const blocker = await recordSlotTeardownBlocker(run, workerBlocker);
       state.blocker = blocker;
-      await releaseRunOwnedCapabilities(run);
       state.succeeded = true;
       state.fence = await fenceRunSlotCleanup(run, blocker);
     },

@@ -17,6 +17,7 @@ const SLOT_ID = 'macwork-mmt-3';
 let run: Run;
 interface FakePane {
   session: string;
+  window?: string;
   panePid: string;
   runnerPid: string;
   runnerLive: boolean;
@@ -40,6 +41,17 @@ mock.module('../core/index.js', {
     readSlotRow: async () => slotRow,
     execOnSlot: async (_vars: unknown, cmd: string) => {
       commands.push(cmd);
+      if (cmd.includes('list-panes -a'))
+        return {
+          stdout: [...panes]
+            .map(
+              ([id, pane]) =>
+                `${pane.session}\t${pane.window ?? 'dev'}\t@${id.slice(1)}\t${id}\t${pane.panePid}`,
+            )
+            .join('\n'),
+          stderr: '',
+          exitCode: 0,
+        };
       const display = /display-message -p -t '?(%\d+)/.exec(cmd);
       if (display) {
         const pane = panes.get(display[1]);
@@ -308,25 +320,27 @@ test('a missing historical primary pane also clears its strongly bound fix alias
 test('a fix without a matching complete primary binding remains held', async () => {
   for (const change of ['session', 'path', 'slot', 'route']) {
     const { primary } = sharedFixRun();
+    panes.get('%75')!.runnerLive = true;
     if (change === 'session') primary.runnerSessionId = 'other-worker';
     if (change === 'path') primary.runnerSessionPath = null;
     if (change === 'slot') primary.slotId = 'another-slot';
     if (change === 'route') primary.target!.target = 'mmt-3:other';
     if (change === 'route') primary.target!.window = 'other';
     assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /no exact pane identity/);
-    assert.equal(commands.length, 0);
+    assert.ok(!commands.some((command) => command.includes('send-keys')));
   }
 });
 
-test('an ambiguous pair of exact panes cannot authorize a fix alias', async () => {
+test('an ambiguous pair of exact panes cannot authorize a live fix alias', async () => {
   const { primary } = sharedFixRun();
+  panes.get('%75')!.runnerLive = true;
   run.agentContexts!.push({
     ...primary,
     id: 'another-peer',
     target: { ...primary.target!, paneId: '%99' },
   });
   assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /no exact pane identity/);
-  assert.equal(commands.length, 0);
+  assert.ok(!commands.some((command) => command.includes('send-keys')));
 });
 
 test('a bound alias whose exact pane moved to another session remains held', async () => {
@@ -344,4 +358,37 @@ test('a changed primary alias binding prevents exit after the liveness probe', a
   };
   await assert.rejects(stopRunOwnedTmuxWorkers(run), /ownership changed before stop/);
   assert.ok(!commands.some((command) => command.includes('send-keys')));
+});
+
+test('a terminal legacy role clears when its exact named window is idle or gone', async () => {
+  for (const absent of [false, true]) {
+    const { fix } = sharedFixRun();
+    fix.runnerSessionId = null;
+    fix.runnerSessionPath = null;
+    if (absent) panes.clear();
+    assert.equal(await stopRunOwnedTmuxWorkers(run), null);
+    assert.ok(!commands.some((command) => command.includes('send-keys')));
+    assert.equal(parkedStops, 0);
+  }
+});
+
+test('a legacy target cannot stop a different live worker or authorize a nonterminal release', async () => {
+  const { fix } = sharedFixRun();
+  fix.runnerSessionId = null;
+  fix.runnerSessionPath = null;
+  panes.get('%75')!.runnerLive = true;
+  assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /verify.*window.*slot release/i);
+  assert.ok(!commands.some((command) => command.includes('send-keys')));
+  run.status = 'blocked';
+  panes.get('%75')!.runnerLive = false;
+  assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /no exact pane identity/);
+});
+
+test('a legacy numeric index is unknown rather than an absent named window', async () => {
+  const { fix } = sharedFixRun();
+  fix.runnerSessionId = null;
+  fix.runnerSessionPath = null;
+  fix.target = { session: 'mmt-3', window: '1', pane: null, target: 'mmt-3:1.0' };
+  assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /no exact pane identity/);
+  assert.deepEqual(commands, []);
 });
