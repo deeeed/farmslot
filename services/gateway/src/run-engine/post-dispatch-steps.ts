@@ -745,7 +745,7 @@ export async function executeReviewStep(
     if (actionId === 'send_feedback') {
       const retryResult = await executeReviewForRun(runId, current.slotId, {
         validationDepth,
-        mode: 'warm',
+        mode: result.mode ?? 'cold',
         reviewId: result.reviewId,
         resumeFromResult: result,
       });

@@ -92,6 +92,11 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
       executeReview: async (_runId, _slotId, options) => {
         executions += 1;
         assert.ok(options);
+        assert.equal(
+          options.mode,
+          'cold',
+          'an unpublished cold review must not require warm PR lineage',
+        );
         assert.equal(options.artifactScope, 'review-1');
         assert.equal(options.effort, 'low');
         assert.equal(options.resumeFromResult?.verdict, 'issues');
@@ -710,6 +715,47 @@ test(
     assert.notEqual(held.status, 'failed');
     assert.equal(resolveEngineDecision(card.id, 'abort'), true);
     assert.equal(await execution, 'abort');
+  },
+);
+
+test(
+  'an unavailable package keeps the existing fix delivery reachable without approval',
+  { timeout: 4000 },
+  async (t) => {
+    const { run, next } = sourceGateFixture(t);
+    updateRun(run.id, {
+      engineState: {
+        publishGate: {
+          reviews: [
+            {
+              id: 'review-current',
+              source: 'human-gate',
+              loopNumber: 4,
+              mode: 'cold',
+              verdict: 'issues',
+              unresolvedCount: 1,
+              issues: [{ file: 'icons.ts', description: 'Bound the SVG sniff' }],
+              feedbackSent: false,
+              recoveryContinuationPending: true,
+            },
+          ],
+        },
+      },
+    });
+    const execution = executeReadyGate(run.id, {
+      ensurePackage: async () => {
+        throw new Error('Deterministic CI gate blocked: REVIEW-FIX.md receipt is stale');
+      },
+    });
+    const card = await next(execution);
+    assert.deepEqual(
+      card.actions.map(({ id }) => id),
+      ['continue-review-fix', 'hold'],
+    );
+    assert.equal(resolveEngineDecision(card.id, 'continue-review-fix'), true);
+    assert.equal(await execution, 'continue-review-fix');
+    assert.equal(getRun(run.id)!.engineState?.publishGate?.reviews?.[0].feedbackSent, false);
+    assert.equal(getRun(run.id)!.engineState?.publishGate?.approvedPackageHash, undefined);
   },
 );
 

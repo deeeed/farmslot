@@ -6,7 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 
-- Restore the publication decision after recovered review findings were already ingested, instead of polling indefinitely with no operator action.
+- Restore publication decisions after recovered findings, preserve fix checklists during gate replay, and continue the recorded review mode with the latest completed worker CI receipt.
 
 - Recognize owned follow-up queue previews and keep unsubmitted composer text out of delivery verification.
 
@@ -29,9 +29,6 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## 0.22.1 - 2026-10-16
 
 - Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
-
-- Run independent pipeline reviews in native sessions, qualify their recorded visual judgments, and audit publication approval against the frozen evidence.
-- Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
 
 ## 0.22.0 - 2026-10-16
 

@@ -808,6 +808,7 @@ test('interactive send-feedback continues from existing findings without another
   });
 
   assert.equal(calls.length, 2);
+  assert.equal((calls[1]?.[2] as { mode?: string })?.mode, 'cold');
   assert.deepEqual((calls[1]?.[2] as { resumeFromResult?: unknown })?.resumeFromResult, {
     verdict: 'issues',
     issues: [issue],
