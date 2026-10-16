@@ -13,6 +13,7 @@ import {
   type ReviewDiffSnapshot,
   type ReviewGatePayload,
   reviewPostingFingerprint,
+  type ReviewViewedFilesResult,
   type Run,
   selectReviewFindings,
 } from '@farmslot/protocol';
@@ -22,7 +23,12 @@ import { fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import { auditEvidenceQuality } from '../intelligence/engine.js';
+import { resolveDefaultPublicationAccount } from '../pr-monitoring/github-account.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
+import {
+  markReviewedFilesViewed,
+  retainViewedFilesResult,
+} from '../review-publication/viewed-files.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
 import {
   assertCaptionConfidence,
@@ -383,6 +389,29 @@ export async function executeReviewGate(runId: string): Promise<void> {
     }
 
     const commentsToPost = acceptedReview.lineComments;
+    let publicationAccount:
+      | Awaited<ReturnType<typeof resolveDefaultPublicationAccount>>
+      | undefined;
+    try {
+      publicationAccount = await resolveDefaultPublicationAccount(
+        current.createdByPrincipalId ?? runId,
+      );
+    } catch {
+      // Viewed is optional. An unavailable credential snapshot preserves the existing poster.
+      publicationAccount = undefined;
+    }
+    const saveViewedFiles = async (viewedFiles: ReviewViewedFilesResult) => {
+      const latest = getRun(runId);
+      if (!latest || !resolvedDecision) throw new Error('Review gate is unavailable');
+      const updated = updateRun(runId, {
+        decisions: latest.decisions.map((decision) =>
+          decision.id === resolvedDecision.id
+            ? { ...decision, payload: { ...(decision.payload as ReviewGatePayload), viewedFiles } }
+            : decision,
+        ),
+      });
+      await persistRunNow(updated, 'review Viewed diagnostic');
+    };
     const reviewInputDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-accepted-review-'));
     const reviewInputFile = path.join(reviewInputDir, 'review.json');
     try {
@@ -437,7 +466,13 @@ export async function executeReviewGate(runId: string): Promise<void> {
               execFile(
                 'bash',
                 postReviewArgs,
-                { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
+                {
+                  timeout: 120_000,
+                  maxBuffer: 10 * 1024 * 1024,
+                  env: publicationAccount
+                    ? { ...process.env, GITHUB_TOKEN: publicationAccount.binding.token }
+                    : process.env,
+                },
                 (err, stdout, stderr) => {
                   if (err) reject(Object.assign(err, { stdout, stderr }));
                   else resolve();
@@ -491,7 +526,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
                   '-f',
                   'side=RIGHT',
                 ],
-                { force: true },
+                { force: true, account: publicationAccount?.binding },
               );
               posted++;
               updateRunStep(runId, S.HUMAN_GATE, {
@@ -517,6 +552,28 @@ export async function executeReviewGate(runId: string): Promise<void> {
           );
         },
       });
+      if (publicationAccount) {
+        await markReviewedFilesViewed(
+          {
+            pr: { host: 'github.com', repo: ciRepo, number: prNumber },
+            headSha: acceptedSnapshot.headSha,
+            ...publicationAccount,
+          },
+          saveViewedFiles,
+        );
+      } else {
+        await retainViewedFilesResult(
+          {
+            headSha: acceptedSnapshot.headSha,
+            attemptedAt: new Date().toISOString(),
+            state: 'skipped',
+            paths: [],
+            markedPaths: [],
+            reason: 'Publication credential could not be frozen; Viewed marks were not attempted',
+          },
+          saveViewedFiles,
+        );
+      }
     } finally {
       await rm(reviewInputDir, { recursive: true, force: true });
       if (evidenceTmpFile) await rm(evidenceTmpFile, { force: true });

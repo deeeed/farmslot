@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.49.0 - 2026-10-16
