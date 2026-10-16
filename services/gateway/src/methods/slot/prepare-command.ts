@@ -252,7 +252,7 @@ export function buildPrepareNewWindowCommand(
 
 /**
  * Kill every window whose name exactly matches `windowName`, addressed by
- * `window_index` rather than by name.
+ * `window_id` rather than by name.
  *
  * tmux refuses name targets when two windows share the same name
  * (`can't find window: prepare-...`). Same-phase prepare retries used to leave
@@ -261,11 +261,8 @@ export function buildPrepareNewWindowCommand(
  * subsequent `pipe-pane` / `kill-window` by name both fail — surfacing as a
  * fake "yarn install failed" before the real command ever starts.
  *
- * Kill highest index first so earlier indices in the snapshot stay valid as
- * tmux renumbers after each kill-window.
- *
  * Farmslot prepare window names are generated as `prepare-<runId>-<phase>` and
- * must not contain `:`; the command uses `index:name` as an internal delimiter.
+ * must not contain `:`; the command uses `id:name` as an internal delimiter.
  */
 export function buildPrepareKillWindowsByNameCommand(
   sessionName: string,
@@ -282,29 +279,37 @@ export function buildPrepareKillWindowsByNameCommand(
  * group, then close the window. Closing only the window SIGHUPs the pane, and a
  * tree that ignores SIGHUP (corepack, yarn) outlives it while still holding the
  * phase's locks. The pane process leads its own group under tmux; a pane that
- * does not is left to the window close. TERM gives the wrapper's trap its
- * cleanup, and a group that survives the grace period is killed.
+ * does not is left to the window close.
+ *
+ * Windows are addressed by their stable `window_id`: a stopped pane can close
+ * its window, and with `renumber-windows` a saved index would then name a
+ * neighbouring window. Every selected group gets TERM first, so the wrapper's
+ * trap runs its cleanup; the groups share one grace period, and survivors are
+ * killed before the windows close.
  */
 function buildPrepareWindowTeardownCommand(sessionName: string, selectWindows: string): string {
-  const session = shellQuote(sessionName);
   return tmuxShellSnippet(
-    `list-windows -t ${session} -F '#{window_index}:#{window_name}' 2>/dev/null | ` +
-      `${selectWindows} | sort -t: -nr -k1,1 | ` +
-      `while IFS=: read -r idx name; do ` +
-      `echo "$idx:$name"; ` +
-      `for pane in $("$TMUX_BIN" list-panes -t ${session}:"$idx" -F '#{pane_pid}' 2>/dev/null); do ` +
+    `list-windows -t ${shellQuote(sessionName)} -F '#{window_id}:#{window_name}' 2>/dev/null | ` +
+      `${selectWindows} | { ` +
+      `ids=''; groups=''; ` +
+      `while IFS=: read -r id name; do ` +
+      `echo "$id:$name"; ids="$ids $id"; ` +
+      `for pane in $("$TMUX_BIN" list-panes -t "$id" -F '#{pane_pid}' 2>/dev/null); do ` +
       `case "$pane" in ''|*[!0-9]*) continue ;; esac; ` +
       `[ "$pane" -gt 1 ] || continue; ` +
       `[ "$(ps -o pgid= -p "$pane" 2>/dev/null | tr -d '[:space:]')" = "$pane" ] || continue; ` +
-      `kill -TERM -"$pane" 2>/dev/null || continue; ` +
+      `kill -TERM -"$pane" 2>/dev/null && groups="$groups $pane"; ` +
+      `done; ` +
+      `done; ` +
       // Wait about 2s on the cheap signal probe; it also counts zombies, so the
       // KILL decision uses the zombie-aware check.
-      `n=0; while kill -0 -"$pane" 2>/dev/null && [ "$n" -lt 20 ]; do sleep 0.1; n=$((n+1)); done; ` +
+      `n=0; while [ "$n" -lt 20 ]; do alive=false; ` +
+      `for group in $groups; do if kill -0 -"$group" 2>/dev/null; then alive=true; fi; done; ` +
+      `$alive || break; sleep 0.1; n=$((n+1)); done; ` +
       `${PREPARE_GROUP_ALIVE_FN}; ` +
-      `if group_alive "$pane"; then kill -KILL -"$pane" 2>/dev/null; fi; ` +
-      `done; ` +
-      `"$TMUX_BIN" kill-window -t ${session}:"$idx" 2>/dev/null || true; ` +
-      `done`,
+      `for group in $groups; do if group_alive "$group"; then kill -KILL -"$group" 2>/dev/null; fi; done; ` +
+      `for id in $ids; do "$TMUX_BIN" kill-window -t "$id" 2>/dev/null || true; done; ` +
+      `}`,
   );
 }
 
@@ -312,7 +317,7 @@ export function buildPreparePreLaunchSweepCommand(sessionName: string, labelPart
   // Reap stale prepare-* windows from other runs, but keep this run's sibling
   // phases (`prepare-<labelPart>` / `prepare-<labelPart>-*`) alive — a later phase must not SIGHUP an
   // in-flight fixtures/deps/preflight window owned by the same prepare.
-  // The `index:name` delimiter is safe here because only Farmslot-generated
+  // The `id:name` delimiter is safe here because only Farmslot-generated
   // `prepare-*` names are eligible for killing, and prepare names never contain
   // `:`.
   return buildPrepareWindowTeardownCommand(
@@ -918,7 +923,7 @@ export async function runPrepareCommand(
     }
   })();
 
-  // Kill by window_index, not by name: duplicate same-named prepare windows make
+  // Kill by window_id, not by name: duplicate same-named prepare windows make
   // `kill-window -t session:name` return "can't find window" and leave orphans.
   const killWindow = () => killPrepareWindowsByName();
 

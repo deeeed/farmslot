@@ -393,7 +393,7 @@ test('a closed prepare pane stops a command that ignores SIGHUP and SIGTERM at o
   writeFileSync(
     script,
     buildPrepareWrappedCommand(
-      `trap '' HUP TERM; sleep 30 & echo $! > ${shellQuote(pidFile)}; wait`,
+      `trap '' HUP TERM; sleep 300 & echo $! > ${shellQuote(pidFile)}; wait`,
       sentinel,
       root,
       { attemptNonce: nonce },
@@ -414,8 +414,10 @@ test('a closed prepare pane stops a command that ignores SIGHUP and SIGTERM at o
     // A closed pane hangs up its whole foreground group.
     process.kill(-pane.pid, 'SIGHUP');
 
+    // The trap's own grace is about 2s; the bound only has to sit well below
+    // the command's 300s and leave room for a loaded host.
     assert.ok(
-      await waitFor(() => existsSync(sentinel), 4_500),
+      await waitFor(() => existsSync(sentinel), 20_000),
       'the trap must run without waiting for the command',
     );
     assert.equal(readFileSync(sentinel, 'utf8').trim(), `129 ${nonce}`);
@@ -431,33 +433,48 @@ test('a closed prepare pane stops a command that ignores SIGHUP and SIGTERM at o
   }
 });
 
-test('tearing down a prepare window stops its process group before closing it', async () => {
+test('tearing down a prepare window stops its group without touching a renumbered neighbour', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-window-teardown-'));
   const bin = path.join(root, 'bin');
+  const state = path.join(root, 'windows');
   const log = path.join(root, 'tmux.log');
   mkdirSync(bin);
-  // A stand-in tmux: no server is started. It reports one matching prepare
-  // window whose pane process is the group below, and records whether that
-  // group was still running when the window was closed.
+  // A stand-in tmux; no server is started. Like a session with
+  // renumber-windows and remain-on-exit off, a window whose pane exited is gone
+  // and the windows after it move up one index.
   writeFileSync(
     path.join(bin, 'tmux'),
     [
       '#!/bin/sh',
-      'case "$1" in',
-      "  list-windows) printf '%s\\n' '3:prepare-run12345-deps' '4:worker' ;;",
-      `  list-panes) printf '%s\\n' "$PANE_PID" ;;`,
-      '  kill-window)',
-      `    if ps -A -o pgid= -o stat= | awk -v g="$PANE_PID" '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'; then echo "kill-window $3 group-alive" >> "$LOG"; else echo "kill-window $3 group-stopped" >> "$LOG"; fi ;;`,
-      'esac',
+      'live() { ps -o stat= -p "$1" 2>/dev/null | grep -q "^[^Z]"; }',
+      ': > "$STATE.next"',
+      'while read -r id name pid; do if live "$pid"; then echo "$id $name $pid" >> "$STATE.next"; fi; done < "$STATE"',
+      'mv "$STATE.next" "$STATE"',
+      'cmd="$1"; shift; target=""; format=""',
+      'while [ $# -gt 0 ]; do case "$1" in -t) target="$2"; shift 2 ;; -F) format="$2"; shift 2 ;; *) shift ;; esac; done',
+      'target="${target#*:}"; n=0; : > "$STATE.next"',
+      'while read -r id name pid; do',
+      '  n=$((n+1))',
+      '  case "$cmd" in',
+      '    list-windows) case "$format" in *window_id*) echo "$id:$name" ;; *) echo "$n:$name" ;; esac ;;',
+      '    list-panes) if [ "$target" = "$id" ] || [ "$target" = "$n" ]; then echo "$pid"; fi ;;',
+      '    kill-window) if [ "$target" = "$id" ] || [ "$target" = "$n" ]; then echo "closed $name" >> "$LOG"; kill -KILL -"$pid" 2>/dev/null; continue; fi ;;',
+      '  esac',
+      '  echo "$id $name $pid" >> "$STATE.next"',
+      'done < "$STATE"',
+      'if [ "$cmd" = kill-window ]; then mv "$STATE.next" "$STATE"; else rm -f "$STATE.next"; fi',
     ].join('\n'),
     { mode: 0o755 },
   );
-  const pane = spawn('bash', ['-c', `trap '' HUP TERM; sleep 30 & wait`], {
+  const prepare = spawn('bash', ['-c', `trap '' HUP TERM; sleep 30 & wait`], {
     detached: true,
     stdio: 'ignore',
   });
-  assert.ok(pane.pid && pane.pid > 1);
-  pane.unref();
+  const worker = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+  assert.ok(prepare.pid && prepare.pid > 1 && worker.pid && worker.pid > 1);
+  prepare.unref();
+  worker.unref();
+  writeFileSync(state, `@7 prepare-run12345-deps ${prepare.pid}\n@8 worker ${worker.pid}\n`);
   try {
     const result = spawnSync(
       'bash',
@@ -465,23 +482,23 @@ test('tearing down a prepare window stops its process group before closing it', 
       {
         encoding: 'utf8',
         timeout: 10_000,
-        env: {
-          ...process.env,
-          PATH: `${bin}:${process.env.PATH}`,
-          PANE_PID: String(pane.pid),
-          LOG: log,
-        },
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STATE: state, LOG: log },
       },
     );
 
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.trim(), '3:prepare-run12345-deps');
-    assert.equal(readFileSync(log, 'utf8').trim(), 'kill-window mm-1:3 group-stopped');
+    assert.ok(!isRunning(prepare.pid), 'the SIGHUP- and SIGTERM-ignoring group was stopped');
+    assert.ok(isRunning(worker.pid), 'the worker window that moved into the old index survives');
+    assert.ok(!existsSync(log) || !readFileSync(log, 'utf8').includes('closed worker'));
+    assert.equal(readFileSync(state, 'utf8').trim(), `@8 worker ${worker.pid}`);
+    assert.equal(result.stdout.trim(), '@7:prepare-run12345-deps');
   } finally {
-    try {
-      process.kill(-pane.pid, 'SIGKILL');
-    } catch {
-      // Already stopped.
+    for (const pid of [prepare.pid, worker.pid]) {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        // Already stopped.
+      }
     }
     rmSync(root, { recursive: true, force: true });
   }
