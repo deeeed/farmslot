@@ -25,9 +25,9 @@
       },
       "feedback-regression": {
         "action": "command",
-        "cmd": "node scripts/quality/run-tsx-tests.mjs --cwd apps/command-center --tsconfig ui/tsconfig.json ui/src/components/workspace/ready-workspace-shell-renderers.test.ts",
+        "cmd": "node scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig apps/command-center/ui/tsconfig.json apps/command-center/ui/src/components/workspace/ready-workspace-shell-renderers.test.ts apps/companion/src/hooks/useRunAcceptance.test.ts",
         "timeout_ms": 60000,
-        "intent": "Verify that stale-snapshot refusals remain visible outside collapsed package details.",
+        "intent": "Verify visible action refusals and Companion acceptance-read retry fencing after the shared judgment helper integration.",
         "next": "feedback-verified"
       },
       "feedback-verified": {
@@ -57,6 +57,78 @@
           "value": 0
         },
         "intent": "Require the shared package build to succeed.",
+        "next": "native-result"
+      },
+      "native-result": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=${TSX_TSCONFIG_PATH:-services/gateway/tsconfig.json} node --import tsx --experimental-test-module-mocks --test services/gateway/src/review/native-visual-result.rpc.live.ts",
+        "timeout_ms": 300000,
+        "intent": "Use an isolated authenticated gateway and a real provider to inspect red and green squares and return exact schema-bound completed-command results.",
+        "next": "native-result-verified"
+      },
+      "native-result-verified": {
+        "action": "assert_output",
+        "source": "native-result",
+        "assert": {
+          "path": "$.exitCode",
+          "operator": "eq",
+          "value": 0
+        },
+        "intent": "Require actual native visual inspection and clean process teardown; contract fixtures alone cannot satisfy this proof.",
+        "next": "mixed-regressions"
+      },
+      "mixed-regressions": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/run-lifecycle/mixed-review-cleanup.test.ts services/gateway/src/agents/runtime-recovery-mixed.test.ts services/gateway/src/run-engine/review-plan.test.ts packages/protocol/test/recipe/claim-reviews.test.ts services/gateway/src/runners/session-record.test.ts services/gateway/src/security/native-worker-owner.test.ts services/gateway/src/runners/native/worker-history.test.ts",
+        "timeout_ms": 120000,
+        "intent": "Check retained tmux session hooks and native reviewer owner/context/lease bindings alongside cancellation, restart, WARM lineage and person precedence.",
+        "next": "mixed-regressions-verified"
+      },
+      "mixed-regressions-verified": {
+        "action": "assert_output",
+        "source": "mixed-regressions",
+        "assert": {
+          "path": "$.exitCode",
+          "operator": "eq",
+          "value": 0
+        },
+        "intent": "Require the migration regressions, including controls known to fail with the old branches.",
+        "next": "policy-default"
+      },
+      "policy-default": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test packages/protocol/test/recipe/claim-reviews.test.ts packages/adapter-sdk/test/evidence-review-model.test.ts packages/review-dispatch/test/publication-gate.test.ts services/gateway/src/review/pipeline-visual-review.test.ts",
+        "timeout_ms": 120000,
+        "intent": "Require visual ACs to accept qualified pipeline receipts without project setup, reject removed person-only configuration and use the shared unchecked label.",
+        "next": "policy-default-verified"
+      },
+      "policy-default-verified": {
+        "action": "assert_output",
+        "source": "policy-default",
+        "assert": {
+          "path": "$.exitCode",
+          "operator": "eq",
+          "value": 0
+        },
+        "intent": "Require the default verification, precedence and no-policy regression checks to pass.",
+        "next": "gateway-types"
+      },
+      "gateway-types": {
+        "action": "command",
+        "cmd": "yarn workspace @farmslot/gateway typecheck",
+        "timeout_ms": 120000,
+        "intent": "Compile the gateway and engine-written test fixture from source without a built runner subpath.",
+        "next": "gateway-types-verified"
+      },
+      "gateway-types-verified": {
+        "action": "assert_output",
+        "source": "gateway-types",
+        "assert": {
+          "path": "$.exitCode",
+          "operator": "eq",
+          "value": 0
+        },
+        "intent": "Require gateway typechecking to resolve the fixture writer directly from source.",
         "next": "done"
       }
     }

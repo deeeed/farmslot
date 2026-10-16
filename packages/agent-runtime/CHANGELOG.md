@@ -6,6 +6,8 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Capture validated native review results on the completed command without treating streamed text as proof.
+
 ## 0.25.4 - 2026-10-16
 
 - Consume the recipe-runner 0.38.1 still-filename fix throughout the worker dependency set.

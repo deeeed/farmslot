@@ -51,10 +51,32 @@ export function withEvidenceAttestation(run: Run, body: string): string {
   const decision = latestResolvedHumanGateDecision(run.decisions, true);
   const prepared = decision?.payload?.kind === 'ready' ? decision.payload.prPackage : undefined;
   if (!prepared) return body;
-  const receipt = assertEvidenceAttestationReceipt(run, decision, prepared);
-  if (!receipt) return body;
+  const approval = decision?.publicationApproval;
   const plain = (value: string) =>
-    value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    value
+      .replace(/[\r\n]+/gu, ' ')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/([`*_[\]\\])/gu, '\\$1');
+  if (
+    approval &&
+    (approval.packageHash !== prepared.packageHash ||
+      JSON.stringify(approval.visualJudgmentReceiptIds) !==
+        JSON.stringify(prepared.visualJudgmentReceiptIds ?? []) ||
+      JSON.stringify(approval.claimOverrideReceiptIds) !==
+        JSON.stringify(prepared.claimOverrideReceiptIds ?? []))
+  )
+    throw new Error('The publication approver receipt does not bind the frozen package.');
+  body = replaceMarkdownSection(
+    body,
+    '## Publication approval',
+    approval
+      ? `${plain(approval.displayName)} · ${approval.subjectKind} · ${plain(approval.principalId)} · ${approval.approvedAt}\nPackage: \`${approval.packageHash}\`. Visual receipts: ${approval.visualJudgmentReceiptIds.map(plain).join(', ') || 'none'}.`
+      : 'Not recorded.',
+  );
+  const receipt = assertEvidenceAttestationReceipt(run, decision, prepared);
+  if (!receipt) return body.trimEnd() + '\n';
   const fence = '`'.repeat(
     Math.max(3, ...[...receipt.reason.matchAll(/`+/g)].map((match) => match[0].length + 1)),
   );

@@ -342,7 +342,7 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
   }
   const slotId = run.slotId;
   if (!slotId) return { released: false };
-  if (run.transport === 'native' && getRun(run.id)) {
+  if (getRun(run.id)) {
     // An uncertain handoff can still have the parent on the slot row. Retire
     // this run's task leases before the release CAS; otherwise that CAS skips
     // the child and leaves its reserved process/handoff alive.

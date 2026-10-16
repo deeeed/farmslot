@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  Text,
+  useColorScheme,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { publicationGateCriteria } from '@farmslot/review-dispatch';
+import { PUBLICATION_GATE_TABS, publicationGateCriteria } from '@farmslot/review-dispatch';
+import { publicationGateColors } from '@farmslot/theme';
 
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
@@ -17,11 +25,7 @@ import { GateReviewSkeleton } from './components/GateReviewSkeleton';
 import { gateReviewStyles as styles } from './styles/gate-review.styles';
 import type { GateReviewActions, GateReviewScreenState } from './use-gate-review-controller';
 
-/**
- * One open publish gate, top to bottom in the order it is judged: the package,
- * the reviewers' latest verdicts, the acceptance criteria, their evidence, and
- * the decision's own actions.
- */
+/** Evidence first; the publication action stays visible in every tab. */
 export function GateReviewScreen({
   state,
   actions,
@@ -31,19 +35,22 @@ export function GateReviewScreen({
   state: GateReviewScreenState;
   actions: GateReviewActions;
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(Boolean(initialClaimId));
+  const [tab, setTab] = useState<string>('evidence');
+  const [judging, setJudging] = useState(false);
+  const appearance = useColorScheme();
+  const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
   const [focusClaim, setFocusClaim] = useState<{ claimId: string }>();
-  const detailsOffset = useRef(0);
   useEffect(() => {
     if (initialClaimId) {
-      setDetailsOpen(true);
+      setTab('evidence');
       setFocusClaim({ claimId: initialClaimId });
     }
   }, [initialClaimId]);
   const viewport = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollView>(null);
-  if (state.status !== 'ready')
+  const evidenceOffset = useRef(0);
+  if (state.status !== 'ready') {
     return (
       <View style={[baseStyles.container, { padding: 16 }]} testID="companion-screen-gate-review">
         <GateReviewSkeleton
@@ -52,25 +59,140 @@ export function GateReviewScreen({
         />
       </View>
     );
+  }
   const { viewModel } = state;
   const { acceptance } = viewModel;
   const expectedRows = publicationGateCriteria(
     viewModel.decision.payload?.kind === 'ready' ? viewModel.decision.payload : undefined,
   ).length;
+  const recordVisualReview: GateReviewActions['recordVisualReview'] = async (...args) => {
+    setJudging(true);
+    try {
+      await actions.recordVisualReview(...args);
+    } finally {
+      setJudging(false);
+    }
+  };
   return (
-    <ScrollView
-      ref={scroll}
+    <View
       testID="companion-screen-gate-review"
-      style={baseStyles.container}
-      contentContainerStyle={[
-        styles.scrollContent,
-        { paddingBottom: styles.scrollContent.paddingBottom + insets.bottom },
+      style={[
+        baseStyles.container,
+        { paddingBottom: insets.bottom, backgroundColor: palette.background },
       ]}
     >
       {viewModel.error ? <Text style={styles.error}>{viewModel.error}</Text> : null}
+      <View
+        accessibilityRole="tablist"
+        style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12 }}
+      >
+        {PUBLICATION_GATE_TABS.map((item) => (
+          <Pressable
+            key={item.id}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: tab === item.id }}
+            onPress={() => setTab(item.id)}
+            style={{
+              minHeight: 44,
+              minWidth: 44,
+              padding: 12,
+              borderBottomWidth: tab === item.id ? 2 : 0,
+              borderColor: palette.accent,
+            }}
+          >
+            <Text style={{ color: palette.text }}>{item.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <ScrollView
+        ref={scroll}
+        testID="companion-gate-review-content"
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.scrollContent}
+      >
+        {tab === 'pr-preview' ? (
+          <GateSummaryCard summary={viewModel.summary} onOpenLog={actions.openLog} />
+        ) : null}
+        {tab === 'quality' ? <GateReviewVerdicts reviews={viewModel.reviews} /> : null}
+        {tab === 'criteria' ? (
+          <View>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Acceptance criteria</Text>
+              <ScrollView
+                nestedScrollEnabled
+                style={{ height: acceptancePanelViewportHeight(expectedRows, viewport.height) }}
+              >
+                <TaskAcceptancePanel
+                  loading={acceptance.loading}
+                  expectedRows={expectedRows}
+                  evidenceModel={acceptance.evidenceModel}
+                  judgmentRows={acceptance.evidenceModel?.judgmentRows(acceptance.reviewer)}
+                  onRecordVisualReview={recordVisualReview}
+                  onMarkUntestable={actions.markUntestable}
+                  acceptanceStatus={acceptance.acceptanceStatus}
+                  acceptanceCriteria={acceptance.acceptanceCriteria}
+                  acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
+                  error={acceptance.error}
+                  onRetry={acceptance.retry}
+                  onOpenEvidence={actions.openEvidence}
+                />
+              </ScrollView>
+              {acceptance.view?.rows.length === 0 && !acceptance.error ? (
+                <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+        {tab === 'evidence' ? (
+          <View
+            onLayout={(event) => {
+              evidenceOffset.current = event.nativeEvent.layout.y;
+            }}
+          >
+            <EvidenceReviewWorkspace
+              runId={viewModel.run.id}
+              gatewayUrl={viewModel.gatewayUrl}
+              artifacts={viewModel.artifacts}
+              pairs={viewModel.pairs}
+              evidenceModel={acceptance.evidenceModel}
+              loading={acceptance.loading}
+              error={!acceptance.evidenceModel ? acceptance.error : null}
+              retry={acceptance.retry}
+              onFocusClaim={(y) =>
+                scroll.current?.scrollTo({ y: evidenceOffset.current + y, animated: true })
+              }
+              reviewer={acceptance.reviewer}
+              onRecordVisualReview={recordVisualReview}
+              focusClaim={focusClaim}
+              onOpenRecordedEvidence={actions.openRecordedEvidence}
+              onOpenVisual={actions.openVisual}
+              onOpenDocument={(artifact) => actions.openLog(artifact.path)}
+              onOpenDiff={actions.openLog}
+              authHeaders={viewModel.authHeaders}
+            />
+            <MediaViewer
+              testID="companion-artifact-media-viewer"
+              visible={Boolean(viewModel.media)}
+              items={viewModel.media?.items ?? []}
+              uri={viewModel.media?.uri ?? null}
+              authHeaders={viewModel.authHeaders}
+              onClose={actions.closeMedia}
+            />
+          </View>
+        ) : null}
+        <View
+          testID="companion-screen-gate-review-end"
+          accessible
+          collapsable={false}
+          accessibilityLabel="End of gate review"
+          style={styles.endMarker}
+        />
+      </ScrollView>
       <View style={styles.section}>
         <GateActions
+          showClaims={false}
           loading={acceptance.loading}
+          disabled={judging}
           reviewPicker={viewModel.reviewPicker}
           decision={viewModel.decision}
           actions={viewModel.actions}
@@ -82,7 +204,7 @@ export function GateReviewScreen({
           onResolve={actions.resolve}
           claims={acceptance.evidenceModel?.claims}
           judgmentRows={acceptance.evidenceModel?.judgmentRows(acceptance.reviewer)}
-          onRecordVisualReview={actions.recordVisualReview}
+          onRecordVisualReview={recordVisualReview}
           onRefreshPackage={() => void actions.refreshPackage()}
           pendingVisualClaimIds={acceptance.evidenceModel?.pendingVisualClaimIds}
           readiness={
@@ -91,91 +213,13 @@ export function GateReviewScreen({
               : undefined
           }
           onFocusClaim={(id) => {
-            setDetailsOpen(true);
+            setTab('evidence');
             setFocusClaim({ claimId: id });
           }}
           attestationReason={viewModel.attestationReason}
           onAttestationReason={actions.setAttestationReason}
         />
       </View>
-      <Pressable
-        style={{ minHeight: 44, justifyContent: 'center' }}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: detailsOpen }}
-        testID="companion-gate-review-details-toggle"
-        onPress={() => setDetailsOpen(!detailsOpen)}
-      >
-        <Text style={baseStyles.textSecondary}>Evidence and details</Text>
-      </Pressable>
-      {detailsOpen ? (
-        <View
-          onLayout={(event) => {
-            detailsOffset.current = event.nativeEvent.layout.y;
-          }}
-        >
-          <GateSummaryCard summary={viewModel.summary} onOpenLog={actions.openLog} />
-          <GateReviewVerdicts reviews={viewModel.reviews} />
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Acceptance criteria</Text>
-            <ScrollView
-              nestedScrollEnabled
-              style={{ height: acceptancePanelViewportHeight(expectedRows, viewport.height) }}
-            >
-              <TaskAcceptancePanel
-                loading={acceptance.loading}
-                expectedRows={expectedRows}
-                evidenceModel={acceptance.evidenceModel}
-                onMarkUntestable={actions.markUntestable}
-                acceptanceStatus={acceptance.acceptanceStatus}
-                acceptanceCriteria={acceptance.acceptanceCriteria}
-                acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
-                error={acceptance.error}
-                onRetry={acceptance.retry}
-                onOpenEvidence={actions.openEvidence}
-              />
-              {acceptance.view?.rows.length === 0 && !acceptance.error ? (
-                <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
-              ) : null}
-            </ScrollView>
-          </View>
-          <EvidenceReviewWorkspace
-            loading={acceptance.loading}
-            error={!acceptance.evidenceModel ? acceptance.error : null}
-            retry={acceptance.retry}
-            runId={viewModel.run.id}
-            gatewayUrl={viewModel.gatewayUrl}
-            artifacts={viewModel.artifacts}
-            pairs={viewModel.pairs}
-            evidenceModel={acceptance.evidenceModel}
-            reviewer={acceptance.reviewer}
-            onRecordVisualReview={actions.recordVisualReview}
-            focusClaim={focusClaim}
-            onFocusClaim={(y) =>
-              scroll.current?.scrollTo({ y: detailsOffset.current + y, animated: true })
-            }
-            onOpenRecordedEvidence={actions.openRecordedEvidence}
-            onOpenVisual={actions.openVisual}
-            onOpenDocument={(artifact) => actions.openLog(artifact.path)}
-            onOpenDiff={actions.openLog}
-            authHeaders={viewModel.authHeaders}
-          />
-          <MediaViewer
-            testID="companion-artifact-media-viewer"
-            visible={Boolean(viewModel.media)}
-            items={viewModel.media?.items ?? []}
-            uri={viewModel.media?.uri ?? null}
-            authHeaders={viewModel.authHeaders}
-            onClose={actions.closeMedia}
-          />
-        </View>
-      ) : null}
-      <View
-        testID="companion-screen-gate-review-end"
-        accessible
-        collapsable={false}
-        accessibilityLabel="End of gate review"
-        style={styles.endMarker}
-      />
-    </ScrollView>
+    </View>
   );
 }

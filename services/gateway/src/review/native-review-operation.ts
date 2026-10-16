@@ -10,6 +10,7 @@ interface ReviewOperation {
   slotId: string | null | undefined;
   taskFile: Run['taskFile'];
   owner: string | undefined;
+  transport: Run['transport'];
   generation: number;
   mutation?: { active: boolean };
 }
@@ -26,7 +27,7 @@ function operationIsCurrent(operation: ReviewOperation | undefined): boolean {
   const run = getRun(operation.runId);
   return Boolean(
     run &&
-    run.transport === 'native' &&
+    run.transport === operation.transport &&
     !isTerminalRunStatus(run.status) &&
     run.status !== 'paused' &&
     run.slotId === operation.slotId &&
@@ -48,7 +49,6 @@ export function assertNativeReviewOperationCurrent(): void {
 }
 
 export function withNativeReviewOperation<T>(run: Run, operation: () => Promise<T>): Promise<T> {
-  if (run.transport !== 'native') return operation();
   const existing = operations.getStore();
   if (existing) {
     if (existing.runId !== run.id) throw new Error('Native review operation changed runs');
@@ -61,6 +61,7 @@ export function withNativeReviewOperation<T>(run: Run, operation: () => Promise<
       slotId: run.slotId,
       taskFile: run.taskFile,
       owner: run.nativeOwnerPrincipalId,
+      transport: run.transport,
       generation: run.engineState?.generation ?? 0,
     },
     async () => {

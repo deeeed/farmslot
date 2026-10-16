@@ -3,7 +3,13 @@ import { realpath } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 
-import type { NativeSessionResponse } from '@farmslot/protocol';
+import {
+  type NativeSessionResponse,
+  type NativeStructuredResult,
+  nativeStructuredResult,
+  PIPELINE_VISUAL_JUDGMENTS_SCHEMA,
+  PIPELINE_VISUAL_RESULT_SCHEMA,
+} from '@farmslot/protocol';
 
 import { JsonLineProcess } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
@@ -83,11 +89,14 @@ export const codexNativeAdapter: NativeAdapter = {
     questions: false,
     interrupt: true,
     resume: true,
+    structuredResultSchemas: [PIPELINE_VISUAL_RESULT_SCHEMA],
     resumeAcrossWorkspaces: true,
   },
   async start(options, emit) {
     let nativeSessionId = '';
     let resolvedModel = options.model;
+    let structuredResult: NativeStructuredResult | undefined;
+    let structuredResultError: string | undefined;
     let turnId: string | undefined;
     let commandId: string | undefined;
     let startingTurn: Promise<unknown> | undefined;
@@ -173,6 +182,23 @@ export const codexNativeAdapter: NativeAdapter = {
           case 'item/completed': {
             const item = wireObject(params.item);
             const itemType = wireString(item.type);
+            // outputSchema constrains this final message. Streamed text and other items never qualify.
+            if (
+              options.resultSchema &&
+              method === 'item/completed' &&
+              itemType === 'agentMessage' &&
+              item.phase === 'final_answer'
+            ) {
+              try {
+                const value: unknown = JSON.parse(wireString(item.text));
+                structuredResult = nativeStructuredResult(options.resultSchema, value);
+                if (!structuredResult)
+                  structuredResultError = 'Native result did not satisfy its bound schema';
+              } catch (error) {
+                if (!(error instanceof SyntaxError)) throw error;
+                structuredResultError = 'Native schema-constrained result was not JSON';
+              }
+            }
             if (!['userMessage', 'agentMessage', 'reasoning', 'plan'].includes(itemType)) {
               const tool = {
                 name: itemType,
@@ -204,7 +230,8 @@ export const codexNativeAdapter: NativeAdapter = {
             publish({
               type: 'turn.completed',
               status,
-              data: { status, error: turn.error },
+              structuredResult: status === 'completed' ? structuredResult : undefined,
+              data: { status, error: turn.error, structuredResultError },
             });
             requests.clear();
             pendingTools.clear();
@@ -294,11 +321,14 @@ export const codexNativeAdapter: NativeAdapter = {
       capabilities: { ...codexNativeAdapter.capabilities, questions: options.mode === 'plan' },
       async send(text, id) {
         commandId = id;
+        structuredResult = undefined;
+        structuredResultError = undefined;
         // A response proves acceptance; turn/started independently proves execution.
         const result = wireObject(
           await (startingTurn = process.request('turn/start', {
             threadId: nativeSessionId,
             input: [{ type: 'text', text }],
+            ...(options.resultSchema ? { outputSchema: PIPELINE_VISUAL_JUDGMENTS_SCHEMA } : {}),
             ...(options.effort ? { effort: options.effort } : {}),
             ...(options.mode === 'plan'
               ? {

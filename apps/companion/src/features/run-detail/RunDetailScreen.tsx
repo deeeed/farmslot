@@ -58,6 +58,7 @@ import {
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { baseStyles, colors, spacing } from '../../lib/theme';
+import { recordVisualClaimReview } from '../../lib/visual-claim-review';
 import { buildFailedStepDiagnosticDraft } from '../../lib/workspace-copilot';
 import { workspaceDecisionKind } from '../../lib/workspace-decisions';
 import {
@@ -201,6 +202,8 @@ export default function RunDetailScreen() {
         criterionSourceUrl: run?.links?.find((link) => link.label === 'Jira')?.url,
         package: recordedEvidence?.input,
         contractVersion: recordedEvidence?.contractVersion,
+        visualReviewAuthority: recordedEvidence?.visualReviewAuthority,
+        visualReviewContext: recordedEvidence?.visualReviewContext,
         readErrors: recordedEvidence?.errors,
         artifactPrefix: recordedEvidence?.artifactPrefix,
         packagePath: recordedEvidence?.packagePath,
@@ -1065,6 +1068,11 @@ export default function RunDetailScreen() {
             evidenceModel.errors.length ? (
               <TaskAcceptancePanel
                 evidenceModel={evidenceModel}
+                judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
+                onRecordVisualReview={async (id, verdict, reason) => {
+                  await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
+                  await loadRecipeRuns(selectedRecipeRunId);
+                }}
                 acceptanceStatus={acceptanceStatus}
                 acceptanceCriteria={acceptanceCriteria}
                 error={acceptanceStatusError}

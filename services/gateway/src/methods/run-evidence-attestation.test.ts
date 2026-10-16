@@ -7,6 +7,7 @@ import { mock, test } from 'node:test';
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   buildRunResolveDecisionParams,
+  type Principal,
   type ReadyGatePrPackage,
   type RunDecision,
 } from '@farmslot/protocol';
@@ -32,8 +33,42 @@ const { makeReadyGatePackage, deleteTestRunIfPresent, retainRunFixture } =
 const { computeReadyGatePackageHash } = await import('../run-completion/ready-gate-package.js');
 const { withEvidenceAttestation } = await import('../run-completion/evidence-attestation.js');
 const { postProcessPRBody } = await import('../run-completion/publication-artifacts.js');
+const { runWithSessionOriginator } = await import('../security/work-originator.js');
 
 const approver = { principalId: 'operator', displayName: 'Operator', credentialId: 'credential' };
+
+test('normal approval audits the actual person or service and frozen receipt ids without changing the package', async (t) => {
+  for (const type of ['person', 'service'] as const) {
+    const f = await fixture(t);
+    f.decision.actions = [{ id: 'approve-publish', label: 'Approve', style: 'primary' }];
+    const principal: Principal = {
+      id: `approver-${type}`,
+      subject: { type, displayName: `Reviewer ${type}` },
+      roles: [],
+    };
+    const before = structuredClone(f.prepared);
+    const params = buildRunResolveDecisionParams({
+      runId: f.run.id,
+      decision: f.decision,
+      actionId: 'approve-publish',
+    });
+    const result = await runWithSessionOriginator(principal, () =>
+      runResolveDecision(params, () => {}, {
+        assertGatePrerequisites: async () => ({ ...f.readiness, state: 'ready', reasons: [] }),
+        resumeRun: async () => {},
+      }),
+    );
+    const saved = result.run.decisions[0]!.publicationApproval!;
+    assert.equal(saved.principalId, principal.id);
+    assert.equal(saved.subjectKind, type);
+    assert.equal(saved.packageHash, before.packageHash);
+    assert.deepEqual(saved.visualJudgmentReceiptIds, before.visualJudgmentReceiptIds ?? []);
+    assert.deepEqual(f.prepared, before);
+    const body = withEvidenceAttestation(result.run, '## Summary\n\nChange.');
+    assert.match(body, new RegExp(`Reviewer ${type} · ${type}`));
+    assert.equal(withEvidenceAttestation(result.run, body), body);
+  }
+});
 
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'gate-attestation-resolve-'));

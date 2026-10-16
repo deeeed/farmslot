@@ -1,4 +1,5 @@
 import type {
+  NativeResultSchema,
   NativeSessionCapabilities,
   NativeSessionEvent,
   NativeSessionResponse,
@@ -21,6 +22,7 @@ export interface NativeAdapterOptions {
   executable: string;
   model?: string;
   mode?: 'default' | 'plan';
+  resultSchema?: NativeResultSchema;
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   effort?: string;

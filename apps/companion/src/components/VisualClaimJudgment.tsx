@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { Pressable, Text, TextInput, useColorScheme, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, TextInput, useColorScheme, View } from 'react-native';
 
 import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import { validVisualJudgmentReason } from '@farmslot/protocol';
-import { visualPrevalidationLabel } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
 /** Shared by the gate and Compare by AC. Only Issue asks a person for prose. */
@@ -11,10 +10,12 @@ export function VisualClaimJudgment({
   row,
   onRecord,
   disabled = false,
+  onBusyChange,
 }: {
   row: EvidenceReviewJudgmentRow;
   onRecord?: (id: string, verdict: 'confirmed' | 'rejected', reason?: string) => Promise<void>;
   disabled?: boolean;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const appearance = useColorScheme();
   const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
@@ -22,11 +23,14 @@ export function VisualClaimJudgment({
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [changing, setChanging] = useState(false);
+  const checked = row.claim.proofKinds.includes('person-reviewed') && !row.pending;
   const delegated = row.reviewKind === 'lead-agent-reviewed';
   const blocked = disabled || busy || !row.reviewKind || !onRecord;
   const record = async (verdict: 'confirmed' | 'rejected') => {
     if (!onRecord || busy) return;
     setBusy(true);
+    onBusyChange?.(true);
     setError('');
     try {
       await onRecord(
@@ -36,10 +40,12 @@ export function VisualClaimJudgment({
       );
       setIssue(false);
       setReason('');
+      setChanging(false);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
       setBusy(false);
+      onBusyChange?.(false);
     }
   };
   const buttonStyle = {
@@ -53,18 +59,18 @@ export function VisualClaimJudgment({
     backgroundColor: palette.surface,
   };
   return (
-    <View style={{ gap: 8 }}>
-      <Text style={{ color: palette.text }}>{visualPrevalidationLabel(row)}</Text>
-      {row.prevalidation ? (
-        <Text style={{ color: palette.text }}>{row.prevalidation.reason}</Text>
-      ) : null}
-      {row.claim.reviewLabels.length ? (
-        <Text style={{ color: palette.secondary }}>{row.claim.reviewLabels.join(' · ')}</Text>
-      ) : null}
-      {row.claim.proofKinds.includes('assertion') ? (
-        <Text style={{ color: palette.secondary }}>Recorded checks</Text>
-      ) : null}
-      {row.reviewKind || row.pending ? (
+    <View style={{ gap: 8 }} accessibilityState={{ busy }}>
+      {checked && !changing && !busy ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Change judgment for ${row.claim.id}`}
+          disabled={blocked}
+          onPress={() => setChanging(true)}
+          style={buttonStyle}
+        >
+          <Text style={{ color: palette.text }}>Change</Text>
+        </Pressable>
+      ) : row.reviewKind || row.pending ? (
         <>
           {issue || delegated ? (
             <TextInput
@@ -89,7 +95,8 @@ export function VisualClaimJudgment({
               onPress={() => void record('confirmed')}
               style={buttonStyle}
             >
-              <Text style={{ color: palette.text }}>Looks right</Text>
+              {busy ? <ActivityIndicator size="small" color={palette.text} /> : null}
+              <Text style={{ color: palette.text }}>{busy ? 'Checking…' : 'Looks right'}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -117,7 +124,7 @@ export function VisualClaimJudgment({
         </>
       ) : null}
       {error ? (
-        <Text accessibilityRole="alert" style={{ color: palette.warning }}>
+        <Text accessibilityRole="alert" style={{ color: palette.issue }}>
           {error}
         </Text>
       ) : null}

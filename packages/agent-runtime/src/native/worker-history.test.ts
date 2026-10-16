@@ -312,3 +312,30 @@ test('worker workspace reads require a pin and refuse results when the lease tra
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('a completed structured result remains with its original task lease after handoff', () => {
+  const history = new NativeWorkerHistory();
+  const bound: NativeCommandReceipt = {
+    ...receipt('visual'),
+    structuredResult: {
+      schema: 'pipeline-visual-judgments-v1',
+      value: {
+        schemaVersion: 1,
+        recipeRunId: 'recording',
+        closureIdentity: 'sha256:' + 'a'.repeat(64),
+        judgments: [],
+      },
+    },
+  };
+  history.observe({ info, commands: [bound] });
+  assert.deepEqual(
+    history.read(info.workerLeaseId!, [], []).commands[0].structuredResult,
+    bound.structuredResult,
+  );
+  history.observe({ info: { ...info, workerLeaseId: 'next-result-lease' } });
+  assert.deepEqual(
+    history.read(info.workerLeaseId!, [], []).commands[0].structuredResult,
+    bound.structuredResult,
+  );
+  assert.equal(history.read('next-result-lease', [], []).commands.length, 0);
+});

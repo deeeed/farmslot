@@ -24,6 +24,7 @@ export class NativeNodeSessions {
         supportsEnsure: true,
         supportsWorkers: true,
         supportsWorkerStopAttestation: true,
+        supportsStructuredResults: true,
         supportsProfiles: true,
       };
     }

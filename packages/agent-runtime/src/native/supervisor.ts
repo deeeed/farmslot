@@ -70,6 +70,7 @@ durableWrite(join(root, 'host.json'), {
   supportsWorkers: true,
   supportsWorkerResumeFence: true,
   supportsWorkerStopAttestation: true,
+  supportsStructuredResults: true,
   supportsWorkerRelocation: true,
   supportsProfiles: true,
   executionNodeId: process.env.FARMSLOT_NATIVE_EXECUTION_NODE_ID ?? 'local',

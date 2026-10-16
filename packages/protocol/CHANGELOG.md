@@ -9,6 +9,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.
 
+- Bind pipeline visual verification to native review commands and publication approval receipts, with no person-only policy or project setup.
+
 ## 0.50.0 - 2026-10-16
 
 - Allow authenticated person visual confirmations without a written reason; retain rationale for issues and delegated reviews.

@@ -7,10 +7,10 @@
 // behavioural test against a real project.json on disk.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 /** A directory the root resolver accepts, with the project fixtures under it. */
 function makeFakeRoot(): string {
@@ -43,11 +43,11 @@ function writeProject(root: string, name: string, body: Record<string, unknown>)
 }
 
 const ROOT = makeFakeRoot();
+after(() => rmSync(ROOT, { recursive: true, force: true }));
 writeProject(ROOT, 'opted-in', {
   visual_claim_review: {
     delegatedReviewerPrincipalIds: ['lead-reviewer'],
     delegatorPrincipalId: 'person',
-    personOnlyClaimIds: ['ac1'],
   },
   runtime_capabilities: {
     providers: { 'browser-cdp': provider },
@@ -79,7 +79,6 @@ test('loadProjectConfigs produces runtimeCapabilities, including the pressure op
   assert.deepEqual(optedIn.visualClaimReview, {
     delegatedReviewerPrincipalIds: ['lead-reviewer'],
     delegatorPrincipalId: 'person',
-    personOnlyClaimIds: ['AC-1'],
   });
 });
 

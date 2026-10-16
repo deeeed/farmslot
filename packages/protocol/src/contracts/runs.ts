@@ -1348,6 +1348,16 @@ export interface RunDecision {
   resolvedAction?: string;
   /** Authoritative human policy waiver, stamped only by the gateway. */
   evidenceAttestation?: EvidencePolicyAttestation;
+  /** Normal publication authority, retained on the resolution rather than the frozen package. */
+  publicationApproval?: {
+    principalId: string;
+    displayName: string;
+    subjectKind: import('../rpc/principal.js').Principal['subject']['type'];
+    packageHash: string;
+    visualJudgmentReceiptIds: string[];
+    claimOverrideReceiptIds: string[];
+    approvedAt: string;
+  };
   /** Completed failure-triage assessment consulted at resolution, without implied causation. */
   triageAssessmentId?: string;
   payload?: RunDecisionPayload;

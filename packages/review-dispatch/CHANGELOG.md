@@ -23,6 +23,8 @@
 - Keep project review policy fields out of review selections while preserving configured defaults.
 - Add shared review and dispatch selection state, capability defaults, strict validators and ordered request serialization for web, mobile, CLI and gateway consumers, preserving 20-row PR execution profiles and explicit saved defaults.
 
+- Share AC row state and judgment controls across publication, preview and evidence views in both clients, with qualified pipeline verification for every visual AC.
+
 ## 0.1.1 - 2026-10-16
 
 - Consume the recipe-runner 0.38.1 still-filename fix throughout the worker dependency set.

@@ -14,9 +14,12 @@ import {
 import {
   type ArtifactRef,
   parseProjectVisualClaimReviewPolicy,
+  type RecipeArtifactManifestEntry,
   type RunDecision,
   type RunReviewVisualClaimParams,
 } from '@farmslot/protocol';
+
+import { JsonArtifactWriter } from '../../../../../packages/recipe-runner/src/node/writers.js';
 
 await import('../../runtime/mock-pty.test-support.js');
 const { createRun, updateRun, getRun, runsDirectory } = await import('../../runs/store.js');
@@ -61,6 +64,21 @@ export async function fixture(t: TestContext) {
     });
   }
   const directory = path.join(root, prefix);
+  // The retained legacy fixture predates attempt-local publication manifests.
+  // Generate its candidate with the engine writer before sealing this test capture.
+  const legacy = (await readRecordedEvidencePackage(directory)).input;
+  const writer = new JsonArtifactWriter(directory);
+  const fixtureManifest: { artifacts: RecipeArtifactManifestEntry[] } = JSON.parse(
+    files['artifact-manifest.json']!,
+  );
+  for (const artifact of fixtureManifest.artifacts) writer.register(artifact);
+  await writer.writeEvidenceManifest(legacy.claims!);
+  await writer.write('pass');
+  inventory.push({ path: `${prefix}evidence-manifest.json`, purpose: 'evidence' });
+  for (const artifact of inventory)
+    artifact.sha256 = createHash('sha256')
+      .update(await readFile(path.join(root, artifact.path)))
+      .digest('hex');
   const input = (await readRecordedEvidencePackage(directory)).input;
   assert.equal(validateRecordedEvidencePackage(input).status, 'valid');
   const prepared = makeReadyGatePackage({ evidenceManifest: inventory, selectedEvidenceKeys: [] });
@@ -109,7 +127,14 @@ export async function fixture(t: TestContext) {
     displayName: 'Reviewer',
     subjectKind: 'person' as const,
   };
-  const dependencies = { authorizeVisualClaimReview: () => person };
+  const dependencies = {
+    authorizeVisualClaimReview: () => person,
+    refreshPackage: async ({ runId }: { runId: string }) => {
+      const current = getRun(runId);
+      assert.ok(current);
+      return { run: current };
+    },
+  };
   return { run, decision, params, dependencies, input, prepared, directory, person, inventory };
 }
 
@@ -126,7 +151,11 @@ test('delegated judgments retain their own identity/digests and drive the same p
     subjectKind: 'service' as const,
     delegator: { principalId: 'person', displayName: 'Operator' },
   };
-  const dependencies = { authorizeVisualClaimReview: () => reviewer, policy: async () => policy };
+  const dependencies = {
+    ...f.dependencies,
+    authorizeVisualClaimReview: () => reviewer,
+    policy: async () => policy,
+  };
   const params = { ...f.params, kind: 'lead-agent-reviewed' as const };
   const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
   const result = await runReviewVisualClaim(params, () => {}, dependencies);
@@ -176,7 +205,7 @@ test('delegated judgments retain their own identity/digests and drive the same p
   );
 });
 
-test('person-only parents and changed delegation refuse a write without modifying captured evidence', async (t) => {
+test('missing and changed delegation refuse a write without modifying captured evidence', async (t) => {
   const f = await fixture(t);
   const policy = {
     delegatedReviewerPrincipalIds: ['lead-reviewer'],
@@ -193,9 +222,9 @@ test('person-only parents and changed delegation refuse a write without modifyin
   await assert.rejects(
     runReviewVisualClaim(params, () => {}, {
       authorizeVisualClaimReview: () => reviewer,
-      policy: async () => ({ ...policy, personOnlyClaimIds: ['case-1'] }),
+      policy: async () => ({ ...policy, delegatedReviewerPrincipalIds: [] }),
     }),
-    /person review/,
+    /no matching project delegation/,
   );
   let reads = 0;
   await assert.rejects(
@@ -582,7 +611,7 @@ test('QA review consumes only frozen case registration, even when another retain
   assert.deepEqual(await readFile(indexPath), originalIndex);
 });
 
-test('one-tap confirmation has no invented reason, retains identity and requires refresh', async (t) => {
+test('one-tap confirmation has no invented reason and retains identity through refresh', async (t) => {
   const f = await fixture(t);
   const { reason: _reason, ...params } = f.params;
   const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
@@ -619,4 +648,30 @@ test('one-tap confirmation has no invented reason, retains identity and requires
   assert.notEqual(written.receipt.id, result.receipt.id);
   assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
   assert.equal(f.decision.resolvedAt, undefined);
+});
+
+test('a failed automatic refresh preserves the judgment and retry reuses its receipt', async (t) => {
+  const f = await fixture(t);
+  const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
+  await assert.rejects(
+    runReviewVisualClaim(f.params, () => {}, {
+      ...f.dependencies,
+      refreshPackage: async () => {
+        throw new Error('Source is unavailable');
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error && 'code' in error);
+      assert.equal(error.code, 'VISUAL_JUDGMENT_REFRESH_REQUIRED');
+      assert.match(error.message, /Judgment saved.*Source is unavailable/);
+      return true;
+    },
+  );
+  const saved = getRun(f.run.id)?.visualJudgmentReceipts;
+  assert.equal(saved?.length, 1);
+  const result = await runReviewVisualClaim(f.params, () => {}, f.dependencies);
+  assert.equal(result.receipt.id, saved?.[0]?.id);
+  assert.equal(result.run.visualJudgmentReceipts?.length, 1);
+  assert.equal(f.decision.resolvedAt, undefined);
+  assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
 });

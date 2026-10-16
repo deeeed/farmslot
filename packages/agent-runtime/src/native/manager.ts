@@ -14,15 +14,16 @@ import { homedir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import type {
-  NativeCommandReceipt,
-  NativeProfileInfo,
-  NativeSessionCreateParams,
-  NativeSessionEnsureParams,
-  NativeSessionEvent,
-  NativeSessionInfo,
-  NativeSessionResponse,
-  NativeSessionSendResult,
+import {
+  type NativeCommandReceipt,
+  type NativeProfileInfo,
+  type NativeSessionCreateParams,
+  type NativeSessionEnsureParams,
+  type NativeSessionEvent,
+  type NativeSessionInfo,
+  type NativeSessionResponse,
+  type NativeSessionSendResult,
+  nativeStructuredResult,
 } from '@farmslot/protocol';
 
 import {
@@ -375,6 +376,11 @@ export class NativeSessionManager {
     }
     const transport = adapters[params.runner];
     if (!transport) throw new Error(`Runner has no native transport: ${params.runner}`);
+    if (
+      params.resultSchema &&
+      !transport.adapter.capabilities.structuredResultSchemas?.includes(params.resultSchema)
+    )
+      throw new Error('Native runner does not support the requested structured result schema');
     if (workerLaunch && !transport.supportsWorkers)
       throw new Error('Native worker execution is not supported for this runner');
     if (workerLaunch?.filesystemPolicy && !transport.supportsReadOnlyWorkspace)
@@ -550,6 +556,7 @@ export class NativeSessionManager {
       model: params.model ?? previous?.info.model,
       mode,
       accountMode: 'native',
+      resultSchema: params.resultSchema ?? previous?.info.resultSchema,
       ...(effort ? { effort } : {}),
       ...(workerLaunch ? { workerManaged: true, workerLeaseId: workerLaunch.leaseId } : {}),
       state: 'starting',
@@ -597,6 +604,7 @@ export class NativeSessionManager {
       record.startup = transport.adapter.start(
         {
           ...params,
+          resultSchema: info.resultSchema,
           signal: record.startupAbort.signal,
           mode,
           model: info.model,
@@ -661,7 +669,7 @@ export class NativeSessionManager {
       throw new Error('Reserved sessionId belongs to another owner');
     if (record.info.workerLeaseId !== workerLaunch?.leaseId)
       throw new Error('Reserved sessionId belongs to another worker task lease');
-    for (const field of ['runner', 'cwd', 'model', 'mode', 'profileId'] as const) {
+    for (const field of ['runner', 'cwd', 'model', 'mode', 'profileId', 'resultSchema'] as const) {
       const requested = field === 'mode' ? (params.mode ?? 'default') : params[field];
       if (record.info[field] !== requested)
         throw new Error(`Reserved sessionId launch configuration differs: ${field}`);
@@ -966,8 +974,16 @@ export class NativeSessionManager {
   }
 
   private append(record: SessionRecord, event: NativeEventInput): void {
+    const structuredResult =
+      event.type === 'turn.completed' &&
+      event.status === 'completed' &&
+      event.structuredResult &&
+      event.structuredResult.schema === record.info.resultSchema
+        ? nativeStructuredResult(event.structuredResult.schema, event.structuredResult.value)
+        : undefined;
     const enriched: NativeSessionEvent = {
       ...event,
+      structuredResult,
       sessionId: record.info.id,
       generation: record.info.generation,
       sequence: record.events.length + 1,
@@ -989,6 +1005,7 @@ export class NativeSessionManager {
       if (command) {
         command.state = event.status === 'completed' ? 'completed' : 'failed';
         command.outcome = event.status;
+        command.structuredResult = structuredResult;
       }
     }
     if (event.type === 'session.closed') {

@@ -6,16 +6,15 @@ import {
 import { recordedEvidenceClosureIdentity } from './claim-overrides.js';
 import { isRecord } from './common.js';
 import { digestRecipeDocument } from './digest.js';
-import {
-  normalizeRecipeClaimId,
-  type RecipeVisualJudgment,
-  type RecordedEvidencePackageInput,
-} from './evidence.js';
+import { type RecipeVisualJudgment, type RecordedEvidencePackageInput } from './evidence.js';
 
 export const CONFIRM_VISUAL_CLAIM_ACTION = 'confirm-visual';
 export const REJECT_VISUAL_CLAIM_ACTION = 'reject-visual';
 
-export type RecipeVisualJudgmentKind = 'person-reviewed' | 'lead-agent-reviewed';
+export type RecipeVisualJudgmentKind =
+  | 'person-reviewed'
+  | 'lead-agent-reviewed'
+  | 'pipeline-reviewed';
 
 /** Undefined kind is unqualified embedded input, which always needs rationale. */
 export function validVisualJudgmentReason(
@@ -27,9 +26,8 @@ export function validVisualJudgmentReason(
 }
 
 export interface ProjectVisualClaimReviewPolicy {
-  delegatedReviewerPrincipalIds: string[];
-  delegatorPrincipalId: string;
-  personOnlyClaimIds?: string[];
+  delegatedReviewerPrincipalIds?: string[];
+  delegatorPrincipalId?: string;
 }
 
 export type RecipeVisualReviewer = EvidenceAttestationApprover & {
@@ -44,30 +42,23 @@ export function parseProjectVisualClaimReviewPolicy(
   if (value === undefined) return undefined;
   if (
     !isRecord(value) ||
-    typeof value.delegatorPrincipalId !== 'string' ||
-    !value.delegatorPrincipalId.trim() ||
-    !Array.isArray(value.delegatedReviewerPrincipalIds) ||
-    value.delegatedReviewerPrincipalIds.some((id) => typeof id !== 'string' || !id.trim()) ||
-    (value.personOnlyClaimIds !== undefined &&
-      (!Array.isArray(value.personOnlyClaimIds) ||
-        value.personOnlyClaimIds.some((id) => typeof id !== 'string' || !id.trim()))) ||
+    ((value.delegatorPrincipalId !== undefined ||
+      value.delegatedReviewerPrincipalIds !== undefined) &&
+      (typeof value.delegatorPrincipalId !== 'string' ||
+        !value.delegatorPrincipalId.trim() ||
+        !Array.isArray(value.delegatedReviewerPrincipalIds) ||
+        value.delegatedReviewerPrincipalIds.some((id) => typeof id !== 'string' || !id.trim()))) ||
     Object.keys(value).some(
-      (key) =>
-        !['delegatedReviewerPrincipalIds', 'delegatorPrincipalId', 'personOnlyClaimIds'].includes(
-          key,
-        ),
+      (key) => !['delegatedReviewerPrincipalIds', 'delegatorPrincipalId'].includes(key),
     )
   )
     throw new TypeError('Invalid project visualClaimReview policy.');
   return {
-    delegatorPrincipalId: value.delegatorPrincipalId,
-    delegatedReviewerPrincipalIds: [
-      ...new Set(value.delegatedReviewerPrincipalIds as string[]),
-    ].sort(),
-    ...(value.personOnlyClaimIds
+    ...(typeof value.delegatorPrincipalId === 'string'
       ? {
-          personOnlyClaimIds: [
-            ...new Set((value.personOnlyClaimIds as string[]).map(normalizeRecipeClaimId)),
+          delegatorPrincipalId: value.delegatorPrincipalId,
+          delegatedReviewerPrincipalIds: [
+            ...new Set(value.delegatedReviewerPrincipalIds as string[]),
           ].sort(),
         }
       : {}),
@@ -75,21 +66,30 @@ export function parseProjectVisualClaimReviewPolicy(
 }
 
 export function delegatedVisualClaimAllowed(
-  input: RecordedEvidencePackageInput,
-  claimId: string,
   reviewerPrincipalId: string,
   policy: ProjectVisualClaimReviewPolicy | undefined,
 ): boolean {
-  if (!policy?.delegatedReviewerPrincipalIds.includes(reviewerPrincipalId)) return false;
-  const personOnly = new Set(policy.personOnlyClaimIds ?? []);
-  let claim = input.claims?.criteria.find(({ id }) => id === normalizeRecipeClaimId(claimId));
-  if (!claim) return false;
-  while (claim) {
-    if (personOnly.has(claim.id)) return false;
-    claim = input.claims?.criteria.find(({ id }) => id === claim!.parentId);
-  }
-  return true;
+  return Boolean(policy?.delegatedReviewerPrincipalIds?.includes(reviewerPrincipalId));
 }
+
+export interface PipelineVisualReviewerBinding {
+  contextId: string;
+  executionNodeId: string;
+  ownerPrincipalId: string;
+  sessionId: string;
+  generation: string;
+  leaseId: string;
+  commandId: string;
+}
+
+export type RecipeVisualReviewerIdentity =
+  | EvidenceAttestationApprover
+  | {
+      principalId: string;
+      displayName: string;
+      credentialId?: never;
+      personSessionId?: never;
+    };
 
 export function reviewedVisualFiles(
   input: RecordedEvidencePackageInput,
@@ -113,12 +113,16 @@ export interface RecipeVisualJudgmentReceipt extends Omit<
   decisionId?: string;
   snapshotIdentity: string;
   closureIdentity: string;
-  approver: EvidenceAttestationApprover;
+  approver: RecipeVisualReviewerIdentity;
   /** Absence identifies the already-shipped credential-backed person receipts. */
   kind?: RecipeVisualJudgmentKind;
   reviewerSubjectKind?: RecipeVisualReviewer['subjectKind'];
   reviewedFiles?: { path: string; digest: string }[];
   delegation?: { principalId: string; displayName: string; policyDigest: string };
+  /** Internal pipeline collection only; manual judgment RPC cannot supply this binding. */
+  pipeline?: PipelineVisualReviewerBinding;
+  /** New captures retain the same winner in current and frozen projections. */
+  precedence?: 'person-first-v1';
 }
 
 /** Consumers load receipts from the gateway store, never from a recipe/task file. */
@@ -136,11 +140,12 @@ export interface QualifiedRecipeVisualJudgment extends Omit<RecipeVisualJudgment
   reason?: string;
   receiptId: string;
   kind: RecipeVisualJudgmentKind;
-  reviewer: EvidenceAttestationApprover;
+  reviewer: RecipeVisualReviewerIdentity;
   delegation?: RecipeVisualJudgmentReceipt['delegation'];
+  pipeline?: PipelineVisualReviewerBinding;
 }
 
-/** Keep stored order so the engine's existing last-judgment rule applies. */
+/** Current projections put the latest person after agents so a person Issue cannot be cleared by an agent. */
 export function recordedVisualJudgments(
   input: RecordedEvidencePackageInput,
   authority: RecipeVisualReviewAuthority,
@@ -151,10 +156,11 @@ export function recordedVisualJudgments(
     authority.closureIdentity !== recordedEvidenceClosureIdentity(input)
   )
     return [];
-  return authority.receipts.flatMap((receipt) => {
+  const qualified = authority.receipts.flatMap((receipt): QualifiedRecipeVisualJudgment[] => {
     const claim = input.claims!.criteria.find(({ id }) => id === receipt.claimId);
     const kind = receipt.kind ?? 'person-reviewed';
     const delegated = kind === 'lead-agent-reviewed';
+    const pipeline = kind === 'pipeline-reviewed';
     if (
       !claim ||
       !['visual', 'mixed'].includes(claim.proofMode) ||
@@ -162,17 +168,40 @@ export function recordedVisualJudgments(
       receipt.recipeRunId !== authority.recipeRunId ||
       receipt.closureIdentity !== authority.closureIdentity ||
       !receipt.id?.trim() ||
-      !isEvidenceAttestationApprover(receipt.approver) ||
+      (pipeline
+        ? !receipt.approver?.displayName?.trim() ||
+          receipt.approver.credentialId !== undefined ||
+          receipt.approver.personSessionId !== undefined ||
+          receipt.approver.principalId !==
+            `native-review:${receipt.pipeline?.sessionId}:${receipt.pipeline?.leaseId}`
+        : !isEvidenceAttestationApprover(receipt.approver)) ||
       !validVisualJudgmentReason(kind, receipt.verdict, receipt.reason) ||
       !['confirmed', 'rejected'].includes(receipt.verdict) ||
       !Number.isFinite(Date.parse(receipt.judgedAt)) ||
       digestRecipeDocument(receipt.moments) !== digestRecipeDocument(claim.moments) ||
-      !['person-reviewed', 'lead-agent-reviewed'].includes(kind) ||
+      !['person-reviewed', 'lead-agent-reviewed', 'pipeline-reviewed'].includes(kind) ||
       (receipt.kind !== undefined &&
-        receipt.reviewerSubjectKind !== (delegated ? 'service' : 'person')) ||
+        receipt.reviewerSubjectKind !== (kind === 'person-reviewed' ? 'person' : 'service')) ||
       (receipt.reviewedFiles !== undefined &&
         digestRecipeDocument(receipt.reviewedFiles) !==
           digestRecipeDocument(reviewedVisualFiles(input, receipt.claimId))) ||
+      (pipeline &&
+        (!receipt.pipeline ||
+          Object.values(receipt.pipeline).some(
+            (value) => typeof value !== 'string' || !value.trim(),
+          ) ||
+          ![
+            'contextId',
+            'executionNodeId',
+            'ownerPrincipalId',
+            'sessionId',
+            'generation',
+            'leaseId',
+            'commandId',
+          ].every((key) =>
+            Boolean(receipt.pipeline?.[key as keyof PipelineVisualReviewerBinding]),
+          ) ||
+          !receipt.reviewedFiles?.length)) ||
       (delegated &&
         (!receipt.approver.credentialId ||
           !receipt.reviewedFiles?.length ||
@@ -180,12 +209,7 @@ export function recordedVisualJudgments(
           !receipt.delegation?.displayName.trim() ||
           !/^sha256:[a-f0-9]{64}$/u.test(receipt.delegation.policyDigest) ||
           (!authority.historical &&
-            (!delegatedVisualClaimAllowed(
-              input,
-              receipt.claimId,
-              receipt.approver.principalId,
-              authority.projectPolicy,
-            ) ||
+            (!delegatedVisualClaimAllowed(receipt.approver.principalId, authority.projectPolicy) ||
               receipt.delegation.principalId !== authority.projectPolicy?.delegatorPrincipalId ||
               receipt.delegation.policyDigest !== digestRecipeDocument(authority.projectPolicy)))))
     )
@@ -196,6 +220,7 @@ export function recordedVisualJudgments(
         kind,
         reviewer: receipt.approver,
         ...(receipt.delegation ? { delegation: receipt.delegation } : {}),
+        ...(receipt.pipeline ? { pipeline: receipt.pipeline } : {}),
         claimId: receipt.claimId,
         recipeRunId: receipt.recipeRunId,
         verdict: receipt.verdict,
@@ -206,4 +231,16 @@ export function recordedVisualJudgments(
       },
     ];
   });
+  const currentPrecedence = authority.receipts.some(
+    (receipt) =>
+      (receipt.precedence === 'person-first-v1' || receipt.kind === 'pipeline-reviewed') &&
+      qualified.some((judgment) => judgment.receiptId === receipt.id),
+  );
+  return authority.historical && !currentPrecedence
+    ? qualified
+    : qualified.sort(
+        (a, b) =>
+          Number(a.kind === 'person-reviewed') - Number(b.kind === 'person-reviewed') ||
+          Date.parse(a.judgedAt) - Date.parse(b.judgedAt),
+      );
 }

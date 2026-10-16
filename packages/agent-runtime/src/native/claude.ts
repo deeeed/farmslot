@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
-import type { NativeSessionResponse } from '@farmslot/protocol';
+import {
+  type NativeSessionResponse,
+  type NativeStructuredResult,
+  nativeStructuredResult,
+  PIPELINE_VISUAL_JUDGMENTS_SCHEMA,
+  PIPELINE_VISUAL_RESULT_SCHEMA,
+} from '@farmslot/protocol';
 
 import { JsonLineProcess } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
@@ -65,6 +71,7 @@ export const claudeNativeAdapter: NativeAdapter = {
     questions: true,
     interrupt: true,
     resume: true,
+    structuredResultSchemas: [PIPELINE_VISUAL_RESULT_SCHEMA],
     resumeAcrossWorkspaces: true,
   },
   workspaceResumeUnavailableReason: (version) => {
@@ -101,10 +108,11 @@ export const claudeNativeAdapter: NativeAdapter = {
     const pendingRequests = new Map<string, JsonRecord>();
     const activeTools = new Set<string>();
     const publish = (event: NativeEventInput) => emit({ commandId, turnId, ...event });
-    const finishTurn = (data: JsonRecord = {}) => {
+    const finishTurn = (data: JsonRecord = {}, structuredResult?: NativeStructuredResult) => {
       if (!turnStarted && !commandId) return;
       publish({
         type: 'turn.completed',
+        structuredResult,
         status:
           interruptedCommandId !== undefined && interruptedCommandId === commandId
             ? 'interrupted'
@@ -350,7 +358,20 @@ export const claudeNativeAdapter: NativeAdapter = {
             data: { subtype: message.subtype },
           });
         }
-        finishTurn({ subtype: message.subtype, isError: message.is_error });
+        const result =
+          options.resultSchema && message.is_error !== true
+            ? nativeStructuredResult(options.resultSchema, message.structured_output)
+            : undefined;
+        finishTurn(
+          {
+            subtype: message.subtype,
+            isError: message.is_error,
+            ...(options.resultSchema && !result
+              ? { structuredResultError: 'Native result did not satisfy its bound schema' }
+              : {}),
+          },
+          result,
+        );
       }
     };
 
@@ -358,6 +379,9 @@ export const claudeNativeAdapter: NativeAdapter = {
       options.executable,
       [
         ...(options.filesystemPolicy ? ['--settings', '{"disableAllHooks":true}'] : []),
+        ...(options.resultSchema
+          ? ['--json-schema', JSON.stringify(PIPELINE_VISUAL_JUDGMENTS_SCHEMA)]
+          : []),
         '--print',
         '--input-format',
         'stream-json',

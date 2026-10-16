@@ -261,8 +261,7 @@ export function defaultCancelCollaborators(): CancelCollaborators {
       cleanup.set(run.id, state);
       const { readSlotRow } = await import('../core/index.js');
       state.fence.before = run.slotId ? await readSlotRow(run.slotId) : null;
-      if (run.transport === 'native')
-        await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
+      await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
       const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
       await releaseRunOwnedCapabilities(run);
       const blocker = await recordSlotTeardownBlocker(run, workerBlocker);
@@ -282,8 +281,8 @@ export function defaultCancelCollaborators(): CancelCollaborators {
       try {
         const { readSlotField, updateSlotStatusIf } = await import('../core/index.js');
         const { loadFleetStatus } = await import('../fleet/state.js');
+        await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
         if (run.transport === 'native') {
-          await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
           // A completed handoff can leave the prior run cancellable while its successor
           // owns this slot. Stop only this run's leases and leave the successor's slot alone.
           if ((await readSlotField(run.slotId!, 'current_run_id')) !== run.id) {

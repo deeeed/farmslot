@@ -1,22 +1,34 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import type { EvidenceReviewArtifact, EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import type {
+  EvidenceReviewArtifact,
+  EvidenceReviewJudgmentRow,
+  EvidenceReviewModel,
+} from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
   AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
 } from '@farmslot/protocol';
+import { acceptanceClaimRows } from '@farmslot/review-dispatch';
 
 import { acceptanceLedgerView } from '../lib/task-progress-view';
 import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
 
+import { AcceptanceClaimList } from './AcceptanceClaimList';
 import { Skeleton, SkeletonError } from './Skeleton';
 
 interface TaskAcceptancePanelProps {
   loading?: boolean;
   expectedRows?: number;
   onRetry?: () => void;
+  judgmentRows?: readonly EvidenceReviewJudgmentRow[];
+  onRecordVisualReview?: (
+    id: string,
+    verdict: 'confirmed' | 'rejected',
+    reason?: string,
+  ) => Promise<void>;
   onMarkUntestable?: (id: string, reason: string) => void;
   evidenceModel?: EvidenceReviewModel | null;
   showOccurrences?: boolean;
@@ -61,6 +73,8 @@ function TaskAcceptanceContent({
   showOccurrences,
   onOpenOccurrence,
   onMarkUntestable,
+  judgmentRows,
+  onRecordVisualReview,
   onRetry,
 }: TaskAcceptancePanelProps) {
   const ledger = acceptanceStatus ?? { schemaVersion: 1 as const, criteria: [] };
@@ -71,6 +85,7 @@ function TaskAcceptanceContent({
     evidenceModel ?? undefined,
   );
   const [showDetails, setShowDetails] = React.useState(false);
+  const [showWarnings, setShowWarnings] = React.useState(false);
   const [overrideClaim, setOverrideClaim] = React.useState<string | null>(null);
   const [overrideReason, setOverrideReason] = React.useState('');
   const [rawClaims, setRawClaims] = React.useState<ReadonlySet<string>>(() => new Set());
@@ -99,7 +114,10 @@ function TaskAcceptanceContent({
       )}
     </View>
   );
-  React.useEffect(() => setShowDetails(false), [evidenceModel]);
+  React.useEffect(() => {
+    setShowDetails(false);
+    setShowWarnings(false);
+  }, [evidenceModel]);
   const packageStatus = evidenceModel?.packageStatus;
   const [expanded, setExpanded] = React.useState(view.hasOpenCriteria || Boolean(error));
   React.useEffect(() => {
@@ -179,134 +197,156 @@ function TaskAcceptanceContent({
             : null}
         </View>
       ) : null}
-      {expanded
-        ? evidenceModel?.displayWarnings.map((warning) => (
-            <Text key={warning} style={baseStyles.textMuted}>
-              {warning}
+      {expanded && evidenceModel?.displayWarnings.length ? (
+        <View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: showWarnings }}
+            testID="companion-acceptance-warning-details"
+            onPress={() => setShowWarnings((value) => !value)}
+            style={{ minHeight: 44, minWidth: 44, justifyContent: 'center' }}
+          >
+            <Text style={styles.evidence}>
+              Evidence details ({evidenceModel.displayWarnings.length})
             </Text>
-          ))
-        : null}
-      {expanded
-        ? view.rows.map(({ criterion, verdict, color, display, review }) => (
-            <View key={criterion.id} style={styles.row} testID={`companion-ac-row-${criterion.id}`}>
-              <View style={styles.rowHeader}>
-                <Text style={styles.id}>{criterion.id}</Text>
-                <Text style={[styles.pill, { color, borderColor: color }]}>
-                  {verdict ?? 'not assessed'}
+          </Pressable>
+          {showWarnings
+            ? evidenceModel.displayWarnings.map((warning) => (
+                <Text key={warning} style={baseStyles.textMuted}>
+                  {warning}
                 </Text>
-                {criterion.status?.proofMode ? (
-                  <Text style={baseStyles.textMuted}>{criterion.status.proofMode}</Text>
+              ))
+            : null}
+        </View>
+      ) : null}
+      {expanded ? (
+        <AcceptanceClaimList
+          rows={acceptanceClaimRows({
+            claims: view.rows.map(({ review, criterion }) => review ?? criterion),
+            judgmentRows: judgmentRows ?? evidenceModel?.judgmentRows(null),
+            pendingVisualClaimIds: evidenceModel?.pendingVisualClaimIds,
+          })}
+          onRecord={onRecordVisualReview}
+          onFocus={
+            onOpenEvidence
+              ? (id) => {
+                  const row = view.rows.find(({ criterion }) => criterion.id === id);
+                  if (!row) return;
+                  const path = row.display.selected[0]?.artifactPath ?? row.evidence[0]?.path;
+                  if (path) onOpenEvidence(id, path);
+                }
+              : undefined
+          }
+          renderDetails={(id) => {
+            const row = view.rows.find(({ criterion }) => criterion.id === id);
+            if (!row) return null;
+            const { criterion, display, review } = row;
+            return (
+              <View style={styles.details}>
+                {criterion.status?.engineVerdict ? (
+                  <Text style={baseStyles.textMuted}>
+                    Engine verdict: {criterion.status.engineVerdict} · {criterion.status.note}
+                  </Text>
                 ) : null}
-              </View>
-              <Text style={styles.text}>{criterion.text}</Text>
-              {review?.proofKinds.length ? (
-                <Text style={baseStyles.textMuted}>{review.proofKinds.join(' · ')}</Text>
-              ) : null}
-              {review?.reviewLabels.map((label) => (
-                <Text
-                  key={label}
-                  style={baseStyles.textMuted}
-                  testID="companion-visual-review-provenance"
-                >
-                  {label}
-                </Text>
-              ))}
-              {criterion.status?.engineVerdict ? (
-                <Text style={baseStyles.textMuted}>
-                  Engine verdict: {criterion.status.engineVerdict} · {criterion.status.note}
-                </Text>
-              ) : null}
-              {onMarkUntestable && evidenceModel?.claimOverrideCandidate(criterion.id) ? (
-                <View>
+                {onMarkUntestable && evidenceModel?.claimOverrideCandidate(criterion.id) ? (
+                  <View>
+                    <Pressable
+                      accessibilityRole="button"
+                      style={styles.touchAction}
+                      onPress={() => {
+                        setOverrideClaim(criterion.id);
+                        setOverrideReason('');
+                      }}
+                    >
+                      <Text style={styles.evidence}>Mark untestable</Text>
+                    </Pressable>
+                    {overrideClaim === criterion.id ? (
+                      <View>
+                        <TextInput
+                          accessibilityLabel={`Reason for ${criterion.id}`}
+                          testID="companion-claim-override-reason"
+                          style={styles.text}
+                          value={overrideReason}
+                          onChangeText={setOverrideReason}
+                          placeholder="Written reason"
+                        />
+                        <Pressable
+                          accessibilityRole="button"
+                          style={styles.touchAction}
+                          testID="companion-claim-override-confirm"
+                          disabled={!overrideReason.trim()}
+                          onPress={() => onMarkUntestable(criterion.id, overrideReason)}
+                        >
+                          <Text style={styles.evidence}>Confirm untestable override</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+                {review?.timing && review?.timing !== 'measured' ? (
+                  <Text style={baseStyles.textMuted}>{review?.timing}</Text>
+                ) : null}
+                {display.clip && evidenceModel && !evidenceModel.errors.length && onOpenEvidence ? (
                   <Pressable
                     accessibilityRole="button"
+                    style={styles.touchAction}
+                    testID={`companion-ac-clip-${criterion.id}`}
                     onPress={() => {
-                      setOverrideClaim(criterion.id);
-                      setOverrideReason('');
+                      const selected = evidenceModel.selectClaim(criterion.id);
+                      const path = selected?.clips[0]?.videoPath;
+                      if (path) onOpenEvidence(criterion.id, evidenceModel.artifactPath(path));
                     }}
                   >
-                    <Text style={styles.evidence}>Mark untestable</Text>
+                    <Text style={styles.evidence}>Play proof</Text>
                   </Pressable>
-                  {overrideClaim === criterion.id ? (
-                    <View>
-                      <TextInput
-                        accessibilityLabel={`Reason for ${criterion.id}`}
-                        testID="companion-claim-override-reason"
-                        style={styles.text}
-                        value={overrideReason}
-                        onChangeText={setOverrideReason}
-                        placeholder="Written reason"
-                      />
-                      <Pressable
-                        accessibilityRole="button"
-                        testID="companion-claim-override-confirm"
-                        disabled={!overrideReason.trim()}
-                        onPress={() => onMarkUntestable(criterion.id, overrideReason)}
-                      >
-                        <Text style={styles.evidence}>Confirm untestable override</Text>
-                      </Pressable>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-              {review?.timing && review?.timing !== 'measured' ? (
-                <Text style={baseStyles.textMuted}>{review?.timing}</Text>
-              ) : null}
-              {display.clip && evidenceModel && !evidenceModel.errors.length && onOpenEvidence ? (
-                <Pressable
-                  accessibilityRole="button"
-                  testID={`companion-ac-clip-${criterion.id}`}
-                  onPress={() => {
-                    const selected = evidenceModel.selectClaim(criterion.id);
-                    const path = selected?.clips[0]?.videoPath;
-                    if (path) onOpenEvidence(criterion.id, evidenceModel.artifactPath(path));
-                  }}
-                >
-                  <Text style={styles.evidence}>Play proof</Text>
-                </Pressable>
-              ) : null}
-              {renderFiles(criterion.id, display.selected)}
-              {display.raw.length || review?.occurrences.length ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded: rawClaims.has(criterion.id) }}
-                  testID={`companion-ac-raw-${criterion.id}`}
-                  onPress={() =>
-                    setRawClaims((previous) => {
-                      const next = new Set(previous);
-                      if (next.has(criterion.id)) next.delete(criterion.id);
-                      else next.add(criterion.id);
-                      return next;
-                    })
-                  }
-                >
-                  <Text style={styles.evidence}>
-                    {rawClaims.has(criterion.id) ? 'Hide ' : ''}
-                    {display.raw.length ? `raw artifacts (${display.raw.length})` : 'Check details'}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {rawClaims.has(criterion.id) ? (
-                <View>
-                  {review?.occurrences.map((occurrence) => (
-                    <View key={occurrence.traceIndex}>
-                      <Text style={styles.text}>{occurrence.intent}</Text>
-                      {occurrence.expectation ? (
-                        <Text style={baseStyles.textMuted}>
-                          {JSON.stringify(occurrence.expectation)}
-                        </Text>
-                      ) : null}
-                    </View>
-                  ))}
-                  {renderFiles(criterion.id, display.raw)}
-                </View>
-              ) : null}
-              {criterion.status?.note ? (
-                <Text style={baseStyles.textMuted}>{criterion.status.note}</Text>
-              ) : null}
-            </View>
-          ))
-        : null}
+                ) : null}
+                {renderFiles(criterion.id, display.selected)}
+                {display.raw.length || review?.occurrences.length ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: rawClaims.has(criterion.id) }}
+                    style={styles.touchAction}
+                    testID={`companion-ac-raw-${criterion.id}`}
+                    onPress={() =>
+                      setRawClaims((previous) => {
+                        const next = new Set(previous);
+                        if (next.has(criterion.id)) next.delete(criterion.id);
+                        else next.add(criterion.id);
+                        return next;
+                      })
+                    }
+                  >
+                    <Text style={styles.evidence}>
+                      {rawClaims.has(criterion.id) ? 'Hide ' : ''}
+                      {display.raw.length
+                        ? `raw artifacts (${display.raw.length})`
+                        : 'Check details'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {rawClaims.has(criterion.id) ? (
+                  <View>
+                    {review?.occurrences.map((occurrence) => (
+                      <View key={occurrence.traceIndex}>
+                        <Text style={styles.text}>{occurrence.intent}</Text>
+                        {occurrence.expectation ? (
+                          <Text style={baseStyles.textMuted}>
+                            {JSON.stringify(occurrence.expectation)}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ))}
+                    {renderFiles(criterion.id, display.raw)}
+                  </View>
+                ) : null}
+                {criterion.status?.note ? (
+                  <Text style={baseStyles.textMuted}>{criterion.status.note}</Text>
+                ) : null}
+              </View>
+            );
+          }}
+        />
+      ) : null}
       {expanded && showOccurrences
         ? evidenceModel?.occurrences.map((occurrence) => (
             <Pressable
@@ -357,6 +397,15 @@ const styles = StyleSheet.create({
     fontFamily: fonts.mono,
     fontWeight: '700',
   },
+  details: {
+    backgroundColor: colors.bgSurface,
+    padding: spacing.sm,
+  },
+  touchAction: {
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: 'center',
+  },
   row: {
     gap: 2,
     paddingTop: spacing.xs,
@@ -365,11 +414,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-  },
-  id: {
-    color: colors.textMuted,
-    fontSize: fonts.sizeXs,
-    fontFamily: fonts.mono,
   },
   pill: {
     borderWidth: 1,
@@ -398,6 +442,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   evidenceChip: {
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: 'center',
     maxWidth: '100%',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
@@ -410,7 +457,7 @@ const styles = StyleSheet.create({
   },
 });
 
-function TaskAcceptanceSkeleton({ rows = 3 }: { rows?: number }) {
+export function TaskAcceptanceSkeleton({ rows = 3 }: { rows?: number }) {
   return (
     <View
       style={styles.panel}

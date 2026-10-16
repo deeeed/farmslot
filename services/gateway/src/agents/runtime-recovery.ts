@@ -411,8 +411,8 @@ function statusAfterInspection(
 }
 
 export async function reconcileRunAgentRuntime(run: Run): Promise<void> {
-  if (run.transport === 'native') await reconcileNativeRunAgentRuntime(run);
-  else await reconcileTmuxRunAgentRuntime(run);
+  await reconcileNativeRunAgentRuntime(run);
+  if (run.transport !== 'native') await reconcileTmuxRunAgentRuntime(run);
 }
 
 async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestoreResult> {
@@ -424,6 +424,7 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
   const results: TmuxWorkerRestoreContextResult[] = [];
   const patches = new Map<string, Partial<AgentContext>>();
   for (const ctx of contexts) {
+    if (ctx.nativeSession || ctx.nativeSessionOwner) continue;
     const inspection = await inspectContextRuntime(run, ctx);
     const nextStatus = statusAfterInspection(run, ctx, inspection);
     const now = new Date().toISOString();
@@ -546,6 +547,8 @@ export async function restoreTmuxWorker(
       ? contexts.find((ctx) => ctx.id === params.contextId)
       : (contexts.find((ctx) => ctx.id === primaryContextId(run)) ?? contexts[0])) ?? null;
   if (!selected) throw new Error(`Run ${run.id} has no agent context to restore`);
+  if (selected.nativeSession || selected.nativeSessionOwner)
+    throw new Error('Use native session recovery for this review context');
   if (!activeContext(selected)) {
     throw new Error(
       `Agent context ${selected.id} is terminal (${selected.status}); restore a live context instead`,

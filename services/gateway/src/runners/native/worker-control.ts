@@ -27,9 +27,11 @@ function workerBinding(
   allowLaunchIntent = false,
 ) {
   const run = getRun(runId);
-  if (!run || run.transport !== 'native') throw new Error('Native worker run not found');
+  if (!run) throw new Error('Native worker run not found');
   assertNativeRunOwner(run);
   const context = selectAgentContext(run, { role, contextId });
+  if (run.transport !== 'native' && context?.role !== 'review')
+    throw new Error('Native review control requires its exact review context');
   const binding = resolveNativeContext(run, context)?.binding;
   if (!binding || (!binding.generation && !allowLaunchIntent) || binding.releasedAt)
     throw new Error('Native worker has no current process generation');
@@ -47,6 +49,7 @@ export function assertNativeWorkerSnapshot(
     info.executionNodeId !== binding.executionNodeId ||
     info.ownerPrincipalId !== binding.ownerPrincipalId ||
     info.workerLeaseId !== binding.leaseId ||
+    info.resultSchema !== binding.resultSchema ||
     !nativeWorkerProfileMatches(info, binding)
   )
     throw new Error('Native worker session, generation or task lease changed');

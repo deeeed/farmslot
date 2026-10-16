@@ -890,13 +890,19 @@ export async function prepareCompletionPackageTransitionLocked(
     publicationStatus: 'not_published',
     createdAt: new Date().toISOString(),
   };
-  if (run.claimOverrideReceipts?.length || run.visualJudgmentReceipts?.length) {
+  if (
+    run.claimOverrideReceipts?.length ||
+    run.visualJudgmentReceipts?.length ||
+    run.agentContexts?.some((c) => c.pipelineVisualReviewResult)
+  ) {
     const sources = await readFrozenRecordedEvidenceSources(
       run,
       evidenceManifest,
       basePackage.selectedEvidenceKeys,
       retained.ref,
     );
+    const { stampPipelineVisualReviews } = await import('../review/pipeline-visual-review.js');
+    await stampPipelineVisualReviews(run, sources, headSha);
     basePackage.visualJudgmentReceiptIds = appliedVisualJudgmentReceiptIds(
       run,
       sources.map(({ input }) => input),

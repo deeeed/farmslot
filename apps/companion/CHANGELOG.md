@@ -67,6 +67,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Use shared runner/model chips for new conversations, keep custom models behind Other model, and retain conversation-specific catalogs and profiles.
 
+- Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand.
+
 ## 0.8.1 - 2026-10-11
 
 - Compare CI decision snapshots with current PR checks and refresh without leaving the decision.
