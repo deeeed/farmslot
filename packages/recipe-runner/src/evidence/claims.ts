@@ -10,6 +10,7 @@ import {
   type RecipeVisualJudgment,
   type RecordingSegmentRef,
   validateRecipeClaimDeclarations,
+  validVisualJudgmentReason,
 } from '@farmslot/protocol';
 
 import { reachableNodes } from '../core/graph.js';
@@ -160,8 +161,7 @@ export function deriveRecipeClaims(
       if (
         judgment.recipeRunId !== input.recipeRunId ||
         !judgment.actor.trim() ||
-        (!judgment.reason?.trim() &&
-          !(qualified?.kind === 'person-reviewed' && judgment.verdict === 'confirmed')) ||
+        !validVisualJudgmentReason(qualified?.kind, judgment.verdict, judgment.reason) ||
         !Number.isFinite(Date.parse(judgment.judgedAt)) ||
         digestRecipeDocument(judgment.moments) !== digestRecipeDocument(moments)
       )

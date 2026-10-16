@@ -17,11 +17,29 @@
         "source": "rpc",
         "contains": "authenticated public RPC records a text-free confirmation and refuses an empty Issue",
         "intent": "The real authenticated endpoint and state readback passed.",
-        "next": "done"
+        "next": "feedback-regression"
       },
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "feedback-regression": {
+        "action": "command",
+        "cmd": "node scripts/quality/run-tsx-tests.mjs --cwd apps/command-center --tsconfig ui/tsconfig.json ui/src/components/workspace/ready-workspace-shell-renderers.test.ts",
+        "timeout_ms": 60000,
+        "intent": "Verify that stale-snapshot refusals remain visible outside collapsed package details.",
+        "next": "feedback-verified"
+      },
+      "feedback-verified": {
+        "action": "assert_output",
+        "source": "feedback-regression",
+        "assert": {
+          "path": "$.exitCode",
+          "operator": "eq",
+          "value": 0
+        },
+        "intent": "Require the publication-action visibility regression to pass.",
+        "next": "done"
       }
     }
   }

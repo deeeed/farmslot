@@ -44,6 +44,7 @@ import {
   type RunSessionCommandResult,
   runStepExecutionMs,
   runStepQueuedMs,
+  validVisualJudgmentReason,
   visibleInteractiveHandoffActions,
 } from '@farmslot/protocol';
 import {
@@ -850,8 +851,11 @@ export function registerRunCommand(program: Command): void {
           if (!opts.claim?.trim() || !opts.recipeRun?.trim())
             throw new Error('Visual review requires --claim and --recipe-run.');
           if (
-            !opts.reason?.trim() &&
-            (actionId === REJECT_VISUAL_CLAIM_ACTION || opts.judgmentKind === 'lead-agent-reviewed')
+            !validVisualJudgmentReason(
+              opts.judgmentKind ?? 'person-reviewed',
+              actionId === CONFIRM_VISUAL_CLAIM_ACTION ? 'confirmed' : 'rejected',
+              opts.reason,
+            )
           )
             throw new Error('Rejections and delegated visual reviews require --reason.');
           const candidates = opts.decision

@@ -10,6 +10,7 @@ import {
   type RecordedEvidencePackageInput,
   recordedVisualJudgments,
   reviewedVisualFiles,
+  validVisualJudgmentReason,
 } from '../../src/recipe/index.js';
 
 const input: RecordedEvidencePackageInput = JSON.parse(
@@ -230,4 +231,16 @@ test('only qualified person confirmation may omit its rationale', () => {
     recordedVisualJudgments(input, authority([{ ...confirmation, closureIdentity: 'other' }])),
     [],
   );
+});
+
+test('all consumers share the person-confirmation rationale rule', () => {
+  for (const kind of [undefined, 'person-reviewed', 'lead-agent-reviewed'] as const) {
+    for (const verdict of ['confirmed', 'rejected'] as const) {
+      assert.equal(
+        validVisualJudgmentReason(kind, verdict),
+        kind === 'person-reviewed' && verdict === 'confirmed',
+      );
+      assert.equal(validVisualJudgmentReason(kind, verdict, 'Observed the clip.'), true);
+    }
+  }
 });

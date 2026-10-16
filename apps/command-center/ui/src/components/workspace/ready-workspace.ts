@@ -16,6 +16,7 @@ import {
   MARK_CLAIM_UNTESTABLE_ACTION,
   Methods,
   type ReadyGatePayload,
+  validVisualJudgmentReason,
 } from '@farmslot/protocol';
 import { resolveReviewDispatchDefaults } from '@farmslot/review-dispatch';
 
@@ -227,8 +228,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         claimId,
         gateway.authenticatedPrincipal,
         verdict,
-        verdict === 'confirmed' &&
-          model.visualReviewKind(claimId, gateway.authenticatedPrincipal) === 'person-reviewed'
+        validVisualJudgmentReason(
+          model.visualReviewKind(claimId, gateway.authenticatedPrincipal) ?? undefined,
+          verdict,
+        )
           ? undefined
           : this._visualReviewReasons[claimId],
       );
@@ -236,8 +239,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params);
       await this._loadReviewEvidence();
       this._actionMessage = 'Visual judgment recorded.';
+      this._actionTone = 'success';
     } catch (error) {
       this._actionMessage = error instanceof Error ? error.message : String(error);
+      this._actionTone = 'error';
     } finally {
       this._acting = false;
     }

@@ -21,6 +21,7 @@
     "@farmslot/agent-runtime": "workspace:*",
     "@farmslot/capabilities": "workspace:*",
     "@farmslot/credential-store": "workspace:*",
+    "@farmslot/handoff": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/run-bundle": "workspace:*",

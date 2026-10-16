@@ -1,6 +1,5 @@
 import DOMPurify from 'dompurify';
 import { html, nothing } from 'lit';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { marked } from 'marked';
 
 import {
@@ -15,6 +14,7 @@ import {
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 
 import {
   renderRunPostureGateChoices,
@@ -122,7 +122,7 @@ export function renderInteractiveHandoffGate(
     </style>
     <div class="gate-body">
       <div class="gate-description md-body">
-        ${unsafeHTML(
+        ${gatewayMediaHtml(
           DOMPurify.sanitize(marked.parse(decision.description ?? '', { async: false }) as string),
         )}
       </div>

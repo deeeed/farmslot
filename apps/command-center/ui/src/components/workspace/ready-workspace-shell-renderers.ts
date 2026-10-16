@@ -79,6 +79,19 @@ export function renderReadyTopBar(input: {
       invoke: input.confirmAction,
       requestReview: input.openReviewRequestModal,
     })}
+    ${input.actionMessage && (!input.reviewProgress || input.actionTone === 'error')
+      ? html`<div
+          class="rdy-action-feedback ${input.actionTone}"
+          role=${input.actionTone === 'error' ? 'alert' : 'status'}
+        >
+          ${input.actionMessage}
+        </div>`
+      : nothing}
+    ${input.reviewProgress
+      ? html`<div role="status" class="rdy-action-feedback" data-testid="rdy-review-progress">
+          ${input.reviewProgress}
+        </div>`
+      : nothing}
     <details class="rdy-gate-details">
       <summary>Package</summary>
       <div class="rdy-top-bar">
@@ -110,14 +123,6 @@ export function renderReadyTopBar(input: {
           ><span class="rdy-stat-del">-${diffStat.deletions}</span
           ><span class="rdy-stat-files">${diffStat.files} files</span>
         </button>
-        ${input.reviewProgress
-          ? html`<span role="status" data-testid="rdy-review-progress"
-              >${input.reviewProgress}</span
-            >`
-          : nothing}
-        ${input.actionMessage && (!input.reviewProgress || input.actionTone === 'error')
-          ? html`<div class="rdy-action-feedback ${input.actionTone}">${input.actionMessage}</div>`
-          : nothing}
       </div>
     </details>
   `;

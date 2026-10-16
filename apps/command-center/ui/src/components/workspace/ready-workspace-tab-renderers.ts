@@ -1,7 +1,8 @@
 import { html, nothing, type TemplateResult } from 'lit';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type { ArtifactRef, PublicationTarget, ReadyGatePayload } from '@farmslot/protocol';
+
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 
 import type { ReadyInputArtifact } from './ready-workspace-inputs.js';
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
@@ -32,7 +33,7 @@ export function renderReadyPrPreviewTab(input: {
         >
       </div>
       ${input.claims ?? nothing}
-      <div class="rdy-pr-preview-body rdy-md-section">${unsafeHTML(input.markdown)}</div>
+      <div class="rdy-pr-preview-body rdy-md-section">${gatewayMediaHtml(input.markdown)}</div>
     </div>
   `;
 }
@@ -266,7 +267,7 @@ export function renderWorkspaceLearningsTab(input: { workerLearnings?: string })
   if (!input.workerLearnings) return html`<div class="rdy-tab-empty">No learnings</div>`;
   return html`
     <div class="rdy-learnings-tab rdy-md-section">
-      ${unsafeHTML(renderReadyWorkspaceMarkdown(input.workerLearnings))}
+      ${gatewayMediaHtml(renderReadyWorkspaceMarkdown(input.workerLearnings))}
     </div>
   `;
 }

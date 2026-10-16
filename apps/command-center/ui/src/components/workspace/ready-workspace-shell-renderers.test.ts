@@ -180,3 +180,40 @@ test('renderReadyDiffTab keeps the toggle reachable when every changed file is a
   assert.match(text, /Only test files changed/);
   assert.doesNotMatch(text, /No changed files/);
 });
+
+test('action refusals remain visible outside collapsed package details', () => {
+  const text = litText(
+    renderReadyTopBar({
+      payload: gateFixture(),
+      publicationTarget: 'draft',
+      pendingConfirm: null,
+      acting: false,
+      recovering: false,
+      fileDiffAvailable: false,
+      decision: {
+        id: 'gate',
+        type: 'engine_human_gate',
+        title: 'Review',
+        description: '',
+        createdAt: '2026-10-16T00:00:00Z',
+        actions: [{ id: 'request-review', label: 'Request review', style: 'secondary' }],
+      },
+      actionMessage: 'The displayed visual review snapshot changed.',
+      actionTone: 'error',
+      reviewProgress: 'Review in progress',
+      openDiff: () => undefined,
+      openReviewRequestModal: () => undefined,
+      confirmAction: () => undefined,
+    }),
+  );
+  assert.match(text, /role=alert/);
+  assert.match(text, /rdy-request-review/);
+  assert.ok(
+    text.indexOf('Review in progress') < text.indexOf('<details class="rdy-gate-details">'),
+  );
+
+  assert.ok(
+    text.indexOf('The displayed visual review snapshot changed.') <
+      text.indexOf('<details class="rdy-gate-details">'),
+  );
+});

@@ -1,6 +1,5 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
   BacklogArchiveResult,
@@ -78,6 +77,7 @@ import type {
 } from '../shared/dispatch-config-editor.js';
 import { summarizeBacklogDispatchConfig } from '../shared/dispatch-config-summary.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import { linkedRunForBacklogItem, linkedRunsForBacklogItems } from '../shared/linked-run-model.js';
 import {
   planningBadgeStyles,
@@ -2591,7 +2591,7 @@ export class BacklogPanel extends LitElement {
           ${spec
             ? this._specViewerMode === 'markdown'
               ? html`<div class="spec-markdown">
-                  ${unsafeHTML(renderMarkdown(this._specMarkdownBody(spec.content)))}
+                  ${gatewayMediaHtml(renderMarkdown(this._specMarkdownBody(spec.content)))}
                 </div>`
               : html`<pre class="spec-raw">${spec.content}</pre>`
             : nothing}

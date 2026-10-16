@@ -4,6 +4,8 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Stop treating opaque diagnostic session IDs and separate underscore-bearing recipe identifiers as secrets; retain credential-token, cookie, mnemonic and private-key checks.
+
 - Fix the quality check for closeout fixtures with intentionally ignored task metadata fields.
 
 ## 0.3.1 - 2026-07-24

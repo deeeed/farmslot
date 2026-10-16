@@ -96,6 +96,7 @@ export function GateReviewScreen({
         style={{ minHeight: 44, justifyContent: 'center' }}
         accessibilityRole="button"
         accessibilityState={{ expanded: detailsOpen }}
+        testID="companion-gate-review-details-toggle"
         onPress={() => setDetailsOpen(!detailsOpen)}
       >
         <Text style={baseStyles.textSecondary}>Evidence and details</Text>

@@ -1,5 +1,4 @@
 import { html, nothing } from 'lit';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type { ArtifactRef, ReviewStatus } from '@farmslot/protocol';
 import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
@@ -8,6 +7,7 @@ import '../shared/review-dispatch-picker.js';
 
 import { reviewHasPendingContinuationPhases } from '../../utils/review-gate-display.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 
 import type { ReadyInputArtifact } from './ready-workspace-inputs.js';
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
@@ -40,7 +40,7 @@ export function renderReadyInputArtifactViewer(ctx: ReadyInputArtifactViewerCont
         <div class="rdy-input-viewer-body">
           ${artifact.format === 'markdown'
             ? html`<div class="rdy-md-section rdy-input-md">
-                ${unsafeHTML(renderReadyWorkspaceMarkdown(artifact.body))}
+                ${gatewayMediaHtml(renderReadyWorkspaceMarkdown(artifact.body))}
               </div>`
             : html`<pre class="rdy-input-pre">${artifact.body}</pre>`}
         </div>

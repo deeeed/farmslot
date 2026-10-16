@@ -1,6 +1,10 @@
 import { html, nothing } from 'lit';
 
-import { type PublicationGateInput, publicationGateView } from '@farmslot/review-dispatch';
+import {
+  type PublicationGateInput,
+  publicationGateView,
+  visualPrevalidationLabel,
+} from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
 import { fonts, radii, spacing } from '../../styles/theme-tokens.js';
@@ -53,7 +57,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                         changeReason: (reason) => input.changeReviewReason?.(claim.id, reason),
                         record: (verdict) => input.recordReview?.(claim.id, verdict),
                       })
-                    : html`<span class="gate-prevalidation">Agent review · Not recorded</span>`}
+                    : html`<span class="gate-prevalidation">${visualPrevalidationLabel()}</span>`}
                 </li>`,
             )}
           </ul>
@@ -121,6 +125,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                       class="gate-secondary"
                       type="button"
                       data-action=${action.id}
+                      data-testid=${action.id === 'request-review' ? 'rdy-request-review' : nothing}
                       title=${action.description ?? ''}
                       ?disabled=${input.busy ||
                       Boolean(action.disabledReason) ||
@@ -172,6 +177,7 @@ export function publicationGatePanelStyles() {
     ready-workspace .gate-secondary { border: 1px solid var(--gate-border); background: var(--gate-surface); color: var(--gate-text); }
     ready-workspace .publication-gate button:disabled { opacity: 0.65; cursor: not-allowed; }
     ready-workspace .publication-gate :focus-visible { outline: 2px solid var(--gate-accent); outline-offset: 2px; }
+    ready-workspace .rdy-review-content { flex: 1; min-height: 0; overflow: auto; }
     ready-workspace .rdy-gate-details, ready-workspace .rdy-review-content { padding: ${spacing.md} ${spacing.lg}; }
     ready-workspace .rdy-gate-details > summary, ready-workspace .rdy-review-content > summary, ready-workspace .rdy-package-details > summary { cursor: pointer; padding: ${spacing.md}; min-height: 44px; display: flex; align-items: center; }
     ready-workspace .gate-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

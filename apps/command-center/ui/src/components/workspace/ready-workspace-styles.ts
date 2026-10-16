@@ -46,9 +46,10 @@ export function readyWorkspaceLightStyles(): string {
         border-radius: ${radii.sm}; text-transform: uppercase; letter-spacing: 0.04em;
       }
       ready-workspace .rdy-action-feedback {
-        min-width: 220px;
-        max-width: 360px;
-        font-size: 11px;
+        padding: 0 ${spacing.lg} ${spacing.md};
+        flex-shrink: 0;
+        font-size: ${fonts.sizeSm};
+        overflow-wrap: anywhere;
         color: ${colors.textMuted};
       }
       ready-workspace .rdy-action-feedback.success {

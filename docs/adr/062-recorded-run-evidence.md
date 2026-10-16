@@ -567,6 +567,7 @@ cutover; package release and deployment remain separate delivery records.
 ## Amendment 9 (2026-10-16): Per-criterion confirmation without a text form
 
 **Status:** Accepted. Arthur approved the wording and existing per-AC audit trail on 2026-10-16; paired design review approved revision 2 before implementation.
+**Implementation:** [#1179](https://github.com/deeeed/farmslot/pull/1179), coordinated rollout pending.
 **Specification:** [Per-criterion confirmation](../reference/recorded-run-evidence.md#per-criterion-confirmation).
 
 ### Decision

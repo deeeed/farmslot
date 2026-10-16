@@ -190,8 +190,8 @@
       },
       "assert-decision-guard": {
         "action": "ui.wait_for",
-        "test_id": "companion-decision-publish-guard",
-        "text_contains": ["Publish approval is disabled", "AC-2 has no verdict"],
+        "test_id": "companion-gate-review-approve-reason",
+        "text_contains": ["AC-2 has no verdict"],
         "timeout_ms": 15000,
         "intent": "The decision workspace withholds publish approval for the same reason.",
         "proves": ["approve-guard"],
@@ -213,7 +213,7 @@
       },
       "press-decision-approve": {
         "action": "ui.press",
-        "selector": "id=\"companion-decision-action-approve-publish\" enabled=false",
+        "selector": "id=\"companion-gate-review-action-approve-publish\" enabled=false",
         "intent": "The operator tries approve on the Gate tab, which matches only while it is disabled.",
         "proves": ["approve-guard"],
         "next": "no-decision-confirm"
@@ -245,7 +245,7 @@
         "action": "ui.press",
         "test_id": "companion-open-gate-review",
         "intent": "Open the gate review from run detail.",
-        "next": "wait-summary"
+        "next": "open-gate-details"
       },
       "wait-summary": {
         "action": "ui.wait_for",
@@ -291,7 +291,7 @@
       },
       "assert-counts": {
         "action": "ui.wait_for",
-        "text_contains": ["1/2 assessed · 1 proven"],
+        "text_contains": ["1/2 assessed \u00b7 1 proven"],
         "timeout_ms": 15000,
         "intent": "The criteria header counts assessed and proven criteria.",
         "proves": ["gate-review-screen", "approve-guard"],
@@ -350,7 +350,7 @@
       "wait-viewer": {
         "action": "ui.wait_for",
         "test_id": "companion-ac-evidence-viewer-detail",
-        "text": "AC-1 · proven · visual · node capture-recipes",
+        "text": "AC-1 \u00b7 proven \u00b7 visual \u00b7 node capture-recipes",
         "timeout_ms": 30000,
         "intent": "The artifact viewer opens on the evidence with the criterion's verdict on its header.",
         "proves": ["ac-evidence-viewer"],
@@ -446,15 +446,15 @@
       },
       "scroll-actions": {
         "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 900,
-        "intent": "Show the gate actions below the evidence.",
+        "direction": "up",
+        "pixels": 2400,
+        "intent": "Return to the decision status and actions above the evidence.",
         "next": "assert-reason"
       },
       "assert-reason": {
         "action": "ui.wait_for",
         "test_id": "companion-gate-review-approve-reason",
-        "text_contains": ["Publish approval is disabled", "AC-2 has no verdict"],
+        "text_contains": ["AC-2 has no verdict"],
         "timeout_ms": 10000,
         "intent": "The reason publish approval is withheld is shown above the actions.",
         "proves": ["approve-guard"],
@@ -495,7 +495,7 @@
         "cmd": "node scripts/agentic/gate-review-proof.mjs verify-pending",
         "intent": "The gateway still holds the gate open after the approve press.",
         "proves": ["approve-guard"],
-        "next": "press-extra-review"
+        "next": "open-gate-more-actions"
       },
       "press-extra-review": {
         "action": "ui.press",
@@ -573,7 +573,7 @@
         "action": "command",
         "cmd": "node scripts/agentic/gate-review-proof.mjs open-issues-gate",
         "intent": "Open the second gate, whose claude review has open findings.",
-        "next": "wait-issues-summary"
+        "next": "open-issues-details"
       },
       "wait-issues-summary": {
         "action": "ui.wait_for",
@@ -585,7 +585,7 @@
       },
       "assert-issues-counts": {
         "action": "ui.wait_for",
-        "text_contains": ["2/2 assessed · 2 proven"],
+        "text_contains": ["2/2 assessed \u00b7 2 proven"],
         "timeout_ms": 15000,
         "intent": "Every criterion of the second gate is proven.",
         "proves": ["approve-guard"],
@@ -593,15 +593,15 @@
       },
       "scroll-issues-actions": {
         "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 900,
-        "intent": "Show the second gate's actions below its evidence.",
+        "direction": "up",
+        "pixels": 2400,
+        "intent": "Return to the decision status and actions above the evidence.",
         "next": "assert-issues-reason"
       },
       "assert-issues-reason": {
         "action": "ui.wait_for",
         "test_id": "companion-gate-review-approve-reason",
-        "text_contains": ["Latest claude review is issues · 2 unresolved"],
+        "text_contains": ["Latest claude review is issues \u00b7 2 unresolved"],
         "timeout_ms": 10000,
         "intent": "The review with open findings is the reason approve-publish is withheld.",
         "proves": ["approve-guard"],
@@ -648,7 +648,7 @@
         "action": "command",
         "cmd": "node scripts/agentic/gate-review-proof.mjs open-bypass-gate",
         "intent": "Open the third gate, where no review passed and every criterion is judged.",
-        "next": "wait-bypass-summary"
+        "next": "open-bypass-details"
       },
       "wait-bypass-summary": {
         "action": "ui.wait_for",
@@ -660,10 +660,10 @@
       },
       "scroll-bypass-actions": {
         "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 900,
-        "intent": "Show the third gate's actions below its evidence.",
-        "next": "wait-bypass-action"
+        "direction": "up",
+        "pixels": 2400,
+        "intent": "Return to the decision status and actions above the evidence.",
+        "next": "open-bypass-more-actions"
       },
       "wait-bypass-action": {
         "action": "ui.wait_for",
@@ -675,10 +675,10 @@
       },
       "no-bypass-notice": {
         "action": "ui.wait_for",
-        "test_id": "companion-gate-review-approve-reason",
-        "expected": "absent",
+        "selector": "id=\"companion-gate-review-action-approve-publish-unresolved\" enabled=true",
+        "expected": "visible",
         "timeout_ms": 3000,
-        "intent": "Nothing is withheld once every criterion is judged and only the bypass is offered.",
+        "intent": "The review bypass remains enabled when every criterion is judged.",
         "proves": ["approve-guard"],
         "next": "hud-bypass"
       },
@@ -881,6 +881,36 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "open-gate-details": {
+        "action": "ui.press",
+        "test_id": "companion-gate-review-details-toggle",
+        "intent": "Open package and evidence details on demand.",
+        "next": "wait-summary"
+      },
+      "open-issues-details": {
+        "action": "ui.press",
+        "test_id": "companion-gate-review-details-toggle",
+        "intent": "Open package and evidence details on demand.",
+        "next": "wait-issues-summary"
+      },
+      "open-bypass-details": {
+        "action": "ui.press",
+        "test_id": "companion-gate-review-details-toggle",
+        "intent": "Open package and evidence details on demand.",
+        "next": "wait-bypass-summary"
+      },
+      "open-gate-more-actions": {
+        "action": "ui.press",
+        "test_id": "companion-gate-review-more-actions",
+        "intent": "Open secondary gate actions on demand.",
+        "next": "press-extra-review"
+      },
+      "open-bypass-more-actions": {
+        "action": "ui.press",
+        "test_id": "companion-gate-review-more-actions",
+        "intent": "Open secondary gate actions on demand.",
+        "next": "wait-bypass-action"
       }
     }
   }

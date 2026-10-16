@@ -1,6 +1,5 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
   BacklogItem,
@@ -45,6 +44,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import {
   planningBadgeStyles,
   renderPlanningBadge,
@@ -1875,7 +1875,9 @@ export class RoadmapPanel extends LitElement {
       </div>`,
       content: preview
         ? this._promptViewerMode === 'markdown'
-          ? html`<div class="prompt-markdown">${unsafeHTML(renderMarkdown(preview.content))}</div>`
+          ? html`<div class="prompt-markdown">
+              ${gatewayMediaHtml(renderMarkdown(preview.content))}
+            </div>`
           : html`<pre class="prompt-preview">${preview.content}</pre>`
         : html`<div class="muted">
             ${this._promptPreviewLoading === this._promptViewerPath
@@ -1985,7 +1987,7 @@ export class RoadmapPanel extends LitElement {
       content:
         this._promptViewerMode === 'markdown'
           ? html`<div class="prompt-markdown">
-              ${unsafeHTML(renderMarkdown(attachment.content))}
+              ${gatewayMediaHtml(renderMarkdown(attachment.content))}
             </div>`
           : html`<pre class="prompt-preview">${attachment.content}</pre>`,
     });
@@ -2044,7 +2046,7 @@ export class RoadmapPanel extends LitElement {
       content:
         this._promotionDraftModalMode === 'view'
           ? html`<div class="prompt-markdown">
-              ${unsafeHTML(renderMarkdown(this._promotionDraftMarkdown(spec, index)))}
+              ${gatewayMediaHtml(renderMarkdown(this._promotionDraftMarkdown(spec, index)))}
             </div>`
           : html`<div class="draft-editor">
               <div class="field">

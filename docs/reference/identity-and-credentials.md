@@ -31,6 +31,9 @@ farmslot --gateway personal auth status personal
 The authenticated identity must report `subjectKind: person` before human
 attestations. Keep automation in a separate CLI home and profile so a scheduled
 job cannot use a person's credential.
+Set each machine pool's `env.FARMSLOT_HOME` to its service profile home; worker
+launches and deployment verification use that existing override. The service
+profile must match the exact node gateway URL, including its host and path.
 
 ## Issue, rotate and revoke
 

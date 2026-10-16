@@ -17,6 +17,15 @@ export const REJECT_VISUAL_CLAIM_ACTION = 'reject-visual';
 
 export type RecipeVisualJudgmentKind = 'person-reviewed' | 'lead-agent-reviewed';
 
+/** Undefined kind is unqualified embedded input, which always needs rationale. */
+export function validVisualJudgmentReason(
+  kind: RecipeVisualJudgmentKind | undefined,
+  verdict: RecipeVisualJudgment['verdict'],
+  reason?: string,
+): boolean {
+  return Boolean(reason?.trim()) || (kind === 'person-reviewed' && verdict === 'confirmed');
+}
+
 export interface ProjectVisualClaimReviewPolicy {
   delegatedReviewerPrincipalIds: string[];
   delegatorPrincipalId: string;
@@ -154,7 +163,7 @@ export function recordedVisualJudgments(
       receipt.closureIdentity !== authority.closureIdentity ||
       !receipt.id?.trim() ||
       !isEvidenceAttestationApprover(receipt.approver) ||
-      (!receipt.reason?.trim() && (delegated || receipt.verdict !== 'confirmed')) ||
+      !validVisualJudgmentReason(kind, receipt.verdict, receipt.reason) ||
       !['confirmed', 'rejected'].includes(receipt.verdict) ||
       !Number.isFinite(Date.parse(receipt.judgedAt)) ||
       digestRecipeDocument(receipt.moments) !== digestRecipeDocument(claim.moments) ||

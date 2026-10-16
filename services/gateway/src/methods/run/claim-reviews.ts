@@ -18,6 +18,7 @@ import {
   type RunReviewVisualClaimParams,
   type RunReviewVisualClaimResult,
   sameEvidenceAttestationApprover,
+  validVisualJudgmentReason,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
@@ -58,7 +59,7 @@ export async function runReviewVisualClaim(
   const reason = params.reason?.trim();
   if (
     !['confirmed', 'rejected'].includes(params.verdict) ||
-    (!reason && (delegated || params.verdict !== 'confirmed'))
+    !validVisualJudgmentReason(kind, params.verdict, reason)
   )
     throw new Error('Rejections and delegated visual reviews require a written reason.');
   if (

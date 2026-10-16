@@ -1,15 +1,13 @@
-import DOMPurify from 'dompurify';
-import { html, LitElement } from 'lit';
+import { html, LitElement, render, type RootPart } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { marked } from 'marked';
 import type * as monaco from 'monaco-editor';
 
 import type { Diagnostic, PRReviewThread } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { renderMarkdown } from '../../utils/markdown.js';
 import { adoptDocumentCss } from '../../utils/shadow-css.js';
-
-marked.setOptions({ breaks: true, gfm: true });
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 
 // Monaco is multi-MB of JS. Loading it eagerly forces every page reload to
 // re-parse it on the main thread, which compounds with HMR full-reload bursts
@@ -227,6 +225,7 @@ export class CodeViewer extends LitElement {
   private _resizeObserver?: ResizeObserver;
   private _decorations: monaco.editor.IEditorDecorationsCollection | undefined;
   private _commentDecorations: monaco.editor.IEditorDecorationsCollection | undefined;
+  private _commentBodies: RootPart[] = [];
   private _viewZoneIds: string[] = [];
   private _viewZoneDomNodes: HTMLElement[] = [];
   private _collapsedThreadIds = new Set<string>(); // collapsed by default = false, tracks manually collapsed ones
@@ -350,6 +349,7 @@ export class CodeViewer extends LitElement {
     super.disconnectedCallback();
     this._resizeObserver?.disconnect();
     this._layoutDisposable?.dispose();
+    this._disposeCommentBodies();
     // Clean up view zones before disposing
     if (this._editor && this._viewZoneIds.length > 0) {
       this._editor.changeViewZones((accessor) => {
@@ -455,6 +455,7 @@ export class CodeViewer extends LitElement {
   private _applyCommentZones() {
     if (!this._editor) return;
 
+    this._disposeCommentBodies();
     // Remove old zones
     this._editor.changeViewZones((accessor) => {
       for (const id of this._viewZoneIds) accessor.removeZone(id);
@@ -489,12 +490,21 @@ export class CodeViewer extends LitElement {
     this._editor.changeViewZones((accessor) => {
       for (const { thread, domNode, height } of widgets) {
         this._viewZoneDomNodes.push(domNode);
-        const id = accessor.addZone({
+        const zone = {
           afterLineNumber: thread.line!,
           heightInPx: Math.max(24, height),
           domNode,
           suppressMouseDown: false,
-        });
+        };
+        const id = accessor.addZone(zone);
+        domNode.addEventListener(
+          'load',
+          () => {
+            zone.heightInPx = Math.max(24, domNode.scrollHeight + 4);
+            this._editor?.changeViewZones((zones) => zones.layoutZone(id));
+          },
+          true,
+        );
         this._viewZoneIds.push(id);
       }
     });
@@ -536,10 +546,7 @@ export class CodeViewer extends LitElement {
     if (collapsed) return widget;
 
     // Body (markdown)
-    const body = document.createElement('div');
-    body.className = 'cv-tw-body';
-    body.innerHTML = DOMPurify.sanitize(marked.parse(first.body, { async: false }) as string);
-    widget.appendChild(body);
+    widget.appendChild(this._createCommentBody(first.body));
 
     // All replies inline
     if (replyCount > 0) {
@@ -551,13 +558,25 @@ export class CodeViewer extends LitElement {
             <span class="cv-tw-author">${this._esc(c.author)}</span>
             <span class="cv-tw-time">${this._timeAgo(c.createdAt)}</span>
           </div>
-          <div class="cv-tw-body">${DOMPurify.sanitize(marked.parse(c.body, { async: false }) as string)}</div>
         `;
+        commentEl.appendChild(this._createCommentBody(c.body));
         widget.appendChild(commentEl);
       }
     }
 
     return widget;
+  }
+
+  private _createCommentBody(markdown: string): HTMLElement {
+    const body = document.createElement('div');
+    body.className = 'cv-tw-body';
+    this._commentBodies.push(render(gatewayMediaHtml(renderMarkdown(markdown)), body));
+    return body;
+  }
+
+  private _disposeCommentBodies(): void {
+    for (const body of this._commentBodies) body.setConnected(false);
+    this._commentBodies = [];
   }
 
   private _esc(s: string): string {
@@ -725,6 +744,10 @@ export class CodeViewer extends LitElement {
           word-break: break-word;
           overflow-wrap: break-word;
           overflow: hidden;
+        }
+        .cv-tw-body img,
+        .cv-tw-body video {
+          max-width: 100%;
         }
         .cv-tw-body p {
           margin: 2px 0;

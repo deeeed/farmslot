@@ -26,6 +26,7 @@ import type {
   TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import { validVisualJudgmentReason } from '@farmslot/protocol';
 import {
   buildRunResolveDecisionParams,
   Events,
@@ -1283,8 +1284,10 @@ export class RunDetail extends RunDetailState {
         claimId,
         gateway.authenticatedPrincipal,
         verdict,
-        verdict === 'confirmed' &&
-          model.visualReviewKind(claimId, gateway.authenticatedPrincipal) === 'person-reviewed'
+        validVisualJudgmentReason(
+          model.visualReviewKind(claimId, gateway.authenticatedPrincipal) ?? undefined,
+          verdict,
+        )
           ? undefined
           : this._visualReviewReasons[claimId],
       );

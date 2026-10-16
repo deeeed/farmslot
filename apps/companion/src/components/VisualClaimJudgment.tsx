@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Pressable, Text, TextInput, useColorScheme, View } from 'react-native';
 
 import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
+import { validVisualJudgmentReason } from '@farmslot/protocol';
+import { visualPrevalidationLabel } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
 /** Shared by the gate and Compare by AC. Only Issue asks a person for prose. */
@@ -21,9 +23,6 @@ export function VisualClaimJudgment({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const delegated = row.reviewKind === 'lead-agent-reviewed';
-  const pending =
-    row.claim.status?.verdict === 'awaiting-review' &&
-    ['visual', 'mixed'].includes(row.claim.status.proofMode ?? '');
   const blocked = disabled || busy || !row.reviewKind || !onRecord;
   const record = async (verdict: 'confirmed' | 'rejected') => {
     if (!onRecord || busy) return;
@@ -33,7 +32,7 @@ export function VisualClaimJudgment({
       await onRecord(
         row.claim.id,
         verdict,
-        verdict === 'confirmed' && !delegated ? undefined : reason,
+        validVisualJudgmentReason(row.reviewKind ?? undefined, verdict) ? undefined : reason,
       );
       setIssue(false);
       setReason('');
@@ -55,14 +54,7 @@ export function VisualClaimJudgment({
   };
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ color: palette.text }}>
-        Agent review ·{' '}
-        {row.prevalidation
-          ? row.prevalidation.verdict === 'confirmed'
-            ? 'Looks right'
-            : 'Issue'
-          : 'Not recorded'}
-      </Text>
+      <Text style={{ color: palette.text }}>{visualPrevalidationLabel(row)}</Text>
       {row.prevalidation ? (
         <Text style={{ color: palette.text }}>{row.prevalidation.reason}</Text>
       ) : null}
@@ -72,7 +64,7 @@ export function VisualClaimJudgment({
       {row.claim.proofKinds.includes('assertion') ? (
         <Text style={{ color: palette.secondary }}>Recorded checks</Text>
       ) : null}
-      {row.reviewKind || pending ? (
+      {row.reviewKind || row.pending ? (
         <>
           {issue || delegated ? (
             <TextInput
@@ -90,7 +82,10 @@ export function VisualClaimJudgment({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Looks right for ${row.claim.id}`}
-              disabled={blocked || (delegated && !reason.trim())}
+              disabled={
+                blocked ||
+                !validVisualJudgmentReason(row.reviewKind ?? undefined, 'confirmed', reason)
+              }
               onPress={() => void record('confirmed')}
               style={buttonStyle}
             >
@@ -108,7 +103,10 @@ export function VisualClaimJudgment({
             {issue ? (
               <Pressable
                 accessibilityRole="button"
-                disabled={blocked || !reason.trim()}
+                disabled={
+                  blocked ||
+                  !validVisualJudgmentReason(row.reviewKind ?? undefined, 'rejected', reason)
+                }
                 onPress={() => void record('rejected')}
                 style={buttonStyle}
               >

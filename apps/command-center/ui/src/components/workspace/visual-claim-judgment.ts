@@ -1,6 +1,8 @@
 import { html, nothing } from 'lit';
 
 import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
+import { validVisualJudgmentReason } from '@farmslot/protocol';
+import { visualPrevalidationLabel } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
 export interface VisualClaimJudgmentInput {
@@ -15,9 +17,6 @@ export interface VisualClaimJudgmentInput {
 export function renderVisualClaimJudgment(input: VisualClaimJudgmentInput) {
   const { row } = input;
   const delegated = row.reviewKind === 'lead-agent-reviewed';
-  const pending =
-    row.claim.status?.verdict === 'awaiting-review' &&
-    ['visual', 'mixed'].includes(row.claim.status.proofMode ?? '');
   const rationale = html`<label
     >Reason
     <textarea
@@ -31,12 +30,9 @@ export function renderVisualClaimJudgment(input: VisualClaimJudgmentInput) {
   return html`<div class="visual-claim-judgment" data-visual-review=${row.claim.id}>
     <p class="gate-prevalidation">
       ${row.prevalidation
-        ? html`<strong
-              >Agent review ·
-              ${row.prevalidation.verdict === 'confirmed' ? 'Looks right' : 'Issue'}</strong
-            >
+        ? html`<strong>${visualPrevalidationLabel(row)}</strong>
             <span>${row.prevalidation.reason}</span><span>${row.prevalidation.reviewer}</span>`
-        : html`<span>Agent review · Not recorded</span>`}
+        : html`<span>${visualPrevalidationLabel(row)}</span>`}
     </p>
     ${row.claim.reviewLabels.length
       ? html`<span>${row.claim.reviewLabels.join(' · ')}</span>`
@@ -44,14 +40,16 @@ export function renderVisualClaimJudgment(input: VisualClaimJudgmentInput) {
     ${row.claim.proofKinds.includes('assertion')
       ? html`<span class="gate-check">Recorded checks</span>`
       : nothing}
-    ${row.reviewKind || pending
+    ${row.reviewKind || row.pending
       ? html`<div class="gate-judgment-actions">
           ${delegated ? rationale : nothing}
           <button
             class="gate-secondary"
             type="button"
             data-review-verdict="confirmed"
-            ?disabled=${input.busy || !row.reviewKind || (delegated && !input.reason.trim())}
+            ?disabled=${input.busy ||
+            !row.reviewKind ||
+            !validVisualJudgmentReason(row.reviewKind ?? undefined, 'confirmed', input.reason)}
             @click=${() => input.record('confirmed')}
           >
             Looks right
@@ -65,7 +63,8 @@ export function renderVisualClaimJudgment(input: VisualClaimJudgmentInput) {
                   class="gate-secondary"
                   type="button"
                   data-review-verdict="rejected"
-                  ?disabled=${input.busy || !input.reason.trim()}
+                  ?disabled=${input.busy ||
+                  !validVisualJudgmentReason(row.reviewKind ?? undefined, 'rejected', input.reason)}
                   @click=${() => input.record('rejected')}
                 >
                   Record issue

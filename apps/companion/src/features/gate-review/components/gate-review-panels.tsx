@@ -17,6 +17,7 @@ import {
   type PublicationGateClaim,
   publicationGateView,
   type ReviewDispatchViewModel,
+  visualPrevalidationLabel,
 } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
@@ -250,7 +251,11 @@ export function GateActions({
         { backgroundColor: palette.background, borderColor: palette.border },
       ]}
     >
-      <Text accessibilityRole="header" style={[gateStyles.status, { color: palette.text }]}>
+      <Text
+        testID="companion-gate-review-approve-reason"
+        accessibilityRole="header"
+        style={[gateStyles.status, { color: palette.text }]}
+      >
         {view.status}
       </Text>
       {view.claims.length ? (
@@ -301,7 +306,7 @@ export function GateActions({
                     disabled={disabled || sendingActionId !== null}
                   />
                 ) : (
-                  <Text style={{ color: palette.secondary }}>Agent review · Not recorded</Text>
+                  <Text style={{ color: palette.secondary }}>{visualPrevalidationLabel()}</Text>
                 )}
               </View>
             ))}
@@ -359,6 +364,7 @@ export function GateActions({
             style={gateStyles.button}
             accessibilityRole="button"
             accessibilityState={{ expanded: moreActions }}
+            testID="companion-gate-review-more-actions"
             onPress={() => setMoreActions(!moreActions)}
           >
             <Text style={{ color: palette.secondary }}>More actions</Text>

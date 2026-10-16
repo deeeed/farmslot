@@ -126,3 +126,9 @@ export function publicationGateView(input: PublicationGateInput) {
 }
 
 export type PublicationGateView = ReturnType<typeof publicationGateView>;
+
+export function visualPrevalidationLabel(
+  row?: Pick<EvidenceReviewJudgmentRow, 'prevalidation'>,
+): string {
+  return `Agent review · ${row?.prevalidation ? (row.prevalidation.verdict === 'confirmed' ? 'Looks right' : 'Issue') : 'Not recorded'}`;
+}

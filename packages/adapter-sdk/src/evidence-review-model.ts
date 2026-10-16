@@ -37,6 +37,7 @@ import {
   type SelfPrincipalSummary,
   summarizeAcceptanceStatus,
   validateRecipeRecordingTimelineBinding,
+  validVisualJudgmentReason,
 } from '@farmslot/protocol';
 import {
   deriveReviewedRecipeClaims,
@@ -152,6 +153,7 @@ export interface EvidenceReviewClaim extends AcceptanceCriterionView {
 /** Qualified visual review only; assertions and worker notes are not pre-validation. */
 export interface EvidenceReviewJudgmentRow {
   claim: EvidenceReviewClaim;
+  pending: boolean;
   reviewKind: RecipeVisualJudgmentKind | null;
   prevalidation: {
     verdict: 'confirmed' | 'rejected';
@@ -924,6 +926,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
           .at(-1);
         return {
           claim,
+          pending: pendingVisualClaimIds.includes(claim.id),
           reviewKind: visualReviewKind(claim.id, principal),
           prevalidation: delegated?.reason
             ? {
@@ -977,7 +980,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         throw new Error(
           'This claim requires an authorized reviewer and a captured evidence selection.',
         );
-      if (!reason?.trim() && (kind !== 'person-reviewed' || verdict !== 'confirmed'))
+      if (!validVisualJudgmentReason(kind, verdict, reason))
         throw new Error('An issue or delegated review needs a reason.');
       return {
         runId: input.visualReviewAuthority.runId,

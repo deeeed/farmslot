@@ -22,6 +22,7 @@ import {
   type PublicationBaselineContext,
   resolvePublicationManifest,
 } from './publication-artifacts.js';
+import { assertPublicationTextSafe } from './publication-secrets.js';
 import {
   resolveSelectedEvidenceRef,
   sha256Text,
@@ -193,16 +194,21 @@ export async function verifyFrozenPublicationEvidence(
   bundleRef?: RunArtifactBundleRef,
 ): Promise<void> {
   if (!inventory.length && !selectedEvidenceKeys.length) return;
+  assertPublicationTextSafe(JSON.stringify(selectedEvidenceKeys));
+  const selected = selectedEvidenceKeys.flatMap((key) => {
+    const artifact = resolveSelectedEvidenceRef(key, [...inventory]);
+    return artifact ? [artifact] : [];
+  });
+  assertPublicationTextSafe(JSON.stringify(selected));
   await verifyReadyGateSelectedEvidenceFiles(
     run,
     { evidenceManifest: [...inventory], artifactBundle: bundleRef },
     [...selectedEvidenceKeys],
   );
   await readFrozenPublicationManifest(run, inventory, bundleRef);
-  const media = selectedEvidenceKeys.filter(isUploadableMediaPath).flatMap((key) => {
-    const selected = resolveSelectedEvidenceRef(key, [...inventory]);
-    return selected ? [selected.path] : [];
-  });
+  const media = selected
+    .filter((artifact) => isUploadableMediaPath(artifact.path))
+    .map(({ path }) => path);
   const roots = recordedEvidenceRoots(inventory, media);
   const selectedRecordedMedia = media.filter((key) =>
     roots.some((root) => key.startsWith(`${root}/`)),
@@ -221,5 +227,28 @@ export async function verifyFrozenPublicationEvidence(
       throw new Error(
         `Frozen publication recipe is invalid: ${issues.map((issue) => issue.message).join('; ')}`,
       );
+  }
+  // This inventory is the frozen publication closure, not the task's historical
+  // artifacts. Media pixels retain their existing visual-review requirements.
+  // Selected before roots were validated above even though only the head ledger
+  // is returned as verdict authority.
+  const textPrefixes = [
+    ...new Set([
+      ...sources.map(({ artifactPrefix }) => artifactPrefix),
+      ...roots.map((root) => `${root}/`),
+    ]),
+  ];
+  const textEntries = inventory.filter(
+    (artifact) =>
+      !isUploadableMediaPath(artifact.path) &&
+      (artifact.purpose === 'evidence-manifest' ||
+        artifact.purpose === 'evidence-manifest-source' ||
+        artifact.path === SELECTION_MANIFEST_PATH ||
+        textPrefixes.some((prefix) => artifact.path.startsWith(prefix))),
+  );
+  // The canonical closure above and retained reader check the byte identities.
+  // Its valid empty logs must not inherit the selected-media non-empty rule.
+  for (const artifact of textEntries) {
+    assertPublicationTextSafe(await readRetainedRunText(run, artifact.path, bundleRef));
   }
 }

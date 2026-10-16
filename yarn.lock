@@ -4955,6 +4955,7 @@ __metadata:
     "@farmslot/agent-runtime": "workspace:*"
     "@farmslot/capabilities": "workspace:*"
     "@farmslot/credential-store": "workspace:*"
+    "@farmslot/handoff": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/review-dispatch": "workspace:*"
     "@farmslot/run-bundle": "workspace:*"
@@ -4975,7 +4976,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@farmslot/handoff@workspace:packages/handoff":
+"@farmslot/handoff@workspace:*, @farmslot/handoff@workspace:packages/handoff":
   version: 0.0.0-use.local
   resolution: "@farmslot/handoff@workspace:packages/handoff"
   dependencies:
