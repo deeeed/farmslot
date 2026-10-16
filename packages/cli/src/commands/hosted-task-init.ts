@@ -18,6 +18,7 @@ import {
   type TaskInitSpec,
 } from '@farmslot/agent-runtime';
 import {
+  DEVICE_INVENTORY_PLATFORMS,
   isExecutionTemplateReference,
   isRecord,
   isTemplateProvenance,
@@ -372,15 +373,19 @@ export function selectHostedTaskTemplate(
 
 /**
  * Recipe-host options for a hosted task, scoped like the gateway's slot recipe
- * calls. The shared slot context derives the adapter from the slot; its pool
- * platform is a device kind (`chrome-extension`, `cli`), not an adapter flag.
+ * calls. A native slot's device platform selects its provider family, as device
+ * targeting does. Other pool platforms (`chrome-extension`, `cli`, `web`) name a
+ * slot kind, not an adapter, so the shared slot context applies the pack's.
  */
 export function hostedTaskRecipeHostOptions(
-  slot: Pick<SlotVars, 'remoteRepo' | 'projectName' | 'slotId' | 'resourceVars'>,
+  slot: Pick<SlotVars, 'remoteRepo' | 'projectName' | 'slotId' | 'platform' | 'resourceVars'>,
 ): ReturnType<typeof projectRecipeHostOptions> {
   return projectRecipeHostOptions('task', slot.remoteRepo, {
     project: slot.projectName,
     slot: slot.slotId,
+    ...(DEVICE_INVENTORY_PLATFORMS.some((platform) => platform === slot.platform)
+      ? { platform: slot.platform }
+      : {}),
     app: slot.resourceVars.app,
   });
 }
