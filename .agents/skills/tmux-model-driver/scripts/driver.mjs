@@ -181,10 +181,11 @@ export function paneSafety(tail, runner) {
 }
 
 function paths(meta, selection = {}) {
+  const external = path.join(runnerRuntimeDir(meta.current_path), '.observability');
   const obs =
     process.env.TMUX_MODEL_DRIVER_OBSERVABILITY_DIR ||
-    (fs.existsSync(path.join(runnerRuntimeDir(meta.current_path), '.observability', 'install.json'))
-      ? path.join(runnerRuntimeDir(meta.current_path), '.observability')
+    (fs.existsSync(path.join(external, 'install.json'))
+      ? external
       : path.join(meta.current_path, '.agent', '.observability'));
   const root =
     process.env.TMUX_MODEL_DRIVER_STATE_DIR ||

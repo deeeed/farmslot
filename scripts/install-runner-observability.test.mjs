@@ -14,7 +14,7 @@ const temporaryDirectories = new Set();
 function temporaryDirectory(prefix) {
   const directory = fs.mkdtempSync(prefix);
   temporaryDirectories.add(directory);
-  runtimeRoots.add(runnerRuntimeDir(directory));
+  runtimeRoots.add(path.dirname(runnerRuntimeDir(directory)));
   return directory;
 }
 const runtimeRoots = new Set();
@@ -41,7 +41,7 @@ function installToTempDir(runner = 'claude', existingRepo, env) {
     ],
     { stdio: 'pipe', ...(env ? { env: { ...process.env, ...env } } : {}) },
   );
-  runtimeRoots.add(runnerRuntimeDir(repo));
+  runtimeRoots.add(path.dirname(runnerRuntimeDir(repo)));
   const obsDir = path.join(runnerRuntimeDir(repo), '.observability');
   const hookPath = path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs');
   const claudeSettingsPath = path.join(obsDir, 'claude-settings.json');
@@ -1645,4 +1645,63 @@ test('cursor launch setup creates missing config and refuses malformed config', 
   fs.writeFileSync(config, '{invalid');
   assert.throws(() => installToTempDir('cursor', dir, env));
   assert.equal(fs.readFileSync(config, 'utf8'), '{invalid');
+});
+
+test('installer expands an explicit home runtime on the execution host without checkout files', () => {
+  const scratch = temporaryDirectory(path.join(os.tmpdir(), 'obs-home-runtime-'));
+  const repo = path.join(scratch, 'product');
+  const home = path.join(scratch, 'home');
+  fs.mkdirSync(repo);
+  fs.mkdirSync(home);
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'claude',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '~/runner-state',
+      '--slot-id',
+      'home-runtime',
+    ],
+    { cwd: repo, env: { ...process.env, HOME: home }, stdio: 'pipe' },
+  );
+  const obs = path.join(home, 'runner-state/.observability');
+  assert.ok(fs.existsSync(path.join(obs, 'claude-settings.json')));
+  assert.equal(fs.existsSync(path.join(repo, '~')), false);
+  assert.deepEqual(fs.readdirSync(repo), []);
+  const settings = JSON.parse(fs.readFileSync(path.join(obs, 'claude-settings.json'), 'utf8'));
+  assert.ok(settings.hooks.UserPromptSubmit[0].hooks[0].command.includes(obs));
+});
+
+test('private native runtime install preserves the primary checkout observation alias', () => {
+  const scratch = temporaryDirectory(path.join(os.tmpdir(), 'obs-native-isolation-'));
+  const repo = path.join(scratch, 'product');
+  const primary = path.join(repo, '.agent/.observability');
+  fs.mkdirSync(primary, { recursive: true });
+  fs.writeFileSync(path.join(primary, 'hooks.jsonl'), 'primary');
+  fs.symlinkSync(primary, path.join(repo, '.observability'));
+  installToTempDir('claude', repo);
+  const before = fs.readlinkSync(path.join(repo, '.observability'));
+  const native = path.join(scratch, 'private-native');
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'claude',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      native,
+      '--slot-id',
+      'private-native',
+    ],
+    { stdio: 'pipe' },
+  );
+  assert.equal(fs.readlinkSync(path.join(repo, '.observability')), before);
+  assert.equal(fs.readFileSync(path.join(repo, '.observability/hooks.jsonl'), 'utf8'), 'primary');
+  assert.ok(fs.existsSync(path.join(native, '.observability/claude-settings.json')));
 });

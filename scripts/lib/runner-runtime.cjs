@@ -3,6 +3,7 @@ const path = require('node:path').posix;
 // A sibling slot runtime is identical on the gateway and execution host. No
 // gateway HOME/TMPDIR is substituted into paths belonging to a remote node.
 function runnerRuntimeDir(repo, runtimeDir = '.agent') {
+  if (runtimeDir === repo) return path.normalize(repo);
   const root = path.normalize(repo);
   const configured =
     runtimeDir.startsWith('/') || runtimeDir.startsWith('~/')

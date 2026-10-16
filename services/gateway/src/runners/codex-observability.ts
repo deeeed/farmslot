@@ -468,7 +468,7 @@ import os
 from pathlib import Path
 
 repo = os.path.realpath(${JSON.stringify(options.repo)})
-isolated_root = Path(${JSON.stringify(options.isolatedSessionsRoot)})
+isolated_root = Path(${JSON.stringify(options.isolatedSessionsRoot)}).expanduser()
 global_root = Path(${JSON.stringify(options.globalSessionsRoot ?? '')}) if ${options.globalSessionsRoot ? 'True' : 'False'} else Path.home() / '.codex' / 'sessions'
 not_before_ms = ${Math.floor(options.observedNotBeforeMs)}
 preferred_id = ${options.preferred ? JSON.stringify(options.preferred.sessionId) : 'None'}

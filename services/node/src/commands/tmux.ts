@@ -1,13 +1,22 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { expandTilde } from '@farmslot/capabilities/fs-watch';
 import type { NodeTmuxPane, NodeTmuxPaneSignals } from '@farmslot/protocol';
+import { findSlotByRepo } from '@farmslot/protocol/node/slot-by-repo';
+import type { RawPoolJson } from '@farmslot/slot-config';
 
+import { resolveExecPoolDir } from './exec.js';
 import { GitHeadCache } from './git-head-cache.js';
+
+const supportRoot = path.dirname(resolveExecPoolDir(import.meta.url, ''));
+const { runnerRuntimeDir }: { runnerRuntimeDir(repo: string, runtimeDir?: string): string } =
+  createRequire(import.meta.url)(path.join(supportRoot, 'scripts/lib/runner-runtime.cjs'));
 
 const execFileAsync = promisify(execFile);
 const TMUX_INVENTORY_CACHE_MS = 3_000;
@@ -218,12 +227,36 @@ function parseLastHookEvent(text: string | undefined): NodeTmuxPaneSignals['hook
 
 export async function readPaneSignals(
   cwd: string | undefined,
+  runtimeDir?: string,
 ): Promise<NodeTmuxPaneSignals | undefined> {
   if (!cwd) return undefined;
+  if (!runtimeDir && existsSync(resolveExecPoolDir())) {
+    const match = await findSlotByRepo<RawPoolJson>(resolveExecPoolDir(), await realpath(cwd));
+    if (match?.pool.project) {
+      const project = parseJsonObject(
+        await readOptionalText(
+          path.join(supportRoot, 'projects', match.pool.project, 'project.json'),
+        ),
+      );
+      const paths = project?.paths;
+      if (
+        paths &&
+        typeof paths === 'object' &&
+        !Array.isArray(paths) &&
+        'runtime_dir' in paths &&
+        typeof paths.runtime_dir === 'string'
+      )
+        runtimeDir = paths.runtime_dir;
+    }
+  }
+  const external = path.join(expandTilde(runnerRuntimeDir(cwd, runtimeDir)), '.observability');
+  const observability = existsSync(path.join(external, 'install.json'))
+    ? external
+    : path.join(cwd, '.observability');
   const [statuslineRaw, signalRaw, hooksRaw] = await Promise.all([
-    readOptionalText(path.join(cwd, '.observability', 'statusline.json')),
+    readOptionalText(path.join(observability, 'statusline.json')),
     readOptionalText(path.join(cwd, 'SIGNAL.json')),
-    readOptionalText(path.join(cwd, '.observability', 'hooks.jsonl')),
+    readOptionalText(path.join(observability, 'hooks.jsonl')),
   ]);
   const statusline = parseJsonObject(statuslineRaw);
   const signal = parseJsonObject(signalRaw);

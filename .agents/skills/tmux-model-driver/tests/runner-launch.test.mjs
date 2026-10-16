@@ -102,3 +102,40 @@ test('lane shell survives successful and failed exec runner exits under errexit'
     fs.rmSync(dir, { recursive: true });
   }
 });
+
+test('legacy lane installation migrates the original home before retained resume', () => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-legacy-runtime-'));
+  const repo = path.join(scratch, 'product');
+  const original = path.join(repo, '.agent');
+  fs.mkdirSync(path.join(original, 'codex-home/sessions'), { recursive: true });
+  fs.mkdirSync(path.join(original, '.observability'), { recursive: true });
+  fs.writeFileSync(path.join(original, 'codex-home/sessions/retained.jsonl'), 'retained history');
+  fs.writeFileSync(path.join(original, '.observability/hooks.jsonl'), 'retained observations');
+  try {
+    const launch = runnerLaunch({
+      id: 'fixture',
+      cwd: repo,
+      runtime_dir: original,
+      runner: 'claude',
+      model: 'fixture',
+      resume_id: 'retained',
+    });
+    const installer = launch.command.match(
+      /node '[^']+install-runner-observability\.mjs' --runner 'claude'.*? --slot-id 'fixture'/,
+    );
+    assert.ok(installer);
+    const result = spawnSync('/bin/bash', ['-c', installer[0]], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(fs.lstatSync(path.join(original, 'codex-home')).isSymbolicLink());
+    assert.equal(
+      fs.readFileSync(path.join(launch.runtime_dir, 'codex-home/sessions/retained.jsonl'), 'utf8'),
+      'retained history',
+    );
+    assert.equal(
+      fs.readFileSync(path.join(original, '.observability/hooks.jsonl'), 'utf8'),
+      'retained observations',
+    );
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+});

@@ -111,7 +111,7 @@ export async function prepareNativeWorkerLaunch(input: {
       'native-workers',
       input.sessionId,
     );
-    const installRepo = vars.remoteRepo;
+    const installRepo = input.stateDirectory ?? vars.remoteRepo;
     const runtimeDir = input.stateDirectory ?? legacyRuntimeDir;
     if (input.prepareAccount) {
       const support = await ensureNodeSupportBundle(

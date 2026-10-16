@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { expandTilde } from '../../../../scripts/lib/provider-accounts.mjs';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { withMachineEnv } from '../../../../services/gateway/src/core/project-env.ts';
 import {
@@ -29,8 +30,16 @@ export function runnerLaunch(lane) {
     !['sandboxed', 'full-auto', 'dangerous'].includes(lane.safety_tier)
   )
     throw new Error('Unknown safety_tier');
-  const cwd = fs.realpathSync(lane.cwd);
-  const runtime = runnerRuntimeDir(path.resolve(lane.cwd), path.resolve(lane.runtime_dir));
+  const configuredCwd = path.resolve(expandTilde(lane.cwd));
+  const cwd = fs.realpathSync(configuredCwd);
+  const configuredRuntime = path.resolve(expandTilde(lane.runtime_dir));
+  const runtime = runnerRuntimeDir(configuredCwd, configuredRuntime);
+  // Keep the original namespace for installer migration, even when cwd is a
+  // filesystem alias. The resolved destination is for prompts/returned paths.
+  const installRuntime =
+    runtime === configuredRuntime
+      ? configuredRuntime
+      : path.relative(configuredCwd, configuredRuntime);
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   const vars = {
     slotId: lane.id,
@@ -46,7 +55,7 @@ export function runnerLaunch(lane) {
   };
   const opts = {
     repo: cwd,
-    runtimeDir: runtime,
+    runtimeDir: installRuntime,
     safetyTier: lane.safety_tier,
     effort: lane.effort,
     codexAccountLabel: lane.account_label,
@@ -72,7 +81,7 @@ export function runnerLaunch(lane) {
       skipUpdateCheck: true,
     });
     command = withMachineEnv(
-      `${buildRunnerObservabilityInstallCommand(vars, lane.runner, cwd, runtime, { accountLabel: lane.account_label })} && ${buildCodexHomeSetup(cwd, runtime)} && ${launch}`,
+      `${buildRunnerObservabilityInstallCommand(vars, lane.runner, cwd, installRuntime, { accountLabel: lane.account_label })} && ${buildCodexHomeSetup(cwd, installRuntime)} && ${launch}`,
       vars,
     );
   } else {

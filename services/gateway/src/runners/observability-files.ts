@@ -4,7 +4,6 @@ import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
-import { shellQuote } from '../core/tmux.js';
 
 import type {
   HookRecord,
@@ -357,7 +356,10 @@ export async function readRunnerSessionObservabilityState(
 ): Promise<HookRecord | null> {
   const obsDir = await runnerObservabilityDirForSlot(vars);
   const statePath = path.posix.join(obsDir, 'sessions', `${encodeURIComponent(sessionId)}.json`);
-  const result = await execOnSlot(vars, `cat ${shellQuote(statePath)} 2>/dev/null || true`);
+  const result = await execOnSlot(
+    vars,
+    `cat ${shellExpressionForRemotePath(statePath)} 2>/dev/null || true`,
+  );
   return parseHookJsonl(result.stdout)[0] ?? null;
 }
 
@@ -368,7 +370,10 @@ export async function readRunnerPaneObservabilityState(
 ): Promise<HookRecord | null> {
   const obsDir = await runnerObservabilityDirForSlot(vars);
   const statePath = path.posix.join(obsDir, 'panes', `${encodeURIComponent(paneId)}.json`);
-  const result = await execOnSlot(vars, `cat ${shellQuote(statePath)} 2>/dev/null || true`);
+  const result = await execOnSlot(
+    vars,
+    `cat ${shellExpressionForRemotePath(statePath)} 2>/dev/null || true`,
+  );
   return parseHookJsonl(result.stdout)[0] ?? null;
 }
 

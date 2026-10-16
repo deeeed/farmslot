@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -170,4 +170,21 @@ test('readPaneSignals reads hook statusline and task signals from pane cwd', asy
       phase: 'validate',
     },
   });
+});
+
+test('readPaneSignals uses external configured observations without a checkout alias', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'node-external-pane-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'product');
+  const runtime = path.join(root, 'runner-runtime');
+  await mkdir(repo);
+  await mkdir(path.join(runtime, '.observability'), { recursive: true });
+  await writeFile(path.join(runtime, '.observability/install.json'), '{}');
+  await writeFile(
+    path.join(runtime, '.observability/statusline.json'),
+    JSON.stringify({ busy: false, ctxPct: 42, model: 'fixture' }),
+  );
+  const signals = await readPaneSignals(repo, runtime);
+  assert.equal(signals?.statusline?.ctxPct, 42);
+  assert.equal(signals?.statusline?.busy, false);
 });

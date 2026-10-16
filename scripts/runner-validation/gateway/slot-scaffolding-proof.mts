@@ -1,3 +1,4 @@
+import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
 // Manual RPC proof. Use node --import tsx --experimental-test-module-mocks.
 // Cases: new, user, copy-failure; baseline additionally needs FARMSLOT_PROOF_BASE_REF.
 // Real backend/Git/files, fixture-only tmux, no physical slot or UI mutation.
@@ -135,8 +136,11 @@ mkdirSync(path.join(repo, '.task/qa/parked/artifacts'), { recursive: true });
 writeFileSync(path.join(repo, '.task/qa/parked/TASK.md'), 'parked task');
 writeFileSync(path.join(repo, '.task/qa/parked/artifacts/evidence.txt'), 'parked evidence');
 writeFileSync(path.join(repo, '.task/qa/proof/artifacts/evidence.txt'), 'evidence');
-mkdirSync(path.join(repo, '.agent/.observability'), { recursive: true });
-writeFileSync(path.join(repo, '.agent/.observability/hooks.jsonl'), 'observations');
+const externalObservations = path.join(runnerRuntimeDir(repo), '.observability');
+mkdirSync(externalObservations, { recursive: true });
+writeFileSync(path.join(externalObservations, 'hooks.jsonl'), 'observations');
+mkdirSync(path.join(repo, '.agent'), { recursive: true });
+symlinkSync(externalObservations, path.join(repo, '.agent/.observability'));
 mkdirSync(path.join(repo, '.agent/browser'), { recursive: true });
 writeFileSync(path.join(repo, '.agent/browser/profile.json'), 'warm');
 symlinkSync('.agent/.observability', path.join(repo, '.observability'));
@@ -266,7 +270,12 @@ try {
     assert.ok(existsSync(archive));
     const contents = execFileSync('tar', ['-tf', archive], { encoding: 'utf8' });
     assert.match(contents, /\.task\/qa\/proof\/TASK.md/);
-    assert.match(contents, /\.agent\/\.observability\/hooks.jsonl/);
+    const observationsArchive = path.join(path.dirname(archive), 'runner-observability.tar');
+    assert.match(
+      execFileSync('tar', ['-tf', observationsArchive], { encoding: 'utf8' }),
+      /hooks.jsonl/,
+    );
+    assert.equal(existsSync(externalObservations), false);
     assert.equal(existsSync(path.join(repo, '.task/qa/proof')), false);
     assert.equal(readFileSync(path.join(repo, '.task/qa/parked/TASK.md'), 'utf8'), 'parked task');
     assert.equal(

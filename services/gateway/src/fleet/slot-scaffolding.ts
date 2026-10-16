@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import {
   execOnSlot,
   type RawProjectJson,
@@ -136,6 +137,16 @@ export async function archiveSlotScaffolding(
       throw new Error(`Scaffolding parent escapes slot repository: ${relative}`);
     sources.push({ relative, absolute, resolved: await slotRealpath(vars, absolute) });
   }
+  const external = path.posix.join(runnerRuntimeDir(vars.remoteRepo, runtime), '.observability');
+  if (await slotFileExists(vars, external)) {
+    const resolved = await slotRealpath(vars, external);
+    if (
+      resolved !==
+      path.posix.join(await slotRealpath(vars, path.posix.dirname(external)), '.observability')
+    )
+      throw new Error('External runner observations must be an owned directory');
+    sources.push({ relative: 'runner-observability', absolute: external, resolved });
+  }
   const directory = path.join(options.destination, randomUUID());
   if (!sources.length) return { directory, roots: 0 };
   // tar preserves links as links. Copying their targets could leak a mounted
@@ -146,9 +157,10 @@ export async function archiveSlotScaffolding(
   const temporary = created.stdout.trim();
   try {
     const remoteArchive = path.posix.join(temporary, 'scaffolding.tar');
+    const checkoutSources = sources.filter((source) => source.absolute !== external);
     const packed = await execOnSlot(
       vars,
-      `tar -C ${shellQuote(vars.remoteRepo)} -cf ${shellQuote(remoteArchive)} -- ${sources.map((source) => shellQuote(source.relative)).join(' ')}`,
+      `tar -C ${shellQuote(vars.remoteRepo)} -cf ${shellQuote(remoteArchive)} ${checkoutSources.length ? `-- ${checkoutSources.map((source) => shellQuote(source.relative)).join(' ')}` : '-T /dev/null'}`,
       { timeout: 120_000 },
     );
     if (packed.exitCode !== 0) throw new Error(`Cannot pack scaffolding: ${packed.stderr}`);
@@ -161,11 +173,34 @@ export async function archiveSlotScaffolding(
     });
     if ((await stat(archive)).size !== (await slotStat(vars, remoteArchive)).size)
       throw new Error('Scaffolding archive transfer incomplete');
+    if (sources.some((source) => source.absolute === external)) {
+      const externalArchive = path.posix.join(temporary, 'runner-observability.tar');
+      const packedExternal = await execOnSlot(
+        vars,
+        `tar -C ${shellQuote(external)} -cf ${shellQuote(externalArchive)} .`,
+        { timeout: 120_000 },
+      );
+      if (packedExternal.exitCode !== 0)
+        throw new Error(`Cannot pack runner observations: ${packedExternal.stderr}`);
+      await slotCopyFile(vars, externalArchive, path.join(directory, 'runner-observability.tar'), {
+        phase: 'mirror',
+        slotId: vars.slotId,
+        label: 'release-observability',
+      });
+      if (
+        (await stat(path.join(directory, 'runner-observability.tar'))).size !==
+        (await slotStat(vars, externalArchive)).size
+      )
+        throw new Error('Runner observations archive transfer incomplete');
+    }
     await writeFile(
       path.join(directory, 'manifest.json'),
       `${JSON.stringify({ slotId: vars.slotId, sources: sources.map((source) => source.relative) }, null, 2)}\n`,
     );
-    for (const source of sources.reverse()) {
+    for (const source of [
+      ...sources.filter((source) => source.absolute !== external).reverse(),
+      ...sources.filter((source) => source.absolute === external),
+    ]) {
       await options.beforeRemove();
       if ((await slotRealpath(vars, source.absolute)) !== source.resolved)
         throw new Error(`Scaffolding changed during collection: ${source.relative}`);

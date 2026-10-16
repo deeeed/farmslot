@@ -224,14 +224,14 @@ export function buildPiLaunch(options: {
       : path.posix.join(options.repo, options.taskFile)
     : '';
   const envPrefix = [
-    `FARMSLOT_OBS_DIR=${shellQuote(obsDir)}`,
+    `FARMSLOT_OBS_DIR=${shellExpressionForRemotePath(obsDir)}`,
     `FARMSLOT_SLOT_ID=${shellQuote(options.slotId ?? '')}`,
     'FARMSLOT_RUNNER=pi',
     `FARMSLOT_THINKING=${shellQuote(thinking)}`,
     `FARMSLOT_MODEL=${shellQuote(cliModel)}`,
     ...(taskFile ? [`FARMSLOT_TASK_FILE=${shellQuote(taskFile)}`] : []),
   ].join(' ');
-  return `cd ${shellQuote(options.repo)} && ${envPrefix} ${options.binary}${flagFragment}${thinkingFlag} --approve -e ${shellQuote(extension)} --model ${quoteRunnerArgValue(assertedModel(cliModel))}`;
+  return `cd ${shellQuote(options.repo)} && ${envPrefix} ${options.binary}${flagFragment}${thinkingFlag} --approve -e ${shellExpressionForRemotePath(extension)} --model ${quoteRunnerArgValue(assertedModel(cliModel))}`;
 }
 
 /**
@@ -560,15 +560,15 @@ export function buildCodexHomeSetup(
   // Otherwise fall back to the global ~/.codex with no farmslot observability, so a
   // codex worker launches regardless. We never create or write the home here — that
   // keeps the global config clean and avoids a half-built home that codex would reject.
-  const provisioned = `{ [ -e ${shellQuote(`${codexHome}/auth.json`)} ] || [ -e ${shellQuote(`${codexHome}/.farmslot-provider-auth`)} ]; }`;
+  const provisioned = `{ [ -e ${shellExpressionForRemotePath(`${codexHome}/auth.json`)} ] || [ -e ${shellExpressionForRemotePath(`${codexHome}/.farmslot-provider-auth`)} ]; }`;
   // Codex resumes only from $CODEX_HOME/sessions. A session started on the global
   // home (before its node's codex-home was usable) keeps resuming there.
   const rollout = options.resumeSessionId ? shellQuote(`*${options.resumeSessionId}*.jsonl`) : null;
   const resumable = rollout
-    ? ` && { find ${shellQuote(`${codexHome}/sessions`)} -name ${rollout} 2>/dev/null | grep -q . || ! find "$HOME/.codex/sessions" -name ${rollout} 2>/dev/null | grep -q .; }`
+    ? ` && { find ${shellExpressionForRemotePath(`${codexHome}/sessions`)} -name ${rollout} 2>/dev/null | grep -q . || ! find "$HOME/.codex/sessions" -name ${rollout} 2>/dev/null | grep -q .; }`
     : '';
   return (
-    `if ${provisioned}${resumable}; then export CODEX_HOME=${shellQuote(codexHome)}; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features.hooks=true'; ` +
+    `if ${provisioned}${resumable}; then export CODEX_HOME=${shellExpressionForRemotePath(codexHome)}; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features.hooks=true'; ` +
     `else unset CODEX_HOME; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--disable'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='plugin_hooks'; echo "[farmslot] codex-home not selected; using global ~/.codex without observability" >&2; fi`
   );
 }
