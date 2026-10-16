@@ -21,6 +21,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Relaunch a stopped reviewer once after cleanup, retaining failed-attempt evidence and its actual failure if recovery fails.
 - Refresh unapproved publication packages with missing retained bundles even when source HEAD is unchanged; preserve approved package identity on failure.
 - Retain pipeline review result snapshots in publication packages and use the pane-owned process's structured turn records for publication readiness, monitor nudges and safe-send busy checks.
+- Retain recovered publication reviews' original snapshots and structured artifacts, repairing missing evidence without another review or budget spend.
+
 - Keep failed reviewers without an artifact scope from holding publication gates in recovery after a settled review.
 - Exclude unavailable native hosts from automatic review placement even when their previous reviews were accepted.
 - Resume an interrupted self-review fix after gateway restart without skipping its signal or waiting for an operator replay.
