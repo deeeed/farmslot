@@ -10,7 +10,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Recognize owned follow-up queue previews and keep unsubmitted composer text out of delivery verification.
 
-- Detect pinned provider CLI drift across node and SSH shell paths, report unhealthy nodes, and verify exact-version global rollout.
+- Keep confirmed provider CLI drift critical while reporting timed-out probes as unverified load warnings.
 
 - Resolve PR and ticket branches before automatic slot scoring, preferring a free matching checkout without prompting that every branch is stale.
 - Disclose skipped code review in the publish gate and published PR provenance while preserving project approval policy.

@@ -239,6 +239,10 @@ export interface ProviderCliHealth {
   packageName: string;
   expectedVersion: string;
   ok: boolean;
+  status?: 'verified' | 'version-mismatch' | 'probe-timeout' | 'probe-error';
+  loadAvg1?: number;
+  retryAttempted?: boolean;
+  confirmedMismatch?: { checkedAt: string; reason: string };
   checkedAt: string;
   reason?: string;
   binaries: Array<{ name: string; path: string; scope: string; version: string }>;
