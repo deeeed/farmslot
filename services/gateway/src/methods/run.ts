@@ -153,6 +153,7 @@ import {
   assertWarmReviewRequestAvailable,
 } from '../run-engine/review-plan.js';
 import { runSupersededSince } from '../run-engine/run-generation.js';
+import { refreshRunLinks } from '../run-engine/run-links.js';
 import {
   persistMonitorWindowStart,
   probeWorkerSignalForRun,
@@ -206,6 +207,7 @@ import {
   isInternalArtifactOnlyEvalTicket,
   isManualBacklogRef,
   isValidTicketForFlow,
+  jiraTicketDataForCreate,
 } from './run/ticket-policy.js';
 import { normalizeRunCreateMode } from './run-create-mode.js';
 
@@ -835,8 +837,14 @@ async function runCreateWithSources(
   const expectedQa = options.expectedQa ? structuredClone(options.expectedQa) : undefined;
   const plan = preparedPlan ?? (await planRunCreation(params, options));
   params = { ...plan.params, ...(preparedPlan ? { slotId: params.slotId } : {}) };
+  // Read once, after the planner's local checks; the planner also runs per
+  // candidate slot and on source replans.
+  const ticketData = await jiraTicketDataForCreate(params);
+  if (ticketData !== params.ticketData) params = { ...params, ticketData };
   const createRecord = (): Run => {
     options.beforeCreate?.();
+    // The ticket read awaited after the planner's duplicate check.
+    assertDuplicateRunAllowed(params, listRuns({ active: true }).runs);
     if (plan.workspaceAdmission) assertReviewWorkspaceAdmitted(plan.workspaceAdmission);
     assertExpectedQaSelection(plan.reviewQa, expectedQa);
     // Defer background persist on the claim handoff path so the Run file cannot
@@ -921,6 +929,11 @@ async function runCreateWithSources(
         run = updateRun(run.id, linkedState);
       }
     }
+  }
+  if (ticketData !== plan.params.ticketData) {
+    // The pipeline refreshes links only when it fetches the ticket itself.
+    await refreshRunLinks(run.id);
+    run = getRun(run.id) ?? run;
   }
   // Set runtime flags (not persisted)
   if (params.skipPrepare) {
