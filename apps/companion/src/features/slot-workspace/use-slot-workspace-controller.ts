@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   Events,
+  extractRunArtifactManifest,
   type FamilyObservabilityGetResult,
   type FamilyObservabilitySnapshot,
   Methods,
@@ -32,7 +33,6 @@ import {
   artifactsForRecipeRun,
   artifactUrlForEntry,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
   groupVisualArtifactPairs,
   resolveRecipeRunSelection,
 } from '../../lib/artifact-url';

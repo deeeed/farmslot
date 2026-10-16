@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Retain hosted task tooling under the expanded machine home, so a `~/` FARMSLOT_HOME no longer places task pins inside the product checkout.
 
 ## 0.28.0 - 2026-10-16
 

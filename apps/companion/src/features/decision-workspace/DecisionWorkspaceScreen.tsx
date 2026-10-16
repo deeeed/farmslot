@@ -1883,6 +1883,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             <>
               {humanGate ? (
                 <GateActions
+                  run={sourceRun}
                   loading={humanGate.acceptance.loading}
                   decision={decision}
                   actions={humanGate.actions.map((action) =>

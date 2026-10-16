@@ -2,13 +2,14 @@ import { useRouter } from 'expo-router';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
-import type {
-  FamilyObservabilitySnapshot,
-  RecipeRunArtifactGroup,
-  Run,
-  RunDecision,
-  SlotRunHistoryEntry,
-  TaskProgressStructured,
+import {
+  extractRunArtifactManifest,
+  type FamilyObservabilitySnapshot,
+  type RecipeRunArtifactGroup,
+  type Run,
+  type RunDecision,
+  type SlotRunHistoryEntry,
+  type TaskProgressStructured,
 } from '@farmslot/protocol';
 import { taskProgressPercent } from '@farmslot/review-dispatch';
 
@@ -25,7 +26,6 @@ import {
   classifyArtifact,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
   groupVisualArtifactPairs,
   type VisualArtifactPair,
 } from '../../../lib/artifact-url';

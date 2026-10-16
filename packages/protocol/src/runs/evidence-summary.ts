@@ -1,4 +1,16 @@
 import type { EvidenceManifestEntry, Run } from '../contracts/runs.js';
+import { isInternalRunArtifactPath } from '../recipes/step-io.js';
+
+/** A run artifact with the metadata its source recorded. */
+export interface RunArtifactManifestEntry extends EvidenceManifestEntry {
+  type?: string;
+  label?: string;
+  nodeId?: string;
+  mimeType?: string;
+  timelinePath?: string;
+  timelineUnavailableReason?: string;
+  bundleDigest?: string;
+}
 
 export interface RunEvidenceSummary {
   artifactCount: number;
@@ -6,29 +18,57 @@ export interface RunEvidenceSummary {
   visualPairCount: number;
 }
 
-export function runEvidenceArtifacts(
-  run: Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>,
-): EvidenceManifestEntry[] {
-  const entries: EvidenceManifestEntry[] = [];
-  entries.push(...(run.liveRecipeContext?.artifactManifest ?? []));
+/**
+ * Every artifact a run reports: gate and review payloads, the captured run
+ * output and step outputs, without gateway-internal launch diagnostics. Command
+ * Center and Companion both read a run's artifacts through this.
+ */
+export function extractRunArtifactManifest(
+  run: Pick<Run, 'decisions' | 'steps' | 'output'>,
+): RunArtifactManifestEntry[] {
+  const entries: RunArtifactManifestEntry[] = [];
   for (const decision of run.decisions ?? []) {
     const payload = decision.payload;
-    if (!payload) continue;
-    if (payload.kind === 'ready') {
+    if (payload?.kind === 'ready') {
       entries.push(...(payload.artifactManifest ?? []));
       entries.push(...(payload.prPackage?.evidenceManifest ?? []));
-    } else if (payload.kind === 'review' || payload.kind === 'no-change') {
+      for (const check of payload.prPackage?.deterministicChecks ?? []) {
+        if (check.logPath) {
+          entries.push({
+            path: check.logPath,
+            purpose: 'ci-parity-log',
+            type: 'log',
+            label: `${check.reference} · ${check.status}`,
+          });
+        }
+      }
+    } else if (payload?.kind === 'review') {
+      entries.push(...(payload.artifactManifest ?? []));
+      entries.push(...runArtifactPathsToManifest(payload.reviewInputArtifactPaths ?? []));
+    } else if (payload?.kind === 'no-change') {
       entries.push(...(payload.artifactManifest ?? []));
     }
   }
-  for (const step of run.steps ?? []) {
-    collectRunEvidenceArtifactEntries(step.outputs, entries);
+  for (const artifact of run.output?.artifactManifest ?? []) {
+    if (!isInternalRunArtifactPath(artifact.path)) entries.push(artifact);
   }
-  return dedupeRunEvidenceArtifacts(entries);
+  for (const step of run.steps ?? []) {
+    collectRunArtifactEntries(step.outputs, entries);
+  }
+  return dedupeRunArtifacts(entries);
+}
+
+export function runEvidenceArtifacts(
+  run: Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'>,
+): RunArtifactManifestEntry[] {
+  return dedupeRunArtifacts([
+    ...(run.liveRecipeContext?.artifactManifest ?? []),
+    ...extractRunArtifactManifest(run),
+  ]);
 }
 
 export function summarizeRunEvidence(
-  run: Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>,
+  run: Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'>,
 ): RunEvidenceSummary {
   const artifacts = runEvidenceArtifacts(run);
   return {
@@ -52,47 +92,77 @@ export function isRunEvidenceVisualArtifact(entry: Pick<EvidenceManifestEntry, '
   return isRunEvidenceImageArtifact(entry) || isRunEvidenceVideoArtifact(entry);
 }
 
-function collectRunEvidenceArtifactEntries(value: unknown, entries: EvidenceManifestEntry[]): void {
+export function runArtifactPathsToManifest(paths: readonly string[]): RunArtifactManifestEntry[] {
+  return paths.map((path) => ({ path, purpose: inferRunArtifactPurpose(path) }));
+}
+
+const RUN_ARTIFACT_IMAGE_EXTS = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
+
+export function inferRunArtifactPurpose(path: string): string {
+  const normalized = path.toLowerCase();
+  if (/\.(diff|patch)$/.test(normalized)) return 'diff';
+  if (normalized.includes('screenshot')) return 'screenshot';
+  if (isRunEvidenceVideoArtifact({ path })) return 'video';
+  if (RUN_ARTIFACT_IMAGE_EXTS.test(path)) return 'image';
+  if (/diff[_-]?stat/i.test(normalized)) return 'diff-stat';
+  if (/\/diff\.(txt|md)$/i.test(normalized)) return 'diff';
+  if (normalized.includes('review')) return 'review';
+  if (normalized.includes('report')) return 'report';
+  if (normalized.includes('recipe')) return 'recipe';
+  return 'artifact';
+}
+
+function collectRunArtifactEntries(value: unknown, entries: RunArtifactManifestEntry[]): void {
   if (value == null) return;
   if (typeof value === 'string') {
-    if (looksLikeRunEvidenceArtifactPath(value)) {
-      entries.push({ path: value, purpose: inferRunEvidenceArtifactPurpose(value) });
+    if (looksLikeRunArtifactPath(value)) {
+      entries.push({ path: value, purpose: inferRunArtifactPurpose(value) });
     }
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((item) => collectRunEvidenceArtifactEntries(item, entries));
+    value.forEach((item) => collectRunArtifactEntries(item, entries));
     return;
   }
   if (typeof value !== 'object') return;
 
   const record = value as Record<string, unknown>;
-  if (typeof record.path === 'string' && looksLikeRunEvidenceArtifactEntry(record)) {
+  if (typeof record.path === 'string' && looksLikeRunArtifactEntry(record)) {
     entries.push({
       path: record.path,
       purpose:
-        typeof record.purpose === 'string'
-          ? record.purpose
-          : inferRunEvidenceArtifactPurpose(record.path),
+        typeof record.purpose === 'string' ? record.purpose : inferRunArtifactPurpose(record.path),
       ...(typeof record.sizeBytes === 'number' ? { sizeBytes: record.sizeBytes } : {}),
+      ...(typeof record.type === 'string' ? { type: record.type } : {}),
+      ...(typeof record.label === 'string' ? { label: record.label } : {}),
+      ...(typeof record.mimeType === 'string' ? { mimeType: record.mimeType } : {}),
       ...(typeof record.sha256 === 'string' ? { sha256: record.sha256 } : {}),
+      ...(typeof record.timelinePath === 'string' ? { timelinePath: record.timelinePath } : {}),
+      ...(typeof record.timelineUnavailableReason === 'string'
+        ? { timelineUnavailableReason: record.timelineUnavailableReason }
+        : {}),
     });
   }
-  Object.entries(record)
-    .filter(
-      ([key]) => key !== 'path' && key !== 'purpose' && key !== 'sizeBytes' && key !== 'sha256',
-    )
-    .forEach(([, item]) => collectRunEvidenceArtifactEntries(item, entries));
+
+  Object.values(record).forEach((item) => collectRunArtifactEntries(item, entries));
 }
 
-function looksLikeRunEvidenceArtifactEntry(record: Record<string, unknown>): boolean {
-  const pathValue = record.path;
+function looksLikeRunArtifactEntry(record: Record<string, unknown>): boolean {
+  const path = record.path;
+  if (typeof path !== 'string') return false;
   return (
-    typeof pathValue === 'string' &&
-    (typeof record.purpose === 'string' ||
-      typeof record.type === 'string' ||
-      typeof record.mimeType === 'string' ||
-      looksLikeRunEvidenceArtifactPath(pathValue))
+    typeof record.purpose === 'string' ||
+    typeof record.type === 'string' ||
+    typeof record.mimeType === 'string' ||
+    looksLikeRunArtifactPath(path)
+  );
+}
+
+function looksLikeRunArtifactPath(value: string): boolean {
+  return (
+    RUN_ARTIFACT_IMAGE_EXTS.test(value) ||
+    isRunEvidenceVideoArtifact({ path: value }) ||
+    /\.(md|json|txt|log|diff|patch)$/i.test(value)
   );
 }
 
@@ -143,38 +213,52 @@ function pathDirname(pathValue: string): string {
   return index >= 0 ? normalized.slice(0, index) : '.';
 }
 
-function dedupeRunEvidenceArtifacts(entries: EvidenceManifestEntry[]): EvidenceManifestEntry[] {
-  const merged = new Map<string, EvidenceManifestEntry>();
+/** One entry per path; the most specific purpose and the latest retention metadata win. */
+export function dedupeRunArtifacts<T extends RunArtifactManifestEntry>(entries: readonly T[]): T[] {
+  const merged = new Map<string, T>();
   for (const entry of entries) {
     const existing = merged.get(entry.path);
-    merged.set(
-      entry.path,
-      existing
-        ? {
-            ...entry,
-            purpose:
-              existing.purpose === 'artifact' && entry.purpose !== 'artifact'
-                ? entry.purpose
-                : existing.purpose,
-            sizeBytes: existing.sizeBytes ?? entry.sizeBytes,
-            sha256: existing.sha256 ?? entry.sha256,
-          }
-        : entry,
-    );
+    merged.set(entry.path, existing ? mergeRunArtifactMetadata(existing, entry) : entry);
   }
   return [...merged.values()];
 }
 
-function looksLikeRunEvidenceArtifactPath(value: string): boolean {
-  return /\.(png|jpe?g|webp|gif|mp4|mov|m4v|webm|md|json|txt|diff|patch)$/i.test(value);
+const LATEST_RUN_ARTIFACT_FIELDS = [
+  'sha256',
+  'timelinePath',
+  'timelineUnavailableReason',
+  'bundleDigest',
+] as const;
+
+function mergeRunArtifactMetadata<T extends RunArtifactManifestEntry>(existing: T, incoming: T): T {
+  const merged = { ...existing };
+  for (const key of LATEST_RUN_ARTIFACT_FIELDS) {
+    if (incoming[key] !== undefined) merged[key] = incoming[key];
+  }
+  const incomingIsMoreSpecific =
+    runArtifactPurposeSpecificity(incoming.purpose) >
+    runArtifactPurposeSpecificity(existing.purpose);
+  if (incomingIsMoreSpecific) merged.purpose = incoming.purpose;
+  const fixed = new Set<keyof T>(['path', 'purpose', ...LATEST_RUN_ARTIFACT_FIELDS]);
+  for (const key of Object.keys(incoming) as Array<keyof T>) {
+    if (fixed.has(key) || incoming[key] === undefined) continue;
+    if (merged[key] === undefined || incomingIsMoreSpecific) merged[key] = incoming[key];
+  }
+  return merged;
 }
 
-function inferRunEvidenceArtifactPurpose(pathValue: string): string {
-  const normalized = pathValue.toLowerCase();
-  if (normalized.includes('before') || normalized.includes('baseline')) return 'before';
-  if (normalized.includes('after') || normalized.includes('current')) return 'after';
-  if (normalized.includes('diff')) return 'diff';
-  if (normalized.includes('review')) return 'review';
-  if (normalized.includes('report')) return 'report';
-  return 'artifact';
+const NEUTRAL_VISUAL_PURPOSES = new Set([
+  'image',
+  'screenshot',
+  'debug-screenshot',
+  'video',
+  'visual',
+]);
+
+function runArtifactPurposeSpecificity(purpose: string): number {
+  if (/\b(before|after|current|candidate|baseline|reference)\b/.test(purpose)) return 3;
+  if (purpose === 'other') return 0;
+  if (!NEUTRAL_VISUAL_PURPOSES.has(purpose) && purpose !== 'artifact') return 2;
+  if (purpose === 'artifact') return 0;
+  return 1;
 }

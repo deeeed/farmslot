@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add `extractRunArtifactManifest`, the one run artifact extractor for Command Center and Companion; it includes captured run output and keeps source metadata.
+
 - Expose optional dev deployment worker CLI verification health on node and fleet metrics.
 
 - Expose optional provider probe status, load, retry and retained mismatch diagnostics.

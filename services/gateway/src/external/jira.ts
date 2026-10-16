@@ -180,14 +180,18 @@ export async function downloadJiraAttachments(
   return downloaded;
 }
 
-function resolveJiraAuth(config: JiraConfig): {
+export function resolveJiraAuth(config: JiraConfig): {
   email: string | undefined;
   token: string | undefined;
+  emailVar: string;
+  tokenVar: string;
 } {
   const emailVar = config.emailEnv || 'JIRA_EMAIL';
   const tokenVar = config.apiTokenEnv || 'JIRA_API_TOKEN';
   return {
     email: process.env[emailVar],
     token: process.env[tokenVar],
+    emailVar,
+    tokenVar,
   };
 }

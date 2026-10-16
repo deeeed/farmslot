@@ -45,6 +45,28 @@ function fixture(t: TestContext) {
   };
 }
 
+test('a tilde FARMSLOT_HOME retains tooling under the home directory, not the checkout', (t) => {
+  const { root, taskDir, input } = fixture(t);
+  const home = path.join(root, 'home');
+  const checkout = path.join(root, 'checkout');
+  fs.mkdirSync(home);
+  fs.mkdirSync(checkout);
+  const previous = { home: process.env.HOME, cwd: process.cwd() };
+  t.after(() => {
+    process.chdir(previous.cwd);
+    if (previous.home === undefined) delete process.env.HOME;
+    else process.env.HOME = previous.home;
+  });
+  // A gateway that loads FARMSLOT_HOME from a checkout .env passes it literally.
+  process.env.HOME = home;
+  process.env.FARMSLOT_HOME = '~/.farmslot-dev';
+  process.chdir(checkout);
+  const receipt = retainTaskExecution(taskDir, input);
+  assert.equal(path.dirname(receipt.pin), path.join(home, '.farmslot-dev', 'task-pins'));
+  assert.deepEqual(fs.readdirSync(checkout), []);
+  assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), receipt);
+});
+
 test('task tooling survives install pruning and provider/library updates', (t) => {
   const { root, taskDir, provider, library, input } = fixture(t);
   fs.symlinkSync(input.executable, path.join(input.distributionRoot, 'entry-link'));

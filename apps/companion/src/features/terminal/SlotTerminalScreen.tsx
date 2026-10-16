@@ -31,6 +31,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   type CopilotFormatInstructionResult,
   Events,
+  extractRunArtifactManifest,
   Methods,
   type Run,
   type RunForSlotResult,
@@ -56,7 +57,6 @@ import {
   artifactUrlForEntry,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
   groupVisualArtifactPairs,
   type VisualArtifactPair,
 } from '../../lib/artifact-url';

@@ -1,4 +1,5 @@
 import {
+  extractRunArtifactManifest,
   Methods,
   type RecipeRunArtifactGroup,
   type Run,
@@ -13,7 +14,6 @@ import {
   artifactsForRecipeRun,
   artifactSource,
   artifactUrl,
-  extractRunArtifactManifest,
 } from './artifact-url';
 import type { GatewayClient } from './gateway-client';
 import { gatewayFetch } from './gateway-http-auth';

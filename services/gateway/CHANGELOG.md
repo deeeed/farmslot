@@ -6,9 +6,15 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Never count a prompt left unsent in a busy Codex composer as delivered, on any send attempt. Each review-fix prompt now starts with its delivery identity, so a fix round is proven only by its own runner receipt; a fix sent before this change is still recognized, but only by a receipt after its own delivery. A fix sent without a receipt is acknowledged only by the worker's fix signal, never by pane activity.
 
+- Resolve a Jira-key run's ticket through the project's Jira source when the run is created, and refuse creation when there is no source, no credentials, or the read fails, instead of storing a key-only placeholder ticket.
+
 - Accept only the complete next-tool-call steering block as rendered queue proof; the "tab to queue message" hint, postponed follow-ups and queue placeholders never prove delivery. Buffered input uses the runner's normal submit key.
 
 - Deliver lane handoffs to busy Claude sessions with Enter, and treat a draft in Claude's boxed composer as live input that blocks delivery.
+
+- Read `ci.local_check` through the typed project configuration instead of a local cast.
+
+- Prefer Tailscale pairing addresses over LAN and exclude VPN tunnel addresses from phone pairing candidates.
 
 - Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
 

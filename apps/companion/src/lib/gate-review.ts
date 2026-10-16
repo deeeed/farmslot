@@ -23,6 +23,7 @@ import {
   type RunDecision,
   type RunGateReadiness,
 } from '@farmslot/protocol';
+import { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
 // The shared palette, not `./theme`: that module builds StyleSheets, which pulls
 // react-native into this pure module and out of reach of the node test runner.
 import { colors } from '@farmslot/theme';
@@ -262,13 +263,15 @@ export function approvePublishGuard(input: ApprovePublishGuardInput): ApprovePub
  * The decision's own actions with the publish approvals the guard withholds.
  * Unjudged criteria withhold every publish approval, overrides included; a
  * latest review that is not an approval withholds the plain approvals, while the
- * review overrides stay as the gateway offers them. Hold and review requests are
- * never withheld.
+ * review overrides stay as the gateway offers them. Open findings or a running
+ * fix (`reviewBlock`) withhold every publish approval, as the gateway does. Hold
+ * and review requests are never withheld.
  */
 export function gateReviewActions(
   actions: ReadonlyArray<DecisionAction>,
   guard: ApprovePublishGuard,
   readiness?: RunGateReadiness,
+  reviewBlock?: string,
 ): GateReviewAction[] {
   return actions.map((action) => {
     if (
@@ -277,6 +280,7 @@ export function gateReviewActions(
     )
       return { ...action, disabledReason: 'Evidence attestation is unavailable for this gate.' };
     if (!isPublishApprovalAction(action.id)) return { ...action, disabledReason: null };
+    if (reviewBlock) return { ...action, disabledReason: reviewBlock };
     const reasons = REVIEW_OVERRIDE_ACTIONS.has(action.id)
       ? guard.acceptanceReasons
       : [...guard.acceptanceReasons, ...guard.reviewReasons];
@@ -291,7 +295,7 @@ export function gateReviewActions(
  * "loading".
  */
 export function humanGateGuard(
-  run: Pick<Run, 'engineState'> | null,
+  run: Pick<Run, 'engineState' | 'status' | 'agentContexts'> | null,
   decision: HumanGateGuardDecision,
   acceptance: GateAcceptanceInput,
 ): HumanGateGuardState {
@@ -309,6 +313,7 @@ export function humanGateGuard(
       decision.actions,
       guard,
       decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
+      run ? publicationReviewBlockingReason(run) : undefined,
     ),
   };
 }

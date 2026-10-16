@@ -39,13 +39,12 @@ export const expandTemplateWithReservedLast: typeof expandReservedTemplate = (
         expandReservedTemplate(token, vars, projectVars, reserved, extraVars),
       ]),
   );
-  const ci = projectVars?.projectJson.ci as { local_check?: string } | undefined;
   return renderTemplatePlaceholders(
     template,
     {
       ...values,
       TASK_DIR: expandReservedTemplate('{{TASK_DIR}}', vars, projectVars, reserved, extraVars),
-      'ci.local_check': ci?.local_check ?? '',
+      'ci.local_check': projectVars?.projectJson.ci?.local_check ?? '',
       CI_PARITY_CHECKLIST: reserved.CI_PARITY_CHECKLIST ?? '',
     },
     'Role template',

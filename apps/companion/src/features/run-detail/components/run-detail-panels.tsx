@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
+  extractRunArtifactManifest,
   type RecipeRunArtifactGroup,
   type Run,
   type RunDecision,
@@ -19,7 +20,6 @@ import {
   classifyArtifact,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
   groupVisualArtifactPairs,
   type VisualArtifactPair,
 } from '../../../lib/artifact-url';
