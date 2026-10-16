@@ -56,7 +56,7 @@ async function routePinnedWorkerInput(
 ) {
   const current = () => {
     const run = getRun(target.runId);
-    if (!run || run.transport !== 'native')
+    if (!run)
       throw new GatewayMethodError('NATIVE_SESSION_ERROR', 'Native worker run is unavailable');
     assertNativeRunOwner(run);
     const context = run.agentContexts?.find((context) => context.id === target.contextId);
@@ -64,7 +64,9 @@ async function routePinnedWorkerInput(
     if (
       !context ||
       !binding ||
-      binding.ownerPrincipalId !== run.nativeOwnerPrincipalId ||
+      (run.transport !== 'native' && (context.role !== 'review' || context.nativeSessionOwner)) ||
+      (run.nativeOwnerPrincipalId !== undefined &&
+        binding.ownerPrincipalId !== run.nativeOwnerPrincipalId) ||
       binding.sessionId !== params.sessionId ||
       binding.executionNodeId !== (params.executionNodeId ?? 'local') ||
       binding.generation !== target.generation ||

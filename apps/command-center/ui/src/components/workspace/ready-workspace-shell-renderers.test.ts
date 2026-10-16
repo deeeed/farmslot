@@ -143,7 +143,7 @@ test('blocked visual claims show judgment rows and keep attestation out of the a
       focusClaim: () => undefined,
     }),
   );
-  assert.match(text, /2 criteria need your visual judgment.*AC-1.*AC-2/s);
+  assert.match(text, /AC-1.*AC-2.*2 criteria need a check/s);
   assert.doesNotMatch(text, /Reason for evidence policy attestation/);
   assert.match(text, /Review\s+evidence/);
 });
@@ -239,12 +239,7 @@ test('action refusals remain visible outside collapsed package details', () => {
   );
   assert.match(text, /role=alert/);
   assert.match(text, /rdy-request-review/);
-  assert.ok(
-    text.indexOf('Review in progress') < text.indexOf('<details class="rdy-gate-details">'),
-  );
-
-  assert.ok(
-    text.indexOf('The displayed visual review snapshot changed.') <
-      text.indexOf('<details class="rdy-gate-details">'),
-  );
+  assert.match(text, /Review in progress/);
+  assert.match(text, /The displayed visual review snapshot changed/);
+  assert.doesNotMatch(text, /rdy-gate-details/);
 });

@@ -13,6 +13,8 @@ import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
+import { validateNativeRunner } from '../runners/native/manager.js';
+import { nativeReviewerOwner, nativeReviewerResultSchema } from '../runners/native/review-owner.js';
 import { cancelNativeWorkerContext, dispatchNativeWorker } from '../runners/native/worker.js';
 import { readNativeWorkerSnapshot } from '../runners/native/worker-control.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
@@ -43,6 +45,11 @@ import {
   withNativeReviewMutation,
   withNativeReviewOperation,
 } from './native-review-operation.js';
+import {
+  capturePipelineVisualInput,
+  collectPipelineVisualResult,
+  pipelineVisualReviewPrompt,
+} from './pipeline-visual-review.js';
 import { startProgressWatcher } from './progress.js';
 import {
   applyTerminalReviewSignal,
@@ -109,8 +116,10 @@ export async function runNativeReviewAgent(input: NativeReviewInput): Promise<Re
 async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<ReviewAgentResult> {
   const { vars, runId, runner, model, taskDir, loopNumber, artifactScope, validationDepth } = input;
   const original = getRun(runId);
-  if (!original || original.transport !== 'native') throw new Error('Native review run not found');
+  if (!original) throw new Error('Native review run not found');
   assertNativeRunOwner(original);
+  validateNativeRunner(runner, model);
+  const ownerPrincipalId = nativeReviewerOwner(original, vars);
   const generation = original.engineState?.generation ?? 0;
   const admit = () => {
     assertNativeReviewOperationCurrent();
@@ -152,7 +161,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
   const scope: WarmReviewerScope = {
     reviewId: lineage,
     project: original.project,
-    ownerPrincipalId: original.nativeOwnerPrincipalId ?? original.createdByPrincipalId ?? null,
+    ownerPrincipalId,
     transport: 'native',
     runId,
     taskDir,
@@ -180,8 +189,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
     warm = sourceRun?.agentContexts?.find((candidate) => candidate.id === retained!.contextId);
     if (
       !sourceRun ||
-      sourceRun.nativeOwnerPrincipalId !== original.nativeOwnerPrincipalId ||
-      sourceRun.transport !== 'native' ||
+      warm?.nativeSession?.ownerPrincipalId !== ownerPrincipalId ||
       !warm?.nativeSession ||
       warm.role !== 'review' ||
       warm.nativeSession.releasedAt ||
@@ -206,7 +214,6 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       )
     )
       throw new WarmReviewRefusal('session-busy', 'the retained reviewer is active');
-    retained = claimWarmReviewerSession(scope, { consume: true });
   }
   const target = targetForChecklistBasename(reviewerChecklistBasename(contextId));
   const feedbackRelPath = reviewerFeedbackRelPath(contextId);
@@ -216,7 +223,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
   const startedAt = recovering
     ? (context!.attemptStartedAt ?? context!.startedAt ?? new Date().toISOString())
     : new Date().toISOString();
-  await admitReviewRound(runId, reviewRoundAdmissionId(lineage, loopNumber, startedAt));
+  let resultSchema = context?.nativeSession?.resultSchema;
   let progress: { stop(): void | Promise<void> } | undefined;
   let activeTaskSet = false;
   let primaryFailure: unknown;
@@ -236,6 +243,20 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
         snapshot.snapshot.source === 'unavailable'
       )
         throw new Error('Native reviewer requires immutable captured base/head commits');
+      const visualInput = recovering
+        ? context?.pipelineVisualReviewInput
+        : nativeReviewerResultSchema(vars, runner)
+          ? await capturePipelineVisualInput(runId, snapshot.snapshot.headSha)
+          : undefined;
+      if (!recovering)
+        resultSchema = visualInput ? nativeReviewerResultSchema(vars, runner) : undefined;
+      if (retained && warm?.nativeSession?.resultSchema !== resultSchema)
+        throw new WarmReviewRefusal(
+          'session-unavailable',
+          'the retained reviewer uses another result contract; choose cold',
+        );
+      await admitReviewRound(runId, reviewRoundAdmissionId(lineage, loopNumber, startedAt));
+      if (retained) retained = claimWarmReviewerSession(scope, { consume: true });
       if (!recovering) {
         admit();
         context = (await upsertAgentContext(runId, 'review', {
@@ -251,6 +272,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           reviewLoopNumber: loopNumber,
           runner,
           model,
+          ...(visualInput ? { pipelineVisualReviewInput: visualInput } : {}),
           ...(input.effort?.trim() ? { effort: input.effort.trim() } : {}),
           target: null,
         }))!;
@@ -290,7 +312,8 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
         await writeTextFileOnSlot(
           vars,
           taskMdPath,
-          prependReviewerExecutionContract(template, mark),
+          prependReviewerExecutionContract(template, mark) +
+            (visualInput ? pipelineVisualReviewPrompt(visualInput, taskDir) : ''),
         );
       }
       admit();
@@ -352,6 +375,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
         taskId: run.ticketOrPr,
         runner,
         model,
+        resultSchema,
         effort: input.effort?.trim() || undefined,
         safetyTier: run.safetyTier ?? runnerDefaultSafetyTier(runner),
         project: projectVars.projectJson,
@@ -400,13 +424,14 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       // A resumed process can bootstrap a fresh signal attempt. Read the watcher's
       // current binding so its valid terminal signal is not compared with the old one.
       context = latest;
-      const probe = await probeWorkerSignalForRun(runId, vars.slotId, context);
-      if (probe.ok) break;
-      if (probe.code === 'artifact_contract') throw new TerminalReviewArtifactError(probe.message);
       const snapshot = await readNativeWorkerSnapshot(runId, 'review', contextId);
       const command = snapshot.commands.find(
         (command) => command.commandId === context!.nativeSession!.commandId,
       );
+      const probe = await probeWorkerSignalForRun(runId, vars.slotId, context);
+      if (probe.ok && command?.state === 'completed' && command.outcome === 'completed') break;
+      if (!probe.ok && probe.code === 'artifact_contract')
+        throw new TerminalReviewArtifactError(probe.message);
       if (['closed', 'failed'].includes(snapshot.session.state) || command?.outcome === 'failed') {
         const reason =
           snapshot.session.error ?? 'Native reviewer stopped without a valid terminal signal';
@@ -429,6 +454,13 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       feedback.terminalInvalidReason,
     );
     if (error) throw error;
+    const visualResult = !feedback.incomplete
+      ? collectPipelineVisualResult(
+          admit(),
+          context,
+          await readNativeWorkerSnapshot(runId, 'review', contextId),
+        )
+      : undefined;
     const persisted = await withNativeReviewMutation(() =>
       persistReviewOutputArtifacts({
         vars,
@@ -452,6 +484,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           status: feedback.incomplete ? 'blocked' : 'complete',
           lastSignalAt: completedAt,
           reviewResultValidatedAt: feedback.incomplete ? undefined : completedAt,
+          ...(visualResult ? { pipelineVisualReviewResult: visualResult } : {}),
         },
         {
           guard: async () => {

@@ -18,11 +18,10 @@ import {
   publicationGateCriteria,
   publicationGateView,
   type ReviewDispatchViewModel,
-  visualPrevalidationLabel,
 } from '@farmslot/review-dispatch';
 import { gateClaimsHeight, publicationGateColors, skeletonTokens } from '@farmslot/theme';
 
-import { VisualClaimJudgment } from '../../../components/VisualClaimJudgment';
+import { AcceptanceClaimList } from '../../../components/AcceptanceClaimList';
 import type {
   GateReviewAction,
   GateReviewSummary,
@@ -154,10 +153,12 @@ export function GateActions({
   pendingVisualClaimIds,
   readiness,
   onFocusClaim,
+  showClaims = true,
   loading = false,
   disabled = false,
   reviewDisabled = false,
 }: {
+  showClaims?: boolean;
   loading?: boolean;
   disabled?: boolean;
   reviewDisabled?: boolean;
@@ -183,6 +184,7 @@ export function GateActions({
   const appearance = useColorScheme();
   const viewport = useWindowDimensions();
   const [attestingDecisionId, setAttestingDecisionId] = useState<string | null>(null);
+  const [judging, setJudging] = useState(false);
   const [moreActions, setMoreActions] = useState(false);
   if (decision.resolvedAt) {
     return (
@@ -213,6 +215,7 @@ export function GateActions({
   const renderAction = (action: PublicationGateAction, primary = false) => {
     const actionDisabled =
       disabled ||
+      judging ||
       Boolean(action.disabledReason) ||
       sendingActionId !== null ||
       (primary && Boolean(view.blockedReason)) ||
@@ -269,7 +272,11 @@ export function GateActions({
         numberOfLines={2}
         style={[gateStyles.status, { color: palette.text }]}
       >
-        {view.status}
+        {judging
+          ? 'Saving judgment and refreshing…'
+          : sendingActionId === 'refresh-package'
+            ? 'Refreshing…'
+            : view.status}
       </Text>
       {view.warnings.map((warning) => (
         <Text
@@ -280,71 +287,29 @@ export function GateActions({
           {warning}
         </Text>
       ))}
-      {rowCount ? (
+      {showClaims && rowCount ? (
         <View accessibilityLabel="Acceptance judgments">
-          <Text style={[gateStyles.label, { color: palette.text, height: 24 }]}>
-            Acceptance judgments
-          </Text>
+          <Text style={[gateStyles.label, { color: palette.text }]}>Acceptance judgments</Text>
           <ScrollView
             nestedScrollEnabled
             style={{ height: gateClaimsHeight(rowCount, viewport.height) }}
           >
-            {!view.claims.length && loading
+            {loading && !view.claims.length
               ? Array.from({ length: rowCount }, (_, index) => (
                   <GateClaimSkeleton
-                    color={skeletonTokens.colors[appearance === 'light' ? 'light' : 'dark']}
                     key={index}
+                    color={skeletonTokens.colors[appearance === 'light' ? 'light' : 'dark']}
                   />
                 ))
               : null}
-            {view.claims.map((claim) => (
-              <View
-                key={claim.id}
-                testID={`gate-ac-${claim.id}`}
-                style={[gateStyles.claim, { borderColor: palette.border }]}
-              >
-                <Text style={[gateStyles.label, { color: palette.text }]}>{claim.id}</Text>
-                <Text numberOfLines={2} style={[gateStyles.claimText, { color: palette.text }]}>
-                  {claim.text}
-                </Text>
-                <Text
-                  style={[
-                    gateStyles.chip,
-                    {
-                      borderColor: palette.border,
-                      color: claim.pending ? palette.warning : palette.text,
-                    },
-                  ]}
-                >
-                  {claim.state}
-                </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Review evidence for ${claim.id}`}
-                  onPress={() => onFocusClaim?.(claim.id)}
-                  style={[
-                    gateStyles.button,
-                    { backgroundColor: palette.surface, borderColor: palette.border },
-                  ]}
-                >
-                  <Text style={{ color: palette.text }}>
-                    Review evidence
-                    {claim.judgment?.media.clip
-                      ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
-                      : ''}
-                  </Text>
-                </Pressable>
-                {claim.judgment ? (
-                  <VisualClaimJudgment
-                    row={claim.judgment}
-                    onRecord={onRecordVisualReview}
-                    disabled={disabled || sendingActionId !== null}
-                  />
-                ) : (
-                  <Text style={{ color: palette.secondary }}>{visualPrevalidationLabel()}</Text>
-                )}
-              </View>
-            ))}
+            <AcceptanceClaimList
+              rows={view.claims}
+              onFocus={onFocusClaim}
+              onRecord={onRecordVisualReview}
+              disabled={disabled || judging || sendingActionId !== null}
+              onBusyChange={setJudging}
+              testIDPrefix="gate-ac"
+            />
           </ScrollView>
         </View>
       ) : null}
@@ -383,7 +348,7 @@ export function GateActions({
             accessibilityRole="button"
             style={gateStyles.button}
             onPress={onRefreshPackage}
-            disabled={disabled || sendingActionId !== null}
+            disabled={disabled || judging || sendingActionId !== null}
           >
             <Text style={{ color: palette.text }}>Refresh package</Text>
           </Pressable>
@@ -432,19 +397,9 @@ export function GateActions({
 }
 
 const gateStyles = StyleSheet.create({
-  panel: { padding: spacing.lg, borderWidth: 1, borderRadius: radii.md, gap: spacing.lg },
-  status: { fontSize: fonts.sizeMd, fontWeight: '600', minHeight: 44, textAlignVertical: 'center' },
+  panel: { padding: spacing.md, borderTopWidth: 1, gap: spacing.md },
+  status: { fontSize: fonts.sizeMd, fontWeight: '600' },
   label: { fontSize: fonts.sizeSm, fontWeight: '600' },
-  claim: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingVertical: spacing.md,
-    borderTopWidth: 1,
-  },
-  claimText: { flex: 1, minWidth: 160, fontSize: fonts.sizeSm, lineHeight: 18 },
-  chip: { borderWidth: 1, borderRadius: radii.sm, padding: spacing.sm, fontSize: fonts.sizeSm },
   button: {
     minHeight: 44,
     minWidth: 44,

@@ -5,7 +5,6 @@ import path from 'node:path';
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type AgentContext,
-  allocateReviewerContext,
   isTerminalRunStatus,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
@@ -23,7 +22,6 @@ import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.j
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
-  ensureTmuxWindow,
   killTmuxWindowById,
   listExactTmuxWindows,
   resolveExactTmuxWindowPane,
@@ -31,49 +29,22 @@ import {
   resolveTmuxWindowId,
   resolveTmuxWindowIdentity,
   resolveTmuxWindowPaneCount,
-  respawnTmuxWindowWithCommand,
   shellQuote,
   throwIfTmuxQueryTimedOut,
-  TMUX_WINDOW_RESPAWN_SETTLE_MS,
   tmuxShellSnippet,
-  type TmuxWindowRef,
 } from '../core/tmux.js';
-import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { runSupersededSince } from '../run-engine/run-generation.js';
-import { stackPrBase } from '../run-engine/stack-base.js';
-import {
-  buildLaunchCommand,
-  RUNNER_LAUNCH_READY_TIMEOUT_MS,
-  runnerSupportsSessionReload,
-} from '../runners/launch-command.js';
+import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { readNativeWorkerSnapshot } from '../runners/native/worker-control.js';
 import {
-  launchAckSignalAdvanced,
-  readLaunchAckSignalSnapshot,
-} from '../runners/prompt-delivery-evidence.js';
-import {
-  captureRunnerPromptAcceptanceBaseline,
   getRunnerObservability,
-  runnerHasDurablePromptHandoff,
-  runnerNeedsPostLaunchPrompt,
   runnerRetainedSessionHandoff,
   runnerSupportsInteractivePrompt,
   sendRunnerPostLaunchPrompt,
-  WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
-import {
-  captureRunnerSessionMetadata,
-  probeRunnerDescendantPid,
-  resumableSessionProbeCommand,
-} from '../runners/session-process.js';
-import { deliverPromptToRetainedRunnerSession } from '../runners/session-reactivation.js';
-import {
-  clearedRunnerSessionContextPatch,
-  recordRunnerSessionForRole,
-} from '../runners/session-record.js';
+import { probeRunnerDescendantPid } from '../runners/session-process.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
-import { clearRunActiveTaskFile, getAllRuns, getRun, updateRun } from '../runs/store.js';
+import { clearRunActiveTaskFile, getRun, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
   unavailableRunnerSessionUsage,
@@ -82,42 +53,25 @@ import {
   checklistMarkerCommand,
   restoreWorkerChecklistTargetFromSlot,
   slotTaskRelPath,
-  syncChecklistTargetForRole,
   targetForChecklistBasename,
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
-import { unwatchContext, watchContext } from '../tasks/watcher.js';
+import { unwatchContext } from '../tasks/watcher.js';
 import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { finishReviewCleanup } from './cleanup.js';
 import { readReviewFeedback } from './feedback.js';
-import { broadcastReviewRun, startProgressWatcher } from './progress.js';
-import { admitReviewRound, reviewRoundAdmissionId } from './review-round-budget.js';
-import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
+import { startProgressWatcher } from './progress.js';
+import { reviewPRIdentity, WarmReviewRefusal } from './session-mode.js';
 import {
-  claimWarmReviewerSession,
-  invalidateWarmReviewerSessions,
-  registerWarmReviewerSession,
-  resolveWarmReviewerSession,
-  reviewPRIdentity,
-  type WarmReviewerScope,
-  WarmReviewRefusal,
-} from './session-mode.js';
-import {
-  bestEffortCaptureRunnerSessionMetadata,
-  bestEffortListRunnerSessionFiles,
-  captureReviewSnapshot,
   debugReviewLog,
   durationBetween,
   readPersistedReviewSnapshot,
-  removeSlotFiles,
   reviewArtifactDir,
-  type ReviewSessionMeta,
   waitForSessionTranscriptToSettle,
 } from './snapshots.js';
-import { reviewerChecklistBasename, reviewerFeedbackRelPath } from './template-paths.js';
+import { reviewerFeedbackRelPath } from './template-paths.js';
 export { reviewerChecklistBasename, reviewerFeedbackRelPath } from './template-paths.js';
-import { expandReviewTemplate } from './templates.js';
 import {
   isSuccessfulTerminalReviewSignal,
   isTerminalReviewArtifactError,
@@ -126,58 +80,6 @@ import {
   terminalReviewArtifactErrorForCompletion,
   withReviewerRelaunch,
 } from './terminal-result.js';
-
-interface ReconciledReviewerWindow extends TmuxWindowRef {
-  disposition: 'existing' | 'created';
-  runnerAlive: boolean;
-}
-
-async function reconcileReviewerWindow(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  session: string,
-  windowName: string,
-  runner: string,
-): Promise<ReconciledReviewerWindow> {
-  // Do not resize shared tmux windows here. Prompt acceptance and completion
-  // are hook/signal based; changing the server size corrupts attached operator
-  // clients without strengthening the runner contract.
-  const ensured = await ensureTmuxWindow(vars, session, windowName);
-  const candidates = await Promise.all(
-    ensured.windows.map(async (window) => {
-      const runnerProbe = await probeRunnerDescendantPid(vars, window.panePid, runner, {
-        timeout: 10_000,
-      });
-      return { ...window, runnerProbe };
-    }),
-  );
-  const indeterminate = candidates.find((window) => window.runnerProbe.state === 'unknown');
-  if (indeterminate?.runnerProbe.state === 'unknown') {
-    throw new Error(
-      `Cannot reconcile ${session}:${windowName}: runner liveness is unknown for ${indeterminate.windowId}${indeterminate.runnerProbe.reason ? ` (${indeterminate.runnerProbe.reason})` : ''}`,
-    );
-  }
-  const live = candidates.filter((window) => window.runnerProbe.state === 'present');
-  const newestFirst = (a: TmuxWindowRef, b: TmuxWindowRef) =>
-    (Number.isFinite(b.activityAt) ? b.activityAt : 0) -
-      (Number.isFinite(a.activityAt) ? a.activityAt : 0) || b.windowIndex - a.windowIndex;
-  const canonical = [...live].sort(newestFirst)[0] ?? [...candidates].sort(newestFirst)[0];
-  if (!canonical) throw new Error(`No tmux reviewer window available for ${session}:${windowName}`);
-
-  for (const duplicate of candidates) {
-    if (duplicate.windowId === canonical.windowId) continue;
-    await killTmuxWindowById(vars, duplicate.windowId);
-  }
-  if (candidates.length > 1) {
-    debugReviewLog(
-      `[review] reconciled ${candidates.length} ${session}:${windowName} windows to ${canonical.windowId}`,
-    );
-  }
-  return {
-    ...canonical,
-    disposition: ensured.disposition,
-    runnerAlive: canonical.runnerProbe.state === 'present',
-  };
-}
 
 /** Progress mark writes status "running"; only terminal worker signals count as done. */
 export function parseTerminalReviewSignal(raw: string) {
@@ -1020,750 +922,50 @@ async function runReviewAgentAttempt(
     effort: effort ?? null,
     mode,
   }).effort;
-  if (getRun(_runId)?.transport === 'native') {
-    const { runNativeReviewAgent } = await import('./native-review-agent.js');
-    return runNativeReviewAgent({
+  // Only already-admitted tmux attempts may finish on their original transport.
+  // Every new pipeline admission uses the native reviewer contract.
+  const retainedTmux = selectRecoverableReviewContext(getRun(_runId)?.agentContexts ?? [], {
+    taskDir,
+    runner,
+    artifactScope,
+  });
+  if (retainedTmux && !retainedTmux.nativeSession) {
+    const session = await resolveTmuxSession(vars.slotId, vars);
+    const recovered = await recoverRunningReviewAgent({
       vars,
       runner,
       model,
       taskDir,
+      slotId: _slotId,
       runId: _runId,
+      session,
       reviewTimeoutMs,
       loopNumber,
       validationDepth,
       artifactScope,
       mode,
-      effort: resolvedEffort,
       reviewId,
     });
+    if (recovered) return recovered;
+    throw new Error(
+      'The retained tmux review could not be collected. Request a cold native review.',
+    );
   }
-  const session = await resolveTmuxSession(vars.slotId, vars);
-  const recovered = await recoverRunningReviewAgent({
+  const { runNativeReviewAgent } = await import('./native-review-agent.js');
+  return runNativeReviewAgent({
     vars,
     runner,
     model,
     taskDir,
-    slotId: _slotId,
     runId: _runId,
-    session,
     reviewTimeoutMs,
     loopNumber,
     validationDepth,
     artifactScope,
     mode,
+    effort: resolvedEffort,
     reviewId,
   });
-  if (recovered) return recovered;
-  const parentRun = getRun(_runId);
-  const launchEffort = resolvedEffort ?? undefined;
-  const startedAt = new Date().toISOString();
-  const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
-  let progressWatcher: { stop(): void | Promise<void> } | null = null;
-  let primaryFailure: unknown;
-  let activeTaskSet = false;
-  const sessionFilesBefore = await bestEffortListRunnerSessionFiles(vars, runner);
-  let sessionMeta: ReviewSessionMeta = {
-    runnerSessionPath: null,
-    runnerSessionId: null,
-    error: sessionFilesBefore.error,
-  };
-  const parentRunForAlloc = getRun(_runId);
-  const identity = reviewPRIdentity(parentRunForAlloc);
-  const lineage =
-    reviewId?.trim() || (mode === 'cold' ? artifactScope?.trim() || randomUUID() : null);
-  if (!lineage)
-    throw new WarmReviewRefusal(
-      'missing-session',
-      'WARM requires the reviewId of the lineage being continued',
-    );
-  const warmScope: WarmReviewerScope = {
-    reviewId: lineage,
-    project: parentRunForAlloc?.project ?? vars.projectName,
-    ownerPrincipalId:
-      parentRunForAlloc?.nativeOwnerPrincipalId ?? parentRunForAlloc?.createdByPrincipalId ?? null,
-    transport: 'tmux',
-    runId: _runId,
-    taskDir,
-    artifactScope: artifactScope ?? null,
-    runner,
-    model,
-    effort: launchEffort ?? null,
-    repository: identity?.repository ?? '',
-    prNumber: identity?.prNumber ?? 0,
-  };
-  const runnerCanResume = runnerSupportsSessionReload(runner);
-  let warmSession = null as ReturnType<typeof claimWarmReviewerSession>;
-  if (mode === 'warm') {
-    if (!identity)
-      throw new WarmReviewRefusal('pr-mismatch', 'the current run has no verified repository/PR');
-    if (!runnerCanResume)
-      throw new WarmReviewRefusal(
-        'unsupported-runner',
-        'the runner cannot reload a retained reviewer',
-      );
-    warmSession = resolveWarmReviewerSession(warmScope, getAllRuns());
-    if (!warmSession)
-      throw new WarmReviewRefusal(
-        'missing-session',
-        'no completed PR reviewer session and reviewed head were retained',
-      );
-    if (warmSession.slotId !== vars.slotId)
-      throw new WarmReviewRefusal(
-        'slot-mismatch',
-        'the retained reviewer belongs to a different slot',
-      );
-    if (
-      getAllRuns().some(
-        (run) =>
-          run.id !== _runId &&
-          run.agentContexts?.some(
-            (context) =>
-              context.runnerSessionId === warmSession!.runnerSessionId &&
-              ['launching', 'working', 'waiting'].includes(context.status),
-          ),
-      )
-    )
-      throw new WarmReviewRefusal('session-busy', 'the reviewer session is owned by an active run');
-  }
-  await admitReviewRound(_runId, reviewRoundAdmissionId(lineage, loopNumber, startedAt));
-  const reviewSnapshot = await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope, {
-    mode,
-    baseRef: parentRunForAlloc
-      ? ((await stackPrBase(parentRunForAlloc)) ?? parentRunForAlloc.repeatReviewContext?.baseRef)
-      : undefined,
-    lastReviewedHeadSha: warmSession?.lastReviewedHeadSha,
-  });
-  if (
-    !reviewSnapshot.snapshot.baseSha ||
-    !reviewSnapshot.snapshot.headSha ||
-    reviewSnapshot.snapshot.source === 'unavailable'
-  )
-    throw new Error('Review requires captured immutable base and head SHAs');
-  const retainReviewerSession = Boolean(identity);
-  let claimedWarmSession = false;
-  const allocated = allocateReviewerContext({
-    runId: _runId,
-    runner,
-    model,
-  });
-  const reviewWindow =
-    warmSession?.windowName ?? `${allocated.windowName}-${randomUUID().slice(0, 8)}`;
-  const priorReviewerContext = [...(parentRunForAlloc?.agentContexts ?? [])]
-    .reverse()
-    .find(
-      (context) =>
-        context.role === 'review' &&
-        context.runner === runner &&
-        context.target?.window === reviewWindow &&
-        context.signalFile,
-    );
-  const reviewChecklistTarget = targetForChecklistBasename(reviewerChecklistBasename(allocated.id));
-  const feedbackRelPath = reviewerFeedbackRelPath(allocated.id);
-  const resultRelPath = reviewerResultRelPath(allocated.id);
-  const taskMdPath = taskDirRelPath(taskDir, reviewChecklistTarget.checklist);
-  let reviewContext = await upsertAgentContext(_runId, 'review', {
-    id: allocated.id,
-    reviewId: lineage,
-    ...clearedRunnerSessionContextPatch(),
-    label: allocated.label,
-    status: 'launching',
-    attemptStartedAt: startedAt,
-    // The worker establishes the new opaque attempt identity with `mark start`.
-    // Do not let a warm context expose the previous attempt during launch.
-    signalAttemptId: undefined,
-    promptAcceptance: undefined,
-    taskFile: taskDirRelPath(taskDir, reviewChecklistTarget.checklist),
-    signalFile: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
-    reviewResultFile: resultRelPath,
-    artifactScope: artifactScope ?? null,
-    reviewLoopNumber: loopNumber,
-    runner,
-    model,
-    ...(launchEffort ? { effort: launchEffort } : {}),
-    target: null,
-  });
-  broadcastReviewRun(_runId);
-
-  try {
-    if (warmSession) {
-      warmSession = claimWarmReviewerSession(warmScope, { consume: true });
-      if (!warmSession)
-        throw new WarmReviewRefusal(
-          'missing-session',
-          'the retained reviewer changed before launch',
-        );
-      claimedWarmSession = true;
-    }
-    // 1. Keep one stable window per runner. Reset versus resume changes runner
-    // context, not topology; the runner capability decides whether delivery
-    // reuses the live process or replaces it through native resume/cold launch.
-    const reviewerWindow = await reconcileReviewerWindow(vars, session, reviewWindow, runner);
-    const reviewTarget = reviewerWindow.windowId;
-    const priorReviewerSignal = priorReviewerContext?.signalFile
-      ? await readLaunchAckSignalSnapshot(vars, priorReviewerContext.signalFile)
-      : null;
-
-    // 1b. Clear prior-pass artifacts so waitForReviewCompletion / readReviewFeedback
-    // can't short-circuit on stale files (caused retry verdict to mirror pass 1).
-    await removeSlotFiles(vars, [
-      `${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`,
-      `${vars.remoteRepo}/${taskDir}/${resultRelPath}`,
-      slotTaskRelPath(vars, taskDir, reviewChecklistTarget.signal),
-    ]);
-
-    // 2. Bind the stable operator-addressable window to this review context.
-    debugReviewLog(
-      `[review] reviewer window ${reviewWindow}: ${reviewerWindow.disposition} (${reviewTarget})`,
-    );
-    reviewContext =
-      (await upsertAgentContext(_runId, 'review', {
-        id: allocated.id,
-        label: allocated.label,
-        runner,
-        model,
-        ...(launchEffort ? { effort: launchEffort } : {}),
-        target: {
-          session,
-          window: reviewWindow,
-          pane: reviewerWindow.paneId,
-          target: reviewTarget,
-        },
-      })) ?? reviewContext;
-
-    // Log active windows so we can see what's in the session
-    const winList = (
-      await execOnSlot(vars, tmuxShellSnippet(`list-windows -t ${shellQuote(session)} 2>/dev/null`))
-    ).stdout.trim();
-    debugReviewLog(`[review] windows in ${session}: ${winList}`);
-
-    // 3. Write expanded review TASK.md to the slot before launch so
-    // non-interactive runners (e.g. Codex) can read it immediately.
-    // The template is in projects/<project>/templates/worker/review.md with {{VAR}} placeholders.
-    // Long multiline prompts get bracketed-pasted by tmux — so we write to a file.
-    const markPrompt = reviewChecklistMarkPrompt(
-      taskDir,
-      taskMdPath,
-      reviewChecklistTarget,
-      feedbackRelPath,
-      resultRelPath,
-    );
-    let expandedTemplate = scopeReviewFeedbackPath(
-      await expandReviewTemplate(vars, taskDir, _runId, validationDepth, {
-        ...reviewChecklistTarget,
-        feedback: feedbackRelPath,
-      }),
-      feedbackRelPath,
-      resultRelPath,
-    );
-    // What this document gives the reviewer; a pass records it (F42).
-    await noteReviewInputsAtLaunch(_runId);
-    const range = warmSession
-      ? continuationReviewScope({
-          priorHeadSha: warmSession.lastReviewedHeadSha,
-          currentHeadSha: reviewSnapshot.snapshot.headSha,
-          priorArtifactDir: `${warmSession.taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}`,
-        })
-      : `## COLD review range\n\nReview the complete PR diff at captured commits ${reviewSnapshot.snapshot.baseSha}..${reviewSnapshot.snapshot.headSha}. Read ${taskDir}/${reviewSnapshot.snapshot.diffPath}. Do not narrow this review to previous findings.\n\n`;
-    expandedTemplate = `${range}${expandedTemplate}`;
-    expandedTemplate = prependReviewerExecutionContract(expandedTemplate, markPrompt);
-    await writeTextFileOnSlot(vars, taskMdPath, expandedTemplate);
-    await syncChecklistTargetForRole(vars, taskDir, 'review', {
-      reportPath: feedbackRelPath,
-      additionalArtifactPaths: [resultRelPath],
-      target: reviewChecklistTarget,
-    });
-
-    // Mark the reviewer-specific checklist as the active task file for progress tracking.
-    updateRun(_runId, { activeTaskFile: taskMdPath });
-    activeTaskSet = true;
-    if (reviewContext) await watchContext(vars.slotId, reviewContext);
-
-    // Interactive runners receive a short prompt after the TUI is ready; the
-    // detailed instructions live in the reviewer checklist. Exec runners bake a
-    // self-contained prompt into their launch command.
-    // A missing transcript cannot establish retained review ownership.
-    if (warmSession) {
-      const probe = warmSession.runnerSessionPath
-        ? await execOnSlot(vars, resumableSessionProbeCommand(warmSession.runnerSessionPath), {
-            timeout: 10_000,
-          })
-        : null;
-      if (!probe || probe.exitCode !== 0) {
-        throw new WarmReviewRefusal(
-          'session-unavailable',
-          'the retained reviewer transcript is unavailable',
-        );
-      }
-    }
-    const basePrompt = runnerNeedsPostLaunchPrompt(runner)
-      ? await resolveWorkerDispatchPrompt(parentRun?.project ?? vars.projectName, {
-          taskFile: taskMdPath,
-          taskDir,
-        })
-      : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review.`;
-    const taskPrompt = warmSession
-      ? `Continue your review of ${warmScope.repository}#${warmScope.prNumber}. Review only ${warmSession.lastReviewedHeadSha}..${reviewSnapshot.snapshot.headSha}. Complete the current checklist output contract.\n\n${basePrompt}`
-      : basePrompt;
-    let promptAccepted = false;
-
-    // 4. Reuse the live reviewer when possible. The runner capability decides
-    // whether the next turn is a safe in-place send or a native resume that
-    // replaces the idle process while preserving its retained session.
-    const parentSafetyTier = parentRun?.safetyTier;
-    const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
-    await ensureNodeSupportBundle(vars, runtimeDir);
-    const coldLaunchCommand = () =>
-      buildLaunchCommand(vars, runner, model, taskPrompt, {
-        taskFile: taskMdPath,
-        taskDir,
-        effort: launchEffort,
-        safetyTier: parentSafetyTier,
-        runtimeDir,
-      });
-    const signalPath = taskDirRelPath(taskDir, reviewChecklistTarget.signal);
-
-    const persistLiveReviewerSession = async (binding: {
-      runnerSessionId: string | null;
-      runnerSessionPath: string | null;
-    }): Promise<boolean> => {
-      if (!binding.runnerSessionId || !binding.runnerSessionPath) return false;
-      sessionMeta = {
-        runnerSessionId: binding.runnerSessionId,
-        runnerSessionPath: binding.runnerSessionPath,
-      };
-      // Reviewer loops allocate a non-canonical context id (`rev2-codex`), so
-      // the hook is given that exact target instead of collapsing every
-      // reviewer generation onto the canonical `review` context.
-      await upsertAgentContext(_runId, 'review', {
-        id: allocated.id,
-        label: allocated.label,
-        status: 'launching',
-      });
-      reviewContext =
-        (await recordRunnerSessionForRole({
-          runId: _runId,
-          role: 'review',
-          contextId: allocated.id,
-          label: allocated.label,
-          session: binding,
-          captureLabel: 'reviewer live session bind',
-        })) ?? reviewContext;
-      return true;
-    };
-
-    const bindLiveReviewerSession = async (
-      options: {
-        sinceMs?: number;
-        observedNotBeforeMs?: number;
-        excludedSessionId?: string | null;
-        excludedSessionPath?: string | null;
-      } = {},
-    ): Promise<boolean> => {
-      const binding = await captureRunnerSessionMetadata(vars, runner, [], {
-        ...options,
-        paneId: reviewerWindow.paneId,
-        slotId: vars.slotId,
-      });
-      return binding ? persistLiveReviewerSession(binding) : false;
-    };
-
-    // Cold launch → settle → capture the pane-owned session → bind context
-    // → deliver prompt. A claimed warm session supplies the native resume id,
-    // but only the live pane hook may establish the binding after launch.
-    const launchReviewer = async (
-      launchCmd: string,
-      prompt: string,
-      claimed: typeof warmSession,
-    ): Promise<void> => {
-      const launchAckBaseline = runnerNeedsPostLaunchPrompt(runner)
-        ? null
-        : await readLaunchAckSignalSnapshot(vars, signalPath);
-      const handoffAckSinceMs = Date.now();
-      let bindingObservedNotBeforeMs = handoffAckSinceMs;
-      debugReviewLog(`[review] launching (${runner}) via respawn-window: ${launchCmd}`);
-      await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd, {
-        preserveWindowAfterExit: true,
-      });
-      await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
-      sessionMeta = await bestEffortCaptureRunnerSessionMetadata(
-        vars,
-        runner,
-        sessionFilesBefore.paths,
-        sessionFilesBefore.error,
-        {
-          sinceMs: handoffAckSinceMs,
-          paneId: reviewerWindow.paneId,
-        },
-      );
-      const launchedContext = await upsertAgentContext(_runId, 'review', {
-        id: allocated.id,
-        label: allocated.label,
-        status: 'launching',
-      });
-      // One hook owns session identity, including on the cold-launch path. It
-      // records nothing when the capture produced no complete pair, so fall
-      // back to the launch upsert rather than dropping the fresh context.
-      reviewContext =
-        (await recordRunnerSessionForRole({
-          runId: _runId,
-          role: 'review',
-          contextId: allocated.id,
-          label: allocated.label,
-          session: sessionMeta,
-          captureLabel: 'reviewer cold launch',
-        })) ??
-        launchedContext ??
-        reviewContext;
-
-      // Cold launch: argv-first runners already carry the task on the respawn
-      // line (`withArgvTaskPromptPlaceholder`). A second tmux send races that
-      // turn and can fail closed because pane-only Cursor has no prompt digest.
-      // Recovery retires the exact stale argv-reviewer window before relaunch.
-      if (runnerNeedsPostLaunchPrompt(runner)) {
-        const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
-          vars,
-          reviewTarget,
-          runner,
-          handoffAckSinceMs,
-        );
-        bindingObservedNotBeforeMs = promptAcceptanceBaselineMs ?? handoffAckSinceMs;
-        try {
-          await sendRunnerPostLaunchPrompt(
-            vars,
-            reviewTarget,
-            runner,
-            prompt,
-            reviewChecklistTarget.checklist,
-            'review',
-            {
-              readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
-              maxAttempts: 5,
-              blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/review-launch.txt`,
-              signalPath,
-              launchAckSignalPath: signalPath,
-              promptAcceptanceBaselineMs,
-              requirePromptDigest: true,
-              handoffAckSinceMs,
-              softAcceptOnHandoffAck: true,
-              runtimeDir,
-            },
-          );
-        } catch (err) {
-          const handoff = await runnerHasDurablePromptHandoff(
-            vars,
-            reviewTarget,
-            runner,
-            prompt,
-            handoffAckSinceMs,
-            {
-              promptAcceptanceBaselineMs,
-              requirePromptDigest: true,
-            },
-          );
-          if (!handoff.accepted) throw err;
-          console.warn(
-            `[review] prompt delivery verifier failed but durable handoff passed via ${handoff.source}: ${handoff.reason}`,
-          );
-        }
-      }
-
-      if (runnerNeedsPostLaunchPrompt(runner)) {
-        promptAccepted = true;
-      } else {
-        const acknowledgement = await readLaunchAckSignalSnapshot(vars, signalPath);
-        promptAccepted = Boolean(
-          acknowledgement && launchAckSignalAdvanced(launchAckBaseline, acknowledgement),
-        );
-      }
-
-      // Some interactive runners emit SessionStart before creating their
-      // transcript file. The pre-prompt capture correctly refuses that
-      // incomplete identity; retry only after exact prompt acceptance, when
-      // the pane hook and resumable transcript can both be verified.
-      if (
-        !sessionMeta.runnerSessionId &&
-        runnerCanResume &&
-        !(await bindLiveReviewerSession({ observedNotBeforeMs: bindingObservedNotBeforeMs })) &&
-        retainReviewerSession
-      ) {
-        console.warn(
-          `[review] ${claimed ? 'reloaded' : 'launched'} ${runner} reviewer did not establish an authoritative session binding in ${reviewTarget}; completing this pass without retaining it`,
-        );
-        invalidateWarmReviewerSessions(_runId, runner);
-      }
-    };
-
-    if (warmSession) {
-      const delivery = await deliverPromptToRetainedRunnerSession({
-        vars,
-        target: reviewTarget,
-        runnerId: runner,
-        sessionId: warmSession.runnerSessionId,
-        sessionPath: warmSession.runnerSessionPath,
-        model,
-        effort: launchEffort,
-        prompt: taskPrompt,
-        safetyTier: parentSafetyTier,
-        runtimeDir,
-        taskDir,
-        taskFile: taskMdPath,
-        launchAckSignalPath: signalPath,
-        replacementReadySignalPath: priorReviewerContext?.signalFile,
-        replacementReadySignalAttemptId: priorReviewerContext?.signalAttemptId,
-        replacementReadySignal: priorReviewerSignal,
-        recovery: { runId: _runId },
-        forceBusyPoll: true,
-        sendLogPrefix: 'review-warm',
-      });
-      if (!delivery.delivered)
-        throw new WarmReviewRefusal(
-          delivery.disposition === 'hold' ? 'session-busy' : 'session-unavailable',
-          delivery.reason,
-        );
-      promptAccepted = true;
-      if (
-        !(await bindLiveReviewerSession()) ||
-        sessionMeta.runnerSessionId !== warmSession.runnerSessionId
-      )
-        throw new WarmReviewRefusal(
-          'session-unavailable',
-          'the runner did not confirm the retained reviewer identity',
-        );
-    } else {
-      await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
-    }
-
-    // Session binding and process launch do not prove prompt acceptance.
-    if (promptAccepted) {
-      // The exact accepted native turn identifies this attempt without comparing
-      // gateway time with a remote node's clock.
-      const acceptance =
-        sessionMeta.runnerSessionId && sessionMeta.runnerSessionPath
-          ? await getRunnerObservability(runner)?.promptAcceptedInSession?.(
-              vars,
-              reviewTarget,
-              sessionMeta.runnerSessionId,
-              sessionMeta.runnerSessionPath,
-              taskPrompt,
-              0,
-            )
-          : null;
-      reviewContext =
-        (await upsertAgentContext(_runId, 'review', {
-          id: allocated.id,
-          label: allocated.label,
-          status: 'working',
-          ...(acceptance?.value === true &&
-          acceptance.exactPromptMatch &&
-          acceptance.turnToken &&
-          sessionMeta.runnerSessionId &&
-          sessionMeta.runnerSessionPath
-            ? {
-                promptAcceptance: {
-                  runner,
-                  deliveryStartedAt: startedAt,
-                  sessionId: sessionMeta.runnerSessionId,
-                  sessionPath: sessionMeta.runnerSessionPath,
-                  observedAt: acceptance.observedAt,
-                  turnToken: acceptance.turnToken,
-                },
-              }
-            : {}),
-        })) ?? reviewContext;
-    }
-
-    broadcastReviewRun(_runId);
-
-    // 6. Watch the reviewer-specific checklist for progress + wait for completion
-    const reviewPath = slotTaskRelPath(vars, taskDir, reviewChecklistTarget.checklist);
-    progressWatcher = startProgressWatcher(vars, reviewPath, _runId, 'Review', {
-      contextId: allocated.id,
-      role: 'review',
-    });
-    await waitForReviewCompletionOrThrow(
-      vars,
-      reviewTarget,
-      taskDir,
-      reviewTimeoutMs,
-      _runId,
-      runner,
-      allocated.id,
-      reviewChecklistTarget.signal,
-      feedbackRelPath,
-      resultRelPath,
-    );
-    await waitForSessionTranscriptToSettle(vars, sessionMeta.runnerSessionPath);
-    const usage = sessionMeta.error
-      ? unavailableRunnerSessionUsage({
-          runner,
-          runnerSessionId: sessionMeta.runnerSessionId,
-          runnerSessionPath: sessionMeta.runnerSessionPath,
-          error: sessionMeta.error,
-        })
-      : await extractRunnerSessionUsage({
-          slotId: vars.slotId,
-          vars,
-          runner,
-          runnerSessionId: sessionMeta.runnerSessionId,
-          runnerSessionPath: sessionMeta.runnerSessionPath,
-        });
-
-    // 7. Read reviewer-specific feedback.
-    const terminalSignal = await readTerminalReviewSignal(
-      vars,
-      taskDir,
-      reviewChecklistTarget.signal,
-    );
-    const feedback = applyTerminalReviewSignal(
-      await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath),
-      terminalSignal,
-    );
-    const terminalArtifactError = terminalReviewArtifactErrorForCompletion(
-      allocated.id,
-      feedback.terminalInvalidReason,
-    );
-    if (terminalArtifactError) throw terminalArtifactError;
-    if (feedback.incomplete) {
-      return {
-        ...feedback,
-        validationDepth,
-        mode,
-        reviewId: lineage,
-        reviewerSessionId: sessionMeta.runnerSessionId,
-        usage,
-        reviewSnapshot: reviewSnapshot.snapshot,
-        startedAt,
-        completedAt: new Date().toISOString(),
-      };
-    }
-    if (retainReviewerSession) {
-      // Record this pass's session so the next loop of THIS run can resume it.
-      const reusableSessionId = sessionMeta.runnerSessionId;
-      const reusableSessionPath = sessionMeta.runnerSessionPath;
-      if (reusableSessionId && runnerSupportsSessionReload(runner)) {
-        registerWarmReviewerSession({
-          ...warmScope,
-          contextId: allocated.id,
-          windowName: reviewWindow,
-          slotId: vars.slotId,
-          runnerSessionId: reusableSessionId,
-          runnerSessionPath: reusableSessionPath ?? null,
-          lastLoopNumber: loopNumber,
-          lastReviewedHeadSha: reviewSnapshot.snapshot.headSha!,
-        });
-      }
-    }
-    const persisted = await persistReviewOutputArtifacts({
-      vars,
-      taskDir,
-      taskMdPath,
-      signalBasename: reviewChecklistTarget.signal,
-      feedbackRelPath,
-      resultRelPath,
-      artifactDir,
-      feedbackIncomplete: feedback.incomplete ?? false,
-    });
-    const completedAt = new Date().toISOString();
-    await upsertAgentContext(_runId, 'review', {
-      id: allocated.id,
-      status: 'complete',
-      reviewResultValidatedAt: completedAt,
-    });
-    return {
-      ...feedback,
-      validationDepth,
-      mode,
-      reviewId: lineage,
-      reviewerSessionId: sessionMeta.runnerSessionId,
-      session: {
-        mode,
-        reviewId: lineage,
-        continuity: warmSession ? 'resumed' : 'fresh',
-        ...(warmSession
-          ? { priorRunId: warmSession.runId, priorSessionId: warmSession.runnerSessionId }
-          : {}),
-        sessionId: sessionMeta.runnerSessionId ?? undefined,
-        repository: identity?.repository,
-        prNumber: identity?.prNumber,
-        lastReviewedHeadSha: warmSession
-          ? warmSession.lastReviewedHeadSha
-          : reviewSnapshot.snapshot.headSha,
-        runner,
-        model,
-        effort: launchEffort ?? null,
-      },
-      usage,
-      reviewSnapshot: reviewSnapshot.snapshot,
-      artifactPaths: [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths],
-      taskProgressArtifactPath: persisted.taskProgressArtifactPath,
-      timeline: [
-        {
-          kind: loopNumber > 1 ? 're-review' : 'review',
-          loopNumber,
-          runner,
-          model,
-          startedAt,
-          completedAt,
-          durationMs: durationBetween(startedAt, completedAt),
-          verdict: feedback.verdict === 'pass' ? 'pass' : 'issues',
-          unresolvedCount: feedback.verdict === 'pass' ? 0 : feedback.issues.length,
-          artifactPaths: [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths],
-        },
-      ],
-      startedAt,
-      completedAt,
-    };
-  } catch (err) {
-    primaryFailure = err;
-    if (claimedWarmSession) invalidateWarmReviewerSessions(_runId, runner);
-    try {
-      await markAgentContextStatus(
-        _runId,
-        'review',
-        isTerminalReviewArtifactError(err) ? 'blocked' : 'failed',
-        {
-          id: allocated.id,
-          lastSignalAt: new Date().toISOString(),
-        },
-      );
-    } catch (recordError) {
-      primaryFailure = new AggregateError(
-        [err, recordError],
-        `${String(err)}; status recording also failed: ${String(recordError)}`,
-        { cause: err },
-      );
-    }
-    throw primaryFailure;
-  } finally {
-    await finishReviewCleanup(primaryFailure, [
-      () => progressWatcher?.stop(),
-      () => unwatchContext(vars.slotId, allocated.id),
-      async () => {
-        if (!(primaryFailure instanceof ReviewerExitedError) || !reviewContext?.target) return;
-        const target = reviewContext.target;
-        const pane = await resolveExactTmuxWindowPane(vars, target.target);
-        if (!pane) return;
-        if (
-          pane.paneId !== target.paneId ||
-          (await resolveTmuxWindowPaneCount(vars, target.target)) !== 1
-        )
-          throw new Error('Stopped reviewer pane changed before cleanup');
-        await killTmuxWindowById(vars, target.target);
-      },
-      async () => {
-        if (!activeTaskSet) return;
-        clearRunActiveTaskFile(_runId, taskMdPath);
-        const parentRun = getRun(_runId);
-        await restoreWorkerChecklistTargetFromSlot(
-          vars,
-          taskDir,
-          parentRun
-            ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined }
-            : undefined,
-        );
-      },
-    ]);
-  }
 }
 
 export async function waitForReviewCompletion(

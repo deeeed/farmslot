@@ -198,12 +198,7 @@ export function persistedWarmReviewerSession(
   run: Run,
 ): WarmReviewerSession | null {
   const identity = reviewPRIdentity(run);
-  if (
-    run.project !== scope.project ||
-    (run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null) !== scope.ownerPrincipalId ||
-    (run.transport ?? 'tmux') !== scope.transport
-  )
-    return null;
+  if (run.project !== scope.project) return null;
   if (
     !identity ||
     identity.repository.toLowerCase() !== scope.repository.toLowerCase() ||
@@ -227,6 +222,11 @@ export function persistedWarmReviewerSession(
   const contexts = [...(run.agentContexts ?? [])].reverse().filter(
     (candidate) =>
       candidate.role === 'review' &&
+      (scope.transport === 'native'
+        ? candidate.nativeSession?.ownerPrincipalId === scope.ownerPrincipalId
+        : !candidate.nativeSession &&
+          (run.transport ?? 'tmux') === 'tmux' &&
+          (run.createdByPrincipalId ?? null) === scope.ownerPrincipalId) &&
       candidate.reviewId === scope.reviewId &&
       candidate.runner === scope.runner &&
       candidate.status === 'complete' &&

@@ -261,10 +261,10 @@ test('clicking an evidence file opens the files of its criterion, in order, in t
       openEvidence: (open) => calls.push(open),
     });
     const handlers = litBindings(panel, '@click=') as Array<(event: MouseEvent) => void>;
-    assert.equal(handlers.length, 3, 'one handler per evidence link');
+    assert.equal(handlers.length, 5, 'three file links and two row review actions');
 
     const second = click();
-    handlers[1](second.event);
+    handlers[2](second.event);
     assert.equal(second.prevented(), true, 'the browser does not follow the link');
     assert.equal(calls.length, 1);
     assert.equal(calls[0].criterion.id, 'AC-1');
@@ -275,13 +275,13 @@ test('clicking an evidence file opens the files of its criterion, in order, in t
     ]);
     assert.equal(calls[0].index, 1);
 
-    handlers[2](click().event);
+    handlers[4](click().event);
     assert.equal(calls[1].criterion.id, 'AC-2');
     assert.deepEqual(calls[1].evidence, ['artifacts/teardown-final-state.png']);
     assert.equal(calls[1].index, 0);
 
     const modified = click({ metaKey: true });
-    handlers[0](modified.event);
+    handlers[1](modified.event);
     assert.equal(modified.prevented(), false, 'cmd-click keeps the new-tab behaviour');
     assert.equal(calls.length, 2);
     assert.deepEqual(opened, [], 'nothing calls window.open');

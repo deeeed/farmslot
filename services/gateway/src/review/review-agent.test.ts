@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 import type { AgentContext } from '@farmslot/protocol';
 
+import '../runtime/mock-pty.test-support.js';
+
 import { retainedReviewerDeliveryPlan } from '../runners/registry.js';
 import { targetForChecklistBasename } from '../tasks/checklist-target.js';
 
@@ -27,14 +29,6 @@ test('review recovery rejects in-place handoff for argv-first runners', () => {
     'utf8',
   );
   assert.match(source, /runnerRetainedSessionHandoff\(runner\) === 'argv-relaunch'/);
-  assert.match(
-    source,
-    /if \(runnerNeedsPostLaunchPrompt\(runner\)\) \{\s*const promptAcceptanceBaselineMs/,
-  );
-  assert.doesNotMatch(
-    source,
-    /if \(runnerSupportsInteractivePrompt\(runner\)\) \{\s*const promptAcceptanceBaselineMs/,
-  );
   assert.match(source, /abandonRecoveredReviewer\(`\$\{delivery\} recovered reviewer cleanup`\)/);
 });
 

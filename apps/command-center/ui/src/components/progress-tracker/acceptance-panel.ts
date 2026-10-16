@@ -14,6 +14,7 @@
 
 import { css, html, nothing, type TemplateResult, unsafeCSS } from 'lit';
 
+import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import {
   createEvidenceReviewModel,
   type EvidenceReviewClaim,
@@ -26,8 +27,15 @@ import type {
   AcceptanceStatusLedger,
 } from '@farmslot/protocol';
 import { summarizeAcceptanceStatus } from '@farmslot/protocol';
+import { acceptanceClaimRows } from '@farmslot/review-dispatch';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+
+import {
+  type AcceptanceClaimListActions,
+  acceptanceClaimListStyles,
+  renderAcceptanceClaimList,
+} from './acceptance-claim-list.js';
 
 export interface AcceptancePanelPresentation {
   /** Assessment progress stays distinct from how many criteria are proven. */
@@ -67,6 +75,7 @@ export function evidenceLabel(evidencePath: string): string {
 }
 
 export const acceptancePanelStyles = css`
+  ${unsafeCSS(acceptanceClaimListStyles())}
   .ac-panel {
     margin: ${unsafeCSS(spacing.sm)} 0;
     border: 1px solid ${unsafeCSS(colors.bgCardHover)};
@@ -86,6 +95,12 @@ export const acceptancePanelStyles = css`
   }
   .ac-summary::-webkit-details-marker {
     display: none;
+  }
+  .ac-warning-details > summary {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
   }
   .ac-summary:hover {
     background: ${unsafeCSS(colors.bgCardHover)};
@@ -122,25 +137,6 @@ export const acceptancePanelStyles = css`
     padding: 0 ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.sm)};
   }
 
-  .ac-row {
-    display: flex;
-    align-items: baseline;
-    gap: ${unsafeCSS(spacing.sm)};
-  }
-
-  .ac-id {
-    flex-shrink: 0;
-    width: 3.2em;
-    color: ${unsafeCSS(colors.textMuted)};
-    font-family: ${unsafeCSS(fonts.mono)};
-  }
-
-  .ac-text {
-    flex: 1;
-    min-width: 0;
-    color: ${unsafeCSS(colors.textPrimary)};
-  }
-
   .ac-verdict {
     flex-shrink: 0;
     padding: 0 5px;
@@ -150,44 +146,10 @@ export const acceptancePanelStyles = css`
     font-weight: 600;
     text-transform: uppercase;
   }
-  .ac-row.ac-proven .ac-verdict {
-    border-color: ${unsafeCSS(colors.statusOk)};
-    color: ${unsafeCSS(colors.statusOk)};
-  }
-  /* Weak and missing are the verdicts that block a terminal mark. */
-  .ac-row.ac-failed .ac-verdict,
-  .ac-row.ac-weak .ac-verdict,
-  .ac-row.ac-missing .ac-verdict {
-    border-color: ${unsafeCSS(colors.statusFail)};
-    color: ${unsafeCSS(colors.statusFail)};
-  }
-  /* No verdict yet: the neutral accent, never a status colour. */
-  .ac-row.ac-none .ac-verdict {
-    border-style: dashed;
-  }
-  /* Manifest evidence with no verdict: muted and dotted so it never reads as proven. */
-  .ac-row.ac-evidence-linked .ac-verdict {
-    border-style: dotted;
-    border-color: ${unsafeCSS(colors.textSecondary)};
-    color: ${unsafeCSS(colors.textSecondary)};
-  }
-
   .ac-source {
     color: ${unsafeCSS(colors.textMuted)};
     font-style: italic;
   }
-  .ac-row.ac-untestable .ac-verdict {
-    border-style: dashed;
-    border-color: ${unsafeCSS(colors.statusWarn)};
-    color: ${unsafeCSS(colors.statusWarn)};
-  }
-
-  .ac-mode {
-    flex-shrink: 0;
-    color: ${unsafeCSS(colors.textMuted)};
-    font-family: ${unsafeCSS(fonts.mono)};
-  }
-
   .ac-meta {
     display: flex;
     flex-wrap: wrap;
@@ -378,8 +340,8 @@ export function runAcceptanceCriterionEvidence(
   }));
 }
 
-function renderRow(
-  { view, link, evidence }: AcceptanceEvidenceRow,
+function renderRowDetails(
+  { view, evidence }: AcceptanceEvidenceRow,
   model: EvidenceReviewModel,
   evidenceHref?: (evidencePath: string) => string,
   openEvidence?: (open: AcceptanceEvidenceOpen) => void,
@@ -389,7 +351,6 @@ function renderRow(
   const criterion = view.status;
   // A registered criterion with no verdict yet is a row, not an absence: the panel
   // must show what still has to be judged, and must not imply a verdict.
-  const verdict = criterion?.verdict ?? (link ? 'evidence-linked' : 'none');
   const recipeNodes = criterion?.recipeNodes ?? [];
   const display = model.claimDisplay(view.id);
   const renderFiles = (files: typeof display.selected) =>
@@ -422,14 +383,8 @@ function renderRow(
       )}
     </div>`;
   return html`
-    <div
-      class="ac-row ac-${verdict}"
-      data-testid="acceptance-row"
-      data-ac-id=${view.id}
-      data-ac-verdict=${verdict}
-    >
-      <span class="ac-id">${view.id}</span>
-      <span class="ac-text">${view.text}</span>
+    <details class="ac-meta ac-more-actions">
+      <summary>More</summary>
       ${display.clip && !model?.errors.length && openEvidence
         ? html`<button
             class="ac-evidence"
@@ -449,77 +404,66 @@ function renderRow(
             Play proof
           </button>`
         : nothing}
-      ${view.timing && view.timing !== 'measured'
-        ? html`<span class="ac-mode">${view.timing}</span>`
+      ${display.selected.length ? renderFiles(display.selected) : nothing}
+      ${display.raw.length
+        ? html`<details class="ac-meta" data-testid="acceptance-raw-artifacts">
+            <summary>raw artifacts (${display.raw.length})</summary>
+            ${renderFiles(display.raw)}
+          </details>`
         : nothing}
-      ${criterion?.proofMode ? html`<span class="ac-mode">${criterion.proofMode}</span>` : nothing}
-      ${view.proofKinds.map((kind) => html`<span class="ac-mode">${kind}</span>`)}
-      <span class="ac-verdict"
-        >${criterion ? criterion.verdict : link ? 'evidence linked' : 'not assessed'}</span
-      >
-    </div>
-    ${view.reviewLabels.map(
-      (label) => html`<div class="ac-meta" data-testid="visual-review-provenance">${label}</div>`,
-    )}
-    ${display.selected.length ? renderFiles(display.selected) : nothing}
-    ${display.raw.length
-      ? html`<details class="ac-meta" data-testid="acceptance-raw-artifacts">
-          <summary>raw artifacts (${display.raw.length})</summary>
-          ${renderFiles(display.raw)}
-        </details>`
-      : nothing}
-    ${recipeNodes.length || view.occurrences.length
-      ? html`<details class="ac-meta" data-testid="acceptance-check-details">
-          <summary>Check details</summary>
-          ${recipeNodes.map((node) => html`<span>${node}</span>`)}
-          ${view.occurrences.map(
-            (occurrence) =>
-              html`<div class="ac-meta">
-                <span>${occurrence.intent}</span>
-                ${occurrence.expectation
-                  ? html`<code>${JSON.stringify(occurrence.expectation)}</code>`
-                  : nothing}
-              </div>`,
-          )}
-        </details>`
-      : nothing}
-    ${criterion?.note ? html`<div class="ac-note">${criterion.note}</div>` : nothing}
-    ${criterion?.engineVerdict
-      ? html`<div class="ac-note">Engine verdict: ${criterion.engineVerdict}</div>`
-      : nothing}
-    ${markUntestable && model?.claimOverrideCandidate(view.id)
-      ? html`<div class="ac-note">
-          <button
-            type="button"
-            data-testid="claim-override-open"
-            @click=${() => editor?.select(view.id)}
-          >
-            Mark untestable
-          </button>
-          ${editor?.claimId === view.id
-            ? html`
-                <label
-                  >Reason
-                  <textarea
-                    data-testid="claim-override-reason"
-                    aria-label=${`Reason for ${view.id}`}
-                    .value=${editor.reason}
-                    @input=${(event: Event) =>
-                      editor.change((event.target as HTMLTextAreaElement).value)}
-                  ></textarea>
-                </label>
-                <button
-                  type="button"
-                  data-testid="claim-override-confirm"
-                  ?disabled=${!editor.reason.trim()}
-                  @click=${() => markUntestable(view.id, editor.reason)}
-                >
-                  Confirm untestable override
-                </button>
-              `
-            : nothing}
-        </div>`
-      : nothing}
+      ${recipeNodes.length || view.occurrences.length
+        ? html`<details class="ac-meta" data-testid="acceptance-check-details">
+            <summary>Check details</summary>
+            ${recipeNodes.map((node) => html`<span>${node}</span>`)}
+            ${view.occurrences.map(
+              (occurrence) =>
+                html`<div class="ac-meta">
+                  <span>${occurrence.intent}</span>
+                  ${occurrence.expectation
+                    ? html`<code>${JSON.stringify(occurrence.expectation)}</code>`
+                    : nothing}
+                </div>`,
+            )}
+          </details>`
+        : nothing}
+      ${criterion?.note ? html`<div class="ac-note">${criterion.note}</div>` : nothing}
+      ${criterion?.engineVerdict
+        ? html`<div class="ac-note">Engine verdict: ${criterion.engineVerdict}</div>`
+        : nothing}
+      ${markUntestable && model?.claimOverrideCandidate(view.id)
+        ? html`<div class="ac-note">
+            <button
+              type="button"
+              data-testid="claim-override-open"
+              @click=${() => editor?.select(view.id)}
+            >
+              Mark untestable
+            </button>
+            ${editor?.claimId === view.id
+              ? html`
+                  <label
+                    >Reason
+                    <textarea
+                      data-testid="claim-override-reason"
+                      aria-label=${`Reason for ${view.id}`}
+                      .value=${editor.reason}
+                      @input=${(event: Event) =>
+                        editor.change((event.target as HTMLTextAreaElement).value)}
+                    ></textarea>
+                  </label>
+                  <button
+                    type="button"
+                    data-testid="claim-override-confirm"
+                    ?disabled=${!editor.reason.trim()}
+                    @click=${() => markUntestable(view.id, editor.reason)}
+                  >
+                    Confirm untestable override
+                  </button>
+                `
+              : nothing}
+          </div>`
+        : nothing}
+    </details>
   `;
 }
 
@@ -533,6 +477,7 @@ export function renderAcceptancePanel(
   ledger: AcceptanceStatusLedger,
   options: {
     evidenceModel?: EvidenceReviewModel;
+    judgments?: AcceptanceClaimListActions & { rows: readonly EvidenceReviewJudgmentRow[] };
     markUntestable?: (id: string, reason: string) => void;
     overrideEditor?: AcceptanceClaimOverrideEditor;
     showOccurrences?: boolean;
@@ -609,15 +554,44 @@ export function renderAcceptancePanel(
               evidence manifest unreadable: ${linksError}
             </div>`
           : nothing}
-        ${rows.map((row) =>
-          renderRow(
-            row,
-            model,
-            options.evidenceHref,
-            options.openEvidence,
-            options.markUntestable,
-            options.overrideEditor,
-          ),
+        ${renderAcceptanceClaimList(
+          acceptanceClaimRows({
+            claims: rows.map(({ view, link }) => ({ ...view, evidenceLinked: Boolean(link) })),
+            judgmentRows: options.judgments?.rows ?? model.judgmentRows(null),
+            pendingVisualClaimIds: model.pendingVisualClaimIds,
+          }),
+          {
+            ...options.judgments,
+            focusClaim:
+              options.judgments?.focusClaim ??
+              (options.openEvidence
+                ? (id) => {
+                    const row = rows.find(({ view }) => view.id === id);
+                    if (!row || !row.evidence.length) return;
+                    model.selectClaim(id);
+                    const selected = model.claimDisplay(id).selected[0]?.artifactPath;
+                    options.openEvidence?.({
+                      criterion: row.view,
+                      evidence: row.evidence,
+                      index: selected ? Math.max(0, row.evidence.indexOf(selected)) : 0,
+                      evidenceModel: model,
+                    });
+                  }
+                : undefined),
+            details: (id) => {
+              const row = rows.find(({ view }) => view.id === id);
+              return row
+                ? renderRowDetails(
+                    row,
+                    model,
+                    options.evidenceHref,
+                    options.openEvidence,
+                    options.markUntestable,
+                    options.overrideEditor,
+                  )
+                : nothing;
+            },
+          },
         )}
         ${model.packageStatus
           ? html`<div
@@ -645,7 +619,15 @@ export function renderAcceptancePanel(
                 : nothing}
             </div>`
           : nothing}
-        ${model.displayWarnings.map((warning) => html`<p class="ac-note">${warning}</p>`)}
+        ${model.displayWarnings.length
+          ? html`<details
+              class="ac-note ac-warning-details"
+              data-testid="acceptance-warning-details"
+            >
+              <summary>Evidence details (${model.displayWarnings.length})</summary>
+              ${model.displayWarnings.map((warning) => html`<p>${warning}</p>`)}
+            </details>`
+          : nothing}
         ${options.showOccurrences
           ? model?.occurrences.map(
               (occurrence) =>

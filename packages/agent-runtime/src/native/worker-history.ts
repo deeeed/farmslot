@@ -52,7 +52,16 @@ export class NativeWorkerHistory {
     if (entry.info && lease) this.windows.get(lease)!.info = structuredClone(entry.info);
     for (const command of entry.commands ?? []) {
       // Journal commands also carry private prompt text. Never retain it in public receipts.
-      const { generation, commandId, state, submitted, accepted, outcome, queued } = command;
+      const {
+        generation,
+        commandId,
+        state,
+        submitted,
+        accepted,
+        outcome,
+        queued,
+        structuredResult,
+      } = command;
       this.commands.set(commandId, {
         generation,
         commandId,
@@ -61,6 +70,7 @@ export class NativeWorkerHistory {
         accepted,
         outcome,
         ...(queued ? { queued } : {}),
+        ...(structuredResult ? { structuredResult: structuredClone(structuredResult) } : {}),
       });
       if (!this.commandLeases.has(commandId))
         this.commandLeases.set(commandId, command.leaseId ?? this.currentLease);

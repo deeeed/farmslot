@@ -60,7 +60,17 @@ export function assertNativeRunOwner(
     Pick<Partial<Run>, 'reviewWorkspaceTarget'>,
 ): void {
   const nativeContexts = run.agentContexts?.filter((context) => context.nativeSession) ?? [];
-  if (run.transport !== 'native' && !run.nativeOwnerPrincipalId && !nativeContexts.length) return;
+  if (run.transport !== 'native' && !run.nativeOwnerPrincipalId) {
+    for (const context of nativeContexts) {
+      if (context.role !== 'review' || context.nativeSessionOwner)
+        throw new GatewayMethodError(
+          'AUTH_FORBIDDEN',
+          'Only independent reviewers may use native sessions on this worker transport',
+        );
+      resolveReviewWorkspaceOwner(context.nativeSession!.ownerPrincipalId);
+    }
+    return;
+  }
   if (!run.nativeOwnerPrincipalId)
     throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native run has no recorded profile owner');
   const owner = run.reviewWorkspaceTarget

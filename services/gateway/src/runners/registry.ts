@@ -1,3 +1,5 @@
+import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
+
 import {
   runnerPaneContainsInstruction,
   runnerPaneHasQueuedInstruction,
@@ -26,6 +28,7 @@ import {
   type ExecResult,
   isPiThinkingLevel,
   isReviewerWindowName,
+  type NativeResultSchema,
   normalizeRunner,
   RUNNER_ALIASES,
   RUNNER_MOBILE_KEY_PROFILES,
@@ -4062,4 +4065,9 @@ export function stripRunnerNoise(content: string, runnerId?: string | null): str
   }
 
   return lines.join('\n');
+}
+
+/** Workflow policy consumes adapter capability, independently of the producing worker transport. */
+export function runnerNativeResultSchemas(runner: string): readonly NativeResultSchema[] {
+  return nativeRunnerDefinitions[runner]?.adapter.capabilities.structuredResultSchemas ?? [];
 }

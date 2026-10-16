@@ -71,13 +71,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
     ? (input.renderReportEvidence?.() ?? nothing)
     : nothing;
 
-  const reviewContent = html` ${packageGate
-      ? html`<details class="rdy-package-details">
-          <summary>Checks and history</summary>
-          <div style="height:320px;overflow:auto">${input.renderPackagePanel()}</div>
-        </details>`
-      : nothing}
-    ${input.renderTabBar()}
+  const reviewContent = html`${input.renderTabBar()}
     <div
       class="rdy-tab-pane-host"
       style=${packageGate ? 'height:min(65vh,640px);flex:none' : nothing}
@@ -90,7 +84,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
       ${readyWorkspaceLightStyles()}
       ${acceptancePanelStyles.cssText}
     </style>
-    ${input.renderTopBar()} ${input.renderResolvedBanner()}
+    ${input.renderResolvedBanner()}
     <div class="rdy-split">
       ${renderReadyRecoveryOverlay(input)}
       ${packageGate
@@ -110,14 +104,10 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
             <div class="rdy-resize" @mousedown=${input.onResizeStart}></div>
           `}
       <div class="rdy-bottom" style="flex: ${packageGate ? 1 : 100 - input.splitPct} 1 0%">
-        ${packageGate
-          ? html`<details class="rdy-review-content">
-              <summary>Evidence and details</summary>
-              ${reviewContent}
-            </details>`
-          : reviewContent}
+        ${reviewContent}
       </div>
     </div>
+    ${input.renderTopBar()}
     <media-lightbox
       .items=${input.lightbox.items}
       .pairs=${input.lightbox.pairs}

@@ -145,6 +145,13 @@ export class NativeSessionClient {
       throw new Error(
         'Native host upgrade required for explicit stopped-process confirmation; existing sessions remain readable',
       );
+    if (
+      'params' in request &&
+      'resultSchema' in request.params &&
+      request.params.resultSchema &&
+      !host.supportsStructuredResults
+    )
+      throw new Error('Native host upgrade required for schema-bound review results');
     const result = await requestHost<T>(host, request);
     if ('params' in request && request.params.profileId) {
       const session = result as NativeSessionInfo;

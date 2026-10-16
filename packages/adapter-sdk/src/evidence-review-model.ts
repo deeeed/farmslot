@@ -20,7 +20,6 @@ import {
   type RecipeRecordingTimelineBinding,
   type RecipeRecordingTimelineDocument,
   recipeTraceEntries,
-  type RecipeVisualJudgmentKind,
   type RecipeVisualReviewAuthority,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
@@ -154,7 +153,7 @@ export interface EvidenceReviewClaim extends AcceptanceCriterionView {
 export interface EvidenceReviewJudgmentRow {
   claim: EvidenceReviewClaim;
   pending: boolean;
-  reviewKind: RecipeVisualJudgmentKind | null;
+  reviewKind: NonNullable<RunReviewVisualClaimParams['kind']> | null;
   prevalidation: {
     verdict: 'confirmed' | 'rejected';
     reason: string;
@@ -237,7 +236,7 @@ export interface EvidenceReviewModel {
   visualReviewKind(
     claimId: string,
     principal: SelfPrincipalSummary | null,
-  ): RecipeVisualJudgmentKind | null;
+  ): NonNullable<RunReviewVisualClaimParams['kind']> | null;
   visualReviewRequest(
     claimId: string,
     principal: SelfPrincipalSummary | null,
@@ -466,7 +465,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
           ? ['assertion' as const]
           : []),
         ...reviewContributions(claim.id).map((judgment) =>
-          judgment.kind === 'lead-agent-reviewed'
+          judgment.kind !== 'person-reviewed'
             ? ('agent-reviewed' as const)
             : ('person-reviewed' as const),
         ),
@@ -474,7 +473,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     ],
     reviewLabels: reviewContributions(claim.id).map(
       (judgment) =>
-        `${judgment.kind === 'lead-agent-reviewed' ? `agent-reviewed (delegated by ${judgment.delegation!.displayName})` : 'person-reviewed'} · ${judgment.reviewer.displayName}`,
+        `${judgment.kind === 'pipeline-reviewed' ? 'Verified by agent' : judgment.kind === 'lead-agent-reviewed' ? `agent-reviewed (delegated by ${judgment.delegation!.displayName})` : 'person-reviewed'} · ${judgment.reviewer.displayName}`,
     ),
     kind: claim.status?.kind ?? 'acceptance',
     ...(claim.status?.parentId ? { parentId: claim.status.parentId } : {}),
@@ -790,7 +789,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   const visualReviewKind = (
     claimId: string,
     principal: SelfPrincipalSummary | null,
-  ): RecipeVisualJudgmentKind | null => {
+  ): NonNullable<RunReviewVisualClaimParams['kind']> | null => {
     const authority = input.visualReviewAuthority;
     if (
       !pkg ||
@@ -805,7 +804,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       return null;
     if (principal?.subjectKind === 'person') return 'person-reviewed';
     return principal?.subjectKind === 'service' &&
-      delegatedVisualClaimAllowed(pkg, claimId, principal.id, authority.projectPolicy)
+      delegatedVisualClaimAllowed(principal.id, authority.projectPolicy)
       ? 'lead-agent-reviewed'
       : null;
   };
@@ -921,7 +920,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       return claims.map((claim) => {
         const delegated = judgments
           .filter(
-            (judgment) => judgment.claimId === claim.id && judgment.kind === 'lead-agent-reviewed',
+            (judgment) => judgment.claimId === claim.id && judgment.kind !== 'person-reviewed',
           )
           .at(-1);
         return {

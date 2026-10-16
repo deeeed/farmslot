@@ -1,6 +1,7 @@
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 
 export type ReadyWorkspaceTab =
+  | 'criteria'
   | 'pr-preview'
   | 'input'
   | 'diff'
@@ -42,6 +43,7 @@ export interface ReviewWorkspaceHashWriteState {
 }
 
 const READY_TABS = new Set<ReadyWorkspaceTab>([
+  'criteria',
   'pr-preview',
   'input',
   'diff',

@@ -3,8 +3,12 @@ import test from 'node:test';
 
 import { EVIDENCE_ATTESTATION_ACTION, type RunGateReadiness } from '@farmslot/protocol';
 
-import { publicationGateCriteria } from '../src/publication-gate.js';
-import { publicationGateView } from '../src/publication-gate.js';
+import {
+  acceptanceClaimRows,
+  type PublicationGateClaim,
+  publicationGateCriteria,
+  publicationGateView,
+} from '../src/publication-gate.js';
 
 const evidenceOnly: RunGateReadiness = {
   state: 'not-ready',
@@ -47,14 +51,14 @@ test('pending judgments have separate labeled rows and withhold attestation and 
     claims: [{ id: 'AC-1', text: 'Order lines hide the position size.', status: null }],
     pendingVisualClaimIds: ['AC-1', 'AC-2'],
   });
-  assert.equal(view.status, '2 criteria need your visual judgment');
+  assert.equal(view.status, '2 criteria need a check');
   assert.equal(view.claims[0].text, 'Order lines hide the position size.');
   assert.equal(view.claims[1].id, 'AC-2');
   assert.equal(view.attestation, null);
   assert.equal(view.approval, null);
 });
 
-test('judged and engine-proven rows remain distinct', () => {
+test('review labels alone never imply proven visual meaning', () => {
   const view = publicationGateView({
     actions: [],
     claims: [
@@ -74,7 +78,36 @@ test('judged and engine-proven rows remain distinct', () => {
   });
   assert.deepEqual(
     view.claims.map((claim) => claim.state),
-    ['Judged', 'Proven'],
+    ['Not assessed', 'Proven'],
+  );
+});
+
+test('all AC views distinguish assertions, qualified reviews and unchecked visuals', () => {
+  const proven = (
+    id: string,
+    proofKinds: PublicationGateClaim['proofKinds'],
+  ): PublicationGateClaim => ({
+    id,
+    text: id,
+    status: { id, text: id, verdict: 'proven', evidence: [], recipeNodes: [] },
+    proofKinds,
+  });
+  const rows = acceptanceClaimRows({
+    claims: [
+      proven('AC-1', ['assertion']),
+      proven('AC-2', ['agent-reviewed']),
+      proven('AC-3', ['person-reviewed']),
+      { id: 'AC-4', text: 'Visual proof missing', status: null },
+    ],
+    pendingVisualClaimIds: ['AC-4'],
+  });
+  assert.deepEqual(
+    rows.map((row) => row.state),
+    ['Proven', 'Verified by agent', 'Checked', 'Needs a check'],
+  );
+  assert.deepEqual(
+    rows.map((row) => row.tone),
+    ['proven', 'verified', 'checked', 'pending'],
   );
 });
 

@@ -1,3 +1,8 @@
+import type {
+  NativeResultSchema,
+  NativeStructuredResult,
+} from '../recipe/pipeline-visual-judgments.js';
+
 /** Native sessions are opt-in. Authentication and agent execution remain runner-owned. */
 export interface NativeSessionCapabilities {
   modes: Array<'default' | 'plan'>;
@@ -10,6 +15,8 @@ export interface NativeSessionCapabilities {
   /** Saved conversation may resume in a sibling worktree on the same execution host. */
   resumeAcrossWorkspaces?: boolean;
   resumeUnavailableReason?: string;
+  /** Schemas accepted and validated through provider-native constrained results. */
+  structuredResultSchemas?: NativeResultSchema[];
 }
 
 export interface NativeSessionCreateParams {
@@ -24,6 +31,8 @@ export interface NativeSessionCreateParams {
   model?: string;
   effort?: string;
   mode?: 'default' | 'plan';
+  /** Pipeline reviewers bind this schema before their first command. */
+  resultSchema?: NativeResultSchema;
   /** Exact native identity, never a live TUI takeover. */
   resumeSessionId?: string;
 }
@@ -58,6 +67,7 @@ export interface NativeExecutionNodeDeclaration {
   /** Private worker launch contract, separate from ordinary session creation. */
   supportsWorkers?: boolean;
   supportsWorkerStopAttestation?: boolean;
+  supportsStructuredResults?: boolean;
   supportsProfiles?: boolean;
 }
 export interface NativeSessionListResult {
@@ -92,6 +102,7 @@ export interface NativeCommandReceipt {
   accepted: boolean;
   queued?: boolean;
   outcome?: 'completed' | 'failed' | 'interrupted';
+  structuredResult?: NativeStructuredResult;
 }
 
 export interface NativeSessionResponse {
@@ -136,6 +147,7 @@ export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
   model?: string;
   mode: 'default' | 'plan';
   accountMode: 'native';
+  resultSchema?: NativeResultSchema;
   effort?: string;
   /** Recovery must rebuild the trusted worker launch configuration through run controls. */
   workerManaged?: boolean;
@@ -186,6 +198,8 @@ export interface NativeSessionEvent {
     }>;
   };
   status?: 'completed' | 'failed' | 'interrupted';
+  /** Only a schema-bound completed provider turn may supply this value. */
+  structuredResult?: NativeStructuredResult;
   /** Runner-specific diagnostics; clients render normalized fields above. */
   data?: Record<string, unknown>;
 }

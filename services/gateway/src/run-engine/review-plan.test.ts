@@ -341,6 +341,66 @@ test('WARM preflight refuses unbound or foreign lineage without changing the req
   assert.equal(request.mode, 'warm');
 });
 
+test('WARM preflight uses the retained native reviewer on a tmux producing run, including restart recovery', async () => {
+  const { assertWarmReviewRequestAvailable } = await import('./review-plan.js');
+  const run = makeRun({
+    project: 'project',
+    ticketOrPr: 'owner/repo#42',
+    slotId: 'slot-a',
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            ...passing('review-native-lineage', 'native-conversation'),
+            reviewedHeadSha: 'a'.repeat(40),
+          },
+        ],
+      },
+    },
+  });
+  run.transport = 'tmux';
+  run.agentContexts = [
+    {
+      id: 'review-native',
+      role: 'review',
+      label: 'Review',
+      status: 'complete',
+      runId: run.id,
+      slotId: 'slot-a',
+      reviewId: 'review-native-lineage',
+      runner: selection.runner,
+      model: selection.model,
+      effort: selection.effort,
+      runnerSessionId: 'native-conversation',
+      reviewResultValidatedAt: '2026-10-16T00:00:00Z',
+      nativeSession: {
+        sessionId: 'session',
+        generation: 'generation',
+        leaseId: 'lease',
+        commandId: 'command',
+        executionNodeId: 'local',
+        ownerPrincipalId: 'native-owner',
+        acceptedAt: '2026-10-16T00:00:00Z',
+      },
+    },
+  ];
+  const request = {
+    ...selection,
+    mode: 'warm',
+    context: {
+      reviewLineages: [
+        { repository: 'owner/repo', prNumber: 42, reviewId: 'review-native-lineage' },
+      ],
+    },
+  };
+  resetWarmReviewerSessionsForTest();
+  assert.doesNotThrow(() => assertWarmReviewRequestAvailable(run, request, [run]));
+  assert.doesNotThrow(() => assertWarmReviewRequestAvailable(run, request, [run]));
+  assert.equal(run.transport, 'tmux');
+  assert.equal(run.nativeOwnerPrincipalId, undefined);
+  resetWarmReviewerSessionsForTest();
+});
+
 test('fresh-session rechecks of one lineage still count only its latest result', () => {
   const policy = { minimumReviews: 2, requestedBy: 'dispatch' as const };
   assert.equal(

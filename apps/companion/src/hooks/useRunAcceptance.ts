@@ -31,6 +31,7 @@ import type { GatewayClient } from '../lib/gateway-client';
 import { isGatewayBackgroundPauseError } from '../lib/recoverable-errors';
 import { taskProgressRequestForRun, taskProgressUpdateTargetsRun } from '../lib/task-progress';
 import { type AcceptanceLedgerView, acceptanceLedgerView } from '../lib/task-progress-view';
+import { recordVisualClaimReview } from '../lib/visual-claim-review';
 import { useConnectionStore } from '../store/connection';
 
 import { useConnectedTransport } from './useConnectedTransport';
@@ -236,15 +237,7 @@ export function useRunAcceptance(
       evidenceModel,
       reviewer: client?.authenticatedPrincipal ?? null,
       async recordVisualReview(claimId, verdict, reason) {
-        if (!client || !evidenceModel) throw new Error('The evidence review is unavailable.');
-        const params = evidenceModel.visualReviewRequest(
-          claimId,
-          client.authenticatedPrincipal,
-          verdict,
-          reason,
-        );
-        if (params.runId !== runId) throw new Error('The run changed. Refresh the evidence.');
-        await client.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params);
+        await recordVisualClaimReview(client, runId, evidenceModel, claimId, verdict, reason);
         setBroadcasts((value) => value + 1);
       },
       recipeRunId: evidence?.selectedRecipeRunId ?? null,

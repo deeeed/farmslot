@@ -68,7 +68,6 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
         )}
         <div class="rdy-package-header">
           <div class="rdy-package-title">
-            <strong>Pre-publication cockpit</strong>
             ${ctx.packageArtifact && ctx.payload.prPackage
               ? html`
                   <button

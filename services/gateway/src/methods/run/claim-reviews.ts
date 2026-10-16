@@ -15,6 +15,7 @@ import {
   recordedEvidenceClosureIdentity,
   reviewedVisualFiles,
   type Run,
+  type RunRefreshPublishPackageParams,
   type RunReviewVisualClaimParams,
   type RunReviewVisualClaimResult,
   sameEvidenceAttestationApprover,
@@ -26,6 +27,7 @@ import {
   appliedVisualJudgmentReceiptIds,
   readVisualReviewPolicy,
 } from '../../run-engine/claim-reviews.js';
+import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
 import {
   readVisualReviewSource,
   visualReviewSnapshotIdentity,
@@ -39,6 +41,7 @@ export interface VisualClaimReviewDependencies {
   ) => RecipeVisualReviewer;
   policy?: typeof readVisualReviewPolicy;
   source?: typeof readVisualReviewSource;
+  refreshPackage?: (params: RunRefreshPublishPackageParams) => Promise<{ run: Run }>;
 }
 
 export async function runReviewVisualClaim(
@@ -95,11 +98,8 @@ export async function runReviewVisualClaim(
   if (validateRecordedEvidencePackage(input).status !== 'valid')
     throw new Error('The selected recorded evidence failed integrity validation.');
   const claim = deriveReviewedRecipeClaims(input).find(({ id }) => id === claimId);
-  if (
-    delegated &&
-    (!delegator || !delegatedVisualClaimAllowed(input, claimId, approver.principalId, policy))
-  )
-    throw new Error('This project/claim requires person review or has no matching delegation.');
+  if (delegated && (!delegator || !delegatedVisualClaimAllowed(approver.principalId, policy)))
+    throw new Error('This reviewer has no matching project delegation.');
   if (
     !claim ||
     claim.verdict !== 'awaiting-review' ||
@@ -122,6 +122,7 @@ export async function runReviewVisualClaim(
     moments: claim.moments,
     approver,
     kind,
+    precedence: 'person-first-v1' as const,
     reviewerSubjectKind: subjectKind,
     reviewedFiles: reviewedVisualFiles(input, claim.id),
     ...(delegated && delegator
@@ -194,7 +195,36 @@ export async function runReviewVisualClaim(
         policy,
       ),
   );
-  const updated = getRun(run.id)!;
+  let updated = getRun(run.id)!;
   emit(Events.RUN_UPDATED, { run: updated });
+  if (
+    source.decisionId &&
+    updated.decisions.some(
+      (decision) =>
+        decision.id === source.decisionId &&
+        !decision.resolvedAt &&
+        decision.payload?.kind === 'ready',
+    )
+  ) {
+    try {
+      const refreshed = await (dependencies.refreshPackage ?? refreshPublishPackage)({
+        runId: run.id,
+        decisionId: source.decisionId,
+      });
+      updated = refreshed.run;
+    } catch (error) {
+      // The judgment is durable. Its idempotent retry can repeat the supported
+      // refresh without creating another receipt or losing the person's decision.
+      throw new GatewayMethodError(
+        'VISUAL_JUDGMENT_REFRESH_REQUIRED',
+        `Judgment saved, but package refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+        {
+          userAction: 'Retry the judgment or refresh the publication package.',
+          details: { runId: run.id, receiptId: receipt.id },
+        },
+      );
+    }
+    emit(Events.RUN_UPDATED, { run: updated });
+  }
   return { run: updated, receipt };
 }

@@ -10,7 +10,10 @@ import {
 
 import { GatewayMethodError } from '../../core/method-error.js';
 import { getAllRunsWithArchived, getRun } from '../../runs/store.js';
-import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import {
+  assertNativeRunOwner,
+  resolveReviewWorkspaceOwner,
+} from '../../security/native-worker-owner.js';
 
 import { routeNativeExecution } from './node.js';
 
@@ -58,6 +61,7 @@ export function nativeWorkerHistoryBinding(
     : [context];
   if (owners.length !== 1) return;
   const owner = owners[0];
+  if (run.transport !== 'native' && (context.role !== 'review' || owner.role !== 'review')) return;
   if (
     owner.nativeSessionOwner ||
     owner.runId !== run.id ||
@@ -99,7 +103,8 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
     if (
       !selected ||
       !binding ||
-      binding.ownerPrincipalId !== run.nativeOwnerPrincipalId ||
+      (run.nativeOwnerPrincipalId !== undefined &&
+        binding.ownerPrincipalId !== run.nativeOwnerPrincipalId) ||
       binding.sessionId !== params.sessionId ||
       binding.executionNodeId !== (params.executionNodeId ?? 'local')
     )
@@ -112,6 +117,7 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
         'NATIVE_SESSION_ERROR',
         'Current workspace is unavailable for task history',
       );
+    if (run.transport !== 'native') resolveReviewWorkspaceOwner(binding.ownerPrincipalId);
     return selected;
   };
   const { binding } = current();

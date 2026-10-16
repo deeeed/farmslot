@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.8.2 - 2026-10-16

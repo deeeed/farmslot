@@ -155,14 +155,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (this.decision) this._hydratePublicationTarget();
     if (this.decision) this._hydrateEvidenceSelection();
     if (this.hideRecipeTab && this._activeTab === 'recipe') {
-      this._activeTab = this._payload?.prPackage ? 'pr-preview' : 'diff';
+      this._activeTab = this._payload?.prPackage ? 'evidence' : 'diff';
     }
     if (
       (this._payload?.prPackage || this._packagePending) &&
       !this._defaultPackageTabSelected &&
       !this._hashTabRequested
     ) {
-      this._activeTab = 'pr-preview';
+      this._activeTab = 'evidence';
       this._defaultPackageTabSelected = true;
       this._syncViewStateToHash();
     }

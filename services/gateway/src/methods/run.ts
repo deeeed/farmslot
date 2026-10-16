@@ -178,7 +178,7 @@ import {
   assertNativeRunOwner,
   resolveReviewWorkspaceOwner,
 } from '../security/native-worker-owner.js';
-import { currentSessionOriginator } from '../security/work-originator.js';
+import { currentSessionOriginator, currentSessionPrincipal } from '../security/work-originator.js';
 import { captureRunCreationRequest } from '../sources/creation-request.js';
 import {
   SourceAdmissionRefusal,
@@ -1910,6 +1910,9 @@ export async function resolveRunDecision(
   if (params.selectionData && Object.hasOwn(params.selectionData, 'evidenceAttestation'))
     throw new Error('Evidence attestation receipts are gateway-owned. Supply only a reason.');
   const attestedApproval = params.actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
+  const publicationPrincipal = isPublishApprovalAction(params.actionId)
+    ? currentSessionPrincipal()
+    : undefined;
   let attestationApprover: EvidenceAttestationApprover | undefined;
   if (attestedApproval) {
     if (
@@ -2193,6 +2196,17 @@ export async function resolveRunDecision(
     const readyPayload = decision.payload as ReadyGatePayload | undefined;
     if (isPublishApprovalAction(params.actionId) && readyPayload?.kind === 'ready') {
       decision.payload = { ...readyPayload, currentDescription };
+      if (publicationPrincipal && readyPayload.prPackage) {
+        decision.publicationApproval = {
+          principalId: publicationPrincipal.id,
+          displayName: publicationPrincipal.subject.displayName,
+          subjectKind: publicationPrincipal.subject.type,
+          packageHash: readyPayload.prPackage.packageHash,
+          visualJudgmentReceiptIds: [...(readyPayload.prPackage.visualJudgmentReceiptIds ?? [])],
+          claimOverrideReceiptIds: [...(readyPayload.prPackage.claimOverrideReceiptIds ?? [])],
+          approvedAt: new Date().toISOString(),
+        };
+      }
     }
 
     // Store selectionData on decision so engine steps can use it. The ADR-054

@@ -8,7 +8,11 @@ import {
   type ReadyGatePayload,
   type RunDecision,
 } from '@farmslot/protocol';
-import type { PublicationGateAction, PublicationGateClaim } from '@farmslot/review-dispatch';
+import {
+  PUBLICATION_GATE_TABS,
+  type PublicationGateAction,
+  type PublicationGateClaim,
+} from '@farmslot/review-dispatch';
 
 import { colors } from '../../styles/theme-tokens.js';
 import type { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
@@ -28,6 +32,8 @@ export function renderReadyTopBar(input: {
   chooseAttestation?: () => void;
   setAttestationReason?: (value: string) => void;
   acting: boolean;
+  showClaims?: boolean;
+  feedback?: import('@farmslot/review-dispatch').VisualJudgmentFeedback;
   pausedReason?: string;
   pausedRetry?: () => void;
   loading?: boolean;
@@ -51,18 +57,14 @@ export function renderReadyTopBar(input: {
   pendingVisualClaimIds?: readonly string[];
   focusClaim?: (id: string) => void | Promise<void>;
 }) {
-  const { branch, prNumber, repo, diffStat } = input.payload;
-  const lifecycle = deriveRunLifecycleView({
-    status: 'human-gating',
-    gateReadiness: input.payload.gateReadiness,
-  });
-  const prUrl = prNumber && repo ? `https://github.com/${repo}/pull/${prNumber}` : null;
   const actions: readonly PublicationGateAction[] =
     input.decision?.actions ??
     (!input.payload.prPackage ? [{ id: 'ready', label: 'Mark Ready', style: 'primary' }] : []);
   return html`
     ${renderPublicationGatePanel({
       actions,
+      showClaims: input.showClaims,
+      feedback: input.feedback,
       loading: input.loading,
       loadError: input.loadError,
       retry: input.retry,
@@ -104,39 +106,6 @@ export function renderReadyTopBar(input: {
           ${input.reviewProgress}
         </div>`
       : nothing}
-    <details class="rdy-gate-details">
-      <summary>Package</summary>
-      <div class="rdy-top-bar">
-        <span class="rdy-branch">${branch}</span>
-        ${input.payload.reviewRoundBudget
-          ? html`<span role="status" data-testid="rdy-review-round-budget"
-              >${input.payload.reviewRoundBudget.label}</span
-            >`
-          : nothing}
-        ${input.decision?.resolvedAt
-          ? html`<span class="rdy-resolved-badge"
-              >Resolved · ${input.decision.resolvedAction ?? 'done'}</span
-            >`
-          : lifecycle.gateLabel
-            ? html`<span role="status">${lifecycle.gateLabel}</span>`
-            : nothing}
-        ${prUrl
-          ? html`<a class="rdy-pr-link" href=${prUrl} target="_blank" rel="noopener"
-              >#${prNumber}</a
-            >`
-          : html`<span class="rdy-pr-link rdy-local-only">local package</span>`}
-        <button
-          class="rdy-diff-stat"
-          title="Open diff viewer"
-          ?disabled=${!input.diffArtifact && !input.fileDiffAvailable}
-          @click=${() => input.openDiff(`${branch} diff`, input.diffArtifact)}
-        >
-          <span class="rdy-stat-add">+${diffStat.additions}</span
-          ><span class="rdy-stat-del">-${diffStat.deletions}</span
-          ><span class="rdy-stat-files">${diffStat.files} files</span>
-        </button>
-      </div>
-    </details>
   `;
 }
 
@@ -159,6 +128,27 @@ export function renderReadyTabBar(input: {
   const hasLearnings = !!input.payload.workerLearnings;
   const hasPreview = Boolean(input.payload.prPackage || input.packagePending);
 
+  if (input.payload.prPackage)
+    return html` <div class="rdy-tab-bar" role="tablist" aria-label="Publication gate">
+      ${PUBLICATION_GATE_TABS.map(
+        (tab) =>
+          html`<button
+            role="tab"
+            class="rdy-tab ${input.activeTab === tab.id ? 'active' : ''}"
+            aria-selected=${input.activeTab === tab.id}
+            @click=${() => input.setActiveTab(tab.id)}
+          >
+            ${tab.label}
+          </button>`,
+      )}
+      <details class="gate-extra-tabs">
+        <summary>More views</summary>
+        ${(['diff', 'input', 'recipe', 'learnings'] as const).map(
+          (id) =>
+            html`<button class="rdy-tab" @click=${() => input.setActiveTab(id)}>${id}</button>`,
+        )}
+      </details>
+    </div>`;
   return html`
     <div class="rdy-tab-bar">
       ${hasPreview
@@ -301,6 +291,45 @@ export function renderReadyDiffTab(input: {
       </div>
     </div>
   `;
+}
+
+export function renderReadyPackageMetadata(input: Parameters<typeof renderReadyTopBar>[0]) {
+  const { branch, prNumber, repo, diffStat } = input.payload;
+  const lifecycle = deriveRunLifecycleView({
+    status: 'human-gating',
+    gateReadiness: input.payload.gateReadiness,
+  });
+  const prUrl = prNumber && repo ? `https://github.com/${repo}/pull/${prNumber}` : null;
+  return html` <section class="rdy-gate-details">
+    <div class="rdy-top-bar">
+      <span class="rdy-branch">${branch}</span>
+      ${input.payload.reviewRoundBudget
+        ? html`<span role="status" data-testid="rdy-review-round-budget"
+            >${input.payload.reviewRoundBudget.label}</span
+          >`
+        : nothing}
+      ${input.decision?.resolvedAt
+        ? html`<span class="rdy-resolved-badge"
+            >Resolved · ${input.decision.resolvedAction ?? 'done'}</span
+          >`
+        : lifecycle.gateLabel
+          ? html`<span role="status">${lifecycle.gateLabel}</span>`
+          : nothing}
+      ${prUrl
+        ? html`<a class="rdy-pr-link" href=${prUrl} target="_blank" rel="noopener">#${prNumber}</a>`
+        : html`<span class="rdy-pr-link rdy-local-only">local package</span>`}
+      <button
+        class="rdy-diff-stat"
+        title="Open diff viewer"
+        ?disabled=${!input.diffArtifact && !input.fileDiffAvailable}
+        @click=${() => input.openDiff(`${branch} diff`, input.diffArtifact)}
+      >
+        <span class="rdy-stat-add">+${diffStat.additions}</span
+        ><span class="rdy-stat-del">-${diffStat.deletions}</span
+        ><span class="rdy-stat-files">${diffStat.files} files</span>
+      </button>
+    </div>
+  </section>`;
 }
 
 function renderReadyDiffSkeleton(error = '', retry?: () => void) {

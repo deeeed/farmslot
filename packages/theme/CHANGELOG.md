@@ -4,6 +4,7 @@ All notable changes to `@farmslot/theme` are tracked here.
 
 ## Unreleased
 
+- Distinguish publication criterion states with readable light and dark colors.
 - Share skeleton shapes, sizing and appearance tokens across clients.
 
 - Add accessible light and dark publication decision tokens.
