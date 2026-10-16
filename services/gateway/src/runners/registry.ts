@@ -1784,7 +1784,14 @@ export function runnerPaneShowsPromptAccepted(
   runnerId?: string | null,
 ): boolean {
   if (pane === previousPane) return false;
+  // A busy Codex turn keeps its progress on screen while the prompt sits unsent in the
+  // live composer, so progress with the prompt visible proves nothing there.
+  const unsentCodexPrompt =
+    normalizeRunner(runnerId) === 'codex' &&
+    !runnerPaneHasQueuedInstruction(pane, message) &&
+    runnerPaneHasBufferedInstruction(pane, message, runnerId);
   if (
+    !unsentCodexPrompt &&
     runnerPaneShowsCurrentInteractiveProgress(pane, runnerId) &&
     (runnerPaneContainsInstruction(pane, message) ||
       (marker && paneTailText(pane, 16).includes(marker)))

@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { AgentContext, ReviewIssue, WorkerSignal } from '@farmslot/protocol';
 
 import { makeRun } from '../run-engine/test-fixtures.js';
+import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
 
 import { parseReviewIssueBullets } from './issues.js';
 import {
@@ -555,7 +556,10 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
       deliver: async (options) => {
         delivered = true;
         assert.equal(options.target, 'ff-1:bugfix-restored');
-        assert.match(options.prompt, /^read tasks\/run-1\/REVIEW-FIX\.md\n\n/);
+        assert.match(
+          options.prompt,
+          /^Farmslot fix delivery \d{4}-\d\d-\d\dT[\d:.]+Z\.\n\nread tasks\/run-1\/REVIEW-FIX\.md\n\n/,
+        );
         assert.match(
           options.prompt,
           /tasks\/run-1\/mark --checklist REVIEW-FIX\.md --signal REVIEW-FIX-SIGNAL\.json start/,
@@ -563,7 +567,7 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
         assert.match(options.prompt, /complete --mark-last/);
         assert.match(options.prompt, /no-change --reason/);
         assert.match(options.prompt, /blocked --reason/);
-        assert.match(options.prompt, /Farmslot fix delivery attempt: 2026-08-04T08:15:00\.000Z$/);
+        assert.doesNotMatch(options.prompt, /2026-08-04T08:15:00/, 'mark start rewrites attempts');
         assert.equal(options.sessionId, 'session-1');
         assert.equal(options.sessionPath, '/sessions/session-1.jsonl');
         assert.equal(options.priorPromptSendAttempted, false);
@@ -578,6 +582,52 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
   assert.equal(checklistTargetRestored, true);
   assert.equal(persistedTarget, 'ff-1:bugfix-restored');
   assert.equal(delivered, true);
+});
+
+test('a recovered fix prompt is the sent text and its receipt never matches another round', async () => {
+  const run = {
+    id: 'run-1',
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    metrics: { runner: 'claude', model: 'opus' },
+    agentContexts: [],
+  };
+  const prompts: string[] = [];
+  const deps = {
+    getRun: (() => run) as never,
+    resolvePrompt: async (_project: string, input: { taskFile: string }) =>
+      `read ${input.taskFile}`,
+    resolveRuntimeDir: async () => '.sandbox/farmslot-farm/agent',
+    readLaunchAck: async () => null,
+    syncChecklistTarget: async () => {},
+    ensureTarget: async () => 'ff-1:bugfix',
+    persistTarget: async () => {},
+    deliver: async (options: { prompt: string }) => {
+      prompts.push(options.prompt);
+      return { delivered: true as const, acknowledgement: 'structured' as const };
+    },
+  };
+  // The worker's mark start rewrote attemptStartedAt after the first round was sent.
+  for (const boundary of ['2026-10-16T08:10:27.976Z', '2026-10-16T10:53:17.568Z']) {
+    await resumeReviewFixPromptDelivery(
+      { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
+      'run-1',
+      {
+        id: 'review-fix',
+        runner: 'claude',
+        model: 'opus',
+        taskFile: 'tasks/run-1/REVIEW-FIX.md',
+        signalFile: 'tasks/run-1/REVIEW-FIX-SIGNAL.json',
+        target: { session: 'ff-1', window: 'bugfix', target: 'ff-1:bugfix' },
+        attemptStartedAt: '2026-10-16T10:54:03.119Z',
+        promptDeliveryStartedAt: boundary,
+      },
+      deps as never,
+    );
+  }
+  assert.match(prompts[0], /^Farmslot fix delivery 2026-10-16T08:10:27\.976Z\.\n/);
+  assert.match(prompts[1], /^Farmslot fix delivery 2026-10-16T10:53:17\.568Z\.\n/);
+  assert.notEqual(runnerPromptDigest(prompts[0]), runnerPromptDigest(prompts[1]));
 });
 
 test('restart recovery preserves a persisted fix prompt delivery boundary when the runner exits', async () => {
