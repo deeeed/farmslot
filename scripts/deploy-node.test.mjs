@@ -1115,8 +1115,9 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
     for (const { code, output } of results) assert.equal(code, 0, output);
     const reaps = results.filter(({ output }) => output.includes('removing stale lock'));
     assert.equal(reaps.length, 1, 'exactly one contender takes over the stale lock');
+    // Each contender's focused install and package build run whole under the lock.
     const installs = fs.readFileSync(path.join(home, 'yarn.log'), 'utf8').trim().split('\n');
-    assert.equal(installs.length, 6);
+    assert.equal(installs.length, 12);
     for (let index = 0; index < installs.length; index += 2) {
       const [start, end] = installs.slice(index, index + 2);
       assert.match(start, /^start /, installs.join('\n'));
