@@ -5,9 +5,11 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   executionTemplateCatalogFlow,
+  type ExecutionTemplateSource,
   type HandoffMetadata,
   projectWorkerTemplateSource,
   resolveConfiguredExecutionTemplateSources,
+  type ResolveConfiguredExecutionTemplateSourcesOptions,
   type SelectedExecutionTemplate,
   selectExecutionTemplate,
   type TaskExecutionProvenance,
@@ -25,8 +27,10 @@ import {
   executionSourceContext,
   loadProjectVars,
   loadSlotVars,
+  type ProjectVars,
   resolveProjectTaskDirName,
   resolveSourceBinding,
+  type SlotVars,
 } from '@farmslot/slot-config';
 
 import { isLocalPool } from '../slot-context.js';
@@ -291,6 +295,81 @@ export function hostedTerminalPolicy(
   };
 }
 
+/** Node-local catalog inputs for the template a hosted request names. */
+export interface HostedTaskTemplateCatalog {
+  project: Pick<
+    ProjectVars,
+    'projectName' | 'projectConfig' | 'projectTemplatesDir' | 'projectJson'
+  >;
+  slot: Pick<SlotVars, 'platform' | 'machineEnv'>;
+  resolveSourceBinding?: ResolveConfiguredExecutionTemplateSourcesOptions['resolveSourceBinding'];
+}
+
+export interface HostedTaskTemplateSelection {
+  sources: ExecutionTemplateSource[];
+  selected: SelectedExecutionTemplate;
+}
+
+/**
+ * Select the requested template from this node's configured catalog. Source
+ * roots come from the slot machine environment and the node process, so a
+ * root only the gateway has leaves its source unavailable here.
+ */
+export function selectHostedTaskTemplate(
+  { project, slot, resolveSourceBinding }: HostedTaskTemplateCatalog,
+  request: Pick<HostedTaskInitRequest, 'task' | 'template'>,
+): HostedTaskTemplateSelection {
+  const configured = resolveConfiguredExecutionTemplateSources(
+    project.projectJson.execution_templates,
+    {
+      projectPackRoot: path.dirname(project.projectConfig),
+      env: { ...slot.machineEnv, ...process.env },
+      ...(resolveSourceBinding ? { resolveSourceBinding } : {}),
+    },
+  );
+  const unavailable = configured.unavailable.find(
+    (source) => source.id === request.template.sourceId,
+  );
+  if (unavailable) {
+    const variable = project.projectJson.execution_templates?.sources?.find(
+      (source) => source.id === unavailable.id,
+    )?.root.env;
+    throw refusal(
+      `Execution-template source "${unavailable.id}" is unavailable on this node (${unavailable.reason})${
+        variable ? `; set ${variable} in the slot machine environment` : ''
+      }.`,
+      'TASK_TEMPLATE_SOURCE_UNAVAILABLE',
+    );
+  }
+  const sources = [
+    projectWorkerTemplateSource(project.projectName, project.projectTemplatesDir),
+    ...configured.sources,
+  ];
+  const selected = selectExecutionTemplate({
+    sources,
+    flow: executionTemplateCatalogFlow(
+      sources,
+      project.projectJson.qa?.profiles,
+      request.task.flow,
+      request.template.id,
+    ),
+    platform: slot.platform,
+    runMode: request.task.runMode,
+    domain: request.task.domain,
+    explicitId: request.template.id,
+    defaults: project.projectJson.execution_templates?.defaults,
+  });
+  if (
+    selected.entry.sourceId !== request.template.sourceId ||
+    selected.entry.sha256 !== request.template.sha256
+  )
+    throw refusal(
+      'Selected task template differs from the configured node catalog.',
+      'TASK_TEMPLATE_CHANGED',
+    );
+  return { sources, selected };
+}
+
 export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResult> {
   const file = path.resolve(inputFile);
   if (!/^\.task-init-[0-9a-f-]{36}\.json$/.test(path.basename(file)))
@@ -367,11 +446,10 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
         'TASK_INIT_PARTIAL',
       );
     const admittedSources = await executionSourceContext();
-    const configured = resolveConfiguredExecutionTemplateSources(
-      project.projectJson.execution_templates,
+    const { sources, selected } = selectHostedTaskTemplate(
       {
-        projectPackRoot: path.dirname(project.projectConfig),
-        env: { ...slot.machineEnv, ...process.env },
+        project,
+        slot,
         ...(admittedSources
           ? {
               resolveSourceBinding: (selection) =>
@@ -379,33 +457,8 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
             }
           : {}),
       },
+      request,
     );
-    const sources = [
-      projectWorkerTemplateSource(slot.projectName, project.projectTemplatesDir),
-      ...configured.sources,
-    ];
-    const selected = selectExecutionTemplate({
-      sources,
-      flow: executionTemplateCatalogFlow(
-        sources,
-        project.projectJson.qa?.profiles,
-        request.task.flow,
-        request.template.id,
-      ),
-      platform: slot.platform,
-      runMode: request.task.runMode,
-      domain: request.task.domain,
-      explicitId: request.template.id,
-      defaults: project.projectJson.execution_templates?.defaults,
-    });
-    if (
-      selected.entry.sourceId !== request.template.sourceId ||
-      selected.entry.sha256 !== request.template.sha256
-    )
-      throw refusal(
-        'Selected task template differs from the configured node catalog.',
-        'TASK_TEMPLATE_CHANGED',
-      );
     const {
       resolveWorkerTerminalContract,
     }: {
