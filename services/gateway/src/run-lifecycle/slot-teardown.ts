@@ -15,7 +15,7 @@ import {
   updateSlotStatusIf,
 } from '../core/index.js';
 import { slotRealpath } from '../core/slot-io.js';
-import { tmuxShellSnippet } from '../core/tmux.js';
+import { resolveTmuxSession, tmuxShellSnippet } from '../core/tmux.js';
 import { isActiveSlotHolder } from '../methods/dispatch/slot-scoring.js';
 import { reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
 import {
@@ -132,7 +132,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   const listed = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      "list-panes -a -F '#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_path}'",
+      "list-panes -a -F '#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_path}\t#{session_path}\t#{session_id}\t#{session_created}'",
     ),
     { cwd: '/' },
   );
@@ -159,15 +159,36 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
     for (const paneId of historical) ownedPanes.add(paneId);
   }
   const ownedShells = new Set<string>();
+  let slotSession: string | undefined;
+  const sessionOrigins = new Map<string, string>();
   for (const line of listed.stdout.split('\n')) {
-    const [session, paneId, panePid, cwd] = line.split('\t');
+    const [session, paneId, panePid, cwd, origin, sessionId, createdAt] = line.split('\t');
     if (ownedPanes.has(paneId)) {
       const worker = await probeRunnerDescendantPid(vars, panePid);
       if (worker.state !== 'absent')
         return `Worker ownership in pane ${paneId} is not quiescent; slot teardown was skipped`;
       ownedShells.add(panePid);
-    } else if (cwd && (cwd === repo || cwd.startsWith(`${repo}/`)))
-      return `Tmux session ${session} uses the slot repository and was not created by this run`;
+    } else if (cwd && (cwd === repo || cwd.startsWith(`${repo}/`))) {
+      slotSession ??= await resolveTmuxSession(run.slotId, vars, { strict: true });
+      if (
+        !isTerminalRunStatus(run.status) ||
+        session !== slotSession ||
+        !origin ||
+        !/^\$\d+$/.test(sessionId ?? '') ||
+        !/^\d+$/.test(createdAt ?? '') ||
+        Number(createdAt) <= 0
+      )
+        return `Tmux session ${session} uses the slot repository without verified slot ownership`;
+      if (!sessionOrigins.has(origin))
+        sessionOrigins.set(origin, (await slotRealpath(vars, origin)).replace(/\/$/, ''));
+      if (sessionOrigins.get(origin) !== repo)
+        return `Tmux session ${session} was started outside this slot checkout; cleanup deferred`;
+      // A slot session survives its runs. Its unrecorded idle shells own no
+      // conversation, but a live or unknown worker still blocks cleanup.
+      if ((await probeRunnerDescendantPid(vars, panePid)).state !== 'absent')
+        return `Unrecorded pane ${paneId} in slot session ${session} is not quiescent; cleanup deferred`;
+      ownedShells.add(panePid);
+    }
   }
   const { getRuntimeCapabilityRegistry } = await import('../methods/runtime-capabilities.js');
   const status = await getRuntimeCapabilityRegistry().settledStatus(run.slotId);

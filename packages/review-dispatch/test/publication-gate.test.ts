@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { EVIDENCE_ATTESTATION_ACTION, type RunGateReadiness } from '@farmslot/protocol';
 
+import { publicationGateCriteria } from '../src/publication-gate.js';
 import { publicationGateView } from '../src/publication-gate.js';
 
 const evidenceOnly: RunGateReadiness = {
@@ -153,4 +154,51 @@ test('changed visual judgments require a visible refresh, never approval', () =>
   });
   assert.equal(refreshed.blockedReason, '');
   assert.equal(refreshed.approval?.id, 'approve-publish-evidence-refresh');
+});
+
+test('declared gate criteria keep unassessed rows when the recorded ledger is partial', () => {
+  const criteria = publicationGateCriteria({
+    acceptanceCriteria: ['First requirement', 'Second requirement'],
+    acceptanceStatus: {
+      schemaVersion: 2,
+      criteria: [
+        { id: 'AC-1', text: 'First requirement', verdict: 'proven', evidence: [], recipeNodes: [] },
+      ],
+    },
+  });
+  assert.deepEqual(criteria, [
+    { id: 'AC-1', text: 'First requirement' },
+    { id: 'AC-2', text: 'Second requirement' },
+  ]);
+  assert.equal(
+    publicationGateCriteria({
+      acceptanceCriteria: ['First', 'Second'],
+      acceptanceStatus: { schemaVersion: 2, criteria: [] },
+    }).length,
+    2,
+  );
+});
+
+test('older gate row counts use the same recorded fallback in both clients', () => {
+  const rows = [
+    {
+      id: 'retained-criterion',
+      text: 'Recorded requirement',
+      verdict: 'proven' as const,
+      evidence: [],
+      recipeNodes: [],
+    },
+  ];
+  assert.deepEqual(
+    publicationGateCriteria({ acceptanceStatus: { schemaVersion: 1, criteria: rows } }),
+    rows,
+  );
+  assert.deepEqual(
+    publicationGateCriteria({
+      acceptanceCriteria: [],
+      acceptanceStatus: { schemaVersion: 1, criteria: rows },
+    }),
+    rows,
+  );
+  assert.deepEqual(publicationGateCriteria(undefined), []);
 });

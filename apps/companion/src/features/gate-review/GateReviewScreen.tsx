@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { publicationGateCriteria } from '@farmslot/review-dispatch';
 
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
-import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
+import {
+  acceptancePanelViewportHeight,
+  TaskAcceptancePanel,
+  TaskAcceptanceSkeleton,
+} from '../../components/TaskAcceptancePanel';
 import { baseStyles } from '../../lib/theme';
 
 import { GateActions, GateReviewVerdicts, GateSummaryCard } from './components/gate-review-panels';
+import { GateReviewSkeleton } from './components/GateReviewSkeleton';
 import { gateReviewStyles as styles } from './styles/gate-review.styles';
 import type { GateReviewActions, GateReviewScreenState } from './use-gate-review-controller';
 
@@ -34,24 +41,23 @@ export function GateReviewScreen({
       setFocusClaim({ claimId: initialClaimId });
     }
   }, [initialClaimId]);
+  const viewport = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollView>(null);
-  if (state.status !== 'ready') {
+  if (state.status !== 'ready')
     return (
-      <View style={[baseStyles.container, styles.center]} testID="companion-screen-gate-review">
-        <Text style={baseStyles.textSecondary}>
-          {state.status === 'error' ? state.message : 'Loading gate...'}
-        </Text>
-        {state.status === 'error' ? (
-          <Pressable onPress={actions.refresh}>
-            <Text style={baseStyles.textSecondary}>Retry</Text>
-          </Pressable>
-        ) : null}
+      <View style={[baseStyles.container, { padding: 16 }]} testID="companion-screen-gate-review">
+        <GateReviewSkeleton
+          error={state.status === 'error' ? state.message : undefined}
+          retry={actions.refresh}
+        />
       </View>
     );
-  }
   const { viewModel } = state;
   const { acceptance } = viewModel;
+  const expectedRows = publicationGateCriteria(
+    viewModel.decision.payload?.kind === 'ready' ? viewModel.decision.payload : undefined,
+  ).length;
   return (
     <ScrollView
       ref={scroll}
@@ -65,6 +71,7 @@ export function GateReviewScreen({
       {viewModel.error ? <Text style={styles.error}>{viewModel.error}</Text> : null}
       <View style={styles.section}>
         <GateActions
+          loading={!acceptance.view && !acceptance.error}
           reviewPicker={viewModel.reviewPicker}
           decision={viewModel.decision}
           actions={viewModel.actions}
@@ -111,24 +118,33 @@ export function GateReviewScreen({
           <GateReviewVerdicts reviews={viewModel.reviews} />
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Acceptance criteria</Text>
-            {acceptance.view || acceptance.error ? (
-              <TaskAcceptancePanel
-                evidenceModel={acceptance.evidenceModel}
-                onMarkUntestable={actions.markUntestable}
-                acceptanceStatus={acceptance.acceptanceStatus}
-                acceptanceCriteria={acceptance.acceptanceCriteria}
-                acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
-                error={acceptance.error}
-                onOpenEvidence={actions.openEvidence}
-              />
-            ) : (
-              <Text style={styles.muted}>Loading acceptance criteria...</Text>
-            )}
-            {acceptance.view?.rows.length === 0 && !acceptance.error ? (
-              <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
-            ) : null}
+            <ScrollView
+              nestedScrollEnabled
+              style={{ height: acceptancePanelViewportHeight(expectedRows, viewport.height) }}
+            >
+              {acceptance.view || acceptance.error ? (
+                <TaskAcceptancePanel
+                  evidenceModel={acceptance.evidenceModel}
+                  onMarkUntestable={actions.markUntestable}
+                  acceptanceStatus={acceptance.acceptanceStatus}
+                  acceptanceCriteria={acceptance.acceptanceCriteria}
+                  acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
+                  error={acceptance.error}
+                  onRetry={acceptance.retry}
+                  onOpenEvidence={actions.openEvidence}
+                />
+              ) : (
+                <TaskAcceptanceSkeleton rows={expectedRows} />
+              )}
+              {acceptance.view?.rows.length === 0 && !acceptance.error ? (
+                <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
+              ) : null}
+            </ScrollView>
           </View>
           <EvidenceReviewWorkspace
+            loading={!acceptance.evidenceModel && !acceptance.error}
+            error={!acceptance.evidenceModel ? acceptance.error : null}
+            retry={acceptance.retry}
             runId={viewModel.run.id}
             gatewayUrl={viewModel.gatewayUrl}
             artifacts={viewModel.artifacts}

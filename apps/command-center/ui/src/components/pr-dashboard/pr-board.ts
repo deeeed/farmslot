@@ -37,6 +37,7 @@ import {
 
 import { prAttentionReasons } from './pr-attention.js';
 import type { PRAutomationInventory, PRAutomationPanel } from './pr-automation-panel.js';
+import { renderPrBoardSkeleton } from './pr-board-skeleton.js';
 import {
   matchesPrKey,
   prBoardUrlStateFromHash,
@@ -1323,16 +1324,14 @@ export class PRBoard extends LitElement {
   }
   private _renderListContent(entries: PRWorkspaceEntry[], hiddenTerminal: number) {
     if (!entries.length) {
-      if (this._prsLoading)
-        return html`<farm-hydrating
-          data-testid="pr-list-loading"
-          message="Fetching pull requests from GitHub…"
-        ></farm-hydrating>`;
-      if (this._inventory.loading)
-        return html`<farm-hydrating
-          data-testid="pr-list-loading"
-          message="Loading review rules and monitors…"
-        ></farm-hydrating>`;
+      if (this._lastRefreshError)
+        return renderPrBoardSkeleton(
+          false,
+          'Pull requests unavailable',
+          () => void this._fetchPRs(true),
+        );
+      if (this._prsLoading) return renderPrBoardSkeleton(false);
+      if (this._inventory.loading) return renderPrBoardSkeleton(false);
       return html`<p class="empty-col" data-testid="pr-list-empty">
         ${hiddenTerminal
           ? `No open PRs need you. ${hiddenTerminal} merged or closed PRs are hidden; enable “Show merged / closed & history” to see them.`
@@ -1386,11 +1385,7 @@ export class PRBoard extends LitElement {
   }
 
   private _renderBoard(filtered: PRStatus[]) {
-    if (this._prsLoading && !filtered.length)
-      return html`<farm-hydrating
-        data-testid="pr-list-loading"
-        message="Fetching pull requests from GitHub…"
-      ></farm-hydrating>`;
+    if (this._prsLoading && !filtered.length) return renderPrBoardSkeleton(true);
     return html`
       <div class="kanban">
         ${this._columns.map((col) => {
@@ -1635,13 +1630,6 @@ export class PRBoard extends LitElement {
               </button>
             </div>
           </div>
-          ${this._prsLoading && entries.length
-            ? html`<farm-hydrating
-                class="inline"
-                data-testid="pr-list-loading"
-                message="Fetching pull requests from GitHub… showing tracked PRs meanwhile"
-              ></farm-hydrating>`
-            : nothing}
           ${this._layout === 'board' && this._section === 'prs'
             ? html`<div
                 @pr-select=${(event: CustomEvent) => this._selectFromCard(event)}

@@ -4,12 +4,15 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Keep runner runtime and observability outside product checkouts, preserve active session paths, and retain explicitly indexed hidden proof files in immutable evidence bundles.
+- Recognize quiescent configured slot sessions across completed runs while preserving foreign sessions and live workers during teardown.
+
 - Keep machine connection health current in cached fleet reads and wait for execution nodes at retained publication gates after gateway restart.
 - Read native parent interruption receipts when hooks retain an active turn, preserving child-stop and later-parent activity guards.
 - Encode artifact URL path segments so publication verifies and embeds filenames containing literal percent escapes and other URL characters.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Keep runner runtime and observability outside product checkouts, preserve active session paths, and retain explicitly indexed hidden proof files in immutable evidence bundles.
 
 ## 0.22.0 - 2026-10-16
 

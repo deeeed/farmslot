@@ -1,0 +1,35 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Stable asynchronous gate layout",
+  "description": "Open the committed async-sections story in Agent Chrome. Compare the real gate renderer with its loading and error compositions through the story controls. No live gate or judgment is changed.",
+  "proofTargets": [
+    {
+      "id": "gate-layout",
+      "claim": "Loading, loaded and error gate states keep the content below them at the same position.",
+      "proofMode": "state"
+    }
+  ],
+  "workflow": {
+    "entry": "measure",
+    "nodes": {
+      "measure": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs eval dev/async-sections 'const anchor=document.querySelector('\"'\"'[data-testid=gate-layout-anchor]'\"'\"'); if(!anchor) throw new Error('\"'\"'Gate story is unavailable'\"'\"'); const sample=()=>({top:anchor.getBoundingClientRect().top,height:document.querySelector('\"'\"'.publication-gate'\"'\"').getBoundingClientRect().height}); const settle=async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);}; const states={}; for(const phase of ['\"'\"'loading'\"'\"','\"'\"'loaded'\"'\"','\"'\"'error'\"'\"']){document.querySelector('\"'\"'[data-phase-choice='\"'\"'+phase+'\"'\"']'\"'\"').click();await settle();states[phase]=sample();} const shiftPx=Math.max(...Object.values(states).map(state=>Math.abs(state.top-states.loading.top))); return JSON.stringify({shiftPx,states});'",
+        "intent": "Compare the gate boundary while changing the story through its controls.",
+        "next": "assert-stable"
+      },
+      "assert-stable": {
+        "action": "assert_output",
+        "source": "measure",
+        "contains": "\"shiftPx\":0",
+        "proves": ["gate-layout"],
+        "intent": "No content below the gate moves as the read resolves or fails.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
