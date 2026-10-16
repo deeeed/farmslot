@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
+
 - Keep failed dev worker CLI verification visible as critical node and fleet health.
 
 - Reuse verified parent acceptance for PR follow-up completion, retain proof provenance in completion and PR comments, and keep current-checkout CI independent.

@@ -23,6 +23,7 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { admitReviewRound } from '../review/review-round-budget.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
+import { manualTicketData } from '../run-completion/test-fixtures.js';
 import { overwriteRetainedFixture, retainRunFixture } from '../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getAllRuns, getRun, updateRun } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
@@ -3236,6 +3237,7 @@ test('real packaged approval restores a parked run before reading a reused slot 
     slotId: oldSlot,
     branch: pkg.branch,
     taskFile: path.join(task, 'TASK.md'),
+    ticketData: manualTicketData('Restore a parked approval'),
     decisions: [decision],
   });
   await retainRunFixture(getRun(run.id)!, pkg);
