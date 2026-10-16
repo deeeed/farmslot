@@ -4,67 +4,48 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.8.2 - 2026-10-16
+
 - Show the shared no-code-review warning at publication gates.
 
 - Reserve loading layouts and retries for gate, output-review acceptance, evidence and run views with shared skeleton shapes.
-
 - Use one publication decision panel for gate and decision workspaces with explicit AC evidence actions.
-
 - Remember person logins through gateway device sessions and confirm revocation before sign-out, while preserving service profiles.
 - Keep recorded comparisons, gate galleries and AC evidence on their captured bundle when newer output is retained.
-
 - Open Unassigned comparison media through its recorded selection, replacing the previous proof gallery.
-
 - Show selected AC proof first and keep supporting files and checks collapsed in run reviews.
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
 - Use the shared timeline groups in the existing video viewer, keeping node details collapsed and failures expanded.
 - Stop loading checkout authentication in Companion development scripts.
-
 - Use the shared compact worker checklist view and preserve child-unit expansion.
 - Show who an active run is waiting on in run lists and detail status.
-
 - Confirm the secondary Settings sign-out action and retain sign-in with the shared 30-day expiry policy.
-
 - Show and submit the resolved QA profile, require a choice for ambiguous farms, and retain admitted profile identity in run detail.
 - Direct device setup to person pairing instead of build-time gateway token presets.
-
 - Add the shared Sign out / switch account control to forget this device login and disconnect until explicit login or pairing.
 - Render video comparisons with the shared media preview and open recorded moments and ordinary artifacts from their matching viewer selection.
-
 - Reuse the shared criterion comparison model and synchronized Before/After zoom in the existing evidence workspace and player.
-
 - Show the shared visual-review proof kind, delegation and reviewer identity.
-
 - Remove the generic gateway-token fallback from automation configuration.
-
 - Show authenticated visual claim reviews through the shared evidence model.
-
 - Use the shared run evidence contract in package status and recovery guidance.
 - Use shared verified claim overrides in publish and output review while preserving engine verdicts.
-
 - Use the shared evidence-policy attestation action and reason input in the existing gate workspace.
 - Show shared source status and scoped pin controls in farm, node and run views, with PR completion selections, persistent operation diagnostics and recovery from stale pin revisions.
-
 - Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
-
 - Show shared package status and collapsed diagnostics, with neutral legacy evidence and independent retained report access.
-
 - Use shared plain run titles with two-line display and full accessible text across run and decision views.
 - Keep saved reviews readable on the phone after publication closes and across app switches, with the original verdict, reviewed SHA and full report. Requested choices stay separate from confirmed publication.
 - Use the shared evidence review model for claim/step navigation and bounded clips; initialize only the selected video player (ADR-062).
 - Show review rounds as N/5 and disable another review when the budget is spent.
-
 - Group delivered roadmap work separately with PR links and delivery outcome filters.
-
 - Show shared gate prerequisite reasons and run lifecycle labels for correction, review failure and reconciliation.
-
 - Inspect each review finding at its reviewed revision and select which finding comments to publish. Android report dialogs retain the shared recipe HUD.
-- Active-development baseline; add user-facing changes here before release or package publication.
 - Release cuts ship production Android to Play internal and closed testing, verify both tracks, and require an explicit iOS platform.
-
 - Preserve literal query values in phone deep links. Prepared dev leases watch source edits and clear first-run chrome; recipe sessions promptly release idle simulator runners through the provider lifecycle.
 - Add a live recipe for admin people reading service-owned review workspaces.
-
 - Use shared runner/model chips for new conversations, keep custom models behind Other model, and retain conversation-specific catalogs and profiles.
 
 ## 0.8.1 - 2026-10-11

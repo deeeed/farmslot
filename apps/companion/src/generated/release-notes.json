@@ -1,11 +1,11 @@
 {
-  "version": "0.8.1",
-  "date": "2026-10-11",
+  "version": "0.8.2",
+  "date": "2026-10-16",
   "items": [
-    "Compare CI decision snapshots with current PR checks and refresh without leaving the decision",
-    "View local CI commands, exit codes and execution logs in gate review using the existing file viewer",
-    "Configure gate requests, backlog reviews, and PR execution with runner, model, effort, and WARM/COLD choices. Review sequences preserve selections and lineage; missing or ambiguous WARM context blocks submission without changing mode",
-    "Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120",
-    "Review a publish gate on the phone: one screen, reached from run detail and the decision workspace, shows the package, each reviewer's latest verdict, the acceptance criteria with their evidence, and the gate's actions. Approve-publish stays disabled, with the reason, while a criterion has no verdict or a latest review is not an approval, here, on the Gate tab and for worker packets; an unjudged criterion also withholds the review overrides. Hold and review requests stay available. Criterion evidence opens in the artifact viewer and swipes through that criterion's files, and the criteria header turns red while any criterion is unassessed. An action is sent for the package you confirmed and refused if the package changed meanwhile; the gate re-reads after the app reconnects, and text evidence loads at most its first 200,000 bytes"
+    "Pair or sign in as a person with a device session; restore the login after reconnecting and confirm sign-out.",
+    "Review each acceptance criterion with before/after evidence, video moments and recorded visual verdicts.",
+    "Read reports and evidence from retained run snapshots, including after publication.",
+    "Keep gate, acceptance and evidence sections stable while loading and retrying.",
+    "Choose QA profiles and runner/model settings through the shared run controls."
   ]
 }
