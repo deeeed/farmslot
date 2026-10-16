@@ -74,11 +74,10 @@ describe('codex launch picks the isolated home only when the install completed i
     );
 
   it('uses codex-home with hooks for a linked auth.json or a provider-auth marker, else global', (t) => {
-    const repo = mkdtempSync(path.join(tmpdir(), 'codex-home-gate-'));
-    t.after(() => {
-      rmSync(path.dirname(runnerRuntimeDir(repo)), { recursive: true, force: true });
-      rmSync(repo, { recursive: true, force: true });
-    });
+    const root = mkdtempSync(path.join(tmpdir(), 'codex-home-gate-'));
+    const repo = path.join(root, 'repo');
+    mkdirSync(repo);
+    t.after(() => rmSync(root, { recursive: true, force: true }));
     const home = path.join(runnerRuntimeDir(repo), 'codex-home');
     mkdirSync(home, { recursive: true });
     writeFileSync(path.join(home, 'config.toml'), '');
