@@ -68,6 +68,7 @@ import {
   slotSelectionOptionsFor,
   validateSlotForDispatch,
 } from '../methods/dispatch/slot-scoring.js';
+import { resolveDispatchTargetBranch } from '../methods/dispatch/target-branch.js';
 import {
   assertSlotNotOperatorRoot,
   resetSlotRepoToIdle,
@@ -758,11 +759,20 @@ export async function executeFindSlotStep(
   // For PR-bound flows the run branch is the PR head. Resolve profile fit before any
   // branch-affinity shortcut so wizard nudge/fresh-reuse paths honor simulator resources
   // the same way the normal slot picker does.
-  const targetBranch =
-    (run.flowType === 'review-pr' || run.flowType === 'pr-complete' || run.flowType === 'qa') &&
-    run.branch
-      ? run.branch
-      : undefined;
+  const branchFleet = await loadFleetStatus();
+  const targetBranch = await resolveDispatchTargetBranch(
+    {
+      project: run.project,
+      flowType: run.flowType,
+      ticketOrPr: run.ticketOrPr,
+      targetBranch:
+        (run.flowType === 'review-pr' || run.flowType === 'pr-complete' || run.flowType === 'qa') &&
+        run.branch
+          ? run.branch
+          : undefined,
+    },
+    { fleetSlots: branchFleet.slots, logPrefix: 'find-slot' },
+  );
   // Explicit prepare only — profile-fit suggestions never rewrite FIND_SLOT eligibility.
   const requiredPrepareProfile = run.prepareProfile || null;
   const requiredCapabilities = run.engineState?.slotCapabilityRequirements?.capabilityIds;
@@ -775,7 +785,7 @@ export async function executeFindSlotStep(
     : undefined;
   const capabilitySelection = { requiredCapabilities, capabilityCatalogs };
   const releasableBranchHolderIds = await inspectReleasableBranchHolders(
-    (await loadFleetStatus()).slots,
+    branchFleet.slots,
     run.project,
     targetBranch,
     run.slotId ? [run.slotId] : run.allowedSlots,
@@ -1457,6 +1467,7 @@ export async function executeFindSlotStep(
     dispatchPreview(
       {
         ...buildDispatchPreviewParamsForRun(run),
+        targetBranch,
         ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
         ...(skipPrepare ? { skipPrepare } : {}),
       },

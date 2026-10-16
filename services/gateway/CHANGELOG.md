@@ -4,9 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Run independent pipeline reviews in native sessions, qualify their recorded visual judgments, and audit publication approval against the frozen evidence.
+- Resolve PR and ticket branches before automatic slot scoring, preferring a free matching checkout without prompting that every branch is stale.
 
-- Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
 - Resolve CI and review follow-up helpers from the connected node installation and report retained delivery refusals without labelling every held handoff busy.
 - Recognize quiescent configured slot sessions across completed runs while preserving foreign sessions and live workers during teardown.
 
@@ -19,6 +18,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Keep runner runtime and observability outside product checkouts, preserve active session paths, and retain explicitly indexed hidden proof files in immutable evidence bundles.
 
 - Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
+
+- Run independent pipeline reviews in native sessions, qualify their recorded visual judgments, and audit publication approval against the frozen evidence.
+- Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
 
 ## 0.22.0 - 2026-10-16
 

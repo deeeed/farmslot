@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-- Share AC row state and judgment controls across publication, preview and evidence views in both clients, with qualified pipeline verification for every visual AC.
 - Share declared gate criteria across client loading layouts.
 
 - Share publication decision status, AC judgment rows and attestation availability across operator clients.
@@ -21,6 +20,8 @@
 
 - Keep project review policy fields out of review selections while preserving configured defaults.
 - Add shared review and dispatch selection state, capability defaults, strict validators and ordered request serialization for web, mobile, CLI and gateway consumers, preserving 20-row PR execution profiles and explicit saved defaults.
+
+- Share AC row state and judgment controls across publication, preview and evidence views in both clients, with qualified pipeline verification for every visual AC.
 
 ## 0.1.1 - 2026-10-16
 

@@ -2,10 +2,11 @@
 
 ## Unreleased
 
-- Capture validated native review results on the completed command without treating streamed text as proof.
 - Produce hosted and authored tasks with retained node tooling, replay policy, metadata and independently retained workspace dependencies.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Capture validated native review results on the completed command without treating streamed text as proof.
 
 ## 0.25.4 - 2026-10-16
 
