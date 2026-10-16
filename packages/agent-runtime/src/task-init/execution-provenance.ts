@@ -51,6 +51,8 @@ export interface TaskExecutionInput {
   bindingIdentity: TaskRecipeBindingIdentity | null;
   /** All executable provider/library inputs and selected configuration bytes. */
   inputs: readonly string[];
+  /** Selected provider workspaces whose manifest-declared installed dependencies are retained. */
+  dependencyRoots?: readonly string[];
   /** Host selection data. Its bytes are retained and verified with the tooling. */
   selectedConfiguration?: string;
 }
@@ -272,6 +274,7 @@ export function verifyTaskExecutionProvenance(
 export function retainTaskExecution(
   taskDir: string,
   input: TaskExecutionInput,
+  additionalInputs: readonly string[] = [],
 ): TaskExecutionProvenance {
   if (fs.existsSync(path.join(taskDir, receiptFile))) {
     return verifyTaskExecutionProvenance(taskDir, input.bindingIdentity);
@@ -303,18 +306,35 @@ export function retainTaskExecution(
       store,
     ]);
     const retainedInputs: TaskRetainedInput[] = [{ ...cli, path: path.join(pin, 'cli') }];
-    for (const source of [...new Set(input.inputs.map((file) => fs.realpathSync(file)))]) {
-      if (
-        retainedInputs.some(
-          (entry) => source === entry.source || source.startsWith(`${entry.source}${path.sep}`),
-        )
-      )
+    for (const source of [
+      ...new Set([...input.inputs, ...additionalInputs].map((file) => fs.realpathSync(file))),
+    ]) {
+      const covering = retainedInputs.find(
+        (entry) => source === entry.source || source.startsWith(`${entry.source}${path.sep}`),
+      );
+      if (covering) {
+        const retained = path.join(
+          staging,
+          path.relative(pin, covering.path),
+          path.relative(covering.source, source),
+        );
+        if (!fs.existsSync(retained))
+          throw new Error(`Selected task input was excluded from its tooling workspace: ${source}`);
         continue;
+      }
       const relative = path.join('inputs', String(retainedInputs.length), path.basename(source));
-      const copied = retainTaskInput(source, path.join(staging, relative), [
-        path.resolve(taskDir),
-        store,
-      ]);
+      const dependencies: TaskRetainedInput[] = [];
+      const copied = retainTaskInput(
+        source,
+        path.join(staging, relative),
+        [path.resolve(taskDir), store],
+        {
+          dependencies: input.dependencyRoots?.some((root) => fs.realpathSync(root) === source),
+          onDependency: (entry) => dependencies.push(entry),
+        },
+      );
+      for (const entry of dependencies)
+        retainedInputs.push({ ...entry, path: path.join(pin, path.relative(staging, entry.path)) });
       retainedInputs.push({ ...copied, path: path.join(pin, relative) });
     }
     fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });

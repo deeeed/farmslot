@@ -6,21 +6,15 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
-  buildBranchUpdateGuardCommand,
-  buildBranchUpdateInstructions,
-  buildHandoffMetadata,
   buildOperatorWaitInstructions,
-  buildTaskDocument,
-  executionTemplateReference,
   type HandoffSourceKind,
+  parseProjectWorkerTemplateFileName,
   portableProjectRepo,
   readTaskDocumentAddendum,
-  TASK_DOCUMENT_ADDENDUM_TEMPLATE,
-  writeTaskDir,
+  type TaskInitSpec,
 } from '@farmslot/agent-runtime';
 import {
   type ArtifactRef,
-  checklistNumberingMismatches,
   checklistStepName,
   DEFAULT_BRANCH,
   enumerateChecklistCheckboxes,
@@ -30,7 +24,6 @@ import {
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type PlanningContextProjection,
-  renderTemplatePlaceholders,
   type RepeatReviewContext,
   type Run,
   runOutputReviewEnabled,
@@ -68,20 +61,12 @@ import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/
 import { prepareBranchMaintenance } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 
-import {
-  agentRuntimeCommandsForSlot,
-  agentRuntimeScriptForSlot,
-  farmslotDirectoryForSlot,
-} from './agent-runtime-script.js';
-import {
-  assertArtifactOnlyTaskGuard,
-  evaluateArtifactOnlyTaskGuard,
-} from './artifact-only-guard.js';
-import { markCommandForSlot } from './checklist-target.js';
+import { farmslotDirectoryForSlot } from './agent-runtime-script.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
 } from './execution-template-catalog.js';
+import { initializeHostedTaskOnSlot, syncHostedTaskSidecars } from './hosted-task-init.js';
 import {
   buildPlanningContextSection,
   resolveRunPlanningContext,
@@ -91,7 +76,6 @@ import { buildQaTaskSection, writeQaInput } from './qa-input.js';
 import { runContractSection } from './run-contract.js';
 import { stackSection } from './stack-section.js';
 import { renderAcceptanceCriteria } from './task-document.js';
-import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 import {
   readWorkerTerminalProjectConfig,
   resolveWorkerTerminalContract,
@@ -358,30 +342,6 @@ export function renderCommentSummary(rows: CommentRow[]): string {
   return `${header}\n${body}${droppedNote}${truncated}`;
 }
 
-function taskBlockValue(markdown: string, key: string): string {
-  const match = markdown.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
-  return match?.[1]?.trim() ?? '';
-}
-
-function stripPublicationLines(markdown: string): string {
-  let inFence = false;
-  return markdown
-    .split('\n')
-    .map((line) => {
-      if (line.trim().startsWith('```')) {
-        inFence = !inFence;
-        return line;
-      }
-      const guard = evaluateArtifactOnlyTaskGuard(line);
-      if (guard.allowed) return line;
-      const indent = line.match(/^\s*/)?.[0] ?? '';
-      return inFence
-        ? `${indent}# Artifact-only replay: publication command removed.`
-        : `${indent}Artifact-only replay: publication instruction removed.`;
-    })
-    .join('\n');
-}
-
 export function shouldApplyArtifactOnlyTaskPolicy(
   run: Pick<Run, 'completionPolicy' | 'flowType' | 'lane' | 'startRef'>,
 ): boolean {
@@ -392,84 +352,24 @@ export function shouldApplyArtifactOnlyTaskPolicy(
   );
 }
 
-export function applyArtifactOnlyTaskPolicy(
-  markdown: string,
+export function artifactOnlyReplayForRun(
   run: Pick<Run, 'completionPolicy' | 'flowType' | 'lane' | 'startRef' | 'engineState'>,
-  // Split layout: the checklist has no Task block, so BRANCH/REPO come from the
-  // task document instead of the markdown being rewritten.
-  taskBlockSource: string = markdown,
-): string {
-  if (!shouldApplyArtifactOnlyTaskPolicy(run)) return markdown;
-
-  const branch = taskBlockValue(taskBlockSource, 'BRANCH') || '<branch-from-task-block>';
-  const repo = taskBlockValue(taskBlockSource, 'REPO') || '<repo-from-task-block>';
-  const replayBase =
-    run.startRef?.resolvedSha ?? run.startRef?.requestedRef ?? 'selected reference/base';
-  const harnessOverlayGlob = '`' + harnessRoot() + '/**`';
-  const harnessOverlayGuardrail = run.engineState?.evalExperiment
-    ? [
-        'Ignore injected recipe-harness overlay paths when reasoning about the product bug or product diff:',
-        '`scripts/perps/agentic/**`, `app/core/AgenticService/**`, ' +
-          harnessOverlayGlob +
-          ', `temp/agentic/recipes/**`, and package `a:*` script aliases are harness infrastructure, not candidate product fixes.',
-      ].join('\n')
-    : '';
-  const artifactOnlyPreamble = [
-    '## Artifact-only replay guardrails',
-    '',
-    `This task is an artifact-only comparison replay from \`${replayBase}\`.`,
-    'The local `main` branch may be newer than this replay base and may already contain the original fix; do not use `main` as the comparison baseline.',
-    `When inspecting candidate changes, compare against the replay base: \`git diff ${replayBase}\` (or \`git diff ${replayBase} -- <paths>\`).`,
-    harnessOverlayGuardrail,
-    'Avoid every publication action: no remote pushes, no GitHub PR CLI mutations, no ready/merge/publication state changes.',
-    'Leave the local working-tree diff, validation evidence, and artifacts as the output. Stop after writing `artifacts/report.md` and the completion signal.',
-    '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  let result = markdown.replace(/^(#.+\n)/, `$1\n${artifactOnlyPreamble}`);
-
-  result = result.replace(
-    / {2}- \*\*If PR_NUMBER is empty\*\* — create the branch and draft PR:[\s\S]*? {4}Update `PR_NUMBER:`[^\n]*(?:\n|$)/g,
-    [
-      '  - **If PR_NUMBER is empty** — artifact-only replay mode: do not open a PR and do not publish. Confirm a local work branch exists only:',
-      '    ```bash',
-      `    cd "${repo.replace(/"/g, '\\"')}"`,
-      `    branch="${branch.replace(/"/g, '\\"')}"`,
-      '    current=$(git symbolic-ref --short HEAD 2>/dev/null || true)',
-      '    if [ "$current" != "$branch" ]; then',
-      '      git checkout -B "$branch"',
-      '    fi',
-      '    git status --short',
-      '    ```',
-      '    Leave `PR_NUMBER:` empty. This run ends with local artifacts and working-tree diff only.',
-      '',
-    ].join('\n'),
-  );
-
-  result = result.replace(
-    /or create it from `[^`]+` if needed\./g,
-    `or verify it was prepared from replay base \`${replayBase}\`; do not recreate it from \`main\`.`,
-  );
-  result = result.replace(/git diff main\.\.\.HEAD/g, `git diff ${replayBase}`);
-  result = result.replace(/git diff main\.\.HEAD/g, `git diff ${replayBase}`);
-  result = result.replace(/git log main\.\.HEAD/g, `git log ${replayBase}..HEAD`);
-  result = result.replace(/git log HEAD\.\.main/g, `git log HEAD..${replayBase}`);
-  result = result.replace(/commit\/push approval/g, 'artifact-only completion approval');
-  result = result.replace(
-    /- \[ \] \*\*(\d+)\. On approval — commit, push, update PR:\*\*[\s\S]*?(?=\s*Write completion signal:|\n- \[ \] \*\*\d+\.)/g,
-    [
-      '- [ ] **$1. Artifact-only completion — leave local evidence only:**',
-      '  - Do not push to any remote, use GitHub PR CLI mutation commands, edit/comment on PRs, mark ready, merge, or publish this replay.',
-      '  - Leave the working-tree diff, `artifacts/report.md`, and validation artifacts as the comparison output.',
-      '',
-    ].join('\n'),
-  );
-
-  result = stripPublicationLines(result);
-  assertArtifactOnlyTaskGuard(result);
-  return result;
+): TaskInitSpec['artifactOnlyReplay'] {
+  if (!shouldApplyArtifactOnlyTaskPolicy(run)) return undefined;
+  return {
+    base: run.startRef?.resolvedSha ?? run.startRef?.requestedRef ?? 'selected reference/base',
+    ...(run.engineState?.evalExperiment
+      ? {
+          ignoredPaths: [
+            'scripts/perps/agentic/**',
+            'app/core/AgenticService/**',
+            `${harnessRoot()}/**`,
+            'temp/agentic/recipes/**',
+            'package a:* script aliases',
+          ],
+        }
+      : {}),
+  };
 }
 
 // The interactive checklist is an execution plan, not the acceptance criteria.
@@ -746,6 +646,7 @@ export async function writeTaskFile(
     skipCollisionCheck?: boolean;
     extraVars?: Record<string, string>;
     onProgress?: WriteTaskProgressFn;
+    initializeTask?: typeof initializeHostedTaskOnSlot;
   },
 ): Promise<string> {
   if (!run.slotId) throw new Error('No slot assigned — cannot write task');
@@ -796,43 +697,25 @@ export async function writeTaskFile(
       );
     }
   }
-  const legacyTemplate = configuredTemplate
-    ? undefined
-    : await resolveWorkerTemplateSelectionForRun(
-        projectVars,
-        run.flowType,
-        run.mode,
-        run.taskTemplate,
-        effectiveDomain,
-      );
-  const templateName = configuredTemplate
-    ? path.basename(configuredTemplate.entry.relativePath)
-    : legacyTemplate!.fileName;
-  const templatePath = configuredTemplate
-    ? configuredTemplate.entry.path
-    : legacyTemplate!.templatePath;
-  let template = configuredTemplate ? configuredTemplate.markdown : legacyTemplate!.content;
+  if (!configuredTemplate)
+    throw new Error('Hosted tasks require a configured execution-template catalog.');
+  const templateName = path.basename(configuredTemplate.entry.relativePath);
+  const templatePath = configuredTemplate.entry.path;
+  const template = configuredTemplate.markdown;
+  const templateIdentity = parseProjectWorkerTemplateFileName(run.flowType, templateName);
   const templateProvenance = await buildTemplateProvenance({
     flowType: run.flowType,
     project: run.project,
     templatePath,
     templateName,
     templateContent: template,
-    templateVariant: legacyTemplate?.variant,
-    templateIsDefault: legacyTemplate?.isDefault,
-    templateSelectionSource: configuredTemplate
-      ? configuredTemplate.reason === 'explicit'
-        ? 'explicit'
-        : 'default'
-      : legacyTemplate!.selectionSource,
-    templateSelectionReason: configuredTemplate?.reason ?? legacyTemplate!.selectionReason,
+    templateVariant: templateIdentity?.variant,
+    templateIsDefault: templateIdentity?.isDefault,
+    templateSelectionSource: configuredTemplate.reason === 'explicit' ? 'explicit' : 'default',
+    templateSelectionReason: configuredTemplate.reason,
     role: shouldApplyArtifactOnlyTaskPolicy(run) ? 'eval-candidate' : 'worker',
-    source: configuredTemplate
-      ? configuredTemplate.entry.sourceKind === 'project'
-        ? 'current-project'
-        : 'external'
-      : undefined,
-    projectRepoPath: configuredTemplate ? path.dirname(configuredTemplate.entry.path) : undefined,
+    source: configuredTemplate.entry.sourceKind === 'project' ? 'current-project' : 'external',
+    projectRepoPath: path.dirname(configuredTemplate.entry.path),
   });
 
   // Inject mode preamble after first heading line (# Worker: Dev, # Session Context, etc.)
@@ -849,9 +732,6 @@ export async function writeTaskFile(
   // keeps the template in TASK.md: its CHECKLIST.md is the operator-agreed plan
   // written by writeInteractiveDevSidecars, and the template embeds that plan.
   const splitChecklist = !isLightweightInteractiveDevRun(run);
-  if (!splitChecklist) {
-    template = template.replace(/^(#.+\n)/, `$1\n${modePreamble}\n`);
-  }
 
   // Build task folder — each run gets its own timestamped dir (allows comparison across runs).
   // Timestamp is MMDD-HHMMSS (seconds precision). Minute-only precision caused the E12 race
@@ -1092,7 +972,6 @@ export async function writeTaskFile(
   // Use the same connected installation for task paths and configured commands.
   vars.farmslot_dir = farmslotDirForSlot;
   vars.FARMSLOT_DIR = farmslotDirForSlot;
-  Object.assign(vars, await agentRuntimeCommandsForSlot(slotVars));
 
   // ─── Linked tickets (plural, pre-rendered markdown) ───
   // A PR can reference multiple tickets ("Fixes PROJ-123, PROJ-456"). Templates
@@ -1259,26 +1138,13 @@ export async function writeTaskFile(
   vars.CI_PARITY_CHECKLIST = splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md';
   if (publicationBase) {
     const operation = await prepareBranchMaintenance(run, slotVars, defaultBranch);
-    vars.BRANCH_UPDATE_SCRIPT = await agentRuntimeScriptForSlot(slotVars, 'branch-update.mjs');
     if (operation) {
       vars.BRANCH_UPDATE_CONTEXT = JSON.stringify(operation);
       vars.PUBLICATION_PARENT_BASE_SHA = operation.replayBoundarySha;
       vars.PUBLICATION_PARENT_HEAD_SHA = operation.authorityHeadSha;
     }
-    vars.BRANCH_UPDATE_GUARD_CMD = buildBranchUpdateGuardCommand(vars);
-    vars.BRANCH_UPDATE_PUSH_CMD = buildBranchUpdateGuardCommand(vars, 'push');
-    vars.BRANCH_UPDATE_INSTRUCTIONS = buildBranchUpdateInstructions(
-      publicationBase,
-      vars.BRANCH_UPDATE_GUARD_CMD,
-      vars.BRANCH_UPDATE_PUSH_CMD,
-    );
   }
 
-  const content = renderTemplatePlaceholders(
-    template,
-    vars,
-    `Worker template ${templatePath ?? templateName}`,
-  );
   const taskFilePath = path.join(taskAbsDir, 'TASK.md');
   // Gateway-owned context (family scope, PR-complete handoff, runtime capability
   // plan, related planning context, review contract) is appended to the document
@@ -1307,64 +1173,24 @@ export async function writeTaskFile(
     return `${withRuntimeContext.trimEnd()}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n${buildQaTaskSection(vars.TASK_DIR, run)}`;
   };
 
-  let finalContent: string;
-  let checklistContent: string | null = null;
-  if (splitChecklist) {
-    const addendum = await readTaskDocumentAddendum(projectVars.projectTemplatesDir);
-    const renderedAddendum = addendum
-      ? renderTemplatePlaceholders(
-          addendum.content,
-          vars,
-          `Task document addendum templates/${TASK_DOCUMENT_ADDENDUM_TEMPLATE}`,
-        )
-      : null;
-    const taskDocument = buildTaskDocument({
-      flowType: run.flowType,
-      modePreamble,
-      vars,
-      description,
-      acceptanceCriteria: ticket.acceptanceCriteria,
-      affectedArea: ticket.affectedArea || '',
-      screenshotsMarkdown: screenshotsMd,
-      commentsMarkdown: vars.COMMENTS,
-      linkedTicketsMarkdown: vars.LINKED_TICKETS,
-      linkedDescriptionsMarkdown: vars.LINKED_DESCRIPTIONS,
-      commentSummaryMarkdown: vars.COMMENT_SUMMARY,
-      addendum: renderedAddendum,
-      hasTicketData: Boolean(run.ticketData),
-    });
-    // Artifact-only replays neutralize publication steps inside the checklist
-    // (BRANCH/REPO for the rewritten snippets come from the task document) and
-    // put the replay guardrails at the top of the task document the worker
-    // opens first.
-    checklistContent = applyArtifactOnlyTaskPolicy(content, run, taskDocument);
-    finalContent = applyArtifactOnlyTaskPolicy(await appendTaskContext(taskDocument), run);
-  } else {
-    const withPlanningContext = await appendTaskContext(content);
-    const withOperatorWait =
-      vars.MODE === 'interactive'
-        ? `${withPlanningContext.trimEnd()}\n\n${buildOperatorWaitInstructions(vars.TASK_DIR)}\n`
-        : withPlanningContext;
-    finalContent = applyArtifactOnlyTaskPolicy(withOperatorWait, run);
-  }
-  if (shouldApplyArtifactOnlyTaskPolicy(run)) {
-    assertArtifactOnlyTaskGuard(finalContent);
-  }
-  const enumeratedChecklist = checklistContent ?? finalContent;
-  if (configuredTemplate) {
-    templateProvenance.executionTemplate = executionTemplateReference(
-      configuredTemplate.entry,
-      enumeratedChecklist,
-    );
-  }
-  // Warn (not fail) so a template bug in one farm pack cannot brick dispatch;
-  // the log line names the template so the pack can be fixed.
-  const numberingMismatches = checklistNumberingMismatches(enumeratedChecklist);
-  if (numberingMismatches.length > 0) {
-    console.warn(
-      `[task-writer] checklist label numbering diverges from step positions in ${templatePath ?? templateName} (${numberingMismatches.join('; ')}) — 'mark N' targets positions; renumber the template labels`,
-    );
-  }
+  const isPrFlow = ['review-pr', 'pr-complete', 'update-branch'].includes(run.flowType);
+  const handoffSourceKind: HandoffSourceKind =
+    run.flowType === 'qa' && run.qaSource
+      ? 'github-pr'
+      : ticket.jiraKey
+        ? 'jira'
+        : ticket.githubIssue
+          ? 'github-issue'
+          : isPrFlow
+            ? 'github-pr'
+            : 'text';
+  const addendum = await readTaskDocumentAddendum(projectVars.projectTemplatesDir);
+  const { executionTemplate: _reference, ...portableProvenance } = templateProvenance;
+  const additions = await appendTaskContext('');
+  const taskDocumentAdditions =
+    !splitChecklist && vars.MODE === 'interactive'
+      ? `${additions}\n${buildOperatorWaitInstructions(vars.TASK_DIR)}\n`
+      : additions;
   const workerTerminalConfig = readWorkerTerminalProjectConfig(
     projectVars.projectJson as Record<string, unknown>,
   );
@@ -1377,60 +1203,58 @@ export async function writeTaskFile(
       humanGateEnabled(run.flowType, run.mode ?? undefined, projectVars.projectJson)) ||
     (runOutputReviewEnabled(run) && Boolean(terminalContract.commands.complete.report));
 
-  // Run identity in the shape the recipe-cook skill writes, so `handoff closeout`
-  // and any other task-dir consumer see one contract on both surfaces. The
-  // selected checklist reference and the farm's template provenance ride along
-  // in the same record; the reference is never stored twice.
-  const isPrFlow =
-    run.flowType === 'review-pr' ||
-    run.flowType === 'pr-complete' ||
-    run.flowType === 'update-branch';
-  const handoffSourceKind: HandoffSourceKind =
-    run.flowType === 'qa' && run.qaSource
-      ? 'github-pr'
-      : ticket.jiraKey
-        ? 'jira'
-        : ticket.githubIssue
-          ? 'github-issue'
-          : isPrFlow
-            ? 'github-pr'
-            : 'text';
-  const { executionTemplate: selectedReference, ...portableProvenance } = templateProvenance;
-  const handoff = buildHandoffMetadata({
-    attemptId: run.id,
-    surface: 'farmslot',
-    project: run.project,
+  const taskData: Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'> = {
+    taskDir: path.posix.join(slotVars.remoteRepo, vars.TASK_DIR),
+    taskDirLabel: vars.TASK_DIR,
     flow: run.flowType,
-    repo: portableProjectRepo(projectVars.projectJson as Record<string, unknown>),
+    platform: slotVars.platform,
+    runMode: run.mode ?? undefined,
     domain: effectiveDomain ?? undefined,
-    title: ticket.title,
-    sourceKind: handoffSourceKind,
-    // Ids for the acceptance ledger (ADR-060) are positional in this array.
-    acceptanceCriteria: ticket.acceptanceCriteria,
-    ticket: ticketRef,
-    sourceRef: ticketUrl || vars.PR_URL || undefined,
-    terminalContract,
-    startedAt: templateProvenance.renderedAt,
-    ...(configuredTemplate && selectedReference
-      ? { executionTemplate: { selectionReason: configuredTemplate.reason, ...selectedReference } }
-      : {}),
-    templateProvenance: portableProvenance,
-  });
-
-  // The task dir itself comes from the shared producer: TASK.md, CHECKLIST.md
-  // (split layout), the mark shim, handoff.json, the terminal contract, and the
-  // ticket as fetched. No checklist-target.json: absent means the worker default;
-  // only a role switch writes one.
-  await writeTaskDir({
-    taskDir: taskAbsDir,
-    taskMarkdown: finalContent,
-    checklistMarkdown: checklistContent,
-    markCommand: await markCommandForSlot(slotVars, projectVars),
-    handoff,
+    task: {
+      title: ticket.title,
+      description,
+      sourceKind: handoffSourceKind,
+      acceptanceCriteria: ticket.acceptanceCriteria,
+      affectedArea: ticket.affectedArea || '',
+      screenshotsMarkdown: screenshotsMd,
+      commentsMarkdown: vars.COMMENTS,
+      linkedTicketsMarkdown: vars.LINKED_TICKETS,
+      linkedDescriptionsMarkdown: vars.LINKED_DESCRIPTIONS,
+      commentSummaryMarkdown: vars.COMMENT_SUMMARY,
+      ticket: ticketRef,
+      sourceRef: ticketUrl || vars.PR_URL || undefined,
+    },
+    handoff: {
+      attemptId: run.id,
+      surface: 'farmslot',
+      project: run.project,
+      repo: portableProjectRepo(projectVars.projectJson as Record<string, unknown>),
+      startedAt: templateProvenance.renderedAt,
+      templateProvenance: portableProvenance,
+    },
+    vars,
+    modePreamble,
+    addendum: addendum?.content ?? null,
+    taskDocumentAdditions,
     terminalContract,
     bugInput: run.ticketData ?? undefined,
-    deterministicCommands: vars,
-  });
+    ...(splitChecklist
+      ? {}
+      : {
+          operatorPlan: await readFile(path.join(taskAbsDir, EXECUTION_CHECKLIST_DOCUMENT), 'utf8'),
+        }),
+    artifactOnlyReplay: artifactOnlyReplayForRun(run),
+  };
+  templateProvenance.executionTemplate = await (opts?.initializeTask ?? initializeHostedTaskOnSlot)(
+    slotVars,
+    taskAbsDir,
+    {
+      binding: projectVars.projectJson.recipe?.provider ? 'project' : 'static',
+      task: taskData,
+      template: configuredTemplate,
+    },
+  );
+
   await writeQaInput(taskAbsDir, {
     ...run,
     executionTemplate: templateProvenance.executionTemplate ?? run.executionTemplate,
@@ -1457,6 +1281,7 @@ export async function writeTaskFile(
     }
   }
 
+  if (!opts?.initializeTask) await syncHostedTaskSidecars(slotVars, taskAbsDir, taskData.taskDir);
   console.log(`[task-writer] wrote ${taskFilePath}`);
   return taskFilePath;
 }

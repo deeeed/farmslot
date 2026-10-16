@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
+
 - Record one-tap person visual confirmations without invented prose, preserving receipt identity and package refresh requirements.
 - Preserve the task marker and its frozen tooling when switching between worker and review checklists.
 

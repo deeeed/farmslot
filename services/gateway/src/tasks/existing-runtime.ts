@@ -1,9 +1,9 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
   buildHandoffMetadata,
-  ensureTaskRuntime,
   type HandoffMetadata,
   portableProjectRepo,
 } from '@farmslot/agent-runtime';
@@ -12,10 +12,12 @@ import {
   isLightweightInteractiveDevRun,
   type Run,
 } from '@farmslot/protocol';
+import { resolveProjectTaskDirName } from '@farmslot/slot-config';
 
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
 
-import { markCommandForSlot } from './checklist-target.js';
+import { resolveConfiguredExecutionTemplateForSlot } from './execution-template-catalog.js';
+import { initializeHostedTaskOnSlot, verifyHostedTaskOnSlot } from './hosted-task-init.js';
 import {
   readWorkerTerminalProjectConfig,
   resolveWorkerTerminalContract,
@@ -26,6 +28,20 @@ export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
   if (!run.taskFile) throw new Error('Existing task runtime requires its task');
   const project = await loadProjectVars(run.project);
   const slot = run.slotId ? await loadSlotVars(run.slotId) : undefined;
+  if (!slot) throw new Error('Existing task initialization requires its execution slot.');
+  const workerTaskDir = path.posix.join(
+    slot.remoteRepo,
+    resolveProjectTaskDirName(project.projectJson),
+    path.basename(path.dirname(path.dirname(run.taskFile))),
+    path.basename(path.dirname(run.taskFile)),
+  );
+  if (existsSync(path.join(path.dirname(run.taskFile), 'artifacts/harness-provenance.json'))) {
+    await verifyHostedTaskOnSlot(slot, workerTaskDir);
+    return;
+  }
+  // A structured existing runner session proves this is a same-run legacy resume.
+  // Its original marker and metadata remain untouched.
+  if (run.metrics.runnerSessionId) return;
   const task = await readFile(run.taskFile, 'utf8');
   let authored: HandoffMetadata | undefined;
   try {
@@ -78,12 +94,43 @@ export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
   const checklist = enumerateChecklistCheckboxes(task)
     .map((item) => lines[item.lineIndex])
     .join('\n');
-  await ensureTaskRuntime({
-    taskDir: path.dirname(run.taskFile),
-    checklistMarkdown: !isLightweightInteractiveDevRun(run) && checklist ? `${checklist}\n` : null,
-    handoff,
-    terminalContract,
-    markCommand: slot ? await markCommandForSlot(slot, project) : undefined,
-    bugInput: run.ticketData ?? undefined,
+  const selected = resolveConfiguredExecutionTemplateForSlot(project, {
+    flow: run.flowType,
+    platform: slot.platform,
+    runMode: run.mode ?? 'interactive',
+    ...(run.domain ? { explicitDomain: run.domain } : {}),
+    ...(slot.domain ? { slotDomain: slot.domain } : {}),
+    ...(run.executionTemplateId ? { explicitId: run.executionTemplateId } : {}),
+  });
+  const checklistFile = path.join(path.dirname(run.taskFile), 'CHECKLIST.md');
+  const checklistMarkdown = existsSync(checklistFile)
+    ? await readFile(checklistFile, 'utf8')
+    : !isLightweightInteractiveDevRun(run) && checklist
+      ? `${checklist}\n`
+      : null;
+  await initializeHostedTaskOnSlot(slot, path.dirname(run.taskFile), {
+    binding: project.projectJson.recipe?.provider ? 'project' : 'static',
+    template: selected,
+    task: {
+      taskDir: workerTaskDir,
+      flow: run.flowType,
+      platform: slot.platform,
+      runMode: run.mode ?? undefined,
+      domain: run.domain ?? undefined,
+      task: {
+        title: run.ticketData?.title ?? run.ticketOrPr,
+        sourceKind: 'text',
+        acceptanceCriteria: run.ticketData?.acceptanceCriteria ?? [],
+      },
+      handoff: {
+        surface: handoff.surface,
+        project: handoff.project,
+        attemptId: handoff.attemptId,
+        repo: handoff.repo,
+      },
+      terminalContract,
+      bugInput: run.ticketData ?? undefined,
+      authored: { taskMarkdown: task, checklistMarkdown, handoff },
+    },
   });
 }

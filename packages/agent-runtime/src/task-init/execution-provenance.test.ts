@@ -100,3 +100,89 @@ test('rewriting task-owned hashes cannot authorize a different executable', (t) 
     code: 'TASK_PROVENANCE_INVALID',
   });
 });
+
+test('owning workspace keeps sibling imports and declared local dependencies after originals disappear', async (t) => {
+  const { root, taskDir, input } = fixture(t);
+  const workspace = path.join(root, 'tooling');
+  const dependency = path.join(root, 'local-package');
+  const leaf = path.join(root, 'node_modules', 'leaf');
+  for (const directory of [
+    path.join(workspace, 'recipe'),
+    path.join(workspace, 'lib'),
+    path.join(workspace, 'node_modules'),
+    dependency,
+    leaf,
+  ])
+    fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(
+    path.join(workspace, 'package.json'),
+    JSON.stringify({
+      private: true,
+      type: 'module',
+      files: ['recipe', 'lib'],
+      dependencies: { local: 'workspace:*' },
+    }),
+  );
+  fs.writeFileSync(path.join(workspace, 'product.js'), 'ordinary product source');
+  fs.writeFileSync(path.join(workspace, 'lib', 'state.mjs'), 'export const state = 3;');
+  fs.writeFileSync(
+    path.join(workspace, 'recipe', 'provider.mjs'),
+    'import { state } from "../lib/state.mjs"; import value from "local"; export default state + value;',
+  );
+  fs.writeFileSync(
+    path.join(dependency, 'package.json'),
+    JSON.stringify({
+      name: 'local',
+      type: 'module',
+      main: 'index.mjs',
+      peerDependencies: { leaf: '1.0.0' },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(dependency, 'index.mjs'),
+    'import value from "leaf"; export default value + 2;',
+  );
+  fs.writeFileSync(
+    path.join(leaf, 'package.json'),
+    JSON.stringify({ name: 'leaf', type: 'module', main: 'index.mjs' }),
+  );
+  fs.writeFileSync(path.join(leaf, 'index.mjs'), 'export default 5;');
+  fs.symlinkSync(dependency, path.join(workspace, 'node_modules', 'local'));
+  fs.mkdirSync(path.join(workspace, 'node_modules', 'ambient'));
+  fs.writeFileSync(path.join(workspace, 'node_modules', 'ambient', 'unused'), 'not declared');
+  const receipt = retainTaskExecution(taskDir, {
+    ...input,
+    inputs: [workspace],
+    dependencyRoots: [workspace],
+  });
+  const retained = receipt.retainedInputs.find(
+    (entry) => entry.source === fs.realpathSync(workspace),
+  );
+  assert.ok(retained);
+  assert.equal(fs.existsSync(path.join(retained.path, 'node_modules', 'ambient')), false);
+  assert.equal(fs.existsSync(path.join(retained.path, 'product.js')), false);
+  assert.ok(receipt.retainedInputs.some((entry) => entry.source === fs.realpathSync(dependency)));
+  fs.rmSync(workspace, { recursive: true });
+  fs.rmSync(dependency, { recursive: true });
+  fs.rmSync(path.join(root, 'node_modules'), { recursive: true });
+  const { pathToFileURL } = await import('node:url');
+  const module = await import(
+    pathToFileURL(path.join(retained.path, 'recipe', 'provider.mjs')).href
+  );
+  assert.equal(module.default, 10);
+  assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), receipt);
+});
+
+test('missing declared dependency refuses before a receipt can authorize a marker', (t) => {
+  const { taskDir, provider, input } = fixture(t);
+  fs.writeFileSync(
+    path.join(provider, 'package.json'),
+    JSON.stringify({ private: true, dependencies: { absent: '1.0.0' } }),
+  );
+  assert.throws(
+    () =>
+      retainTaskExecution(taskDir, { ...input, inputs: [provider], dependencyRoots: [provider] }),
+    /Declared task dependency absent is not installed/,
+  );
+  assert.equal(fs.existsSync(path.join(taskDir, 'artifacts', 'harness-provenance.json')), false);
+});

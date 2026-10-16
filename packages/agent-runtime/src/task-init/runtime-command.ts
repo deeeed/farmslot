@@ -21,8 +21,14 @@ export function quoteTaskPath(word: string): string {
 export function installedTaskCommands(mapPath?: (file: string) => string): {
   AC_CMD: string;
   ARTIFACT_CHECK_CMD: string;
+  BRANCH_UPDATE_SCRIPT: string;
 } {
   const file = path.join(packageRoot, 'bin/farmslot-agent.mjs');
   const entry = `node ${mapPath ? quoteTaskPath(mapPath(file)) : quoteMarkCommandWord(file)}`;
-  return { AC_CMD: `${entry} ac`, ARTIFACT_CHECK_CMD: `${entry} artifact-check` };
+  const branchScript = path.join(packageRoot, 'scripts/branch-update.mjs');
+  return {
+    AC_CMD: `${entry} ac`,
+    ARTIFACT_CHECK_CMD: `${entry} artifact-check`,
+    BRANCH_UPDATE_SCRIPT: mapPath ? mapPath(branchScript) : branchScript,
+  };
 }

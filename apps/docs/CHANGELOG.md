@@ -4,7 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
-- Document proposed node-owned hosted task initialization and workspace dependency retention without changing recipe-library roots.
+- Document node-owned hosted task initialization and workspace dependency retention without changing recipe-library roots.
 
 - Document authored task Markdown rendering and its output controls in the generated recipe CLI reference.
 

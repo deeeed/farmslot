@@ -44,6 +44,7 @@ import {
   resolveProjectTaskDirName,
   updateSlotStatus,
 } from '../../core/index.js';
+import { slotFileExists } from '../../core/slot-io.js';
 import { SSH_CONNECT_SHELL_OPTIONS } from '../../core/ssh-options.js';
 import {
   firstWindowTarget,
@@ -112,6 +113,7 @@ import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.j
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
 import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import { verifyHostedTaskOnSlot } from '../../tasks/hosted-task-init.js';
 import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
@@ -1532,35 +1534,48 @@ export async function dispatchExecute(
   step('copy', 'Copying task files...');
   const workerTaskAbs = `${vars.remoteRepo}/${workerTaskDir}`;
 
-  if (isLocal(vars.host, vars.machine)) {
-    await mkdir(workerTaskAbs, { recursive: true });
-    await copyFile(taskFilePath, path.join(workerTaskAbs, 'TASK.md'));
+  const retainedReceipt = `${workerTaskAbs}/artifacts/harness-provenance.json`;
+  if (await slotFileExists(vars, retainedReceipt)) {
+    await verifyHostedTaskOnSlot(vars, workerTaskAbs);
+    step('copy', 'Retained task verified; task documents and evidence preserved');
   } else {
-    await execOnSlot(vars, `mkdir -p '${workerTaskAbs}'`);
-    await execLocal(
-      `scp -q ${SSH_CONNECT_SHELL_OPTIONS} '${taskFilePath}' '${vars.sshTarget}:${workerTaskAbs}/TASK.md'`,
-    );
-  }
-  step('copy', `TASK.md copied to ${workerTaskDir}/TASK.md`);
-  for (const sidecar of await copyPreparedTaskRootSidecars({
-    taskDir,
-    workerTaskAbs,
-    host: vars.host,
-    machine: vars.machine,
-    sshTarget: vars.sshTarget,
-  })) {
-    step('copy', `${sidecar} copied`);
-  }
+    if (
+      existsSync(path.join(taskDir, 'artifacts/harness-provenance.json')) ||
+      !currentRun?.metrics.runnerSessionId
+    )
+      throw new Error(
+        'The node-owned retained task is missing or belongs to another allocation. Recover the original task or author a fresh task directory; never delete its receipt.',
+      );
+    if (isLocal(vars.host, vars.machine)) {
+      await mkdir(workerTaskAbs, { recursive: true });
+      await copyFile(taskFilePath, path.join(workerTaskAbs, 'TASK.md'));
+    } else {
+      await execOnSlot(vars, `mkdir -p '${workerTaskAbs}'`);
+      await execLocal(
+        `scp -q ${SSH_CONNECT_SHELL_OPTIONS} '${taskFilePath}' '${vars.sshTarget}:${workerTaskAbs}/TASK.md'`,
+      );
+    }
+    step('copy', `TASK.md copied to ${workerTaskDir}/TASK.md`);
+    for (const sidecar of await copyPreparedTaskRootSidecars({
+      taskDir,
+      workerTaskAbs,
+      host: vars.host,
+      machine: vars.machine,
+      sshTarget: vars.sshTarget,
+    })) {
+      step('copy', `${sidecar} copied`);
+    }
 
-  // Copy assets/, inputs/, artifacts/ if they exist
-  for (const subdir of await copyTaskDirSubdirectories({
-    taskDir,
-    workerTaskAbs,
-    host: vars.host,
-    machine: vars.machine,
-    sshTarget: vars.sshTarget,
-  })) {
-    step('copy', `${subdir}/ copied`);
+    // Copy assets/, inputs/, artifacts/ if they exist
+    for (const subdir of await copyTaskDirSubdirectories({
+      taskDir,
+      workerTaskAbs,
+      host: vars.host,
+      machine: vars.machine,
+      sshTarget: vars.sshTarget,
+    })) {
+      step('copy', `${subdir}/ copied`);
+    }
   }
 
   // We just wrote artifacts/recipe.json + artifacts/recipe-library/ into the

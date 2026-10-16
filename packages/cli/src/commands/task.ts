@@ -44,7 +44,7 @@ export function taskHelperArgv(command: Command, includePlatform = false): strin
   return forwarded;
 }
 
-function cliInstallation(): Omit<TaskExecutionInput, 'bindingIdentity' | 'inputs'> {
+export function cliInstallation(): Omit<TaskExecutionInput, 'bindingIdentity' | 'inputs'> {
   const packageRoot = fs.realpathSync(fileURLToPath(new URL('../..', import.meta.url)));
   const workspace = path.resolve(packageRoot, '../..');
   const workspaceInstall = fs.existsSync(path.join(workspace, 'yarn.lock'));

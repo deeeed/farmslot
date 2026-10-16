@@ -15,9 +15,9 @@ import type { FlowType, Run } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
-process.env.FARMSLOT_DEMO_POOL = '1';
+import { writeTaskFixture } from './writer.test-support.js';
 
-const { writeTaskFile } = await import('./writer.js');
+process.env.FARMSLOT_DEMO_POOL = '1';
 
 const GOLDEN_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -89,7 +89,7 @@ for (const flowType of ['dev', 'fix-bug', 'review-pr', 'pr-complete'] as const) 
     t.after(async () => {
       if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
     });
-    taskPath = await writeTaskFile(goldenRun(flowType), { skipCollisionCheck: true });
+    taskPath = await writeTaskFixture(goldenRun(flowType), { skipCollisionCheck: true });
     const actual = normalize(await readFile(taskPath, 'utf-8'), path.dirname(taskPath));
     const goldenPath = path.join(GOLDEN_DIR, `${flowType}.golden`);
     if (UPDATE) {
@@ -117,7 +117,7 @@ test('a stacked dev run gets the golden document plus only a Stack section', asy
       downstream: ['Polish (wn_polish)'],
     },
   };
-  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
   const actual = normalize(await readFile(taskPath, 'utf-8'), path.dirname(taskPath));
   const section = [
     '## Stack',
@@ -148,5 +148,8 @@ test('stacked maintenance without retained publication ownership refuses before 
   };
   // Real ownership, PUBLICATION_BASE rendering and default freshness remain in
   // the manual production-gateway stack-base-consumers proof.
-  await assert.rejects(writeTaskFile(run, { skipCollisionCheck: true }), /PARENT_BOUNDARY_MISSING/);
+  await assert.rejects(
+    writeTaskFixture(run, { skipCollisionCheck: true }),
+    /PARENT_BOUNDARY_MISSING/,
+  );
 });

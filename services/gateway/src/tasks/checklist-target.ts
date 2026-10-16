@@ -1,7 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { quoteMarkCommandWord } from '@farmslot/agent-runtime';
 import {
   CHECKLIST_TARGET_MANIFEST,
   type ChecklistTarget,
@@ -38,13 +37,11 @@ export {
   WORKER_SIGNAL_FILE,
 } from '@farmslot/protocol/checklist-target';
 
-import type { loadSlotVars, ProjectVars } from '../core/config.js';
+import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { expandTemplate } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
-import { agentRuntimeScriptForSlot, farmslotDirectoryForSlot } from './agent-runtime-script.js';
 import { syncTerminalContractForFlowOnSlot } from './worker-terminal-contract.js';
 
 export function checklistTargetForAgentRole(
@@ -121,29 +118,6 @@ export async function syncChecklistTargetForRole(
     target.checklist,
     terminal?.additionalArtifactPaths,
   );
-}
-
-/**
- * The command the task's `mark` shim runs. A pack may set `vars.mark_cmd`
- * (for example `${MM_HARNESS_BIN:-mm-harness} checklist mark`) so workers get
- * the harness's gates; the default is the slot-synced agent-runtime engine.
- */
-export async function markCommandForSlot(
-  vars: Pick<Awaited<ReturnType<typeof loadSlotVars>>, 'host' | 'machine'> &
-    Parameters<typeof expandTemplate>[1],
-  projectVars?: ProjectVars,
-): Promise<string> {
-  const raw = projectVars?.projectJson.vars?.mark_cmd;
-  if (typeof raw === 'string' && raw.trim()) {
-    // Resolve only commands that consume the root, including nested pack vars.
-    const directoryToken = '\u0000FARMSLOT_DIR\u0000';
-    const command = expandTemplate(raw, vars, projectVars, { farmslot_dir: directoryToken });
-    return command.includes(directoryToken)
-      ? command.replaceAll(directoryToken, await farmslotDirectoryForSlot(vars))
-      : command;
-  }
-  const helper = await agentRuntimeScriptForSlot(vars, 'mark-checklist-step.cjs');
-  return `node ${quoteMarkCommandWord(helper)}`;
 }
 
 export async function syncChecklistTarget(

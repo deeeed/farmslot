@@ -180,7 +180,7 @@ Publish the additive SDK export in a reviewed pre-1.0 minor release. Migrate cal
 
 ## Amendment 5: Hosted task initialization, 2026-10-16
 
-**Status:** Proposed. Earlier decisions retain their status.
+**Status:** Accepted by lead amendment authority, 2026-10-16. Implementation: [#1186](https://github.com/deeeed/farmslot/pull/1186). Earlier decisions retain their status.
 
 ### Decision and rationale
 

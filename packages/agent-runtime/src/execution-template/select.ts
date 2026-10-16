@@ -8,6 +8,7 @@ import { executionTemplateReference } from './snapshot.js';
 import {
   type ExecutionTemplateEntry,
   ExecutionTemplateSelectionError,
+  type ExecutionTemplateSource,
   type ListCompatibleExecutionTemplatesOptions,
   type SelectedExecutionTemplate,
   type SelectExecutionTemplateOptions,
@@ -192,4 +193,21 @@ export function selectExecutionTemplate(
     'ambiguous',
     `Execution-template selection is ambiguous. Choose one exact id: ${compatibleIds(general)}.`,
   );
+}
+
+export function executionTemplateCatalogFlow(
+  sources: ExecutionTemplateSource[],
+  profiles: readonly { template_id: string }[] | undefined,
+  flow: string,
+  explicitId?: string,
+): string {
+  if (flow !== 'qa') return flow;
+  if (!explicitId || !profiles?.some((profile) => profile.template_id === explicitId)) {
+    throw new Error('QA requires a template selected by a configured farm preset');
+  }
+  const entry = listExecutionTemplates({ sources, includeShadowed: false }).find(
+    (candidate) => candidate.id === explicitId,
+  );
+  if (!entry) throw new Error(`QA template "${explicitId}" is unavailable`);
+  return entry.flow;
 }

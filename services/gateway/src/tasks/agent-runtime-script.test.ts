@@ -22,12 +22,7 @@ import { expandTemplateWithReservedLast } from '../core/hooks.js';
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
 
-import {
-  agentRuntimeCommandsForSlot,
-  agentRuntimeScriptForSlot,
-  farmslotDirectoryForSlot,
-} from './agent-runtime-script.js';
-import { markCommandForSlot } from './checklist-target.js';
+import { agentRuntimeScriptForSlot, farmslotDirectoryForSlot } from './agent-runtime-script.js';
 
 async function fixture(t: test.TestContext) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'active-node-runtime-')));
@@ -143,10 +138,9 @@ test('worker commands execute the connected acceptance helper with an explicit t
       task: { acceptanceCriteria: ['The configured helper reads this task'] },
     }),
   );
-  const { AC_CMD: command, ARTIFACT_CHECK_CMD: artifactCheck } =
-    await agentRuntimeCommandsForSlot(vars);
+  const helper = await agentRuntimeScriptForSlot(vars, 'acceptance-cli.cjs');
+  const command = `node "${helper}"`;
   assert.ok(command.includes(roots[1]));
-  assert.ok(artifactCheck.includes(roots[1]));
   assert.equal(requests.length, 1);
   const result = spawnSync('bash', ['-c', `${command} list --task-dir "$1"`, '_', taskDir], {
     cwd: root,
@@ -181,7 +175,8 @@ test('the selected remote mark engine executes the frozen CI command and writes 
       ],
     }),
   );
-  const command = await markCommandForSlot(vars);
+  const helper = await agentRuntimeScriptForSlot(vars, 'mark-checklist-step.cjs');
+  const command = `node "${helper}"`;
   assert.ok(command.includes(roots[1]));
   const result = spawnSync('bash', ['-c', `${command} "$1" 1`, '_', taskDir], {
     cwd: repo,
@@ -211,22 +206,17 @@ test('unavailable helper exports fail closed instead of falling back to producti
   );
 });
 
-test('local helpers and project harness marker overrides preserve their selection', async () => {
-  const vars = { host: 'localhost', machine: 'local', resourceVars: {} } as SlotVars;
+test('local helpers preserve their installation selection', async () => {
   assert.equal(
-    await agentRuntimeScriptForSlot(vars, 'acceptance-ledger.cjs'),
+    await agentRuntimeScriptForSlot(
+      { host: 'localhost', machine: 'local' },
+      'acceptance-ledger.cjs',
+    ),
     path.join(farmslotRoot, 'packages/agent-runtime/scripts/acceptance-ledger.cjs'),
-  );
-  const project = {
-    projectJson: { vars: { mark_cmd: 'harness checklist mark' } },
-  } as unknown as ProjectVars;
-  assert.equal(
-    await markCommandForSlot({ ...vars, host: 'unconnected.invalid' }, project),
-    'harness checklist mark',
   );
 });
 
-test('configured marker resolves its nested harness command in the connected installation', async (t) => {
+test('project command expansion uses its connected installation', async (t) => {
   const { roots, vars, requests, activate } = await fixture(t);
   const localCi = { enabled: true, local_check: 'printf parity' };
   const project: ProjectVars = {
@@ -238,7 +228,6 @@ test('configured marker resolves its nested harness command in the connected ins
       name: 'demo',
       ci: localCi,
       vars: {
-        mark_cmd: '"$({{resolver}})" checklist mark',
         resolver: 'node "{{farmslot_dir}}/resolve.mjs" "{{FARMSLOT_DIR}}"',
       },
     },
@@ -275,21 +264,6 @@ test('configured marker resolves its nested harness command in the connected ins
     assert.ok(ciTemplate.includes(`node "${roots[index]}/resolve.mjs"`));
     assert.ok(ciTemplate.includes('[DETERMINISTIC: ci.local_check]'));
     assert.ok(ciTemplate.includes('literal {{repo}}'));
-    const command = await markCommandForSlot(vars, project);
-    assert.ok(command.includes(roots[index]));
-    assert.ok(!command.includes('~/farmslot-node'));
-    const result = spawnSync('bash', ['-c', `${command} --checklist REVIEW.md 2`], {
-      cwd: roots[index],
-      encoding: 'utf8',
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(result.stdout.trim().split('\n'), [
-      'checklist',
-      'mark',
-      '--checklist',
-      'REVIEW.md',
-      '2',
-    ]);
   }
   assert.ok(requests.every((request) => request.cwd === undefined));
 });

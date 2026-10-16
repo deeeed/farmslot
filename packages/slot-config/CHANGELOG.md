@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Expose existing recipe provider declarations to typed hosted-task consumers.
+
 - Preserve per-call template bindings through nested project commands and reserved values.
 
 - Keep visual-review delegation in operator runtime settings for managed packs, with validation and the existing backups.
