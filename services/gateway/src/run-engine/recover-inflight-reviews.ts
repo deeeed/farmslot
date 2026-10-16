@@ -58,6 +58,7 @@ import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-s
 import {
   buildPublishGateReviewStatus,
   normalizeExhaustedReviewContinuation,
+  pendingReviewContinuation,
   reviewNeedsContinuation,
 } from './gate-policy.js';
 import { persistReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
@@ -73,14 +74,16 @@ export interface PublicationReviewRecoveryResult {
   terminalErrors: Array<{ contextId: string; message: string }>;
 }
 
-/** Metadata repairs must replay the gate without restamping a review to a new package. */
+/** Recover the operator gate even when a prior poll already ingested its findings. */
 export function publicationReviewRecoveryNeedsReplay(
   result: PublicationReviewRecoveryResult,
+  reviews: ReviewStatus[] = [],
 ): boolean {
   return (
     result.recoveredIds.length > 0 ||
     (result.repairedIds?.length ?? 0) > 0 ||
-    (result.relaunchIds?.length ?? 0) > 0
+    (result.relaunchIds?.length ?? 0) > 0 ||
+    pendingReviewContinuation(reviews) !== undefined
   );
 }
 
