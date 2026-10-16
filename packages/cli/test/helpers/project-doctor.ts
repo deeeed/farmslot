@@ -52,6 +52,18 @@ export function fixture(t: TestContext, missing = false) {
       typeof value === 'string' ? value : JSON.stringify(value),
     );
   };
+  write('package.json', {
+    private: true,
+    type: 'module',
+    files: [
+      'provider.mjs',
+      'fixture-harness.mjs',
+      'recipe-library.json',
+      'project.json',
+      'manifests',
+      'recipes',
+    ],
+  });
   write('recipe-library.json', { schema_version: 1, name: 'example', platforms: ['headless'] });
   write('project.json', {
     name: 'example',

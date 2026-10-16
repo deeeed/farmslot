@@ -2,8 +2,8 @@
 //
 // A harness (or an engineer) calls `taskInit` with what it knows and gets the
 // same TASK.md, CHECKLIST.md, mark, and inputs/ a Farmslot dispatch writes. The
-// gateway composes the same pieces (`renderTemplatePlaceholders`,
-// `buildTaskDocument`, `writeTaskDir`) around its control-plane steps.
+// gateway supplies control-plane data; the node calls this producer with its
+// own retained installation.
 
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -23,8 +23,12 @@ import {
   executionTemplateReference,
   readExecutionTemplateSnapshot,
 } from '../execution-template/snapshot.js';
-import type { ExecutionTemplateSource } from '../execution-template/types.js';
+import type {
+  ExecutionTemplateSource,
+  SelectedExecutionTemplate,
+} from '../execution-template/types.js';
 
+import { applyArtifactOnlyTaskPolicy, type ArtifactOnlyReplay } from './artifact-only.js';
 import {
   retainTaskExecution,
   type TaskExecutionInput,
@@ -42,8 +46,10 @@ import {
   type HandoffMetadata,
   type HandoffSourceKind,
 } from './task-document.js';
-import { writeTaskDir, type WrittenTaskDir } from './write.js';
+import { writeTaskDir, type WriteTaskDirInput, type WrittenTaskDir } from './write.js';
 
+export { applyArtifactOnlyTaskPolicy } from './artifact-only.js';
+export * from './artifact-only-guard.js';
 export * from './branch-update.js';
 export * from './discover.js';
 export {
@@ -80,6 +86,7 @@ export function builtinTerminalContract(
 export interface TaskInitTemplateSelection {
   sources: ExecutionTemplateSource[];
   explicitId?: string;
+  selection?: SelectedExecutionTemplate;
 }
 
 export interface TaskInitSpec {
@@ -103,6 +110,12 @@ export interface TaskInitSpec {
     sourceKind: HandoffSourceKind;
     ticket?: string;
     sourceRef?: string;
+    affectedArea?: string;
+    screenshotsMarkdown?: string;
+    commentsMarkdown?: string;
+    linkedTicketsMarkdown?: string;
+    linkedDescriptionsMarkdown?: string;
+    commentSummaryMarkdown?: string;
   };
   handoff: {
     surface: string;
@@ -110,6 +123,7 @@ export interface TaskInitSpec {
     attemptId?: string;
     repo?: string;
     startedAt?: string;
+    templateProvenance?: HandoffMetadata['templateProvenance'];
   };
   /** Extra `{{PLACEHOLDER}}` values for the checklist and task block. */
   vars?: Record<string, string>;
@@ -121,6 +135,10 @@ export interface TaskInitSpec {
   execution?: TaskExecutionInput;
   terminalContract?: WorkerTerminalContractDocument;
   bugInput?: unknown;
+  operatorPlan?: string;
+  taskDocumentAdditions?: string;
+  artifactOnlyReplay?: ArtifactOnlyReplay;
+  authored?: Pick<WriteTaskDirInput, 'taskMarkdown' | 'checklistMarkdown' | 'handoff'>;
 }
 
 export interface TaskInitResult extends WrittenTaskDir {
@@ -130,14 +148,25 @@ export interface TaskInitResult extends WrittenTaskDir {
 }
 
 export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
-  const selected = selectExecutionTemplate({
-    sources: spec.template.sources,
-    flow: spec.flow,
-    platform: spec.platform,
-    ...(spec.runMode ? { runMode: spec.runMode } : {}),
-    ...(spec.domain ? { domain: spec.domain } : {}),
-    ...(spec.template.explicitId ? { explicitId: spec.template.explicitId } : {}),
-  });
+  const selected =
+    spec.template.selection ??
+    selectExecutionTemplate({
+      sources: spec.template.sources,
+      flow: spec.flow,
+      platform: spec.platform,
+      ...(spec.runMode ? { runMode: spec.runMode } : {}),
+      ...(spec.domain ? { domain: spec.domain } : {}),
+      ...(spec.template.explicitId ? { explicitId: spec.template.explicitId } : {}),
+    });
+  if (
+    spec.authored &&
+    (spec.authored.handoff.project !== spec.handoff.project ||
+      spec.authored.handoff.flow !== spec.flow)
+  )
+    throw new Error('Authored task handoff belongs to a different project or flow.');
+  const templateRoot =
+    spec.template.sources.find((source) => source.id === selected.entry.sourceId)?.root ??
+    path.dirname(selected.entry.path);
   const taskDirLabel = spec.taskDirLabel ?? spec.taskDir;
   const taskCommands = spec.execution
     ? installedTaskCommands((file) => {
@@ -147,6 +176,12 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
         return path.join(taskExecutionPin(spec.taskDir, spec.execution!), 'cli', relative);
       })
     : installedTaskCommands();
+  for (const key of Object.keys(taskCommands)) {
+    if (spec.execution && spec.vars?.[key] !== undefined)
+      throw new Error(
+        `Task variable ${key} is derived from retained tooling and cannot be overridden.`,
+      );
+  }
   const vars: Record<string, string> = {
     TICKET: spec.task.ticket ?? '',
     TITLE: spec.task.title,
@@ -178,51 +213,78 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
   }
 
   const source = `Execution template ${selected.entry.id} (${selected.entry.sourceId})`;
-  const checklistMarkdown = renderTemplatePlaceholders(
-    readExecutionTemplateSnapshot(selected.entry).markdown,
-    vars,
-    source,
-  );
-  const reference = executionTemplateReference(selected.entry, checklistMarkdown);
-  const executionTemplate: HandoffExecutionTemplate = {
-    selectionReason: selected.reason,
-    ...reference,
-  };
-
+  const snapshot = readExecutionTemplateSnapshot(selected.entry);
+  const renderedTemplate = spec.authored
+    ? snapshot.markdown
+    : renderTemplatePlaceholders(snapshot.markdown, vars, source);
   const terminalContract =
     spec.terminalContract ??
     builtinTerminalContract(spec.flow, { ...(spec.runMode ? { mode: spec.runMode } : {}) });
-  const handoffMetadata = buildHandoffMetadata({
-    attemptId: spec.handoff.attemptId ?? randomUUID(),
-    surface: spec.handoff.surface,
-    project: spec.handoff.project,
-    flow: spec.flow,
-    repo: spec.handoff.repo,
-    domain: spec.domain,
-    title: spec.task.title,
-    sourceKind: spec.task.sourceKind,
-    ticket: spec.task.ticket,
-    sourceRef: spec.task.sourceRef,
-    acceptanceCriteria: spec.task.acceptanceCriteria,
-    terminalContract,
-    startedAt: spec.handoff.startedAt,
-    executionTemplate,
-  });
+  let checklistMarkdown = spec.authored
+    ? spec.authored.checklistMarkdown
+    : (spec.operatorPlan ?? renderedTemplate);
+  let taskMarkdown =
+    spec.authored?.taskMarkdown ??
+    (spec.operatorPlan !== undefined
+      ? `${renderedTemplate.trimEnd()}\n`
+      : buildTaskDocument({
+          flowType: spec.flow,
+          modePreamble: spec.modePreamble ?? '',
+          vars,
+          description: spec.task.description ?? '',
+          acceptanceCriteria: spec.task.acceptanceCriteria ?? [],
+          affectedArea: spec.task.affectedArea,
+          screenshotsMarkdown: spec.task.screenshotsMarkdown,
+          commentsMarkdown: spec.task.commentsMarkdown,
+          linkedTicketsMarkdown: spec.task.linkedTicketsMarkdown,
+          linkedDescriptionsMarkdown: spec.task.linkedDescriptionsMarkdown,
+          commentSummaryMarkdown: spec.task.commentSummaryMarkdown,
+          addendum: spec.addendum
+            ? renderTemplatePlaceholders(spec.addendum, vars, 'Task document addendum')
+            : null,
+          hasTicketData: spec.bugInput !== undefined,
+        }));
+  if (spec.operatorPlan !== undefined && spec.modePreamble)
+    taskMarkdown = taskMarkdown.replace(/^(#.+\n)/, `$1\n${spec.modePreamble}\n`);
+  if (spec.taskDocumentAdditions)
+    taskMarkdown = `${taskMarkdown.trimEnd()}${spec.taskDocumentAdditions.startsWith('\n') ? '' : '\n\n'}${spec.taskDocumentAdditions}`;
+  if (spec.artifactOnlyReplay) {
+    if (checklistMarkdown !== null)
+      checklistMarkdown = applyArtifactOnlyTaskPolicy(
+        checklistMarkdown,
+        spec.artifactOnlyReplay,
+        taskMarkdown,
+      );
+    taskMarkdown = applyArtifactOnlyTaskPolicy(taskMarkdown, spec.artifactOnlyReplay);
+  }
+  const executionTemplate: HandoffExecutionTemplate = {
+    selectionReason: selected.reason,
+    ...executionTemplateReference(selected.entry, checklistMarkdown ?? taskMarkdown),
+  };
+  const handoffMetadata =
+    spec.authored?.handoff ??
+    buildHandoffMetadata({
+      attemptId: spec.handoff.attemptId ?? randomUUID(),
+      surface: spec.handoff.surface,
+      project: spec.handoff.project,
+      flow: spec.flow,
+      repo: spec.handoff.repo,
+      domain: spec.domain,
+      title: spec.task.title,
+      sourceKind: spec.task.sourceKind,
+      ticket: spec.task.ticket,
+      sourceRef: spec.task.sourceRef,
+      acceptanceCriteria: spec.task.acceptanceCriteria,
+      terminalContract,
+      startedAt: spec.handoff.startedAt,
+      executionTemplate,
+      templateProvenance: spec.handoff.templateProvenance,
+    });
 
-  const taskMarkdown = buildTaskDocument({
-    flowType: spec.flow,
-    modePreamble: spec.modePreamble ?? '',
-    vars,
-    description: spec.task.description ?? '',
-    acceptanceCriteria: spec.task.acceptanceCriteria ?? [],
-    addendum: spec.addendum
-      ? renderTemplatePlaceholders(spec.addendum, vars, 'Task document addendum')
-      : null,
-    hasTicketData: spec.bugInput !== undefined,
-  });
+  if (!handoffMetadata.executionTemplate) handoffMetadata.executionTemplate = executionTemplate;
 
   const executionProvenance = spec.execution
-    ? retainTaskExecution(spec.taskDir, spec.execution)
+    ? retainTaskExecution(spec.taskDir, spec.execution, [templateRoot])
     : undefined;
   const written = await writeTaskDir({
     taskDir: spec.taskDir,

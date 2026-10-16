@@ -15,6 +15,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Keep runner runtime and observability outside product checkouts, preserve active session paths, and retain explicitly indexed hidden proof files in immutable evidence bundles.
 
+- Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
+
 ## 0.22.0 - 2026-10-16
 
 - Refresh stale fleet snapshots from the monitor, stop leftover service helpers when their health is down, and re-probe retired worker targets before retaining cleanup holds.

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share existing template provenance validators with node-local hosted task initialization.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.
 

@@ -1,4 +1,4 @@
-import { assertArtifactOnlyTaskGuard } from '../tasks/artifact-only-guard.js';
+import { assertArtifactOnlyTaskGuard } from '@farmslot/agent-runtime';
 
 export function assertArtifactOnlyEvalTaskGuard(markdown: string): void {
   try {

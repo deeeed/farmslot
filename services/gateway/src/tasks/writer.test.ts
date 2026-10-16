@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
 
+import { applyArtifactOnlyTaskPolicy, assertArtifactOnlyTaskGuard } from '@farmslot/agent-runtime';
 import {
   DEFAULT_DEV_INTERACTIVE_PROFILE,
   PLANNING_CONTEXT_MAX_RELATIONS,
@@ -17,12 +18,13 @@ import { normalizeRawRuntimeCapabilities } from '@farmslot/slot-config';
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
+import { writeTaskFixture } from './writer.test-support.js';
+
 // These tests exercise runs on the committed demo pool's slots (demo-ff-1),
 // which the loaders hide unless explicitly opted in.
 process.env.FARMSLOT_DEMO_POOL = '1';
 
-// Legacy template-selection regressions use a legacy project independently of
-// farmslot-farm's configured QA catalog.
+// Template-selection regressions use an isolated configured catalog.
 const legacyProject = `writer-legacy-${process.pid}-farm`;
 const legacyPack = path.join(farmslotRoot, 'projects', legacyProject);
 before(async () => {
@@ -30,12 +32,11 @@ before(async () => {
   const configFile = path.join(legacyPack, 'project.json');
   const config = JSON.parse(await readFile(configFile, 'utf8'));
   config.name = legacyProject;
-  delete config.execution_templates;
+  config.execution_templates ??= { sources: [] };
   await writeFile(configFile, JSON.stringify(config));
 });
 after(() => rm(legacyPack, { recursive: true, force: true }));
 
-import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
 import { buildPlanningContextSection } from './planning-context.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 
@@ -48,7 +49,7 @@ async function readProvenance(taskPath: string): Promise<Record<string, unknown>
 }
 import {
   appendRuntimeCapabilityAndPlanningContext,
-  applyArtifactOnlyTaskPolicy,
+  artifactOnlyReplayForRun,
   buildTaskFolderPrefix,
   buildTemplateProvenance,
   checklistForInteractiveDev,
@@ -64,7 +65,6 @@ import {
   STATIC_REVIEW_INSTRUCTIONS_DIR,
   writePreviousReviewInputs,
   writeStaticReviewInstructionInputs,
-  writeTaskFile,
 } from './writer.js';
 
 test('runtime proof planning precedes acquisition guidance and retains related planning context', () => {
@@ -416,6 +416,14 @@ TASK_DIR: /tmp/task
   \`\`\`
 `;
 
+function applyReplayForRun(
+  markdown: string,
+  run: Parameters<typeof artifactOnlyReplayForRun>[0],
+  taskBlockSource?: string,
+): string {
+  return applyArtifactOnlyTaskPolicy(markdown, artifactOnlyReplayForRun(run), taskBlockSource);
+}
+
 const FORBIDDEN_PUBLISH_SNIPPETS = [
   /\bgh\s+pr\s+create\b/i,
   /\bgh\s+pr\s+edit\b/i,
@@ -496,10 +504,7 @@ test('artifact-only task guard rejects push and publication variants', () => {
 test('artifact-only task policy strips dev publishing instructions from replay tasks', () => {
   assert.throws(() => assertArtifactOnlyTaskGuard(PUBLISHING_DEV_TEMPLATE_SHAPE), /forbidden/);
 
-  const safe = applyArtifactOnlyTaskPolicy(
-    PUBLISHING_DEV_TEMPLATE_SHAPE,
-    makeArtifactOnlyReplayRun(),
-  );
+  const safe = applyReplayForRun(PUBLISHING_DEV_TEMPLATE_SHAPE, makeArtifactOnlyReplayRun());
 
   assert.match(safe, /Artifact-only replay guardrails/);
   assert.match(safe, /artifact-only comparison replay/);
@@ -519,7 +524,7 @@ test('artifact-only task policy rewrites an approval step followed directly by t
     /forbidden/,
   );
 
-  const safe = applyArtifactOnlyTaskPolicy(
+  const safe = applyReplayForRun(
     NEXT_STEP_PUBLISHING_DEV_TEMPLATE_SHAPE,
     makeArtifactOnlyReplayRun(),
   );
@@ -540,10 +545,7 @@ test('artifact-only task policy strips simple dev publishing checklist shapes', 
     /forbidden/,
   );
 
-  const safe = applyArtifactOnlyTaskPolicy(
-    SIMPLE_PUBLISHING_DEV_TEMPLATE_SHAPE,
-    makeArtifactOnlyReplayRun(),
-  );
+  const safe = applyReplayForRun(SIMPLE_PUBLISHING_DEV_TEMPLATE_SHAPE, makeArtifactOnlyReplayRun());
 
   assert.match(safe, /Artifact-only replay guardrails/);
   assert.match(safe, /publication instruction removed/);
@@ -571,7 +573,7 @@ test('artifact-only task policy rewrites replay baseline guidance without changi
     'git log HEAD..main --oneline',
     '```',
   ].join('\n');
-  const normal = applyArtifactOnlyTaskPolicy(template, {
+  const normal = applyReplayForRun(template, {
     flowType: 'fix-bug',
     lane: 'production',
     completionPolicy: undefined,
@@ -580,7 +582,7 @@ test('artifact-only task policy rewrites replay baseline guidance without changi
   });
   assert.equal(normal, template);
 
-  const safe = applyArtifactOnlyTaskPolicy(template, {
+  const safe = applyReplayForRun(template, {
     flowType: 'fix-bug',
     lane: 'comparison',
     completionPolicy: 'artifact-only',
@@ -606,7 +608,7 @@ test('artifact-only task policy strips publishing instructions without startRef'
     '- If everything passes, create a draft PR.',
   ].join('\n');
 
-  const safe = applyArtifactOnlyTaskPolicy(template, makeArtifactOnlyReplayRunWithoutStartRef());
+  const safe = applyReplayForRun(template, makeArtifactOnlyReplayRunWithoutStartRef());
 
   assert.match(safe, /selected reference\/base/);
   assert.doesNotMatch(safe, /Ignore injected recipe-harness overlay paths/);
@@ -630,8 +632,8 @@ test('writeTaskFile allows comparison siblings with different variants', async (
     }
   });
 
-  taskA = await writeTaskFile(runA);
-  taskB = await writeTaskFile(runB);
+  taskA = await writeTaskFixture(runA);
+  taskB = await writeTaskFixture(runB);
 
   assert.notEqual(taskA, taskB);
   assert.match(taskA, /claude-/);
@@ -660,7 +662,7 @@ test('mark shim records the slot-synced engine and honours FARMSLOT_MARK_CMD', a
   t.after(async () => {
     if (taskFile) await rm(path.dirname(taskFile), { recursive: true, force: true });
   });
-  taskFile = await writeTaskFile(makeRun('MARK-1234', 'claude'));
+  taskFile = await writeTaskFixture(makeRun('MARK-1234', 'claude'));
   const markPath = path.join(path.dirname(taskFile), CHECKLIST_MARKER_INPUT);
   const marker = await readFile(markPath, 'utf-8');
   assert.equal((await stat(markPath)).mode & 0o755, 0o755);
@@ -816,8 +818,8 @@ test('writeTaskFile renders selected template variant and leaves source template
 
   const run = makeRun(`PROJ-${Date.now()}`, 'variant');
   run.project = legacyProject;
-  run.taskTemplate = { fileName: 'dev-template-test.md', variant: 'template-test' };
-  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  run.executionTemplateId = 'dev/template-test';
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
 
   const rendered = await readFile(taskPath, 'utf-8');
   const checklist = await readFile(path.join(path.dirname(taskPath), 'CHECKLIST.md'), 'utf-8');
@@ -845,7 +847,7 @@ test('writeTaskFile implicitly renders dev-interactive template for interactive 
     if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
   });
 
-  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
 
   const rendered = await readFile(taskPath, 'utf-8');
   const provenance = (await readProvenance(taskPath)) as {
@@ -860,13 +862,29 @@ test('writeTaskFile implicitly renders dev-interactive template for interactive 
   assert.match(rendered, /mark wait --who/);
   assert.match(rendered, /mark resume/);
   assert.equal(provenance.templateName, 'dev-interactive.md');
-  assert.equal(provenance.templateSelectionSource, 'implicit-interactive-dev');
-  assert.match(provenance.templateSelectionReason ?? '', /interactive mode/);
+  assert.equal(provenance.templateSelectionSource, 'default');
+  assert.match(provenance.templateSelectionReason ?? '', /configured-default/);
   for (const forbidden of FORBIDDEN_PUBLISH_SNIPPETS) {
     assert.doesNotMatch(rendered, forbidden);
     assert.doesNotMatch(checklist, forbidden);
   }
 });
+
+async function configurePrCompleteDefault(enabled: boolean): Promise<void> {
+  const configFile = path.join(legacyPack, 'project.json');
+  const config = JSON.parse(await readFile(configFile, 'utf8'));
+  config.execution_templates.defaults = (config.execution_templates.defaults ?? []).filter(
+    (entry: { when: { flow?: string } }) => entry.when.flow !== 'pr-complete',
+  );
+  if (enabled)
+    config.execution_templates.defaults.push({
+      when: { flow: 'pr-complete', runMode: 'interactive' },
+      templateId: 'pr-complete/interactive',
+    });
+  await writeFile(configFile, JSON.stringify(config));
+  const { invalidateProjectVarsCache } = await import('@farmslot/slot-config');
+  invalidateProjectVarsCache(legacyProject);
+}
 
 test('writeTaskFile implicitly renders pr-complete-interactive template for interactive pr-complete', async (t) => {
   const workerDir = path.join(legacyPack, 'templates', 'worker');
@@ -885,6 +903,7 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
     ].join('\n'),
     'utf-8',
   );
+  await configurePrCompleteDefault(true);
   const run = makeRun('123', 'interactive-pr-complete');
   run.project = legacyProject;
   run.flowType = 'pr-complete';
@@ -893,10 +912,11 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
   let taskPath = '';
   t.after(async () => {
     if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+    await configurePrCompleteDefault(false);
     await rm(variantPath, { force: true });
   });
 
-  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
 
   const rendered = await readFile(taskPath, 'utf-8');
   const provenance = (await readProvenance(taskPath)) as {
@@ -910,8 +930,8 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
   assert.doesNotMatch(rendered, /STATUS:/);
   assert.match(rendered, /Do \*\*not\*\* write a terminal `SIGNAL\.json`/);
   assert.equal(provenance.templateName, 'pr-complete-interactive.md');
-  assert.equal(provenance.templateSelectionSource, 'implicit-interactive-pr-complete');
-  assert.match(provenance.templateSelectionReason ?? '', /interactive mode/);
+  assert.equal(provenance.templateSelectionSource, 'default');
+  assert.match(provenance.templateSelectionReason ?? '', /configured-default/);
 });
 
 test('writeTaskFile appends interactive PR-complete handoff to default template when variant is absent', async (t) => {
@@ -931,7 +951,7 @@ test('writeTaskFile appends interactive PR-complete handoff to default template 
     if (previousVariant != null) await writeFile(variantPath, previousVariant, 'utf-8');
   });
 
-  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
 
   const rendered = await readFile(taskPath, 'utf-8');
   const provenance = (await readProvenance(taskPath)) as {
@@ -944,17 +964,16 @@ test('writeTaskFile appends interactive PR-complete handoff to default template 
   assert.match(rendered, /Do \*\*not\*\* write a terminal `SIGNAL\.json`/);
   assert.equal(provenance.templateName, 'pr-complete.md');
   assert.equal(provenance.templateSelectionSource, 'default');
-  assert.match(provenance.templateSelectionReason ?? '', /absent, using default/);
+  assert.match(provenance.templateSelectionReason ?? '', /single-general-candidate/);
 });
 
 test('writeTaskFile fails loudly when explicit selected template disappears', async () => {
   const run = makeRun(`PROJ-${Date.now()}`, 'missing-template');
   run.project = legacyProject;
-  run.taskTemplate = { fileName: 'dev-definitely-missing.md', variant: 'definitely-missing' };
-  await assert.rejects(
-    () => writeTaskFile(run, { skipCollisionCheck: true }),
-    /selected Worker template not found:/,
-  );
+  run.executionTemplateId = 'dev/definitely-missing';
+  await assert.rejects(() => writeTaskFixture(run, { skipCollisionCheck: true }), {
+    code: 'missing-or-incompatible',
+  });
 });
 
 test('interactive checklist is an execution plan, never the acceptance criteria', () => {
@@ -998,7 +1017,7 @@ test('lightweight interactive dev keeps the sidecar plan as CHECKLIST.md and the
     if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
   });
 
-  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
   const taskDir = path.dirname(taskPath);
   // The producer must not overwrite the operator-agreed plan the sidecar wrote.
   const checklist = await readFile(path.join(taskDir, 'CHECKLIST.md'), 'utf-8');
@@ -1034,7 +1053,7 @@ test('templated TASK.md renders acceptance criteria one bullet per criterion, li
     if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
   });
 
-  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
   const rendered = await readFile(taskPath, 'utf-8');
   const section = rendered.split('## Acceptance Criteria')[1]?.split('\n## ')[0] ?? '';
   assert.equal(

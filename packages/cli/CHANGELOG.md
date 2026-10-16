@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Initialize hosted tasks on the selected node through its immutable CLI, preserving authored task data and refusing relocated receipts or tooling overrides.
+
 - Allow person confirm-visual without --reason while keeping it mandatory for issues and delegated judgments.
 
 - Start the Gateway with its own source mappings so publication checks resolve current workspace dependencies after a clean install.

@@ -454,7 +454,7 @@ function isPortableRelativePath(value: unknown): value is string {
   );
 }
 
-function isTemplateProvenance(value: unknown): value is PortableTemplateProvenance {
+export function isTemplateProvenance(value: unknown): value is PortableTemplateProvenance {
   if (!isPlainRecord(value)) return false;
   return (
     value.kind === 'task-template' &&
@@ -477,7 +477,7 @@ function isTemplateProvenance(value: unknown): value is PortableTemplateProvenan
   );
 }
 
-function isExecutionTemplateReference(value: unknown): value is ExecutionTemplateReference {
+export function isExecutionTemplateReference(value: unknown): value is ExecutionTemplateReference {
   if (!isPlainRecord(value)) return false;
   return (
     typeof value.id === 'string' &&

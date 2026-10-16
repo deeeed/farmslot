@@ -3,7 +3,6 @@ import path from 'node:path';
 import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { expandTemplateWithReservedLast } from '../core/hooks.js';
-import { shellQuote } from '../core/tmux.js';
 import { nodeExecArgv } from '../fleet/node-rpc.js';
 
 /** Resolve remote helpers from the connected node, which may be a dev deployment. */
@@ -35,15 +34,6 @@ export async function agentRuntimeScriptForSlot(
         `Repair that node's runtime installation; no other deployment will be used.`,
     );
   return script;
-}
-
-export async function agentRuntimeCommandsForSlot(
-  vars: Pick<SlotVars, 'host' | 'machine'>,
-): Promise<{ AC_CMD: string; ARTIFACT_CHECK_CMD: string }> {
-  const script = await agentRuntimeScriptForSlot(vars, 'acceptance-cli.cjs');
-  const entry = path.posix.join(path.posix.dirname(script), '..', 'bin', 'farmslot-agent.mjs');
-  const command = `node ${shellQuote(entry)}`;
-  return { AC_CMD: `${command} ac`, ARTIFACT_CHECK_CMD: `${command} artifact-check` };
 }
 
 /** Framework-relative pack commands use the connected node's installation, too. */

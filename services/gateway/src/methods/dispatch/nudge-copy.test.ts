@@ -10,7 +10,7 @@ import { fakeSshTools } from '../../core/ssh-test-fixtures.js';
 import * as realFleetState from '../../fleet/state.js';
 import * as realRegistry from '../../runners/registry.js';
 import * as realRunStore from '../../runs/store.js';
-import * as realSidecars from '../../tasks/sidecars.js';
+import * as realHostedTask from '../../tasks/hosted-task-init.js';
 
 import * as realPreview from './preview.js';
 
@@ -23,7 +23,8 @@ const SLOT_ID = 'fake-remote-mm-1';
 const taskDir = path.join(tools.root, 'tasks', 'pr-complete', 'T-1');
 const taskFile = path.join(taskDir, 'TASK.md');
 const slotCommands: string[] = [];
-const STOP = 'stop after the TASK.md copy';
+const STOP = 'retained task verification refused';
+const verifiedTasks: string[] = [];
 
 mock.module('../../core/index.js', {
   namedExports: {
@@ -67,12 +68,11 @@ mock.module('./preview.js', {
 mock.module('../../runners/registry.js', {
   namedExports: { ...realRegistry, runnerSupportsTmuxNudges: () => true },
 });
-// The sidecar copy is covered with task-sync; stopping here keeps the nudge
-// from reaching the runner.
-mock.module('../../tasks/sidecars.js', {
+mock.module('../../tasks/hosted-task-init.js', {
   namedExports: {
-    ...realSidecars,
-    copyPreparedTaskRootSidecars: async () => {
+    ...realHostedTask,
+    verifyHostedTaskOnSlot: async (_slot: unknown, task: string) => {
+      verifiedTasks.push(task);
       throw new Error(STOP);
     },
   },
@@ -83,7 +83,7 @@ mock.module('../../tasks/sidecars.js', {
 const fresh: string = './nudge.js?mocked';
 const { nudgeDispatch } = (await import(fresh)) as typeof import('./nudge.js');
 
-test('the nudge copies TASK.md to a remote slot with scp ConnectTimeout=10 and BatchMode=yes', async () => {
+test('nudge refuses an invalid retained task before copying documents or reaching the runner', async () => {
   mkdirSync(taskDir, { recursive: true });
   writeFileSync(taskFile, '# Task\n');
 
@@ -96,17 +96,7 @@ test('the nudge copies TASK.md to a remote slot with scp ConnectTimeout=10 and B
   );
 
   const workerTaskAbs = `${REMOTE_REPO}/.task/pr-complete/T-1`;
-  assert.deepEqual(slotCommands, [`mkdir -p '${workerTaskAbs}'`]);
-  assert.deepEqual(tools.calls(), [
-    [
-      'scp',
-      '-q',
-      '-o',
-      'ConnectTimeout=10',
-      '-o',
-      'BatchMode=yes',
-      taskFile,
-      `${SSH_TARGET}:${workerTaskAbs}/TASK.md`,
-    ],
-  ]);
+  assert.deepEqual(verifiedTasks, [workerTaskAbs]);
+  assert.deepEqual(slotCommands, []);
+  assert.deepEqual(tools.calls(), []);
 });

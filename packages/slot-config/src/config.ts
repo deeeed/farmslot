@@ -206,6 +206,7 @@ export interface SlotVars {
 // ─── Raw project.json shape ───
 
 export interface RawProjectJson {
+  recipe?: ProjectConfig['recipe'];
   name?: string;
   repo_url?: string;
   primary_repo?: string;

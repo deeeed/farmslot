@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import {
+  executionTemplateCatalogFlow,
   type ExecutionTemplateEntry,
   executionTemplateEntryParticipates,
   executionTemplateReference,
@@ -158,26 +159,6 @@ export function projectUsesExecutionTemplateCatalog(projectVars: ProjectVars): b
   return projectVars.projectJson.execution_templates !== undefined;
 }
 
-function catalogFlow(
-  projectVars: ProjectVars,
-  sources: ExecutionTemplateSource[],
-  flow: string,
-  explicitId?: string,
-): string {
-  if (flow !== 'qa') return flow;
-  if (
-    !explicitId ||
-    !projectVars.projectJson.qa?.profiles.some((profile) => profile.template_id === explicitId)
-  ) {
-    throw new Error('QA requires a template selected by a configured farm preset');
-  }
-  const entry = listExecutionTemplates({ sources, includeShadowed: false }).find(
-    (candidate) => candidate.id === explicitId,
-  );
-  if (!entry) throw new Error(`QA template "${explicitId}" is unavailable`);
-  return entry.flow;
-}
-
 export function availableExecutionTemplateDomains(projectVars: ProjectVars): string[] {
   const domains = new Set<string>();
   for (const domain of Object.keys(projectVars.projectJson.command_env?.domains ?? {})) {
@@ -226,7 +207,12 @@ export function configuredExecutionTemplateOptions(
     throw new Error('Execution-template catalog queries require flow unless unfiltered.');
   }
 
-  const flow = catalogFlow(projectVars, sources, query.flow, query.explicitId);
+  const flow = executionTemplateCatalogFlow(
+    sources,
+    projectVars.projectJson.qa?.profiles,
+    query.flow,
+    query.explicitId,
+  );
   const options = query.platform
     ? listCompatibleExecutionTemplates({
         sources,
@@ -293,7 +279,12 @@ export function resolveConfiguredExecutionTemplate(
   const { sources } = configuredCatalog(projectVars);
   const selected = selectExecutionTemplate({
     sources,
-    flow: catalogFlow(projectVars, sources, query.flow, query.explicitId),
+    flow: executionTemplateCatalogFlow(
+      sources,
+      projectVars.projectJson.qa?.profiles,
+      query.flow,
+      query.explicitId,
+    ),
     platform: query.platform,
     runMode: query.runMode,
     ...(query.domain ? { domain: query.domain } : {}),
@@ -318,7 +309,16 @@ export function readConfiguredExecutionTemplateSnapshot(
   const { sources } = configuredCatalog(projectVars);
   const entry = listExecutionTemplates({
     sources,
-    ...(query.flow ? { flow: catalogFlow(projectVars, sources, query.flow, query.id) } : {}),
+    ...(query.flow
+      ? {
+          flow: executionTemplateCatalogFlow(
+            sources,
+            projectVars.projectJson.qa?.profiles,
+            query.flow,
+            query.id,
+          ),
+        }
+      : {}),
     includeShadowed: true,
   }).find((candidate) => candidate.id === query.id && candidate.sourceId === query.sourceId);
   if (!entry) {

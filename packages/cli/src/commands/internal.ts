@@ -34,9 +34,11 @@ import {
   type SlotVars,
 } from '@farmslot/slot-config';
 
-import { createEmitter } from '../envelope.js';
+import { createEmitter, errorEnvelope, okEnvelope } from '../envelope.js';
 import { OutputContext } from '../output.js';
 import { isLocalPool } from '../slot-context.js';
+
+import { runHostedTaskInit } from './hosted-task-init.js';
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -159,6 +161,23 @@ export function registerInternalCommand(program: Command): void {
   const internal = program
     .command('internal')
     .description('Gateway-free plumbing for lifecycle scripts (stable output contracts)');
+
+  internal
+    .command('task-init <input-file>')
+    .description('Initialize a hosted task through this node’s retained CLI installation')
+    .action(async (inputFile: string, _options: unknown) => {
+      const output = new OutputContext(true);
+      try {
+        output.writeJson(okEnvelope('internal.task-init', await runHostedTaskInit(inputFile)));
+      } catch (error) {
+        const exitCode =
+          error instanceof Error && 'exitCode' in error && typeof error.exitCode === 'number'
+            ? error.exitCode
+            : 1;
+        output.writeJson({ ...errorEnvelope('internal.task-init', error), exitCode });
+        process.exitCode = exitCode;
+      }
+    });
 
   internal
     .command('slot-vars <slotId>')

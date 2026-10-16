@@ -54,6 +54,14 @@ function fixture(t: TestContext) {
   );
   fs.writeFileSync(path.join(installed, 'farmslot'), '#!/usr/bin/env node\n');
   fs.writeFileSync(
+    path.join(pack, 'package.json'),
+    JSON.stringify({
+      private: true,
+      type: 'module',
+      files: ['provider.mjs', 'project.json', 'actions.json'],
+    }),
+  );
+  fs.writeFileSync(
     path.join(pack, 'provider.mjs'),
     `
     import fs from 'node:fs';
@@ -239,9 +247,17 @@ test('retained installed providers keep hoisted dependencies after installation 
         });
         const receipt = retainTaskExecution(f.taskDir, execution);
         const dependencies = receipt.retainedInputs.find(
-          (entry) => entry.source === path.join(installation, 'node_modules'),
+          (entry) => entry.source === dependencyRoot,
         );
         assert.ok(dependencies);
+        assert.equal(
+          receipt.retainedInputs.some(
+            (entry) =>
+              entry.source === installation ||
+              entry.source === path.join(installation, 'node_modules'),
+          ),
+          false,
+        );
         assert.equal(fs.existsSync(path.join(dependencies.path, 'private-note.txt')), false);
       });
       fs.rmSync(installation, { recursive: true });
@@ -450,4 +466,104 @@ test('retained hosts preserve recipe runtime, farm runtime and declared conforma
     assert.equal(host.context.project?.farmRuntimeDir, freshFarm);
     assert.deepEqual(host.context.project?.checks, checks);
   });
+});
+
+test('external providers retain the owning workspace without widening their recipe root', async (t) => {
+  const f = fixture(t);
+  const recipe = path.join(f.pack, 'recipe');
+  const library = path.join(f.pack, 'lib');
+  fs.mkdirSync(recipe);
+  fs.mkdirSync(library);
+  fs.writeFileSync(path.join(library, 'policy.mjs'), 'export const ready = true;\n');
+  const provider = fs.readFileSync(path.join(f.pack, 'provider.mjs'), 'utf8');
+  fs.writeFileSync(
+    path.join(recipe, 'provider.mjs'),
+    `if (!(await import('../lib/policy.mjs')).ready) throw new Error('Missing policy');\n${provider}`,
+  );
+  fs.rmSync(path.join(f.pack, 'provider.mjs'));
+  fs.writeFileSync(
+    path.join(f.pack, 'package.json'),
+    JSON.stringify({ private: true, type: 'module', files: ['recipe', 'lib', 'project.json'] }),
+  );
+  const config = f.options.projects?.[0]?.config;
+  assert.ok(config?.recipe);
+  config.recipe.provider = { module: 'provider.mjs', root: { projectPath: recipe } };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(config));
+  await withProjectRecipeHost(f.options, async (host) => {
+    assert.equal(host.context.project?.provider.root, recipe);
+    const execution = await projectTaskExecution(host, {
+      executable: path.join(f.installed, 'farmslot'),
+      packageRoot: f.installed,
+      distributionRoot: f.installed,
+    });
+    retainTaskExecution(f.taskDir, execution);
+  });
+  fs.rmSync(f.pack, { recursive: true, force: true });
+  await withTaskProjectHost(f.options, f.taskDir, async (host) => {
+    assert.equal(path.basename(host.context.project!.provider.root), 'recipe');
+    assert.equal(host.provider.runtime.id, 'headless');
+  });
+});
+
+test('project retention excludes task history while preserving tooling source', async (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.pack, 'package.json'), '{"private":true,"type":"module"}');
+  fs.mkdirSync(path.join(f.pack, 'tasks', 'previous'), { recursive: true });
+  fs.writeFileSync(path.join(f.pack, 'tasks', 'previous', 'TASK.md'), 'old task and evidence');
+  await withProjectRecipeHost(f.options, async (host) => {
+    const execution = await projectTaskExecution(host, {
+      executable: path.join(f.installed, 'farmslot'),
+      packageRoot: f.installed,
+      distributionRoot: f.installed,
+    });
+    const receipt = retainTaskExecution(f.taskDir, execution);
+    const pack = receipt.retainedInputs.find((input) => input.source === f.pack);
+    assert.ok(pack);
+    assert.equal(fs.existsSync(path.join(pack.path, 'provider.mjs')), true);
+    assert.equal(fs.existsSync(path.join(pack.path, 'tasks')), false);
+  });
+});
+
+test('nested app retention excludes app-relative recipe runtime output', async (t) => {
+  const f = fixture(t);
+  const app = path.join(f.checkout, 'apps/web');
+  const recipe = path.join(app, 'recipe');
+  fs.mkdirSync(path.join(recipe, 'runtime'), { recursive: true });
+  fs.writeFileSync(
+    path.join(app, 'package.json'),
+    JSON.stringify({ private: true, type: 'module', files: ['recipe'] }),
+  );
+  fs.copyFileSync(path.join(f.pack, 'provider.mjs'), path.join(recipe, 'provider.mjs'));
+  fs.writeFileSync(path.join(recipe, 'runtime/state.json'), '{"state":"runtime output"}');
+  const config = f.options.projects?.[0]?.config;
+  assert.ok(config?.recipe);
+  const selected = {
+    ...config,
+    apps: ['apps/web'],
+    recipe: {
+      ...config.recipe,
+      provider: { module: 'provider.mjs', root: { projectPath: 'apps/web/recipe' } },
+    },
+  };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(selected));
+  await withProjectRecipeHost(
+    {
+      ...f.options,
+      projects: [{ root: f.pack, config: selected }],
+      tokens: ['--project', 'example', '--app', 'apps/web', '--runtime-dir', 'recipe/runtime'],
+    },
+    async (host) => {
+      assert.equal(host.context.target.value, app);
+      const execution = await projectTaskExecution(host, {
+        executable: path.join(f.installed, 'farmslot'),
+        packageRoot: f.installed,
+        distributionRoot: f.installed,
+      });
+      const receipt = retainTaskExecution(f.taskDir, execution);
+      const retainedApp = receipt.retainedInputs.find((input) => input.source === app);
+      assert.ok(retainedApp);
+      assert.equal(fs.existsSync(path.join(retainedApp.path, 'recipe/provider.mjs')), true);
+      assert.equal(fs.existsSync(path.join(retainedApp.path, 'recipe/runtime/state.json')), false);
+    },
+  );
 });
