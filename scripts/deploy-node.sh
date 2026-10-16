@@ -931,15 +931,30 @@ REFRESH
   # ~/.local/bin, where the links above live, first on PATH. GW_URL is the URL
   # this node dials, and no control-plane credential is set, so the CLI
   # authenticates with the stored profile for that URL exactly as a tmux worker
-  # does. FARMSLOT_HOME is left as the shell has it for both instances. Native
-  # workers instead inherit the node's FARMSLOT_HOME (~/.farmslot-dev for dev);
-  # that is a known follow-up, and this verifies the tmux worker path only.
+  # does. Honor the selected pool's explicit FARMSLOT_HOME, as worker launches
+  # already do. Without an override, retain the login-shell home.
   echo "[deploy] verifying node CLI from a worker shell..."
   WORKER_ENV_PREFIX=$(< "$SCRIPT_DIR/lib/worker-env-prefix.sh")
   TMUX_BIN_LOOKUP=$(< "$SCRIPT_DIR/lib/tmux-bin.sh")
-  if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX" "$TMUX_BIN_LOOKUP" "${CLI_VERIFY_TIMEOUT_SECONDS:-120}" "$INSTANCE")" << 'VERIFY'
+  WORKER_FARMSLOT_HOME=$(node --input-type=module - "$REPO_ROOT" "$MACHINE" << 'WORKER_HOME'
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [root, machine] = process.argv.slice(2);
+const poolDir = path.join(root, 'pool');
+if (existsSync(poolDir)) {
+  const { readPoolFiles } = await import(pathToFileURL(path.join(root, 'packages/protocol/dist/node/slot-by-repo.js')));
+  const pool = readPoolFiles(poolDir).find(({ pool }) => pool.machine === machine)?.pool;
+  const home = pool?.env?.FARMSLOT_HOME;
+  if (home !== undefined && (typeof home !== 'string' || !home.trim()))
+    throw new Error('pool.env.FARMSLOT_HOME must be a nonempty string');
+  process.stdout.write(home ?? '');
+}
+WORKER_HOME
+  )
+  if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX" "$TMUX_BIN_LOOKUP" "${CLI_VERIFY_TIMEOUT_SECONDS:-120}" "$INSTANCE" "$WORKER_FARMSLOT_HOME")" << 'VERIFY'
 set -uo pipefail
-entry=$1 gw_url=$2 prefix=$3 tmux_lookup=$4 timeout=$5 instance=$6
+entry=$1 gw_url=$2 prefix=$3 tmux_lookup=$4 timeout=$5 instance=$6 worker_home=$7
 work=$(mktemp -d "${TMPDIR:-/tmp}/farmslot-cli-verify.XXXXXX")
 session=""
 fallback_pid=""
@@ -975,6 +990,7 @@ version=$(farmslot --version < /dev/null) || {
   exit 1
 }
 echo "  farmslot $version"
+echo "  farmslot profile home: ${FARMSLOT_HOME:-$HOME/.farmslot}"
 if ! farmslot rpc gateway.status < /dev/null > /dev/null; then
   # Nothing listening on the gateway's port (the instance's gateway is down) is
   # not a CLI fault: the checks above passed, so warn and let the deploy finish.
@@ -994,12 +1010,13 @@ if ! farmslot rpc gateway.status < /dev/null > /dev/null; then
     exit 0
   fi
   echo "[deploy] ERROR: farmslot rpc gateway.status failed against $GW_URL" >&2
-  echo "  fix: store a gateway profile for that URL as this user:" >&2
+  echo "  fix: store a service gateway profile for that URL in ${FARMSLOT_HOME:-$HOME/.farmslot}/gateways.json:" >&2
   echo "    farmslot gateway add <name> $GW_URL && farmslot login <name>" >&2
   exit 1
 fi
 echo "  farmslot rpc gateway.status ok ($GW_URL)"
 PROBE
+if [ -n "$worker_home" ]; then prefix="$prefix; export FARMSLOT_HOME=$(printf '%q' "$worker_home")"; fi
 probe="$prefix && export GW_URL=$(printf '%q' "$gw_url") && bash $(printf '%q' "$work/probe.sh") $(printf '%q ' "$entry" "$instance")"
 launch="exec bash -lc $(printf '%q' "$probe > $(printf '%q' "$work/out") 2>&1; echo \$? > $(printf '%q' "$work/status")")"
 eval "$tmux_lookup"
