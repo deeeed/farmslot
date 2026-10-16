@@ -39,6 +39,24 @@
           "value": 0
         },
         "intent": "Require the publication-action visibility regression to pass.",
+        "next": "package-build"
+      },
+      "package-build": {
+        "action": "command",
+        "cmd": "yarn workspace @farmslot/review-dispatch build",
+        "timeout_ms": 120000,
+        "intent": "Build the shared gate package with its declared SDK dependency.",
+        "next": "package-built"
+      },
+      "package-built": {
+        "action": "assert_output",
+        "source": "package-build",
+        "assert": {
+          "path": "$.exitCode",
+          "operator": "eq",
+          "value": 0
+        },
+        "intent": "Require the shared package build to succeed.",
         "next": "done"
       }
     }

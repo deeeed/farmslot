@@ -21,7 +21,7 @@
     "dist/**/*.js.map"
   ],
   "scripts": {
-    "build": "tsc --project tsconfig.json",
+    "build": "yarn workspace @farmslot/adapter-sdk build && tsc --project tsconfig.json",
     "typecheck": "tsc --noEmit --project test/tsconfig.json",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
