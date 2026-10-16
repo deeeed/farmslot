@@ -48,8 +48,9 @@ A marker or shared prefix alone is insufficient. A fresh Enter submission into a
 queue can also use its matching truncated steering preview and separate overflow line.
 Claude transcript records written after the send prove delivery: an exact human prompt
 (`native-session`), or input queued during a turn (`native-queue`) that Claude attaches
-at its next step (`native-steering`). Claude's own queued input never blocks a handoff;
-a draft in its boxed composer does.
+at its next step (`native-steering`). A `native-queue` receipt stays until its caller
+acknowledges delivery. Claude's own queued input never blocks a handoff; a draft in its
+boxed composer does.
 Codex native history supplies exact prompt and turn evidence. Native `/goal` delivery requires
 a matching active `thread_goal_updated` objective followed by its new `task_started` turn. Pane-bound hook
 digests supply acceptance and new-turn evidence for hook-capable runners.

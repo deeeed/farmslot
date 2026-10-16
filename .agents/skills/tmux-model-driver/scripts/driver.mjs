@@ -717,7 +717,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                   verification = 'receipt_mismatch';
                   break;
                 }
-                if (evidence.source === 'runner-steering')
+                // Queued input stays retained until its caller acknowledges delivery.
+                if (['runner-steering', 'native-queue'].includes(evidence.source))
                   durableWrite(files.receipt, { ...current, accepted: evidence });
                 else clearAcceptedReceipt(files, current);
               }

@@ -615,6 +615,12 @@ test('Claude composer parsing reads only the boxed live input', () => {
     runnerPaneBufferedInstruction(claudeBox('first line\n  second line', '❯ old prompt')),
     'first line second line',
   );
+  assert.equal(
+    runnerPaneBufferedInstruction(claudeBox('draft\n❯ quoted prompt\n\n  ⏵⏵ quoted footer')),
+    'draft ❯ quoted prompt ⏵⏵ quoted footer',
+  );
+  const bashMode = claudeBox('').replace('❯ ', '! ');
+  assert.equal(runnerPaneBufferedInstruction(bashMode), '!');
 });
 
 test('an idle Claude pane gets one Enter and proves the human prompt in its transcript', async (t) => {
@@ -656,11 +662,40 @@ test('a busy Claude turn takes Enter input through its native queue', async (t) 
   assert.equal(result.submitted, true);
   assert.equal(result.evidence.source, 'native-queue');
   assert.equal(paneState('%1', 'claude').queued, false, 'its own queue never blocks a handoff');
+  const keys = f.keys.length;
+  const retry = await send('%1', 'claude', f.payload);
+  assert.equal(
+    retry.evidence.receipt_id,
+    result.evidence.receipt_id,
+    'retained until acknowledged',
+  );
+  assert.equal(f.keys.length, keys, 'a retry never pastes queued input again');
 
-  f.record({ type: 'attachment', attachment: { type: 'queued_command', prompt: 'later' } });
+  f.setCapturedPanes(claudeBox('later'), (key, pasted) => {
+    const stale = new Date(Date.now() - 60000).toISOString();
+    f.record({
+      type: 'attachment',
+      timestamp: stale,
+      attachment: { type: 'queued_command', prompt: pasted },
+    });
+    f.record({ type: 'attachment', attachment: { type: 'queued_command', prompt: pasted } });
+    return claudeBox('');
+  });
   const later = await send('%1', 'claude', 'later');
   assert.equal(later.submitted, true);
-  assert.equal(later.evidence.source, 'native-queue');
+  assert.equal(later.evidence.source, 'native-steering');
+});
+
+test('a stale Claude record appended after the send never proves it', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    const stale = new Date(Date.now() - 60000).toISOString();
+    f.record({ type: 'queue-operation', operation: 'enqueue', timestamp: stale, content: pasted });
+    return claudeBox('');
+  });
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.submitted, false);
+  assert.equal(result.evidence, null);
 });
 
 test('Claude refuses before typing without its own registered native session', async (t) => {
