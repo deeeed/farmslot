@@ -71,25 +71,23 @@ test('renderPrBody runs the pack renderer with the machine env and returns the b
   }
 });
 
-test('renderPrBody surfaces the renderer error message on failure', async () => {
+test('renderPrBody surfaces string and structured renderer error messages', async () => {
   const root = await makeTaskDir();
+  const message =
+    'pr-description.md is missing the template section(s) ## **Changelog**; author them under those exact headings.';
   try {
-    const calls: string[] = [];
-    await assert.rejects(
-      renderPrBody(
-        makeRun({ taskFile: path.join(root, 'task.md'), slotId: 'macwork-mmdev-1' }),
-        deps({
-          calls,
-          exec: async () => ({
-            exitCode: 1,
-            stdout:
-              '{"status":"error","error":"pr-description.md is missing the template section(s) ## **Changelog**; author them under those exact headings."}',
-            stderr: '',
+    for (const error of [message, { code: 'RECIPE_ARTIFACTS_INVALID', message }]) {
+      await assert.rejects(
+        renderPrBody(
+          makeRun({ taskFile: path.join(root, 'task.md'), slotId: 'macwork-mmdev-1' }),
+          deps({
+            calls: [],
+            exec: async () => ({ exitCode: 1, stdout: JSON.stringify({ error }), stderr: '' }),
           }),
-        }),
-      ),
-      /PR body render failed: pr-description\.md is missing the template section\(s\) ## \*\*Changelog\*\*/,
-    );
+        ),
+        /PR body render failed: pr-description\.md is missing the template section\(s\) ## \*\*Changelog\*\*/,
+      );
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

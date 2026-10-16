@@ -1,13 +1,27 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  link,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
 
+import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
+import { recordRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
 import { digestRecipeDocument } from '@farmslot/protocol';
+import { writeRunReport } from '@farmslot/recipe-cli/harness';
+import { createRecipeRunner } from '@farmslot/recipe-runner';
 import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 
 import { registerRecipeCommand, validateRecipeArtifactDirectory } from './recipe.js';
@@ -471,4 +485,285 @@ test('malformed present claims cannot disappear into legacy validation', async (
   assert.ok(
     result.checks.some((c) => c.id === 'file.acceptance-status.json' && c.status === 'fail'),
   );
+});
+
+for (const selectedState of ['present', 'missing', 'outside', 'nested'] as const) {
+  test(`task artifact inspection honors selected attempt (${selectedState}) over a legacy package`, async (t) => {
+    const task = await mkdtemp(path.join(os.tmpdir(), 'artifacts-selection-'));
+    const legacy = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+    const selected = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+    t.after(() => rm(task, { recursive: true, force: true }));
+    t.after(() => rm(legacy, { recursive: true, force: true }));
+    t.after(() => rm(selected, { recursive: true, force: true }));
+    await mkdir(path.join(task, 'artifacts/recipe-runs'), { recursive: true });
+    await rename(legacy, path.join(task, 'artifacts/recipe'));
+    const attempt = path.join(task, 'artifacts/recipe-runs/attempt-2');
+    await rename(selected, attempt);
+    assert.equal(recordRecipeAttemptSelection(task, attempt), true);
+    const pointer = path.join(task, 'artifacts/latest-valid-recipe-run.json');
+    const before = await readFile(pointer, 'utf8');
+    if (selectedState === 'nested') {
+      await mkdir(path.join(attempt, 'artifacts'));
+      await rename(path.join(task, 'artifacts/recipe'), path.join(attempt, 'artifacts/recipe'));
+      await rm(path.join(attempt, 'artifact-manifest.json'));
+    } else if (selectedState !== 'present') {
+      if (selectedState === 'outside') {
+        await rename(attempt, selected);
+        await symlink(selected, attempt);
+      } else await rm(attempt, { recursive: true });
+    }
+    let output = '';
+    t.mock.method(process.stdout, 'write', (chunk: string | Uint8Array) => {
+      output += chunk.toString();
+      return true;
+    });
+    const previousExit = process.exitCode;
+    t.after(() => {
+      process.exitCode = previousExit;
+    });
+    process.exitCode = 0;
+    const program = new Command().name('farmslot').option('--json').exitOverride();
+    registerRecipeCommand(program);
+    await program.parseAsync(['recipe', 'artifacts', task, '--json', '--validate'], {
+      from: 'user',
+    });
+    const result = JSON.parse(output);
+    if (selectedState === 'present') {
+      assert.equal(process.exitCode, 0, output);
+      assert.equal(result.artifactDir, attempt);
+      assert.equal(result.validation.status, 'pass');
+    } else {
+      assert.equal(process.exitCode, 1, output);
+      assert.match(
+        result.error.message,
+        selectedState === 'nested' ? /ENOENT/ : /outside its root/,
+      );
+    }
+    assert.equal(await readFile(pointer, 'utf8'), before);
+  });
+}
+
+function artifactInvocation(
+  t: TestContext,
+  directory: string,
+): (flags: string[]) => Promise<string> {
+  let captured = '';
+  t.mock.method(process.stdout, 'write', (chunk: string | Uint8Array) => {
+    captured += chunk.toString();
+    return true;
+  });
+  const previousExit = process.exitCode;
+  t.after(() => {
+    process.exitCode = previousExit;
+  });
+  return async (flags) => {
+    captured = '';
+    process.exitCode = 0;
+    const program = new Command().name('farmslot').option('--json').exitOverride();
+    registerRecipeCommand(program);
+    await program.parseAsync(['recipe', 'artifacts', directory, ...flags], { from: 'user' });
+    return captured;
+  };
+}
+
+test('authored static Markdown renders to stdout or explicit output, without inventing validation', async (t) => {
+  const task = await mkdtemp(path.join(os.tmpdir(), 'static-markdown-'));
+  t.after(() => rm(task, { recursive: true, force: true }));
+  const artifacts = path.join(task, 'artifacts');
+  await mkdir(artifacts);
+  await writeFile(
+    path.join(artifacts, 'pr-description.md'),
+    '## Description\n\nStatic source change.\n',
+  );
+  const invoke = artifactInvocation(t, task);
+  const body = await invoke(['--format', 'markdown']);
+  assert.match(body, /Static source change\./);
+  assert.match(body, /Not applicable: no recipe run report/);
+  assert.deepEqual(await readdir(artifacts), ['pr-description.md']);
+  const out = path.join(artifacts, 'pr-body.md');
+  const json = JSON.parse(await invoke(['--format', 'markdown', '--out', out, '--json']));
+  assert.equal(json.out, out);
+  assert.equal(json.body, undefined);
+  assert.equal(await readFile(out, 'utf8'), body);
+  assert.deepEqual(json.sections, ['## **Validation Recipe**', '## **Validation Logs**']);
+  assert.equal(json.manifest, undefined);
+  await rm(out);
+  const refused = JSON.parse(
+    await invoke(['--format', 'markdown', '--validate', '--out', out, '--json']),
+  );
+  assert.equal(process.exitCode, 1);
+  assert.match(JSON.stringify(refused), /No retained artifact package/);
+  await assert.rejects(readFile(out), { code: 'ENOENT' });
+  const wrongFormat = JSON.parse(await invoke(['--out', out, '--json']));
+  assert.match(JSON.stringify(wrongFormat), /require --format markdown/);
+  await assert.rejects(readFile(out), { code: 'ENOENT' });
+});
+
+test('authored Markdown preserves selected package provenance and refuses evidence overwrite', async (t) => {
+  const task = await mkdtemp(path.join(os.tmpdir(), 'selected-markdown-'));
+  const original = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+  t.after(() => rm(task, { recursive: true, force: true }));
+  t.after(() => rm(original, { recursive: true, force: true }));
+  const artifacts = path.join(task, 'artifacts');
+  await mkdir(path.join(artifacts, 'recipe-runs'), { recursive: true });
+  const selected = path.join(artifacts, 'recipe-runs/selected');
+  await rename(original, selected);
+  await writeFile(path.join(artifacts, 'pr-description.md'), '## Description\n\nAuthored PR.\n');
+  await writeFile(path.join(artifacts, 'recipe.json'), '{broken stale draft');
+  await writeFile(
+    path.join(selected, 'report.md'),
+    'Status: pass\nNodes: 1/1 passed\nSELECTED_PROOF\n',
+  );
+  assert.equal(recordRecipeAttemptSelection(task, selected), true);
+  const pointer = await readFile(path.join(artifacts, 'latest-valid-recipe-run.json'), 'utf8');
+  const invoke = artifactInvocation(t, task);
+  const json = JSON.parse(
+    await invoke([
+      '--format',
+      'markdown',
+      '--validate',
+      '--command',
+      'farmslot recipe run task/recipe.json',
+      '--json',
+    ]),
+  );
+  assert.equal(json.artifactDir, selected);
+  assert.deepEqual(json.manifest.provenance.runner, runner);
+  assert.equal(json.validation.status, 'pass');
+  assert.equal(json.recipe.path, 'artifacts/recipe-runs/selected/recipe.json');
+  assert.match(json.body, /SELECTED_PROOF/);
+  assert.match(json.body, /farmslot recipe run task\/recipe.json/);
+  assert.doesNotMatch(json.body, /broken stale draft/);
+  assert.match(json.body, /Runner: test-runner/);
+  assert.doesNotMatch(
+    json.body,
+    /packages\/cli\/src\/commands\/recipe-artifacts|recipe-runs\/selected/,
+  );
+  const prosePath = path.join(artifacts, 'pr-description.md');
+  const prose = await readFile(prosePath, 'utf8');
+  await rm(prosePath);
+  const missing = JSON.parse(await invoke(['--format', 'markdown', '--json']));
+  assert.equal(process.exitCode, 1);
+  assert.match(JSON.stringify(missing), /Missing artifacts\/pr-description/);
+  await writeFile(prosePath, prose);
+  for (const file of [
+    'recipe-runs/selected/recipe.json',
+    'pr-description.md',
+    'latest-valid-recipe-run.json',
+  ]) {
+    const out = path.join(artifacts, file);
+    const before = await readFile(out, 'utf8');
+    const refused = JSON.parse(await invoke(['--format', 'markdown', '--out', out, '--json']));
+    assert.equal(process.exitCode, 1);
+    assert.match(JSON.stringify(refused), /must not overwrite/);
+    assert.equal(await readFile(out, 'utf8'), before);
+  }
+  assert.equal(
+    await readFile(path.join(artifacts, 'latest-valid-recipe-run.json'), 'utf8'),
+    pointer,
+  );
+  const out = path.join(artifacts, 'pr-body.md');
+  await writeJson(path.join(selected, 'trace.json'), {
+    metadata: { runner: { ...runner, git_ref: 'wrong' } },
+    entries: [traceEntry],
+  });
+  const invalid = JSON.parse(
+    await invoke(['--format', 'markdown', '--validate', '--out', out, '--json']),
+  );
+  assert.match(JSON.stringify(invalid), /Artifact validation failed/);
+  await assert.rejects(readFile(out), { code: 'ENOENT' });
+});
+
+test('legacy task-root packages allow the usual PR body output while preserving evidence inputs', async (t) => {
+  const task = await mkdtemp(path.join(os.tmpdir(), 'legacy-markdown-'));
+  const original = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+  t.after(() => rm(task, { recursive: true, force: true }));
+  t.after(() => rm(original, { recursive: true, force: true }));
+  const artifacts = path.join(task, 'artifacts');
+  await rename(original, artifacts);
+  await writeFile(path.join(artifacts, 'pr-description.md'), '## Description\n\nAuthored PR.\n');
+  await writeFile(
+    path.join(artifacts, 'report.md'),
+    'Status: pass\nNodes: 1/1 passed\nLEGACY_REPORT\n',
+  );
+  const invoke = artifactInvocation(t, task);
+  const out = path.join(artifacts, 'pr-body.md');
+  const rendered = JSON.parse(await invoke(['--format', 'markdown', '--out', out, '--json']));
+  assert.equal(process.exitCode, 0, JSON.stringify(rendered));
+  assert.equal(rendered.out, out);
+  assert.match(await readFile(out, 'utf8'), /Authored PR\./);
+  assert.match(await readFile(out, 'utf8'), /LEGACY_REPORT/);
+  const summary = path.join(artifacts, 'summary.json');
+  const before = await readFile(summary, 'utf8');
+  await invoke(['--format', 'markdown', '--out', summary, '--json']);
+  assert.equal(process.exitCode, 1);
+  assert.equal(await readFile(summary, 'utf8'), before);
+});
+
+test('Markdown output preserves consumed comparison closure files', async (t) => {
+  const task = await mkdtemp(path.join(os.tmpdir(), 'comparison-output-'));
+  const child = await mkdtemp(path.join(os.tmpdir(), 'comparison-source-'));
+  t.after(() => rm(task, { recursive: true, force: true }));
+  t.after(() => rm(child, { recursive: true, force: true }));
+  const engine = createRecipeRunner({
+    actionManifest: {
+      $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
+      actions: {
+        end: { description: 'Finish the recipe', examples: [{ action: 'end', status: 'pass' }] },
+      },
+    },
+    adapters: [],
+    runner,
+    defaultSource: { kind: 'operator', trust: 'trusted', name: 'artifact-reader-test' },
+  });
+  assert.equal(
+    (await engine.run({ recipeDocument: recipe, artifactsDir: child, projectRoot: task })).status,
+    'pass',
+  );
+  const artifacts = path.join(task, 'artifacts');
+  const parent = await engine.run({
+    recipeDocument: recipe,
+    artifactsDir: artifacts,
+    projectRoot: task,
+    comparisonDependencies: [child],
+    finalizeArtifacts: async (context) => {
+      writeRunReport(context);
+    },
+  });
+  assert.equal(parent.status, 'pass');
+  await writeFile(
+    path.join(artifacts, 'pr-description.md'),
+    '## Description\n\nComparison proof.\n',
+  );
+  const retained = await readRecordedEvidencePackage(artifacts);
+  const dependency = retained.input.comparisonDependencies?.[0];
+  assert.ok(dependency);
+  const relative = `${dependency.artifactRoot}/summary.json`;
+  assert.ok(retained.input.artifactPaths?.includes(relative));
+  const validated = await validateRecipeArtifactDirectory(artifacts, {
+    requireRunnerProvenance: true,
+  });
+  assert.equal(validated.status, 'pass', JSON.stringify(validated));
+  const out = path.join(artifacts, relative);
+  const before = await readFile(out, 'utf8');
+  const invoke = artifactInvocation(t, task);
+  await invoke(['--format', 'markdown', '--out', out, '--json']);
+  assert.equal(process.exitCode, 1);
+  assert.equal(await readFile(out, 'utf8'), before);
+});
+
+test('Markdown output refuses file aliases of authored prose', async (t) => {
+  const task = await mkdtemp(path.join(os.tmpdir(), 'alias-output-'));
+  t.after(() => rm(task, { recursive: true, force: true }));
+  const artifacts = path.join(task, 'artifacts');
+  await mkdir(artifacts);
+  const prose = path.join(artifacts, 'pr-description.md');
+  await writeFile(prose, '## Description\n\nAuthored prose must survive.\n');
+  const out = path.join(artifacts, 'body-alias.md');
+  await link(prose, out);
+  const before = await readFile(prose, 'utf8');
+  const invoke = artifactInvocation(t, task);
+  await invoke(['--format', 'markdown', '--out', out, '--json']);
+  assert.equal(process.exitCode, 1);
+  assert.equal(await readFile(prose, 'utf8'), before);
 });

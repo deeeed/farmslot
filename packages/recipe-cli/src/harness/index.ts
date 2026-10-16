@@ -40,6 +40,7 @@ export {
   type ArtifactManifestEntry,
   indexArtifactManifest,
   readContainedJsonArtifact,
+  runnerRevision,
   writeContainedArtifact,
 } from './artifact-files.js';
 export {
@@ -100,6 +101,11 @@ export {
   redactStructuredValue,
   withCommandJournal,
 } from './command-journal.js';
+export {
+  renderTaskArtifactsMarkdown,
+  type TaskArtifactsMarkdownInput,
+  type TaskArtifactsMarkdownResult,
+} from './commands/artifacts-markdown.js';
 export { type CallCommandOptions, handleCall, handleCallHelp } from './commands/call.js';
 export {
   type ChecklistCommandOptions,

@@ -6,6 +6,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 - Use refresh-only person-device profiles for login, startup and activation; renew access silently, confirm sign-out and hand browsers one-use invitations while preserving service credentials.
 
+- Render authored task Markdown with selected recipe evidence and public-safe provenance, preserving explicit output selection and refusing missing prose, invalid packages or evidence overwrites. Artifact inspection honors the retained selected attempt.
+
 - Add canonical task, review and recipe quality commands with strict grammar, project helper composition and declared project quality guidance in help. Keep static-task help provider-free. Refuse missing task projects selected by flags, runtime bindings or slots before creating an unbound task.
 
 - Add runs bundle retain for captured reports and evidence; portable export reads retained snapshots and import retains them in the target store.
