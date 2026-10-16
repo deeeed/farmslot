@@ -349,6 +349,7 @@ export function slotSelectionOptionsFor(
   return {
     ...fallback,
     ...plan.params,
+    targetBranch: plan.params.targetBranch ?? fallback.targetBranch,
     requiredPrepareProfile: plan.params.prepareProfile ?? null,
     skipPrepare: plan.params.skipPrepare,
     projectConfigs: plan.projectConfigs,
