@@ -31,7 +31,9 @@ const { makeReadyGatePackage, deleteTestRunIfPresent, retainRunFixture } =
   await import('../run-engine/test-fixtures.js');
 const { computeReadyGatePackageHash } = await import('../run-completion/ready-gate-package.js');
 const { withPublicationProvenance } = await import('../run-completion/evidence-attestation.js');
-const { postProcessPRBody } = await import('../run-completion/publication-artifacts.js');
+const { postProcessPRBody, replaceMarkdownSection } =
+  await import('../run-completion/publication-artifacts.js');
+const { buildPublishGateReviewStatus } = await import('../run-engine/gate-policy.js');
 
 const approver = { principalId: 'operator', displayName: 'Operator', credentialId: 'credential' };
 
@@ -161,6 +163,13 @@ test('authority revocation during awaited validation leaves no approval or recei
 
 test('publication and refresh retain the exact reason despite artifact-path sanitization', async (t) => {
   const f = await fixture(t);
+  f.run.steps = [
+    {
+      name: 'review',
+      status: 'skipped',
+      outputs: { skipped: true, reason: 'disabled-for-project' },
+    },
+  ];
   const reason =
     'Inspected artifacts/chart-before.png and artifacts/chart-after.png.\nThe claim is satisfied.';
   const result = await runResolveDecision(
@@ -171,22 +180,37 @@ test('publication and refresh retain the exact reason despite artifact-path sani
       assertGatePrerequisites: async () => f.readiness,
     },
   );
-  const initial = await postProcessPRBody(result.run, 'example/repo', 42, new Map(), [], {
-    failOnError: true,
-    baseBody: '## Summary\n\nChange.',
-    evidenceManifest: null,
-    checkAuthorChecklist: false,
-  });
-  assert.ok(initial?.includes(reason));
-  const refreshed = await postProcessPRBody(result.run, 'example/repo', 42, new Map(), [], {
-    failOnError: true,
-    baseBody: initial!,
-    evidenceManifest: null,
-    checkAuthorChecklist: false,
-  });
-  assert.equal(refreshed, initial);
-  assert.equal(refreshed?.split('## Evidence policy attestation').length, 2);
-  assert.equal(postedBodies.at(-1), refreshed);
+  const draft = withPublicationProvenance(
+    result.run,
+    '## Summary\n\nChange.\n\n## **Screenshots/Recordings**\n\nPrevious evidence.',
+  );
+  const rewritten = replaceMarkdownSection(
+    draft,
+    '## **Screenshots/Recordings**',
+    'Hosted evidence.',
+  );
+  for (const baseBody of [
+    rewritten,
+    '## Summary\n\nChange.\n\n## Evidence policy attestation\n\nExisting retained attestation.',
+  ]) {
+    const initial = await postProcessPRBody(result.run, 'example/repo', 42, new Map(), [], {
+      failOnError: true,
+      baseBody,
+      evidenceManifest: null,
+      checkAuthorChecklist: false,
+    });
+    assert.ok(initial?.includes(reason));
+    assert.ok(initial?.includes('No code review ran'));
+    const refreshed = await postProcessPRBody(result.run, 'example/repo', 42, new Map(), [], {
+      failOnError: true,
+      baseBody: initial!,
+      evidenceManifest: null,
+      checkAuthorChecklist: false,
+    });
+    assert.equal(refreshed, initial);
+    assert.equal(refreshed?.split('## Evidence policy attestation').length, 2);
+    assert.equal(postedBodies.at(-1), refreshed);
+  }
 });
 
 test('publication and refresh disclose skipped code review without duplicating provenance', async (t) => {
@@ -212,6 +236,27 @@ test('publication and refresh disclose skipped code review without duplicating p
     baseBody: body!,
   });
   assert.equal(refreshed, body);
+  f.run.engineState!.publishGate!.reviews = [
+    buildPublishGateReviewStatus({
+      source: 'human-gate',
+      priorReviewCount: 0,
+      requestedRunner: null,
+      reviewId: 'review-1',
+      reviewResult: {
+        mode: 'cold',
+        verdict: 'blocked',
+        reason: 'review-unavailable: node offline',
+        retryCount: 0,
+        validationDepth: 'static-code',
+        attempts: [],
+      },
+    }),
+  ];
+  const unavailable = await postProcessPRBody(f.run, 'example/repo', 42, new Map(), [], {
+    ...options,
+    baseBody: body!,
+  });
+  assert.ok(unavailable?.includes('No code review ran'));
   f.run.engineState!.publishGate!.reviews = [
     {
       id: 'review-1',

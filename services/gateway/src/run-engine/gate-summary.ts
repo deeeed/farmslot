@@ -258,7 +258,8 @@ export function buildReviewSummary(
 
   return {
     ...(review ? { review } : {}),
-    ...(review?.status === 'skipped' && reviews.every((entry) => entry.verdict === 'skipped')
+    ...(review?.status === 'skipped' &&
+    !reviews.some((entry) => entry.verdict === 'pass' || entry.verdict === 'issues')
       ? { noCodeReview: true }
       : {}),
     reviews: summaries,

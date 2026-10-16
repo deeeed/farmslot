@@ -677,7 +677,7 @@ export interface GateSummary {
 
 /** Review outcomes for a gate, projected from review + reviews. */
 export interface ReviewSummary {
-  /** Pipeline review was skipped and no other code review ran. Nonblocking disclosure. */
+  /** Pipeline review was skipped and no code review completed. Nonblocking disclosure. */
   noCodeReview?: boolean;
   review?: {
     status: 'skipped' | 'done' | 'failed' | 'pending';

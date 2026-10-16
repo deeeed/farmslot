@@ -372,12 +372,25 @@ test('a requested code review clears the skipped-pipeline warning', () => {
         outputs: { skipped: true, reason: 'disabled-for-project' },
       },
     ],
-    engineState: {
-      publishGate: { reviews: [{ ...passingReview, id: 'review-1', source: 'human-gate' }] },
-    },
+    engineState: { publishGate: { reviews: [] } },
   });
   assert.equal(buildReviewSummary(run).review?.status, 'skipped');
-  assert.equal(buildReviewSummary(run).noCodeReview, undefined);
+  assert.equal(buildReviewSummary(run).noCodeReview, true);
+  for (const verdict of ['pending', 'failed', 'cancelled', 'pass', 'issues'] as const) {
+    run.engineState!.publishGate!.reviews = [
+      {
+        ...passingReview,
+        id: 'review-1',
+        source: 'human-gate',
+        verdict,
+      },
+    ];
+    assert.equal(
+      buildReviewSummary(run).noCodeReview,
+      ['pass', 'issues'].includes(verdict) ? undefined : true,
+      verdict,
+    );
+  }
 });
 
 test('aggregateFamilyChainedLoops rolls up pr-complete/update-branch loops only', () => {
