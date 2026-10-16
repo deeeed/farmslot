@@ -10,6 +10,7 @@ import {
   type AcceptanceStatusLedger,
   deriveRunLifecycleView,
   Events,
+  extractRunArtifactManifest,
   isSlotFreedByPark,
   isTerminalRunStatus,
   liveGateParkView,
@@ -36,7 +37,6 @@ import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
   artifactsForRecipeRun,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
   resolveRecipeRunSelection,
 } from '../../lib/artifact-url';
 import { currentFarmConnection } from '../../lib/connection-authority';
