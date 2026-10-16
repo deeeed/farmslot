@@ -121,6 +121,7 @@ export function useRunAcceptance(
     }
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
+    if (!data) setRequestError(null);
     client
       .request<TaskProgressResult>(Methods.TASK_PROGRESS, target)
       .then(async (result) => {
@@ -165,6 +166,7 @@ export function useRunAcceptance(
         setRequestError(`Acceptance criteria unavailable: ${err.message}`);
       });
     // `target` is derived from the run fields listed here.
+    // Receiving data must not trigger another read; it only controls cold-error feedback.
   }, [
     broadcasts,
     client,
