@@ -1,0 +1,177 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+import { fileURLToPath, URL } from 'node:url';
+import vm from 'node:vm';
+
+import ts from 'typescript';
+
+import { Events, Methods } from '@farmslot/protocol';
+
+import type { RunAcceptanceSource } from './useRunAcceptance';
+
+const run: RunAcceptanceSource = {
+  id: 'fixture-run',
+  slotId: 'fixture-slot',
+  updatedAt: '2026-10-16T00:00:00Z',
+};
+const progress = { acceptanceCriteria: [], acceptanceStatus: { schemaVersion: 2, criteria: [] } };
+
+/** Execute the actual hook with deterministic React scheduling and a read-only transport stub. */
+function mount(request: (method: string) => Promise<unknown>) {
+  const cells: unknown[] = [];
+  const effects: Array<{ deps: readonly unknown[]; cleanup?: () => void }> = [];
+  let cell = 0;
+  let effect = 0;
+  let pending: Array<() => void> = [];
+  const connection = {};
+  const client = { request, subscribe: () => () => undefined, authenticatedPrincipal: null };
+  const react = {
+    useState(initial: unknown) {
+      const index = cell++;
+      if (!(index in cells)) cells[index] = typeof initial === 'function' ? initial() : initial;
+      return [
+        cells[index],
+        (next: unknown) => {
+          cells[index] = typeof next === 'function' ? next(cells[index]) : next;
+        },
+      ];
+    },
+    useRef(initial: unknown) {
+      const index = cell++;
+      if (!(index in cells)) cells[index] = { current: initial };
+      return cells[index];
+    },
+    useMemo(calculate: () => unknown) {
+      return calculate();
+    },
+    useEffect(callback: () => unknown, deps: readonly unknown[]) {
+      const index = effect++;
+      const previous = effects[index];
+      if (
+        previous &&
+        deps.length === previous.deps.length &&
+        deps.every((value, at) => Object.is(value, previous.deps[at]))
+      )
+        return;
+      pending.push(() => {
+        previous?.cleanup?.();
+        const cleanup = callback();
+        effects[index] = {
+          deps,
+          ...(typeof cleanup === 'function' ? { cleanup: () => cleanup() } : {}),
+        };
+      });
+    },
+  };
+  const dependencies: Record<string, unknown> = {
+    react,
+    '@farmslot/protocol': { Methods, Events },
+    '@farmslot/adapter-sdk/evidence': { createEvidenceReviewModel: () => null },
+    '../lib/recoverable-errors': { isGatewayBackgroundPauseError: () => false },
+    '../lib/task-progress': {
+      taskProgressRequestForRun: () => ({ runId: run.id, slotId: run.slotId }),
+      taskProgressUpdateTargetsRun: () => false,
+    },
+    '../lib/task-progress-view': { acceptanceLedgerView: () => ({ rows: [] }) },
+    '../store/connection': {
+      useConnectionStore: (select: (state: { authorityEpoch: number }) => unknown) =>
+        select({ authorityEpoch: 1 }),
+    },
+    './useConnectedTransport': { useConnectedTransport: () => connection },
+  };
+  const exports: Record<string, unknown> = {};
+  const source = readFileSync(
+    fileURLToPath(new URL('./useRunAcceptance.ts', import.meta.url)),
+    'utf8',
+  );
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  vm.runInNewContext(
+    compiled,
+    {
+      exports,
+      console,
+      require(name: string) {
+        if (!(name in dependencies)) throw new Error(`Unexpected hook dependency ${name}`);
+        return dependencies[name];
+      },
+    },
+    { timeout: 1000 },
+  );
+  const hook = exports.useRunAcceptance;
+  assert.equal(typeof hook, 'function');
+  if (typeof hook !== 'function') throw new Error('Hook export missing');
+  return {
+    render(input = run): Record<string, unknown> {
+      cell = 0;
+      effect = 0;
+      pending = [];
+      const result: unknown = hook(client, input);
+      for (const callback of pending) callback();
+      assert.ok(typeof result === 'object' && result !== null);
+      if (typeof result !== 'object' || result === null) throw new Error('Invalid hook result');
+      return Object.fromEntries(Object.entries(result));
+    },
+    cleanup() {
+      for (const entry of effects) entry.cleanup?.();
+    },
+  };
+}
+const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+function retry(result: Record<string, unknown>) {
+  assert.equal(typeof result.retry, 'function');
+  if (typeof result.retry !== 'function') throw new Error('Retry callback missing');
+  result.retry();
+}
+
+test('retry re-reads an idle acceptance failure without changing run identity or updatedAt', async (t) => {
+  let reads = 0;
+  let evidenceReads = 0;
+  const mounted = mount(async (method) => {
+    if (method === Methods.TASK_PROGRESS) {
+      if (++reads === 1) throw new Error('temporary read failure');
+      return progress;
+    }
+    assert.equal(method, Methods.RUN_RECIPE_RUNS_FOR_RUN);
+    evidenceReads++;
+    return { recipeRuns: [], selectedRecipeRunId: null };
+  });
+  t.after(mounted.cleanup);
+  mounted.render();
+  await settle();
+  const failed = mounted.render();
+  assert.match(String(failed.error), /temporary read failure/);
+  mounted.render({ ...run });
+  await settle();
+  assert.equal(reads, 1);
+  retry(failed);
+  mounted.render();
+  await settle();
+  assert.equal(reads, 2);
+  assert.equal(evidenceReads, 1);
+  assert.equal(mounted.render().error, null);
+});
+
+test('retry fences a response that began before the latest failed read', async (t) => {
+  let reads = 0;
+  let finish: (result: unknown) => void = () => assert.fail('first request did not start');
+  const old = new Promise<unknown>((resolve) => {
+    finish = resolve;
+  });
+  const mounted = mount(async (method) => {
+    assert.equal(method, Methods.TASK_PROGRESS);
+    if (++reads === 1) return old;
+    throw new Error('current read failure');
+  });
+  t.after(mounted.cleanup);
+  retry(mounted.render());
+  mounted.render();
+  await settle();
+  assert.equal(reads, 2);
+  finish(progress);
+  await settle();
+  assert.match(String(mounted.render().error), /current read failure/);
+});

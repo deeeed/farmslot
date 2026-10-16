@@ -28,6 +28,11 @@ export function renderReadyTopBar(input: {
   chooseAttestation?: () => void;
   setAttestationReason?: (value: string) => void;
   acting: boolean;
+  pausedReason?: string;
+  pausedRetry?: () => void;
+  loading?: boolean;
+  loadError?: string;
+  retry?: () => void;
   recovering: boolean;
   diffArtifact?: ArtifactRef;
   fileDiffAvailable: boolean;
@@ -58,6 +63,9 @@ export function renderReadyTopBar(input: {
   return html`
     ${renderPublicationGatePanel({
       actions,
+      loading: input.loading,
+      loadError: input.loadError,
+      retry: input.retry,
       claims: input.claims,
       judgmentRows: input.judgmentRows,
       reviewReason: input.reviewReason,
@@ -71,7 +79,10 @@ export function renderReadyTopBar(input: {
       attesting: input.attesting,
       chooseAttestation: () => input.chooseAttestation?.(),
       resolved: Boolean(input.decision?.resolvedAt),
-      busy: input.acting || input.recovering,
+      busy: input.acting,
+      pausedRetry: input.pausedRetry,
+      pausedReason:
+        input.pausedReason || (input.recovering ? 'Reconnecting; actions paused' : undefined),
       pendingConfirm: input.pendingConfirm,
       reviewDisabled: input.payload.reviewRoundBudget?.remaining === 0,
       changeReason: (reason) => input.setAttestationReason?.(reason),
@@ -131,6 +142,7 @@ export function renderReadyTopBar(input: {
 export function renderReadyTabBar(input: {
   payload: ReadyGatePayload;
   activeTab: ReadyWorkspaceTab;
+  packagePending?: boolean;
   hideRecipeTab: boolean;
   evidenceCount: number;
   qualityCount: number;
@@ -144,7 +156,7 @@ export function renderReadyTabBar(input: {
   const hasQuality = input.qualityCount > 0;
   const hasInput = input.inputCount > 0;
   const hasLearnings = !!input.payload.workerLearnings;
-  const hasPreview = !!input.payload.prPackage;
+  const hasPreview = Boolean(input.payload.prPackage || input.packagePending);
 
   return html`
     <div class="rdy-tab-bar">
@@ -222,6 +234,7 @@ export function renderReadyDiffTab(input: {
   slotId: string;
   diffLoading: boolean;
   diffError: string;
+  retryDiff?: () => void;
   diffFiles: GitBranchDiffFile[];
   testFilter: DiffTestFilterController;
   selectedFile: string;
@@ -231,8 +244,8 @@ export function renderReadyDiffTab(input: {
   selectFile: (path: string) => void;
 }) {
   if (!input.slotId) return html`<div class="rdy-tab-empty">No slot — diff not available</div>`;
-  if (input.diffLoading) return html`<div class="rdy-tab-empty">Loading diff...</div>`;
-  if (input.diffError) return html`<div class="rdy-tab-empty">${input.diffError}</div>`;
+  if (input.diffLoading) return renderReadyDiffSkeleton();
+  if (input.diffError) return renderReadyDiffSkeleton(input.diffError, input.retryDiff);
   if (input.diffFiles.length === 0) return html`<div class="rdy-tab-empty">No changed files</div>`;
   const split = input.testFilter.split(input.diffFiles);
   const allHidden = split.visible.length === 0;
@@ -275,7 +288,7 @@ export function renderReadyDiffTab(input: {
               Only test files changed — show tests to review them
             </div>`
           : input.fileDiffLoading
-            ? html`<div class="rdy-tab-empty">Loading file diff...</div>`
+            ? renderReadyDiffSkeleton()
             : input.fileDiff
               ? html`
                   <diff-review
@@ -287,4 +300,20 @@ export function renderReadyDiffTab(input: {
       </div>
     </div>
   `;
+}
+
+function renderReadyDiffSkeleton(error = '', retry?: () => void) {
+  return html`<farm-hydrating message="Loading diff" .error=${error} @retry=${retry}
+    ><div style="display:grid;gap:12px;min-height:300px">
+      <div style="display:flex;gap:12px">
+        <farm-skeleton kind="button" width="100px"></farm-skeleton
+        ><farm-skeleton kind="button" width="120px"></farm-skeleton>
+      </div>
+      ${Array.from(
+        { length: 9 },
+        (_, index) =>
+          html`<farm-skeleton width=${index % 3 === 2 ? '60%' : '90%'}></farm-skeleton>`,
+      )}
+    </div></farm-hydrating
+  >`;
 }

@@ -117,6 +117,7 @@ import {
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
 import { GateActions, GateReviewEntryCard } from '../gate-review/components/gate-review-panels';
+import { GateReviewSkeleton } from '../gate-review/components/GateReviewSkeleton';
 import { PlanningChoices } from '../planning/PlanningControls';
 import { ReviewDispatchPicker } from '../review-dispatch/ReviewDispatchPicker';
 import { ReviewHistoryPanel } from '../run-detail/components/ReviewHistoryPanel';
@@ -1016,10 +1017,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   if (!decision || !presentation) {
     return (
       <View style={[baseStyles.container, styles.center, { paddingBottom: insets.bottom }]}>
-        <Text style={baseStyles.textSecondary}>{error ?? 'Loading decision...'}</Text>
-        <Pressable style={styles.secondaryButton} onPress={refreshDecision}>
-          <Text style={styles.secondaryButtonText}>Refresh</Text>
-        </Pressable>
+        <GateReviewSkeleton error={error ?? undefined} retry={refreshDecision} />
       </View>
     );
   }

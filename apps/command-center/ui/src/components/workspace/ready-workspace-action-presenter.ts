@@ -103,14 +103,30 @@ index 1111111..2222222 100644
  }
 `;
 
+interface RetainedReadyPayload {
+  runId: string;
+  decisionId: string;
+  payload: ReadyGatePayload;
+}
+
 export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState {
   readonly _testFilter = new DiffTestFilterController(this, {
     patterns: () => this._diffTestPatterns,
     onChange: () => this._onHideTestsChanged(),
   });
 
+  private _retainedPayload: RetainedReadyPayload | undefined;
+
   get _payload(): ReadyGatePayload | undefined {
-    return this.decision?.payload as ReadyGatePayload | undefined;
+    const payload = this.decision?.payload;
+    if (payload?.kind !== 'ready') return undefined;
+    // Keep the last captured metadata and its media bindings together during a compact refresh.
+    const cached = this._retainedPayload;
+    return this._packagePending &&
+      cached?.runId === this.runId &&
+      cached.decisionId === this.decision?.id
+      ? cached.payload
+      : payload;
   }
 
   get _currentRunner(): string {
@@ -122,6 +138,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   willUpdate() {
+    const payload = this.decision?.payload;
+    if (payload?.kind === 'ready' && !this._packagePending)
+      this._retainedPayload = { runId: this.runId, decisionId: this.decision.id, payload };
+    else if (
+      this._retainedPayload?.runId !== this.runId ||
+      this._retainedPayload?.decisionId !== this.decision?.id
+    )
+      this._retainedPayload = undefined;
     if (!this._initialized && this.decision && this.slotId) {
       this._initialized = true;
       this._hydratePublicationTarget();
@@ -133,7 +157,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (this.hideRecipeTab && this._activeTab === 'recipe') {
       this._activeTab = this._payload?.prPackage ? 'pr-preview' : 'diff';
     }
-    if (this._payload?.prPackage && !this._defaultPackageTabSelected && !this._hashTabRequested) {
+    if (
+      (this._payload?.prPackage || this._packagePending) &&
+      !this._defaultPackageTabSelected &&
+      !this._hashTabRequested
+    ) {
       this._activeTab = 'pr-preview';
       this._defaultPackageTabSelected = true;
       this._syncViewStateToHash();

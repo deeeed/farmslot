@@ -7,6 +7,8 @@ import type {
 } from '@farmslot/adapter-sdk/evidence';
 import type { ArtifactRef, SelfPrincipalSummary } from '@farmslot/protocol';
 
+import '../shared/hydrating-placeholder.js';
+
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 
@@ -583,4 +585,22 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
 
 function formatMoment(ms: number): string {
   return `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}.${String(Math.floor(ms % 1000)).padStart(3, '0')}`;
+}
+
+export function renderEvidenceGridSkeleton(error = '', retry?: () => void, count = 4) {
+  return html`<farm-hydrating message="Evidence" .error=${error} @retry=${retry}
+    ><div style="display:grid;gap:12px;min-height:340px">
+      <farm-skeleton width="30%"></farm-skeleton>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
+        ${Array.from(
+          { length: count },
+          () =>
+            html`<div style="display:grid;gap:12px">
+              <farm-skeleton kind="block" height="150"></farm-skeleton
+              ><farm-skeleton width="65%"></farm-skeleton>
+            </div>`,
+        )}
+      </div>
+    </div></farm-hydrating
+  >`;
 }

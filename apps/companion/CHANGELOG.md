@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Reserve loading layouts for gate, evidence and run views with shared skeleton shapes and retries.
+
 - Use one publication decision panel for gate and decision workspaces with explicit AC evidence actions.
 
 - Remember person logins through gateway device sessions and confirm revocation before sign-out, while preserving service profiles.

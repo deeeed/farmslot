@@ -9,8 +9,11 @@ import type { Run } from '@farmslot/protocol';
 // and the process group the holder lives in. The task watcher stays real: its
 // import graph reaches slot-teardown, which would then load before the mocks apply.
 import * as realCore from '../core/index.js';
+import * as realTmux from '../core/tmux.js';
 import * as realOwnedStop from '../runners/owned-stop.js';
 import * as realSessionArchive from '../runners/session-archive.js';
+import type { RunnerDescendantPidProbe } from '../runners/session-process.js';
+import * as realSessionProcess from '../runners/session-process.js';
 import * as realRunStore from '../runs/store.js';
 
 const RUN_ID = 'run-cancelled';
@@ -37,6 +40,8 @@ let providerCleanups: number;
 let workspaceHelperAlive = false;
 let rawProcessCensus: string | null = null;
 let cwdProcessCensus: string | null = null;
+let tmuxInventory = '';
+let runnerProbe: RunnerDescendantPidProbe = { state: 'absent' };
 
 function reapIdentity(cmd: string) {
   const expected = /if \[ "\$scope" != '([0-9a-f]+)' \]/.exec(cmd)?.[1];
@@ -62,6 +67,7 @@ mock.module('../core/index.js', {
       remoteRepo: '/slot',
       host: 'localhost',
       projectName: 'mm',
+      session: 'mmt-1',
     }),
     loadProjectVars: async () => ({ runtimeDir: '.agent' }),
     readSlotRow: async () => slotRow,
@@ -100,6 +106,7 @@ mock.module('../core/index.js', {
     },
     execOnSlot: async (_vars: unknown, cmd: string) => {
       commands.push(cmd);
+      if (cmd.includes('list-panes -a')) return { stdout: tmuxInventory, stderr: '', exitCode: 0 };
       if (cmd.startsWith('lsof -a -d cwd'))
         return {
           stdout: cwdProcessCensus ?? (workspaceHelperAlive ? 'p999\nn/slot\n' : ''),
@@ -127,6 +134,13 @@ mock.module('../core/index.js', {
     },
   },
 });
+mock.module('../core/tmux.js', {
+  namedExports: { ...realTmux, resolveTmuxSession: async () => 'mmt-1' },
+});
+mock.module('../runners/session-process.js', {
+  namedExports: { ...realSessionProcess, probeRunnerDescendantPid: async () => runnerProbe },
+});
+
 mock.module('../runs/store.js', {
   namedExports: {
     ...realRunStore,
@@ -151,7 +165,7 @@ mock.module('../runners/session-archive.js', {
 mock.module('../server.js', { namedExports: { broadcastEvent: () => {} } });
 const realSlotIO = await import('../core/slot-io.js');
 mock.module('../core/slot-io.js', {
-  namedExports: { ...realSlotIO, slotRealpath: async () => '/slot' },
+  namedExports: { ...realSlotIO, slotRealpath: async (_vars: unknown, file: string) => file },
 });
 const realPosture = await import('../methods/runtime-posture.js');
 mock.module('../methods/runtime-posture.js', {
@@ -213,6 +227,8 @@ beforeEach(() => {
   workspaceHelperAlive = false;
   rawProcessCensus = null;
   cwdProcessCensus = null;
+  tmuxInventory = '';
+  runnerProbe = { state: 'absent' };
 });
 
 test('cancel during or after prepare stops the run prepare-scope holder', async () => {
@@ -421,4 +437,34 @@ test('an unreadable live process identity cannot masquerade as an exited occupan
   assert.match((await slotTeardownBlocker(run)) ?? '', /identity census is unreadable/);
   rawProcessCensus = '1000 1 1000 Fri Oct 9 01:00:00 2026 node\n';
   assert.equal(await slotTeardownBlocker(run), null, 'the original occupant is verifiably gone');
+});
+
+test('a reused configured slot session accepts its unrecorded idle shell', async () => {
+  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/slot\t$2\t1791363049\n';
+  rawProcessCensus = '111 1 111 Fri Oct 9 01:00:00 2026 /bin/zsh\n';
+  cwdProcessCensus = 'p111\nn/slot\n';
+  assert.equal(await slotTeardownBlocker(run), null);
+});
+
+test('a foreign controller and a different session origin remain protected', async () => {
+  tmuxInventory = 'xreview-controller\t%3\t111\t/slot\t/slot\t$2\t1791363049\n';
+  assert.match((await slotTeardownBlocker(run)) ?? '', /without verified slot ownership/);
+  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/operator\t$2\t1791363049\n';
+  assert.match((await slotTeardownBlocker(run)) ?? '', /started outside this slot checkout/);
+  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/slot\t\t\n';
+  assert.match((await slotTeardownBlocker(run)) ?? '', /without verified slot ownership/);
+});
+
+test('a live unrecorded runner in the reused slot session stays protected', async () => {
+  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/slot\t$2\t1791363049\n';
+  runnerProbe = { state: 'present', pid: '222' };
+  assert.match((await slotTeardownBlocker(run)) ?? '', /is not quiescent/);
+});
+
+test('a non-runner child in an unrecorded slot pane still blocks cleanup', async () => {
+  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/slot\t$2\t1791363049\n';
+  rawProcessCensus =
+    '111 1 111 Fri Oct 9 01:00:00 2026 /bin/zsh\n222 111 111 Fri Oct 9 01:00:00 2026 node\n';
+  cwdProcessCensus = 'p111\nn/slot\np222\nn/slot\n';
+  assert.match((await slotTeardownBlocker(run)) ?? '', /pane process 111 is still occupied/);
 });
