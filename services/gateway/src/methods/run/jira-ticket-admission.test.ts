@@ -14,7 +14,7 @@ const temporary = await mkdtemp(path.join(os.tmpdir(), 'jira-ticket-admission-')
 process.env.FARMSLOT_RUNS_DIR = path.join(temporary, 'runs');
 
 const { farmslotRoot } = await import('../../fleet/state.js');
-const { getAllRuns } = await import('../../runs/store.js');
+const { deleteRun, getAllRuns, getRun, updateRun } = await import('../../runs/store.js');
 const { fetchTicketData } = await import('../../run-engine/ticket-data.js');
 const { runCreate } = await import('../run.js');
 const { jiraTicketDataForCreate } = await import('./ticket-policy.js');
@@ -58,7 +58,7 @@ const ISSUE = {
   },
 };
 
-function withJira(t: test.TestContext, respond: (url: string) => Response) {
+function withJira(t: test.TestContext, respond: (url: string) => Response | Promise<Response>) {
   const originalFetch = globalThis.fetch;
   const requested: string[] = [];
   globalThis.fetch = async (input) => {
@@ -138,7 +138,7 @@ test('creation stores the Jira ticket read through the project source', async (t
   assert.ok(requested[0]?.startsWith('https://jira.example.invalid/rest/api/3/issue/TAT-4138?'));
 });
 
-test('creation keeps a caller ticket read from Jira for the same key and leaves other refs alone', async (t) => {
+test('creation keeps a caller ticket read from Jira for the same key and leaves other runs alone', async (t) => {
   const requested = withJira(t, () => json({}, 500));
   const copied = jiraTicketData('TAT-4138', 'Implement market icon mapping');
   const base = { project, flowType: 'dev' as const, ticketOrPr: 'TAT-4138' };
@@ -148,8 +148,58 @@ test('creation keeps a caller ticket read from Jira for the same key and leaves 
     { ...base, ticketOrPr: 'MANUAL-000146' },
     { ...base, ticketOrPr: 'example-org/example-repo#12' },
     { ...base, flowType: 'pr-complete' as const, ticketOrPr: 'example-org/example-repo#12' },
+    // The caller wrote the task, or the run is a validation or comparison run.
+    { ...base, taskFile: '/tasks/dev/TAT-4138/TASK.md' },
+    { ...base, mode: 'validation' as const },
+    { ...base, lane: 'comparison' as const, variant: 'replay' },
   ]) {
     assert.equal(await jiraTicketDataForCreate(params), undefined, JSON.stringify(params));
   }
   assert.deepEqual(requested, []);
+});
+
+test('overlapping creates for one Jira key store one run', async (t) => {
+  const previous = {
+    NODE_TEST_CONTEXT: process.env.NODE_TEST_CONTEXT,
+    FARMSLOT_DISABLE_RUN_ENGINE_START: process.env.FARMSLOT_DISABLE_RUN_ENGINE_START,
+  };
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const requested = withJira(t, async (url) => {
+    await held;
+    return url.includes('/comment') ? json({ comments: [] }) : json(ISSUE);
+  });
+  const created: string[] = [];
+  t.after(async () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    for (const id of created) {
+      updateRun(id, { status: 'done', completedAt: new Date().toISOString() });
+      await deleteRun(id);
+    }
+  });
+  const params = { project, flowType: 'dev', mode: 'autonomous', ticketOrPr: 'TAT-4138' } as const;
+  const attempts = [runCreate({ ...params }, () => {}), runCreate({ ...params }, () => {})];
+  // Both requests pass planning and wait on the Jira read before either is stored.
+  for (let i = 0; i < 200 && requested.length < 2; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(requested.length, 2);
+  release();
+  const settled = await Promise.allSettled(attempts);
+  for (const result of settled)
+    if (result.status === 'fulfilled') created.push(result.value.run.id);
+  assert.equal(created.length, 1);
+  const refused = settled.find((result) => result.status === 'rejected');
+  assert.match(String(refused?.reason), /Active run already exists for TAT-4138/);
+  assert.equal(getAllRuns().filter((run) => run.ticketOrPr === 'TAT-4138').length, 1);
+  // A ticket read at creation still gets its Jira link.
+  assert.ok(
+    getRun(created[0])?.links?.some(
+      (link) =>
+        link.label === 'Jira' && link.url === 'https://jira.example.invalid/browse/TAT-4138',
+    ),
+  );
 });

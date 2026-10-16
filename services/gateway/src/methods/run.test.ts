@@ -1466,7 +1466,6 @@ test('runCreate rejects direct prior-run startRef provenance', async (t) => {
           flowType: 'dev',
           project: baseline.project,
           ticketOrPr: baseline.ticketOrPr,
-          ticketData: jiraTicketData(baseline.ticketOrPr),
           familyId: baseline.familyId,
           parentRunId: baseline.id,
           lane: 'comparison',

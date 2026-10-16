@@ -8,6 +8,7 @@ import {
 } from '@farmslot/protocol';
 
 import { fetchTicketData } from '../../run-engine/ticket-data.js';
+import { resolveRunLane } from '../../runs/store.js';
 import { JIRA_KEY_RE, normalizeTicketRef, validateTicketRef } from '../dispatch/ticket-ref.js';
 
 export function isInternalArtifactOnlyEvalTicket(
@@ -48,10 +49,12 @@ export function isStoredManualBacklogRun(
 }
 
 /**
- * A run for a Jira key starts from that ticket, read through the project's
- * Jira source: the caller's copy when it was read from Jira for the same key
- * (eval and successor runs copy it), else a fresh read that refuses instead of
- * storing a key-only placeholder.
+ * A production run for a Jira key, whose task Farmslot writes from the ticket,
+ * starts from that ticket read through the project's Jira source: the caller's
+ * copy when it was read from Jira for the same key (successor runs copy it),
+ * else a fresh read that refuses instead of storing a key-only placeholder.
+ * A caller-authored task file, and validation and comparison runs, keep the
+ * caller's ticket.
  */
 export async function jiraTicketDataForCreate(
   params: RunCreateParams,
@@ -60,9 +63,10 @@ export async function jiraTicketDataForCreate(
   const key = ref.toUpperCase();
   if (
     !params.project ||
+    params.taskFile ||
+    resolveRunLane(params.mode, params.lane) !== 'production' ||
     params.flowType === 'qa' ||
     PR_BOUND_FLOW_TYPES.has(params.flowType as FlowType) ||
-    isInternalArtifactOnlyEvalTicket(params) ||
     isManualBacklogRef(key) ||
     !JIRA_KEY_RE.test(key)
   ) {
