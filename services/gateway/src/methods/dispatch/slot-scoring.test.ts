@@ -161,7 +161,11 @@ test('slotScore: family affinity bonus and health tiebreakers', () => {
 test('candidate plans preserve a resolved branch when task creation has not populated it', () => {
   const targetBranch = 'TAT-4137-feat-chart-native-order-management';
   const candidate = slot({ slot: 'same-branch', branch: targetBranch });
-  const params = { project: 'demo-farm', flowType: 'pr-complete', ticketOrPr: 'example/app#210' };
+  const params: SlotSelectionPlan['params'] = {
+    project: 'demo-farm',
+    flowType: 'pr-complete',
+    ticketOrPr: 'example/app#210',
+  };
   const options = {
     targetBranch,
     plans: new Map<string, SlotSelectionPlan>([
