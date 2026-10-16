@@ -2,7 +2,12 @@ import path from 'node:path';
 
 import { isRecord } from '@farmslot/protocol';
 
-import { readContainedJsonArtifact, readContainedTextArtifact } from '../artifact-files.js';
+import {
+  readContainedJsonArtifact,
+  readContainedTextArtifact,
+  runnerRevision,
+} from '../artifact-files.js';
+import { countRecipeNodes } from '../run-engine.js';
 
 export interface TaskArtifactsMarkdownInput {
   taskDir: string;
@@ -55,18 +60,6 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function countRecipeNodes(recipe: unknown): number {
-  if (!isRecord(recipe)) return 0;
-  if (Array.isArray(recipe.nodes)) return recipe.nodes.length;
-  if (Array.isArray(recipe.steps)) return recipe.steps.length;
-  if (!isRecord(recipe.workflow)) return 0;
-  if (isRecord(recipe.workflow.nodes)) return Object.keys(recipe.workflow.nodes).length;
-  return Object.values(recipe.workflow).reduce<number>(
-    (total, value) => total + (Array.isArray(value) ? value.length : 0),
-    0,
-  );
-}
-
 async function optionalText(root: string, file: string): Promise<string | undefined> {
   try {
     return await readContainedTextArtifact(root, file, MAX_ARTIFACT_BYTES, file);
@@ -117,7 +110,7 @@ export async function renderTaskArtifactsMarkdown(
         provenance.push(`Run: ${escapeHtml(summary.recipeRunId)}`);
       if (isRecord(summary.runner)) {
         const runner = summary.runner;
-        const revision = runner.git_ref ?? runner.gitRef ?? runner.ref ?? runner.commit;
+        const revision = runnerRevision(runner);
         if (typeof runner.name === 'string') provenance.push(`Runner: ${escapeHtml(runner.name)}`);
         if (typeof revision === 'string')
           provenance.push(`Runner revision: ${escapeHtml(revision)}`);
@@ -135,7 +128,7 @@ export async function renderTaskArtifactsMarkdown(
   let recipe: TaskArtifactsMarkdownResult['recipe'] = null;
   if (recipeText !== undefined) {
     const document: unknown = JSON.parse(recipeText);
-    const nodes = countRecipeNodes(document);
+    const nodes = countRecipeNodes(document) ?? 0;
     const title = isRecord(document)
       ? typeof document.title === 'string'
         ? document.title

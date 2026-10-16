@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  link,
   mkdir,
   mkdtemp,
   readdir,
@@ -16,8 +17,11 @@ import { fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
 
+import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import { recordRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
 import { digestRecipeDocument } from '@farmslot/protocol';
+import { writeRunReport } from '@farmslot/recipe-cli/harness';
+import { createRecipeRunner } from '@farmslot/recipe-runner';
 import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 
 import { registerRecipeCommand, validateRecipeArtifactDirectory } from './recipe.js';
@@ -694,4 +698,72 @@ test('legacy task-root packages allow the usual PR body output while preserving 
   await invoke(['--format', 'markdown', '--out', summary, '--json']);
   assert.equal(process.exitCode, 1);
   assert.equal(await readFile(summary, 'utf8'), before);
+});
+
+test('Markdown output preserves consumed comparison closure files', async (t) => {
+  const task = await mkdtemp(path.join(os.tmpdir(), 'comparison-output-'));
+  const child = await mkdtemp(path.join(os.tmpdir(), 'comparison-source-'));
+  t.after(() => rm(task, { recursive: true, force: true }));
+  t.after(() => rm(child, { recursive: true, force: true }));
+  const engine = createRecipeRunner({
+    actionManifest: {
+      $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
+      actions: {
+        end: { description: 'Finish the recipe', examples: [{ action: 'end', status: 'pass' }] },
+      },
+    },
+    adapters: [],
+    runner,
+    defaultSource: { kind: 'operator', trust: 'trusted', name: 'artifact-reader-test' },
+  });
+  assert.equal(
+    (await engine.run({ recipeDocument: recipe, artifactsDir: child, projectRoot: task })).status,
+    'pass',
+  );
+  const artifacts = path.join(task, 'artifacts');
+  const parent = await engine.run({
+    recipeDocument: recipe,
+    artifactsDir: artifacts,
+    projectRoot: task,
+    comparisonDependencies: [child],
+    finalizeArtifacts: async (context) => {
+      writeRunReport(context);
+    },
+  });
+  assert.equal(parent.status, 'pass');
+  await writeFile(
+    path.join(artifacts, 'pr-description.md'),
+    '## Description\n\nComparison proof.\n',
+  );
+  const retained = await readRecordedEvidencePackage(artifacts);
+  const dependency = retained.input.comparisonDependencies?.[0];
+  assert.ok(dependency);
+  const relative = `${dependency.artifactRoot}/summary.json`;
+  assert.ok(retained.input.artifactPaths?.includes(relative));
+  const validated = await validateRecipeArtifactDirectory(artifacts, {
+    requireRunnerProvenance: true,
+  });
+  assert.equal(validated.status, 'pass', JSON.stringify(validated));
+  const out = path.join(artifacts, relative);
+  const before = await readFile(out, 'utf8');
+  const invoke = artifactInvocation(t, task);
+  await invoke(['--format', 'markdown', '--out', out, '--json']);
+  assert.equal(process.exitCode, 1);
+  assert.equal(await readFile(out, 'utf8'), before);
+});
+
+test('Markdown output refuses file aliases of authored prose', async (t) => {
+  const task = await mkdtemp(path.join(os.tmpdir(), 'alias-output-'));
+  t.after(() => rm(task, { recursive: true, force: true }));
+  const artifacts = path.join(task, 'artifacts');
+  await mkdir(artifacts);
+  const prose = path.join(artifacts, 'pr-description.md');
+  await writeFile(prose, '## Description\n\nAuthored prose must survive.\n');
+  const out = path.join(artifacts, 'body-alias.md');
+  await link(prose, out);
+  const before = await readFile(prose, 'utf8');
+  const invoke = artifactInvocation(t, task);
+  await invoke(['--format', 'markdown', '--out', out, '--json']);
+  assert.equal(process.exitCode, 1);
+  assert.equal(await readFile(prose, 'utf8'), before);
 });

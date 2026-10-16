@@ -10,6 +10,12 @@ export interface ArtifactManifestEntry {
   metadata?: Record<string, unknown>;
 }
 
+/** Keep legacy revision field selection identical for validation and presentation. */
+export function runnerRevision(runner: Record<string, unknown>): string | undefined {
+  const revision = runner.git_ref ?? runner.gitRef ?? runner.ref ?? runner.commit;
+  return typeof revision === 'string' ? revision : undefined;
+}
+
 export async function writeContainedArtifact(
   artifactsDir: string,
   relativePath: string,

@@ -40,6 +40,7 @@ export {
   type ArtifactManifestEntry,
   indexArtifactManifest,
   readContainedJsonArtifact,
+  runnerRevision,
   writeContainedArtifact,
 } from './artifact-files.js';
 export {

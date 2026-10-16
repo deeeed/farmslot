@@ -1,9 +1,12 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { type Command, Option } from 'commander';
 
-import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
+import {
+  readRecordedEvidencePackage,
+  type RecordedEvidencePackageReadResult,
+} from '@farmslot/adapter-sdk';
 import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
 import { readRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
 import {
@@ -19,6 +22,7 @@ import {
   type RecipeValidationFinding,
   type RecipeValidationResult,
 } from '@farmslot/protocol';
+import { runnerRevision } from '@farmslot/recipe-cli/harness';
 import {
   applyTaskLocalInvocationTrust,
   createRecipeRunner,
@@ -147,7 +151,7 @@ function readRunnerProvenance(parent: unknown, field: string): Record<string, un
   const runner = parent[field];
   if (!isRecord(runner)) return null;
   const source = runner.source;
-  const ref = runner.git_ref ?? runner.gitRef ?? runner.ref ?? runner.commit;
+  const ref = runnerRevision(runner);
   if (typeof source !== 'string' || source.trim() === '') return null;
   if (typeof ref !== 'string' || ref.trim() === '') return null;
   return runner;
@@ -155,7 +159,7 @@ function readRunnerProvenance(parent: unknown, field: string): Record<string, un
 
 function canonicalRunnerIdentity(runner: Record<string, unknown>): string | null {
   const source = runner.source;
-  const ref = runner.git_ref ?? runner.gitRef ?? runner.ref ?? runner.commit;
+  const ref = runnerRevision(runner);
   if (typeof source !== 'string' || source.trim() === '') return null;
   if (typeof ref !== 'string' || ref.trim() === '') return null;
   return JSON.stringify({ source: source.trim(), ref: ref.trim() });
@@ -181,7 +185,18 @@ export async function validateRecipeArtifactDirectory(
   opts: RecipeArtifactsValidateOptions,
 ): Promise<ArtifactValidationResult> {
   const artifactDir = resolveRecipeCliPath(artifactDirInput);
-  const loaded = await readRecordedEvidencePackage(artifactDir);
+  return validateRecipeArtifactRead(
+    artifactDir,
+    opts,
+    await readRecordedEvidencePackage(artifactDir),
+  );
+}
+
+async function validateRecipeArtifactRead(
+  artifactDir: string,
+  opts: RecipeArtifactsValidateOptions,
+  loaded: RecordedEvidencePackageReadResult,
+): Promise<ArtifactValidationResult> {
   const checks: ArtifactValidationCheck[] = loaded.checks;
   const retained = loaded.input;
   const { summary, trace, manifest, artifactDigests } = retained;
@@ -400,17 +415,10 @@ async function writeArtifactsMarkdown(
   const shared = await import('@farmslot/recipe-cli/harness');
   let parent = path.dirname(out);
   while (!existsSync(parent)) parent = path.dirname(parent);
+  const destination = existsSync(out) ? statSync(out, { bigint: true }) : undefined;
   const protectedPaths = [
     ...(artifactDir
-      ? [
-          'artifact-manifest.json',
-          'summary.json',
-          'trace.json',
-          'recipe.json',
-          'recipe-resolution.json',
-          'report.md',
-          ...artifactPaths,
-        ].map((file) => path.resolve(artifactDir, file))
+      ? [...artifactPaths, 'report.md'].map((file) => path.resolve(artifactDir, file))
       : []),
     ...(taskDir
       ? [
@@ -425,12 +433,15 @@ async function writeArtifactsMarkdown(
       : []),
   ];
   if (
-    protectedPaths.some(
-      (file) =>
+    protectedPaths.some((file) => {
+      const input = destination && existsSync(file) ? statSync(file, { bigint: true }) : undefined;
+      return (
         out === path.resolve(file) ||
+        (input && destination && input.dev === destination.dev && input.ino === destination.ino) ||
         shared.isPathWithin(file, parent) ||
-        shared.isPathWithin(file, out),
-    )
+        shared.isPathWithin(file, out)
+      );
+    })
   )
     throw new Error('--out must not overwrite authored inputs or retained recipe evidence.');
   await shared.writeContainedArtifact(
@@ -583,9 +594,17 @@ export function registerRecipeCommand(program: Command): void {
           ? await readRecipeCliJsonFileWithinRoot(artifactDir, 'artifact-manifest.json')
           : undefined;
         const artifactPaths = artifactManifestPaths(manifest);
+        const retained =
+          artifactDir && (options.validate || authoredTask || options.out)
+            ? await readRecordedEvidencePackage(artifactDir)
+            : undefined;
         const checked =
-          artifactDir && (options.validate || authoredTask)
-            ? await validateRecipeArtifactDirectory(artifactDir, { requireRunnerProvenance: true })
+          artifactDir && retained && (options.validate || authoredTask)
+            ? await validateRecipeArtifactRead(
+                artifactDir,
+                { requireRunnerProvenance: true },
+                retained,
+              )
             : undefined;
         if (authoredTask && checked?.status === 'fail')
           throw new Error('Artifact validation failed; Markdown was not rendered or written.');
@@ -602,14 +621,17 @@ export function registerRecipeCommand(program: Command): void {
           (artifactDir ? evidenceMarkdown(artifactDir, summary, artifactPaths) : '');
         const out = options.out ? path.resolve(options.out) : undefined;
         if (out) {
-          if (validation?.status === 'fail')
+          if (
+            validation?.status === 'fail' ||
+            retained?.checks.some((check) => check.status === 'fail')
+          )
             throw new Error('Artifact validation failed; Markdown was not written.');
           await writeArtifactsMarkdown(
             out,
             body,
             authoredTask ? taskDir : undefined,
             artifactDir,
-            artifactPaths,
+            retained?.input.artifactPaths ?? [],
           );
         }
         const result = {
