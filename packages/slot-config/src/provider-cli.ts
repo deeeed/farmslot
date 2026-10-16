@@ -9,7 +9,11 @@ import type { ProviderCliHealth } from '@farmslot/protocol';
 
 const execute = promisify(execFile);
 const MARKER = 'FARMSLOT_PROVIDER_PATH';
-const SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
+export function providerShellPath(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'darwin'
+    ? '/usr/bin:/bin:/usr/sbin:/sbin'
+    : '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+}
 
 export type ProviderCliRunner = (
   executable: string,
@@ -19,7 +23,14 @@ export type ProviderCliRunner = (
 ) => Promise<string>;
 
 const run: ProviderCliRunner = async (executable, args, env, timeoutMs = 5_000) =>
-  (await execute(executable, args, { env, timeout: timeoutMs, maxBuffer: 1024 * 1024 })).stdout;
+  (
+    await execute(executable, args, {
+      env,
+      cwd: os.homedir(),
+      timeout: timeoutMs,
+      maxBuffer: 1024 * 1024,
+    })
+  ).stdout;
 
 function probeEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -93,10 +104,15 @@ export async function inspectProviderCli(
     ];
     for (const mode of ['non-interactive', 'login', 'interactive']) {
       const flag = mode === 'non-interactive' ? '-c' : mode === 'login' ? '-lc' : '-lic';
-      const output = await runner(shell, [flag, `printf '\\0${MARKER}\\0%s\\0' "$PATH"`], {
-        ...env,
-        PATH: SYSTEM_PATH,
-      });
+      const output = await runner(
+        shell,
+        [flag, `printf '\\0${MARKER}\\0%s\\0' "$PATH"`],
+        {
+          ...env,
+          PATH: providerShellPath(),
+        },
+        30_000,
+      );
       const fields = output.split('\0');
       const marker = fields.lastIndexOf(MARKER);
       if (marker < 0 || !fields[marker + 1])

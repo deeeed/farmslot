@@ -343,7 +343,7 @@ Status: Proposed. Lead routing approved; acceptance follows paired review.
 
 A provider root declared in machine pool `env.*_PACKAGE_ROOT` supplies its package identity, exact version and public binaries. The same version must be installed globally. Versioned roots remain immutable run pins. Rollout must reject success if any public binary on the node, login, interactive or non-interactive shell PATH reports another version or is missing. Inspect without inherited provider selectors, so delegation cannot hide a stale installation.
 
-The node samples this read-only check through its existing metrics cadence, sharing one probe and caching for at most 60 seconds. A changed pool invalidates the cache. Failures appear in `MachineHealth.providerCliHealth`, fleet machine health and critical pressure concerns. They mark headroom red without changing run, gate or slot ownership.
+The node samples this read-only check in the background through its existing metrics cadence, sharing one probe and caching for at most 60 seconds without delaying gauge events. A changed pool invalidates the cache. Failures appear in `MachineHealth.providerCliHealth`, fleet machine health and critical pressure concerns. They mark headroom red for existing health readers. The checker itself does not write run, gate or slot ownership.
 
 ### Rationale and consequences
 

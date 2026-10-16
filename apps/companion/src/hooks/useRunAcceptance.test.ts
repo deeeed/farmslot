@@ -151,6 +151,7 @@ test('cold Retry shows loading until the unchanged run acceptance read arrives',
   await settle();
   const failed = mounted.render();
   assert.match(String(failed.error), /temporary read failure/);
+  assert.equal(failed.loading, false);
   mounted.render({ ...run });
   await settle();
   assert.equal(reads, 1);
@@ -159,6 +160,7 @@ test('cold Retry shows loading until the unchanged run acceptance read arrives',
   const waiting = mounted.render();
   assert.equal(waiting.error, null, 'A cold Retry must clear its old request error while loading');
   assert.equal(waiting.view, null);
+  assert.equal(waiting.loading, true);
   assert.equal(waiting.evidenceModel, null);
   await settle();
   assert.equal(reads, 2);
@@ -189,6 +191,7 @@ test('Retry preserves a cached acceptance read and its error until the refresh a
   await settle();
   const loaded = mounted.render();
   assert.notEqual(loaded.view, null);
+  assert.equal(loaded.loading, false);
   retry(loaded);
   mounted.render();
   await settle();
@@ -199,6 +202,7 @@ test('Retry preserves a cached acceptance read and its error until the refresh a
   const waiting = mounted.render();
   assert.equal(waiting.error, failed.error);
   assert.equal(waiting.acceptanceStatus, progress.acceptanceStatus);
+  assert.equal(waiting.loading, false);
   assert.notEqual(waiting.view, null);
   await settle();
   assert.equal(reads, 3);
@@ -247,17 +251,20 @@ test('a disconnected cold Retry keeps its error until a connected read starts', 
   await settle();
   const failed = mounted.render();
   assert.match(String(failed.error), /temporary read failure/);
+  assert.equal(failed.loading, false);
   mounted.setConnected(false);
   mounted.render();
   retry(failed);
   mounted.render();
   assert.equal(mounted.render().error, failed.error);
+  assert.equal(mounted.render().loading, false);
   assert.equal(reads, 1);
   mounted.setConnected(true);
   mounted.render();
   const waiting = mounted.render();
   assert.equal(waiting.error, null);
   assert.equal(waiting.view, null);
+  assert.equal(waiting.loading, true);
   assert.equal(reads, 2);
   finish(progress);
   await settle();

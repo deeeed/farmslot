@@ -684,23 +684,30 @@ async function handleRequest(
       case 'system.metrics': {
         // Keep a completed census queued for the subscribed node.metrics event; an ad-hoc
         // gauge RPC must not consume the only process sample before the gateway sees it.
-        const metrics = await collectMetrics({ consumeProcessInventory: false });
+        const metrics = await collectMetrics({
+          consumeProcessInventory: false,
+          machine: MACHINE_NAME,
+        });
         sendResponse(frame.id, true, metrics);
         break;
       }
 
       case 'system.metrics.subscribe': {
         const interval = typeof params.intervalMs === 'number' ? params.intervalMs : 30_000;
-        startMetricsSubscription(interval, (metrics) => {
-          if (!ws || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(
-            JSON.stringify({
-              type: 'event',
-              event: 'node.metrics',
-              payload: { machine: MACHINE_NAME, metrics },
-            }),
-          );
-        });
+        startMetricsSubscription(
+          interval,
+          (metrics) => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(
+              JSON.stringify({
+                type: 'event',
+                event: 'node.metrics',
+                payload: { machine: MACHINE_NAME, metrics },
+              }),
+            );
+          },
+          MACHINE_NAME,
+        );
         sendResponse(frame.id, true, { subscribed: true, intervalMs: interval });
         break;
       }

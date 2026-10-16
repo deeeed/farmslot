@@ -4,31 +4,44 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { collectProviderCliHealth } from './provider-cli-health.js';
+import { collectProviderCliHealth, getProviderCliHealth } from './provider-cli-health.js';
 
 test('node samples share provider failures and a pool change clears them', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'node-provider-health-'));
-  const prior = { pool: process.env.FARMSLOT_POOL_DIR, machine: process.env.MACHINE_NAME };
+  const prior = process.env.FARMSLOT_POOL_DIR;
   process.env.FARMSLOT_POOL_DIR = root;
-  process.env.MACHINE_NAME = 'fixture';
   t.after(async () => {
-    if (prior.pool === undefined) delete process.env.FARMSLOT_POOL_DIR;
-    else process.env.FARMSLOT_POOL_DIR = prior.pool;
-    if (prior.machine === undefined) delete process.env.MACHINE_NAME;
-    else process.env.MACHINE_NAME = prior.machine;
+    if (prior === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = prior;
     await rm(root, { recursive: true, force: true });
   });
-  const pool = path.join(root, 'fixture.json');
+  process.env.FARMSLOT_POOL_DIR = path.join(root, 'not-created');
+  assert.deepEqual(await collectProviderCliHealth('fixture'), []);
+  process.env.FARMSLOT_POOL_DIR = root;
+  const pool = path.join(root, 'fixture-onboard.json');
+  assert.deepEqual(await collectProviderCliHealth('fixture'), []);
   await writeFile(
     pool,
-    JSON.stringify({ env: { FIXTURE_PACKAGE_ROOT: path.join(root, 'missing') } }),
+    JSON.stringify({
+      machine: 'fixture',
+      env: { FIXTURE_PACKAGE_ROOT: path.join(root, 'missing') },
+    }),
   );
-  const [first, concurrent] = await Promise.all([
-    collectProviderCliHealth(),
-    collectProviderCliHealth(),
-  ]);
+  const pending = collectProviderCliHealth('fixture');
+  assert(
+    Array.isArray(getProviderCliHealth('fixture')),
+    'metrics return the last result while probing',
+  );
+  const [first, concurrent] = await Promise.all([pending, collectProviderCliHealth('fixture')]);
   assert.strictEqual(first, concurrent);
   assert.equal(first[0].ok, false);
-  await writeFile(pool, JSON.stringify({ env: {} }));
-  assert.deepEqual(await collectProviderCliHealth(), []);
+  await writeFile(pool, JSON.stringify({ machine: 'fixture', env: {} }));
+  assert.deepEqual(await collectProviderCliHealth('fixture'), []);
+  await writeFile(pool, '{malformed');
+  const malformed = await collectProviderCliHealth('fixture');
+  assert.equal(malformed[0].ok, false);
+  assert.match(malformed[0].reason ?? '', /Invalid pool JSON/);
+  assert(!malformed[0].reason?.includes('{malformed'));
+  await rm(pool);
+  assert.deepEqual(await collectProviderCliHealth('fixture'), []);
 });

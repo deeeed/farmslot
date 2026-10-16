@@ -1,7 +1,15 @@
 import * as Haptics from 'expo-haptics';
 import { Stack, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, type LayoutChangeEvent, Pressable, ScrollView, Text, View } from 'react-native';
+import {
+  Alert,
+  type LayoutChangeEvent,
+  Pressable,
+  ScrollView,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -39,7 +47,10 @@ import {
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer, type MediaViewerItem } from '../../components/MediaViewer';
-import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
+import {
+  acceptancePanelViewportHeight,
+  TaskAcceptancePanel,
+} from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
@@ -182,6 +193,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     [resolvedDecisionId],
   );
   const insets = useSafeAreaInsets();
+  const viewport = useWindowDimensions();
   const router = useRouter();
   const isFocused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
@@ -1710,24 +1722,32 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             >
               <Text style={styles.reportTitle}>Read verified report</Text>
             </Pressable>
-            <TaskAcceptancePanel
-              evidenceModel={outputAcceptance.evidenceModel}
-              onMarkUntestable={markOutputClaimUntestable}
-              acceptanceStatus={outputAcceptance.acceptanceStatus}
-              acceptanceCriteria={outputAcceptance.acceptanceCriteria}
-              error={outputAcceptance.error}
-              onOpenEvidence={(criterionId, path) =>
-                router.push(
-                  acceptanceEvidenceHref(
-                    presentation.runId!,
-                    criterionId,
-                    path,
-                    outputAcceptance.recipeRunId,
-                    decision?.id,
-                  ),
-                )
-              }
-            />
+            <ScrollView
+              nestedScrollEnabled
+              testID="companion-output-acceptance"
+              style={{ height: acceptancePanelViewportHeight(undefined, viewport.height) }}
+            >
+              <TaskAcceptancePanel
+                loading={outputAcceptance.loading}
+                evidenceModel={outputAcceptance.evidenceModel}
+                onMarkUntestable={markOutputClaimUntestable}
+                acceptanceStatus={outputAcceptance.acceptanceStatus}
+                acceptanceCriteria={outputAcceptance.acceptanceCriteria}
+                error={outputAcceptance.error}
+                onRetry={taskProgressRequestForRun(sourceRun) ? outputAcceptance.retry : undefined}
+                onOpenEvidence={(criterionId, path) =>
+                  router.push(
+                    acceptanceEvidenceHref(
+                      presentation.runId!,
+                      criterionId,
+                      path,
+                      outputAcceptance.recipeRunId,
+                      decision?.id,
+                    ),
+                  )
+                }
+              />
+            </ScrollView>
           </View>
         ) : null}
 
@@ -1854,6 +1874,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             <>
               {humanGate ? (
                 <GateActions
+                  loading={humanGate.acceptance.loading}
                   decision={decision}
                   actions={humanGate.actions.map((action) =>
                     action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&

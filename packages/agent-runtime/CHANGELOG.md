@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Produce hosted and authored tasks with retained node tooling, replay policy, metadata and independently retained workspace dependencies.
+- Retain hoisted packages' workspace-provided peers without relaxing missing ordinary dependency checks.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

@@ -9,6 +9,7 @@ import {
   installProviderCli,
   poolProviderRoots,
   type ProviderCliRunner,
+  providerShellPath,
 } from './provider-cli.js';
 
 async function fixture(t: TestContext) {
@@ -49,6 +50,7 @@ async function fixture(t: TestContext) {
       return `profile chatter\0FARMSLOT_PROVIDER_PATH\0${selected}\0`;
     }
     if (executable === 'npm') return '';
+    if (path.dirname(executable) === stale) assert.equal(env.PATH, sshPath);
     assert.equal(env.MM_HARNESS_BIN, undefined);
     assert.equal(env.MM_HARNESS_PACKAGE_ROOT, undefined);
     return versions.get(path.dirname(executable)) + '\n';
@@ -117,4 +119,9 @@ test('rollout succeeds only after every declared binary matches the pin', async 
     }),
   );
   assert.deepEqual(await poolProviderRoots(pool), [f.root]);
+});
+
+test('SSH defaults cover Linux global npm without changing the macOS baseline', () => {
+  assert(providerShellPath('linux').split(path.delimiter).includes('/usr/local/bin'));
+  assert.equal(providerShellPath('darwin'), '/usr/bin:/bin:/usr/sbin:/sbin');
 });

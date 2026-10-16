@@ -4,7 +4,7 @@ The machine pool owns installed provider selection through `env.*_PACKAGE_ROOT`.
 
 Every public binary must report that version from every executable match on the node service PATH, login PATH, interactive PATH and non-interactive PATH. The non-interactive shell starts with the operating system default path, as an SSH command does. Provider selection environment overrides must be absent from probes so an obsolete executable cannot delegate to the pin and mask drift. Missing commands, a failed probe or a mismatching version are failures.
 
-The node shares one in-flight sample and caches it for at most 60 seconds. A pool change invalidates it. Diagnostics travel with the existing metrics subscription into `MachineHealth.providerCliHealth`. A failure marks node headroom red and appears in fleet status and resource pressure concerns. This check grants no cleanup, run or slot authority.
+The node refreshes in the background without delaying gauge events, shares one in-flight sample and caches it for at most 60 seconds. A pool change invalidates it. Diagnostics travel with the existing metrics subscription into `MachineHealth.providerCliHealth`. A failure marks node headroom red and appears in fleet status and resource pressure concerns. This check grants no cleanup, run or slot authority.
 
 ## Rollout
 

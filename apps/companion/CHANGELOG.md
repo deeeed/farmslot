@@ -4,7 +4,9 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Reserve loading layouts for gate, evidence and run views with shared skeleton shapes, including retries before acceptance data loads.
+- Show the shared no-code-review warning at publication gates.
+
+- Reserve loading layouts and retries for gate, output-review acceptance, evidence and run views with shared skeleton shapes.
 
 - Use one publication decision panel for gate and decision workspaces with explicit AC evidence actions.
 

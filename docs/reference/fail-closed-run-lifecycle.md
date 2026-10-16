@@ -63,6 +63,8 @@ projection; the run DTO exposes it for inspection. Recompute it when its inputs
 change and never treat the stored projection as approval authority. Reuse
 existing action definitions; do not add a second decision store.
 
+When project policy skips code review, the shared gate projection and published PR MUST disclose "No code review ran" without withholding approval solely for that skip.
+
 Inspection, hold, evidence selection/judgments, review requests and authorized
 fix/recovery actions MUST remain usable as appropriate. A `collecting` gate may
 gather the visual judgments and reviewer artifacts it still needs. It MUST NOT

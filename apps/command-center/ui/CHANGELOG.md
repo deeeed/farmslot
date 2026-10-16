@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show the shared no-code-review warning at publication gates.
+
 - Keep async gate and panel layouts stable with component-specific skeletons and visible retries after loading errors.
 
 ## 0.21.0 - 2026-10-16
