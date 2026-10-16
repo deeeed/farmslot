@@ -29,7 +29,7 @@ import {
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from './ready-gate-package.js';
-import { makeRun } from './test-fixtures.js';
+import { makeRun, manualTicketData } from './test-fixtures.js';
 const { retainRunFixture } = await import('../run-engine/test-fixtures.js');
 
 const PROSE = '## **Description**\n\nFix the order form.\n';
@@ -58,7 +58,7 @@ async function snapshotMirror(dir: string): Promise<Record<string, string>> {
   return files;
 }
 
-async function makeTask() {
+async function makeTask(ticketTitle = 'Fix the order form') {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-publish-body-race-'));
   const artifactsDir = path.join(root, 'artifacts');
   await mkdir(artifactsDir, { recursive: true });
@@ -67,7 +67,13 @@ async function makeTask() {
   await writeFile(path.join(artifactsDir, 'pr-description.md'), PROSE);
   await writeFile(path.join(artifactsDir, 'pr-body.md'), WORKER_BODY);
   // The slot is gone from the pool, so the template completion keeps the body as rendered.
-  const run = makeRun({ flowType: 'dev', taskFile, slotId: 'no-such-slot', ticketOrPr: 'PROJ-1' });
+  const run = makeRun({
+    flowType: 'dev',
+    taskFile,
+    slotId: 'no-such-slot',
+    ticketOrPr: 'PROJ-1',
+    ticketData: manualTicketData(ticketTitle),
+  });
   await retainRunFixture(run);
   return { root, artifactsDir, run };
 }
@@ -136,7 +142,7 @@ test('the package carries the gateway render even when a mirror refresh copies t
     const mirrorBefore = await snapshotMirror(artifactsDir);
     const published = await assertReadyGatePackageInputsCurrent(
       run,
-      packageWith('feat: implement PROJ-1', draftBody),
+      packageWith('feat: fix the order form', draftBody),
     );
     assert.equal(published.draftBody, draftBody);
     assert.deepEqual(await snapshotMirror(artifactsDir), mirrorBefore);
@@ -164,7 +170,7 @@ test('a changed title and body do not block approval; the current render is publ
     const published = await assertReadyGatePackageInputsCurrent(run, reviewed);
     assert.deepEqual(published, {
       ...reviewed,
-      draftTitle: 'feat: implement PROJ-1',
+      draftTitle: 'feat: fix the order form',
       draftBody: gatewayRender('## **Description**\n\nEdited.\n').trim(),
     });
     const logged = warnings.find((line) => /draft title, draft body changed/.test(line));
@@ -181,6 +187,54 @@ test('a changed title and body do not block approval; the current render is publ
 const REFRESH_STEP =
   /To refresh, click "Refresh current package" on the Ready gate or run: farmslot rpc run\.refreshPublishPackage '\{"runId":"run-1"\}'$/;
 
+test('approval publishes the reviewed body heading, not a ticket-key title', async () => {
+  const { root, artifactsDir, run } = await makeTask('TAT-4138');
+  try {
+    installRenderer(artifactsDir);
+    const heading = 'fix(icons): serve base icons for 1000x markets and null missing icons';
+    await writeFile(path.join(artifactsDir, 'pr-description.md'), `# ${heading}\n\n${PROSE}`);
+    await retainRunFixture(run);
+    const draftBody = await buildPreparedDraftPrBody(run, null, [], 'main', {
+      tolerateMissingSlot: true,
+    });
+    // The package recorded the ticket key as its title, as TAT-4138's did.
+    const published = await assertReadyGatePackageInputsCurrent(
+      run,
+      packageWith('feat: TAT-4138', draftBody),
+    );
+    assert.equal(published.draftTitle, heading);
+    assert.equal(published.draftBody, draftBody);
+  } finally {
+    __setPrBodyRenderDepsForTest(null);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('approval refuses a package with no reviewed title', async () => {
+  const { root, artifactsDir, run } = await makeTask('TAT-4138');
+  try {
+    installRenderer(artifactsDir);
+    const draftBody = await buildPreparedDraftPrBody(run, null, [], 'main', {
+      tolerateMissingSlot: true,
+    });
+    await assert.rejects(
+      assertReadyGatePackageInputsCurrent(run, packageWith('feat: TAT-4138', draftBody)),
+      (error: Error) => {
+        assert.match(
+          error.message,
+          /^No reviewed PR title: .*"# type\(scope\): summary" heading in artifacts\/pr-description\.md/,
+        );
+        assert.match(error.message, /then refresh the package\./);
+        assert.match(error.message, REFRESH_STEP);
+        return true;
+      },
+    );
+  } finally {
+    __setPrBodyRenderDepsForTest(null);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('an evidence or validation mismatch still blocks, naming the input and the refresh step', async () => {
   const { root, artifactsDir, run } = await makeTask();
   try {
@@ -189,7 +243,7 @@ test('an evidence or validation mismatch still blocks, naming the input and the 
       tolerateMissingSlot: true,
     });
     const stale = {
-      ...packageWith('feat: implement PROJ-1', draftBody),
+      ...packageWith('feat: fix the order form', draftBody),
       evidenceManifest: [{ path: 'artifacts/after.png', purpose: 'screenshot', sha256: 'old' }],
       validationSummaryHash: 'old-hash',
     };
@@ -217,7 +271,7 @@ test('a missing evidence file and a moved HEAD still block with the refresh step
   const { root, run } = await makeTask();
   try {
     const prPackage = {
-      ...packageWith('feat: implement PROJ-1', 'Body'),
+      ...packageWith('feat: fix the order form', 'Body'),
       evidenceManifest: [{ path: 'artifacts/after.png', purpose: 'screenshot' }],
       selectedEvidenceKeys: ['artifacts/after.png'],
     };
@@ -250,7 +304,7 @@ test('the gate shows, publishes and records the current render while approval ke
     await rm(root, { recursive: true, force: true });
   });
   installRenderer(artifactsDir);
-  const withoutHash = packageWith('feat: implement PROJ-1', 'Reviewed body A.');
+  const withoutHash = packageWith('feat: fix the order form', 'Reviewed body A.');
   const reviewed = { ...withoutHash, packageHash: computeReadyGatePackageHash(withoutHash) };
   const renderB = gatewayRender(PROSE).trim();
 
@@ -259,7 +313,7 @@ test('the gate shows, publishes and records the current render while approval ke
     reviewed,
     await renderCurrentDescription(run, reviewed),
   );
-  assert.deepEqual(shown, { title: 'feat: implement PROJ-1', body: renderB });
+  assert.deepEqual(shown, { title: 'feat: fix the order form', body: renderB });
 
   // Approval publishes B; the reviewed package and its hash are what was approved.
   const published = await assertReadyGatePackageInputsCurrent(run, reviewed);
@@ -295,7 +349,7 @@ test('the gate shows, publishes and records the current render while approval ke
   recordPublishedDescription(stored.id, 'gate-1', published, '2026-10-09T00:02:00.000Z');
   const recorded = getRun(stored.id)!.decisions[0].payload as ReadyGatePayload;
   assert.deepEqual(recorded.currentDescription, {
-    title: 'feat: implement PROJ-1',
+    title: 'feat: fix the order form',
     body: renderB,
     publishedAt: '2026-10-09T00:02:00.000Z',
   });
@@ -371,7 +425,7 @@ function storedRunWithGate(t: import('node:test').TestContext, payload: unknown)
 test('the recorded description is the body publication posted, without deselected evidence', async (t) => {
   const { capture } = await installGhCapture(t);
   const reviewed = packageWith(
-    'feat: implement PROJ-1',
+    'feat: fix the order form',
     [
       '## **Description**',
       '',
@@ -425,9 +479,9 @@ test('the recorded description is the body publication posted, without deselecte
 
 test('a publish retry that posts nothing leaves the recorded description and its time alone', async (t) => {
   const { capture } = await installGhCapture(t);
-  const reviewed = packageWith('feat: implement PROJ-1', 'Reviewed body A.');
+  const reviewed = packageWith('feat: fix the order form', 'Reviewed body A.');
   const record = {
-    title: 'feat: implement PROJ-1',
+    title: 'feat: fix the order form',
     body: 'Posted body.',
     publishedAt: '2026-10-09T00:02:00.000Z',
   };
@@ -476,7 +530,7 @@ test('a successful publication hands the posted body to the published-descriptio
   });
   // Publication ticks the author checklist, so what it posts is not the approved body.
   const reviewed = packageWith(
-    'feat: implement PROJ-1',
+    'feat: fix the order form',
     '## **Description**\n\nFix the order form.\n\n- [ ] I tested this\n',
   );
   const run = storedRunWithGate(t, { kind: 'ready', prPackage: reviewed });
@@ -486,7 +540,7 @@ test('a successful publication hands the posted body to the published-descriptio
   const sent = await readFile(capture, 'utf-8');
   assert.match(sent, /- \[x\] I tested this/);
   assert.deepEqual(result.publishedDescription, {
-    draftTitle: 'feat: implement PROJ-1',
+    draftTitle: 'feat: fix the order form',
     draftBody: sent,
   });
   // As finalize does with the result.
@@ -498,14 +552,14 @@ test('a successful publication hands the posted body to the published-descriptio
   );
   const payload = getRun(run.id)!.decisions[0].payload as ReadyGatePayload;
   assert.deepEqual(payload.currentDescription, {
-    title: 'feat: implement PROJ-1',
+    title: 'feat: fix the order form',
     body: sent,
     publishedAt: '2026-10-09T00:02:00.000Z',
   });
   assert.equal(payload.prPackage?.packageHash, reviewed.packageHash);
   const log = await readFile(calls, 'utf-8');
   assert.match(log, /^pr edit 4242 --repo owner\/repo --body-file /m);
-  assert.match(log, /^pr edit 4242 --repo owner\/repo --title feat: implement PROJ-1$/m);
+  assert.match(log, /^pr edit 4242 --repo owner\/repo --title feat: fix the order form$/m);
 });
 
 test('publication renders retained prose and inventory after the source task is removed', async (t) => {
@@ -526,7 +580,7 @@ test('publication renders retained prose and inventory after the source task is 
   await rm(root, { recursive: true, force: true });
   const published = await assertReadyGatePackageInputsCurrent(
     run,
-    packageWith('feat: implement PROJ-1', gatewayRender(PROSE).trim()),
+    packageWith('feat: fix the order form', gatewayRender(PROSE).trim()),
   );
   assert.equal(published.draftBody, gatewayRender(PROSE).trim());
 });

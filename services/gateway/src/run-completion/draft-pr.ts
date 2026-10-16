@@ -35,24 +35,46 @@ function sanitizeDraftPrTitleDescription(rawTitle: string): string {
     .replace(/[.\s]+$/, '');
 }
 
-export function buildDraftPrTitle(run: Run): string {
+// A ticket key alone (`TAT-4138`, `[TAT-4138]:`) names the ticket, not the change.
+function namesOnlyTicketKey(text: string): boolean {
+  return text.replace(/\b[A-Z][A-Z0-9]*-\d+\b/g, '').replace(/[\s\p{P}]/gu, '') === '';
+}
+
+// The body's leading `# type(scope): summary` heading, which reviewers read
+// with the rest of the body.
+function bodyHeadingTitle(body: string): string | null {
+  let fenced = false;
+  for (const line of body.split('\n')) {
+    if (/^\s*(?:```|~~~)/.test(line)) fenced = !fenced;
+    else if (!fenced && /^#{1,6}\s/.test(line)) {
+      const title = /^#\s+(.+)$/.exec(line)?.[1].trim() ?? '';
+      const summary = /^[a-z]+(?:\([^)]*\))?!?:\s+(\S.*)$/.exec(title)?.[1];
+      return summary && !namesOnlyTicketKey(summary) ? title : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * The PR title a package records and approval publishes: the body's leading
+ * conventional heading, else one built from the ticket title. Empty when
+ * neither says more than a ticket key; approval refuses an empty title.
+ */
+export function buildDraftPrTitle(run: Run, draftBody: string): string {
+  const heading = bodyHeadingTitle(draftBody);
+  if (heading) return heading;
+  const rawTitle = run.ticketData?.title?.trim();
+  if (!rawTitle) return '';
+  const sanitized = sanitizeDraftPrTitleDescription(rawTitle);
+  if (namesOnlyTicketKey(sanitized)) return '';
   const commitType = run.flowType === 'fix-bug' ? 'fix' : run.flowType === 'dev' ? 'feat' : 'chore';
   const scope = inferDraftPrTitleScope(run);
   const scopePart = scope ? `(${scope})` : '';
-  const rawTitle = run.ticketData?.title?.trim();
-  if (rawTitle) {
-    const sanitized = sanitizeDraftPrTitleDescription(rawTitle);
-    // Lower-case a leading word, never a ticket key (`TAT-4037`).
-    const desc = /^[A-Z][A-Z0-9]*-\d+/.test(sanitized)
-      ? sanitized
-      : sanitized.charAt(0).toLowerCase() + sanitized.slice(1);
-    return `${commitType}${scopePart}: ${desc}`;
-  }
-  const fallbackSubject =
-    run.flowType === 'fix-bug' ? 'bug' : run.flowType === 'dev' ? 'feature' : 'work';
-  const ticket = run.ticketOrPr && !run.ticketOrPr.includes('#') ? run.ticketOrPr : fallbackSubject;
-  const verb = commitType === 'fix' ? 'resolve' : 'implement';
-  return `${commitType}${scopePart}: ${verb} ${ticket}`;
+  // Lower-case a leading word, never a ticket key (`TAT-4037`).
+  const desc = /^[A-Z][A-Z0-9]*-\d+/.test(sanitized)
+    ? sanitized
+    : sanitized.charAt(0).toLowerCase() + sanitized.slice(1);
+  return `${commitType}${scopePart}: ${desc}`;
 }
 
 // A basename stands for an artifact only when no other artifact shares it:

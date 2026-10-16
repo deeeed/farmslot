@@ -78,6 +78,7 @@ import {
   buildPackageEvidenceManifest,
   readCurrentPackageEvidence,
 } from './package-evidence-manifest.js';
+import { PR_PROSE_ARTIFACT } from './pr-body-render.js';
 import {
   markPRReady,
   postPRComment,
@@ -108,6 +109,7 @@ import {
   computeReadyGateReviewSubjectHash,
   packageChangedError,
   readReadyGatePreparedPackage,
+  refreshPackageStep,
   resolveSelectedEvidenceRef,
   sha256Text,
   sortArtifactRefsForComparison,
@@ -461,10 +463,8 @@ export async function renderCurrentDescription(
     await assertPreparedPublicationBaseCurrent(current, preparedPackage, baseBranch),
     { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
-  return {
-    draftTitle: buildDraftPrTitle(current),
-    draftBody: await appendVisualJudgmentProvenance(current, draftBody, preparedPackage),
-  };
+  const body = await appendVisualJudgmentProvenance(current, draftBody, preparedPackage);
+  return { draftTitle: buildDraftPrTitle(current, body), draftBody: body };
 }
 
 async function appendVisualJudgmentProvenance(
@@ -538,6 +538,14 @@ export async function assertReadyGatePackageInputsCurrent(
     preparedPackage,
     artifacts,
   );
+  if (!draftTitle) {
+    // Approval renders the retained package inputs; only a refresh reads an edited description.
+    throw new Error(
+      `No reviewed PR title: neither a "# type(scope): summary" heading in artifacts/${PR_PROSE_ARTIFACT} ` +
+        `nor the ticket title names the change. Add the heading, then refresh the package. ` +
+        refreshPackageStep(current.id),
+    );
+  }
   const descriptionChanges = [
     ...(draftTitle !== preparedPackage.draftTitle ? ['draft title'] : []),
     ...(currentDraftBody !== preparedPackage.draftBody ? ['draft body'] : []),
@@ -873,7 +881,7 @@ export async function prepareCompletionPackageTransitionLocked(
     headSha,
     diffStat: options?.diffStat ?? { files: 0, additions: 0, deletions: 0 },
     reviewSnapshot,
-    draftTitle: buildDraftPrTitle(run),
+    draftTitle: buildDraftPrTitle(run, draftBody),
     draftBody,
     evidenceManifest,
     selectedEvidenceKeys:

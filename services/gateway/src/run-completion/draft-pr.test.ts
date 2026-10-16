@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { buildDraftPrBody, buildDraftPrTitle } from './draft-pr.js';
-import { makeRun } from './test-fixtures.js';
+import { makeRun, manualTicketData } from './test-fixtures.js';
 const { retainRunFixture } = await import('../run-engine/test-fixtures.js');
 
 test('stacked PR bodies name the parent without changing authored prose or duplicating the link', async () => {
@@ -160,7 +160,10 @@ test('buildDraftPrTitle strips platform prefixes and infers perps conventional s
     },
   });
 
-  assert.equal(buildDraftPrTitle(run), 'feat(perps): show liquidation distance % on market detail');
+  assert.equal(
+    buildDraftPrTitle(run, ''),
+    'feat(perps): show liquidation distance % on market detail',
+  );
 });
 
 test('buildDraftPrTitle strips the Core platform prefix', () => {
@@ -178,7 +181,10 @@ test('buildDraftPrTitle strips the Core platform prefix', () => {
     },
   });
 
-  assert.equal(buildDraftPrTitle(run), 'fix(perps): order 0: insufficient margin to place order');
+  assert.equal(
+    buildDraftPrTitle(run, ''),
+    'fix(perps): order 0: insufficient margin to place order',
+  );
 });
 
 test('buildDraftPrTitle strips the Terminal platform prefix', () => {
@@ -197,27 +203,62 @@ test('buildDraftPrTitle strips the Terminal platform prefix', () => {
   });
 
   assert.equal(
-    buildDraftPrTitle(run),
+    buildDraftPrTitle(run, ''),
     'feat: convert markets table into a search-and-select drawer',
   );
 });
 
-test('buildDraftPrTitle keeps a ticket key title upper-case', () => {
+test('buildDraftPrTitle keeps a leading ticket key upper-case', () => {
   const run = makeRun({
     flowType: 'dev',
-    ticketData: {
-      source: 'manual',
-      title: 'TAT-4037',
-      description: '',
-      acceptanceCriteria: [],
-      affectedArea: '',
-      stepsToReproduce: [],
-      screenshots: [],
-      labels: [],
-    },
+    ticketData: manualTicketData('TAT-4037 Show market icons'),
   });
 
-  assert.equal(buildDraftPrTitle(run), 'feat: TAT-4037');
+  assert.equal(buildDraftPrTitle(run, ''), 'feat: TAT-4037 Show market icons');
+});
+
+// TAT-4138 published `feat: TAT-4138` while its approved body opened with this heading.
+const TAT_4138_HEADING = 'fix(icons): serve base icons for 1000x markets and null missing icons';
+const TAT_4138_BODY = [
+  `# ${TAT_4138_HEADING}`,
+  '',
+  'Jira: [TAT-4138](https://example.invalid/browse/TAT-4138).',
+  '',
+  '## Problem',
+  '',
+  'Icons were missing.',
+].join('\n');
+
+test('buildDraftPrTitle takes the reviewed body heading over the ticket title', () => {
+  const keyOnly = makeRun({
+    flowType: 'dev',
+    ticketOrPr: 'TAT-4138',
+    ticketData: manualTicketData('TAT-4138'),
+  });
+  assert.equal(buildDraftPrTitle(keyOnly, TAT_4138_BODY), TAT_4138_HEADING);
+  assert.equal(buildDraftPrTitle(keyOnly, `Stacked on #12.\n\n${TAT_4138_BODY}`), TAT_4138_HEADING);
+
+  const titled = makeRun({ flowType: 'dev', ticketData: manualTicketData('Market icon mapping') });
+  assert.equal(buildDraftPrTitle(titled, TAT_4138_BODY), TAT_4138_HEADING);
+  // Only a leading conventional H1 is a title; otherwise the ticket title stands.
+  for (const body of [
+    '# Market icons\n\nDone.',
+    '## Summary\n\n# fix(icons): a later heading',
+    '```sh\n# fix: a shell comment\n```\n\n## Summary',
+  ]) {
+    assert.equal(buildDraftPrTitle(titled, body), 'feat: market icon mapping');
+  }
+});
+
+test('buildDraftPrTitle has no title when nothing names the change beyond a ticket key', () => {
+  for (const title of ['TAT-4138', '[TAT-4138]:', ' TAT-4138. ']) {
+    const run = makeRun({ flowType: 'dev', ticketData: manualTicketData(title) });
+    for (const body of ['', '## Summary\n\nDone.', '# feat: TAT-4138\n', '# Market icons\n']) {
+      assert.equal(buildDraftPrTitle(run, body), '', `${title} / ${body}`);
+    }
+  }
+  // Without a ticket title the key is never turned into `implement PROJ-1`.
+  assert.equal(buildDraftPrTitle(makeRun({ flowType: 'dev', ticketOrPr: 'PROJ-1' }), ''), '');
 });
 
 test('buildDraftPrBody strips execution provenance before the public summary', async () => {

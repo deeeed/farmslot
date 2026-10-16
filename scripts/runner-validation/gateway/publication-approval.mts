@@ -153,7 +153,10 @@ try {
     const task = path.join(repo, 'tasks', id);
     mkdirSync(path.join(task, 'artifacts'), { recursive: true });
     writeFileSync(path.join(task, 'TASK.md'), '# Publication approval proof\n');
-    writeFileSync(path.join(task, 'artifacts/pr-description.md'), '# Publication approval proof\n');
+    writeFileSync(
+      path.join(task, 'artifacts/pr-description.md'),
+      '# fix: publication approval proof\n',
+    );
     writeJson(path.join(task, 'inputs/handoff.json'), { task: { acceptanceCriteria: [] } });
     const prepared: ReadyGatePrPackage = {
       id: `pkg-${id}`,

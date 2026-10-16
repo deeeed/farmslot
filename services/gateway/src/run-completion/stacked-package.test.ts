@@ -11,7 +11,7 @@ import '../runtime/mock-pty.test-support.js';
 
 import { makeVars } from '../runners/test-fixtures.js';
 
-import { makeRun } from './test-fixtures.js';
+import { makeRun, manualTicketData } from './test-fixtures.js';
 
 const nativeConfig = await import('../core/config.js');
 const nativeExec = await import('../core/exec.js');
@@ -203,6 +203,7 @@ function resetRun(currentStack?: RunStack) {
       taskFile,
       slotId: 'stack-fixture',
       branch: 'fix/child',
+      ticketData: manualTicketData('Child fix'),
     }),
     stack: currentStack,
     prNumber: undefined,

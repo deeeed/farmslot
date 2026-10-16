@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
 import {
   type HostedTaskInitRequest,
+  type HostedTaskTemplateCatalog,
   parseHostedTaskInitRequest,
   runHostedTaskInit,
+  selectHostedTaskTemplate,
 } from './hosted-task-init.js';
 
 function request(): HostedTaskInitRequest {
@@ -102,6 +104,84 @@ test('oversized requests refuse before reading and remove their owned transport 
   fs.truncateSync(requestFile, 8 * 1024 * 1024 + 1);
   await assert.rejects(runHostedTaskInit(requestFile), /at most 8 MiB/);
   assert.equal(fs.existsSync(requestFile), false);
+});
+
+/** A pack whose QA template lives in an environment-rooted package source, like the MetaMask packs. */
+function qaCatalog(
+  t: TestContext,
+  rootInMachineEnv: boolean,
+): {
+  catalog: HostedTaskTemplateCatalog;
+  request: Pick<HostedTaskInitRequest, 'task' | 'template'>;
+} {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-qa-template-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const template = path.join(root, 'cook/references/templates/qa/default.md');
+  fs.mkdirSync(path.dirname(template), { recursive: true });
+  fs.writeFileSync(template, '---\nplatforms: [core]\n---\n# QA\n\n- [ ] Observe\n');
+  fs.mkdirSync(path.join(root, 'pack/templates'), { recursive: true });
+  return {
+    catalog: {
+      project: {
+        projectName: 'fixture',
+        projectConfig: path.join(root, 'pack/project.json'),
+        projectTemplatesDir: path.join(root, 'pack/templates'),
+        projectJson: {
+          execution_templates: {
+            sources: [
+              {
+                id: 'package:fixture-cook',
+                kind: 'package',
+                root: { env: 'FIXTURE_COOK_ROOT' },
+                subpath: 'references/templates',
+              },
+            ],
+          },
+          qa: { profiles: [{ id: 'release', title: 'Release QA', template_id: 'qa/default' }] },
+        },
+      },
+      slot: {
+        platform: 'core',
+        machineEnv: rootInMachineEnv ? { FIXTURE_COOK_ROOT: path.join(root, 'cook') } : {},
+      },
+    },
+    request: {
+      task: { ...request().task, flow: 'qa' },
+      template: {
+        sourceId: 'package:fixture-cook',
+        id: 'qa/default',
+        sha256: createHash('sha256').update(fs.readFileSync(template)).digest('hex'),
+        selectionReason: 'explicit',
+      },
+    },
+  };
+}
+
+test('QA task selects qa/default from a template root in the slot machine environment', (t) => {
+  assert.equal(process.env.FIXTURE_COOK_ROOT, undefined);
+  const { catalog, request: qa } = qaCatalog(t, true);
+  const { selected, sources } = selectHostedTaskTemplate(catalog, qa);
+  assert.equal(selected.entry.id, 'qa/default');
+  assert.equal(selected.entry.flow, 'qa');
+  assert.equal(selected.entry.sourceId, 'package:fixture-cook');
+  assert.equal(selected.entry.sha256, qa.template.sha256);
+  assert.deepEqual(
+    sources.map((source) => source.id),
+    ['project:fixture', 'package:fixture-cook'],
+  );
+});
+
+test('a template source whose root only the gateway has refuses with its name and variable', (t) => {
+  const { catalog, request: qa } = qaCatalog(t, false);
+  assert.throws(
+    () => selectHostedTaskTemplate(catalog, qa),
+    (error: unknown) =>
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'TASK_TEMPLATE_SOURCE_UNAVAILABLE' &&
+      error.message ===
+        'Execution-template source "package:fixture-cook" is unavailable on this node (missing-environment); set FIXTURE_COOK_ROOT in the slot machine environment.',
+  );
 });
 
 test('normal hosted tasks cannot weaken configured terminal gates', async () => {
