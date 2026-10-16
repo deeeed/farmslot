@@ -640,9 +640,11 @@ experimental versioning.
 
 ## Amendment 10: return rejected criteria to the retained worker (2026-10-16)
 
-**Status:** Proposed. The lead selected ADR-062 as owner. Wording acceptance is
-required before lifecycle implementation. This is the authorised follow-up to
-the gate redesign; it does not change publication authority.
+**Status:** Accepted by the lead on 2026-10-16 after paired design review, with
+three implementation clarifications folded into the specification: frozen
+rejected-claim proof mode, a separate task-owned repair recipe, and receipt/repair
+feedback provenance. Ships in #1209. This is the authorised follow-up to the gate
+redesign; it does not change publication authority.
 
 ### Decision
 
@@ -695,7 +697,7 @@ project the selected sources into the existing shared AC list. Harnesses inherit
 the normal wrapper and compatible package cut, with no manifest-writing hook or
 new shell flag. These experimental additions require coordinated minor releases
 and compatible readers before producer activation. Normative details follow in
-[the recorded-evidence specification](../reference/recorded-run-evidence.md#rejected-criterion-repair-proposed).
+[the recorded-evidence specification](../reference/recorded-run-evidence.md#rejected-criterion-repair).
 
 ## Amendment 11: independent visual verification and judgment refresh (2026-10-16)
 

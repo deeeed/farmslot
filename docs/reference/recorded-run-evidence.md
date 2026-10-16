@@ -1279,10 +1279,10 @@ identify the new precedence contract by kind. Frozen readers retain person-first
 ordering for those receipts. Legacy-only frozen captures keep their shipped
 stored-order interpretation. Policy qualification remains bound to the capture.
 
-## Rejected-criterion repair (Proposed)
+## Rejected-criterion repair
 
-This section implements Proposed ADR-062 Amendment 10. It is not an active
-contract until that amendment is accepted and its implementation is released.
+Status: Accepted, 2026-10-16, ADR-062 Amendment 10. The producer stays inactive
+until compatible readers are released.
 
 ### Admission and delivery
 
@@ -1290,7 +1290,8 @@ contract until that amendment is accepted and its implementation is released.
 latest qualified rejected receipts. The client MUST NOT supply replacement AC
 text, evidence, receipt authority or a worker target. The scope MUST retain the
 run/generation, package hash, full task registration, rejected receipt IDs,
-ACs/reasons/files/moments, original evidence sources and retained worker owner.
+ACs/reasons/files/moments with each rejected AC's original `proofMode`, original
+evidence sources and retained worker owner.
 Stale selection, missing rationale, ownership conflict, another active fix or
 exhausted existing fix/review budget MUST refuse before dispatch.
 The scope MUST name the retained review loop whose existing worker-fix budget
@@ -1324,7 +1325,10 @@ MUST remain in the run store. File presence alone MUST NOT activate a scope;
 completed/refused scopes MUST be retired and ignored by normal recipe runs.
 
 The worker MUST author a complete, self-contained repair recipe using the normal
-recipe/library composition model. It MUST explicitly establish its prerequisites
+recipe/library composition model. It is a separate task-owned file passed through
+the hosted task recipe wrapper's existing recipe argument; the main task recipe
+MUST remain unchanged. A repair recipe file without the active run-store scope
+MUST NOT activate repair. It MUST explicitly establish its prerequisites
 and run from its own `workflow.entry` through normal teardown. It MUST NOT skip
 nodes from the original graph, use `stopAfterNode`, introduce per-AC setup fields
 or relax normal partial-run refusal. The full task registry remains in the fresh
@@ -1337,6 +1341,8 @@ failure-to-status rules. A fresh `failed` or `weak` claim MUST select fresh proo
 and block; retained proof MUST NOT hide it. A non-rejected AC may select retained
 proof only if the fresh graph did not execute its proof nodes, or its fresh
 verdict is `proven`/`awaiting-review`. Rejected ACs always require fresh proof.
+A rejected AC's fresh claim MUST keep the scope's frozen `proofMode`; `state`
+proof MUST NOT clear a `visual` or `mixed` Issue.
 
 The existing engine closure-retention/finalization utilities MUST retain each
 referenced original package and write `repair-selection.json` as engine-owned
@@ -1376,8 +1382,11 @@ or recovery at the triggering action. No automatic approval is permitted.
 
 Every reason MUST remain bound to its source receipt and repair ID in retained
 feedback and the existing retrospective `feedbackCandidates` input, using a
-stable receipt/repair source key. Learning adoption and
-recipe-library publication retain their existing authority.
+stable receipt/repair source key. Protocol adds a receipt/repair variant to the
+existing `FeedbackCandidate` type carrying run, receipt, repair and AC identity
+and the original reason; it MUST be produced even when no PR exists and MUST NOT
+be presented as GitHub feedback. Compatible readers ship before its writer.
+Learning adoption and recipe-library publication retain their existing authority.
 
 Conformance MUST cover one rejected AC with a retained confirmed sibling,
 current-head applicability refusal, changed/foreign source refusal, no omitted
