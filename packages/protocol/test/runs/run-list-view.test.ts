@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   isActiveListRun,
   isCompletionPrerequisiteFailure,
+  isSettledCompletionFailure,
+  refusedCompletionStep,
   type Run,
   type RunStep,
 } from '../../src/contracts/runs.js';
@@ -71,6 +73,51 @@ test('active runs are nonterminal runs plus failed runs that still hold resource
   for (const status of ['done', 'failed', 'cancelled'] as const)
     assert.equal(isActiveListRun({ status }), false, status);
   assert.equal(isActiveListRun({ status: 'failed', steps: refusedCompletion }), true);
+});
+
+test('a refused completion is settled once its workspace is discarded or the run is archived', () => {
+  const discarded: RunStep[] = [
+    {
+      name: 'complete',
+      status: 'failed',
+      outputs: { gatePrerequisiteRefusal: {}, gatePrerequisiteDiscardedAt: '2026-10-18T00:00:00Z' },
+    },
+  ];
+  assert.equal(isSettledCompletionFailure({ status: 'failed', steps: refusedCompletion }), false);
+  assert.equal(isSettledCompletionFailure({ status: 'failed', steps: discarded }), true);
+  assert.equal(
+    isSettledCompletionFailure({
+      status: 'failed',
+      steps: refusedCompletion,
+      archivedAt: '2026-10-18T00:00:00Z',
+    }),
+    true,
+  );
+  assert.equal(isActiveListRun({ status: 'failed', steps: discarded }), false);
+  assert.equal(
+    isActiveListRun({
+      status: 'failed',
+      steps: refusedCompletion,
+      archivedAt: '2026-10-18T00:00:00Z',
+    }),
+    false,
+  );
+  // An archived nonterminal record is not a refused completion; its status still decides.
+  assert.equal(isActiveListRun({ status: 'blocked', archivedAt: '2026-10-18T00:00:00Z' }), true);
+});
+
+test('only a discard stamp on the refused step settles the run', () => {
+  const stampedElsewhere: RunStep[] = [
+    { name: 'monitor', status: 'done', outputs: { gatePrerequisiteDiscardedAt: '2026-10-18' } },
+    ...refusedCompletion,
+  ];
+  assert.equal(
+    refusedCompletionStep({ status: 'failed', steps: stampedElsewhere }),
+    stampedElsewhere[1],
+  );
+  assert.equal(isSettledCompletionFailure({ status: 'failed', steps: stampedElsewhere }), false);
+  assert.equal(isActiveListRun({ status: 'failed', steps: stampedElsewhere }), true);
+  assert.equal(refusedCompletionStep({ status: 'done', steps: refusedCompletion }), undefined);
 });
 
 test('selectRunList scopes keep input order', () => {

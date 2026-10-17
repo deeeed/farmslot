@@ -6,6 +6,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.23 - 2026-10-17
+
+- Align with `@farmslot/agent-runtime` 0.29.1, which moves to `@farmslot/adapter-sdk` 0.18.1 and `@farmslot/recipe-runner` 0.39.1.
+
 ## 0.6.22 - 2026-10-17
 
 - Submit lane handoffs with Enter only and prove delivery from native transcripts or the exact next-tool-call steering block; a retry presses Enter for owned text left in the composer without retyping.

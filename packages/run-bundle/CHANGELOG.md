@@ -4,6 +4,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- Bundle garbage collection releases the reservations and pins of a refused completion once it is discarded or archived.
+
 - Bundle garbage collection keeps the reservations and pins of a failed run that still holds its resources (`isActiveListRun`).
 
 - Retain immutable gateway artifact snapshots in farmrun v1 bundles, with store pairing, quota reservations, recovery, retention and target-owned imports.

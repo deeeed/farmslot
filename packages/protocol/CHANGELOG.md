@@ -5,6 +5,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Acceptance ledger rows carry an optional `recipeRunId`, the QA case execution a row came from, and `acceptanceRowExecution` resolves a row's execution. The ledger validator checks a row's moments against that execution.
+- `isSettledCompletionFailure`: a refused completion counts as settled once its workspace is discarded (`gatePrerequisiteDiscardedAt` on the refused step) or the run is archived (`archivedAt`), and `isActiveListRun` stops counting it. `refusedCompletionStep` returns that refused step.
+
 - `FamilyObservabilityRunSummary.active`: whether the run counts as active by `isActiveListRun`, set by the gateway because summaries carry no step outputs.
 
 - A run draft's source line reads "(run selection)", and an empty branch input no longer counts as a selection in the line or the summary.

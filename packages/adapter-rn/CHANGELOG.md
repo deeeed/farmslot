@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.24 - 2026-10-17
+
+- Align with `@farmslot/recipe-runner` 0.39.1, whose network capture summaries redact credential-like path segments.
+
 ## 0.22.23 - 2026-10-17
 
 - Align the worker dependency set with Send back repairs and Protocol 0.54.0.

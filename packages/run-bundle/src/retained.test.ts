@@ -578,6 +578,25 @@ test('GC keeps the reservation of a failed run that still holds its resources', 
   assert.deepEqual(await readdir(path.join(f.store.root, 'reservations')), ['held-run.json']);
 });
 
+test('GC releases the reservation of a refused completion once it is archived', async (t) => {
+  const f = await fixture(t);
+  const archived: Run = {
+    ...f.run,
+    id: 'archived-held-run',
+    status: 'failed',
+    archivedAt: new Date().toISOString(),
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  };
+  await mkdir(path.join(f.store.runsDir, 'archive'), { recursive: true });
+  await writeFile(
+    path.join(f.store.runsDir, 'archive', 'archived-held-run.json'),
+    JSON.stringify(archived),
+  );
+  await reserveRunBundleMetadata(f.store, 'archived-held-run');
+  await collectRunBundleGarbage(f.store);
+  assert.deepEqual(await readdir(path.join(f.store.root, 'reservations')), []);
+});
+
 test('an unresolved imported decision pins its target-owned payload through its original digest alias', async (t) => {
   const f = await fixture(t);
   const result = await materializeRunBundle(f.request);

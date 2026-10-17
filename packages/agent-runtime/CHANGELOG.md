@@ -5,6 +5,10 @@
 - Active-development baseline; add user-facing changes here before release or package publication.
 - A QA task's acceptance ledger merges its case executions by criterion instead of keeping only the last case: a passing execution replaces the rows it proves and leaves the others, and each row names its case execution.
 
+## 0.29.1 - 2026-10-17
+
+- Align with `@farmslot/adapter-sdk` 0.18.1 and `@farmslot/recipe-runner` 0.39.1 (network capture summaries redact credential-like path segments).
+
 ## 0.29.0 - 2026-10-17
 
 - Native Claude and Codex adapters advertise and constrain the repair applicability result contract; the evidence review terminal check accepts a repair's retained rows only from the engine selection.

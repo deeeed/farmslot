@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.18.1 - 2026-10-17
+
+- Align with `@farmslot/recipe-runner` 0.39.1, whose network capture summaries redact credential-like path segments.
+
 ## 0.18.0 - 2026-10-17
 
 - Present retained repair criteria from their original execution, media and receipts, marked as earlier proof.
