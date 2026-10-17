@@ -649,6 +649,49 @@ test('near-full storage commits the report before media admission and fills the 
   assert.equal(transfers, 1);
 });
 
+test('acquisition media under FARMSLOT_PROJECTS_DIR is charged like the default projects dir', async (t) => {
+  const f = await fixture(t);
+  const projects = await mkdtemp(path.join(tmpdir(), 'retained-projects-'));
+  const previous = process.env.FARMSLOT_PROJECTS_DIR;
+  process.env.FARMSLOT_PROJECTS_DIR = projects;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_PROJECTS_DIR;
+    else process.env.FARMSLOT_PROJECTS_DIR = previous;
+    await rm(projects, { recursive: true, force: true });
+  });
+  const historical = path.join(projects, 'demo/tasks/qa/deleted-run/artifacts/unique.mp4');
+  await mkdir(path.dirname(historical), { recursive: true });
+  await writeFile(historical, Buffer.alloc(800_000, 1));
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const video = Buffer.alloc(250_000, 2);
+  let transfers = 0;
+  const result = await materializeRunBundle({
+    ...f.request,
+    policy: {
+      maxStoreBytes: 1_000_000,
+      maxBundleBytes: 500_000,
+      metadataReserveBytes: 50_000,
+      mediaRetentionDays: 30,
+    },
+    artifacts: [
+      f.artifacts[0]!,
+      {
+        path: 'artifacts/capture.mp4',
+        purpose: 'video',
+        sha256: createHash('sha256').update(video).digest('hex'),
+        sizeBytes: video.length,
+      },
+    ],
+    acquireMedia: async (_artifact, destination) => {
+      transfers++;
+      await writeFile(destination, video);
+      return { sha256: createHash('sha256').update(video).digest('hex'), bytes: video.length };
+    },
+  });
+  assert.equal(transfers, 0);
+  assert.ok(result.missingData.includes('media-capacity:artifacts/capture.mp4'));
+});
+
 test('preserved acquisition media from another deleted run remains charged before new transport', async (t) => {
   const f = await fixture(t);
   const historical = path.join(f.root, 'projects/demo/tasks/qa/deleted-run/artifacts/unique.mp4');

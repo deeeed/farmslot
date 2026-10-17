@@ -7,6 +7,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 - Retain immutable gateway artifact snapshots in farmrun v1 bundles, with store pairing, quota reservations, recovery, retention and target-owned imports.
 - Pin prepared captures throughout an active run and verify durable manifests before recording references or availability.
 
+- Acquisition accounting finds run task folders under `FARMSLOT_PROJECTS_DIR` through the protocol farm layout.
+
 - Keep imported claim-override metadata from granting gateway authority.
 
 - Skip non-run JSON in the runs directory when selecting runs to export, so a run-id prefix lookup no longer fails on the runtime capability store. Export `parseRunRecordFile` for the Gateway run store.

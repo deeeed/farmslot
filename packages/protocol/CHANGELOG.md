@@ -6,6 +6,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - A run draft's source line reads "(run selection)", and an empty branch input no longer counts as a selection in the line or the summary.
 - Family readiness counts active runs with `isActiveListRun`: a failed run that still holds its resources counts as active (not failed or settled) and blocks self-learning eligibility as an active run.
+
+- Add `@farmslot/protocol/node/farm-layout`: `ORCHESTRATOR_TASK_DIR`, `resolveProjectsDir` (honours `FARMSLOT_PROJECTS_DIR`) and `orchestratorTaskRoot`, the one definition of where the gateway keeps run task folders.
 - Source status keeps a failed read visible over a context that was empty, and a run draft's line names the selected branch or main.
 - Move run family grouping here from Command Center and Companion: `groupRunsByFamily`, `sortRunsForFamilyView`, `selectRecentRunFamilyGroups` and `RunFamilyGroup`. A family's `activeCount` uses `isActiveListRun`. Remove `ACTIVE_RUN_LIST_LIMIT`: `run.list` `active` is never truncated.
 

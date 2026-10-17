@@ -11,6 +11,7 @@ import type {
   SlotStatus,
 } from '@farmslot/protocol';
 
+import { projectTaskRoots } from '../core/config.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { fleetStatus } from '../methods/fleet.js';
 
@@ -160,13 +161,10 @@ export async function loadPendingDecisions(): Promise<PendingDecision[]> {
   const decisions: PendingDecision[] = [];
 
   // Scan all project task directories for .pending_decision.json files
-  const projectsDir = path.join(farmslotRoot, 'projects');
   try {
-    const projects = await readdir(projectsDir);
-    for (const project of projects) {
-      const tasksDir = path.join(projectsDir, project, 'tasks');
+    for (const { root } of await projectTaskRoots()) {
       try {
-        await scanDirForDecisions(tasksDir, decisions);
+        await scanDirForDecisions(root, decisions);
       } catch {
         /* no tasks dir */
       }

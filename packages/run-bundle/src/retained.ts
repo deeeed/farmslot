@@ -28,6 +28,7 @@ import {
   type RunBundleManifest,
   type RunBundleRetentionPolicy,
 } from '@farmslot/protocol';
+import { orchestratorTaskRoot, resolveProjectsDir } from '@farmslot/protocol/node/farm-layout';
 import {
   sanitizeRunForBundleExport,
   strictTaskRelativePathFromFarmslotRoot,
@@ -311,10 +312,11 @@ async function acquisitionBytes(root: string): Promise<number> {
 /** Count every gateway acquisition tree, including preserved media of archived/deleted runs. */
 async function scanAcquisitionBytes(root: string): Promise<number> {
   let bytes = 0;
+  const layout = { farmslotRoot: root, projectsDir: resolveProjectsDir(root) };
   try {
-    for (const project of await readdir(path.join(root, 'projects'), { withFileTypes: true })) {
+    for (const project of await readdir(layout.projectsDir, { withFileTypes: true })) {
       if (project.isDirectory())
-        bytes += await physicalBytes(path.join(root, 'projects', project.name, 'tasks'));
+        bytes += await physicalBytes(orchestratorTaskRoot(layout, project.name));
     }
   } catch (error) {
     if (!hasCode(error, 'ENOENT')) throw error;
