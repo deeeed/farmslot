@@ -122,30 +122,54 @@ export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisio
   });
 }
 
+/** The failed COMPLETE or FINALIZE step that recorded a refused completion prerequisite. */
+export function refusedCompletionStep(
+  run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>,
+): RunStep | undefined {
+  if (run.status !== 'failed') return undefined;
+  return run.steps?.find(
+    (step) =>
+      (step.name === PipelineSteps.COMPLETE || step.name === PipelineSteps.FINALIZE) &&
+      step.status === 'failed' &&
+      step.outputs?.gatePrerequisiteRefusal !== undefined,
+  );
+}
+
 /** A failed deterministic gate keeps its resources until an operator settles or replays it. */
 export function isCompletionPrerequisiteFailure(
   run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>,
 ): boolean {
+  return refusedCompletionStep(run) !== undefined;
+}
+
+/**
+ * A refused completion prerequisite whose retained resources are gone: the named
+ * forced slot release stamps `gatePrerequisiteDiscardedAt` on the refused step, and
+ * archive stamps `archivedAt`. The refusal itself stays on the step as history.
+ */
+export function isSettledCompletionFailure(
+  run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps' | 'archivedAt'>>,
+): boolean {
+  const refused = refusedCompletionStep(run);
   return (
-    run.status === 'failed' &&
-    Boolean(
-      run.steps?.some(
-        (step) =>
-          (step.name === PipelineSteps.COMPLETE || step.name === PipelineSteps.FINALIZE) &&
-          step.status === 'failed' &&
-          step.outputs?.gatePrerequisiteRefusal !== undefined,
-      ),
-    )
+    refused !== undefined &&
+    (Boolean(run.archivedAt) || refused.outputs?.gatePrerequisiteDiscardedAt !== undefined)
   );
 }
 
 /**
  * A run every active run list shows: nonterminal, or failed while it still holds
- * its resources. The gateway's `run.list` `active` filter, Command Center and
- * Companion all use this rule.
+ * its resources (a refused completion not yet discarded or archived). The
+ * gateway's `run.list` `active` filter, Command Center and Companion all use
+ * this rule.
  */
-export function isActiveListRun(run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>): boolean {
-  return !isTerminalRunStatus(run.status) || isCompletionPrerequisiteFailure(run);
+export function isActiveListRun(
+  run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps' | 'archivedAt'>>,
+): boolean {
+  return (
+    !isTerminalRunStatus(run.status) ||
+    (isCompletionPrerequisiteFailure(run) && !isSettledCompletionFailure(run))
+  );
 }
 
 export type RunStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';

@@ -480,10 +480,14 @@ test('a family-done edge waits while a failed run still holds its resources', as
   await workGraph.schedulerTick({ graphId });
   assert.equal(downstreamQueued(), false, 'a retained failure is still active');
 
-  const settled = runs.updateRun(run.id, { steps: [{ name: 'complete', status: 'failed' }] });
-  await backlog.markBacklogRunObserved(settled);
-  await workGraph.schedulerTick({ graphId });
-  assert.equal(downstreamQueued(), true, 'the settled failure is a terminal outcome');
+  // The operator discards the retained workspace. The discard itself settles the
+  // family edge: slot.release's own emit reaches only its caller.
+  const { markCompletionFailureDiscarded } =
+    await import('../methods/slot/release-run-ownership.js');
+  const published: string[] = [];
+  await markCompletionFailureDiscarded(run.id, (event) => published.push(event));
+  assert.deepEqual(published, ['run.updated']);
+  assert.equal(downstreamQueued(), true, 'the discarded failure is a terminal outcome');
 });
 
 test('work graph can use an owner scope different from backlog project', async () => {

@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import { isActiveListRun, type Run } from '@farmslot/protocol';
 
-import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
+import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../../runs/store.js';
 
-import { detachRunsForReleasedSlot } from './release-run-ownership.js';
+import {
+  detachRunsForReleasedSlot,
+  markCompletionFailureDiscarded,
+} from './release-run-ownership.js';
 
 async function cleanupRun(runId: string): Promise<void> {
   if (!getRun(runId)) return;
@@ -130,4 +133,43 @@ test('a release keeps the explicit pick of a run still waiting in find-slot for 
   assert.equal(getRun(owner.id)!.slotId, null, 'the released owner is detached');
   assert.equal(getRun(bound.id)!.slotId, null);
   assert.equal(getRun(waiter.id)!.slotId, slotId, 'the waiter still targets the slot it asked for');
+});
+
+test('markCompletionFailureDiscarded settles a refused completion once, keeping the refusal', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-discard`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRunStep(run.id, 'complete', {
+    status: 'failed',
+    outputs: { gatePrerequisiteRefusal: { reason: 'no receipt' } },
+  });
+  updateRun(run.id, { status: 'failed' });
+  assert.equal(isActiveListRun(getRun(run.id)!), true);
+  const events: string[] = [];
+
+  await markCompletionFailureDiscarded(run.id, (event) => events.push(event));
+  const outputs = getRun(run.id)!.steps.find((step) => step.name === 'complete')!.outputs!;
+  assert.deepEqual(outputs.gatePrerequisiteRefusal, { reason: 'no receipt' });
+  assert.equal(typeof outputs.gatePrerequisiteDiscardedAt, 'string');
+  assert.equal(isActiveListRun(getRun(run.id)!), false);
+  assert.deepEqual(events, ['run.updated']);
+
+  await markCompletionFailureDiscarded(run.id, (event) => events.push(event));
+  assert.deepEqual(events, ['run.updated'], 'a second discard does not restamp');
+});
+
+test('markCompletionFailureDiscarded leaves other runs alone', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-plain-failed`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'failed' });
+  const before = getRun(run.id)!.steps;
+  await markCompletionFailureDiscarded(run.id, () => assert.fail('no event for a plain failure'));
+  assert.deepEqual(getRun(run.id)!.steps, before);
 });
