@@ -34,6 +34,7 @@ import {
   listPackOwnedEntries,
   packEntryLinkTarget,
 } from '@farmslot/protocol/node/pack-portability';
+import { ORCHESTRATOR_TASK_DIR } from '@farmslot/slot-config';
 
 import {
   decideAddAction,
@@ -289,6 +290,7 @@ function packIgnoredFiles(src: string, paths: string[]): Set<string> {
  * readFileSync would EISDIR on restore), and empty operator dirs are not
  * preserved. A non-git pack source yields no signal → nothing preserved
  * (matches the prior full-replace; real packs are git clones/submodules).
+ * The gateway's run task root is never replaced, so it is not scanned.
  */
 export function operatorAddedFiles(dest: string, src: string): string[] {
   if (!existsSync(dest)) return [];
@@ -296,6 +298,7 @@ export function operatorAddedFiles(dest: string, src: string): string[] {
   const walk = (rel: string): void => {
     for (const entry of readdirSync(join(dest, rel))) {
       if (entry === '.git' || entry === 'node_modules') continue;
+      if (!rel && entry === ORCHESTRATOR_TASK_DIR) continue;
       const childRel = rel ? join(rel, entry) : entry;
       const stat = lstatSync(join(dest, childRel));
       if (stat.isSymbolicLink()) continue;
@@ -382,8 +385,17 @@ export function registerProject(
     mode: statSync(join(dest, rel)).mode,
   }));
   // Full replace: packs own their project dirs — files deleted from the pack
-  // must disappear here too, not survive as stale hooks/fixtures.
-  rmSync(dest, { recursive: true, force: true });
+  // must disappear here too, not survive as stale hooks/fixtures. The gateway's
+  // run task root is not pack content: it holds every run's retained task
+  // inputs and evidence, so it stays in place.
+  if (existsSync(dest) && lstatSync(dest).isDirectory()) {
+    for (const entry of readdirSync(dest)) {
+      if (entry !== ORCHESTRATOR_TASK_DIR)
+        rmSync(join(dest, entry), { recursive: true, force: true });
+    }
+  } else {
+    rmSync(dest, { recursive: true, force: true });
+  }
   cpSync(src, dest, { recursive: true, verbatimSymlinks: true });
   // Restore preserved operator files on top of the fresh pack copy.
   for (const file of preserved) {

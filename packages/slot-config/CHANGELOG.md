@@ -8,6 +8,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 - Detect pinned provider CLI drift across shell paths, distinguish timed-out probes from version mismatches, and verify exact-version global rollout.
 
+- Export `ORCHESTRATOR_TASK_DIR`, the gateway run task folder name inside a project directory, so pack re-sync can keep it.
+
 - Declare the documented `ci.local_check` project field on the `RawProjectJson` type.
 
 - Expose existing recipe provider declarations to typed hosted-task consumers.
