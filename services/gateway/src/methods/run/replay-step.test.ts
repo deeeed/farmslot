@@ -2911,3 +2911,59 @@ test('a later-step replay of a refused completion is refused before it touches t
     epoch: 3,
   });
 });
+
+test('a find-slot replay of a refused completion is refused while the run still holds its slot', async (t) => {
+  const run = await retainedCompletionRun(t, 'macwork-ff-5');
+  const before = structuredClone(getRun(run.id)!.steps);
+
+  await assert.rejects(
+    () =>
+      runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}, {
+        startEngine: async () => {},
+      }),
+    /retains slot macwork-ff-5 for a refused completion prerequisite; a fresh slot selection would abandon it/,
+  );
+
+  assert.equal(getRun(run.id)?.slotId, 'macwork-ff-5', 'the run still names its retained slot');
+  assert.deepEqual(getRun(run.id)?.steps, before, 'the refused COMPLETE is not normalized');
+  assert.equal(isCompletionPrerequisiteFailure(getRun(run.id)!), true);
+  assert.deepEqual(await retainedSlotRow(), {
+    lifecycle: 'held',
+    phase: 'occupied',
+    agent: 'idle',
+    owner: run.id,
+    epoch: 3,
+  });
+});
+
+for (const status of ['failed', 'monitoring'] as const) {
+  test(`a find-slot replay of a ${status} run settles the slot it still holds before re-selecting`, async (t) => {
+    const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: `PROJ-${Date.now()}`,
+    });
+    const slotId = `macwork-ff-held-${status}`;
+    updateRun(run.id, { status, slotId });
+    // A release fence the replay cannot take: the claim stays, and so does the binding.
+    await writeFile(
+      statusFile,
+      `${JSON.stringify({ slots: [{ slot: slotId, lifecycle: 'busy', phase: 'releasing', current_run_id: run.id }] })}\n`,
+    );
+    t.after(async () => {
+      if (priorStatus === null) await rm(statusFile, { force: true });
+      else await writeFile(statusFile, priorStatus);
+      if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+    });
+
+    await assert.rejects(
+      runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}, {
+        startEngine: async () => {},
+      }),
+      /could not be released/,
+    );
+    assert.equal(getRun(run.id)?.slotId, slotId);
+    assert.equal(getRun(run.id)?.status, status);
+  });
+}

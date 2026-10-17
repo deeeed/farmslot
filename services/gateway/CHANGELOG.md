@@ -12,6 +12,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - A visual-review delegator pinned above its current identity generation is refused with a message naming both generations, instead of reading as a replaced identity.
 
+- Refuse `slot.release` and `slot.recycle` of a slot whose run failed a COMPLETE or FINALIZE prerequisite, so a worker or operator can no longer discard the checkout a completion replay needs. Replay the completion, or discard the workspace with a `slot.release` that passes `forceReset:true` and names the run in `expectedRunId`. A replay of such a run must start at the refused step or earlier, since a later-step retry would mark the refusal done; a failed replay restores the retained slot claim instead of releasing it. The recovery proposal no longer offers to release it as orphaned. A find-slot replay is refused as well while the run still holds that slot, since selecting a fresh slot would abandon it. Any other run replayed from find-slot first releases the slot it still holds, instead of leaving it held by a run that no longer names it.
+
 ## 0.23.0 - 2026-10-17
 
 - `run.list` `active` uses the shared `isActiveListRun` rule that Command Center and Companion list with.
@@ -49,8 +51,6 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
 - Render `{{node_support_dir}}` in fixtures and `NODE_SUPPORT_DIR` in worker templates from the slot's selected node-support bundle, so pack scripts no longer resolve through the node install root or the old in-checkout support pointer. Fixture checks read the slot's selection without publishing.
 - Freeze the source identity of a QA run whose ref or range scope names exact commits (`expectedHeadSha`/`expectedBaseSha`, or full-SHA `ref`, `head` and `base`), as PR QA does. Prepare checks out that head, detached when the run has no branch, instead of the default-branch tip; dispatch refuses a prepared HEAD that differs and names the frozen head; completion validates against the same identity, also for runs prepared before this change. Start refs also accept 64-hex commit names.
-
-- Refuse `slot.release` and `slot.recycle` of a slot whose run failed a COMPLETE or FINALIZE prerequisite, so a worker or operator can no longer discard the checkout a completion replay needs. Replay the completion, or discard the workspace with a `slot.release` that passes `forceReset:true` and names the run in `expectedRunId`. A replay of such a run must start at the refused step or earlier, since a later-step retry would mark the refusal done; a failed replay restores the retained slot claim instead of releasing it. The recovery proposal no longer offers to release it as orphaned.
 
 ## 0.22.1 - 2026-10-16
 

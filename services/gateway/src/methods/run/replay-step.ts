@@ -762,6 +762,21 @@ function assertReplayKeepsCompletionRefusal(
     );
 }
 
+/**
+ * Only the named discard may release a retained completion slot, so a replay
+ * that selects a fresh slot cannot settle the claim the run still holds.
+ */
+function assertReselectionKeepsRetainedSlot(
+  run: NonNullable<ReturnType<typeof getRun>>,
+  slot: Readonly<Record<string, unknown>> | null,
+  stepName: string,
+): void {
+  if (slot?.current_run_id !== run.id) return;
+  throw new Error(
+    `Cannot replay ${stepName}: run ${run.id} retains slot ${run.slotId} for a refused completion prerequisite; a fresh slot selection would abandon it. Replay a step after ${PS.FIND_SLOT} to keep its checkout, or discard it first through slot.release RPC with forceReset:true and expectedRunId:${run.id}`,
+  );
+}
+
 function assertReplayAfterDispatchAllowed(
   existing: NonNullable<ReturnType<typeof getRun>>,
   flowSteps: readonly string[] | undefined,
@@ -1166,10 +1181,17 @@ async function replayRunStep(
     assertCancelledReplayNodeAvailable(existing, params.runId);
   }
 
+  // A replay from find-slot or earlier clears the run's slot binding, so the
+  // claim its slot row still holds must be settled before re-selection.
+  const reselectsSlot = targetIdx >= 0 && targetIdx <= findSlotIdx;
+  const priorSlotRow = reselectsSlot && existing.slotId ? await readSlotRow(existing.slotId) : null;
   const replaySnapshot = getRun(params.runId) ?? existing;
   const retainsCompletionSlot = isCompletionPrerequisiteFailure(replaySnapshot);
-  if (retainsCompletionSlot)
+  if (retainsCompletionSlot) {
     assertReplayKeepsCompletionRefusal(replaySnapshot, flowSteps, targetIdx);
+    if (reselectsSlot)
+      assertReselectionKeepsRetainedSlot(replaySnapshot, priorSlotRow, replayStepName);
+  }
   assertReplayAfterDispatchAllowed(
     replaySnapshot,
     flowSteps,
@@ -1298,7 +1320,9 @@ async function replayRunStep(
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
 
-    if (replayStepName === PS.FIND_SLOT && existing.status === 'blocked' && existing.slotId) {
+    // Release the claim whatever the run's status: once the run stops naming
+    // this slot, nothing else frees it.
+    if (reselectsSlot && existing.slotId) {
       const slot = await readSlotRow(existing.slotId);
       if (slot?.current_run_id === params.runId) {
         const { slotRelease } = await import('../slot.js');
@@ -1338,7 +1362,7 @@ async function replayRunStep(
     }
 
     // If replaying from find-slot or earlier, clear slot so it picks fresh
-    if (targetIdx >= 0 && targetIdx <= findSlotIdx) {
+    if (reselectsSlot) {
       replayTaskFile = null;
       effectiveSlotId = null;
       updateRun(params.runId, {
