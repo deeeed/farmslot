@@ -208,6 +208,7 @@ export async function replanSourceRun(run: Run, target: SourceAdmissionTarget): 
   const next = buildRunRecord(plan.params, {
     runId: run.id,
     createdByPrincipalId: run.createdByPrincipalId,
+    createdByPrincipalGeneration: run.createdByPrincipalGeneration,
     nativeOwnerPrincipalId: run.nativeOwnerPrincipalId,
     dispatchRequest: run.dispatchRequest,
     workflowExecution: plan.workflowExecution,
@@ -226,6 +227,7 @@ export async function replanSourceRun(run: Run, target: SourceAdmissionTarget): 
     decisions: run.decisions,
     queuedAt: run.queuedAt,
     createdByPrincipalId: run.createdByPrincipalId,
+    createdByPrincipalGeneration: run.createdByPrincipalGeneration,
     nativeOwnerPrincipalId: run.nativeOwnerPrincipalId,
     executionTemplate: plan.executionTemplateSnapshot,
     engineState: { ...next.engineState, ...run.engineState },
