@@ -1622,9 +1622,9 @@
         },
         "flows": {
           "type": "object",
-          "description": "Per-flow overrides keyed by FlowType (dev, fix-bug, review-pr, pr-complete, update-branch). Timeout fields fall back to the top-level monitoring value, then the built-in default. Turn/token soft budgets fall back to built-in defaults for mechanical flows (update-branch). poll_interval_min, idle_timeout_min, and max_nudges stay project-wide.",
+          "description": "Per-flow overrides keyed by FlowType (dev, fix-bug, review-pr, qa, pr-complete, update-branch). Timeout fields fall back to the top-level monitoring value, then the built-in default. Turn/token soft budgets fall back to built-in defaults for mechanical flows (update-branch). poll_interval_min, idle_timeout_min, and max_nudges stay project-wide.",
           "propertyNames": {
-            "enum": ["fix-bug", "review-pr", "dev", "pr-complete", "update-branch"]
+            "enum": ["fix-bug", "review-pr", "qa", "dev", "pr-complete", "update-branch"]
           },
           "additionalProperties": {
             "type": "object",

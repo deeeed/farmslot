@@ -5,6 +5,8 @@ import test from 'node:test';
 
 import Ajv2020 from 'ajv/dist/2020.js';
 
+import { FLOW_STEPS } from '@farmslot/protocol';
+
 import { farmslotRoot } from './repo-root.js';
 
 type JsonSchema = {
@@ -62,14 +64,19 @@ test('project schema restricts monitoring.flows keys to the known flow types', a
   const flows = schema.properties?.monitoring?.properties?.flows;
   assert.ok(flows, 'schemas/project.schema.json should define monitoring.flows');
   // A typo'd flow name would otherwise validate and then silently never match
-  // at runtime — the enum makes it a schema error instead.
-  assert.deepEqual([...(flows.propertyNames?.enum ?? [])].sort(), [
-    'dev',
-    'fix-bug',
-    'pr-complete',
-    'review-pr',
-    'update-branch',
-  ]);
+  // at runtime — the enum makes it a schema error instead. The runtime reads
+  // every flow type, so the enum must name each one (qa included).
+  assert.deepEqual(
+    [...(flows.propertyNames?.enum ?? [])].sort(),
+    Object.keys(FLOW_STEPS).sort(),
+  );
+  const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+  const project = (flowsConfig: Record<string, unknown>) => ({
+    name: 'schema-test',
+    monitoring: { flows: flowsConfig },
+  });
+  assert.equal(validate(project({ qa: { total_timeout_min: 240 } })), true);
+  assert.equal(validate(project({ quality: { total_timeout_min: 240 } })), false);
 });
 
 test('project schema accepts per-flow worker terminal acceptance rules', async () => {
