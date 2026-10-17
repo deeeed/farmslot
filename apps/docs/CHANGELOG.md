@@ -8,6 +8,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 - Align the API reference with the parent acceptance worker release.
 
+- The getting-started guide says what `farmslot uninstall` keeps as run history: the gateway's run records and task folders, moved to `<workspace>/runs/uninstalled-<time>/`.
+
 - Document node-owned hosted task initialization and workspace dependency retention without changing recipe-library roots.
 
 - Document authored task Markdown rendering and its output controls in the generated recipe CLI reference.
