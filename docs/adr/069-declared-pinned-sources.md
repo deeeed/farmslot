@@ -109,3 +109,60 @@ superseded copies and source-sync mechanisms in the implementation cut-over.
 Arthur accepted this ADR and its specification on 2026-10-12 and approved
 implementation in three staged PRs. This docs PR neither deploys the source
 manager nor converts any live checkout.
+
+## Amendment 1 (2026-10-17): Live source status
+
+**Status:** Accepted (2026-10-17, lead-approved)
+
+### Decision
+
+The gateway publishes a source revision that advances whenever a fact reported
+by `sources.status` changes: declarations, pins, resolutions, locks, run source
+plans and provenance, and syncs or materializations completed through the
+gateway. The shared source status controller rereads `sources.status` for its
+context when that revision advances, when the gateway epoch changes and after
+every reconnect. Source panels in Command Center and Companion have no Refresh
+control and do not poll. Retry stays available after a failed read.
+
+The signal uses the exact payload, key family and revision rules that ADR-071
+(gateway change notifications, proposed and not yet published) defines for
+`resource.changed`. Sources is ADR-071's pilot slice. Until ADR-071 is accepted,
+the payload rides on the existing `hello` and `fleet.updated` events. Adopting
+`resource.changed` as the carrier changes only the shared carrier decoder; the
+controller, renderers and payload stay as they are. Moving source reads into
+ADR-071's shared cache is ADR-071's own later migration. If ADR-071 is rejected,
+this carrier remains the sources contract.
+
+A gateway that reports configured sources but does not announce the signal is
+shown as not supporting live source status. Clients do not fall back to polling.
+
+A source panel shows nothing when its context has no declared sources, no pins
+and no recorded run inputs, or when the viewer cannot read `sources.status`.
+Otherwise it summarizes the context's sources in one line, keeps errors visible
+and puts other details behind a toggle. It does not repeat the run ID or explain
+read-only state.
+
+### Rationale and consequences
+
+Operators saw stale pins until they pressed Refresh, and empty runs showed a
+panel with no information. A view or connection change cannot show that another
+client changed a pin, that a run was admitted or that a branch advanced, so the
+gateway's own revision drives rereads. Using ADR-071's shape now avoids a second
+migration of the same clients. Every writer of reported source facts must
+advance the revision after the new facts become readable. Facts that nodes
+report only when asked, such as local drift, stay current as of the last read
+and show when they were verified.
+
+### Public surface
+
+`@farmslot/protocol/transport/events` exports `ResourceChangedPayload`, and the
+new `@farmslot/protocol/client-cache` entry exports `ResourceKey` and
+`ResourceRevision`, with ADR-071's fields. Only the `sources` key family is
+defined until ADR-071 is accepted. `HelloPayload` and `FleetUpdatedPayload` gain
+optional `resourceChanges`. The `@farmslot/protocol` sources module exports the
+carrier decoder `sourceResourceChanges`; the existing `SourceStatusController`
+gains inputs for observed changes and reconnects. Command Center and Companion
+consume them through their thin renderers. The gateway is the only producer.
+There are no new CLI commands, flags or RPC methods, and harnesses are not
+consumers. These additions are experimental and ship together across protocol,
+gateway and both clients.
