@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
@@ -7,12 +7,23 @@ import { after, test } from 'node:test';
 import type { QueueItem } from '@farmslot/protocol';
 
 const root = mkdtempSync(path.join(tmpdir(), 'delegated-review-dispatch-'));
-for (const dir of ['scripts', 'services/gateway', 'pool', 'projects/review/shared/review-pr']) {
+for (const dir of [
+  'bin',
+  'scripts',
+  'services/gateway',
+  'pool',
+  'projects/review/shared/review-pr',
+]) {
   mkdirSync(path.join(root, dir), { recursive: true });
 }
 writeFileSync(path.join(root, 'CLAUDE.md'), '# Test root\n');
 writeFileSync(path.join(root, 'scripts/dev.sh'), '#!/bin/sh\n');
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
+// Planning must stay offline: any GitHub lookup leaves a record and fails.
+const ghCalls = path.join(root, 'gh-calls');
+writeFileSync(path.join(root, 'bin/gh'), `#!/bin/sh\necho "$*" >> '${ghCalls}'\nexit 1\n`, {
+  mode: 0o700,
+});
 writeFileSync(
   path.join(root, 'projects/review/project.json'),
   JSON.stringify({
@@ -46,6 +57,7 @@ process.env.FARMSLOT_PROJECTS_DIR = path.join(root, 'projects');
 process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'farm-automation';
 process.env.FARMSLOT_HOME = path.join(root, 'home');
 process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = 'off';
+process.env.PATH = `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`;
 after(() => rmSync(root, { recursive: true, force: true }));
 
 const { addItem, getQueueSnapshot, initDispatchQueue, removeItem, tryDispatchNext } =
@@ -118,6 +130,7 @@ test('a live static review request from an admin replacement plans under the nat
     flowType: 'review-pr' as const,
     project: 'review',
     ticketOrPr: 'owner/repo#3',
+    branch: 'fixture-review',
     reviewWorkspaceTarget: { machine: 'review-node' },
     runner: 'codex',
     model: 'gpt-6-astra',
@@ -127,6 +140,7 @@ test('a live static review request from an admin replacement plans under the nat
   const plan = await runWithSessionOriginator(arthur, () =>
     planRunCreation(review, { reviewDelegation: 'live' }),
   );
+  assert.equal(existsSync(ghCalls), false);
   assert.deepEqual(plan.staticReviewOwner, {
     ownerId: 'farm-automation',
     requester: { principalId: 'arthur', principalGeneration: 1 },

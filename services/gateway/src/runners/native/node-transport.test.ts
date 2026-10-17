@@ -15,7 +15,11 @@ import {
   NodeRpcTimeoutError,
   withNodeReconnectWait,
 } from '../../fleet/node-rpc.js';
-import { principalBindNativeOwner, principalCreate } from '../../methods/principal.js';
+import {
+  principalBindNativeOwner,
+  principalCreate,
+  principalReuseRetiredId,
+} from '../../methods/principal.js';
 import { createGatewayAuthRuntime } from '../../security/auth.js';
 
 import { requestNativeNode, resolveNativeExecutionNode, routeNativeExecution } from './node.js';
@@ -344,6 +348,21 @@ test('a replacement at a reused id never routes to a native node or becomes a no
         ),
       /arthur is a replacement identity/,
     );
+
+    const retired = { type: 'node' as const, machine: 'm3', displayName: 'n3' };
+    f.runtime.writer.createPrincipal(retired, [], 'retired-node');
+    f.runtime.writer.retirePrincipals(['retired-node']);
+    const reuse = (nativeOwnerPrincipalId: string) =>
+      principalReuseRetiredId(
+        {
+          principalId: 'retired-node',
+          subject: { ...retired, nativeOwnerPrincipalId },
+          roles: [],
+        },
+        f.runtime,
+      );
+    assert.throws(() => reuse('arthur'), /arthur is a replacement identity/);
+    assert.equal(reuse(keeper.id).principal.subject.type, 'node');
   } finally {
     f.cleanup();
   }
