@@ -79,12 +79,7 @@ export interface AcceptanceStatusLedger {
 }
 
 /** The execution whose retained package a task-ledger row binds to. */
-export function acceptanceRowExecution(
-  ledger: Pick<AcceptanceStatusLedger, 'recipeRunId'>,
-  row: Pick<AcceptanceCriterionStatus, 'recipeRunId'>,
-): string | undefined {
-  return row.recipeRunId ?? ledger.recipeRunId;
-}
+export const acceptanceRowExecution = contract.acceptanceRowExecution;
 
 /**
  * One criterion as task init registered it: the id and the text, with no verdict.

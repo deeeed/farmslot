@@ -22,6 +22,11 @@ function registeredAcceptanceCriteria(criteria) {
     .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }));
 }
 
+/** The execution whose retained package a task-ledger row binds to: a QA case row names its own. */
+function acceptanceRowExecution(ledger, row) {
+  return row?.recipeRunId ?? ledger?.recipeRunId;
+}
+
 function acceptanceCriteriaMatch(expected, actual) {
   return (
     Array.isArray(expected) &&
@@ -149,7 +154,7 @@ function validateAcceptanceStatusLedger(value) {
         entry.moments.some(
           (moment) =>
             !isRecord(moment) ||
-            moment.recipeRunId !== (entry.retainedFrom ?? entry.recipeRunId ?? value.recipeRunId) ||
+            moment.recipeRunId !== (entry.retainedFrom ?? acceptanceRowExecution(value, entry)) ||
             !/^sha256:[a-f0-9]{64}$/.test(moment.videoDigest) ||
             !Number.isInteger(moment.traceIndex) ||
             moment.traceIndex < 0,
@@ -258,6 +263,7 @@ export {
   acceptanceCriteriaMatch,
   acceptanceCriteriaView,
   acceptanceCriterionId,
+  acceptanceRowExecution,
   INHERITED_ACCEPTANCE_INPUT,
   registeredAcceptanceCriteria,
   renderAcceptanceCoverage,

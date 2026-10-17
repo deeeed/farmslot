@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "FARMSLOT_RPC_TIMEOUT_MS=25000 FARMSLOT_QA_OUTPUT_CASE_LEDGER=1 TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/qa-output-evidence-gate.mts",
         "timeout_ms": 300000,
-        "intent": "Merge the case packages into one ledger by criterion, read it back through task.progress, and pass QA completion with each criterion bound to its case package.",
+        "intent": "Merge the case packages into one ledger by criterion, pass the worker terminal checker that mark complete and the monitor run, read the ledger back through task.progress, and pass QA completion with each criterion bound to its case package.",
         "next": "single-execution-binding"
       },
       "single-execution-binding": {

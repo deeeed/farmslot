@@ -23,6 +23,7 @@ const {
   ACCEPTANCE_CRITERION_ID_PATTERN,
   acceptanceCriterionId,
   acceptanceCriteriaMatch,
+  acceptanceRowExecution,
   registeredAcceptanceCriteria,
   validateAcceptanceStatusLedger,
   acceptanceCriteriaView,
@@ -174,6 +175,27 @@ function setDerivedClaims(taskDir, claims) {
 }
 
 /**
+ * The retained package a task row came from: the directory of its transported
+ * trace whose engine claims still name the row's execution, or null.
+ */
+function rowPackageDir(taskDir, row, execution) {
+  for (const file of row.evidence ?? []) {
+    if (path.posix.basename(file) !== 'trace.json') continue;
+    const dir = path.join(taskDir, path.posix.dirname(file));
+    let claims;
+    try {
+      claims = JSON.parse(fs.readFileSync(path.join(dir, 'acceptance-status.json'), 'utf8'));
+    } catch (err) {
+      // A directory without readable engine claims is not a package of this row.
+      if (err.code === 'ENOENT' || err instanceof SyntaxError) continue;
+      throw err;
+    }
+    if (isRecord(claims) && claims.recipeRunId === execution) return dir;
+  }
+  return null;
+}
+
+/**
  * One QA ledger keyed by claim id. A row the new execution addresses (a selected
  * node proves it) replaces the stored row; every other stored row keeps the case
  * execution it came from. Each row names its execution, so the gate can bind it
@@ -193,9 +215,15 @@ function mergeCaseClaims(taskDir, registered, claims) {
     for (const row of stored.criteria) {
       const registration = registered.find(({ id }) => id === row.id);
       if (ACCEPTANCE_CRITERION_ID_PATTERN.test(row.id) && registration?.text !== row.text) continue;
-      // A row whose evidence is gone has nothing left to bind; the new row stands.
-      if (!row.evidence.every((file) => fs.existsSync(path.join(taskDir, file)))) continue;
-      kept.set(row.id, { ...row, recipeRunId: row.recipeRunId ?? stored.recipeRunId });
+      const execution = acceptanceRowExecution(stored, row);
+      // A row whose evidence is gone, or whose case directory now holds another
+      // execution, has nothing left to bind; the new row stands.
+      if (
+        !row.evidence.every((file) => fs.existsSync(path.join(taskDir, file))) ||
+        !rowPackageDir(taskDir, row, execution)
+      )
+        continue;
+      kept.set(row.id, { ...row, recipeRunId: execution });
     }
   }
   const criteria = claims.criteria.map((row) =>
@@ -339,11 +367,13 @@ module.exports = {
   AcceptanceRefusal,
   acceptanceContractIssues,
   acceptanceCriterionId,
+  acceptanceRowExecution,
   acceptanceStatusList,
   handoffAcceptanceCriteria,
   requireHandoffAcceptanceCriteria,
   readAcceptanceLedger,
   renderAcceptanceCoverage,
+  rowPackageDir,
   setDerivedClaims,
   summarizeAcceptanceStatus,
   validateAcceptanceStatusLedger,

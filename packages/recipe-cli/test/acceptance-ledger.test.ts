@@ -295,6 +295,86 @@ test('a repair ledger passes the evidence review terminal gate with its retained
   ]);
 });
 
+test('a QA task merges real case executions and passes the evidence review terminal gate', async (t) => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'claim-cases-'));
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+  const taskDir = path.join(target, 'task');
+  fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+  fs.writeFileSync(
+    path.join(taskDir, 'inputs/handoff.json'),
+    JSON.stringify({ flow: 'qa', task: { acceptanceCriteria: criteria } }),
+  );
+  const runner = createRecipeRunner({
+    actionManifest: manifest,
+    adapters: createStandardCoreAdapters({ actions: ['command', 'assert_output', 'end'] }),
+    defaultSource: { kind: 'operator', trust: 'trusted', name: 'test' },
+  });
+  // One package per case, each proving its own criterion.
+  for (const [index, caseId] of ['QA-01', 'QA-02'].entries()) {
+    const result = await runner.run({
+      projectRoot: target,
+      artifactsDir: path.join(taskDir, 'artifacts/recipe-runs', caseId),
+      claims: criteria.map((claim, position) => ({ id: `AC-${position + 1}`, claim })),
+      recipeDocument: {
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        proofTargets: [{ id: `AC${index + 1}`, claim: criteria[index]!, proofMode: 'state' }],
+        workflow: {
+          entry: 'observe',
+          nodes: {
+            observe: {
+              action: 'command',
+              cmd: 'printf one',
+              intent: 'Read the actual command result.',
+              next: 'check',
+            },
+            check: {
+              action: 'assert_output',
+              source: 'observe',
+              contains: 'one',
+              proves: [`AC${index + 1}`],
+              intent: 'The observed result must be one.',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    });
+    assert.ok(
+      attemptSelection.recordRecipeAttemptSelection(taskDir, path.dirname(result.tracePath)),
+    );
+    recordRecipeAcceptance(taskDir, target, result);
+  }
+  const ledger = JSON.parse(
+    fs.readFileSync(path.join(taskDir, 'artifacts/acceptance-status.json'), 'utf8'),
+  ) as RecipeClaimLedger & { criteria: Array<{ recipeRunId?: string }> };
+  assert.deepEqual(
+    ledger.criteria.map(({ id, verdict }) => [id, verdict]),
+    [
+      ['AC-1', 'proven'],
+      ['AC-2', 'proven'],
+    ],
+  );
+  assert.notEqual(ledger.criteria[0]!.recipeRunId, ledger.criteria[1]!.recipeRunId);
+  assert.equal(ledger.recipeRunId, ledger.criteria[1]!.recipeRunId);
+  const gatePath = require.resolve('@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs');
+  const gate = (await import(path.join(path.dirname(gatePath), 'claim-review-gate.mjs'))) as {
+    pendingClaimReviewIssues(taskDir: string, ledger: RecipeClaimLedger): Promise<string[]>;
+  };
+  // Each row binds to the case package that recorded it, not the last selected case.
+  assert.deepEqual(await gate.pendingClaimReviewIssues(taskDir, ledger), []);
+  const tampered = structuredClone(ledger);
+  tampered.criteria[0]!.verdict = 'missing';
+  assert.deepEqual(await gate.pendingClaimReviewIssues(taskDir, tampered), [
+    'Task claim AC-1 differs from its selected engine claim.',
+  ]);
+  const unbound = structuredClone(ledger);
+  unbound.criteria[0]!.recipeRunId = 'superseded-case-execution';
+  assert.deepEqual(await gate.pendingClaimReviewIssues(taskDir, unbound), [
+    'Task claim AC-1 has no retained package for its execution.',
+  ]);
+});
+
 test('failed actual assertion stays failed and cannot be overwritten manually as proven', async (t) => {
   const run = await execute(t, 'two');
   recordRecipeAcceptance(run.taskDir, run.target, run.result);

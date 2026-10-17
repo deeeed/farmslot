@@ -1,7 +1,7 @@
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual public-RPC regression proof from a retained QA receipt. Originals are read-only.
 import assert from 'node:assert/strict';
-import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFile, execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import {
@@ -119,6 +119,8 @@ if (process.argv[2] === 'serve') {
     'services/gateway/src/run-engine/acceptance-proof.ts',
     'services/gateway/src/run-engine/claim-overrides.ts',
     'packages/agent-runtime/scripts/acceptance-ledger.cjs',
+    'packages/agent-runtime/scripts/claim-review-gate.mjs',
+    'packages/agent-runtime/scripts/check-task-artifact-contract.mjs',
     'packages/recipe-cli/src/harness/acceptance-ledger.ts',
     'packages/protocol/scripts/acceptance.mjs',
     'scripts/runner-validation/gateway/qa-output-evidence-gate.mts',
@@ -400,6 +402,10 @@ if (process.argv[2] === 'serve') {
         'case-binding',
       ].includes(negative),
     );
+    assert.ok(
+      negative !== 'case-binding' || caseLedger,
+      'The case-binding control needs FARMSLOT_QA_OUTPUT_CASE_LEDGER=1.',
+    );
     json(path.join(out, 'input-receipt.json'), {
       originalRunId: original.id,
       farmslotHead,
@@ -637,6 +643,27 @@ if (process.argv[2] === 'serve') {
       );
       json(path.join(out, 'advanced-after-idle.json'), advanced);
     } else if (caseLedger) {
+      // The worker's `mark complete` and the gateway's terminal-signal check run this checker.
+      const terminal = spawnSync(
+        process.execPath,
+        [
+          path.join(source, 'packages/agent-runtime/scripts/check-task-artifact-contract.mjs'),
+          workerDir,
+          '--terminal',
+          'complete',
+          '--contract',
+          path.join(workerDir, 'inputs/worker-terminal-contract.json'),
+        ],
+        { cwd: repo, encoding: 'utf8' },
+      );
+      writeFileSync(
+        path.join(out, 'terminal-check.txt'),
+        `exit ${terminal.status}\n${terminal.stdout}${terminal.stderr}`,
+      );
+      assert.equal(terminal.status, 0, terminal.stdout + terminal.stderr);
+      checks.push(
+        'the worker terminal checker (mark complete and the monitor signal check) accepts the merged ledger',
+      );
       assert.equal((await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok, true);
       const gated = await replay();
       writeFileSync(
