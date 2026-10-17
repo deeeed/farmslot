@@ -1,5 +1,7 @@
-import React, { useContext } from 'react';
+import React, { useContext, useMemo } from 'react';
 import {
+  Alert,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -11,16 +13,25 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import WebView from 'react-native-webview';
 
 import { RecipeHudContext } from '../farmslot/RecipeBridgeProvider';
 import { RecipeHud } from '../farmslot/RecipeHud';
 import { formatDocument } from '../lib/document-format';
+import { isolatedReportHtml, REPORT_DOCUMENT_BASE, reportNavigation } from '../lib/document-html';
 import { colors, fonts, radii, spacing } from '../lib/theme';
+
+export interface DocumentHtmlLinks {
+  /** A report-relative link to the retained artifact path it names, or null. */
+  resolveArtifact: (relativeHref: string) => string | null;
+  openArtifact: (artifactPath: string) => void;
+}
 
 export function DocumentViewer({
   visible,
   title,
   body,
+  html,
   onClose,
   children,
 }: {
@@ -28,17 +39,21 @@ export function DocumentViewer({
   visible: boolean;
   title: string;
   body: string;
+  /** Render the body as an isolated HTML page (a QA run's report.html) instead of formatted text. */
+  html?: DocumentHtmlLinks;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const recipeHud = useContext(RecipeHudContext);
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const topInset = Math.max(
     insets.top,
     Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight ?? 0),
   );
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
-  const formatted = formatDocument(title, body);
+  const formatted = html ? [] : formatDocument(title, body);
+  const isHtml = Boolean(html);
+  const page = useMemo(() => (isHtml ? isolatedReportHtml(body) : ''), [isHtml, body]);
   const minCodeWidth = Math.max(320, width - spacing.xl * 2);
   if (!visible) return null;
   return (
@@ -70,7 +85,36 @@ export function DocumentViewer({
           style={styles.body}
           contentContainerStyle={styles.bodyContent}
         >
-          {formatted.length > 0 ? (
+          {html && body.trim() ? (
+            <WebView
+              testID="companion-document-html"
+              source={{ html: page, baseUrl: REPORT_DOCUMENT_BASE }}
+              // Every URL reaches the decision below; none falls through to the system opener.
+              originWhitelist={['*']}
+              javaScriptEnabled={false}
+              setSupportMultipleWindows={false}
+              nestedScrollEnabled
+              onShouldStartLoadWithRequest={(request) => {
+                // Android passes neither the frame nor the navigation type. With scripts
+                // off and authored meta tags removed, a page navigation there comes from a tap.
+                const tapped =
+                  request.isTopFrame !== false &&
+                  (Platform.OS === 'android' || request.navigationType === 'click');
+                const next = reportNavigation(request.url, html.resolveArtifact, tapped);
+                if (next.kind === 'document') return true;
+                if (next.kind === 'artifact') html.openArtifact(next.path);
+                if (next.kind === 'external')
+                  Linking.openURL(next.url).catch((error: unknown) =>
+                    Alert.alert(
+                      'Link unavailable',
+                      error instanceof Error ? error.message : String(error),
+                    ),
+                  );
+                return false;
+              }}
+              style={[styles.htmlPage, { height: Math.round(height * 0.7) }]}
+            />
+          ) : formatted.length > 0 ? (
             formatted.map((block, index) =>
               block.kind === 'separator' ? (
                 <View key={`${block.kind}-${index}`} style={styles.separator} />
@@ -119,6 +163,10 @@ export function DocumentViewer({
 }
 
 const styles = StyleSheet.create({
+  htmlPage: {
+    borderRadius: radii.md,
+    overflow: 'hidden',
+  },
   container: {
     flex: 1,
     backgroundColor: colors.bgBase,

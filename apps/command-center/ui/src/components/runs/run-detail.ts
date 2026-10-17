@@ -34,6 +34,7 @@ import {
   Methods,
   sortRunsForFamilyView,
 } from '@farmslot/protocol';
+import { pendingOutputReview } from '@farmslot/review-dispatch';
 
 import './native-worker-history.js';
 import './failure-triage-panel.js';
@@ -175,9 +176,7 @@ export class RunDetail extends RunDetailState {
         'acceptanceEvidenceLinks',
       ].some((key) => changed.has(key))
     ) {
-      const output = this.run?.decisions.find(
-        (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
-      );
+      const output = pendingOutputReview(this.run);
       const scope = JSON.stringify([
         this.run?.id,
         this._recordedEvidence?.input?.claims?.recipeRunId,
@@ -853,27 +852,21 @@ export class RunDetail extends RunDetailState {
     const recipeRunId = this._pendingRecipeRunSelectionId || this._selectedRecipeRunId;
     this._recipeRunsRefreshToken = refreshToken;
     try {
-      const outputDecision = run.decisions.find(
-        (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
-      );
+      const outputDecision = pendingOutputReview(run);
+      const recordedRecipeRunId = this._recipeRuns.find(
+        (group) => group.id === recipeRunId,
+      )?.recipeRunId;
       const params = {
         runId: run.id,
         includeRecordedEvidence: true,
         ...(recipeRunId ? { recipeRunId } : {}),
-        ...(outputDecision?.payload?.kind === 'output-review'
+        ...(outputDecision
           ? {
               decisionId: outputDecision.id,
-              ...(this._recipeRuns.find((group) => group.id === recipeRunId)?.recipeRunId
-                ? {
-                    recordedRecipeRunId: this._recipeRuns.find((group) => group.id === recipeRunId)!
-                      .recipeRunId,
-                  }
-                : {}),
+              ...(recordedRecipeRunId ? { recordedRecipeRunId } : {}),
               evidenceSnapshotHash: outputDecision.payload.manifestDigest,
             }
-          : recipeRunId
-            ? { recipeRunId }
-            : {}),
+          : {}),
       };
       let result = await gateway.request<RunRecipeRunsForRunResult>(
         Methods.RUN_RECIPE_RUNS_FOR_RUN,

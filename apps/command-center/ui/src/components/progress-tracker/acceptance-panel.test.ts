@@ -3,13 +3,13 @@ import { test } from 'node:test';
 
 import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type { AcceptanceCriterionStatus, AcceptanceStatusLedger } from '@farmslot/protocol';
+import { acceptancePanelPresentation } from '@farmslot/review-dispatch';
 
 import { litBindings, litText } from '../../testing/lit-text.js';
 
 import {
   type AcceptanceEvidenceOpen,
   acceptancePanelInputs,
-  acceptancePanelPresentation,
   evidenceLabel,
   renderAcceptancePanel,
   type RunAcceptanceData,
@@ -47,32 +47,6 @@ test('supporting files start collapsed and remain available under their original
   for (const path of paths) assert.ok(text.includes(`/artifact/${path}`));
   assert.match(text, /data-ac-id=AC-1/);
   assert.match(text, /data-ac-verdict=proven/);
-});
-
-test('the header separates assessment progress from proven criteria', () => {
-  const view = acceptancePanelPresentation(
-    ledger([
-      criterion({ id: 'AC-1', verdict: 'proven' }),
-      criterion({ id: 'AC-2', verdict: 'weak' }),
-      criterion({ id: 'AC-3', verdict: 'untestable' }),
-    ]),
-  );
-  assert.equal(view.counts, '3/3 assessed · 1 proven');
-  assert.equal(view.countsTooltip, 'proven 1 · weak 1 · missing 0 · untestable 1 · not assessed 0');
-  // A weak criterion is still open work, so the panel starts expanded.
-  assert.equal(view.hasOpenCriteria, true);
-});
-
-test('a run whose criteria are all settled starts collapsed', () => {
-  // Untestable counts as settled: it is a recorded decision, not open work.
-  const view = acceptancePanelPresentation(
-    ledger([
-      criterion({ id: 'AC-1', verdict: 'proven' }),
-      criterion({ id: 'AC-2', verdict: 'untestable' }),
-    ]),
-  );
-  assert.equal(view.counts, '2/2 assessed · 1 proven');
-  assert.equal(view.hasOpenCriteria, false);
 });
 
 test('each row carries its id, verdict, proof mode, evidence and note', () => {

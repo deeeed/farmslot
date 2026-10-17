@@ -13,7 +13,6 @@ import {
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { type EvidenceReviewModel, readEvidenceReviewReport } from '@farmslot/adapter-sdk/evidence';
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionListResult,
@@ -47,6 +46,7 @@ import {
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer, type MediaViewerItem } from '../../components/MediaViewer';
+import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
 import {
   acceptancePanelViewportHeight,
   TaskAcceptancePanel,
@@ -55,12 +55,12 @@ import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import { useRunAcceptance } from '../../hooks/useRunAcceptance';
+import { useRunOutputReport } from '../../hooks/useRunOutputReport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
-  artifactUrl,
   artifactUrlForEntry,
   classifyArtifact,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
@@ -216,7 +216,6 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const [documentViewer, setDocumentViewer] = useState<{
     title: string;
     body: string;
-    evidenceModel?: EvidenceReviewModel;
   } | null>(null);
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
   useEffect(() => {
@@ -838,45 +837,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     [artifactAuthHeaders, checkedEvidenceModel, gatewayUrl, presentation?.runId],
   );
 
-  const openOutputReport = useCallback(async () => {
-    const model = outputAcceptance.evidenceModel;
-    if (!model || !presentation?.runId) return;
-    documentAbortRef.current?.abort();
-    const controller = new AbortController();
-    documentAbortRef.current = controller;
-    setLoadingDocument(outputReviewPayload?.reportPath ?? null);
-    try {
-      const report = await readEvidenceReviewReport(model, async (path) => {
-        const response = await gatewayFetch(
-          artifactUrl(
-            gatewayUrl,
-            presentation.runId!,
-            path,
-            undefined,
-            undefined,
-            model.report?.artifactManifest.find((file) => file.path === path)?.bundleDigest,
-          ),
-          artifactAuthHeaders,
-          { signal: controller.signal },
-        );
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return new Uint8Array(await response.arrayBuffer());
-      });
-      if (!controller.signal.aborted)
-        setDocumentViewer({ title: report.caption, body: report.body, evidenceModel: model });
-    } catch (error) {
-      if (!controller.signal.aborted)
-        Alert.alert('Report unavailable', error instanceof Error ? error.message : String(error));
-    } finally {
-      if (!controller.signal.aborted) setLoadingDocument(null);
-    }
-  }, [
-    artifactAuthHeaders,
+  const outputReport = useRunOutputReport({
+    evidenceModel: outputAcceptance.evidenceModel,
+    runId: presentation?.runId,
     gatewayUrl,
-    outputAcceptance.evidenceModel,
-    outputReviewPayload?.reportPath,
-    presentation?.runId,
-  ]);
+    authHeaders: artifactAuthHeaders,
+  });
 
   const openDiffArtifact = useCallback(
     (path: string, replace = false) => {
@@ -1722,10 +1688,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             <Pressable
               accessibilityRole="button"
               testID="companion-output-report"
-              disabled={!outputAcceptance.evidenceModel || Boolean(loadingDocument)}
-              onPress={() => void openOutputReport()}
+              disabled={!outputAcceptance.evidenceModel || outputReport.loading}
+              onPress={() => void outputReport.open()}
             >
-              <Text style={styles.reportTitle}>Read verified report</Text>
+              <Text style={styles.reportTitle}>
+                {outputReport.loading ? 'Reading verified report…' : 'Read verified report'}
+              </Text>
             </Pressable>
             <ScrollView
               nestedScrollEnabled
@@ -2012,28 +1980,35 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           title={documentViewer?.title ?? ''}
           body={documentViewer?.body ?? ''}
           onClose={() => setDocumentViewer(null)}
-        >
-          {documentViewer?.evidenceModel && sourceRunId ? (
-            <TaskAcceptancePanel
-              acceptanceStatus={null}
-              evidenceModel={documentViewer.evidenceModel}
-              judgmentRows={documentViewer.evidenceModel.judgmentRows(outputAcceptance.reviewer)}
-              onRecordVisualReview={outputAcceptance.recordVisualReview}
-              onOpenEvidence={(criterionId, path) => {
-                setDocumentViewer(null);
-                router.push(
-                  acceptanceEvidenceHref(
-                    sourceRunId,
-                    criterionId,
-                    path,
-                    outputAcceptance.recipeRunId,
-                    decision?.id,
-                  ),
-                );
-              }}
-            />
-          ) : null}
-        </DocumentViewer>
+        />
+        <RunOutputReportViewer
+          report={outputReport}
+          visible={isFocused && Boolean(sourceRunId)}
+          evidenceModel={outputAcceptance.evidenceModel}
+          judgmentRows={
+            outputAcceptance.evidenceModel?.judgmentRows(outputAcceptance.reviewer) ?? []
+          }
+          onRecordVisualReview={outputAcceptance.recordVisualReview}
+          onOpenEvidence={(criterionId, path) => {
+            if (!sourceRunId) return;
+            router.push(
+              acceptanceEvidenceHref(
+                sourceRunId,
+                criterionId,
+                path,
+                outputAcceptance.recipeRunId,
+                decision?.id,
+              ),
+            );
+          }}
+          onOpenArtifact={(path) =>
+            openArtifactWorkspaceForDecision(
+              outputAcceptance.evidenceModel?.report?.artifactManifest.find(
+                (file) => file.path === path,
+              ) ?? { path, purpose: 'artifact' },
+            )
+          }
+        />
       </Animated.ScrollView>
     </View>
   );

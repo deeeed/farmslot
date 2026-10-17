@@ -13,14 +13,15 @@ import {
   Methods,
   withArtifactBundleDigest,
 } from '@farmslot/protocol';
-import { ReviewDispatchViewModel, reviewLineagesForRun } from '@farmslot/review-dispatch';
+import {
+  buildArtifactUrlResolver,
+  ReviewDispatchViewModel,
+  reviewLineagesForRun,
+} from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
 import { transferBoundRequestOptions } from '../../gateway-request-timeout.js';
-import {
-  buildArtifactUrlResolver,
-  rewriteMarkdownArtifactUrls,
-} from '../../utils/artifact-markdown.js';
+import { rewriteMarkdownArtifactUrls } from '../../utils/artifact-markdown.js';
 import { diffSelectionHandOff, visibleDiffSelection } from '../../utils/diff-test-filter.js';
 import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import {

@@ -1,8 +1,10 @@
 import DOMPurify from 'dompurify';
 
-/** Retained HTML is an untrusted document, never part of Command Center's DOM. */
-export const ARTIFACT_HTML_CSP =
-  "default-src 'none'; img-src data:; media-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'";
+import {
+  ARTIFACT_HTML_CSP,
+  decodeArtifactLink,
+  isExternalWebLink,
+} from '@farmslot/review-dispatch';
 
 export interface HtmlArtifactTarget {
   mediaUrl: string;
@@ -29,12 +31,8 @@ export function isolatedArtifactHtml(
   const mediaSources = new Set<string>();
   isolated.querySelectorAll('audio,source,track').forEach((node) => node.remove());
   const resolve = (file: string) => {
-    try {
-      return resolveArtifact?.(decodeURIComponent(file));
-    } catch (error) {
-      if (error instanceof URIError) return null;
-      throw error;
-    }
+    const path = decodeArtifactLink(file);
+    return path === null ? null : resolveArtifact?.(path);
   };
   for (const video of isolated.querySelectorAll('video')) {
     const original = video.getAttribute('src') ?? '';
@@ -60,19 +58,10 @@ export function isolatedArtifactHtml(
     const resolved = resolve(href.split('#')[0]);
     if (!resolved?.viewUrl) {
       // Source PR/docs links deliberately remain user-initiated web links.
-      // Never preserve named/opener targets or authored application schemes.
-      try {
-        const external = new URL(href);
-        if (
-          !['http:', 'https:'].includes(external.protocol) ||
-          external.username ||
-          external.password
-        )
-          anchor.removeAttribute('href');
-        else anchor.setAttribute('target', '_blank');
-      } catch {
-        anchor.removeAttribute('href'); /* unresolved relative links have no retained target */
-      }
+      // Never preserve named/opener targets, authored application schemes or
+      // unresolved relative links, which have no retained target.
+      if (isExternalWebLink(href)) anchor.setAttribute('target', '_blank');
+      else anchor.removeAttribute('href');
       continue;
     }
     const url = new URL(resolved.viewUrl, location.href);

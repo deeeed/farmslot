@@ -13,15 +13,13 @@ import {
   formatEvidenceReviewVideoTime,
 } from '@farmslot/adapter-sdk/evidence';
 import type { RecipeRecordingMarker, RecipeRecordingTimelineDocument } from '@farmslot/protocol';
+import { buildArtifactUrlResolver } from '@farmslot/review-dispatch';
 
 import '../diff-viewer/diff-review.js';
 
 import { isolatedArtifactHtml } from '../../utils/artifact-html.js';
 import { type ArtifactKind, artifactKind } from '../../utils/artifact-kind.js';
-import {
-  buildArtifactUrlResolver,
-  rewriteMarkdownArtifactUrls,
-} from '../../utils/artifact-markdown.js';
+import { rewriteMarkdownArtifactUrls } from '../../utils/artifact-markdown.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
 import { splitUnifiedDiff, type UnifiedDiffSplit } from '../../utils/unified-diff.js';

@@ -25,13 +25,19 @@ import {
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
+import {
+  pendingOutputReview,
+  publicationReviewBlockingReason,
+  runResultsSummary,
+} from '@farmslot/review-dispatch';
 
+import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
+import { useRunOutputReport } from '../../hooks/useRunOutputReport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
@@ -95,6 +101,7 @@ import {
 } from './components/run-detail-panels';
 import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
+import { RunResultsCard } from './components/RunResultsCard';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -150,6 +157,8 @@ export default function RunDetailScreen() {
   const run = loadedRun?.scope === readScope.current ? loadedRun.run : (storeRun ?? null);
   const setRun = (value: Run) => setLoadedRun({ scope: readScope.current, run: value });
   const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
+  // The open output review's snapshot is what the retained report is checked against.
+  const outputReview = useMemo(() => pendingOutputReview(run), [run]);
   const [recordedEvidence, setRecordedEvidence] = useState<RunRecordedEvidenceReview | null>(null);
   const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
@@ -198,6 +207,7 @@ export default function RunDetailScreen() {
     () =>
       createEvidenceReviewModel({
         context: 'run-detail',
+        reportSnapshot: outputReview?.payload,
         comparisonSnapshot: recordedEvidence?.comparisonSnapshot,
         artifacts: run ? extractRunArtifactManifest(run) : [],
         criterionSourceUrl: run?.links?.find((link) => link.label === 'Jira')?.url,
@@ -212,8 +222,18 @@ export default function RunDetailScreen() {
         criteria: acceptanceCriteria ?? undefined,
         report: recordedEvidence?.report,
       }),
-    [acceptanceCriteria, acceptanceStatus, recordedEvidence, run?.output],
+    [acceptanceCriteria, acceptanceStatus, outputReview, recordedEvidence, run?.output],
   );
+  const runResults = useMemo(
+    () => (run ? runResultsSummary(run, extractRunArtifactManifest(run).length) : null),
+    [run],
+  );
+  const outputReport = useRunOutputReport({
+    evidenceModel,
+    runId: run?.id,
+    gatewayUrl,
+    authHeaders: artifactAuthHeaders,
+  });
   const loadRecipeRuns = useCallback(
     (selectionHint: string | null) => {
       const requestId = recipeRunsRequestRef.current + 1;
@@ -541,6 +561,16 @@ export default function RunDetailScreen() {
   const focusedArtifactIsDiff = Boolean(
     focusedArtifactPath && diffArtifactCandidate([{ path: focusedArtifactPath }]),
   );
+  const recordRunVisualReview = async (
+    id: string,
+    verdict: Parameters<typeof recordVisualClaimReview>[4],
+    reason?: string,
+  ) => {
+    await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
+    await loadRecipeRuns(selectedRecipeRunId);
+  };
+  const openAcceptanceEvidence = (criterionId: string, path: string) =>
+    router.push(acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId));
   const openRunEvidenceArtifact = (
     artifactPath?: string,
     recipeRunId?: string | null,
@@ -830,6 +860,16 @@ export default function RunDetailScreen() {
           />
         ) : null}
 
+        {reviewPackageActiveTab === 'evidence' && runResults?.shouldRender ? (
+          <RunResultsCard
+            summary={runResults}
+            hasReport={Boolean(run.output?.reportPath)}
+            captureError={run.output?.captureError}
+            loadingReport={outputReport.loading}
+            onReadReport={() => void outputReport.open()}
+          />
+        ) : null}
+
         {reviewPackageActiveTab === 'evidence' ? (
           <RunReviewWorkspaceSummary
             run={run}
@@ -1077,18 +1117,11 @@ export default function RunDetailScreen() {
               <TaskAcceptancePanel
                 evidenceModel={evidenceModel}
                 judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
-                onRecordVisualReview={async (id, verdict, reason) => {
-                  await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
-                  await loadRecipeRuns(selectedRecipeRunId);
-                }}
+                onRecordVisualReview={recordRunVisualReview}
                 acceptanceStatus={acceptanceStatus}
                 acceptanceCriteria={acceptanceCriteria}
                 error={acceptanceStatusError}
-                onOpenEvidence={(criterionId, path) =>
-                  router.push(
-                    acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId),
-                  )
-                }
+                onOpenEvidence={openAcceptanceEvidence}
               />
             ) : null}
             {activeTaskProgress ? (
@@ -1221,6 +1254,14 @@ export default function RunDetailScreen() {
           style={styles.surfaceEndMarker}
         />
       </Animated.ScrollView>
+      <RunOutputReportViewer
+        report={outputReport}
+        evidenceModel={evidenceModel}
+        judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
+        onRecordVisualReview={recordRunVisualReview}
+        onOpenEvidence={openAcceptanceEvidence}
+        onOpenArtifact={(path) => openRunEvidenceArtifact(path, DECISION_EVIDENCE_RECIPE_RUN_PARAM)}
+      />
     </View>
   );
 }

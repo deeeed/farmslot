@@ -355,53 +355,6 @@ export function resolveEvidenceLightboxLink(args: {
   return runOutputEvidenceSelection(args.runArtifacts, lookup.index, args.artifactUrl);
 }
 
-export interface RunEvidenceSummary {
-  shouldRender: boolean;
-  completeStep: RunStep | undefined;
-  title: string;
-  badge: string;
-  status: RunStep['status'];
-  copy: string;
-  showEvalPackageHint: boolean;
-  emptyMessage: string;
-}
-
-export function runEvidenceSummary(
-  run: Run,
-  artifacts: readonly FamilyObservabilityArtifact[],
-): RunEvidenceSummary {
-  const isReplay =
-    run.lane === 'comparison' || Boolean(run.startRef) || Boolean(run.engineState?.evalExperiment);
-  const completeStep = run.steps.find((step) => step.name === 'complete');
-  const sourceRef = run.startRef?.resolvedSha ?? run.startRef?.requestedRef;
-  const hasOutput = Boolean(run.output);
-  return {
-    shouldRender:
-      hasOutput || run.completionPolicy === 'artifact-only' || isReplay || artifacts.length > 0,
-    completeStep,
-    title: isReplay ? 'Replay evidence' : 'Run results',
-    badge: isReplay ? 'comparison · artifact-only' : (run.metrics.outcome ?? run.status),
-    status:
-      completeStep?.status ??
-      (run.status === 'done' ? 'done' : run.status === 'failed' ? 'failed' : 'pending'),
-    copy: run.output?.closedAt
-      ? `Execution closed. The recorded result remains ${run.metrics.outcome ?? 'unknown'}; closing is not validation or release approval.`
-      : run.output?.workerFinished
-        ? 'The worker has finished. Read its findings and coverage gaps before reviewing the output. Reviewing does not change the verdict or publish anything.'
-        : hasOutput
-          ? 'Files retained from the worker. Execution is still in progress.'
-          : run.startRef
-            ? `This replay started from ${sourceRef ?? 'the selected ref'} and stopped at artifacts. Prior-run replay comparisons are represented by eval Reference and Candidate packages, not run parentage; no PR was published.`
-            : isReplay
-              ? 'This comparison run stops at artifacts instead of publishing a PR. Use these captured files as the run output evidence.'
-              : 'Final artifacts captured by the worker.',
-    showEvalPackageHint: Boolean(run.startRef),
-    emptyMessage: run.output?.captureError
-      ? `Could not retrieve worker files: ${run.output.captureError}`
-      : 'No output files have been retrieved yet.',
-  };
-}
-
 export function buildRunDiagnosisPrompt(run: Run): string {
   const failedSteps = run.steps.filter((step) => step.status === 'failed').map((step) => step.name);
   const slotId = resolveRunSlotId(run);

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show a Run results card on run detail with the run's retained report, the same results Command Center shows. The report bytes are verified against the retained bundle, and an HTML report (a QA run's per-criterion verdicts, coverage gaps and evidence) renders as a page with scripts off. Tapping an evidence link in it opens that retained artifact in Companion, a web link opens in the browser, and nothing else loads; recorded case claims show beneath it. The decision workspace opens reports through the same viewer. The acceptance tally now matches Command Center and shows no proven count before any criterion is assessed.
+
 - Count a family's active runs with the same rule as Command Center and the Review queue, and download every active run.
 
 - List the same active runs as Command Center: failed runs that still hold their slot stay in the Review queue, filters use the shared run-list view model, and archived runs leave the list at once.
