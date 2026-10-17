@@ -43,7 +43,6 @@ try {
   const {
     CredentialStoreRuntime,
     CredentialStoreWriter,
-    parseCredentialWire,
     registerGatewayPresence,
     retirePrincipalsOffline,
   } = await import('@farmslot/credential-store');
@@ -355,8 +354,20 @@ try {
     /cannot be resolved/,
   );
   await assert.rejects(oldClient.call('principal.list', {}));
+  // Persons sign in through person-device sessions, from a pairing code or a credential.
+  const personClient = async (
+    exchange: { code: string } | { credential: string },
+    deviceName: string,
+  ) => {
+    const grant = await client.call<{ accessToken: string }>(Methods.AUTH_SESSION_EXCHANGE, {
+      ...exchange,
+      deviceName,
+      deviceKind: 'cli',
+    });
+    return new GatewayClient({ url, timeout: 5000, credential: { token: grant.accessToken } });
+  };
   const beforeStaleExchange = await readFile(runtime.store.path);
-  await assert.rejects(client.call('pairing.exchange', { code: staleInvitation.code }), {
+  await assert.rejects(personClient({ code: staleInvitation.code }, 'stale invitation'), {
     code: 'PAIRING_FAILED',
   });
   assert.deepEqual(await readFile(runtime.store.path), beforeStaleExchange);
@@ -364,14 +375,10 @@ try {
     gatewayUrl: url,
     authority: { kind: 'existing-principal', principalId: reused.principal.id },
   });
-  const freshPairing = await client.call<{ profile: { secret: string } }>('pairing.exchange', {
-    code: freshInvitation.code,
-  });
-  const replacementPairedClient = new GatewayClient({
-    url,
-    timeout: 5000,
-    credential: { token: freshPairing.profile.secret },
-  });
+  const replacementPairedClient = await personClient(
+    { code: freshInvitation.code },
+    'replacement pairing',
+  );
   await replacementPairedClient.call('principal.list', {});
   claims.push(
     'an old pairing invitation fails after reuse without a store write; a new invitation authenticates as the replacement',
@@ -384,11 +391,7 @@ try {
     },
   );
   assert.notEqual(fresh.credential.id, oldCredential.credential.id);
-  const freshClient = new GatewayClient({
-    url,
-    timeout: 5000,
-    credential: { token: fresh.secret },
-  });
+  const freshClient = await personClient({ credential: fresh.secret }, 'replacement person device');
   await freshClient.call('principal.list', {});
   assert.equal(
     (await freshClient.call<{ devices: unknown[] }>(Methods.PR_PUSH_LIST, {})).devices.length,
@@ -597,11 +600,10 @@ try {
     principalId: operator.principal.id,
     displayName: 'operator device',
   });
-  const operatorClient = new GatewayClient({
-    url,
-    timeout: 5000,
-    credential: { token: operatorIssue.secret },
-  });
+  const operatorClient = await personClient(
+    { credential: operatorIssue.secret },
+    'operator device',
+  );
   const refusedBytes = await readFile(runtime.store.path);
   await assert.rejects(operatorClient.call('principal.reuseRetiredId', reuseParams), {
     code: 'AUTH_FORBIDDEN',
@@ -611,11 +613,6 @@ try {
     'explicit admin reuse replaces a service with a person at the exact id; old secrets stay denied, history reloads, tombstones survive, and operator/node callers are refused',
   );
   await client.call('credential.revoke', { credentialId: fresh.credential.id });
-  const pairedReplacementCredential = parseCredentialWire(freshPairing.profile.secret);
-  assert.ok(pairedReplacementCredential);
-  await client.call('credential.revoke', {
-    credentialId: pairedReplacementCredential.credentialId,
-  });
   await client.call('credential.revoke', { credentialId: paired.record.id });
   await assert.rejects(client.call('credential.revoke', { credentialId: admin.record.id }));
   assert.throws(() => retirePrincipalsOffline([replacement.principal.id]), /gateway|stopped/i);
