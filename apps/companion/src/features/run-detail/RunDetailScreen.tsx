@@ -317,8 +317,12 @@ export default function RunDetailScreen() {
   }, []);
 
   useEffect(() => {
+    // Each reconnect re-reads, as the run does: a load that was paused before the gateway
+    // connected, or while it restarted, otherwise leaves the recorded evidence and its
+    // report missing until the screen is opened again.
+    if (connection === null) return;
     loadRecipeRuns(requestedRecipeRunId).catch(noteRecipeRunsUnavailable);
-  }, [loadRecipeRuns, noteRecipeRunsUnavailable, requestedRecipeRunId]);
+  }, [connection, loadRecipeRuns, noteRecipeRunsUnavailable, requestedRecipeRunId]);
 
   useEffect(() => {
     if (!client || !resolvedRunId || connection === null) return;
