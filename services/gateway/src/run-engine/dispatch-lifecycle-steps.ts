@@ -5,6 +5,7 @@ import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
+import { ensureFrozenQaSource } from '../qa/frozen-source.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
 import { nudgeNativeWorker } from '../runners/native/worker-nudge.js';
 import {
@@ -34,7 +35,6 @@ import { probeRemotePath } from './remote-probes.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
 import { ensureRunStack } from './stack-base.js';
 import { createSubStepCollector, type SubStepCollector } from './sub-step-collector.js';
-import { qaScopeHeadSha } from './ticket-data.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
@@ -269,16 +269,14 @@ export async function executePrepareStep(
     normalizeEvalReplayForTaskWrite,
     stepPartialIO,
   } = context;
-  // A QA ref or range scope that names its head exactly freezes it the way
-  // fetchPRData freezes a PR head at write-task: prepare lands on that commit
-  // and the check below verifies it. Recorded here so a replay lands there too.
-  const admitted = getRun(runId);
-  const scopeHead =
-    admitted?.flowType === 'qa' && !admitted.startRef ? qaScopeHeadSha(admitted.qa) : undefined;
-  if (scopeHead)
-    updateRun(runId, {
-      startRef: { requestedRef: scopeHead, source: { kind: 'git-ref', ref: scopeHead } },
-    });
+  // A QA scope that names its commits exactly freezes them the way fetchPRData
+  // freezes a PR at write-task: prepare lands on the head and the check below
+  // verifies it. Recorded here so a replay lands there too.
+  const frozen = ensureFrozenQaSource(runId);
+  if (frozen?.qaSource && !frozen.startRef) {
+    const head = frozen.qaSource.headSha;
+    updateRun(runId, { startRef: { requestedRef: head, source: { kind: 'git-ref', ref: head } } });
+  }
   const current = await normalizeEvalReplayForTaskWrite(runId, ensureRunSlotBinding(runId));
   if (!current.slotId) throw new Error('No slot assigned');
   // Normally resolved at write-task; repeated here for runs that brought their own task.
@@ -492,11 +490,8 @@ export async function executePrepareStep(
       });
     }
     const afterPrepare = getRun(runId)!;
-    const frozenHead =
-      afterPrepare.flowType === 'qa'
-        ? (afterPrepare.qaSource?.headSha ?? qaScopeHeadSha(afterPrepare.qa))
-        : undefined;
-    if (frozenHead) {
+    if (afterPrepare.flowType === 'qa' && afterPrepare.qaSource) {
+      const frozenHead = afterPrepare.qaSource.headSha;
       const vars = await loadSlotVars(current.slotId);
       const head = await execArgvOnSlot(vars, ['git', 'rev-parse', 'HEAD']);
       const prepared = head.exitCode === 0 ? head.stdout.trim() : 'an unreadable HEAD';

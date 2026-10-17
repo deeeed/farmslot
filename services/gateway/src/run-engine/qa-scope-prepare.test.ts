@@ -127,7 +127,8 @@ mock.module('../core/index.js', { namedExports: { ...realCore, execOnSlot: slotE
 
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
 const { executePrepareStep } = await import('./dispatch-lifecycle-steps.js');
-const { qaScopeHeadSha } = await import('./ticket-data.js');
+const { ensureFrozenQaSource, qaScopeSource } = await import('../qa/frozen-source.js');
+const { assertQaCompletion } = await import('../qa/completion.js');
 
 after(() => {
   for (const [key, value] of Object.entries(previous)) {
@@ -177,21 +178,33 @@ const prepare = (runId: string) =>
     stepPartialIO: new Map(),
   });
 
-test('an exact ref or range head is frozen; branch names, windows and PRs are not', () => {
-  assert.equal(qaScopeHeadSha(selection({ kind: 'ref', ref: frozen })), frozen);
-  assert.equal(
-    qaScopeHeadSha(selection({ kind: 'ref', ref: 'main', expectedHeadSha: frozen })),
-    frozen,
+test('exact ref and range scopes freeze a source; names, windows and PRs do not', () => {
+  const same = { baseSha: frozen, headSha: frozen };
+  assert.deepEqual(qaScopeSource(selection({ kind: 'ref', ref: frozen })), same);
+  assert.deepEqual(
+    qaScopeSource(selection({ kind: 'ref', ref: 'main', expectedHeadSha: frozen })),
+    same,
   );
-  assert.equal(qaScopeHeadSha(selection({ kind: 'range', base: 'v1.0.0', head: frozen })), frozen);
-  assert.equal(qaScopeHeadSha(selection({ kind: 'ref', ref: 'a'.repeat(64) })), 'a'.repeat(64));
-  assert.equal(qaScopeHeadSha(selection({ kind: 'ref', ref: 'main' })), undefined);
-  assert.equal(qaScopeHeadSha(selection({ kind: 'ref', ref: frozen.slice(0, 12) })), undefined);
-  assert.equal(qaScopeHeadSha(selection({ kind: 'window', ref: frozen, hours: 24 })), undefined);
-  assert.equal(qaScopeHeadSha(selection({ kind: 'pr' })), undefined);
-  // An admitted scope without a kind overlays the same-kind preset, as the skill reads it.
+  assert.deepEqual(qaScopeSource(selection({ kind: 'range', base: later, head: frozen })), {
+    baseSha: later,
+    headSha: frozen,
+  });
+  // A range needs both ends exact: its base is the comparison completion checks.
   assert.equal(
-    qaScopeHeadSha({
+    qaScopeSource(selection({ kind: 'range', base: 'v1.0.0', head: frozen })),
+    undefined,
+  );
+  assert.deepEqual(qaScopeSource(selection({ kind: 'ref', ref: 'a'.repeat(64) })), {
+    baseSha: 'a'.repeat(64),
+    headSha: 'a'.repeat(64),
+  });
+  assert.equal(qaScopeSource(selection({ kind: 'ref', ref: 'main' })), undefined);
+  assert.equal(qaScopeSource(selection({ kind: 'ref', ref: frozen.slice(0, 12) })), undefined);
+  assert.equal(qaScopeSource(selection({ kind: 'window', ref: frozen, hours: 24 })), undefined);
+  assert.equal(qaScopeSource(selection({ kind: 'pr' })), undefined);
+  // An admitted scope without a kind overlays the same-kind preset, as the skill reads it.
+  assert.deepEqual(
+    qaScopeSource({
       profile: {
         id: 'ref',
         title: 'Ref',
@@ -200,8 +213,26 @@ test('an exact ref or range head is frozen; branch names, windows and PRs are no
       },
       inputs: { scope: { expectedHeadSha: frozen } },
     }),
-    frozen,
+    same,
   );
+});
+
+// Regression: run 3e2f400a was prepared before its scope froze a source and
+// failed completion for a missing source identity. The same identity now applies
+// there, and an existing one (a PR's) is never replaced.
+test('completion freezes a ref run source it never recorded', async (t) => {
+  const run = qaRun(t, selection({ kind: 'ref', ref: frozen, expectedHeadSha: frozen }));
+  assert.equal(getRun(run.id)?.qaSource, undefined);
+
+  await assert.rejects(assertQaCompletion(run, { retained: true }), (error: Error) => {
+    assert.doesNotMatch(error.message, /no frozen source identity/);
+    return true;
+  });
+  assert.deepEqual(getRun(run.id)?.qaSource, { baseSha: frozen, headSha: frozen });
+
+  const pr = qaRun(t, selection({ kind: 'ref', ref: frozen }));
+  updateRun(pr.id, { qaSource: { baseSha: later, headSha: later } });
+  assert.deepEqual(ensureFrozenQaSource(pr.id)?.qaSource, { baseSha: later, headSha: later });
 });
 
 // Regression: run 3e2f400a admitted a ref scope at an exact commit and was
@@ -221,6 +252,7 @@ test('prepare checks a ref-scope QA run out at its frozen head', budget, async (
   assert.equal(git(repo, 'status', '--porcelain'), '');
   assert.equal(getRun(run.id)?.startRef?.requestedRef, frozen);
   assert.equal(getRun(run.id)?.startRef?.resolvedSha, frozen);
+  assert.deepEqual(getRun(run.id)?.qaSource, { baseSha: frozen, headSha: frozen });
 });
 
 // A prepare replay finds the slot still detached where the first attempt left it.

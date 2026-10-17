@@ -3,8 +3,6 @@ import {
   type LinkedTicket,
   parseGitHubRef,
   type PrIntegrationStatus,
-  type QaInput,
-  type QaProfileSelection,
   type Run,
   type RunTicketData,
   taskTitleText,
@@ -195,30 +193,6 @@ export async function fetchPRData(
   const linkedRefs = ticketData.linkedTickets?.map((t) => t.ref).join(',') || 'none';
   console.log(`[run-engine] PR data set: branch=${prData.branch}, linked=${linkedRefs}`);
   return prData;
-}
-
-const EXACT_COMMIT_RE = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-
-function isQaObject(value: QaInput | undefined): value is { [key: string]: QaInput } {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/**
- * The commit an admitted ref or range QA scope names exactly, read as the Recipe
- * QA resolver reads it: a same-kind preset scope under the admitted one. A branch
- * or tag ref and a window scope resolve their head only when the skill runs.
- */
-export function qaScopeHeadSha(qa: QaProfileSelection | undefined): string | undefined {
-  const preset = qa?.profile.inputs?.scope;
-  const admitted = qa?.inputs.scope;
-  if (!isQaObject(admitted)) return undefined;
-  const scope =
-    isQaObject(preset) && (admitted.kind === undefined || admitted.kind === preset.kind)
-      ? { ...preset, ...admitted }
-      : admitted;
-  if (scope.kind !== 'ref' && scope.kind !== 'range') return undefined;
-  const head = scope.expectedHeadSha ?? (scope.kind === 'ref' ? scope.ref : scope.head);
-  return typeof head === 'string' && EXACT_COMMIT_RE.test(head) ? head : undefined;
 }
 
 // A Jira key names a real ticket: read it through the project's Jira source,

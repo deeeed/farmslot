@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Prepare a QA run whose ref or range scope names an exact head commit (`expectedHeadSha`, or a full-SHA `ref` or `head`) at that commit, detached when the run has no branch, instead of at the default-branch tip. Dispatch refuses a prepared HEAD that differs and names the frozen head. Start refs also accept 64-hex commit names.
+- Freeze the source identity of a QA run whose ref or range scope names exact commits (`expectedHeadSha`/`expectedBaseSha`, or full-SHA `ref`, `head` and `base`), as PR QA does. Prepare checks out that head, detached when the run has no branch, instead of the default-branch tip; dispatch refuses a prepared HEAD that differs and names the frozen head; completion validates against the same identity, also for runs prepared before this change. Start refs also accept 64-hex commit names.
 
 - Point a spent review budget at an extension only when the run can receive one; review-pr, published, artifact-only and archived runs now say why their rounds cannot be extended, and the extension refusal names the same reason.
 

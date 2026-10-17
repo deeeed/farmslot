@@ -30,6 +30,8 @@ import {
 import { BlockedRunError } from '../run-engine/errors.js';
 import { getRun } from '../runs/store.js';
 
+import { ensureFrozenQaSource } from './frozen-source.js';
+
 const assertions = new Set(['assert_json', 'assert_output', 'ui.wait_for']);
 const controls = new Set([
   'end',
@@ -611,7 +613,9 @@ async function readQaCompletion(
 
 export async function assertQaCompletion(run: Run, options: { retained?: boolean } = {}) {
   try {
-    return await readQaCompletion(run, Boolean(options.retained));
+    // A run prepared before its scope froze a source identity gets the same one now.
+    const qaSource = run.qaSource ?? ensureFrozenQaSource(run.id)?.qaSource;
+    return await readQaCompletion(qaSource ? { ...run, qaSource } : run, Boolean(options.retained));
   } catch (error) {
     if (error instanceof BlockedRunError) throw error;
     throw new BlockedRunError(
