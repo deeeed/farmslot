@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
-import { mock, test } from 'node:test';
+import { after, mock, test } from 'node:test';
 
 import type { ResourceStatus } from '@farmslot/protocol';
-
-import { SlotConfigError } from '../core/config.js';
 
 const machine = 'test-machine';
 const remoteMachine = 'offline-machine';
@@ -67,10 +65,7 @@ mock.module('../fleet/resource-manager.js', {
     // The remote machine's node is not connected.
     slotProbeReachable: async (slotId: string) => {
       if (slotId === 'broken-disabled-slot')
-        throw new SlotConfigError(
-          'INVALID_SLOT',
-          "Slot 'broken-disabled-slot' has a relative repo",
-        );
+        throw new Error("Slot 'broken-disabled-slot' has a relative repo on a remote host");
       return slotId !== 'remote-disabled-slot';
     },
   },
@@ -110,6 +105,12 @@ mock.module('../fleet/state.js', {
 });
 
 const { resourceCleanup } = await import('./resource.js');
+
+const ttlBefore = process.env.FARMSLOT_DISABLED_SLOT_PROBE_TTL_MS;
+after(() => {
+  if (ttlBefore === undefined) delete process.env.FARMSLOT_DISABLED_SLOT_PROBE_TTL_MS;
+  else process.env.FARMSLOT_DISABLED_SLOT_PROBE_TTL_MS = ttlBefore;
+});
 
 test('idle cleanup probes a disabled slot to offer what it left running, never a manual slot', async () => {
   reset();

@@ -669,20 +669,24 @@ async function withProbedDisabledSlotStatus<
   try {
     reachable = await slotProbeReachable(slot.slot);
   } catch (error) {
-    // A slot config the resource list accepts can still fail locality (a placeholder
-    // or a relative remote repo). Such a slot cannot be probed; skip it rather than
-    // fail every other slot's cleanup preview.
-    if (!(error instanceof SlotConfigError)) throw error;
+    // Locality only reads slot config, so a throw is a config problem the resource
+    // list tolerated (a placeholder, a relative remote repo). Such a slot cannot be
+    // probed: report it and leave its cached status rather than fail every other
+    // slot's cleanup preview.
+    console.warn(
+      `[resource] not probing disabled slot ${slot.slot}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return resources;
   }
   if (!reachable) return resources;
+  // Marked before the probe, so overlapping reads do not probe the same slot twice.
+  disabledSlotProbedAt.set(slot.slot, Date.now());
   const probed = new Map(
     (await pollSlotResources(slot.slot, { probeInactiveSimulators: true })).map((update) => [
       update.id,
       update.status,
     ]),
   );
-  disabledSlotProbedAt.set(slot.slot, Date.now());
   return resources.map((resource) => ({
     ...resource,
     status: probed.get(resource.id) ?? resource.status,
