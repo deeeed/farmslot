@@ -42,6 +42,7 @@ import { currentSessionOriginator, runWithPrincipalOwner } from '../security/wor
 
 import { type PreparedSourcePins, SourceAuthority } from './authority.js';
 import {
+  advanceSourceRevision,
   announceSourceChanges,
   noteAuthorityFacts,
   noteSourceMaterialized,
@@ -524,6 +525,8 @@ async function mutateRunSourcePlan(
         save: async (run) => {
           updateRun(run.id, run);
           await persistRunNow(getRun(run.id)!, 'source admission');
+          // Readable now, before the engine's next run.updated.
+          advanceSourceRevision();
         },
       }),
     );
@@ -744,8 +747,10 @@ export async function withRunSources<T>(
   };
   if (existingAttempt === -1) attempts.push(currentAttempt);
   else attempts[existingAttempt] = currentAttempt;
-  if (receiptIds.length !== provenance.receiptIds.length || provenance.attemptId !== attemptId)
+  if (receiptIds.length !== provenance.receiptIds.length || provenance.attemptId !== attemptId) {
     updateRun(run.id, { sourceProvenance: { ...provenance, attemptId, attempts, receiptIds } });
+    advanceSourceRevision();
+  }
   return withProjectSources(
     {
       project: run.project,

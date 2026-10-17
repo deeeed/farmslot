@@ -117,9 +117,11 @@ manager nor converts any live checkout.
 ### Decision
 
 The gateway publishes a source revision that advances whenever a fact reported
-by `sources.status` changes: declarations, pins, resolutions, locks, run source
-plans and provenance, and syncs or materializations completed through the
-gateway. The shared source status controller rereads `sources.status` for its
+by `sources.status` changes: declarations, pins, resolution status, commits and
+generations, locks, run source plans, provenance and pin eligibility, execution
+nodes connecting or disconnecting, syncs completed through the gateway and a
+node's first receipt for a lock. A resolution refresh that only updates its
+timestamp does not advance it. The shared source status controller rereads `sources.status` for its
 context when that revision advances, when the gateway epoch changes and after
 every reconnect. Source panels in Command Center and Companion have no Refresh
 control and do not poll. Retry stays available after a failed read.
@@ -160,9 +162,12 @@ new `@farmslot/protocol/client-cache` entry exports `ResourceKey` and
 `ResourceRevision`, with ADR-071's fields. Only the `sources` key family is
 defined until ADR-071 is accepted. `HelloPayload` and `FleetUpdatedPayload` gain
 optional `resourceChanges`. The `@farmslot/protocol` sources module exports the
-carrier decoder `sourceResourceChanges`; the existing `SourceStatusController`
-gains inputs for observed changes and reconnects. Command Center and Companion
-consume them through their thin renderers. The gateway is the only producer.
+carrier decoder `sourceResourceChanges`, the per-connection `SourceChangeFeed`
+(`createSourceChangeFeed`), `connectSourceChangeFeed` for host gateway clients and
+the revision comparison `isNewerSourceRevision`; the existing
+`SourceStatusController` gains `attachFeed` and snapshot `hidden`, `controls` and
+`unsupported` flags. Command Center and Companion consume them through their host
+connections and thin renderers. The gateway is the only producer.
 There are no new CLI commands, flags or RPC methods, and harnesses are not
 consumers. These additions are experimental and ship together across protocol,
 gateway and both clients.

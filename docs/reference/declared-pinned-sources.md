@@ -242,17 +242,20 @@ IDs and pin contents.
 
 The revision MUST advance after any of these changes becomes readable through
 `sources.status`: a declaration load or change, a pin or unpin including pins
-created with a run, a resolution commit, generation, failure or stale transition,
-a persisted lock, a run source plan or provenance write, and a sync or node
-materialization completed through the gateway. Node receipts and drift that a
-node reports only when `sources.status` asks remain current as of that read and
-show their verification time.
+created with a run, a resolution status, commit or generation change, a persisted
+lock, a run source plan or provenance write, a run transition that ends its pin
+selection, an execution node connecting or disconnecting, a sync completed through
+the gateway, and a node's first receipt for a lock. A resolution refresh that
+changes only `resolvedAt` MUST NOT advance it. Node receipts and drift that a node
+reports only when `sources.status` asks remain current as of that read and show
+their verification time.
 
-`hello` MUST carry the current payload as `resourceChanges` when the gateway has
-source declarations. Until ADR-071 is accepted, every `fleet.updated` from such a
-gateway MUST carry it too, and each revision advance MUST broadcast
-`fleet.updated` with the current fleet. The gateway MAY attach the payload at one
-point for all events. The payload MUST reach only principals that may read
+`hello` MUST carry the current payload as `resourceChanges` when sources are
+configured, that is when `sources.status` reports `configured: true`. Until ADR-071
+is accepted, every `fleet.updated` from such a gateway MUST carry it too, and each
+revision advance MUST broadcast `fleet.updated` with the current fleet. The gateway
+MAY attach the payload at one point for every `hello` and `fleet.updated` send. The
+payload MUST reach only principals that may read
 `sources.status`; events delivered to other principals, such as `run.*`, MUST NOT
 carry it. Duplicate and older revisions are harmless.
 
@@ -266,8 +269,8 @@ flight MUST schedule one more read after it. A change observed while a failed
 read is shown MUST reread. Panels MUST NOT poll or offer Refresh. A failed read
 MUST stay visible with Retry.
 
-If `sources.status` reports configured sources and the connection's `hello` had
-no `resourceChanges`, the panel MUST show that live source status is unsupported
+If sources are configured and the connection's `hello` had no
+`resourceChanges`, the panel MUST show that live source status is unsupported
 by the gateway, keep its last read and reread only after reconnect.
 
 ### Panel
