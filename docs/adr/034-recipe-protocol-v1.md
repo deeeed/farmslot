@@ -114,7 +114,7 @@ Existing `farmslot recipe validate` and conformance validation consume the
 explicit authoring option. `@farmslot/protocol/recipe` exports the shared display
 helper/policy, consumed by the runner, web adapter and native renderer.
 `@farmslot/adapter-rn/recipe-hud` supplies the native component to Companion and
-scaffold re-exports. Harnesses including mm-harness inherit runner/adapter policy
+scaffold re-exports. Project harnesses inherit runner/adapter policy
 and retain `app.hud` and custom rendering extension points. These are additive
 package APIs; no command/flag or recipe wire/schema version changes.
 

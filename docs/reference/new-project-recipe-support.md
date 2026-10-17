@@ -64,10 +64,10 @@ Validate:
 Ensure an agent can reach working code with four commands:
 
 ```sh
-mm-harness run --list --json
-mm-harness run <closest-recipe> --describe --json
-mm-harness actions <task-term> --json
-mm-harness actions --action <exact-name> --json
+farmslot recipe run --list --json
+farmslot recipe run <closest-recipe> --describe --json
+farmslot recipe actions <task-term> --json
+farmslot recipe actions --action <exact-name> --json
 ```
 
 Broad output must remain compact. Put full schemas and examples only in exact detail.

@@ -172,6 +172,6 @@ Migration is intentionally compatible:
 5. Remove legacy bundles only after task writers, recipes, review/QA, and operator surfaces all use
    the catalog and lease projection.
 
-MetaMask projects follow the same boundary: an adapter may expose mm-harness action-manifest entries
-as Farmslot provider actions and retain mm-harness provenance/readiness internally. Farmslot does not
-import MetaMask recipes, branch on runner names, or duplicate the mm-harness executor.
+Project harnesses follow the same boundary: an adapter may expose its harness's action-manifest entries
+as Farmslot provider actions and keep the harness's provenance and readiness internal. Farmslot does not
+import project recipes, branch on runner names, or duplicate a project harness's executor.
