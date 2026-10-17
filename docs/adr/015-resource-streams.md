@@ -379,7 +379,7 @@ A pinned provider root may declare no public binaries. Health then checks the pa
 
 - The root declares an exact package name and version.
 - Every provider module that a registered project binding imports from that root resolves inside it, and loads in a child process within the existing command deadline.
-- In the node process's own environment and in the login, interactive and non-interactive shells, the pool's `*_PACKAGE_ROOT` variable is unset or names the same real path. A process value overrides `pool.env` when `farmslot` resolves a binding, so a stale profile export, or a value the node inherited when it started, would select another provider.
+- In every environment a provider caller inherits, the pool's `*_PACKAGE_ROOT` variable is unset or names the same real path. That covers the environment node exec passes to commands, the tmux server's global environment that worker panes inherit, and the login, interactive and non-interactive shells. A process value overrides `pool.env` when `farmslot` resolves a binding, so a stale value in any of them would select another provider.
 - No shell's global npm installation contains the package, since its leftover binaries would still run outside the pin.
 
 A root that still declares binaries keeps the Amendment 5 checks unchanged. The timeout, retry, cache, retention and pressure rules of Amendments 5 and 6 apply to both forms. A selector or global-install mismatch is a `version-mismatch`; a module that fails to resolve or load is a `probe-error`.
