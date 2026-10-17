@@ -5,6 +5,9 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.10.15 - 2026-10-17
+
 - Browser launch and validation read the whole process table with a 16 MB buffer instead of Node's 1 MB default. On a host with many booted simulators (over 1 MB of `ps` output), every launch failed with `spawnSync ps ENOBUFS`. This covers the profile-owner scan and the launch-tree scan.
 
 ## 0.10.14 - 2026-10-17
