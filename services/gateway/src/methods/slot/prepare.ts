@@ -25,6 +25,7 @@ import {
   loadProjectVars,
   loadSlotVars,
   type ProjectVars,
+  type RawProjectJson,
   readSlotField,
   SLOT_PHASE_RELEASING,
   slotFileExists,
@@ -165,6 +166,44 @@ export async function verifyPrepareHealth(
     throw err;
   }
   return healthValue;
+}
+
+/**
+ * Move a slot off a detached HEAD the remote contains, back to its idle branch.
+ * Returns that branch, or null when HEAD may hold local-only commits: those stay
+ * put for the unpublished-commit refusal.
+ */
+async function returnDetachedSlotToIdle(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  projectVars: ProjectVars | undefined,
+  defaultBranch: string,
+  step: (name: string, detail: string) => void,
+): Promise<string | null> {
+  const repo = shellQuote(vars.remoteRepo);
+  const head = (await execOnSlot(vars, `git -C ${repo} rev-parse HEAD`)).stdout.trim();
+  if (!head) return null;
+  try {
+    await resolveStartRefInRepo({
+      repo: vars.remoteRepo,
+      requestedRef: head,
+      exec: (command) => execOnSlot(vars, command),
+    });
+  } catch {
+    return null;
+  }
+  const linkedWorktree = await detectLinkedWorktree(vars);
+  const idle = linkedWorktree
+    ? resolveSlotTrackingBranchFromProject(projectJson, vars, projectVars, linkedWorktree)
+    : defaultBranch;
+  const checkout = await execOnSlot(vars, `git -C ${repo} checkout -q ${shellQuote(idle)}`);
+  if (checkout.exitCode !== 0) {
+    throw new Error(
+      `Slot is detached at ${head.slice(0, 12)} and checking out '${idle}' failed: ${checkout.stderr.slice(-200) || checkout.stdout.slice(-200)}. Run 'farmslot slot release' first.`,
+    );
+  }
+  step('branch', `Left detached ${head.slice(0, 12)}, which origin contains, for '${idle}'`);
+  return idle;
 }
 
 export async function slotPrepare(
@@ -581,12 +620,22 @@ async function slotPrepareInner(
   await excludeSlotScaffolding(vars, projectJson);
 
   // 2. Verify clean state / checkout branch
-  const current = (
+  let current = (
     await execOnSlot(
       vars,
       `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
     )
   ).stdout.trim();
+
+  // A QA run, or this run's earlier attempt, leaves the slot detached at its
+  // frozen head. Once the remote contains that commit nothing is lost by moving
+  // off it, so the slot goes back to its idle branch before the checks below;
+  // a start-ref prepare detaches at its own head again afterwards.
+  if (phaseEnabled('git') && !branch && current === 'HEAD') {
+    current =
+      (await returnDetachedSlotToIdle(vars, projectJson, projectVars, defaultBranch, step)) ??
+      current;
+  }
 
   // The existing preserveBranch path never resets or deletes the branch.
   if (phaseEnabled('git') && !opts?.preserveBranch)
@@ -600,15 +649,7 @@ async function slotPrepareInner(
       `git sync skipped (profile ${profileName()}; HEAD stays on '${current || 'unknown'}')`,
     );
   } else {
-    // A prepare replay finds a QA slot still detached at the start ref it landed on.
-    const detachedAtStartRef =
-      !branch &&
-      current === 'HEAD' &&
-      !!opts?.startRef &&
-      (
-        await execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD`)
-      ).stdout.trim() === opts.startRef.requestedRef;
-    if (!branch && current && current !== defaultBranch && !detachedAtStartRef) {
+    if (!branch && current && current !== defaultBranch) {
       const linkedWorktree = await detectLinkedWorktree(vars);
       const trackingBranch = resolveSlotTrackingBranchFromProject(
         projectJson,
@@ -1160,8 +1201,8 @@ async function slotPrepareInner(
       }
     }
   } else if (opts?.startRef) {
-    // The slot is on its idle branch (checked above) or already detached here.
-    // Detaching first keeps that branch where it was; release checks it out again.
+    // The slot is on its idle branch (checked above). Detaching first keeps that
+    // branch where it was; release checks it out again.
     await resolveRequestedStartRef();
     const flagSweep = await execOnSlot(
       vars,

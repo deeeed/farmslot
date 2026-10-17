@@ -19,6 +19,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Prepare a QA run at a frozen head that is an older commit of a branch which has since moved and which the slot does not track, such as a release-range head after the release branch advances. When neither the slot's remote-tracking refs nor an advertised branch tip settles it, start-ref resolution fetches only the commit history of the remote's advertised branches into a throwaway repository and checks it there, before the tag check; the slot clone gets no new refs and does not become a partial clone. Tags still settle a tag-only commit, also when that history fetch fails. A commit that no advertised branch or tag contains is still refused.
 
+- Prepare a branchless (QA) run on a slot an earlier QA run left detached at its frozen head, instead of refusing with "Slot is on 'HEAD', expected 'main'" or reading a moved-branch head as unpushed work. When the remote contains the detached commit, prepare first checks out the slot's idle branch; a detached commit the remote does not contain is still refused.
+
 ## 0.23.0 - 2026-10-17
 
 - `run.list` `active` uses the shared `isActiveListRun` rule that Command Center and Companion list with.

@@ -273,9 +273,13 @@ try {
   );
   assert.equal(git(repo, 'rev-parse', 'HEAD'), frozen, 'prepare checked out the frozen head');
 
-  // The failed QA prepare leaves the slot detached at its head; put it back on main.
-  git(repo, 'checkout', '-q', 'main');
+  // The failed prepare left the slot detached at that head. A replay of the same
+  // run, then a different run, must prepare from it without an operator release.
+  const replayed = await prepareAt(frozenRunId);
+  assert.match(replayed.error, /exit 42/, 'a prepare replay from the detached slot reaches deps');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), frozen);
   const refused = await prepareAt(localOnlyRunId);
+  assert.doesNotMatch(refused.error, /Slot is on 'HEAD'|unpushed commits/);
   assert.match(refused.error, /not reachable from fetched origin/);
 
   console.log(
@@ -284,6 +288,7 @@ try {
       movedBranchResolved: true,
       preparedToDepsHook: true,
       slotRefsUnchanged: true,
+      replayFromDetachedSlot: true,
       localOnlyRefused: true,
     }),
   );
