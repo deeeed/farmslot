@@ -621,3 +621,34 @@ test('an intake-owned round chains onto a manual review of the same PR', () => {
     'intake rounds of another owner are not chained',
   );
 });
+
+test('an intake round chains only onto rounds of the same owner generation', () => {
+  const result = reviewDecision().payload as ReviewGatePayload;
+  const round = (id: string, ownerGeneration?: number) =>
+    makeRun({
+      id,
+      flowType: 'review-pr',
+      status: 'done',
+      ticketOrPr: 'Owner/Repo#42',
+      reviewResult: result,
+      prWork: {
+        kind: 'review',
+        id: `review:${id}`,
+        sourceId: id,
+        pr: { host: 'github.com', repo: 'Owner/Repo', number: 42 },
+        headSha: 'bbbbbbbbbbbbbbbb',
+        review: {
+          profile: 'standard',
+          ownerId: 'owner',
+          ownerGeneration,
+          options: { mode: 'cold' },
+        },
+      },
+    });
+  for (const [prior, current] of [
+    [undefined, 1],
+    [1, undefined],
+  ])
+    assert.equal(findLatestPriorReviewRun(round('next', current), [round('prior', prior)]), null);
+  assert.equal(findLatestPriorReviewRun(round('next', 1), [round('prior', 1)])?.id, 'prior');
+});

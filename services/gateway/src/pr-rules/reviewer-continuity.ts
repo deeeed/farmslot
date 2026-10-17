@@ -48,7 +48,14 @@ export function preferRetainedReviewer(
       sourceId: intent.id,
       pr: intent.pr,
       headSha: intent.headSha,
-      review: { profile: intent.reviewProfile, ownerId: source.ownerId, options },
+      review: {
+        profile: intent.reviewProfile,
+        ownerId: source.ownerId,
+        ...(source.ownerGeneration !== undefined
+          ? { ownerGeneration: source.ownerGeneration }
+          : {}),
+        options,
+      },
     },
   };
   const ownedRuns = runs.filter((run) => {
@@ -82,6 +89,7 @@ export function preferRetainedReviewer(
         transport: choice.transport ?? 'tmux',
         nativeOwnerPrincipalId: source.ownerId,
         createdByPrincipalId: source.ownerId,
+        createdByPrincipalGeneration: source.ownerGeneration,
         reviewWorkspaceTarget: { machine: choice.machine },
         effort: choice.effort ?? undefined,
         metrics: { runner: choice.runner, model: choice.model },

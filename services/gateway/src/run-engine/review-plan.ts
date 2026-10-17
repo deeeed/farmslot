@@ -373,6 +373,9 @@ export function assertWarmReviewRequestAvailable(
         project: run.project,
         ownerPrincipalId:
           nativeOwner ?? run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
+        ...(transport === 'tmux'
+          ? { ownerPrincipalGeneration: run.createdByPrincipalGeneration }
+          : {}),
         transport,
         taskDir: run.taskFile ? path.dirname(run.taskFile) : '',
         artifactScope: lineage.reviewId,
