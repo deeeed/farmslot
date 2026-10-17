@@ -3,8 +3,9 @@ import test from 'node:test';
 
 import type { PRWorkReference, RunCreateParams } from '@farmslot/protocol';
 
+import { markCompletionFailureDiscarded } from '../methods/slot/release-run-ownership.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
-import { createRun, deleteRun, updateRun } from '../runs/store.js';
+import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import {
   assertNoAutomatedPRConflict,
@@ -176,4 +177,37 @@ test('failed completion retains PR exclusivity until explicit operator settlemen
     /owned by run/,
   );
   assert.equal(runOwnsPR({ ...run, status: 'done' }, reference.pr), false);
+});
+
+test('a discarded failed completion no longer owns its PR', async (t) => {
+  const pr = { ...reference.pr, number: 99125 };
+  const params: RunCreateParams = {
+    flowType: 'review-pr',
+    project: 'project',
+    ticketOrPr: 'owner/repo#99125',
+  };
+  const discarded = createRun(params);
+  const cleanup: string[] = [discarded.id];
+  t.after(async () => {
+    for (const id of cleanup) {
+      updateRun(id, { status: 'done' });
+      await deleteRun(id);
+    }
+  });
+  updateRun(discarded.id, { prWork: { ...reference, pr } });
+  updateRunStep(discarded.id, 'complete', {
+    status: 'failed',
+    outputs: { gatePrerequisiteRefusal: { reason: 'no receipt' } },
+  });
+  updateRun(discarded.id, { status: 'failed' });
+  assert.throws(() => createRun(params), /owned by run/, 'the held failure still owns its PR');
+
+  await markCompletionFailureDiscarded(discarded.id, () => {});
+  const next = createRun(params);
+  cleanup.push(next.id);
+  assert.equal(runOwnsPR(getRun(discarded.id)!, pr), false);
+  updateRun(next.id, { prWork: { ...reference, pr } });
+  // Reviving the discarded run cannot take the PR back from its successor.
+  assert.throws(() => updateRun(discarded.id, { status: 'slot-finding' }), /owned by run/);
+  assert.equal(getRun(discarded.id)!.status, 'failed');
 });
