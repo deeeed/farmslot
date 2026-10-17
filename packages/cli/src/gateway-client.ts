@@ -27,8 +27,8 @@ export class GatewayConnectionError extends Error {
   }
 }
 
-/** A socket that never opened, with the transport's reason: refused, reset, an HTTP status or DNS. */
-function connectionFailed(error: unknown): GatewayConnectionError {
+/** A socket error with the transport's reason, such as a refusal, a reset, an HTTP status or DNS. */
+export function connectionFailed(error: unknown): GatewayConnectionError {
   // A host with several addresses fails with one error per address tried.
   const causes = error instanceof AggregateError ? error.errors : [error];
   const reasons = causes
@@ -370,6 +370,8 @@ export class GatewayClient {
           }
         }, this.timeout);
       };
+      // ws has no handshake limit of its own, so the timeout also covers opening the socket.
+      resetTimer();
 
       const finish = (fn: () => void) => {
         if (done) return;

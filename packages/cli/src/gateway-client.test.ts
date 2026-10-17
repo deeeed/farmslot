@@ -6,9 +6,9 @@ import test, { type TestContext } from 'node:test';
 
 import { WebSocketServer } from 'ws';
 
-import { GatewayClient, GatewayConnectionError } from './gateway-client.js';
+import { connectionFailed, GatewayClient, GatewayConnectionError } from './gateway-client.js';
 
-type Upgrade = 'answer' | 'refuse-503' | 'drop';
+type Upgrade = 'answer' | 'refuse-503' | 'drop' | 'hang';
 
 /** A local gateway stand-in that answers each request, or fails the upgrade the way a restarting gateway does. */
 async function gateway(t: TestContext, upgrade: Upgrade): Promise<string> {
@@ -23,7 +23,7 @@ async function gateway(t: TestContext, upgrade: Upgrade): Promise<string> {
       );
     } else if (upgrade === 'drop') {
       socket.destroy();
-    } else {
+    } else if (upgrade === 'answer') {
       wss.handleUpgrade(req, socket, head, (ws) =>
         ws.on('message', (raw) => {
           const { id } = JSON.parse(String(raw)) as { id: string };
@@ -113,3 +113,40 @@ for (const [name, target, reason] of [
     },
   );
 }
+
+test(
+  'a gateway that never answers the upgrade times out both entry points',
+  { timeout: 5000 },
+  async (t) => {
+    const url = await gateway(t, 'hang');
+    for (const open of [
+      () => new GatewayClient({ url, timeout: 200 }).call('gateway.status'),
+      () => new GatewayClient({ url, timeout: 200 }).connect(),
+    ]) {
+      await assert.rejects(open(), (error: unknown) => {
+        assert.ok(error instanceof GatewayConnectionError);
+        assert.equal(error.message, 'Timeout — no activity for 200ms');
+        return true;
+      });
+    }
+  },
+);
+
+test('the failure reason lists every address tried and skips empty causes', () => {
+  const hint = 'Connection failed — is the gateway running?';
+  for (const [cause, message] of [
+    [
+      new AggregateError([
+        new Error('connect ETIMEDOUT fe80::1:7801'),
+        new Error('connect ECONNREFUSED 127.0.0.1:7801'),
+      ]),
+      `${hint} (connect ETIMEDOUT fe80::1:7801; connect ECONNREFUSED 127.0.0.1:7801)`,
+    ],
+    [new Error('socket hang up'), `${hint} (socket hang up)`],
+    [new Error(''), hint],
+    ['not an error', hint],
+    [undefined, hint],
+  ] as const) {
+    assert.equal(connectionFailed(cause).message, message);
+  }
+});
