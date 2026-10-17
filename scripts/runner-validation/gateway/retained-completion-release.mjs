@@ -22,6 +22,7 @@ import { FLOW_STEPS } from '@farmslot/protocol';
 import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 import {
   closeTmuxSandbox,
+  GIT_LOCATION_ENV,
   openTmuxSandbox,
   tmuxSandboxEnvironment,
 } from '../../quality/run-tsx-tests.mjs';
@@ -37,6 +38,10 @@ const runId = randomUUID();
 const taskFile = path.join(repo, 'tasks', runId, 'TASK.md');
 const statusFile = path.join(root, '.farm-status.json');
 const tmuxDir = openTmuxSandbox();
+// An inherited GIT_DIR or GIT_INDEX_FILE (a hook, a worktree shell) would point
+// fixture git and the gateway at the operator's repository instead.
+const baseEnv = { ...process.env };
+for (const key of GIT_LOCATION_ENV) delete baseEnv[key];
 let gateway;
 let logFd;
 
@@ -49,7 +54,7 @@ function git(cwd, ...args) {
   execFileSync(
     'git',
     ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args],
-    { cwd, stdio: 'pipe' },
+    { cwd, env: baseEnv, stdio: 'pipe' },
   );
 }
 
@@ -70,7 +75,10 @@ const slotRow = () => {
 
 try {
   // The slot's checkout tracks a real origin, so the discard's idle reset can fetch.
-  execFileSync('git', ['init', '-q', '--bare', '--initial-branch=main', origin]);
+  execFileSync('git', ['init', '-q', '--bare', '--initial-branch=main', origin], {
+    env: baseEnv,
+    stdio: 'pipe',
+  });
   mkdirSync(repo, { recursive: true });
   git(repo, 'init', '-q', '--initial-branch=main');
   writeFileSync(path.join(repo, 'README.md'), 'Disposable retained-completion fixture\n');
@@ -156,7 +164,7 @@ try {
   testGatewayIdentity(path.join(temporaryRoot, 'home'), `ws://127.0.0.1:${port}`);
   const env = tmuxSandboxEnvironment(
     {
-      ...process.env,
+      ...baseEnv,
       FARMSLOT_ROOT: root,
       FARMSLOT_HOME: path.join(temporaryRoot, 'home'),
       FARMSLOT_POOL_DIR: path.join(root, 'pool'),
@@ -203,7 +211,8 @@ try {
     stdio: ['ignore', logFd, logFd],
   });
   for (let attempt = 0; ; attempt++) {
-    if (gateway.exitCode !== null) throw new Error('Fixture gateway exited during startup');
+    if (gateway.exitCode !== null || gateway.signalCode !== null)
+      throw new Error('Fixture gateway exited during startup');
     try {
       if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break;
     } catch (error) {
@@ -234,6 +243,10 @@ try {
   );
   retained();
 
+  // A force reset that does not name the run is not the discard.
+  assert.throws(() => rpc('slot.release', { slotId, forceReset: true }), refusal);
+  retained();
+
   // The named force discard releases it, and archive is then reachable.
   const discarded = rpc('slot.release', { slotId, expectedRunId: runId, forceReset: true });
   assert.equal(discarded.released, true);
@@ -257,12 +270,12 @@ try {
     console.error(readFileSync(path.join(temporaryRoot, 'gateway.log'), 'utf8').slice(-4500));
   throw error;
 } finally {
-  if (gateway && gateway.exitCode === null) {
+  if (gateway && gateway.exitCode === null && gateway.signalCode === null) {
     const stopped = once(gateway, 'exit');
     gateway.kill('SIGTERM');
     await stopped;
   }
   if (logFd !== undefined) closeSync(logFd);
-  closeTmuxSandbox(tmuxSandboxEnvironment(process.env, tmuxDir));
+  closeTmuxSandbox(tmuxSandboxEnvironment(baseEnv, tmuxDir));
   rmSync(temporaryRoot, { recursive: true, force: true });
 }
