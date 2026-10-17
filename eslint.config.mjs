@@ -42,6 +42,8 @@ export default [
       '**/.yarn/**',
       '**/node_modules/**',
       '**/dist/**',
+      // atomic dist builds (scripts/build-dist-atomic.mjs)
+      '**/.dist-*/**',
       '**/coverage/**',
       '**/probes/**',
       'apps/command-center/ui/dist/**',

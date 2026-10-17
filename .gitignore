@@ -148,7 +148,9 @@ presentation/
 .release-cut/
 
 # Package build output
-packages/*/dist/
+# dist is a directory, or a symlink to the atomic build in .dist-<stamp> (scripts/build-dist-atomic.mjs)
+packages/*/dist
+packages/*/.dist-*
 services/*/dist/
 pool/*.bak.*
 

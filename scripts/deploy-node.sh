@@ -213,19 +213,34 @@ echo "[deploy] workspace packages to bundle: $(echo "$FARMSLOT_DEPS" | cut -f1 |
 # A missing dist/ crashes the node at startup (ERR_MODULE_NOT_FOUND); a STALE
 # dist/ is worse — it deploys cleanly and then mismatches the gateway at
 # runtime (e.g. a protocol version bump built nowhere). Builds are incremental,
-# so always building is cheap; fail loudly if one cannot build.
+# so always building is cheap; fail loudly if one cannot build. Each dist/ is
+# switched into place atomically (scripts/build-dist-atomic.mjs), so whatever
+# imports these packages from this checkout never sees a missing dist/
+# mid-build. --cli-only deploys no node bundle: it builds only the protocol
+# dist the CLI stage reads, and only when that is missing.
+BUILD_PACKAGES=()
+BUILD_DIRS=()
 while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   [[ -z "$pkg_name" || "$needs_build" != "1" ]] && continue
-  echo "[deploy] building $pkg_name (ships from dist/)..."
-  if ! (cd "$REPO_ROOT" && yarn workspace "$pkg_name" build < /dev/null); then
-    echo "[deploy] ERROR: failed to build $pkg_name — refusing to deploy a missing or stale dist" >&2
-    exit 1
+  if [[ "$CLI_ONLY" == true ]]; then
+    [[ "$pkg_name" == @farmslot/protocol && ! -f "$PACKAGES_DIR/$pkg_dir/dist/node/slot-by-repo.js" ]] || continue
   fi
-  if [[ ! -d "$PACKAGES_DIR/$pkg_dir/dist" ]]; then
-    echo "[deploy] ERROR: $pkg_name build reported success but dist/ is still missing — refusing to deploy" >&2
-    exit 1
-  fi
+  BUILD_PACKAGES+=("$pkg_name")
+  BUILD_DIRS+=("$pkg_dir")
 done <<< "$FARMSLOT_DEPS"
+if (( ${#BUILD_PACKAGES[@]} > 0 )); then
+  echo "[deploy] building ${BUILD_PACKAGES[*]} (ships from dist/)..."
+  if ! node "$SCRIPT_DIR/build-dist-atomic.mjs" "$REPO_ROOT" "${BUILD_PACKAGES[@]}" < /dev/null; then
+    echo "[deploy] ERROR: failed to build ${BUILD_PACKAGES[*]} — refusing to deploy a missing or stale dist" >&2
+    exit 1
+  fi
+  for pkg_dir in "${BUILD_DIRS[@]}"; do
+    if [[ ! -d "$PACKAGES_DIR/$pkg_dir/dist" ]]; then
+      echo "[deploy] ERROR: packages/$pkg_dir build reported success but dist/ is still missing — refusing to deploy" >&2
+      exit 1
+    fi
+  done
+fi
 
 # --- Detect local vs remote ---
 LOCAL_HOSTNAME=$(hostname -s)
@@ -596,6 +611,7 @@ run "mkdir -p $REMOTE_DIR/packages/agent-runtime"
 rsync -a --delete \
   --exclude node_modules \
   --exclude dist \
+  --exclude '.dist-*' \
   "$PACKAGES_DIR/agent-runtime/" \
   "${RSYNC_PREFIX}$REMOTE_DIR/packages/agent-runtime/"
 
