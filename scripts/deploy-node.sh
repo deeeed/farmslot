@@ -148,23 +148,15 @@ resolve_farmslot_deps() {
   resolver="$(mktemp "${TMPDIR:-/tmp}/deploy-node-resolve-XXXXXX.mjs")"
   trap 'rm -f "$resolver"' RETURN
   cat > "$resolver" <<'RESOLVER'
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const [, , repoRoot] = process.argv;
-const packagesDir = path.join(repoRoot, 'packages');
+const [, , repoRoot, builder] = process.argv;
 const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
-
-const dirByName = new Map();
-for (const entry of readdirSync(packagesDir, { withFileTypes: true })) {
-  if (!entry.isDirectory()) continue;
-  try {
-    const pkg = readJson(path.join(packagesDir, entry.name, 'package.json'));
-    dirByName.set(pkg.name, entry.name);
-  } catch {
-    // not a package directory
-  }
-}
+// The same name -> package map the dist builds use.
+const { workspacePackages } = await import(pathToFileURL(builder).href);
+const workspaces = workspacePackages(repoRoot);
 
 const nodePkg = readJson(path.join(repoRoot, 'services/node/package.json'));
 const queue = Object.keys(nodePkg.dependencies ?? {}).filter((name) =>
@@ -174,11 +166,10 @@ const seen = new Set();
 while (queue.length > 0) {
   const name = queue.shift();
   if (seen.has(name)) continue;
-  const dir = dirByName.get(name);
-  if (!dir) throw new Error(`deploy-node: unresolved workspace package ${name}`);
+  const workspace = workspaces.get(name);
+  if (!workspace) throw new Error(`deploy-node: unresolved workspace package ${name}`);
   seen.add(name);
-  const pkg = readJson(path.join(packagesDir, dir, 'package.json'));
-  for (const dep of Object.keys(pkg.dependencies ?? {})) {
+  for (const dep of Object.keys(workspace.pkg.dependencies ?? {})) {
     if (dep.startsWith('@farmslot/') && !seen.has(dep)) queue.push(dep);
   }
 }
@@ -190,8 +181,7 @@ while (queue.length > 0) {
 // though the workspace resolves fine locally via tsx path aliasing — both ship
 // broken, so every dist-shipping package builds on every deploy.
 for (const name of seen) {
-  const dir = dirByName.get(name);
-  const pkg = readJson(path.join(packagesDir, dir, 'package.json'));
+  const { dir, pkg } = workspaces.get(name);
   const hasBuildScript = Boolean(pkg.scripts?.build);
   const mainIsDist = typeof pkg.main === 'string' && pkg.main.startsWith('dist/');
   const exportsIsDist = pkg.exports ? JSON.stringify(pkg.exports).includes('"dist/') : false;
@@ -200,10 +190,10 @@ for (const name of seen) {
   // it produces exactly the node/gateway version mismatch this script exists
   // to prevent. Builds are incremental, so the always-build cost is seconds.
   const needsBuild = hasBuildScript && (mainIsDist || exportsIsDist);
-  process.stdout.write(`${name}\t${dir}\t${needsBuild ? '1' : '0'}\n`);
+  process.stdout.write(`${name}\t${path.basename(dir)}\t${needsBuild ? '1' : '0'}\n`);
 }
 RESOLVER
-  node "$resolver" "$REPO_ROOT"
+  node "$resolver" "$REPO_ROOT" "$SCRIPT_DIR/build-dist-atomic.mjs"
 }
 
 FARMSLOT_DEPS="$(resolve_farmslot_deps)"
@@ -213,19 +203,34 @@ echo "[deploy] workspace packages to bundle: $(echo "$FARMSLOT_DEPS" | cut -f1 |
 # A missing dist/ crashes the node at startup (ERR_MODULE_NOT_FOUND); a STALE
 # dist/ is worse — it deploys cleanly and then mismatches the gateway at
 # runtime (e.g. a protocol version bump built nowhere). Builds are incremental,
-# so always building is cheap; fail loudly if one cannot build.
+# so always building is cheap; fail loudly if one cannot build. Each dist/ is
+# switched into place atomically (scripts/build-dist-atomic.mjs), so whatever
+# imports these packages from this checkout never sees a missing dist/
+# mid-build. --cli-only deploys no node bundle: it builds only the protocol
+# dist the CLI stage reads, and only when that is missing.
+BUILD_PACKAGES=()
+BUILD_DIRS=()
 while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   [[ -z "$pkg_name" || "$needs_build" != "1" ]] && continue
-  echo "[deploy] building $pkg_name (ships from dist/)..."
-  if ! (cd "$REPO_ROOT" && yarn workspace "$pkg_name" build < /dev/null); then
-    echo "[deploy] ERROR: failed to build $pkg_name — refusing to deploy a missing or stale dist" >&2
-    exit 1
+  if [[ "$CLI_ONLY" == true ]]; then
+    [[ "$pkg_name" == @farmslot/protocol && ! -f "$PACKAGES_DIR/$pkg_dir/dist/node/slot-by-repo.js" ]] || continue
   fi
-  if [[ ! -d "$PACKAGES_DIR/$pkg_dir/dist" ]]; then
-    echo "[deploy] ERROR: $pkg_name build reported success but dist/ is still missing — refusing to deploy" >&2
-    exit 1
-  fi
+  BUILD_PACKAGES+=("$pkg_name")
+  BUILD_DIRS+=("$pkg_dir")
 done <<< "$FARMSLOT_DEPS"
+if (( ${#BUILD_PACKAGES[@]} > 0 )); then
+  echo "[deploy] building ${BUILD_PACKAGES[*]} (ships from dist/)..."
+  if ! node "$SCRIPT_DIR/build-dist-atomic.mjs" "$REPO_ROOT" "${BUILD_PACKAGES[@]}" < /dev/null; then
+    echo "[deploy] ERROR: failed to build ${BUILD_PACKAGES[*]} — refusing to deploy a missing or stale dist" >&2
+    exit 1
+  fi
+  for pkg_dir in "${BUILD_DIRS[@]}"; do
+    if [[ ! -d "$PACKAGES_DIR/$pkg_dir/dist" ]]; then
+      echo "[deploy] ERROR: packages/$pkg_dir build reported success but dist/ is still missing — refusing to deploy" >&2
+      exit 1
+    fi
+  done
+fi
 
 # --- Detect local vs remote ---
 LOCAL_HOSTNAME=$(hostname -s)
@@ -596,6 +601,7 @@ run "mkdir -p $REMOTE_DIR/packages/agent-runtime"
 rsync -a --delete \
   --exclude node_modules \
   --exclude dist \
+  --exclude '.dist-*' \
   "$PACKAGES_DIR/agent-runtime/" \
   "${RSYNC_PREFIX}$REMOTE_DIR/packages/agent-runtime/"
 

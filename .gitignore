@@ -149,6 +149,8 @@ presentation/
 
 # Package build output
 packages/*/dist/
+# a build in progress, or one a crash left behind (scripts/build-dist-atomic.mjs)
+packages/*/.dist-*
 services/*/dist/
 pool/*.bak.*
 
