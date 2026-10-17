@@ -1,0 +1,43 @@
+{"offset_ms": null, "record": {"type": "permission-mode"}}
+{"offset_ms": null, "record": {"type": "atis-latch"}}
+{"offset_ms": 4962, "record": {"type": "attachment", "attachment": {"type": "total_tokens_reminder"}}}
+{"offset_ms": 10126, "record": {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Bash"}]}}}
+{"offset_ms": null, "record": {"type": "api-request-blob"}}
+{"offset_ms": null, "record": {"type": "api-request-blob"}}
+{"offset_ms": 10550, "record": {"type": "api-request"}}
+{"offset_ms": 10224, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 10541, "record": {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result"}]}}}
+{"offset_ms": 10522, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 10522, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 10541, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 12051, "record": {"type": "queue-operation", "operation": "enqueue", "content": "{{payload}}"}}
+{"offset_ms": 10545, "record": {"type": "attachment", "attachment": {"type": "total_tokens_reminder"}}}
+{"offset_ms": 14014, "record": {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Read"}]}}}
+{"offset_ms": 14120, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 14228, "record": {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result"}]}}}
+{"offset_ms": 14196, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 14197, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 14227, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 14237, "record": {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Read"}]}}}
+{"offset_ms": null, "record": {"type": "last-prompt"}}
+{"offset_ms": null, "record": {"type": "ai-title"}}
+{"offset_ms": null, "record": {"type": "mode"}}
+{"offset_ms": null, "record": {"type": "permission-mode"}}
+{"offset_ms": null, "record": {"type": "atis-latch"}}
+{"offset_ms": 14420, "record": {"type": "queue-operation", "operation": "remove", "content": "{{payload}}"}}
+{"offset_ms": null, "record": {"type": "api-request-blob"}}
+{"offset_ms": null, "record": {"type": "api-request-blob"}}
+{"offset_ms": null, "record": {"type": "api-request-blob"}}
+{"offset_ms": 14425, "record": {"type": "api-request"}}
+{"offset_ms": 14307, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 14415, "record": {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result"}]}}}
+{"offset_ms": 14384, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 14386, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 14414, "record": {"type": "attachment", "attachment": {"type": "hook_success"}}}
+{"offset_ms": 0, "record": {"type": "attachment", "attachment": {"type": "queued_command", "prompt": "{{payload}}", "commandMode": "prompt"}}}
+{"offset_ms": null, "record": {"type": "last-prompt"}}
+{"offset_ms": null, "record": {"type": "ai-title"}}
+{"offset_ms": null, "record": {"type": "mode"}}
+{"offset_ms": null, "record": {"type": "permission-mode"}}
+{"offset_ms": null, "record": {"type": "atis-latch"}}
+{"offset_ms": 14420, "record": {"type": "attachment", "attachment": {"type": "total_tokens_reminder"}}}

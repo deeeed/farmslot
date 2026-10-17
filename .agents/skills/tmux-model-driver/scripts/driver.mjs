@@ -20,7 +20,9 @@ import {
   hasSubmittedQueue,
   nativeState,
   paneIdentity,
+  queuedInTranscript,
   queuedPrompt,
+  queueProofTimeoutMs,
   readOptional,
   requiresNativeSession,
   sessionSize,
@@ -597,6 +599,7 @@ export function resolveLaunchBlocker(pane, runner, inspect = paneState) {
 }
 
 export async function send(pane, runner, payload, tracePath, flush = false) {
+  const startedAt = Date.now();
   const selection = { payloadHash: hash(payload) };
   let before = paneState(pane, runner, selection);
   let after = before;
@@ -618,6 +621,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
   if (['queued_input', 'acceptance_unacknowledged'].includes(verification) && ownedRetry(before))
     verification = null;
   const timeout = Number(process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS || 3000);
+  // Read before any key, so a bad setting never turns a delivered send into an error.
+  const queueProof = queueProofTimeoutMs();
   let scratch = null;
   let locked = false;
   try {
@@ -650,7 +655,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
       // paneState has already withdrawn pulled-back proofs; a recalled delivered prompt keeps one.
       if (retry && before.accepted) {
         evidence = before.accepted;
-        verification = 'submitted';
+        verification = queuedInTranscript(runner, evidence) ? 'queued' : 'submitted';
       } else if (flush || retry) {
         receipt = JSON.parse(fs.readFileSync(files.receipt, 'utf8'));
         if (
@@ -739,9 +744,16 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
         }
         verification ||= 'unverified';
         let deadline = Date.now() + timeout;
+        // A mid-turn Claude send is proven only by its transcript's queue records, which can
+        // wait for the turn's next step. The wait counts from the start of this send.
+        const queueDeadline =
+          requiresNativeSession(runner) && before.delivery_phase !== 'idle'
+            ? startedAt + queueProof
+            : 0;
         let retriedEnter = false;
+        let leftComposer = false;
         if (verification === 'unverified') {
-          do {
+          for (;;) {
             after = paneState(pane, runner, selection);
             evidence =
               runner === 'shell'
@@ -774,7 +786,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                   durableWrite(files.receipt, { ...current, accepted: evidence });
                 else clearAcceptedReceipt(files, current);
               }
-              verification = 'submitted';
+              verification = queuedInTranscript(runner, evidence) ? 'queued' : 'submitted';
               break;
             }
             if (after.pending_question) {
@@ -795,11 +807,15 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             }
             // Only this receipt's unchanged live composer can authorize another Enter.
             // Historical prompt text and foreign queues never authorize another key.
+            // Text that left the composer and came back was pulled back for editing: no Enter.
+            const owned = ownsComposer(after, runner, receipt);
+            if (!owned) leftComposer = true;
             if (
               !retriedEnter &&
               !flush &&
+              !leftComposer &&
               !payload.startsWith('/goal ') &&
-              ownsComposer(after, runner, receipt)
+              owned
             ) {
               retriedEnter = true;
               tmux(['send-keys', '-t', pane, 'Enter']);
@@ -809,8 +825,11 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
               deadline = Date.now() + timeout;
               continue;
             }
-            await delay(40);
-          } while (Date.now() < deadline);
+            // One last read at the deadline, never a sleep past it.
+            const left = Math.max(deadline, queueDeadline) - Date.now();
+            if (left <= 0) break;
+            await delay(Math.min(left, Date.now() < deadline ? 40 : 250));
+          }
           if (
             verification === 'unverified' &&
             supportsMidTurnPrompt(runner) &&
@@ -832,7 +851,11 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     before_state: before.state,
     after_state: after.state,
     verification,
-    submitted: verification === 'submitted',
+    // Input Claude's transcript records as queued in its turn was accepted, so it counts as
+    // submitted; a rendered queue (Codex /goal) proves nothing about its turn.
+    submitted:
+      verification === 'submitted' ||
+      (verification === 'queued' && queuedInTranscript(runner, evidence)),
     queued: verification === 'queued',
     typed,
     flush,
