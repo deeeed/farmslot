@@ -28,7 +28,11 @@ import {
   type RunBundleManifest,
   type RunBundleRetentionPolicy,
 } from '@farmslot/protocol';
-import { listProjectTaskRoots, resolveProjectsDir } from '@farmslot/protocol/node/farm-layout';
+import {
+  listProjectTaskRoots,
+  ORCHESTRATOR_TASK_DIR,
+  resolveProjectsDir,
+} from '@farmslot/protocol/node/farm-layout';
 import {
   sanitizeRunForBundleExport,
   strictTaskRelativePathFromFarmslotRoot,
@@ -320,7 +324,7 @@ async function scanAcquisitionBytes(root: string): Promise<number> {
     bytes += await physicalBytes(taskRoot);
   }
   const sandbox = async (directory: string): Promise<number> => {
-    if (path.basename(directory) === 'tasks')
+    if (path.basename(directory) === ORCHESTRATOR_TASK_DIR)
       return counted.has(path.resolve(directory)) ? 0 : physicalBytes(directory);
     let sum = 0;
     try {

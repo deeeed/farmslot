@@ -2010,6 +2010,9 @@ export async function cleanupRuns(
   const runsArchived: string[] = [];
   const syntheticRunsDeleted: string[] = [];
   const now = Date.now();
+  // Enumerate before anything is archived or deleted, so an unreadable projects dir fails
+  // the cleanup before it has changed anything.
+  const taskRoots = await projectTaskRoots();
 
   // Delete leaked test fixtures. They never represented real worker execution,
   // so archiving them would only move noisy data elsewhere.
@@ -2060,7 +2063,7 @@ export async function cleanupRuns(
   }
 
   // Scan task dirs for orphaned tasks from failed/cancelled runs
-  for (const { root: tasksDir } of await projectTaskRoots()) {
+  for (const { root: tasksDir } of taskRoots) {
     let taskDirs: string[];
     try {
       taskDirs = await readdir(tasksDir);

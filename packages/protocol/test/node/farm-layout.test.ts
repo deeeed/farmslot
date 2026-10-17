@@ -33,7 +33,7 @@ test('a task root sits in the projects dir, and mock mode keeps the root sandbox
   );
 });
 
-test('project task roots cover real and linked project dirs, never files or dangling links', async (t) => {
+test('project task roots cover real and linked project dirs, never files or unresolvable links', async (t) => {
   const farm = mkdtempSync(path.join(tmpdir(), 'farm-layout-'));
   t.after(() => rmSync(farm, { recursive: true, force: true }));
   const projectsDir = path.join(farm, 'projects');
@@ -41,6 +41,7 @@ test('project task roots cover real and linked project dirs, never files or dang
   mkdirSync(path.join(farm, 'linked-target'));
   symlinkSync(path.join(farm, 'linked-target'), path.join(projectsDir, 'linked'));
   symlinkSync(path.join(farm, 'missing'), path.join(projectsDir, 'dangling'));
+  symlinkSync(path.join(projectsDir, 'loop'), path.join(projectsDir, 'loop'));
   writeFileSync(path.join(projectsDir, 'README.md'), '# projects');
   const layout = { farmslotRoot: farm, projectsDir };
 

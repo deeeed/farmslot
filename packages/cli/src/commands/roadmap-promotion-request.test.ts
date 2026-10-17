@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -202,6 +202,8 @@ test('createRoadmapPromotionRequest writes its decision under FARMSLOT_PROJECTS_
     result.decisionPath,
     path.join(projects, 'farmslot-farm/tasks/roadmap-promotion-ri_override/.pending_decision.json'),
   );
+  assert.ok(existsSync(result.decisionPath));
+  assert.equal(existsSync(path.join(root, 'projects')), false);
 });
 
 test('createRoadmapPromotionRequest rejects path traversal item ids before draft cleanup', async (t) => {

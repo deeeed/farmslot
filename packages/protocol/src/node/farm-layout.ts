@@ -40,9 +40,10 @@ export interface ProjectTaskRoot {
 }
 
 /**
- * The task root of every project dir in the projects dir, linked ones included; files are
- * skipped and a missing projects dir has none. These are non-mock roots: mock-mode projects
- * keep theirs under `<root>/.sandbox`.
+ * The task root of every project dir in the projects dir, linked ones included. Files and links
+ * that do not resolve to a dir are skipped, so one bad link never hides the other projects; a
+ * missing projects dir has none, and an unreadable one throws. These are non-mock roots:
+ * mock-mode projects keep theirs under `<root>/.sandbox`.
  */
 export async function listProjectTaskRoots(layout: FarmLayout): Promise<ProjectTaskRoot[]> {
   let entries;
@@ -63,12 +64,11 @@ export async function listProjectTaskRoots(layout: FarmLayout): Promise<ProjectT
   return roots;
 }
 
-/** A link's target, or null when the link dangles. */
+/** A link's target, or null when it does not resolve (dangling, looping or unreadable). */
 async function linkTarget(link: string) {
   try {
     return await stat(link);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
+  } catch {
+    return null;
   }
 }

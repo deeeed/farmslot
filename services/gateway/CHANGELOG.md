@@ -6,7 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - A run admission or new source attempt advances the source revision once; the engine's next `run.updated` no longer advances it again.
 - The family workspace counts active runs with the shared `isActiveListRun` rule: a family whose failed run still holds its slot reports that run as active and the family as active, matching every run list.
-- A projects dir the gateway cannot read is reported by the pending-decision scan and orphaned-task cleanup instead of being treated as empty.
+- An unreadable projects dir now fails `decision.list` and run cleanup (before cleanup changes anything) instead of reading as empty; the background decision scan logs it and keeps the gateway running. A project link that does not resolve is skipped.
 
 - Task writes, pending-decision scans and orphaned task cleanup share one task root, so with `FARMSLOT_PROJECTS_DIR` set they all use the override instead of `<root>/projects`.
 - Advance the source revision as soon as run admission or a new source attempt is saved, and when a restored or newly created run stops accepting pins.
