@@ -74,8 +74,6 @@ export interface RunnerSessionReactivationOptions {
   launchAckBaseline?: LaunchAckSignalSnapshot | null;
   acceptExistingLaunchAck?: boolean;
   priorPromptSendAttempted?: boolean;
-  /** Earliest receipt time a recorded prior send may be proven by; defaults to any time. */
-  acknowledgementSinceMs?: number;
   onPromptMutationStart?: () => void;
   onPromptMutationConfirmedUntouched?: () => void;
   timeoutMs?: number;
@@ -762,14 +760,13 @@ async function probeDelayedPromptAcknowledgement(
     // The prompt contains the task-scoped path, so its digest is the durable
     // recovery identity. Unlike gateway timestamps, it is safe across node
     // clock skew and proves whether the lost in-memory send already happened.
-    // A caller whose digest is shared across rounds bounds it by its own send.
-    options.acknowledgementSinceMs ?? 0,
+    0,
     {
       launchAckSignalPath: options.launchAckSignalPath,
       launchAckBaseline: options.launchAckBaseline,
       acceptExistingLaunchAck: false,
       requirePromptDigest: true,
-      promptAcceptanceBaselineMs: options.acknowledgementSinceMs ?? 0,
+      promptAcceptanceBaselineMs: 0,
       ...(options.sessionId && options.sessionPath
         ? {
             retainedSession: {
