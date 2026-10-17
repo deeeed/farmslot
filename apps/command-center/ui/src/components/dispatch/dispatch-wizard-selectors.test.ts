@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { DispatchCandidatesResult, PRStatus, SlotStatus } from '@farmslot/protocol';
+import type { DispatchCandidatesResult, PRStatus, Run, SlotStatus } from '@farmslot/protocol';
 
 import {
   candidateDispatchable,
@@ -159,5 +159,29 @@ test('slot helpers find same task and summarize active run', () => {
       runs: [{ id: 'run-1', summary: 'Fix bug' }] as never,
     }),
     'Fix bug',
+  );
+});
+
+test('slotSummaryLabel finds the run that still holds the slot after a refused completion', () => {
+  const slots = [
+    { slot: 'runner-a-mobile-1', machine: 'runner-a', project: 'mobile' },
+  ] as SlotStatus[];
+  const slotRun = (status: Run['status'], steps: Run['steps'] = []) =>
+    ({ id: 'run-1', slotId: 'runner-a-mobile-1', status, steps, summary: 'Held QA' }) as Run;
+  assert.equal(
+    slotSummaryLabel({
+      slotId: 'runner-a-mobile-1',
+      slots,
+      runs: [
+        slotRun('failed', [
+          { name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } },
+        ]),
+      ],
+    }),
+    'Held QA',
+  );
+  assert.equal(
+    slotSummaryLabel({ slotId: 'runner-a-mobile-1', slots, runs: [slotRun('failed')] }),
+    '',
   );
 });

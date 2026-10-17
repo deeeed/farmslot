@@ -2,15 +2,16 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type {
-  AssessmentQuestions,
-  AssessmentRecord,
-  AssessmentRequest,
-  AssessmentResult,
-  DecisionAdviceAnalyzeParams,
-  DecisionAdviceGetParams,
-  DecisionAdviceResult,
-  PendingDecision,
+import {
+  type AssessmentQuestions,
+  type AssessmentRecord,
+  type AssessmentRequest,
+  type AssessmentResult,
+  type DecisionAdviceAnalyzeParams,
+  type DecisionAdviceGetParams,
+  type DecisionAdviceResult,
+  isTerminalRunStatus,
+  type PendingDecision,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { isDecisionAdviceDeclineAction } from '@farmslot/protocol/rpc';
@@ -111,7 +112,7 @@ async function snapshot(
   // Read only the requested gateway-owned run. Neither the caller nor unrelated
   // file decisions can contribute model input.
   const run = getRun(requestedRunId);
-  if (!run || run.status === 'cancelled' || run.status === 'failed' || run.status === 'done')
+  if (!run || isTerminalRunStatus(run.status))
     return { result: { eligible: false, reason: 'not-pending' } };
   const active = run.decisions.find((item) => item.id === decisionId && !item.resolvedAt);
   if (!active) return { result: { eligible: false, reason: 'not-pending' } };

@@ -102,14 +102,30 @@ export const hasSubmittedQueue = (runner, tail) =>
 export const paneIdentity = (meta) =>
   JSON.stringify([meta.pane_pid, meta.process_started_at, meta.runner_pids]);
 
-export function nativeProbeTimeoutMs() {
-  const timeout = Number(process.env.TMUX_MODEL_DRIVER_PROBE_TIMEOUT_MS ?? 10000);
-  if (!Number.isSafeInteger(timeout) || timeout <= 0 || timeout > 2147483647)
+// Claude writes input sent during a turn to its transcript: usually an enqueue at once, then the
+// queued_command attachment when its next step takes it in. Under load the enqueue can also wait
+// for that step (12 s on one worker). Only Claude's transcript proves a queue: Codex steering
+// proved from its history is delivered turn input and stays `submitted`.
+export const queuedInTranscript = (runner, proof) =>
+  requiresNativeSession(runner) &&
+  (proof?.source === 'native-queue' || proof?.source === 'native-steering');
+
+/** A millisecond setting from the environment: unset takes the default; empty is invalid. */
+function envMilliseconds(name, fallback, { allowZero = false } = {}) {
+  const raw = process.env[name];
+  const value = raw === undefined ? fallback : raw.trim() === '' ? Number.NaN : Number(raw);
+  if (!Number.isSafeInteger(value) || value < (allowZero ? 0 : 1) || value > 2147483647)
     throw new Error(
-      'TMUX_MODEL_DRIVER_PROBE_TIMEOUT_MS must be a positive integer in milliseconds',
+      `${name} must be a ${allowZero ? 'non-negative' : 'positive'} integer in milliseconds`,
     );
-  return timeout;
+  return value;
 }
+
+export const queueProofTimeoutMs = () =>
+  envMilliseconds('TMUX_MODEL_DRIVER_QUEUE_PROOF_MS', 20000, { allowZero: true });
+
+export const nativeProbeTimeoutMs = () =>
+  envMilliseconds('TMUX_MODEL_DRIVER_PROBE_TIMEOUT_MS', 10000);
 
 // Probes embed the payload; stdin carries any size, while one argument is capped by the OS.
 function runProbe(command, parse) {

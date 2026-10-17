@@ -22,12 +22,18 @@ import lockfile from 'proper-lockfile';
 import {
   type ArtifactRef,
   decisionArtifactBundleRef,
+  isActiveListRun,
   type Run,
   RUN_BUNDLE_VERSION,
   type RunArtifactBundleRef,
   type RunBundleManifest,
   type RunBundleRetentionPolicy,
 } from '@farmslot/protocol';
+import {
+  listProjectTaskRoots,
+  ORCHESTRATOR_TASK_DIR,
+  resolveProjectsDir,
+} from '@farmslot/protocol/node/farm-layout';
 import {
   sanitizeRunForBundleExport,
   strictTaskRelativePathFromFarmslotRoot,
@@ -311,16 +317,16 @@ async function acquisitionBytes(root: string): Promise<number> {
 /** Count every gateway acquisition tree, including preserved media of archived/deleted runs. */
 async function scanAcquisitionBytes(root: string): Promise<number> {
   let bytes = 0;
-  try {
-    for (const project of await readdir(path.join(root, 'projects'), { withFileTypes: true })) {
-      if (project.isDirectory())
-        bytes += await physicalBytes(path.join(root, 'projects', project.name, 'tasks'));
-    }
-  } catch (error) {
-    if (!hasCode(error, 'ENOENT')) throw error;
+  const layout = { farmslotRoot: root, projectsDir: resolveProjectsDir(root) };
+  // A projects dir inside .sandbox (desktop validation) is charged once, not again below.
+  const counted = new Set<string>();
+  for (const { root: taskRoot } of await listProjectTaskRoots(layout)) {
+    counted.add(path.resolve(taskRoot));
+    bytes += await physicalBytes(taskRoot);
   }
   const sandbox = async (directory: string): Promise<number> => {
-    if (path.basename(directory) === 'tasks') return physicalBytes(directory);
+    if (path.basename(directory) === ORCHESTRATOR_TASK_DIR)
+      return counted.has(path.resolve(directory)) ? 0 : physicalBytes(directory);
     let sum = 0;
     try {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -737,7 +743,7 @@ export async function collectRunBundleGarbage(
     ]) {
       const retain = (ref: RunArtifactBundleRef | undefined, pin: boolean) =>
         retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
-      const active = !['done', 'failed', 'cancelled'].includes(run.status);
+      const active = isActiveListRun(run);
       if (active) activeRuns.add(run.id);
       retain(run.artifactBundle, active);
       retain(run.output?.artifactBundle, active);

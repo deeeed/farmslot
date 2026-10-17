@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   Events,
+  isActiveListRun,
   isSchedulerAuthoritativeGraph,
   isSuccessfulRun,
   isTerminalRunStatus,
@@ -827,7 +828,7 @@ function terminalFamilyOutcome(
   if (!familyId) return null;
   const familyRuns = runs.filter((run) => run.familyId === familyId || run.id === familyId);
   if (familyRuns.length === 0) return null;
-  if (familyRuns.some((run) => !isTerminalRunStatus(run.status))) return null;
+  if (familyRuns.some(isActiveListRun)) return null;
   // Match family observability: a completed successful attempt supersedes
   // earlier failed, cancelled or partially validated attempts in this family.
   if (familyRuns.some(isSuccessfulRun)) return 'success';

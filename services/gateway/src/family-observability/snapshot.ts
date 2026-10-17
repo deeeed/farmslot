@@ -738,6 +738,7 @@ async function buildRunSummary(
     lane: run.lane,
     variant: run.variant ?? null,
     status: run.status,
+    active: isActiveListRun(run),
     project: run.project,
     ticketOrPr: run.ticketOrPr,
     branch: run.branch,

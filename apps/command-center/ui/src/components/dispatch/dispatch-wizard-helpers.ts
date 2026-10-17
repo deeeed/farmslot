@@ -5,6 +5,7 @@
  */
 import {
   buildComparisonVariant,
+  isActiveListRun,
   nextFreeComparisonVariant,
   resolveRunSlotId,
   type Run,
@@ -129,9 +130,7 @@ export function summarizeComparePickerFamilyLane(
   const familyId = familyKeyForRun(run);
   const productionCount = familyRuns.filter((member) => member.lane !== 'comparison').length;
   const comparisonCount = familyRuns.filter((member) => member.lane === 'comparison').length;
-  const activeCount = familyRuns.filter(
-    (member) => !['done', 'failed', 'cancelled'].includes(member.status),
-  ).length;
+  const activeCount = familyRuns.filter(isActiveListRun).length;
   const hasComparisonLane = comparisonCount > 0;
   const siblingLabel =
     familyRuns.length === 1

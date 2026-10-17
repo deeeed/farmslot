@@ -16,7 +16,6 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
-  ACTIVE_RUN_STATUSES,
   type AgentContext,
   type AgentContextStatus,
   agentContextStatusFromRunStatus,
@@ -56,6 +55,7 @@ import { parseRunRecordFile } from '@farmslot/run-bundle';
 import { planRunSources } from '@farmslot/slot-config';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
+import { projectTaskRoots } from '../core/config.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { readSlotField } from '../core/state.js';
 import { farmslotRoot, isValidSafetyTier } from '../fleet/state.js';
@@ -149,15 +149,6 @@ export const SESSION_ARCHIVES_DIRNAME = 'session-archives';
 export function runSessionArchiveDir(runId: string): string {
   return path.join(RUNS_DIR, SESSION_ARCHIVES_DIRNAME, runId);
 }
-
-const ACTIVE_STATUSES: Set<RunStatus> = new Set([
-  ...ACTIVE_RUN_STATUSES,
-  'created',
-  'review-failed',
-  'human-gating',
-  'paused',
-  'blocked',
-]);
 
 export function resolveRunLane(
   mode?: RunCreateParams['mode'],
@@ -650,11 +641,11 @@ export function normalizePersistedRun(run: Run): boolean {
     run.safetyTier = legacyTier;
     changed = true;
   }
-  if (!run.startedAt && ACTIVE_STATUSES.has(run.status)) {
+  if (!run.startedAt && !isTerminalRunStatus(run.status)) {
     run.startedAt = inferredRunStartedAt(run);
     changed = true;
   }
-  if (run.agentContexts === undefined && ACTIVE_STATUSES.has(run.status)) {
+  if (run.agentContexts === undefined && !isTerminalRunStatus(run.status)) {
     const agentContexts = initialAgentContextsForRun(run);
     if (agentContexts) {
       run.agentContexts = agentContexts;
@@ -1590,7 +1581,7 @@ async function deleteRunBody(id: string): Promise<boolean> {
   if (!run) return false;
   if (run.output?.cleanupPending || run.output?.closeError)
     throw new Error(`Cannot delete run ${id} before output closeout cleanup finishes`);
-  if (ACTIVE_STATUSES.has(run.status)) {
+  if (!isTerminalRunStatus(run.status)) {
     throw new Error(`Cannot delete active run ${id} (status=${run.status})`);
   }
   assertNativeWorkersReleased(run);
@@ -1928,7 +1919,7 @@ export function assertRunArchivable(run: Run): void {
   // A settled blocked run counts as active for recovery and the inventory, but
   // nothing can advance it; archiving is the operator's way to close it while
   // keeping the blocked outcome (unlike cancel, which overwrites it).
-  if (ACTIVE_STATUSES.has(run.status) && !isSettledBlockedRun(run)) {
+  if (!isTerminalRunStatus(run.status) && !isSettledBlockedRun(run)) {
     throw new Error(`Cannot archive active run ${run.id} (status=${run.status})`);
   }
   if (run.backlogReconcilePending) {
@@ -2009,6 +2000,9 @@ export async function cleanupRuns(
   const runsArchived: string[] = [];
   const syntheticRunsDeleted: string[] = [];
   const now = Date.now();
+  // Enumerate before anything is archived or deleted, so an unreadable projects dir fails
+  // the cleanup before it has changed anything.
+  const taskRoots = await projectTaskRoots();
 
   // Delete leaked test fixtures. They never represented real worker execution,
   // so archiving them would only move noisy data elsewhere.
@@ -2059,16 +2053,7 @@ export async function cleanupRuns(
   }
 
   // Scan task dirs for orphaned tasks from failed/cancelled runs
-  const projectsDir = path.join(farmslotRoot, 'projects');
-  let projectNames: string[] = [];
-  try {
-    projectNames = await readdir(projectsDir);
-  } catch {
-    /* no projects dir */
-  }
-
-  for (const proj of projectNames) {
-    const tasksDir = path.join(projectsDir, proj, 'tasks');
+  for (const { root: tasksDir } of taskRoots) {
     let taskDirs: string[];
     try {
       taskDirs = await readdir(tasksDir);

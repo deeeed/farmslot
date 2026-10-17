@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit';
 
 import type { Run } from '@farmslot/protocol';
+import { isTerminalRunStatus } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -32,7 +33,7 @@ export function renderPipelineControls(
   const isRunning = ['monitoring', 'ci-watching', 'preparing', 'dispatching'].includes(status);
   const isPaused = status === 'paused';
   const awaitingOperator = isInteractiveCompletionAwaitingOperator(run);
-  const isTerminal = ['done', 'failed', 'cancelled'].includes(status);
+  const isTerminal = isTerminalRunStatus(status);
 
   return html`
     <div class="controls">
@@ -60,7 +61,7 @@ export function renderPipelineControls(
 }
 
 export function renderRunPipelineSummary(run: Run) {
-  const isTerminal = ['done', 'failed', 'cancelled'].includes(run.status);
+  const isTerminal = isTerminalRunStatus(run.status);
   if (!isTerminal) return nothing;
 
   const m = run.metrics;

@@ -7,6 +7,9 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 - Expose provider CLI checks through a standalone entry that does not require a checkout.
 
 - Detect pinned provider CLI drift across shell paths, distinguish timed-out probes from version mismatches, and verify exact-version global rollout.
+- `projectTaskRoots()` uses the protocol enumerator, so it skips files in the projects dir.
+
+- `projectsDir` and `getOrchestratorTaskRoot` come from the protocol farm layout, so run task folders follow `FARMSLOT_PROJECTS_DIR` like project configs do. Add `projectTaskRoots()` for scans of every project's task folders.
 
 - Export `ORCHESTRATOR_TASK_DIR`, the gateway run task folder name inside a project directory, so pack re-sync can keep it.
 

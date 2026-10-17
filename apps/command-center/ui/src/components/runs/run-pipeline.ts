@@ -12,7 +12,12 @@ import type {
   RunStepStatus,
   TaskProgressStructured,
 } from '@farmslot/protocol';
-import { deriveRunLifecycleView, failedRunCancelEffects, Methods } from '@farmslot/protocol';
+import {
+  deriveRunLifecycleView,
+  failedRunCancelEffects,
+  isTerminalRunStatus,
+  Methods,
+} from '@farmslot/protocol';
 
 import '../progress-tracker/progress-tracker.js';
 
@@ -112,7 +117,7 @@ export class RunPipeline extends LitElement {
     if (changed.has('run')) {
       const previous = changed.get('run') as Run | undefined;
       const runChanged = previous?.id !== this.run?.id;
-      const terminal = ['done', 'failed', 'cancelled'].includes(this.run?.status ?? '');
+      const terminal = this.run ? isTerminalRunStatus(this.run.status) : false;
       if (runChanged || terminal) this.cancelPending = false;
       if (runChanged) this.transferProgress = primaryTransferForRun(this.run?.id);
     }
@@ -154,7 +159,7 @@ export class RunPipeline extends LitElement {
     if (!this.run) return nothing;
     const layout = computeLayout(this.run);
     const activityLabel = deriveRunLifecycleView(this.run).activityLabel;
-    const isActive = !['done', 'failed', 'cancelled'].includes(this.run.status);
+    const isActive = !isTerminalRunStatus(this.run.status);
     const recovery = this.run.engineState?.publishGate?.reviewRecovery;
     const showRecovery = Boolean(recovery && recovery.status !== 'recovered');
 

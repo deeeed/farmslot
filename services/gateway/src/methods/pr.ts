@@ -8,6 +8,7 @@ import { join as pathJoin, resolve as pathResolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
+  ACTIVE_RUN_STATUSES,
   computePRRecommendation,
   DEFAULT_BRANCH,
   derivePRMergeState,
@@ -309,18 +310,6 @@ async function loadPRList(
 
   // Preload runs for summary + active detection
   const runs = getAllRuns();
-  const ACTIVE_RUN_STATUSES = new Set([
-    'created',
-    'grading',
-    'writing-task',
-    'slot-finding',
-    'preparing',
-    'dispatching',
-    'monitoring',
-    'reviewing',
-    'completing',
-    'ci-watching',
-  ]);
   // Index: prNumber → most recent run with that PR
   const runByPR = buildLatestRunByPrNumber(runs);
   const projectList = await loadProjectConfigs();
@@ -384,7 +373,7 @@ async function loadPRList(
       pr: run.prNumber,
       slot: run.slotId ?? '',
       project: run.project,
-      workerActive: ACTIVE_RUN_STATUSES.has(run.status),
+      workerActive: ACTIVE_RUN_STATUSES.includes(run.status),
       summary: run.summary ?? null,
       repo,
     });

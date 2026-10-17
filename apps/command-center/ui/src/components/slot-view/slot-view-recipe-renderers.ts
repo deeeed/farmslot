@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit';
 
 import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
+import { isTerminalRunStatus } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { artifactKind } from '../../utils/artifact-kind.js';
@@ -721,7 +722,7 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
   // Without this gate, a long-completed `done` or `cancelled` run shows a
   // misleading "No recipe artifact for this run yet" placeholder forever.
   const runStatus = view._linkedRun.status;
-  const isTerminal = runStatus === 'done' || runStatus === 'failed' || runStatus === 'cancelled';
+  const isTerminal = isTerminalRunStatus(runStatus);
   const pinnedLinkedRun = isSlotViewPinnedLinkedRun(view._linkedRun.id, requestedRunFromHash());
   if (
     isTerminal &&

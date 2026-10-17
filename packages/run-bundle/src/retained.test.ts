@@ -559,6 +559,25 @@ test('GC releases terminal and deleted run reservations while retaining active a
   assert.deepEqual(await readdir(path.join(f.store.root, 'reservations')), [`${active.id}.json`]);
 });
 
+test('GC keeps the reservation of a failed run that still holds its resources', async (t) => {
+  const f = await fixture(t);
+  const held: Run = {
+    ...f.run,
+    id: 'held-run',
+    status: 'failed',
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  };
+  await writeFile(path.join(f.store.runsDir, 'held-run.json'), JSON.stringify(held));
+  await writeFile(
+    path.join(f.store.runsDir, 'settled-run.json'),
+    JSON.stringify({ ...f.run, id: 'settled-run', status: 'failed' }),
+  );
+  await reserveRunBundleMetadata(f.store, 'held-run');
+  await reserveRunBundleMetadata(f.store, 'settled-run');
+  await collectRunBundleGarbage(f.store);
+  assert.deepEqual(await readdir(path.join(f.store.root, 'reservations')), ['held-run.json']);
+});
+
 test('an unresolved imported decision pins its target-owned payload through its original digest alias', async (t) => {
   const f = await fixture(t);
   const result = await materializeRunBundle(f.request);
@@ -647,6 +666,92 @@ test('near-full storage commits the report before media admission and fills the 
   assert.deepEqual(repaired.ref, partial.ref);
   assert.deepEqual(repaired.missingData, []);
   assert.equal(transfers, 1);
+});
+
+test('acquisition media under FARMSLOT_PROJECTS_DIR is charged like the default projects dir', async (t) => {
+  const f = await fixture(t);
+  const projects = await mkdtemp(path.join(tmpdir(), 'retained-projects-'));
+  const previous = process.env.FARMSLOT_PROJECTS_DIR;
+  process.env.FARMSLOT_PROJECTS_DIR = projects;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_PROJECTS_DIR;
+    else process.env.FARMSLOT_PROJECTS_DIR = previous;
+    await rm(projects, { recursive: true, force: true });
+  });
+  const historical = path.join(projects, 'demo/tasks/qa/deleted-run/artifacts/unique.mp4');
+  await mkdir(path.dirname(historical), { recursive: true });
+  await writeFile(historical, Buffer.alloc(800_000, 1));
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const video = Buffer.alloc(250_000, 2);
+  let transfers = 0;
+  const result = await materializeRunBundle({
+    ...f.request,
+    policy: {
+      maxStoreBytes: 1_000_000,
+      maxBundleBytes: 500_000,
+      metadataReserveBytes: 50_000,
+      mediaRetentionDays: 30,
+    },
+    artifacts: [
+      f.artifacts[0]!,
+      {
+        path: 'artifacts/capture.mp4',
+        purpose: 'video',
+        sha256: createHash('sha256').update(video).digest('hex'),
+        sizeBytes: video.length,
+      },
+    ],
+    acquireMedia: async (_artifact, destination) => {
+      transfers++;
+      await writeFile(destination, video);
+      return { sha256: createHash('sha256').update(video).digest('hex'), bytes: video.length };
+    },
+  });
+  assert.equal(transfers, 0);
+  assert.ok(result.missingData.includes('media-capacity:artifacts/capture.mp4'));
+});
+
+test('a projects dir inside the root sandbox is charged once', async (t) => {
+  const f = await fixture(t);
+  const projects = path.join(f.root, '.sandbox/electron/projects');
+  const previous = process.env.FARMSLOT_PROJECTS_DIR;
+  process.env.FARMSLOT_PROJECTS_DIR = projects;
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_PROJECTS_DIR;
+    else process.env.FARMSLOT_PROJECTS_DIR = previous;
+  });
+  const historical = path.join(projects, 'demo/tasks/qa/deleted-run/artifacts/unique.mp4');
+  await mkdir(path.dirname(historical), { recursive: true });
+  await writeFile(historical, Buffer.alloc(400_000, 1));
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const video = Buffer.alloc(250_000, 2);
+  let transfers = 0;
+  const result = await materializeRunBundle({
+    ...f.request,
+    policy: {
+      maxStoreBytes: 1_000_000,
+      maxBundleBytes: 500_000,
+      metadataReserveBytes: 50_000,
+      mediaRetentionDays: 30,
+    },
+    artifacts: [
+      f.artifacts[0]!,
+      {
+        path: 'artifacts/capture.mp4',
+        purpose: 'video',
+        sha256: createHash('sha256').update(video).digest('hex'),
+        sizeBytes: video.length,
+      },
+    ],
+    acquireMedia: async (_artifact, destination) => {
+      transfers++;
+      await writeFile(destination, video);
+      return { sha256: createHash('sha256').update(video).digest('hex'), bytes: video.length };
+    },
+  });
+  // Charged twice, 800 KB of 1 MB would defer the video; charged once, it fits.
+  assert.equal(transfers, 1);
+  assert.deepEqual(result.missingData, []);
 });
 
 test('preserved acquisition media from another deleted run remains charged before new transport', async (t) => {

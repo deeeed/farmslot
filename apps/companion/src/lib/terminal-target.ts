@@ -1,12 +1,10 @@
-import type { Run } from '@farmslot/protocol';
+import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
 export interface CompanionTerminalTargetParams {
   slotId: string;
   runId?: string;
   bareSession?: true;
 }
-
-const READ_ONLY_RUN_STATUSES: ReadonlySet<Run['status']> = new Set(['done', 'failed', 'cancelled']);
 
 export function shouldUseBareTerminalSessionForRun({
   requestedRunId,
@@ -21,7 +19,7 @@ export function shouldUseBareTerminalSessionForRun({
   if (!run) return true;
   if (!run.slotId) return true;
   if (run.slotId !== requestedSlotId) return true;
-  return READ_ONLY_RUN_STATUSES.has(run.status);
+  return isTerminalRunStatus(run.status);
 }
 
 export function buildCompanionTerminalTarget({
