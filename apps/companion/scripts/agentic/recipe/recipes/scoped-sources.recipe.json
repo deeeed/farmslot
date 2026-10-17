@@ -116,9 +116,10 @@
       "node-source": {
         "action": "ui.wait_for",
         "intent": "The node source panel is mounted in fleet.",
-        "text_contains": ["proof-pack reported"],
+        "test_id": "sources-line",
+        "text_contains": ["proof-pack"],
         "timeout_ms": 120000,
-        "next": "node-capture-hud"
+        "next": "node-details"
       },
       "node-capture": {
         "action": "ui.screenshot",
@@ -136,9 +137,10 @@
       "run-source": {
         "action": "ui.wait_for",
         "intent": "Retained run inputs remain readable.",
-        "text_contains": ["proof-pack run input"],
+        "test_id": "sources-line",
+        "text_contains": ["proof-pack"],
         "timeout_ms": 120000,
-        "next": "run-capture-hud"
+        "next": "run-details"
       },
       "run-capture": {
         "action": "ui.screenshot",
@@ -153,17 +155,19 @@
       },
       "pin-visible": {
         "action": "ui.wait_for",
-        "text_contains": ["pinned farm", "experiment/farm"],
+        "test_id": "sources-line",
+        "text_contains": ["proof-pack experiment/farm (farm pin)"],
         "timeout_ms": 120000,
-        "intent": "The native panel shows the published branch and scope before capture.",
-        "next": "pin-capture-hud"
+        "intent": "The native panel's one line shows the published branch and scope.",
+        "next": "pin-details"
       },
       "main-visible": {
         "action": "ui.wait_for",
-        "text_contains": ["main override farm"],
+        "test_id": "sources-line",
+        "text_contains": ["proof-pack main (farm override)"],
         "timeout_ms": 120000,
-        "intent": "The native panel shows the returned main selection before capture.",
-        "next": "main-capture-hud"
+        "intent": "The native panel's one line shows the returned main selection.",
+        "next": "main-details-visible"
       },
       "pin-capture-hud": {
         "action": "app.hud",
@@ -327,6 +331,52 @@
         "expected": "absent",
         "timeout_ms": 120000,
         "next": "partial-after-refresh"
+      },
+      "pin-details": {
+        "action": "ui.press",
+        "intent": "Open the details that name the main base.",
+        "test_id": "sources-details-toggle",
+        "next": "pin-details-visible"
+      },
+      "pin-details-visible": {
+        "action": "ui.wait_for",
+        "text_contains": ["pinned farm", "experiment/farm"],
+        "timeout_ms": 30000,
+        "intent": "The details show the pin scope and main base before capture.",
+        "next": "pin-capture-hud"
+      },
+      "main-details-visible": {
+        "action": "ui.wait_for",
+        "text_contains": ["main override farm"],
+        "timeout_ms": 30000,
+        "intent": "The open details show the explicit main selection before capture.",
+        "next": "main-capture-hud"
+      },
+      "node-details": {
+        "action": "ui.press",
+        "intent": "Open the node source details.",
+        "test_id": "sources-details-toggle",
+        "next": "node-details-visible"
+      },
+      "node-details-visible": {
+        "action": "ui.wait_for",
+        "intent": "The node details report the source state.",
+        "text_contains": ["proof-pack reported"],
+        "timeout_ms": 30000,
+        "next": "node-capture-hud"
+      },
+      "run-details": {
+        "action": "ui.press",
+        "intent": "Open the retained run input details.",
+        "test_id": "sources-details-toggle",
+        "next": "run-details-visible"
+      },
+      "run-details-visible": {
+        "action": "ui.wait_for",
+        "intent": "The details name the retained run input.",
+        "text_contains": ["proof-pack run input"],
+        "timeout_ms": 30000,
+        "next": "run-capture-hud"
       }
     }
   }

@@ -484,6 +484,7 @@ export function initServerGlobals(): void {
     loadFleetStatus()
       .then((fleet) => broadcastEvent(Events.FLEET_UPDATED, { fleet }))
       .catch((err) => {
+        // Revisions only grow, so the next fleet.updated or hello carries this change.
         console.warn(`[server] source change broadcast failed: ${(err as Error).message}`);
       });
   });

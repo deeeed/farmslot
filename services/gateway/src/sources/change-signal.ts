@@ -1,8 +1,10 @@
 // Live source status (ADR-069 Amendment 1, ADR-071 pilot slice). This module stays free of
-// gateway imports so the run store, node registry and server can all advance it.
+// gateway state imports so the run store, node registry and server can all advance it.
 import { randomUUID } from 'node:crypto';
 
-import { PipelineSteps, type ResourceChangedPayload, type Run } from '@farmslot/protocol';
+import type { ResourceChangedPayload, Run } from '@farmslot/protocol';
+
+import { runSourcesSelectable } from './pin-target.js';
 
 const epoch = randomUUID();
 let revision = 0;
@@ -11,6 +13,7 @@ let publisher: (() => void) | undefined;
 let publishScheduled = false;
 let authorityFacts: string | undefined;
 const runFacts = new Map<string, string>();
+const materialized = new Set<string>();
 
 /** The current payload, absent until source declarations are configured. */
 export function currentSourceResourceChanges(): ResourceChangedPayload | undefined {
@@ -55,23 +58,26 @@ export function noteAuthorityFacts(signature: string): void {
 export function noteRunSourceFacts(run: Run): void {
   if (!configured || (!run.sourcePlan && !run.sourceProvenance)) return;
   const signature = JSON.stringify([
-    run.status,
+    runSourcesSelectable(run),
     run.sourcePlan?.lock.digest ?? null,
     run.sourceProvenance?.lock.digest ?? null,
     run.sourceProvenance?.attemptId ?? null,
-    run.metrics?.runnerSessionId ?? null,
-    run.recoveryAttempts?.length ?? 0,
-    run.steps.some(
-      (step) =>
-        step.name !== PipelineSteps.FIND_SLOT &&
-        step.status !== 'pending' &&
-        step.status !== 'skipped',
-    ),
   ]);
   const previous = runFacts.get(run.id);
   if (['done', 'failed', 'cancelled'].includes(run.status)) runFacts.delete(run.id);
   else runFacts.set(run.id, signature);
   if (previous !== undefined && previous !== signature) advanceSourceRevision();
+}
+
+/**
+ * A node publishes a lock's receipt once, on its first materialization; repeats only
+ * verify it. Locks persist before materialization finishes, so its receipt needs its own.
+ */
+export function noteSourceMaterialized(nodeId: string, lockDigest: string): void {
+  const key = `${nodeId}\0${lockDigest}`;
+  if (!configured || materialized.has(key)) return;
+  materialized.add(key);
+  advanceSourceRevision();
 }
 
 /** Test hook: the same process-level state the gateway uses. */
@@ -82,4 +88,5 @@ export function resetSourceChangeSignalForTests(): void {
   publishScheduled = false;
   authorityFacts = undefined;
   runFacts.clear();
+  materialized.clear();
 }

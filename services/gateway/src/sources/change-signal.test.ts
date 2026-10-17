@@ -10,10 +10,11 @@ import {
   currentSourceResourceChanges,
   noteAuthorityFacts,
   noteRunSourceFacts,
+  noteSourceMaterialized,
   resetSourceChangeSignalForTests,
   setSourceChangePublisher,
 } from './change-signal.js';
-import { sourceTestPlan } from './source.test-support.js';
+import { sourceTestLock, sourceTestPlan } from './source.test-support.js';
 
 function configuredSignal(): { published: () => number } {
   resetSourceChangeSignalForTests();
@@ -55,14 +56,34 @@ test('a run advances when its source lock or pin eligibility changes, not on fir
   const run = makeRun({ status: 'created' });
   noteRunSourceFacts(run);
   assert.equal(revision(), 0, 'runs without source plans are ignored');
-  run.sourcePlan = sourceTestPlan();
+  run.sourcePlan = sourceTestPlan(sourceTestLock(undefined, run.id));
   noteRunSourceFacts(run);
   noteRunSourceFacts(run);
   assert.equal(revision(), 0);
+  run.status = 'slot-finding';
+  noteRunSourceFacts(run);
+  assert.equal(revision(), 0, 'a status change that keeps pins open is not a source fact');
   run.status = 'cancelled';
   noteRunSourceFacts(run);
   assert.equal(revision(), 1, 'cancelling ends pin selection');
   noteRunSourceFacts(run);
   assert.equal(revision(), 1, 'a finished run is forgotten');
+  resetSourceChangeSignalForTests();
+});
+
+test('a receipt that lands after its lock was announced advances again, once per node', async () => {
+  await setImmediate(); // let the previous test's coalesced broadcast drain
+  const signal = configuredSignal();
+  noteAuthorityFacts('baseline');
+  noteAuthorityFacts('lock persisted');
+  await setImmediate();
+  assert.deepEqual([revision(), signal.published()], [1, 1]);
+  noteSourceMaterialized('gateway', 'lock-a');
+  await setImmediate();
+  assert.deepEqual([revision(), signal.published()], [2, 2], 'materialization finished later');
+  noteSourceMaterialized('gateway', 'lock-a');
+  assert.equal(revision(), 2, 'repeat materialization only verifies the receipt');
+  noteSourceMaterialized('node-1', 'lock-a');
+  assert.equal(revision(), 3);
   resetSourceChangeSignalForTests();
 });

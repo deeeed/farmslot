@@ -32,8 +32,10 @@ export interface SourceStatusSnapshot {
   interactive: boolean;
   canEdit: boolean;
   selectionRefusal?: string;
-  /** Render nothing: an empty context, or a viewer that cannot read source status. */
+  /** Render nothing: no facts or failure yet, an empty context, or a viewer that cannot read. */
   hidden: boolean;
+  /** Render the rows' pin and sync controls. */
+  controls: boolean;
   /** The gateway reports sources but did not announce live source status. */
   unsupported: boolean;
 }
@@ -54,7 +56,8 @@ export class SourceStatusController {
   private pendingConnectionKey?: string;
   private feed?: SourceChangeFeed;
   private covered?: SourceRevisionMark;
-  private reading = false;
+  /** The version of the read in flight; a context change abandons it. */
+  private readingVersion?: number;
   private rereadAfterRead = false;
   private deniedRead = false;
 
@@ -69,7 +72,8 @@ export class SourceStatusController {
       selections: structuredClone([...(context.selections ?? [])]),
       interactive: true,
       canEdit: false,
-      hidden: false,
+      hidden: true,
+      controls: false,
       unsupported: false,
     };
     this.update({});
@@ -94,8 +98,14 @@ export class SourceStatusController {
     this.snapshot.interactive =
       !this.snapshot.busy && !this.snapshot.loading && !this.snapshot.pending;
     this.snapshot.canEdit = this.snapshot.interactive && this.snapshot.view?.editable === true;
+    const view = this.snapshot.view;
     this.snapshot.hidden =
-      this.snapshot.view?.hidden === true || (this.snapshot.error !== undefined && this.deniedRead);
+      view?.hidden === true ||
+      (this.snapshot.error !== undefined && this.deniedRead) ||
+      (!view && this.snapshot.error === undefined && !this.snapshot.pending);
+    this.snapshot.controls = Boolean(
+      view && (view.editable || view.draft || view.actions.length > 0),
+    );
     this.snapshot.unsupported =
       this.status?.configured === true && this.feed?.getState().announced === false;
     this.snapshot.selectionRefusal =
@@ -130,15 +140,17 @@ export class SourceStatusController {
 
   private observeFeed(): void {
     const latest = this.feed?.getState().latest;
-    // Before the first read the host's initial load covers the current state.
-    if (
-      latest &&
-      (this.status || this.snapshot.error) &&
-      isNewerSourceRevision(latest, this.covered)
-    ) {
-      if (this.reading) this.rereadAfterRead = true;
-      else void this.refresh();
-      return;
+    if (latest && isNewerSourceRevision(latest, this.covered)) {
+      // A change during any read, the first included, is not covered by it.
+      if (this.readingVersion === this.version) {
+        this.rereadAfterRead = true;
+        return;
+      }
+      // Before the first read the host's initial load covers the current state.
+      if (this.status || this.snapshot.error) {
+        void this.refresh();
+        return;
+      }
     }
     this.update({});
   }
@@ -184,7 +196,7 @@ export class SourceStatusController {
       this.context.params ?? sourceStatusParamsForTarget(undefined, this.context.target);
     // Gateways publish only after a change is readable, so this read covers the mark.
     this.covered = this.feed?.getState().latest;
-    this.reading = true;
+    this.readingVersion = version;
     this.rereadAfterRead = false;
     this.update({ loading: true, error: undefined });
     try {
@@ -201,7 +213,7 @@ export class SourceStatusController {
       }
     } finally {
       if (version === this.version) {
-        this.reading = false;
+        this.readingVersion = undefined;
         // A change seen during the read is not covered by it: read once more.
         if (this.rereadAfterRead) {
           this.rereadAfterRead = false;

@@ -7,14 +7,17 @@ export interface SourceRevisionMark {
 }
 
 /**
- * The one carrier decoder (ADR-069 Amendment 1). Until `resource.changed` exists the
- * payload rides on `hello` and `fleet.updated`; adopting ADR-071 changes only this.
+ * The carrier (ADR-069 Amendment 1). Until `resource.changed` exists the payload rides on
+ * `hello` and `fleet.updated`; adopting ADR-071 changes only these events and the decoder.
  */
+const SOURCE_CHANGE_EVENTS: readonly string[] = [Events.HELLO, Events.FLEET_UPDATED];
+
+/** The one carrier decoder. */
 export function sourceResourceChanges(
   event: string,
   payload: unknown,
 ): ResourceChangedPayload | undefined {
-  if (event !== Events.HELLO && event !== Events.FLEET_UPDATED) return undefined;
+  if (!SOURCE_CHANGE_EVENTS.includes(event)) return undefined;
   const changes = (payload as { resourceChanges?: unknown } | null)?.resourceChanges;
   if (!changes || typeof changes !== 'object') return undefined;
   const candidate = changes as Partial<ResourceChangedPayload>;
@@ -69,7 +72,6 @@ export class SourceChangeFeed {
   };
 
   receive(event: string, payload: unknown): void {
-    if (event !== Events.HELLO && event !== Events.FLEET_UPDATED) return;
     const changes = sourceResourceChanges(event, payload);
     const mark = changes ? sourceMark(changes) : undefined;
     const announced = event === Events.HELLO ? Boolean(mark) : this.state.announced;
@@ -90,4 +92,22 @@ export class SourceChangeFeed {
 
 export function createSourceChangeFeed(): SourceChangeFeed {
   return new SourceChangeFeed();
+}
+
+/** The part of a host's gateway client that feeds source changes. */
+export interface SourceChangeConnection {
+  subscribe(event: string, handler: (payload: unknown) => void): unknown;
+  onConnectionChange(listener: (state: string) => void): unknown;
+}
+
+/** Wire a host connection to its feed; hosts call this once per gateway client. */
+export function connectSourceChangeFeed(
+  feed: SourceChangeFeed,
+  connection: SourceChangeConnection,
+): void {
+  for (const event of SOURCE_CHANGE_EVENTS)
+    connection.subscribe(event, (payload) => feed.receive(event, payload));
+  connection.onConnectionChange((state) => {
+    if (state !== 'connected') feed.disconnected();
+  });
 }

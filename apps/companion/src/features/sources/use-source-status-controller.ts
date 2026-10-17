@@ -50,6 +50,11 @@ export function useSourceStatusController(
     generation: number | null;
   } | null>(null);
   contextRef.current = connectedContext;
+  // Attached before the first read so that read records the revision it covers.
+  useEffect(
+    () => (client ? controller.attachFeed(sourceChangeFeedFor(client)) : undefined),
+    [controller, client],
+  );
   useEffect(() => {
     const changed = controller.setContext(contextRef.current);
     const transportChanged =
@@ -59,10 +64,6 @@ export function useSourceStatusController(
     if ((changed || transportChanged) && generation !== null && client?.workspaceAccess === 'farm')
       void controller.refresh();
   }, [controller, key, generation, client]);
-  useEffect(
-    () => (client ? controller.attachFeed(sourceChangeFeedFor(client)) : undefined),
-    [controller, client],
-  );
   useEffect(() => {
     let previous = controller.getSnapshot().selections;
     return controller.subscribe(() => {

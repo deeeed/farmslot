@@ -33,6 +33,8 @@ export interface SourceStatusViewContext {
 }
 
 export interface SourceStatusRowView {
+  /** This source's part of the view's one line. */
+  line: string;
   summary: string;
   details: string[];
   declaration: SourceDeclaration;
@@ -186,19 +188,27 @@ export function deriveSourceStatusView(
         selectionErrors,
         canPin: selection?.selection === 'branch' && selectionErrors.length === 0,
       };
-      const visiblePin =
-        status.runSource?.state === 'locked' ? row.recordedLocks[0]?.entry.pin : row.effective?.pin;
+      const locked = status.runSource?.state === 'locked';
+      const recorded = locked ? row.recordedLocks[0]?.entry : undefined;
+      const visiblePin = locked ? recorded?.pin : row.effective?.pin;
+      const ref =
+        recorded?.effectiveRef ?? row.effective?.effectiveRef ?? declaration.ref ?? 'main';
       const pinSummary = visiblePin
         ? `; ${visiblePin.selection === 'branch' ? 'pinned' : 'main override'} ${visiblePin.scope}, base main ${visiblePin.baseMainCommit}`
         : '';
       const summary =
         draftRef !== undefined
           ? `${declaration.id} run selection ${draftRef} ${draftResolution?.commit ?? 'unresolved'} ${draftResolution?.status ?? 'unknown'}, reported main base ${mainResolution?.commit ?? 'unresolved'}`
-          : status.runSource?.state === 'locked' && row.recordedLocks[0]
-            ? `${declaration.id} run input ${row.recordedLocks[0].entry.effectiveRef} ${row.recordedLocks[0].entry.commit}${pinSummary}`
+          : recorded
+            ? `${declaration.id} run input ${recorded.effectiveRef} ${recorded.commit}${pinSummary}`
             : `${declaration.id} reported ${row.effective?.effectiveRef ?? declaration.ref ?? 'main'} ${row.resolution?.commit ?? 'unresolved'} ${row.resolution?.status ?? 'unknown'}${pinSummary}`;
       return {
         ...row,
+        line: !visiblePin
+          ? `${declaration.id} ${ref}`
+          : visiblePin.selection === 'branch'
+            ? `${declaration.id} ${ref} (${visiblePin.scope} pin)`
+            : `${declaration.id} main (${visiblePin.scope} override)`,
         summary,
         details: [
           ...(draftRef !== undefined
@@ -212,24 +222,12 @@ export function deriveSourceStatusView(
     }),
     errors: status.errors,
   });
-  const locked = status.runSource?.state === 'locked';
   view.hidden = view.rows.length === 0 && !status.pins?.length;
-  view.line = view.rows.map((row) => sourceLine(row, locked)).join(' · ');
+  view.line = view.rows.map((row) => row.line).join(' · ');
   return view;
 }
 
-function sourceLine(row: SourceStatusRowView, locked: boolean): string {
-  const recorded = locked ? row.recordedLocks[0]?.entry : undefined;
-  const pin = recorded ? recorded.pin : row.effective?.pin;
-  const ref =
-    recorded?.effectiveRef ?? row.effective?.effectiveRef ?? row.declaration.ref ?? 'main';
-  if (!pin) return `${row.declaration.id} ${ref}`;
-  return pin.selection === 'branch'
-    ? `${row.declaration.id} ${ref} (${pin.scope} pin)`
-    : `${row.declaration.id} main (${pin.scope} override)`;
-}
-
-type SourceStatusRowFacts = Omit<SourceStatusRowView, 'summary' | 'details'>;
+type SourceStatusRowFacts = Omit<SourceStatusRowView, 'line' | 'summary' | 'details'>;
 
 /** All renderers describe the same reported locks, pin audit and receipt facts. */
 function sourceRowFacts(row: SourceStatusRowFacts): string[] {

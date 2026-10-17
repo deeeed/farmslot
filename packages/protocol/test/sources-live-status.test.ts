@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { SourcesStatusResult } from '../src/rpc/sources.js';
-import { createSourceChangeFeed, sourceResourceChanges } from '../src/sources/changes.js';
+import {
+  connectSourceChangeFeed,
+  createSourceChangeFeed,
+  sourceResourceChanges,
+} from '../src/sources/changes.js';
 import { createSourceCommandClient } from '../src/sources/client.js';
 import { SourceStatusController } from '../src/sources/controller.js';
 import { Events } from '../src/transport/events.js';
@@ -95,6 +99,38 @@ test('a change during an in-flight read schedules exactly one more read', async 
   assert.equal(panel.reads(), 3);
 });
 
+test('a change during the first read, or the first read after a context change, rereads once', async () => {
+  const panel = harness();
+  let release!: () => void;
+  const held = () =>
+    new Promise<SourcesStatusResult>((resolve) => {
+      release = () => resolve(sourceStatusFixture());
+    });
+  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(1) });
+  panel.respond(held);
+  const first = panel.controller.refresh();
+  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(2) });
+  panel.respond(async () => sourceStatusFixture());
+  release();
+  await first;
+  await settle();
+  assert.equal(panel.reads(), 2, 'the first read did not cover revision 2');
+
+  panel.respond(held);
+  void panel.controller.refresh();
+  panel.controller.setContext({ target: { scope: 'node', targetId: 'node-1' }, actions: [] });
+  const abandoned = release;
+  panel.respond(held);
+  const next = panel.controller.refresh();
+  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(3) });
+  panel.respond(async () => sourceStatusFixture());
+  abandoned();
+  release();
+  await next;
+  await settle();
+  assert.equal(panel.reads(), 5, 'the new context read is followed by exactly one reread');
+});
+
 test('a change while a failed read is shown rereads, and denied reads hide the panel', async () => {
   const panel = harness();
   panel.feed.receive(Events.HELLO, { fleet: null, ...changes(1) });
@@ -129,6 +165,7 @@ test('an empty context is hidden and a gateway that does not announce is unsuppo
     effectiveSelections: [],
   }));
   panel.feed.receive(Events.HELLO, { fleet: null });
+  assert.equal(panel.controller.getSnapshot().hidden, true, 'nothing to show before facts');
   await panel.controller.refresh();
   assert.equal(panel.controller.getSnapshot().hidden, true);
   assert.equal(
@@ -140,6 +177,7 @@ test('an empty context is hidden and a gateway that does not announce is unsuppo
   panel.respond(async () => sourceStatusFixture());
   await panel.controller.refresh();
   assert.equal(panel.controller.getSnapshot().hidden, false);
+  assert.equal(panel.controller.getSnapshot().controls, true, 'farm pin actions show controls');
   assert.equal(panel.controller.getSnapshot().unsupported, true);
 });
 
@@ -170,4 +208,19 @@ test('the carrier decoder reads only hello and fleet.updated with a valid payloa
     undefined,
   );
   assert.deepEqual(sourceResourceChanges(Events.HELLO, changes(3))?.changes[0].revision, 3);
+});
+
+test('one helper wires a host connection: carrier events feed it, a lost connection resets it', () => {
+  const handlers = new Map<string, (payload: unknown) => void>();
+  let connection!: (state: string) => void;
+  const feed = createSourceChangeFeed();
+  connectSourceChangeFeed(feed, {
+    subscribe: (event, handler) => handlers.set(event, handler),
+    onConnectionChange: (listener) => (connection = listener),
+  });
+  assert.deepEqual([...handlers.keys()].sort(), [Events.FLEET_UPDATED, Events.HELLO].sort());
+  handlers.get(Events.HELLO)!({ fleet: null, ...changes(2) });
+  assert.deepEqual(feed.getState(), { announced: true, latest: { epoch: 'epoch-1', revision: 2 } });
+  connection('disconnected');
+  assert.deepEqual(feed.getState(), {});
 });

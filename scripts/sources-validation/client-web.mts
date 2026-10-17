@@ -35,6 +35,7 @@ const cdp = async (...args: string[]) => {
 };
 interface RenderedSourcePanel {
   text: string;
+  line?: string;
   inputs: Array<{ disabled: boolean }>;
   buttons: Array<{ id: string; disabled: boolean }>;
   statusErrors: string[];

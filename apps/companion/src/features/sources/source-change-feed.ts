@@ -1,4 +1,8 @@
-import { createSourceChangeFeed, Events, type SourceChangeFeed } from '@farmslot/protocol';
+import {
+  connectSourceChangeFeed,
+  createSourceChangeFeed,
+  type SourceChangeFeed,
+} from '@farmslot/protocol';
 
 import type { GatewayClient } from '../../lib/gateway-client';
 
@@ -13,10 +17,6 @@ export function sourceChangeFeedFor(client: GatewayClient): SourceChangeFeed {
   if (existing) return existing;
   const feed = createSourceChangeFeed();
   feeds.set(client, feed);
-  for (const event of [Events.HELLO, Events.FLEET_UPDATED])
-    client.subscribe(event, (payload) => feed.receive(event, payload));
-  client.onConnectionChange((state) => {
-    if (state !== 'connected') feed.disconnected();
-  });
+  connectSourceChangeFeed(feed, client);
   return feed;
 }

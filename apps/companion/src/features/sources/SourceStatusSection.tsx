@@ -104,9 +104,7 @@ export function SourceStatusSection(props: SourceStatusSectionProps) {
   );
   const [details, setDetails] = useState(false);
   const view = snapshot.view;
-  // Nothing to show until facts or a failure arrive, and never for an empty context.
-  if (!visible || snapshot.hidden || (!view && !snapshot.error && !snapshot.pending)) return null;
-  const editable = view && (view.editable || view.draft || view.actions.length > 0);
+  if (!visible || snapshot.hidden) return null;
   return (
     <View style={styles.panel} testID="sources-panel">
       <View style={styles.header}>
@@ -160,7 +158,8 @@ export function SourceStatusSection(props: SourceStatusSectionProps) {
           {error.nodeId ?? error.sourceId ?? error.project}: {error.reason}
         </Text>
       ))}
-      {editable &&
+      {view &&
+        snapshot.controls &&
         view.rows.map((row) => (
           <SourceRow
             key={row.declaration.id}

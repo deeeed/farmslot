@@ -57,11 +57,11 @@ test('unknown selection metadata stays unknown and missing revisions disable mut
 test('a context without sources, pins or recorded inputs is hidden; others read as one line', () => {
   const original = status();
   assert.equal(deriveSourceStatusView(original, { actions: [] }).line, 'pack experiment');
-  original.effectiveSelections![0].pin = {
+  const farmPin = {
     sourceId: 'pack',
-    selection: 'branch',
+    selection: 'branch' as const,
     ref: 'experiment',
-    scope: 'farm',
+    scope: 'farm' as const,
     targetId: 'farm',
     actor: 'operator',
     declarationRevision: 1,
@@ -69,6 +69,7 @@ test('a context without sources, pins or recorded inputs is hidden; others read 
     baseMainCommit: 'a'.repeat(40),
     createdAt: '2026-10-12T00:00:00Z',
   };
+  original.effectiveSelections![0].pin = farmPin;
   const pinned = deriveSourceStatusView(original, { actions: [] });
   assert.equal(pinned.hidden, false);
   assert.equal(pinned.line, 'pack experiment (farm pin)');
@@ -93,6 +94,16 @@ test('a context without sources, pins or recorded inputs is hidden; others read 
   assert.deepEqual(locked.actions, []);
   assert.equal(locked.line, 'pack main');
   assert.equal('readOnlyReason' in locked, false);
+
+  // A locked run without a recorded entry shows no pin, in its line as in its summary.
+  refused.effectiveSelections![0].pin = farmPin;
+  refused.locks = [];
+  const unrecorded = deriveSourceStatusView(refused, {
+    params: { runId: 'retained' },
+    actions: [],
+  });
+  assert.equal(unrecorded.rows[0].summary.includes('pinned'), false);
+  assert.equal(unrecorded.line.includes('(farm pin)'), false);
 });
 
 test('admitted and historical inputs remain visible after their declaration is removed', () => {

@@ -41,7 +41,11 @@ import { buildRunRecord, getRun, persistRunNow, updateRun } from '../runs/store.
 import { currentSessionOriginator } from '../security/work-originator.js';
 
 import { type PreparedSourcePins, SourceAuthority } from './authority.js';
-import { announceSourceChanges, noteAuthorityFacts } from './change-signal.js';
+import {
+  announceSourceChanges,
+  noteAuthorityFacts,
+  noteSourceMaterialized,
+} from './change-signal.js';
 import { captureRunCreationRequest } from './creation-request.js';
 import { assertSourcePinTarget } from './pin-target.js';
 import {
@@ -94,6 +98,15 @@ function sourceFactsSignature(source: SourceAuthority): string {
   ]);
 }
 
+/** Gateway receipts become readable through `sources.status` when materialization returns. */
+class ObservedSourceMaterializer extends SourceMaterializer {
+  override async materialize(lock: SourceLock): Promise<SourceMaterialization> {
+    const result = await super.materialize(lock);
+    noteSourceMaterialized(this.nodeId, lock.digest);
+    return result;
+  }
+}
+
 /** The private farm declaration file is outside every pack it bootstraps. */
 export async function initializeSources(): Promise<void> {
   const home = farmslotHome();
@@ -122,7 +135,7 @@ export async function initializeSources(): Promise<void> {
   await authority.recoverRunCreations((runId) =>
     Boolean(getRun(runId)?.sourcePlan || getRun(runId)?.sourceProvenance),
   );
-  gateway = new SourceMaterializer('gateway', path.join(home, 'sources', 'gateway'));
+  gateway = new ObservedSourceMaterializer('gateway', path.join(home, 'sources', 'gateway'));
   // Configure fail-closed reads immediately; each closure becomes available as
   // its own sources finish, without waiting for an unrelated repository.
   configureProjectSources(projectContext, () => Object.keys(configuration.packs));
@@ -181,6 +194,7 @@ async function nodeMaterialization(
     { timeout: 120_000, requireSameConnection: true },
   )) as SourceMaterialization;
   assertSourceAttestation(lock, nodeId, result);
+  noteSourceMaterialized(nodeId, lock.digest);
   return result;
 }
 

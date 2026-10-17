@@ -141,9 +141,7 @@ export class SourceStatusPanel extends LitElement {
     if (!gateway.isGlobalAdmin) return nothing;
     const state = this.controller.getSnapshot();
     const view = state.view;
-    // Nothing to show until facts or a failure arrive, and never for an empty context.
-    if (state.hidden || (!view && !state.error && !state.pending)) return nothing;
-    const editable = view && (view.editable || view.draft || view.actions.length > 0);
+    if (state.hidden) return nothing;
     return html`<section data-testid="sources-panel">
       <header>
         <h3>Sources</h3>
@@ -180,7 +178,7 @@ export class SourceStatusPanel extends LitElement {
             ${error.nodeId ?? error.sourceId ?? error.project}: ${error.reason}
           </p>`,
       )}
-      ${editable
+      ${view && state.controls
         ? view.rows.map(
             (row) =>
               html`<article data-source-id=${row.declaration.id}>

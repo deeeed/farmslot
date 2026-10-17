@@ -380,16 +380,18 @@ export class SourceAuthority {
           prepared.operation,
         );
       await this.persist(next, false);
+      let result: T;
       try {
         assertTarget();
-        const result = publish();
+        result = publish();
         this.state = next;
-        this.notify();
-        return result;
       } catch (error) {
         await this.persist(previous);
         throw error;
       }
+      // Outside the rollback: observers learn of a pin that is already published.
+      this.notify();
+      return result;
     });
   }
 
