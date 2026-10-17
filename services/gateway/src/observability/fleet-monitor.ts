@@ -102,22 +102,26 @@ export function startMonitor(eventHandler: MonitorEventHandler): void {
   }, FLEET_POLL_MS);
   fleetTimer.unref();
 
-  // Decision scan loop
-  decisionTimer = setInterval(async () => {
+  // Decision scan loop. A scan that fails (an unreadable projects dir) is logged and retried on
+  // the next tick; it must never become an unhandled rejection, which would stop the gateway.
+  const guardedScan = async () => {
     if (decisionPollInFlight) return;
     decisionPollInFlight = true;
     try {
       await scanDecisions();
-    } catch {
-      /* ignore scan errors */
+    } catch (err) {
+      console.warn(
+        `[fleet-monitor] decision scan failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       decisionPollInFlight = false;
     }
-  }, DECISION_POLL_MS);
+  };
+  decisionTimer = setInterval(() => void guardedScan(), DECISION_POLL_MS);
   decisionTimer.unref();
 
   // Initial scan
-  scanDecisions();
+  void guardedScan();
 
   // Persist state every 30s
   persistTimer = setInterval(() => saveMonitorState(), 30_000);
@@ -161,16 +165,12 @@ export async function loadPendingDecisions(): Promise<PendingDecision[]> {
   const decisions: PendingDecision[] = [];
 
   // Scan all project task directories for .pending_decision.json files
-  try {
-    for (const { root } of await projectTaskRoots()) {
-      try {
-        await scanDirForDecisions(root, decisions);
-      } catch {
-        /* no tasks dir */
-      }
+  for (const { root } of await projectTaskRoots()) {
+    try {
+      await scanDirForDecisions(root, decisions);
+    } catch {
+      /* no tasks dir */
     }
-  } catch {
-    /* no projects dir */
   }
 
   return decisions;

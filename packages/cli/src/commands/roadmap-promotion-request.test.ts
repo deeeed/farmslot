@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -178,6 +178,32 @@ test('createRoadmapPromotionRequest does not use targets as a draft-count fallba
   assert.equal(raw.payload.expectedBacklogItems, 0);
   assert.equal(raw.actions[0]?.label, 'Review promotion');
   assert.deepEqual(raw.payload.draftSpecPaths, []);
+});
+
+test('createRoadmapPromotionRequest writes its decision under FARMSLOT_PROJECTS_DIR, where the monitor scans', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-roadmap-promotion-'));
+  const projects = mkdtempSync(path.join(tmpdir(), 'farmslot-roadmap-projects-'));
+  const previous = process.env.FARMSLOT_PROJECTS_DIR;
+  process.env.FARMSLOT_PROJECTS_DIR = projects;
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_PROJECTS_DIR;
+    else process.env.FARMSLOT_PROJECTS_DIR = previous;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(projects, { recursive: true, force: true });
+  });
+
+  const result = await createRoadmapPromotionRequest(
+    root,
+    { itemId: 'ri_override', title: 'Override root' },
+    new Date('2026-10-18T00:00:00.000Z'),
+  );
+
+  assert.equal(
+    result.decisionPath,
+    path.join(projects, 'farmslot-farm/tasks/roadmap-promotion-ri_override/.pending_decision.json'),
+  );
+  assert.ok(existsSync(result.decisionPath));
+  assert.equal(existsSync(path.join(root, 'projects')), false);
 });
 
 test('createRoadmapPromotionRequest rejects path traversal item ids before draft cleanup', async (t) => {

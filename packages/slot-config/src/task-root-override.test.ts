@@ -22,7 +22,7 @@ test('task roots follow FARMSLOT_PROJECTS_DIR, and mock mode keeps the root sand
   );
 });
 
-test('projectTaskRoots lists every projects dir entry, linked ones included', async () => {
+test('projectTaskRoots lists project dirs, linked ones included', async () => {
   mkdirSync(path.join(projects, 'app'));
   mkdirSync(linkedTarget);
   symlinkSync(linkedTarget, path.join(projects, 'linked'));

@@ -36,7 +36,9 @@ import {
 } from '@farmslot/protocol';
 import {
   type FarmLayout,
+  listProjectTaskRoots,
   orchestratorTaskRoot,
+  type ProjectTaskRoot,
   resolveProjectsDir,
 } from '@farmslot/protocol/node/farm-layout';
 import {
@@ -2318,19 +2320,9 @@ export function getOrchestratorTaskRoot(
   return orchestratorTaskRoot(farmLayout, projectName, isMockModeProject(projectJson));
 }
 
-/**
- * The task root of every entry in the projects dir, for gateway scans of run task folders.
- * Linked project dirs count; a scan skips a root it cannot read.
- */
-export async function projectTaskRoots(): Promise<Array<{ project: string; root: string }>> {
-  let names: string[];
-  try {
-    names = await readdir(projectsDir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw err;
-  }
-  return names.map((project) => ({ project, root: getOrchestratorTaskRoot(project) }));
+/** The non-mock task root of every project dir (see listProjectTaskRoots), for gateway scans. */
+export function projectTaskRoots(): Promise<ProjectTaskRoot[]> {
+  return listProjectTaskRoots(farmLayout);
 }
 
 export function resolveTaskRelDir(

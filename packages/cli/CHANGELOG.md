@@ -7,6 +7,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 - `review checklist` prints one "Domain patterns" heading and points setup step 2 at the domain's antipatterns file. `review domain` names its source on stderr. An owned-paths file with an empty domain is refused. `recipe logs` words its refusals generically and returns `--events`, undetected-adapter and unknown-adapter errors as usage envelopes. Doctor's recorder failure line includes the recorder detail.
 
 - Run `recipe artifacts`, `recipe artifacts validate` and doctor live-evidence checks through the shared recipe-cli harness exports, with unchanged output and refusals.
+- `roadmap request-promotion` writes its decision under `FARMSLOT_PROJECTS_DIR` when set, where the gateway's decision scan looks.
 
 - `farmslot uninstall` keeps or backs up the gateway's real run history: the run records and project task folders inside the farmslot clone move under `<workspace>/runs/uninstalled-<time>/` before the clone is removed. Before, keep and backup applied only to `<workspace>/runs`, which the gateway never writes, so run history was always deleted. `--purge --keep-history` keeps `<workspace>/runs`, and a failed move or backup leaves the history and the whole install (clone, `state.json`, PATH link) in place for a re-run.
 
