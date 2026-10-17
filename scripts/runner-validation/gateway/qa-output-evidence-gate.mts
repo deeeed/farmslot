@@ -196,6 +196,8 @@ if (process.argv[2] === 'serve') {
     });
     cpSync(input.taskDir, workerDir, { recursive: true });
     cpSync(input.taskDir, retained, { recursive: true });
+    // A retained run bundle is read-only; only the disposable copies become writable.
+    execFileSync('chmod', ['-R', 'u+w', workerDir, retained]);
     // The copied run belongs to the disposable project. Keep its frozen task
     // identity consistent without changing the original contract or artifacts.
     for (const copiedTask of [workerDir, retained]) {

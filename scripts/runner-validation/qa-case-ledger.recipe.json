@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "A QA task ledger merges its case packages by criterion",
+  "description": "Manual public RPC proof from a copied artifact-only QA receipt with more than one case package. FARMSLOT_QA_OUTPUT_PROOF_INPUT supplies runSnapshot, taskDir and repo. Originals remain read-only. Rebuilds the copied ledger through recipe-cli's task transport, then gates it on a disposable gateway with a real native worker and a teardown barrier after gate and QA validation.",
+  "workflow": {
+    "entry": "merged-ledger",
+    "nodes": {
+      "merged-ledger": {
+        "action": "command",
+        "cmd": "FARMSLOT_QA_OUTPUT_CASE_LEDGER=1 TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/qa-output-evidence-gate.mts",
+        "timeout_ms": 300000,
+        "intent": "Merge the case packages into one ledger by criterion, read it back through task.progress, and pass QA completion with each criterion bound to its case package.",
+        "next": "single-execution-binding"
+      },
+      "single-execution-binding": {
+        "action": "command",
+        "cmd": "FARMSLOT_QA_OUTPUT_CASE_LEDGER=1 FARMSLOT_QA_OUTPUT_NEGATIVE=case-binding TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/qa-output-evidence-gate.mts",
+        "timeout_ms": 300000,
+        "intent": "Negative control: with every criterion bound to the last case's execution, QA completion refuses the merged ledger as structurally invalid.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
