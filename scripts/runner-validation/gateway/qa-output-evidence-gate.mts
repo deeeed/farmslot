@@ -260,6 +260,8 @@ if (process.argv[2] === 'serve') {
       );
     }
     symlinkSync(path.join(source, 'scripts'), path.join(root, 'scripts'), 'dir');
+    // A local slot runs the framework's agent-runtime checker for deterministic receipts.
+    symlinkSync(path.join(source, 'packages'), path.join(root, 'packages'), 'dir');
     writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable retained QA regression\n');
     json(path.join(root, 'services/gateway/package.json'), { name: 'fixture', version: '0.0.0' });
     json(path.join(root, 'projects', project, 'project.json'), {
