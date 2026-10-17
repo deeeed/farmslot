@@ -184,6 +184,17 @@ test('summarizeComparePickerFamilyLane explains first comparison sibling vs exis
   assert.match(withLane.forkHint, /joins this comparison family/);
 });
 
+test('summarizeComparePickerFamilyLane counts active runs like the run list', () => {
+  const root = makeRun({
+    id: 'root',
+    status: 'failed',
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  });
+  const failed = makeRun({ id: 'failed', lane: 'comparison', variant: 'a', status: 'failed' });
+  const fixing = makeRun({ id: 'fixing', lane: 'comparison', variant: 'b', status: 'fixing' });
+  assert.equal(summarizeComparePickerFamilyLane(root, [root, failed, fixing]).activeCount, 2);
+});
+
 test('comparePickerFamilyChipLabel prefers variant tags on comparison lane', () => {
   assert.equal(comparePickerFamilyChipLabel(makeRun({ lane: 'production' })), 'production');
   assert.equal(

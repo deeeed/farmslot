@@ -22,6 +22,7 @@ import lockfile from 'proper-lockfile';
 import {
   type ArtifactRef,
   decisionArtifactBundleRef,
+  isActiveListRun,
   type Run,
   RUN_BUNDLE_VERSION,
   type RunArtifactBundleRef,
@@ -737,7 +738,7 @@ export async function collectRunBundleGarbage(
     ]) {
       const retain = (ref: RunArtifactBundleRef | undefined, pin: boolean) =>
         retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
-      const active = !['done', 'failed', 'cancelled'].includes(run.status);
+      const active = isActiveListRun(run);
       if (active) activeRuns.add(run.id);
       retain(run.artifactBundle, active);
       retain(run.output?.artifactBundle, active);

@@ -2,7 +2,12 @@
 // gateway state imports so the run store, node registry and server can all advance it.
 import { randomUUID } from 'node:crypto';
 
-import { Events, type ResourceChangedPayload, type Run } from '@farmslot/protocol';
+import {
+  Events,
+  isTerminalRunStatus,
+  type ResourceChangedPayload,
+  type Run,
+} from '@farmslot/protocol';
 
 import { runSourcesSelectable } from './pin-target.js';
 
@@ -67,7 +72,7 @@ function runSourceSignature(run: Run): string {
 /** Records the run's facts and returns the previous record. */
 function recordRunSourceFacts(run: Run): string | undefined {
   const previous = runFacts.get(run.id);
-  if (['done', 'failed', 'cancelled'].includes(run.status)) runFacts.delete(run.id);
+  if (isTerminalRunStatus(run.status)) runFacts.delete(run.id);
   else runFacts.set(run.id, runSourceSignature(run));
   return previous;
 }

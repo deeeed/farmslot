@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Work-graph `family-done` edges wait while a family run is active by `isActiveListRun`, so a failed run that still holds its slot is not yet a terminal outcome. Family snapshots mark each run `active`. The PR dashboard's worker-active flag uses `ACTIVE_RUN_STATUSES`, and the remaining hand-written run status lists call the shared helpers.
+
 - A run admission or new source attempt advances the source revision once; the engine's next `run.updated` no longer advances it again.
 - The family workspace counts active runs with the shared `isActiveListRun` rule: a family whose failed run still holds its slot reports that run as active and the family as active, matching every run list.
 - Advance the source revision as soon as run admission or a new source attempt is saved, and when a restored or newly created run stops accepting pins.

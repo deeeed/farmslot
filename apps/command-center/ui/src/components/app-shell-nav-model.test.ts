@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import type { Run, RunStep } from '@farmslot/protocol';
 
+import { filterRunList } from './runs/run-list-model.js';
 import {
   activeSidebarRuns,
   clampSidebarWidth,
@@ -44,18 +45,47 @@ test('sidebar width parser clamps stored values', () => {
   assert.equal(clampSidebarWidth(277.6), 278);
 });
 
-test('active sidebar runs include live attention states and cap list', () => {
+test('active sidebar runs follow the run list Active tab and cap the list', () => {
+  const noFilters = { projects: [], machines: [] };
+  const held = run('held', 'failed', {
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  });
+  const runs = [
+    run('a', 'monitoring'),
+    held,
+    run('b', 'failed'),
+    run('c', 'done'),
+    run('d', 'cancelled'),
+    run('e', 'fixing'),
+    run('f', 'blocked'),
+  ];
+  const sidebar = activeSidebarRuns(runs, noFilters, [], Number.MAX_SAFE_INTEGER);
   assert.deepEqual(
-    activeSidebarRuns([
-      run('a', 'monitoring'),
-      run('b', 'failed'),
-      run('c', 'done'),
-      run('d', 'cancelled'),
-    ]).map((r) => r.id),
-    ['a', 'b'],
+    sidebar.map((r) => r.id),
+    ['a', 'held', 'e', 'f'],
   );
   assert.deepEqual(
-    activeSidebarRuns([run('a', 'monitoring'), run('b', 'preparing')], 1).map((r) => r.id),
+    sidebar.map((r) => r.id),
+    filterRunList({
+      familyFilter: '',
+      familyRuns: null,
+      tagFilter: '',
+      tagRuns: null,
+      runs,
+      globalFilters: noFilters,
+      slotMachines: new Map(),
+      tab: 'active',
+      statusFilter: 'all',
+      flowFilter: '',
+      laneFilter: '',
+      searchQuery: '',
+      sortBy: 'newest',
+    }).map((r) => r.id),
+  );
+  assert.deepEqual(
+    activeSidebarRuns([run('a', 'monitoring'), run('b', 'preparing')], noFilters, [], 1).map(
+      (r) => r.id,
+    ),
     ['a'],
   );
 });

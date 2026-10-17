@@ -206,6 +206,31 @@ test('findActiveRunConflict matches raw or normalized ticket and ignores termina
   );
 });
 
+test('findActiveRunConflict treats a failed run that still holds its slot as active', () => {
+  const input = { ticket: 'PROJ-1', normalizedTicket: 'PROJ-1', project: 'example-mobile' };
+  assert.equal(
+    findActiveRunConflict(
+      [makeRun({ id: 'failed', status: 'failed', ticketOrPr: 'PROJ-1' })],
+      input,
+    ),
+    null,
+  );
+  assert.deepEqual(
+    findActiveRunConflict(
+      [
+        makeRun({
+          id: 'held',
+          status: 'failed',
+          ticketOrPr: 'PROJ-1',
+          steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+        }),
+      ],
+      input,
+    ),
+    { id: 'held', status: 'failed' },
+  );
+});
+
 test('deriveDispatchFleetViewState filters fleet and preserves project selection rules', () => {
   const slots = [
     makeSlot('mobile-mini', { machine: 'mini', project: 'mobile' }),

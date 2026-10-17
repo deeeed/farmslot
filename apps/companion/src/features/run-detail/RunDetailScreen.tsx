@@ -557,7 +557,7 @@ export default function RunDetailScreen() {
       muted: colors.textMuted,
     }[lifecycle.tone];
   const replayAllowed =
-    ['failed', 'done', 'cancelled'].includes(run.status) &&
+    isTerminalRunStatus(run.status) &&
     !run.engineState?.operatorForceCompleted &&
     Boolean(client) &&
     connectionStatus === 'connected';

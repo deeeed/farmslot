@@ -21,7 +21,6 @@ import {
   normalizeRunTags,
   resolveRunSlotId,
   type RunFamilyGroup,
-  selectRunList,
   slotMachineMap,
   summarizeRunEvidence,
 } from '@farmslot/protocol';
@@ -66,6 +65,7 @@ import {
   type RunInventorySortKey,
 } from './run-list-inventory.js';
 import {
+  activeRunsForGlobalFilters,
   filterRunList,
   isArchivableRun,
   runGradeColor,
@@ -519,12 +519,11 @@ export class RunList extends RunListState {
       Boolean(this.familyFilter) ||
       this.laneFilter === 'comparison' ||
       familyGroups.some((group) => group.runs.length > 1);
-    const activeCount = selectRunList(this.runs, {
-      scope: 'active',
-      projects: this.globalFilters.projects,
-      machines: this.globalFilters.machines,
-      slotMachines: slotMachineMap(this.fleet?.slots ?? []),
-    }).length;
+    const activeCount = activeRunsForGlobalFilters(
+      this.runs,
+      this.globalFilters,
+      this.fleet?.slots ?? [],
+    ).length;
     const showStatusFilter = this.tab === 'history' || this.tab === 'all';
     const showCheckboxes = this.manageMode;
     const selCount = this.selectedIds.size;
