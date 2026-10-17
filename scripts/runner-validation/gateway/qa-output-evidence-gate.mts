@@ -291,7 +291,10 @@ if (process.argv[2] === 'serve') {
     json(path.join(root, 'pool/status-local.json'), {
       slots: [{ slot: slotId, lifecycle: 'held', phase: 'occupied', current_run_id: original.id }],
     });
-    // Fixture slot state must not change the checkout inputs a deterministic receipt hashes.
+    // As a provisioned slot does, keep farm scaffolding and fixture slot state out of
+    // the checkout inputs a deterministic receipt hashes.
+    const { slotScaffoldingPaths } =
+      await import('../../../services/gateway/src/fleet/slot-scaffolding.js');
     const exclude = path.resolve(
       repo,
       execFileSync('git', ['rev-parse', '--git-path', 'info/exclude'], {
@@ -300,7 +303,13 @@ if (process.argv[2] === 'serve') {
       }).trim(),
     );
     mkdirSync(path.dirname(exclude), { recursive: true });
-    writeFileSync(exclude, '/.farm-status\n', { flag: 'a' });
+    writeFileSync(
+      exclude,
+      ['.farm-status', ...slotScaffoldingPaths({ runtime_dir: 'tasks', task_dir: 'tasks' }).owned]
+        .map((root) => `\n/${root}`)
+        .join('') + '\n',
+      { flag: 'a' },
+    );
     json(path.join(repo, '.farm-status'), {
       lifecycle: 'held',
       phase: 'occupied',
@@ -628,6 +637,10 @@ if (process.argv[2] === 'serve') {
     } else if (caseLedger) {
       assert.equal((await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok, true);
       const gated = await replay();
+      writeFileSync(
+        path.join(out, 'checkout-status.txt'),
+        execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }),
+      );
       // The Command Center AC panel reads the ledger the gate consumed.
       const panel = await rpc<{ acceptanceStatus?: { criteria: Array<Record<string, unknown>> } }>(
         'task.progress',
