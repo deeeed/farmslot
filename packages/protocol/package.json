@@ -28,6 +28,11 @@
       "import": "./dist/checklist-target.js",
       "default": "./dist/checklist-target.js"
     },
+    "./client-cache": {
+      "types": "./dist/client-cache/index.d.ts",
+      "import": "./dist/client-cache/index.js",
+      "default": "./dist/client-cache/index.js"
+    },
     "./surfaces/command-center": {
       "types": "./dist/surfaces/command-center.d.ts",
       "import": "./dist/surfaces/command-center.js",

@@ -10,6 +10,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Add the shared run-list view model: `isActiveListRun` (nonterminal, or failed while it still holds resources after a refused completion prerequisite), `selectRunList`, `slotMachineMap`, `mergeRunsById` and `ACTIVE_RUN_LIST_LIMIT`. `isCompletionPrerequisiteFailure` moves here from the gateway.
 - Add the Send back repair contract: `RecipeRepairScope`, the engine claim-source selection, the `pipeline-visual-judgments-v2` applicability result, the run-store repair record and a receipt/repair `FeedbackCandidate` variant; the shared decision request sends Send back with no selection data.
+- Live source status: `ResourceChangedPayload` (proposed ADR-071 shape), `ResourceKey`/`ResourceRevision` from the new `client-cache` entry, `sourceResourceChanges` and `SourceChangeFeed`, and controller rereads when the gateway's source revision advances. Source views report `hidden` and a one-line `line`; `readOnlyReason` is removed.
 - Add `RunTaskExecution` and optional `RunEngineState.taskExecution`, the start of the dispatch that began the current task identity.
 - `extractRunArtifactManifest` keeps a gate's recorded metadata for files the run output captured again, skips host paths and prose in step outputs, and shares `isRunArtifactImagePath` with clients.
 - Add `extractRunArtifactManifest`, the one run artifact extractor for Command Center and Companion; it includes captured run output and keeps source metadata.

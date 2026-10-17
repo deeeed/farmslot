@@ -10,6 +10,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - List active runs with the rule Companion and `run.list` `active` use: a failed run stays in Active only while it still holds its slot. The Active count follows the global filters, machine filters use the fleet's slot machine, and runs older than the loaded page still appear while active.
 - Show Send back to agent as the gate's primary action and label Send back reasons apart from PR feedback.
+- Sources panel updates itself from the gateway's source revision: no Refresh, hidden when nothing is configured or pinned, and one summary line with details on demand.
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 - Show the shared no-code-review warning at publication gates.
 - Keep async gate and panel layouts stable with component-specific skeletons and visible retries after loading errors.

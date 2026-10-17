@@ -17,6 +17,36 @@ export interface SourcePinTargetState {
   >;
 }
 
+type SourcePinRun = NonNullable<SourcePinTargetState['run']>;
+
+/** A run accepts source pins until admission or its first effect. */
+export function runSourcesSelectable(run: SourcePinRun): boolean {
+  // FIND_SLOT stores its pending slot-picker decision as blocked before admission.
+  const waitingForSlot =
+    run.status === 'blocked' &&
+    run.steps.some((step) => step.name === PipelineSteps.FIND_SLOT && step.status === 'running') &&
+    run.decisions.some(
+      (decision) =>
+        decision.type === 'engine_no_suitable_slot' &&
+        !decision.resolvedAt &&
+        decision.payload?.kind === 'slot_picker',
+    );
+  return !(
+    !run.sourcePlan ||
+    run.sourcePlan.lock.context.runId !== run.id ||
+    run.sourceProvenance ||
+    (!['created', 'slot-finding', 'human-gating'].includes(run.status) && !waitingForSlot) ||
+    run.steps.some(
+      (step) =>
+        step.name !== PipelineSteps.FIND_SLOT &&
+        step.status !== 'pending' &&
+        step.status !== 'skipped',
+    ) ||
+    run.metrics.runnerSessionId ||
+    run.recoveryAttempts?.length
+  );
+}
+
 /** Recheck authoritative target state both before fetching and before publishing a pin. */
 export function assertSourcePinTarget(target: SourcePinTarget, state: SourcePinTargetState): void {
   if (target.scope === 'farm' && target.targetId === 'farm') return;
@@ -33,29 +63,6 @@ export function assertSourcePinTarget(target: SourcePinTarget, state: SourcePinT
   const activated = Date.parse(state.activatedAt);
   if (!Number.isFinite(created) || !Number.isFinite(activated) || created < activated)
     throw new Error(`Historical source inputs cannot change: ${run.id}`);
-  // FIND_SLOT stores its pending slot-picker decision as blocked before admission.
-  const waitingForSlot =
-    run.status === 'blocked' &&
-    run.steps.some((step) => step.name === PipelineSteps.FIND_SLOT && step.status === 'running') &&
-    run.decisions.some(
-      (decision) =>
-        decision.type === 'engine_no_suitable_slot' &&
-        !decision.resolvedAt &&
-        decision.payload?.kind === 'slot_picker',
-    );
-  if (
-    !run.sourcePlan ||
-    run.sourcePlan.lock.context.runId !== run.id ||
-    run.sourceProvenance ||
-    (!['created', 'slot-finding', 'human-gating'].includes(run.status) && !waitingForSlot) ||
-    run.steps.some(
-      (step) =>
-        step.name !== PipelineSteps.FIND_SLOT &&
-        step.status !== 'pending' &&
-        step.status !== 'skipped',
-    ) ||
-    run.metrics.runnerSessionId ||
-    run.recoveryAttempts?.length
-  )
+  if (!runSourcesSelectable(run))
     throw new Error(`Run source inputs are admitted or have effects: ${run.id}`);
 }

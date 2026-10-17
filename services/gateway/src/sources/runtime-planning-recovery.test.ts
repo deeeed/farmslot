@@ -27,6 +27,7 @@ const { SourceAuthority } = await import('./authority.js');
 const { initializeSources, stopSourceReconciliation, withRunSources } =
   await import('./runtime.js');
 const { sourceTestLock, sourceTestMaterialization } = await import('./source.test-support.js');
+const { currentSourceResourceChanges } = await import('./change-signal.js');
 const { makeRun } = await import('../run-engine/test-fixtures.js');
 const store = await import('../runs/store.js');
 const { runReplayStep } = await import('../methods/run/replay-step.js');
@@ -49,6 +50,7 @@ async function initialize(t: TestContext) {
   t.mock.method(SourceAuthority, 'open', async () => ({
     recoverRunCreations: async () => {},
     startReconciliation: () => () => {},
+    observe: () => () => {},
     activatedAt: () => '2020-01-01T00:00:00Z',
   }));
   t.mock.method(SourceMaterializer.prototype, 'materialize', async (lock: SourceLock) => {
@@ -65,6 +67,8 @@ test('admitted planning uses the retained gateway lock without a removed slot or
   const run = makeRun({ project: 'demo', slotId: 'removed-old-slot' });
   run.sourceProvenance = provenance();
   const before = structuredClone(run.sourceProvenance);
+  const revision = () => currentSourceResourceChanges()!.changes[0].revision;
+  const revisionBefore = revision();
   const result = await withRunSources(
     run,
     async () => {
@@ -76,6 +80,7 @@ test('admitted planning uses the retained gateway lock without a removed slot or
   );
   assert.equal(result, 'read pinned catalog');
   assert.equal(materialized.length, 1);
+  assert.equal(revision(), revisionBefore + 1, 'the gateway receipt is announced');
   assert.deepEqual(run.sourceProvenance, before);
 });
 
