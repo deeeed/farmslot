@@ -581,8 +581,7 @@ class DefaultRecipeRunner implements RecipeRunner {
                 ? { role: node.role }
                 : {}),
               ...((captureAnnotations && (node.ac !== undefined || node.role !== undefined)) ||
-              String(node.action).startsWith('ui.') ||
-              RECIPE_ASSERTION_ACTIONS.has(String(node.action))
+              proofNodeIds.has(nodeId)
                 ? await observeRecipeCaptureSource(projectRoot)
                 : {}),
             });
@@ -598,7 +597,7 @@ class DefaultRecipeRunner implements RecipeRunner {
               }
               // A recorder's first frame trails its start, so the first proof node waits one
               // evidence padding: it lands inside the capture with footage before it.
-              await delay(EVIDENCE_PADDING_MS);
+              await delay(EVIDENCE_PADDING_MS, undefined, { signal: request.signal });
             }
           },
           createContext: (nodeId, activeRecipe, activeOutputs, getOutput) =>

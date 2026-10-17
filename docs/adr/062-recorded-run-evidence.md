@@ -788,18 +788,20 @@ recording 75.5 s after its first node, after the app restart, three venue
 about 88 s unrecorded.
 
 The lead-in is needed because a recorder's first frame trails its start, and a
-recorder without clock evidence bounds frame zero only by its lifetime. An
-assertion that ran immediately after binding fell inside that uncertainty: on an
-owned emulator with `adb screenrecord` it measured [-370, +110] ms and its visual
-claim stayed weak. With the lead-in it measured [+635, +1086] ms and the claim
-was awaiting review. QA-03's first recorded segment has a 793 ms window.
+recorder without clock evidence bounds frame zero only by its lifetime. On an
+owned emulator with `adb screenrecord`, a trial without the lead-in measured the
+assertion at [-370, +110] ms, inside that uncertainty, and its visual claim stayed
+weak. With the lead-in it measured [+626, +1120] ms and the claim was awaiting
+review. QA-03's first recorded segment has a 793 ms window, so a recorder whose
+start uncertainty exceeds 1 s can still leave the first proof node outside.
 
 One rule serves every target. A device or simulator recorder could start at run
 entry, but setup that proves nothing needs no footage, and a per-target split
 would make the capture window depend on the recorder. Recordings now start
 earlier by the setup between the first assertion and the first UI node, plus the
-1 s lead-in, which uses more of the existing duration and byte limits. Every
-recorded run takes 1 s longer.
+1 s lead-in, which uses more of the existing duration and byte limits. A run that
+binds at a proof node takes 1 s longer; explicit recording without UI nodes still
+binds at run entry, with no lead-in.
 
 Target resolution moves with the bind point. A recipe that launches or replaces
 its browser after an assertion now binds the process that assertion saw, so
