@@ -867,7 +867,7 @@ const capturedBusyQueue = fs
   .map((line) => JSON.parse(line));
 
 /** Append the captured records after `sentAt`, at `scale` of their real delay (0: at once). */
-function replayBusyQueue(f, payload, sentAt, scale) {
+function replayBusyQueue(t, f, payload, sentAt, scale) {
   let written = 0;
   const writeUntil = (offset) => {
     for (; written < capturedBusyQueue.length; written++) {
@@ -881,10 +881,14 @@ function replayBusyQueue(f, payload, sentAt, scale) {
     }
   };
   if (!scale) return writeUntil(Infinity);
+  const timers = [];
   for (const { offset_ms: at, record } of capturedBusyQueue)
-    if (record.type === 'queue-operation') setTimeout(() => writeUntil(at), at * scale);
+    if (record.type === 'queue-operation')
+      timers.push(setTimeout(() => writeUntil(at), at * scale));
   const last = Math.max(...capturedBusyQueue.map(({ offset_ms: at }) => at ?? 0));
-  setTimeout(() => writeUntil(Infinity), last * scale + 20);
+  timers.push(setTimeout(() => writeUntil(Infinity), last * scale + 20));
+  // A failed send must not leave writes into the removed fixture to mask its error.
+  t.after(() => timers.forEach(clearTimeout));
 }
 const capturedEnqueueAt = capturedBusyQueue.find(
   ({ record }) => record.operation === 'enqueue',
@@ -896,7 +900,7 @@ test('a busy Claude send waits for the queue record its next step writes and rep
   let sentAt = 0;
   f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
     sentAt = Date.now();
-    replayBusyQueue(f, pasted, sentAt, 0.01);
+    replayBusyQueue(t, f, pasted, sentAt, 0.01);
     return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
   });
   const result = await send('%1', 'claude', f.payload);
@@ -926,13 +930,34 @@ test('a Claude queue record written after the wait is confirmed by the same send
   assert.equal(first.submitted, false);
   assert.equal(first.evidence, null);
   const keys = f.keys.length;
-  replayBusyQueue(f, f.payload, sentAt, 0);
+  replayBusyQueue(t, f, f.payload, sentAt, 0);
   const confirmed = await send('%1', 'claude', f.payload);
   assert.equal(confirmed.verification, 'queued');
   assert.equal(confirmed.submitted, true);
   assert.equal(confirmed.evidence.source, 'native-steering');
   assert.equal(confirmed.evidence.observed_at, sentAt);
   assert.equal(f.keys.length, keys, 'confirming never pastes or presses a key');
+});
+
+test('input pulled back during the queue-proof wait gets no second Enter', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS = '400';
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    // Pulled back with Up after the verify window, before any queue record.
+    const timer = setTimeout(() => {
+      process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeBox(pasted);
+    }, 100);
+    t.after(() => clearTimeout(timer));
+    return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+  });
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.verification, 'not_sent');
+  assert.equal(result.submitted, false);
+  assert.deepEqual(
+    f.keys.filter((args) => args[0] === 'send-keys'),
+    [['send-keys', '-t', '%1', 'Enter']],
+    'the owned text back in the composer is left for its editor',
+  );
 });
 
 // Captured Claude 2.1.292 after Up during a busy turn: the queued handoff is back in the composer.

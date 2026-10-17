@@ -9,6 +9,8 @@ import {
   acceptedPrompt,
   nativeState,
   paneIdentity,
+  queuedInTranscript,
+  queueProofTimeoutMs,
   readOptional,
   transcriptQuestion,
   writeSentinel,
@@ -466,4 +468,31 @@ test('native parent interruption clears inherited active state without treating 
     'busy',
     'a later parent prompt is not the interrupted turn',
   );
+});
+
+test('only Claude transcript queue records report queued; Codex history steering stays submitted', () => {
+  for (const source of ['native-queue', 'native-steering'])
+    assert.equal(queuedInTranscript('claude', { source }), true, source);
+  assert.equal(queuedInTranscript('claude', { source: 'native-session' }), false);
+  // Codex's rollout probe also names in-turn steering native-steering; it is delivered input.
+  assert.equal(queuedInTranscript('codex', { source: 'native-steering' }), false);
+  assert.equal(queuedInTranscript('codex', { source: 'runner-steering' }), false);
+  assert.equal(queuedInTranscript('claude', null), false);
+});
+
+test('the queue-proof wait reads milliseconds: unset takes the default, empty is refused', (t) => {
+  const saved = process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS;
+  t.after(() => {
+    if (saved === undefined) delete process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS;
+    else process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS = saved;
+  });
+  delete process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS;
+  assert.equal(queueProofTimeoutMs(), 20000);
+  process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS = '0';
+  assert.equal(queueProofTimeoutMs(), 0);
+  // An empty value never silently disables the wait.
+  for (const value of ['', ' ', 'soon', '-1', '1.5', '2147483648']) {
+    process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS = value;
+    assert.throws(() => queueProofTimeoutMs(), /non-negative integer in milliseconds/, value);
+  }
 });

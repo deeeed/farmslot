@@ -52,13 +52,17 @@ postponed input and never proves delivery. Its receipt is preserved without anot
 A marker or shared prefix alone is insufficient. A fresh Enter submission into an empty
 queue can also use its matching truncated steering preview and separate overflow line.
 Claude transcript records written after the send prove delivery. An exact human prompt
-(`native-session`) reports `submitted`. Input sent during a turn reports `queued` with
+(`native-session`) reports `submitted`. Claude input sent during a turn reports `queued` with
 `submitted: true`, proved by its queue records: the enqueue (`native-queue`) and the
-`queued_command` attachment Claude adds at its next step (`native-steering`). Claude writes
-both at that next step, not at Enter, so a mid-turn send keeps reading the transcript for up
-to `TMUX_MODEL_DRIVER_QUEUE_PROOF_MS` (default 20000) and presses no other key meanwhile.
-With no record by then it reports `unverified` and keeps its receipt; the same send run later
-confirms `queued` from the transcript without typing. A `native-queue` receipt stays until its caller
+`queued_command` attachment Claude adds when its next step takes the input in
+(`native-steering`). The enqueue is usually written at once, but under load it can wait for
+that next step (12 s on one busy worker), so a mid-turn Claude send keeps reading the
+transcript until `TMUX_MODEL_DRIVER_QUEUE_PROOF_MS` after the send started. It presses no key
+in that time, and text that left the composer and came back is never submitted again. With no
+record by then it reports `unverified` and keeps its receipt; the same send run later confirms
+it from the transcript without typing: `queued`, or `submitted` once Claude has taken the input
+as its next prompt. Codex steering proved from its history stays `submitted`; only a rendered
+`/goal` queue reports `queued` with `submitted: false`. A `native-queue` receipt stays until its caller
 acknowledges delivery. It is rechecked against the transcript on every inspection: Up pulls
 queued input back (`popAll`), which withdraws it for status, acknowledgement and retries,
 whatever the composer shows next. A delivered prompt recalled from history keeps its proof. Claude's own queued input never blocks a handoff; a draft in its
@@ -140,6 +144,7 @@ is refused. Never clear the composer or resend an unverified prompt.
   Default is `<pane-current-path>/.agent/.observability`.
 - `TMUX_MODEL_DRIVER_STATE_DIR`: private receipt and lock directory.
 - `TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS`: verification ceiling, default 3000 ms.
+- `TMUX_MODEL_DRIVER_QUEUE_PROOF_MS`: how long a mid-turn Claude send keeps reading its transcript for the queue record, counted from the start of the send; non-negative integer, default 20000, 0 turns the wait off, and an empty value is refused before any key is pressed. The pane's transport lock is held meanwhile, so another send or acknowledgement to that pane gets `driver_busy`. Lane callers' send timeouts must cover it.
 - `TMUX_MODEL_DRIVER_PROBE_TIMEOUT_MS`: positive integer native shell-probe budget in milliseconds, default 10000. Pane state and send preflight use this same budget. Process-owned rollout headers are checked together; large histories retain their full native boundary and question checks. This is separate from the verification retry window. Lane callers must allow enough total time for startup and all probes.
 - `TMUX_MODEL_DRIVER_STAGE_ROOT`: directory for staged shell launch scripts.
 
