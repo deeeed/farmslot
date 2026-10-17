@@ -488,9 +488,9 @@ if (process.argv[2] === 'serve') {
       }
       if (${JSON.stringify(negative)} === 'case-binding' && url.endsWith('/run-engine/acceptance-proof.ts')) {
         const text = String(result.source);
-        const target = 'input.claims?.recipeRunId === rowExecution(criterion.id) &&';
-        if (!text.includes(target)) throw new Error('Case binding control target changed');
-        const changed = text.replace(target, 'input.claims?.recipeRunId === projectedRunId &&');
+        const target = ${/input\.claims\?\.recipeRunId\s*===\s*rowExecution\(criterion\.id\)\s*&&/u};
+        if (!target.test(text)) throw new Error('Case binding control target changed');
+        const changed = text.replace(target, 'input.claims?.recipeRunId===projectedRunId&&');
         writeFileSync(${JSON.stringify(path.join(out, 'source-mutation.json'))}, JSON.stringify({mode:'case-binding',url,
           beforeHash:createHash('sha256').update(text).digest('hex'),
           loadedHash:createHash('sha256').update(changed).digest('hex')}));
