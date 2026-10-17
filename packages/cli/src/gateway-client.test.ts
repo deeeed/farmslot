@@ -78,6 +78,37 @@ test(
   },
 );
 
+test(
+  'a one-shot call ignores frames that arrive after its result',
+  { timeout: 5000 },
+  async (t) => {
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(wss, 'listening');
+    t.after(() => wss.close());
+    // The event goes out right behind the result, before the client's close reaches the server.
+    const serverClosed = new Promise<void>((resolve) =>
+      wss.on('connection', (ws) => {
+        ws.on('close', () => resolve());
+        ws.on('message', (raw) => {
+          const { id } = JSON.parse(String(raw)) as { id: string };
+          ws.send(JSON.stringify({ type: 'res', id, ok: true, payload: { served: true } }));
+          ws.send(JSON.stringify({ type: 'event', event: 'fleet.updated', payload: {} }));
+        });
+      }),
+    );
+    const url = `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`;
+    const events: unknown[] = [];
+    const result = await new GatewayClient({ url, timeout: 2000 }).callWithEvents(
+      'gateway.status',
+      {},
+      (event) => events.push(event),
+    );
+    assert.deepEqual(result, { served: true });
+    await serverClosed;
+    assert.deepEqual(events, []);
+  },
+);
+
 for (const [name, target, reason] of [
   [
     'a 503 upgrade',

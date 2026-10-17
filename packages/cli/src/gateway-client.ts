@@ -411,6 +411,8 @@ export class GatewayClient {
       });
 
       ws.addEventListener('message', (evt) => {
+        // ws still delivers frames while closing; one after the result must not restart the timer.
+        if (done) return;
         resetTimer();
         let frame: Frame;
         try {
