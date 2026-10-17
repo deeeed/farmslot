@@ -341,7 +341,7 @@ run.refreshPublishedEvidence '{"runId":"<run-id>"}'`.
 
 ## Amendment 6: retained completion slot release, 2026-10-17
 
-**Status:** Proposed.
+**Status:** Accepted (lead, 2026-10-17), approved at `2e5cd7a5` after paired review.
 **Specification:** [Pipeline settlement](../reference/fail-closed-run-lifecycle.md#pipeline-settlement).
 
 ### Decision
