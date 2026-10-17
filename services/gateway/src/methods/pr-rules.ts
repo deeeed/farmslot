@@ -96,7 +96,8 @@ export async function initPRRules(
     },
     (id) => {
       auth.store.ensureFresh();
-      return auth.store.findPrincipal(id)?.generation ?? 0;
+      const principal = auth.store.findPrincipal(id);
+      return principal ? (principal.generation ?? 0) : undefined;
     },
   );
   setDirectPublicationAuthority({
@@ -228,6 +229,8 @@ export async function prRulesMethod(method: string, value: unknown): Promise<unk
   const id = p.id as string | undefined;
   const revision = p.revision as number | undefined;
   if (method === Methods.PR_TEAM_SAVE) {
+    if (p.notificationPrincipalGenerations !== undefined)
+      throw new Error('Unsupported property: notificationPrincipalGenerations');
     assertPRTeamConfig(p.config);
     const config = p.config;
     const previous = id ? service.store.team(id, ownerId).config.account : undefined;

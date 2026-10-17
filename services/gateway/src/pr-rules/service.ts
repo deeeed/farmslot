@@ -103,7 +103,10 @@ export class PRRuleService {
     ) => Promise<PRSourceScan> = collectPRRuleTarget,
     private readonly checkpoints?: Pick<PRSourceCheckpoints, 'consume' | 'current' | 'prune'>,
     private readonly runChanged: (run: Run) => void = () => {},
-    private readonly recipientGeneration: (id: string) => number = principalOwnerGeneration,
+    /** Current generation of a principal id; undefined when the id does not resolve. */
+    private readonly recipientGeneration: (
+      id: string,
+    ) => number | undefined = principalOwnerGeneration,
   ) {
     this.previousAudience = this.notificationAudience();
   }
@@ -522,10 +525,17 @@ export class PRRuleService {
     revision?: number,
   ): Promise<PRTeamProfile> {
     this.assertAuthorized(ownerId);
+    // The store's revision check refuses the save if this profile changes before it is written.
+    const previous = id ? this.store.list(ownerId).teams.find((team) => team.id === id) : undefined;
     const generations = Object.fromEntries(
-      config.notificationPrincipalIds.flatMap((id) => {
-        const generation = this.recipientGeneration(id);
-        return generation > 0 ? [[id, generation]] : [];
+      config.notificationPrincipalIds.flatMap((recipient) => {
+        // A kept recipient stays bound to the identity it was added as, even after id reuse.
+        const generation = previous?.config.notificationPrincipalIds.includes(recipient)
+          ? (previous.notificationPrincipalGenerations?.[recipient] ?? 0)
+          : this.recipientGeneration(recipient);
+        if (generation === undefined)
+          throw new Error(`Notification recipient ${recipient} does not resolve to a principal`);
+        return generation > 0 ? [[recipient, generation]] : [];
       }),
     );
     const team = await this.store.saveTeam(ownerId, config, id, revision, generations);

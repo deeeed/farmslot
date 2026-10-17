@@ -230,3 +230,50 @@ test('push registration, acknowledgements and delayed delivery stay with the dev
   const reloaded = await PRPushStore.load(join(dir, 'push.json'));
   assert.equal(reloaded.snapshot().devices.find((device) => device.id === old.id)?.enabled, false);
 });
+
+test('team re-save keeps kept recipients bound and binds only newly added ids', async (t) => {
+  const dir = await scratch(t);
+  const store = await PRRuleStore.load(join(dir, 'rules.json'));
+  const current = new Map([
+    ['kept', 1],
+    ['original', 0],
+  ]);
+  const service = new PRRuleService(
+    store,
+    () => true,
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (id) => current.get(id),
+  );
+  const save = (ids: string[], team?: { id: string; revision: number }) =>
+    service.saveTeam(
+      owner,
+      { ...teamConfig, notificationPrincipalIds: ids },
+      team?.id,
+      team?.revision,
+    );
+  const first = await save(['kept', 'original']);
+  assert.deepEqual(first.notificationPrincipalGenerations, { kept: 1 });
+  // Both ids are reused by replacement identities before the next save.
+  current.set('kept', 2).set('original', 1).set('added', 3);
+  const kept = await save(['kept', 'original', 'added'], first);
+  assert.deepEqual(kept.notificationPrincipalGenerations, { kept: 1, added: 3 });
+  const removed = await save(['original', 'added'], kept);
+  assert.deepEqual(removed.notificationPrincipalGenerations, { added: 3 });
+  const readded = await save(['original', 'added', 'kept'], removed);
+  assert.deepEqual(readded.notificationPrincipalGenerations, { added: 3, kept: 2 });
+  // Removing and re-adding ids within one save submits them unchanged.
+  current.set('added', 4).set('kept', 5);
+  const unchanged = await save(['kept', 'added', 'original'], readded);
+  assert.deepEqual(unchanged.notificationPrincipalGenerations, { added: 3, kept: 2 });
+  await assert.rejects(
+    save(['kept', 'ghost'], unchanged),
+    /Notification recipient ghost does not resolve to a principal/,
+  );
+  assert.equal(store.list(owner).teams[0].revision, unchanged.revision);
+});
