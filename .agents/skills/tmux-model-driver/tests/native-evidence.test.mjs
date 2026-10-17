@@ -9,10 +9,12 @@ import {
   acceptedPrompt,
   nativeState,
   paneIdentity,
+  proofVerification,
   queuedInTranscript,
   queueProofTimeoutMs,
   readOptional,
   transcriptQuestion,
+  verifyTimeoutMs,
   writeSentinel,
 } from '../scripts/native-evidence.mjs';
 
@@ -494,5 +496,29 @@ test('the queue-proof wait reads milliseconds: unset takes the default, empty is
   for (const value of ['', ' ', 'soon', '-1', '1.5', '2147483648']) {
     process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS = value;
     assert.throws(() => queueProofTimeoutMs(), /non-negative integer in milliseconds/, value);
+  }
+});
+
+test('a delivered proof reports queued only for a Claude transcript queue record', () => {
+  assert.equal(proofVerification('claude', { source: 'native-queue' }), 'queued');
+  assert.equal(proofVerification('claude', { source: 'native-steering' }), 'queued');
+  assert.equal(proofVerification('claude', { source: 'native-session' }), 'submitted');
+  assert.equal(proofVerification('codex', { source: 'native-steering' }), 'submitted');
+  assert.equal(proofVerification('codex', { source: 'runner-steering' }), 'submitted');
+});
+
+test('the verify timeout reads milliseconds: unset takes the default, anything else non-numeric is refused', (t) => {
+  const saved = process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS;
+  t.after(() => {
+    if (saved === undefined) delete process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS;
+    else process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS = saved;
+  });
+  delete process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS;
+  assert.equal(verifyTimeoutMs(), 3000);
+  process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS = '0';
+  assert.equal(verifyTimeoutMs(), 0);
+  for (const value of ['', ' ', '5s', '-1', '1.5', '2147483648']) {
+    process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS = value;
+    assert.throws(() => verifyTimeoutMs(), /non-negative integer in milliseconds/, value);
   }
 });

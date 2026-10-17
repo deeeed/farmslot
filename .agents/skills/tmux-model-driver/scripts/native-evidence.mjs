@@ -110,6 +110,10 @@ export const queuedInTranscript = (runner, proof) =>
   requiresNativeSession(runner) &&
   (proof?.source === 'native-queue' || proof?.source === 'native-steering');
 
+/** A delivered send's verification: Claude transcript queue records report `queued`. */
+export const proofVerification = (runner, proof) =>
+  queuedInTranscript(runner, proof) ? 'queued' : 'submitted';
+
 /** A millisecond setting from the environment: unset takes the default; empty is invalid. */
 function envMilliseconds(name, fallback, { allowZero = false } = {}) {
   const raw = process.env[name];
@@ -123,6 +127,9 @@ function envMilliseconds(name, fallback, { allowZero = false } = {}) {
 
 export const queueProofTimeoutMs = () =>
   envMilliseconds('TMUX_MODEL_DRIVER_QUEUE_PROOF_MS', 20000, { allowZero: true });
+
+export const verifyTimeoutMs = () =>
+  envMilliseconds('TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS', 3000, { allowZero: true });
 
 export const nativeProbeTimeoutMs = () =>
   envMilliseconds('TMUX_MODEL_DRIVER_PROBE_TIMEOUT_MS', 10000);
@@ -475,7 +482,7 @@ export function acceptedPrompt(meta, runner, obsDir, receipt) {
   return null;
 }
 
-// Claude records idle input as a human prompt. Input during a turn is queued at once and
+// Claude records idle input as a human prompt. Input during a turn is usually queued at once and
 // attached to the turn at its next step. Only records written after the send can match.
 export function acceptedClaudePrompt(sessionPath, sessionId, receipt) {
   if (!sessionPath) return null;
