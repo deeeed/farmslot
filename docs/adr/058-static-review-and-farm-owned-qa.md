@@ -179,7 +179,7 @@ Verify request-over-policy selection, workflow-policy-over-farm-default selectio
 
 ## Amendment 2: Frozen head for ref and range QA (2026-10-17)
 
-**Status:** Proposed; the lead approves after delta review of #1244.
+**Status:** Accepted (2026-10-17, lead-approved after delta review of #1244 at `e4b7cc4f`).
 
 ### Decision
 
