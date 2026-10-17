@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Resource pressure relief lists manual slots among the cleanup exclusions and says a disabled slot's running resources are included and probed.
 - Describe recipe library discovery hosts generically instead of naming one project's harness.
 
 - Align the API reference with the parent acceptance worker release.

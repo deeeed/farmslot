@@ -370,3 +370,15 @@ Bound every tmux client in the deployment worker-shell probe, including cleanup.
 Dev deployment persists the verification outcome in its existing selected home. Node metrics publish failure as optional worker CLI health, and fleet/pressure readers retain it until a later successful verification. Cleanup failure cannot leave a success receipt. This makes an online node's failed worker environment visible without changing worker ownership or process gauges.
 
 Public surface: optional `WorkerCliHealth` on existing `@farmslot/protocol` node metrics and machine health. Private deployment writes the receipt; the node sampler and gateway health readers consume it. No new command, RPC or harness/provider contract. Normative rules are in `docs/reference/node-worker-cli-health.md`.
+
+## Amendment 8: disabled slots in idle cleanup, 2026-10-18
+
+Status: Proposed. A bug-fix amendment under ADR-015's resource pressure controls, routed by the lead; acceptance follows paired review.
+
+Idle cleanup (`resource.cleanup` and the pressure snapshot's cleanup candidates) includes a disabled slot's running resources. This supersedes the disabled entry in the Resource Pressure Controls safety defaults; busy, held, actively working, manual and current-run slots stay excluded. A disabled slot is out of dispatch, not in use, and nothing else stops what it left running: on macpro, two disabled slots kept iOS simulators booted for days, invisible to every bulk path.
+
+Node watches cover enabled slots only, so nothing keeps a disabled slot's resource status current. When building cleanup candidates, the gateway probes an eligible disabled slot (no bound run, at least one resource with a health hook) through its configured health hooks, unless it probed that slot within the last minute; the probe also fills the cache, so a disabled slot's status is at most a minute stale. A remote slot whose node is not connected is left as cached rather than waited on; one whose slot config fails locality resolution is reported and left as cached rather than allowed to fail the read. Live cleanup verifies each stop with a fresh probe, including a simulator on an idle slot, whose status is otherwise served from the cache.
+
+Consequences: cleanup previews may list disabled slots' resources. Every reader of the pressure snapshot (Command Center and the CLI through `resource.pressure.snapshot`, chat, and machine parking) can trigger these probes, bounded to one per eligible disabled slot per minute. Cleanup remains an explicit, hook-driven operator action; nothing stops resources automatically.
+
+Public surface: no new RPC, field or command. `resource.cleanup` and `resource.pressure.snapshot` may now return targets on disabled slots.

@@ -28,6 +28,14 @@ test('slotAllowsDefaultResourceCleanup excludes active or retained run slots', (
   assert.equal(slotAllowsDefaultResourceCleanup(slot({ lifecycle: 'held' })), false);
   assert.equal(slotAllowsDefaultResourceCleanup(slot({ agent: 'working' })), false);
   assert.equal(slotAllowsDefaultResourceCleanup(slot({ currentRunId: 'run-1' })), false);
+  assert.equal(slotAllowsDefaultResourceCleanup(slot({ lifecycle: 'manual' })), false);
+  // Out of dispatch, not in use: what it left running is idle cleanup's to stop.
+  assert.equal(slotAllowsDefaultResourceCleanup(slot({ lifecycle: 'disabled' })), true);
+  // Disabling a slot replaces held/occupied; its run binding still keeps it out.
+  assert.equal(
+    slotAllowsDefaultResourceCleanup(slot({ lifecycle: 'disabled', currentRunId: 'run-1' })),
+    false,
+  );
 });
 
 test('a slot the fleet lists but slot-config cannot resolve is skipped, not fatal', () => {

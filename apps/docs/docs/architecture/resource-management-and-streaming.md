@@ -53,7 +53,9 @@ Resource status also powers operational cleanup. Command Center can preview and
 run resource cleanup for idle resources:
 
 - Cleanup targets only `running` or `stale` resources.
-- Busy, held, actively working, or current-run slots are excluded by default.
+- Busy, held, actively working, manual, or current-run slots are excluded by default.
+  A disabled slot's running resources are included; the gateway probes them, since
+  disabled slots have no resource watches.
 - Shutdown always goes through the configured resource `shutdown` hook.
 - Farmslot does not hardcode `pkill`, Metro ports, webpack commands, or simulator
   names in the shared layer.

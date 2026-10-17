@@ -53,6 +53,7 @@ import {
   pollSlotResources,
   resolveSlotResources,
   setResourceWatchesEnabled,
+  slotProbeReachable,
 } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { DEFAULT_HOST_PRESSURE_THRESHOLDS } from '../runtime-capabilities/host-pressure-config.js';
@@ -222,8 +223,6 @@ export async function resourceCleanup(
   const exactTargetsEnabled = params.targets !== undefined;
   const fleet = await loadFleetStatus();
   const slots = fleet.slots.filter((slot) => {
-    if (!slot.enabled) return false;
-    if (slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') return false;
     if (!slotAllowsDefaultResourceCleanup(slot)) return false;
     if (machineFilterPresent && !machineFilter.has(slot.machine)) return false;
     if (projectFilterPresent && !projectFilter.has(slot.project)) return false;
@@ -263,6 +262,7 @@ export async function resourceCleanup(
       );
       continue;
     }
+    resources = await withProbedDisabledSlotStatus(slot, resources);
     for (const resource of resources) {
       if (exactTargetsEnabled && !exactTargets.has(`${slot.machine}:${slot.slot}:${resource.id}`)) {
         continue;
@@ -318,7 +318,9 @@ export async function resourceCleanup(
       ...new Set(targets.filter((target) => target.ok !== false).map((target) => target.slotId)),
     ];
     for (const slotId of slotsToVerify) {
-      const statuses = await pollSlotResources(slotId);
+      // Probe, not the cache: an idle slot's simulator is otherwise only read from
+      // the cache, which still says running right after the shutdown.
+      const statuses = await pollSlotResources(slotId, { probeInactiveSimulators: true });
       const statusByResource = new Map(statuses.map((status) => [status.id, status.status]));
       for (const target of targets.filter((item) => item.slotId === slotId)) {
         const afterStatus = statusByResource.get(target.resourceId);
@@ -639,13 +641,69 @@ export async function resourcePressureSnapshot(
   };
 }
 
+const DEFAULT_DISABLED_SLOT_PROBE_TTL_MS = 60_000;
+const disabledSlotProbedAt = new Map<string, number>();
+
+/** How long a disabled slot's probed status is trusted; the env override serves disposable proofs. */
+function disabledSlotProbeTtlMs(): number {
+  const override = Number(process.env.FARMSLOT_DISABLED_SLOT_PROBE_TTL_MS);
+  return Number.isFinite(override) && override >= 0 ? override : DEFAULT_DISABLED_SLOT_PROBE_TTL_MS;
+}
+
+/**
+ * Node watches cover enabled slots only, so nothing keeps a disabled slot's
+ * resource status current: what it left running stays `unknown`, and a probed
+ * status goes stale when something boots or stops it later. When building idle
+ * cleanup candidates, probe an eligible disabled slot unless it was probed within
+ * the TTL; the probe also fills the cache. A remote slot whose node is not
+ * connected is left as cached rather than waited on.
+ */
+async function withProbedDisabledSlotStatus<
+  T extends { id: string; status: ResourceStatus; definition: { hooks?: { health?: string } } },
+>(slot: SlotStatus, resources: T[]): Promise<T[]> {
+  if (slot.enabled || !slotAllowsDefaultResourceCleanup(slot)) return resources;
+  if (!resources.some((resource) => resource.definition.hooks?.health)) return resources;
+  const probedAt = disabledSlotProbedAt.get(slot.slot);
+  if (probedAt !== undefined && Date.now() - probedAt < disabledSlotProbeTtlMs()) return resources;
+  let reachable: boolean;
+  try {
+    reachable = await slotProbeReachable(slot.slot);
+  } catch (error) {
+    // Locality only reads slot config, so a throw is a config problem the resource
+    // list tolerated (a placeholder, a relative remote repo). Such a slot cannot be
+    // probed: report it and leave its cached status rather than fail every other
+    // slot's cleanup preview.
+    console.warn(
+      `[resource] not probing disabled slot ${slot.slot}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return resources;
+  }
+  if (!reachable) return resources;
+  // Marked before the probe, so overlapping reads do not probe the same slot twice.
+  disabledSlotProbedAt.set(slot.slot, Date.now());
+  const probed = new Map(
+    (await pollSlotResources(slot.slot, { probeInactiveSimulators: true })).map((update) => [
+      update.id,
+      update.status,
+    ]),
+  );
+  return resources.map((resource) => ({
+    ...resource,
+    status: probed.get(resource.id) ?? resource.status,
+  }));
+}
+
 async function resolvePressureResourcesForSlots(slots: SlotStatus[]) {
   const resources = new Map<string, Awaited<ReturnType<typeof resolvePressureSlotResources>>>();
   for (let index = 0; index < slots.length; index += PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY) {
     const batch = slots.slice(index, index + PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY);
     const resolved = await Promise.all(
       batch.map(
-        async (slot) => [slot.slot, await resolvePressureSlotResources(slot.slot)] as const,
+        async (slot) =>
+          [
+            slot.slot,
+            await withProbedDisabledSlotStatus(slot, await resolvePressureSlotResources(slot.slot)),
+          ] as const,
       ),
     );
     for (const [slotId, slotResources] of resolved) resources.set(slotId, slotResources);
@@ -769,7 +827,6 @@ function pressureCleanupCandidates(
 ): ResourcePressureCleanupCandidate[] {
   const targets: ResourcePressureCleanupCandidate[] = [];
   for (const slot of slots) {
-    if (!slot.enabled || slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') continue;
     if (!slotAllowsDefaultResourceCleanup(slot)) continue;
     for (const resource of resourcesBySlot.get(slot.slot) ?? []) {
       if (resource.status !== 'running' && resource.status !== 'stale') continue;
@@ -892,10 +949,16 @@ function emptyPressureSnapshot(
   };
 }
 
+/**
+ * Idle cleanup may stop this slot's resources. A disabled slot qualifies: it is
+ * out of dispatch, not in use, and nothing else stops what it left running. A
+ * manual slot belongs to a person.
+ */
 export function slotAllowsDefaultResourceCleanup(
   slot: Pick<SlotStatus, 'agent' | 'currentRunId' | 'lifecycle'>,
 ): boolean {
-  if (slot.lifecycle === 'busy' || slot.lifecycle === 'held') return false;
+  if (slot.lifecycle === 'busy' || slot.lifecycle === 'held' || slot.lifecycle === 'manual')
+    return false;
   if (slot.agent === 'working') return false;
   return !slot.currentRunId;
 }

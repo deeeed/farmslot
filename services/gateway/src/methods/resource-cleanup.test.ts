@@ -17,6 +17,7 @@ mock.module('../fleet/resource-manager.js', {
       throw missingSlot;
     },
     setResourceWatchesEnabled: async () => ({ enabled: true }),
+    slotProbeReachable: async () => true,
   },
 });
 
