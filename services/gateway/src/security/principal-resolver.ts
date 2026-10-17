@@ -20,6 +20,15 @@ export type PrincipalResolution =
         | 'session_ended';
     };
 
+/**
+ * A record bound to an identity that an explicit id reuse replaced. Distinct
+ * from revocation: the record still belongs to that identity, and the named
+ * action re-creates it for the replacement.
+ */
+export function generationMismatchMessage(principalId: string, action: string): string {
+  return `${principalId} has been replaced by a newer identity at the same id; ${action}`;
+}
+
 export interface PrincipalResolverFacts {
   bindIsLoopbackOnly: boolean;
   trustProxyHeaders: boolean;
