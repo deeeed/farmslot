@@ -24,7 +24,7 @@ import {
   extractBacklogAcceptanceCriteria,
   stripBacklogAcceptanceCriteriaSection,
 } from '../backlog/spec.js';
-import { farmslotRoot, getOrchestratorTaskRoot, getProjectField } from '../core/config.js';
+import { getOrchestratorTaskRoot, getProjectField } from '../core/config.js';
 import { updateSlotStatus } from '../core/state.js';
 import { fetchPRDiffFiles } from '../external/github.js';
 import { acceptanceCriteriaFromMarkdown } from '../external/ticket-markdown.js';
@@ -520,9 +520,7 @@ export async function executeWriteTaskStep(
       FLOW_TO_TASK_TEMPLATE[current.flowType] ??
       `${current.flowType}.md`;
     const pv = await loadProjectVarsOrNull(current.project, 'run step', current.id);
-    const orchestratorTaskRoot = pv
-      ? getOrchestratorTaskRoot(current.project, pv.projectJson)
-      : path.join(farmslotRoot, 'projects', current.project, 'tasks');
+    const orchestratorTaskRoot = getOrchestratorTaskRoot(current.project, pv?.projectJson);
     const relPath = path.relative(orchestratorTaskRoot, current.taskFile);
     const taskRelDir =
       !relPath || relPath.startsWith('..') ? undefined : relPath.replace(/\/TASK\.md$/, '');
@@ -723,9 +721,7 @@ export async function executeWriteTaskStep(
 
   // Extract relative task dir from absolute path using the orchestrator task root
   const pv = await loadProjectVarsOrNull(current.project, 'run step', current.id);
-  const orchestratorTaskRoot = pv
-    ? getOrchestratorTaskRoot(current.project, pv.projectJson)
-    : path.join(farmslotRoot, 'projects', current.project, 'tasks');
+  const orchestratorTaskRoot = getOrchestratorTaskRoot(current.project, pv?.projectJson);
   const extractTaskRelDir = (absPath: string): string | undefined => {
     const relPath = path.relative(orchestratorTaskRoot, absPath);
     if (!relPath || relPath.startsWith('..')) return undefined;

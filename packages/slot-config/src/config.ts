@@ -35,6 +35,13 @@ import {
   validateQaConfig,
 } from '@farmslot/protocol';
 import {
+  type FarmLayout,
+  listProjectTaskRoots,
+  orchestratorTaskRoot,
+  type ProjectTaskRoot,
+  resolveProjectsDir,
+} from '@farmslot/protocol/node/farm-layout';
+import {
   findSlotByRepo,
   isIgnoredPoolFile,
   readPoolFiles,
@@ -57,9 +64,8 @@ import { readSourceRuntimeSettings } from './source-runtime-settings.js';
 const poolDir = process.env.FARMSLOT_POOL_DIR
   ? path.resolve(process.env.FARMSLOT_POOL_DIR)
   : path.join(farmslotRoot, 'pool');
-const projectsDir = process.env.FARMSLOT_PROJECTS_DIR
-  ? path.resolve(process.env.FARMSLOT_PROJECTS_DIR)
-  : path.join(farmslotRoot, 'projects');
+const projectsDir = resolveProjectsDir(farmslotRoot);
+const farmLayout: FarmLayout = { farmslotRoot, projectsDir };
 const PROJECT_CONFIG_NOT_FOUND_PREFIX = 'Project config not found:';
 
 export function isMissingProjectConfigError(err: unknown): boolean {
@@ -2304,17 +2310,19 @@ export function isMockModeProject(projectJson?: RawProjectJson | null): boolean 
   return Boolean(projectJson?.external?.mock_mode);
 }
 
-/** Gateway-written run task folders inside a project directory; never pack content. */
-export const ORCHESTRATOR_TASK_DIR = 'tasks';
+export { ORCHESTRATOR_TASK_DIR } from '@farmslot/protocol/node/farm-layout';
 
+/** Where the gateway keeps a project's run task folders (the protocol farm layout). */
 export function getOrchestratorTaskRoot(
   projectName: string,
   projectJson?: RawProjectJson | null,
 ): string {
-  if (isMockModeProject(projectJson)) {
-    return path.join(farmslotRoot, '.sandbox', projectName, ORCHESTRATOR_TASK_DIR);
-  }
-  return path.join(farmslotRoot, 'projects', projectName, ORCHESTRATOR_TASK_DIR);
+  return orchestratorTaskRoot(farmLayout, projectName, isMockModeProject(projectJson));
+}
+
+/** The non-mock task root of every project dir (see listProjectTaskRoots), for gateway scans. */
+export function projectTaskRoots(): Promise<ProjectTaskRoot[]> {
+  return listProjectTaskRoots(farmLayout);
 }
 
 export function resolveTaskRelDir(

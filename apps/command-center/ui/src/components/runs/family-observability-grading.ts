@@ -3,7 +3,7 @@ import type {
   HumanGrade,
   ProofTargetVerdict,
 } from '@farmslot/protocol';
-import { DEFAULT_GRADER_ID } from '@farmslot/protocol';
+import { DEFAULT_GRADER_ID, isTerminalRunStatus } from '@farmslot/protocol';
 
 import type { SemanticValue } from './grade-semantic-picker.js';
 
@@ -18,9 +18,10 @@ export type VerdictValue = ProofTargetVerdict['verdict'];
 export type GradeVerdictDraft = Partial<ProofTargetVerdict>;
 
 export function canGradeFamilyRun(
-  run: Pick<FamilyObservabilityRunSummary, 'status' | 'steps'>,
+  run: Pick<FamilyObservabilityRunSummary, 'status' | 'active' | 'steps'>,
 ): boolean {
-  if (!['done', 'failed', 'cancelled'].includes(run.status)) return false;
+  // A run is gradable once it no longer counts as active; older snapshots carry no flag.
+  if (run.active ?? !isTerminalRunStatus(run.status)) return false;
   const monitorStep = run.steps.find((step) => step.stepName === 'monitor');
   return Boolean(
     monitorStep && monitorStep.status !== 'pending' && monitorStep.status !== 'skipped',

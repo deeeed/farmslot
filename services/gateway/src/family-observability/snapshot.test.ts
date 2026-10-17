@@ -161,6 +161,20 @@ test('snapshot aggregates family runs, artifacts, and learnings from persisted f
   assert.equal(snapshot.runs[0].familyScope?.scopeVerdict, 'full-scope-addressed');
 });
 
+test('snapshot marks each run active with the run-list rule', async () => {
+  const held = makeRun({
+    id: 'held',
+    status: 'failed',
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  });
+  const failed = makeRun({ id: 'failed', parentRunId: 'held', status: 'failed' });
+  const snapshot = await buildFamilyObservabilitySnapshotFromRuns([held, failed]);
+  assert.deepEqual(Object.fromEntries(snapshot.runs.map((run) => [run.runId, run.active])), {
+    held: true,
+    failed: false,
+  });
+});
+
 test('snapshot projects eval package manifests with package evidence rows', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'family-observability-experiment-manifest-'));
   const evalDir = path.join(base, 'candidate');

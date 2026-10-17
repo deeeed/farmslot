@@ -11,6 +11,7 @@ import {
   type FlowType,
   interactiveHandoffDecisionActions,
   isLightweightInteractiveDevRun,
+  isTerminalRunStatus,
   type MonitorSnapshot,
   type MonitorViolation,
   parseInteractiveHandoffTimeoutMinutes,
@@ -3026,7 +3027,7 @@ async function waitForMonitorDecision(
     !latest ||
     !currentDecision ||
     (latest.engineState?.generation ?? 0) !== generation ||
-    ['done', 'failed', 'cancelled'].includes(latest.status) ||
+    isTerminalRunStatus(latest.status) ||
     (currentDecision.resolvedAt && currentDecision.resolvedAction !== actionId)
   )
     return 'abort';

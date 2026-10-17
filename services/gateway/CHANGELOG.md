@@ -4,8 +4,13 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Work-graph `family-done` edges wait while a family run is active by `isActiveListRun`, so a failed run that still holds its slot is not yet a terminal outcome, and family snapshots mark each run `active`. The PR dashboard's worker-active flag reads `ACTIVE_RUN_STATUSES`: runs that are fixing or reconciling now show as working, created runs no longer do. Hand-written done/failed/cancelled lists call `isTerminalRunStatus`.
+
 - A run admission or new source attempt advances the source revision once; the engine's next `run.updated` no longer advances it again.
 - The family workspace counts active runs with the shared `isActiveListRun` rule: a family whose failed run still holds its slot reports that run as active and the family as active, matching every run list.
+- An unreadable projects dir now fails `decision.list` and run cleanup (before cleanup changes anything) instead of reading as empty; the background decision scan logs it and keeps the gateway running. A project link that does not resolve is skipped.
+
+- Task writes, pending-decision scans and orphaned task cleanup share one task root, so with `FARMSLOT_PROJECTS_DIR` set they all use the override instead of `<root>/projects`.
 - Advance the source revision as soon as run admission or a new source attempt is saved, and when a restored or newly created run stops accepting pins.
 - `run.list` `active` returns every active run unless the caller sets a limit.
 
@@ -15,7 +20,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - A visual-review delegator pinned above its current identity generation is refused with a message naming both generations, instead of reading as a replaced identity.
 
-- Refuse `slot.release` and `slot.recycle` of a slot whose run failed a COMPLETE or FINALIZE prerequisite, so a worker or operator can no longer discard the checkout a completion replay needs. Replay the completion, or discard the workspace with a `slot.release` that passes `forceReset:true` and names the run in `expectedRunId`. A replay of such a run must start at the refused step or earlier, since a later-step retry would mark the refusal done; a failed replay restores the retained slot claim instead of releasing it. The recovery proposal no longer offers to release it as orphaned. A find-slot replay is refused as well while the run still holds that slot, since selecting a fresh slot would abandon it. Any other run replayed from find-slot first releases the slot it still holds, instead of leaving it held by a run that no longer names it; when that release would be refused (gate hold, park record, native owner), the replay is refused before it touches the run.
+- Refuse `slot.release` and `slot.recycle` of a slot whose run failed a COMPLETE or FINALIZE prerequisite, so a worker or operator can no longer discard the checkout a completion replay needs. Replay the completion, or discard the workspace with a `slot.release` that passes `forceReset:true` and names the run in `expectedRunId`. A replay of such a run must start at the refused step or earlier, since a later-step retry would mark the refusal done; a failed replay restores the retained slot claim instead of releasing it. The recovery proposal no longer offers to release it as orphaned. A find-slot replay is refused as well while the run still holds that slot, since selecting a fresh slot would abandon it. Any other run replayed from find-slot first releases the slot it still holds, instead of leaving it held by a run that no longer names it; when that release would be refused (gate hold, park record, native owner), the replay is refused before it touches the run. A slot whose machine is not connected is refused the same way, at once instead of after the node wait; every find-slot refusal of this kind names its exits: bring the machine back, then replay again or discard the workspace through the named `slot.release`.
+
+- Prepare a QA run at a frozen head that is an older commit of a branch which has since moved and which the slot does not track, such as a release-range head after the release branch advances. When neither the slot's remote-tracking refs nor an advertised branch tip settles it, start-ref resolution fetches only the commit history of the remote's advertised branches into a throwaway repository and checks it there, before the tag check; the slot clone gets no new refs and does not become a partial clone. Tags still settle a tag-only commit, also when that history fetch fails. A commit that no advertised branch or tag contains is still refused. A branchless prepare on a slot left detached, for example at an earlier QA run's head, no longer refuses with "Slot is on 'HEAD', expected 'main'" or reads that head as unpushed work: when the remote contains the detached commit, prepare first checks out the slot's idle branch, and otherwise refuses naming why.
 
 ## 0.23.0 - 2026-10-17
 

@@ -2,7 +2,7 @@ import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import type { Run, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
-import { runDisplayTitle } from '@farmslot/protocol';
+import { isTerminalRunStatus, runDisplayTitle } from '@farmslot/protocol';
 
 import '../shared/status-badge.js';
 import './slot-headroom-dot.js';
@@ -597,7 +597,7 @@ export class SlotCard extends LitElement {
           .title}
         @click=${(e: Event) => {
           e.stopPropagation();
-          location.hash = ['done', 'failed', 'cancelled'].includes(run.status)
+          location.hash = isTerminalRunStatus(run.status)
             ? `family/${run.familyId}?run=${encodeURIComponent(run.id)}`
             : `run/${run.id}`;
         }}

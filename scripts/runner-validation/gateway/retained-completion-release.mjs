@@ -44,6 +44,9 @@ const heldRunId = randomUUID();
 // A run waiting at its publication gate: its slot is gate-held.
 const gateSlotId = `gate-${randomUUID()}`;
 const gateRunId = randomUUID();
+// A failed run whose slot lives on a machine that cannot be reached.
+const offlineSlotId = `offline-${randomUUID()}`;
+const offlineRunId = randomUUID();
 const taskFile = path.join(repo, 'tasks', runId, 'TASK.md');
 const statusFile = path.join(root, '.farm-status.json');
 const tmuxDir = openTmuxSandbox();
@@ -141,6 +144,23 @@ try {
       },
     ],
   });
+  writeJson(path.join(root, 'pool', 'offline.json'), {
+    machine: 'offline-node',
+    host: 'offline-node.invalid',
+    ssh_user: os.userInfo().username,
+    os: 'darwin',
+    slots: [
+      {
+        id: offlineSlotId,
+        project,
+        platform: 'cli',
+        repo: path.join(temporaryRoot, 'offline-repo'),
+        session: offlineSlotId,
+        enabled: true,
+        mode: 'dispatch',
+      },
+    ],
+  });
   writeJson(path.join(root, 'projects', project, 'project.json'), {
     name: project,
     type: 'monorepo',
@@ -182,6 +202,24 @@ try {
     status: 'failed',
     error: 'Worker exited before signalling done.',
     slotId: heldSlotId,
+    createdAt: new Date(Date.now() - 120000).toISOString(),
+    updatedAt: new Date(Date.now() - 60000).toISOString(),
+    completedAt: new Date(Date.now() - 60000).toISOString(),
+    decisions: [],
+    metrics: { nudgeCount: 0, outcome: 'failed', runner: 'scripted', model: null },
+    steps: steps.map((name, i) => ({
+      name,
+      status: i < monitorIdx ? 'done' : i === monitorIdx ? 'failed' : 'pending',
+    })),
+  });
+  writeJson(path.join(root, '.runs', `${offlineRunId}.json`), {
+    id: offlineRunId,
+    project,
+    ticketOrPr: 'PROJ-999994',
+    flowType: 'dev',
+    status: 'failed',
+    error: 'Worker exited before signalling done.',
+    slotId: offlineSlotId,
     createdAt: new Date(Date.now() - 120000).toISOString(),
     updatedAt: new Date(Date.now() - 60000).toISOString(),
     completedAt: new Date(Date.now() - 60000).toISOString(),
@@ -243,6 +281,14 @@ try {
         agent: 'idle',
         current_run_id: gateRunId,
         slot_epoch: 5,
+      },
+      {
+        slot: offlineSlotId,
+        lifecycle: 'held',
+        phase: 'occupied',
+        agent: 'idle',
+        current_run_id: offlineRunId,
+        slot_epoch: 6,
       },
     ],
   });
@@ -374,6 +420,22 @@ try {
   assert.notEqual(slotRow(heldSlotId).lifecycle, 'held');
   rpc('run.cancel', { runId: heldRunId });
 
+  // Release must confirm the old worker stopped, so a slot on a machine that
+  // cannot be reached stays held, and the refusal names the way out.
+  assert.throws(
+    () =>
+      rpc('run.replayStep', {
+        runId: offlineRunId,
+        stepName: 'find-slot',
+        triggeredBy: 'operator',
+      }),
+    new RegExp(
+      `could not be released before restarting this run \\(.+\\)\\. If its machine is offline, bring it back first; then replay again, or discard the workspace through slot\\.release RPC with forceReset:true and expectedRunId:${offlineRunId}`,
+    ),
+  );
+  assert.equal(rpc('run.get', { runId: offlineRunId }).run.slotId, offlineSlotId);
+  assert.equal(slotRow(offlineSlotId).owner, offlineRunId, 'the offline slot still names its run');
+
   console.log(
     JSON.stringify({
       runId,
@@ -386,6 +448,7 @@ try {
       findSlotReplayRefused: true,
       gateHeldReplayRefusedBeforeMutation: true,
       reselectionReleasedHeldSlot: slotRow(heldSlotId),
+      offlineReplayRefusalNamesExits: true,
     }),
   );
 } catch (error) {

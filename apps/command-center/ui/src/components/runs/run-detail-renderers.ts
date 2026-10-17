@@ -19,6 +19,7 @@ import {
   deriveRunLifecycleView,
   isSettledBlockedRun,
   isSlotFreedByPark,
+  isTerminalRunStatus,
   modeForFlow,
   modelsMatch,
   normalizeRunTags,
@@ -484,7 +485,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       : ticketUrl;
   const familyHref = familyRunHash(r.familyId, r.id);
   const familyRunScopeHref = familyRunHash(r.familyId, r.id, { tokens: 'run' });
-  const isTerminal = r.status === 'done' || r.status === 'failed' || r.status === 'cancelled';
+  const isTerminal = isTerminalRunStatus(r.status);
   const engine = resolveRunEngine(r);
   const boundSlotId = resolveRunSlotId(r);
   const terminalUnavailable = reviewTerminalUnavailableReason(r);

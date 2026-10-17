@@ -9,6 +9,7 @@ import {
   type ChatSuggestedAction,
   type FailureCategory,
   isCompletionPrerequisiteFailure,
+  isTerminalRunStatus,
   type OperatorSnapshotResult,
   RECOVERABLE_FAILURE_CATEGORIES,
   type Run,
@@ -574,8 +575,7 @@ function recoveryDescriptors(
   // dispatch-step failure with category=undefined still leaves an orphaned
   // slot the operator can free. A refused completion prerequisite is not
   // orphaned: it keeps its slot for replay and release refuses it.
-  const runIsTerminal =
-    run.status === 'failed' || run.status === 'cancelled' || run.status === 'done';
+  const runIsTerminal = isTerminalRunStatus(run.status);
   if (runIsTerminal && run.slotId && !isCompletionPrerequisiteFailure(run)) {
     descriptors.push({
       id: 'release-orphaned-slot',

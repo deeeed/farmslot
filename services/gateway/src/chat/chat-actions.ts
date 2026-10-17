@@ -9,6 +9,7 @@ import {
   type ChatListActionsResult,
   type ChatSuggestedAction,
   failedRunCancelEffects,
+  isTerminalRunStatus,
   type Run,
   type RunCreateParams,
   type RunStep,
@@ -494,7 +495,7 @@ async function assertCurrentPreconditions(action: StoredChatAction): Promise<Act
         `Action precondition failed: run ${runId ?? ''} is no longer available`,
       );
     assertRunActionSnapshot(action, run);
-    if (run.status === 'done' || run.status === 'failed' || run.status === 'cancelled') {
+    if (isTerminalRunStatus(run.status)) {
       throw new ChatActionRejectError(
         'precondition-fail',
         `Action precondition failed: run ${runId} is already terminal`,
@@ -512,7 +513,7 @@ async function assertCurrentPreconditions(action: StoredChatAction): Promise<Act
         `Action precondition failed: run ${runId ?? ''} is no longer available`,
       );
     assertRunActionSnapshot(action, run);
-    if (run.status !== 'done' && run.status !== 'failed' && run.status !== 'cancelled') {
+    if (!isTerminalRunStatus(run.status)) {
       throw new ChatActionRejectError(
         'precondition-fail',
         `Action precondition failed: run ${runId} is not terminal`,

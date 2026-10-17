@@ -1,9 +1,7 @@
 import path from 'node:path';
 
 import type { RunBundleProfile } from '../contracts/run-bundles.js';
-import type { Run } from '../contracts/runs.js';
-
-const TERMINAL_IMPORT_STATUSES = new Set(['done', 'failed', 'cancelled', 'blocked']);
+import { isTerminalRunStatus, type Run } from '../contracts/runs.js';
 
 /** Drop recycle-snapshot pointers so farmrun never claims a local transcript it does not carry. */
 export function stripRunnerSessionArchives<T extends Pick<Run, 'metrics' | 'agentContexts'>>(
@@ -50,7 +48,7 @@ export function sanitizeRunForBundleExport(run: Run, profile: RunBundleProfile):
     delete cloned.recoveryAttempts;
     delete cloned.recoveryProposal;
     delete cloned.liveRecipeContext;
-    if (!TERMINAL_IMPORT_STATUSES.has(cloned.status)) {
+    if (!isTerminalRunStatus(cloned.status) && cloned.status !== 'blocked') {
       cloned.status = 'done';
     }
   }
