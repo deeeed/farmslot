@@ -140,12 +140,33 @@ export function isCompletionPrerequisiteFailure(
 }
 
 /**
- * A run every active run list shows: nonterminal, or failed while it still holds
- * its resources. The gateway's `run.list` `active` filter, Command Center and
- * Companion all use this rule.
+ * A refused completion prerequisite whose retained resources are gone: the named
+ * forced slot release stamps `gatePrerequisiteDiscardedAt` on the refused step, and
+ * archive stamps `archivedAt`. The refusal itself stays on the step as history.
  */
-export function isActiveListRun(run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>): boolean {
-  return !isTerminalRunStatus(run.status) || isCompletionPrerequisiteFailure(run);
+export function isSettledCompletionFailure(
+  run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps' | 'archivedAt'>>,
+): boolean {
+  return (
+    isCompletionPrerequisiteFailure(run) &&
+    (Boolean(run.archivedAt) ||
+      Boolean(run.steps?.some((step) => step.outputs?.gatePrerequisiteDiscardedAt !== undefined)))
+  );
+}
+
+/**
+ * A run every active run list shows: nonterminal, or failed while it still holds
+ * its resources (a refused completion not yet discarded or archived). The
+ * gateway's `run.list` `active` filter, Command Center and Companion all use
+ * this rule.
+ */
+export function isActiveListRun(
+  run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps' | 'archivedAt'>>,
+): boolean {
+  return (
+    !isTerminalRunStatus(run.status) ||
+    (isCompletionPrerequisiteFailure(run) && !isSettledCompletionFailure(run))
+  );
 }
 
 export type RunStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';

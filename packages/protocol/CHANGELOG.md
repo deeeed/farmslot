@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `isSettledCompletionFailure`: a refused completion counts as settled once its workspace is discarded (`gatePrerequisiteDiscardedAt` on the refused step) or the run is archived (`archivedAt`), and `isActiveListRun` stops counting it.
+
 - `FamilyObservabilityRunSummary.active`: whether the run counts as active by `isActiveListRun`, set by the gateway because summaries carry no step outputs.
 
 - A run draft's source line reads "(run selection)", and an empty branch input no longer counts as a selection in the line or the summary.

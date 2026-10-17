@@ -480,10 +480,22 @@ test('a family-done edge waits while a failed run still holds its resources', as
   await workGraph.schedulerTick({ graphId });
   assert.equal(downstreamQueued(), false, 'a retained failure is still active');
 
-  const settled = runs.updateRun(run.id, { steps: [{ name: 'complete', status: 'failed' }] });
+  // The operator discards the retained workspace: the refusal stays, and the run settles.
+  const settled = runs.updateRun(run.id, {
+    steps: [
+      {
+        name: 'complete',
+        status: 'failed',
+        outputs: {
+          gatePrerequisiteRefusal: {},
+          gatePrerequisiteDiscardedAt: new Date().toISOString(),
+        },
+      },
+    ],
+  });
   await backlog.markBacklogRunObserved(settled);
   await workGraph.schedulerTick({ graphId });
-  assert.equal(downstreamQueued(), true, 'the settled failure is a terminal outcome');
+  assert.equal(downstreamQueued(), true, 'the discarded failure is a terminal outcome');
 });
 
 test('work graph can use an owner scope different from backlog project', async () => {

@@ -1,6 +1,11 @@
-import { Events, isSlotFreedByPark } from '@farmslot/protocol';
+import {
+  Events,
+  isCompletionPrerequisiteFailure,
+  isSlotFreedByPark,
+  PipelineSteps,
+} from '@farmslot/protocol';
 
-import { listRuns, updateRun } from '../../runs/store.js';
+import { getRun, listRuns, updateRun, updateRunStep } from '../../runs/store.js';
 import { slotPinIsRequestOnly } from '../dispatch/slot-scoring.js';
 
 type Emit = (event: string, payload: unknown) => void;
@@ -35,4 +40,25 @@ export function detachRunsForReleasedSlot(
     emit(Events.RUN_UPDATED, { run: updated });
   }
   return detached;
+}
+
+/**
+ * The named forced release of a run whose completion prerequisite was refused
+ * discards its retained workspace. Stamp the refused step so every active run
+ * list treats the run as settled; the refusal stays as history.
+ */
+export function markCompletionFailureDiscarded(runId: string, emit: Emit): void {
+  const run = getRun(runId);
+  if (!run || !isCompletionPrerequisiteFailure(run)) return;
+  const refused = run.steps.find(
+    (step) =>
+      (step.name === PipelineSteps.COMPLETE || step.name === PipelineSteps.FINALIZE) &&
+      step.status === 'failed' &&
+      step.outputs?.gatePrerequisiteRefusal !== undefined,
+  );
+  if (!refused || refused.outputs?.gatePrerequisiteDiscardedAt !== undefined) return;
+  const updated = updateRunStep(runId, refused.name, {
+    outputs: { ...refused.outputs, gatePrerequisiteDiscardedAt: new Date().toISOString() },
+  });
+  emit(Events.RUN_UPDATED, { run: updated });
 }

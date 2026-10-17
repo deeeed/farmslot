@@ -88,7 +88,10 @@ import { terminalAttachmentCleanup } from '../terminal-attachment.js';
 import { slotPrepare } from './prepare.js';
 import { prepareIdentityPath, reapSlotPrepareScope } from './prepare-command.js';
 import { closeDevServerLogTailWindow } from './prepare-devserver-log.js';
-import { detachRunsForReleasedSlot } from './release-run-ownership.js';
+import {
+  detachRunsForReleasedSlot,
+  markCompletionFailureDiscarded,
+} from './release-run-ownership.js';
 import { activePrepareAborts, applySelectedApp, type EventEmitter } from './shared.js';
 import {
   assertSlotNotOperatorRoot,
@@ -946,6 +949,9 @@ async function slotReleaseImpl(
     if (detachedRunIds.length > 0) {
       step('runs', `Detached ${detachedRunIds.length} run(s) from released slot`);
     }
+  }
+  if (params.forceReset && params.expectedRunId && params.expectedRunId === releasedOwner) {
+    markCompletionFailureDiscarded(params.expectedRunId, emit);
   }
 
   emit('slot.release.done', { requestId, slotId: params.slotId, keepWarm });

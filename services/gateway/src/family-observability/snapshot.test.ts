@@ -168,10 +168,41 @@ test('snapshot marks each run active with the run-list rule', async () => {
     steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
   });
   const failed = makeRun({ id: 'failed', parentRunId: 'held', status: 'failed' });
-  const snapshot = await buildFamilyObservabilitySnapshotFromRuns([held, failed]);
+  const discarded = makeRun({
+    id: 'discarded',
+    parentRunId: 'held',
+    status: 'failed',
+    steps: [
+      {
+        name: 'complete',
+        status: 'failed',
+        outputs: {
+          gatePrerequisiteRefusal: {},
+          gatePrerequisiteDiscardedAt: '2026-10-18T00:00:00Z',
+        },
+      },
+    ],
+  });
+  const archived = {
+    ...makeRun({
+      id: 'archived',
+      parentRunId: 'held',
+      status: 'failed',
+      steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+    }),
+    archivedAt: '2026-10-18T00:00:00Z',
+  };
+  const snapshot = await buildFamilyObservabilitySnapshotFromRuns([
+    held,
+    failed,
+    discarded,
+    archived,
+  ]);
   assert.deepEqual(Object.fromEntries(snapshot.runs.map((run) => [run.runId, run.active])), {
     held: true,
     failed: false,
+    discarded: false,
+    archived: false,
   });
 });
 

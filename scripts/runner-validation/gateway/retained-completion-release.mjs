@@ -387,12 +387,29 @@ try {
   assert.throws(() => rpc('slot.release', { slotId, forceReset: true }), refusal);
   retained();
 
-  // The named force discard releases it, and archive is then reachable.
+  // While it holds the slot, every active view counts the run.
+  const listedActive = () =>
+    rpc('run.list', { active: true }).runs.some((listed) => listed.id === runId);
+  const familyActive = () => {
+    const result = rpc('family.observability.get', { familyId: runId });
+    return (result.snapshot ?? result).runs.find((summary) => summary.runId === runId)?.active;
+  };
+  assert.equal(listedActive(), true, 'the retained run is listed as active');
+  assert.equal(familyActive(), true, 'the family view counts the retained run as active');
+
+  // The named force discard releases it and settles the run; archive is then reachable.
   const discarded = rpc('slot.release', { slotId, expectedRunId: runId, forceReset: true });
   assert.equal(discarded.released, true);
   assert.equal(slotRow().owner, null);
-  assert.equal(rpc('run.get', { runId }).run.slotId, null);
+  const discardedRun = rpc('run.get', { runId }).run;
+  assert.equal(discardedRun.slotId, null);
+  assert.equal(listedActive(), false, 'the discarded run is settled');
+  assert.equal(familyActive(), false, 'the family view no longer counts the discarded run');
+  const refusedStep = discardedRun.steps.find((step) => step.name === 'complete');
+  assert.ok(refusedStep.outputs.gatePrerequisiteRefusal, 'the refusal stays as history');
+  assert.equal(typeof refusedStep.outputs.gatePrerequisiteDiscardedAt, 'string');
   assert.equal(rpc('run.archive', { runId }).ok, true);
+  assert.equal(listedActive(), false, 'the archived run is not listed as active');
 
   // A gate-held run's release would be refused, so its replay is refused before
   // it cancels the gate driver: generation, status and slot are unchanged.
@@ -444,6 +461,8 @@ try {
       laterStepReplayRefused: true,
       failedReplayRestoredClaim: true,
       namedDiscardReleased: discarded.released,
+      listedActiveWhileHeld: true,
+      settledAfterDiscard: { runList: false, familyView: false },
       archivedAfterDiscard: true,
       findSlotReplayRefused: true,
       gateHeldReplayRefusedBeforeMutation: true,
