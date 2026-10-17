@@ -111,7 +111,7 @@ in the protocol registry before implementation; each row needs writer coverage.
 | `capabilities`, node/slot scope; `capability`, capability ID | Inventory, acquire, release, readiness or lease state                                          | Runtime resources and recipe target picker                                |
 | `workspace`, slot or native workspace identity               | File tree/content, git/index/HEAD, diagnostics or branch diff changes                          | Editor/tree, git status/diff and workspace lists                          |
 | `workers`, node ID                                           | Tmux inventory, pane/session identity, linked runner or control availability                   | Worker lists, terminal controls and runner keys                           |
-| `native-session`, node/session and retained worker binding   | Session lifecycle, structured transcript, command receipt, pending question or approval        | Native conversation cursor reads and session inventory                    |
+| `native-session`, node/session/owner and worker binding      | Session lifecycle, structured transcript, command receipt, pending question or approval        | Native conversation cursor reads and session inventory                    |
 | `profiles`, node and owner scope                             | Registered profile or workspace catalog change                                                 | Native profile/setup pickers; external login observations remain separate |
 | `configuration`, authorized scope                            | Pool, project, execution template, provider or account registration changes                    | Config panels, preview and account pickers                                |
 | `planning`, project and optional item ID                     | Roadmap, backlog, work graph, launch plan or delivery change                                   | Planning lists/detail and dispatch context                                |
@@ -138,8 +138,10 @@ update path owns each query during migration.
 Resource notifications must apply the same resource- and principal-level read
 authorization as their queries. For `resource.changed`, that per-key read check
 replaces the event-name broadcast allowlist rather than adding to it: a principal
-receives a key exactly when it may call that key's read methods. `native-session`
-and `profiles` keys follow native-owner access, so a native-only principal keeps
+receives a key exactly when that key's read would return it to this principal,
+including the handler's owner scoping, not only method-level authorization.
+`native-session` and `profiles` keys follow native-owner access: a native-only
+principal receives only the sessions and profiles its handler owns, and keeps
 live transcripts and approvals without polling. Never broadcast another
 principal's resource IDs, existence, revisions or scope. Private native sessions,
 profiles, saved reviews and account metadata retain their existing boundaries.
@@ -183,7 +185,7 @@ preconditions on the server. Cached freshness is never mutation authorization.
 
 | Source/action                                                                                                                                         | Owner and policy                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GitHub PRs, checks, comments, project fields and account observations without a reliable subscribed feed                                              | One gateway collector per normalized upstream query, shared across viewers. Slow poll at least 60 seconds for passive views, honor rate limits/backoff and visibility. Existing active CI monitor schedules keep their execution policy. Pending CI-timeout decisions keep their policy; the client auto-resolve moves into the gateway CI monitor. Publish a resource change when the observed result or its freshness/error changes. |
+| GitHub PRs, checks, comments, project fields and account observations without a reliable subscribed feed                                              | One gateway collector per normalized upstream query, shared across viewers. Slow poll at least 60 seconds for passive views, honor rate limits/backoff and visibility. Existing active CI monitor schedules keep their execution policy. Pending CI-timeout decisions and their client auto-resolve keep their current policy, owner and authority. Publish a resource change when the observed result or its freshness/error changes. |
 | Remote release refs, package registry channels and provider login/quota state without a change feed                                                   | Gateway integration collector, passive interval at least 60 seconds and slower where quotas require. Separate observed time/error from the last successful value. Installed/node state and operation progress use notifications.                                                                                                                                                                                                       |
 | Device-local Expo update availability                                                                                                                 | One Companion update integration. Check on foreground or explicit user request; any background check is at least five minutes. Download and reload remain explicit actions under the existing update policy.                                                                                                                                                                                                                           |
 | Retry after a read/transport error                                                                                                                    | Keep a contextual Retry action using the shared cache. It must not become a permanent Refresh control in a healthy panel.                                                                                                                                                                                                                                                                                                              |
@@ -212,6 +214,8 @@ must prove these scenarios with both real clients against the same gateway:
   restart the gateway. Active queries recover in both cases without command replay.
 - Switch gateway/principal and revoke a permission. No former data, event key or
   late response crosses the authorization boundary.
+- Connect two native owners and an admin at once. Neither owner receives the
+  other's `native-session` or `profiles` keys.
 - Run a busy writer, such as a worker generating code in a watched workspace.
   Each observed key refetches at most once per its family's publish interval.
 - With multiple observers, an idle gateway produces no periodic panel reads.

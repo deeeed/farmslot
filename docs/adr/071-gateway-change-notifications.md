@@ -40,10 +40,11 @@ recovery. Command Center and Companion each instantiate that same implementation
 once per authenticated connection. Their renderers subscribe to shared query
 state. They do not implement separate event-to-query maps or polling policies.
 
-Each notification reaches a principal only if that principal may call the
-key's read methods. For `resource.changed`, this per-key check replaces the
-event-name broadcast allowlist, so native-only principals keep live native
-sessions and approvals. Existing domain events such as `run.updated` stay for
+Each notification reaches a principal only if that key's read would return it
+to that principal, including the handler's owner scoping. For `resource.changed`,
+this per-key check replaces the event-name broadcast allowlist, so native-only
+principals keep live native sessions and approvals, and see only the sessions
+their handler owns. Existing domain events such as `run.updated` stay for
 their current consumers; the cache treats them only as invalidations.
 
 A notification invalidates data; it does not carry a replacement verdict,
@@ -125,9 +126,8 @@ settle reads and Refresh controls:
    sessions, including node-reported file, git, device and task-progress changes.
 5. Configuration, planning, assessment, analytics and copilot.
 6. Upstream and gateway-update collectors (gateway update status, runner seats,
-   GitHub accounts, PR review threads). The CI-timeout auto-resolve moves into
-   the gateway CI monitor. Remove remaining duplicate client caches and event
-   mappings, and enforce the panel rule in review/CI.
+   GitHub accounts, PR review threads). Remove remaining duplicate client
+   caches and event mappings, and enforce the panel rule in review/CI.
 
 Each implementation PR must name its writer/read/query/event mappings and audit
 rows. Mixed deployment reports unsupported or stale state explicitly; it must
