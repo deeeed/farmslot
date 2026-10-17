@@ -6,9 +6,16 @@ import Ajv from 'ajv';
 import type { PRPushDelivery, PRPushDevice, PRPushRegisterParams } from '@farmslot/protocol';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import {
+  matchesPrincipalOwner,
+  ownerGenerationSchema,
+  principalOwnerGeneration,
+  principalOwnerStamp,
+} from '../security/work-originator.js';
 
 export interface StoredPushDevice extends PRPushDevice {
   ownerId: string;
+  ownerGeneration?: number;
   token: string;
   tokenRevision?: number;
 }
@@ -52,6 +59,7 @@ const validate = new Ajv().compile<PushData>({
         properties: {
           id: text,
           ownerId: text,
+          ownerGeneration: ownerGenerationSchema,
           tokenRevision: integer,
           token: text,
           installationId: text,
@@ -196,13 +204,17 @@ export class PRPushStore {
     ); // Caller receives failure; later mutations must still run.
     return work;
   }
+  private acknowledgementKey(ownerId: string, sourceId: string): string {
+    const generation = principalOwnerGeneration(ownerId);
+    return JSON.stringify(generation > 0 ? [ownerId, generation, sourceId] : [ownerId, sourceId]);
+  }
   acknowledgement(ownerId: string, sourceId: string): string | undefined {
-    return this.data.acknowledgements?.[JSON.stringify([ownerId, sourceId])];
+    return this.data.acknowledgements?.[this.acknowledgementKey(ownerId, sourceId)];
   }
   acknowledge(ownerId: string, sourceId: string, authorized: () => boolean): Promise<void> {
     return this.change((data) => {
       if (!authorized()) throw new Error('Notification is unavailable');
-      const key = JSON.stringify([ownerId, sourceId]);
+      const key = this.acknowledgementKey(ownerId, sourceId);
       (data.acknowledgements ??= {})[key] ??= new Date().toISOString();
     });
   }
@@ -215,17 +227,28 @@ export class PRPushStore {
     const { expectedRevision, ...p } = structuredClone(input);
     return this.change((data) => {
       if (!authorized()) throw new Error('Notification registration authority was revoked');
+      const generation = principalOwnerGeneration(ownerId);
+      // Re-pairing keeps the phone's Expo token. Retire its stale binding, never
+      // adopt the old device or its deliveries into the replacement identity.
+      for (const device of data.devices)
+        if (
+          device.enabled &&
+          device.token === p.token &&
+          device.ownerId === ownerId &&
+          (device.ownerGeneration ?? 0) < generation
+        )
+          this.disableDevice(device);
       if (
         data.devices.some(
           (d) =>
             d.token === p.token &&
             d.enabled &&
-            (d.ownerId !== ownerId || d.installationId !== p.installationId),
+            (!matchesPrincipalOwner(d, ownerId) || d.installationId !== p.installationId),
         )
       )
         throw new Error('Push token is already registered to another installation or principal');
       const previous = data.devices.find(
-        (d) => d.ownerId === ownerId && d.installationId === p.installationId,
+        (d) => matchesPrincipalOwner(d, ownerId) && d.installationId === p.installationId,
       );
       if (previous ? previous.revision !== expectedRevision : expectedRevision !== undefined)
         throw new Error('Push settings changed; refresh before registering');
@@ -242,6 +265,7 @@ export class PRPushStore {
         ...p,
         id: previous?.id ?? randomUUID(),
         ownerId,
+        ...principalOwnerStamp(ownerId),
         revision: (previous?.revision ?? 0) + (changed ? 1 : 0),
         tokenRevision: previous
           ? (previous.tokenRevision ?? previous.revision) + (previous.token !== p.token ? 1 : 0)
@@ -272,14 +296,15 @@ export class PRPushStore {
   disable(ownerId: string, installationId: string): Promise<void> {
     return this.change((data) => {
       const device = data.devices.find(
-        (d) => d.ownerId === ownerId && d.installationId === installationId,
+        (d) => matchesPrincipalOwner(d, ownerId) && d.installationId === installationId,
       );
-      if (device?.enabled) {
-        device.enabled = false;
-        device.revision++;
-        device.updatedAt = new Date().toISOString();
-      }
+      if (device?.enabled) this.disableDevice(device);
     });
+  }
+  private disableDevice(device: StoredPushDevice): void {
+    device.enabled = false;
+    device.revision++;
+    device.updatedAt = new Date().toISOString();
   }
   reserve(
     device: StoredPushDevice,
@@ -363,6 +388,12 @@ export class PRPushStore {
 }
 
 export function publicDevice(device: StoredPushDevice): PRPushDevice {
-  const { token: _token, ownerId: _ownerId, tokenRevision: _tokenRevision, ...value } = device;
+  const {
+    token: _token,
+    ownerId: _ownerId,
+    ownerGeneration: _ownerGeneration,
+    tokenRevision: _tokenRevision,
+    ...value
+  } = device;
   return value;
 }

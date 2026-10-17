@@ -32,6 +32,7 @@ import {
   type RunProgressObservation,
 } from '../runners/run-progress.js';
 import { getRun, listRuns, updateRun } from '../runs/store.js';
+import { samePrincipalOwner } from '../security/work-originator.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
 import {
@@ -190,7 +191,8 @@ export function findLatestPriorReviewRun(
         if (
           requested &&
           candidate.prWork?.kind === 'review' &&
-          (candidate.prWork.review?.ownerId !== requested.ownerId ||
+          (!candidate.prWork.review ||
+            !samePrincipalOwner(candidate.prWork.review, requested) ||
             candidate.prWork.review.profile !== requested.profile)
         )
           return false;

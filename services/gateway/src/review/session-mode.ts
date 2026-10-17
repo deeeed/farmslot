@@ -24,6 +24,8 @@ export interface WarmReviewerScope {
   reviewId: string;
   project: string;
   ownerPrincipalId: string | null;
+  /** Creator generation for tmux continuity; omission means zero. Native sessions are id-only. */
+  ownerPrincipalGeneration?: number;
   transport: 'tmux' | 'native';
   taskDir: string;
   artifactScope: string | null;
@@ -103,6 +105,7 @@ export function claimWarmReviewerSession(
   if (
     session.project !== scope.project ||
     session.ownerPrincipalId !== scope.ownerPrincipalId ||
+    (session.ownerPrincipalGeneration ?? 0) !== (scope.ownerPrincipalGeneration ?? 0) ||
     session.transport !== scope.transport
   )
     throw new WarmReviewRefusal(
@@ -226,7 +229,8 @@ export function persistedWarmReviewerSession(
         ? candidate.nativeSession?.ownerPrincipalId === scope.ownerPrincipalId
         : !candidate.nativeSession &&
           (run.transport ?? 'tmux') === 'tmux' &&
-          (run.createdByPrincipalId ?? null) === scope.ownerPrincipalId) &&
+          (run.createdByPrincipalId ?? null) === scope.ownerPrincipalId &&
+          (run.createdByPrincipalGeneration ?? 0) === (scope.ownerPrincipalGeneration ?? 0)) &&
       candidate.reviewId === scope.reviewId &&
       candidate.runner === scope.runner &&
       candidate.status === 'complete' &&

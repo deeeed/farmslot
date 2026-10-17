@@ -8,6 +8,7 @@ import '../runtime/mock-pty.test-support.js';
 
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { getAllRuns } from '../runs/store.js';
+import { runWithWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
 
 import {
   sourceTestLock,
@@ -199,3 +200,33 @@ for (const field of ['selection', 'execution', 'review', 'removed', 'added'] as 
     );
   });
 }
+
+test('source revalidation keeps the creator generation under any actor', async () => {
+  const lock = sourceTestLock('node-1');
+  const sources = {
+    project: 'demo',
+    pack: lock.packBindings.demo,
+    materialization: sourceTestMaterialization(lock, 'gateway'),
+    packs: lock.packBindings,
+  };
+  const actors: WorkOriginator[] = [
+    { kind: 'system' },
+    { kind: 'principal', principalId: 'creator', principalGeneration: 1 },
+    { kind: 'principal', principalId: 'admin', principalGeneration: 2 },
+  ];
+  for (const [generation, actor] of [
+    ...actors.map((actor) => [1, actor] as const),
+    [undefined, actors[2]] as const,
+  ]) {
+    const run = makeRun({ id: 'run-1', project: 'demo', flowType: 'dev', status: 'slot-finding' });
+    run.sourcePlan = sourceTestPlan();
+    run.dispatchRequest = { project: 'demo', flowType: 'dev', ticketOrPr: 'TAT-1' };
+    run.createdByPrincipalId = 'creator';
+    run.createdByPrincipalGeneration = generation;
+    const next = await runWithWorkOriginator(actor, () =>
+      withProjectSources(sources, () => replanSourceRun(run, { nodeId: 'node-1' })),
+    );
+    assert.equal(next.createdByPrincipalId, 'creator');
+    assert.equal(next.createdByPrincipalGeneration, generation);
+  }
+});

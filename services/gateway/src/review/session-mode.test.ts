@@ -160,6 +160,19 @@ test('restart recovery requires completed separate session and matching verdict/
     null,
   );
   assert.equal(persistedWarmReviewerSession(scope, { ...run, engineState: undefined }), null);
+  const owned = (generation?: number) => ({
+    ...run,
+    createdByPrincipalId: 'owner',
+    createdByPrincipalGeneration: generation,
+  });
+  const ownerScope = (generation?: number) => ({
+    ...scope,
+    ownerPrincipalId: 'owner',
+    ownerPrincipalGeneration: generation,
+  });
+  assert.equal(persistedWarmReviewerSession(ownerScope(1), owned()), null);
+  assert.equal(persistedWarmReviewerSession(ownerScope(), owned(1)), null);
+  assert.equal(persistedWarmReviewerSession(ownerScope(1), owned(1))?.runId, 'prior-run');
 });
 
 test('multiple reviewer lineages for one PR never select the latest unrelated review', () => {
@@ -178,6 +191,10 @@ test('multiple reviewer lineages for one PR never select the latest unrelated re
   assert.equal(claimWarmReviewerSession({ ...scope, reviewId: '' }), null);
   assert.throws(
     () => claimWarmReviewerSession({ ...scope, ownerPrincipalId: 'foreign' }),
+    /incompatible project, owner or transport/,
+  );
+  assert.throws(
+    () => claimWarmReviewerSession({ ...scope, ownerPrincipalGeneration: 1 }),
     /incompatible project, owner or transport/,
   );
 });

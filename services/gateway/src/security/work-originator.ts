@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import type { Principal } from '@farmslot/protocol';
+import type { Principal, Run } from '@farmslot/protocol';
 
 import type { GatewayAuthRuntime, GatewayAuthSession } from './auth.js';
 import { systemWorkPrincipal } from './principal-resolver.js';
@@ -48,6 +48,80 @@ export function currentSessionPrincipal(): Principal | undefined {
   return sessionOriginator.getStore()?.principal;
 }
 
+/** A stored owner without a generation belongs to the original identity. */
+export interface PrincipalOwner {
+  ownerId: string;
+  ownerGeneration?: number;
+}
+
+export function principalOwnerGeneration(ownerId: string): number {
+  const originator = currentSessionOriginator();
+  return originator.kind === 'principal' && originator.principalId === ownerId
+    ? (originator.principalGeneration ?? 0)
+    : 0;
+}
+
+export function principalIdentityKey(ownerId: string): string {
+  const generation = principalOwnerGeneration(ownerId);
+  return generation > 0 ? principalOwnerKey({ ownerId, ownerGeneration: generation }) : ownerId;
+}
+
+export function principalOwnerKey(owner: PrincipalOwner): string {
+  return JSON.stringify([owner.ownerId, owner.ownerGeneration ?? 0]);
+}
+
+export function principalOwnerStamp(ownerId: string): Pick<PrincipalOwner, 'ownerGeneration'> {
+  const generation = principalOwnerGeneration(ownerId);
+  return generation > 0 ? { ownerGeneration: generation } : {};
+}
+
+export function samePrincipalOwner(left: PrincipalOwner, right: PrincipalOwner): boolean {
+  return (
+    left.ownerId === right.ownerId && (left.ownerGeneration ?? 0) === (right.ownerGeneration ?? 0)
+  );
+}
+
+/** The creator owns delayed PR follow-ups; native-only legacy records remain generation zero. */
+export function runPrincipalOwner(
+  run: Pick<
+    Run,
+    'createdByPrincipalId' | 'createdByPrincipalGeneration' | 'nativeOwnerPrincipalId' | 'prWork'
+  >,
+): PrincipalOwner | undefined {
+  if (run.createdByPrincipalId)
+    return { ownerId: run.createdByPrincipalId, ownerGeneration: run.createdByPrincipalGeneration };
+  if (run.prWork?.review) return run.prWork.review;
+  return run.nativeOwnerPrincipalId ? { ownerId: run.nativeOwnerPrincipalId } : undefined;
+}
+
+export function matchesPrincipalOwner(owner: PrincipalOwner, ownerId: string): boolean {
+  if (owner.ownerId !== ownerId) return false;
+  const originator = currentSessionOriginator();
+  // Internal maintenance reads do not grant authority. Effect guards separately
+  // resolve the exact stored generation; network reads are session-scoped here.
+  return originator.kind !== 'principal' || originator.principalId !== ownerId
+    ? true
+    : samePrincipalOwner(owner, { ownerId, ...principalOwnerStamp(ownerId) });
+}
+
+export function runWithPrincipalOwner<T>(owner: PrincipalOwner, operation: () => T): T {
+  // Resumed authorship carries no request principal, so it never supervises.
+  return sessionOriginator.run({ originator: principalOwnerOriginator(owner) }, operation);
+}
+
+/** Resume durable work's exact authorship; the caller must still authorize its effects. */
+export function runWithWorkOriginator<T>(originator: WorkOriginator, operation: () => T): T {
+  return sessionOriginator.run({ originator }, operation);
+}
+
+export function principalOwnerOriginator(owner: PrincipalOwner): WorkOriginator {
+  return {
+    kind: 'principal',
+    principalId: owner.ownerId,
+    ...(owner.ownerGeneration !== undefined ? { principalGeneration: owner.ownerGeneration } : {}),
+  };
+}
+
 export function workAuthorshipNotice(
   previous: WorkOriginator | undefined,
   next: WorkOriginator,
@@ -70,6 +144,34 @@ export function resolveWorkOriginator(
     originator.principalGeneration,
   );
   return resolution.ok ? resolution.principal : null;
+}
+
+/** The id a stored originator names when an explicit reuse replaced that identity. */
+export function replacedWorkOriginator(
+  runtime: GatewayAuthRuntime,
+  originator: WorkOriginator | undefined,
+): string | undefined {
+  if (originator?.kind !== 'principal') return undefined;
+  const resolution = runtime.resolver.resolvePrincipalId(
+    originator.principalId,
+    originator.principalGeneration,
+  );
+  return !resolution.ok && resolution.reason === 'generation_mismatch'
+    ? originator.principalId
+    : undefined;
+}
+
+/** Stored identity generation: omitted for zero, otherwise a positive safe integer. */
+export const ownerGenerationSchema = {
+  type: 'integer',
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+};
+
+/** Owners and their generations are gateway-derived; a request never supplies them. */
+export function assertNoClientOwnerFields(params: Record<string, unknown>): void {
+  for (const key of ['ownerId', 'ownerGeneration', 'notificationPrincipalGenerations'])
+    if (key in params) throw new Error(`Unsupported property: ${key}`);
 }
 
 export function isWorkOriginator(value: unknown): value is WorkOriginator {

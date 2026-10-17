@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { AssessmentReport } from '@farmslot/protocol';
 
 import { stableJson } from '../evals/package-store.js';
+import { principalOwnerStamp, samePrincipalOwner } from '../security/work-originator.js';
 
 import { readAssessmentArtifact, saveAssessmentArtifact } from './artifacts.js';
 import { assertAssessmentRecord } from './record-validation.js';
@@ -32,7 +33,8 @@ export async function assessmentReport(
       throw new Error('Invalid or changed report');
     for (const record of report.records) {
       assertAssessmentRecord(record);
-      if (record.ownerId !== ownerId) throw new Error('Invalid report owner');
+      if (!samePrincipalOwner(record, { ownerId, ...principalOwnerStamp(ownerId) }))
+        throw new Error('Invalid report owner');
     }
     return report;
   }

@@ -125,3 +125,28 @@ test('nested WARM selection without a retained session cannot fall back to COLD'
     /WARM review unavailable/,
   );
 });
+
+test('workspace continuity binds the creator generation in both directions', () => {
+  for (const [priorGeneration, currentGeneration] of [
+    [undefined, 1],
+    [1, undefined],
+  ]) {
+    assert.throws(
+      () =>
+        configureWorkspaceContinuity(
+          { ...current, createdByPrincipalGeneration: currentGeneration },
+          { ...prior, createdByPrincipalGeneration: priorGeneration },
+          context(),
+        ),
+      /WARM review unavailable/,
+    );
+  }
+  const result = context();
+  configureWorkspaceContinuity(
+    { ...current, createdByPrincipalGeneration: 1 },
+    { ...prior, createdByPrincipalGeneration: 1 },
+    result,
+  );
+  assert.equal(result.session?.continuity, 'resumed');
+  assert.equal(result.session?.sessionId, 'chat');
+});

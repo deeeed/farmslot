@@ -36,6 +36,7 @@ import {
   reviewTmuxStartupState,
 } from '../runners/review-tmux.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
 import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 
 import { preflightReviewWorkspaceAccount } from './account-preflight.js';
@@ -212,9 +213,13 @@ async function freezeSubject(
     url: pr.url,
     capturedAt: new Date().toISOString(),
   };
+  const owner = runPrincipalOwner(run);
   const prior = findLatestPriorReviewRun(
     run,
-    getAllRuns().filter((candidate) => candidate.createdByPrincipalId === run.createdByPrincipalId),
+    getAllRuns().filter((candidate) => {
+      const candidateOwner = runPrincipalOwner(candidate);
+      return owner && candidateOwner && samePrincipalOwner(owner, candidateOwner);
+    }),
   );
   const context = prior
     ? await confirmIncrementalAncestry(

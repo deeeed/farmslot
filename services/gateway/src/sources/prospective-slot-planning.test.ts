@@ -44,6 +44,7 @@ function fixture() {
         directReviewPublication: undefined,
         executionTemplateSnapshot: undefined,
         workspaceAdmission: undefined,
+        staticReviewOwner: undefined,
       };
     },
     params: (plan) => ({ ...plan.params, slotId: undefined }),

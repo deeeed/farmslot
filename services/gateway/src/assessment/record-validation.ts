@@ -336,6 +336,7 @@ export function assertAssessmentRecord(value: unknown): asserts value is Assessm
           'version',
           'id',
           'ownerId',
+          'ownerGeneration',
           'consumer',
           'subject',
           'startedAt',
@@ -352,6 +353,10 @@ export function assertAssessmentRecord(value: unknown): asserts value is Assessm
     value.version !== 1 ||
     !bounded(value.id) ||
     !bounded(value.ownerId) ||
+    (value.ownerGeneration !== undefined &&
+      (!count(value.ownerGeneration) ||
+        !Number.isSafeInteger(value.ownerGeneration) ||
+        value.ownerGeneration < 1)) ||
     !bounded(value.policyVersion) ||
     !ASSESSMENT_CONSUMERS.some((consumer) => consumer === value.consumer) ||
     !statuses.has(String(value.status)) ||

@@ -8,6 +8,7 @@ import type {
 
 import { getQueueSnapshot } from '../backlog/dispatch-queue.js';
 import { getAllRuns } from '../runs/store.js';
+import { runWithPrincipalOwner, runWithSystemOriginator } from '../security/work-originator.js';
 
 import { activePRRuns } from './active-work.js';
 import { fetchPRMonitorObservation } from './github-observation.js';
@@ -25,7 +26,7 @@ export class PRMonitoringService {
 
   constructor(
     readonly store: PRMonitorStore,
-    private readonly authorized: (ownerId: string) => boolean,
+    private readonly authorized: (ownerId: string, generation?: number) => boolean,
     private readonly broadcast: (ownerId: string, monitor: PRMonitor) => void,
     private readonly observe: Observer = fetchPRMonitorObservation,
     private readonly runs: () => Run[] = getAllRuns,
@@ -34,7 +35,9 @@ export class PRMonitoringService {
   present(monitor: PRMonitor): PRMonitor {
     return {
       ...monitor,
-      activeRuns: this.authorized(monitor.ownerId) ? activePRRuns(monitor, this.runs()) : [],
+      activeRuns: this.authorized(monitor.ownerId, monitor.ownerGeneration ?? 0)
+        ? activePRRuns(monitor, this.runs())
+        : [],
     };
   }
 
@@ -64,7 +67,7 @@ export class PRMonitoringService {
 
   tick(now = Date.now()): Promise<void> {
     if (this.sweep) return this.sweep;
-    this.sweep = this.reconcileDue(now).finally(() => {
+    this.sweep = runWithSystemOriginator(() => this.reconcileDue(now)).finally(() => {
       this.sweep = undefined;
     });
     return this.sweep;
@@ -73,7 +76,7 @@ export class PRMonitoringService {
   private async reconcileDue(now: number): Promise<void> {
     for (const monitor of this.store.snapshot().monitors) {
       // Suspension updates contain live run metadata and must respect revocation too.
-      if (!this.authorized(monitor.ownerId)) continue;
+      if (!this.authorized(monitor.ownerId, monitor.ownerGeneration ?? 0)) continue;
       const work = activePRRuns(monitor, this.runs());
       const snapshot = JSON.stringify(work);
       const previous = this.workSnapshots.get(monitor.id);
@@ -89,7 +92,7 @@ export class PRMonitoringService {
         (monitor.nextCheckAt && Date.parse(monitor.nextCheckAt) > now)
       )
         continue;
-      await this.refresh(monitor.id, monitor.ownerId);
+      await runWithPrincipalOwner(monitor, () => this.refresh(monitor.id, monitor.ownerId));
     }
   }
 
@@ -157,13 +160,17 @@ export class PRMonitoringService {
   private async refreshOnce(id: string, ownerId: string): Promise<PRMonitor> {
     const monitor = this.store.get(id, ownerId);
     if (monitor.lifecycle !== 'active') return monitor;
-    if (activePRRuns(monitor, this.runs()).length && this.authorized(ownerId)) return monitor;
+    if (
+      activePRRuns(monitor, this.runs()).length &&
+      this.authorized(ownerId, monitor.ownerGeneration ?? 0)
+    )
+      return monitor;
     let result: { observation: PRMonitorObservation } | { error: string; checkedAt: string };
     try {
-      this.assertAuthorized(ownerId);
+      this.assertAuthorized(ownerId, monitor.ownerGeneration ?? 0);
       result = { observation: await this.observe(monitor.config, ownerId) };
       // Revocation while GitHub was responding must prevent publishing fresh private facts.
-      this.assertAuthorized(ownerId);
+      this.assertAuthorized(ownerId, monitor.ownerGeneration ?? 0);
     } catch (error) {
       result = {
         error: error instanceof Error ? error.message : String(error),
@@ -178,14 +185,16 @@ export class PRMonitoringService {
       monitor.revision,
       result,
       monitor.observationGeneration ?? 0,
-      () => !activePRRuns(monitor, this.runs()).length,
+      () =>
+        ('error' in result || this.authorized(ownerId, monitor.ownerGeneration ?? 0)) &&
+        !activePRRuns(monitor, this.runs()).length,
     );
     if (updated) this.broadcast(ownerId, updated);
     return updated ?? this.store.get(id, ownerId);
   }
 
-  private assertAuthorized(ownerId: string): void {
-    if (!this.authorized(ownerId))
+  private assertAuthorized(ownerId: string, generation?: number): void {
+    if (!this.authorized(ownerId, generation))
       throw new Error('Subscription owner no longer has monitoring authority');
   }
 

@@ -199,8 +199,26 @@ test('project review policy rejects malformed grants and removed person-only con
     { delegatorPrincipalId: '', delegatedReviewerPrincipalIds: [] },
     { delegatorPrincipalId: 'person', delegatedReviewerPrincipalIds: [''] },
     { delegatorPrincipalId: 'person', delegatedReviewerPrincipalIds: [], actor: 'spoof' },
+    ...[0, -1, 1.5, '1', null].map((delegatorPrincipalGeneration) => ({
+      delegatorPrincipalId: 'person',
+      delegatedReviewerPrincipalIds: [],
+      delegatorPrincipalGeneration,
+    })),
+    { delegatorPrincipalGeneration: 1 },
   ])
     assert.throws(() => parseProjectVisualClaimReviewPolicy(policy), /Invalid project/);
+  assert.deepEqual(
+    parseProjectVisualClaimReviewPolicy({
+      delegatorPrincipalId: 'person',
+      delegatorPrincipalGeneration: 1,
+      delegatedReviewerPrincipalIds: ['lead'],
+    }),
+    {
+      delegatorPrincipalId: 'person',
+      delegatorPrincipalGeneration: 1,
+      delegatedReviewerPrincipalIds: ['lead'],
+    },
+  );
   assert.deepEqual(
     parseProjectVisualClaimReviewPolicy({
       delegatorPrincipalId: 'person',

@@ -20,8 +20,12 @@ import { PRPublicationEnrollment } from '../pr-monitoring/publication.js';
 import { PRMonitoringService } from '../pr-monitoring/service.js';
 import { PRMonitorStore } from '../pr-monitoring/store.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
-import { isAdminPrincipal } from '../security/authorization.js';
-import { currentSessionOriginator } from '../security/work-originator.js';
+import { ownerAdminAuthority } from '../security/authorization.js';
+import {
+  assertNoClientOwnerFields,
+  currentSessionOriginator,
+  runWithPrincipalOwner,
+} from '../security/work-originator.js';
 
 let service: PRMonitoringService | undefined;
 let dispatcher: PRRepairDispatcher | undefined;
@@ -39,19 +43,15 @@ export function initPRMonitorDispatch(
   dispatcher = new PRRepairDispatcher(
     service.store,
     service,
-    (ownerId) => {
-      const owner = auth.resolver.resolvePrincipalId(ownerId);
-      return owner.ok && isAdminPrincipal(owner.principal);
-    },
+    ownerAdminAuthority(auth),
     (monitor) =>
-      publish(monitor.ownerId, Events.PR_WATCH_UPDATED, { monitor: monitoring.present(monitor) }),
+      runWithPrincipalOwner(monitor, () =>
+        publish(monitor.ownerId, Events.PR_WATCH_UPDATED, { monitor: monitoring.present(monitor) }),
+      ),
   );
   initPRQueueAdmission('repair', dispatcher);
   enrollment?.stop();
-  enrollment = new PRPublicationEnrollment(service.store, service, (ownerId) => {
-    const owner = auth.resolver.resolvePrincipalId(ownerId);
-    return owner.ok && isAdminPrincipal(owner.principal);
-  });
+  enrollment = new PRPublicationEnrollment(service.store, service, ownerAdminAuthority(auth));
   if (poll) dispatcher.start();
   if (poll) enrollment.start();
 }
@@ -66,12 +66,11 @@ export async function initPRMonitoring(
   const store = await PRMonitorStore.load(resolve(farmslotRoot, '.pr-monitors.json'));
   const monitoring = new PRMonitoringService(
     store,
-    (ownerId) => {
-      const owner = auth.resolver.resolvePrincipalId(ownerId);
-      return owner.ok && isAdminPrincipal(owner.principal);
-    },
+    ownerAdminAuthority(auth),
     (ownerId, monitor) => {
-      publish(ownerId, Events.PR_WATCH_UPDATED, { monitor: monitoring.present(monitor) });
+      runWithPrincipalOwner(monitor, () =>
+        publish(ownerId, Events.PR_WATCH_UPDATED, { monitor: monitoring.present(monitor) }),
+      );
       if (poll) dispatcher?.wake();
     },
   );
@@ -83,7 +82,9 @@ export async function initPRMonitoring(
 function params(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Parameters must be an object');
-  return value as Record<string, unknown>;
+  const p = value as Record<string, unknown>;
+  assertNoClientOwnerFields(p);
+  return p;
 }
 
 function string(value: unknown, name: string): string {

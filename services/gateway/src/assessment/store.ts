@@ -16,6 +16,7 @@ import {
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { principalOwnerStamp, samePrincipalOwner } from '../security/work-originator.js';
 
 import { TRIAGE_SPEND_BOUND_EXCEEDED, TRIAGE_SPEND_BOUND_UNVERIFIABLE } from './provider.js';
 import {
@@ -45,6 +46,10 @@ function root(): string {
 function location(id: string): string {
   if (!ID.test(id)) throw new Error('Invalid assessment ID');
   return path.join(root(), `${id}.json`);
+}
+/** Session reads see only their own generation; a reused id never adopts older records. */
+function owns(ownerId: string, record: AssessmentRecord): boolean {
+  return samePrincipalOwner(record, { ownerId, ...principalOwnerStamp(ownerId) });
 }
 async function serialized<T>(fn: () => Promise<T>): Promise<T> {
   const previous = tail;
@@ -129,6 +134,7 @@ async function createAssessment(
     version: 1,
     id: randomUUID(),
     ...context,
+    ...principalOwnerStamp(context.ownerId),
     startedAt: new Date().toISOString(),
     status: 'started',
     policyVersion: context.policyVersion ?? 'review-intake-v2',
@@ -166,7 +172,7 @@ export async function reserveAssessment(
     const records = await retained();
     const existing = records.find(
       (r) =>
-        r.ownerId === context.ownerId &&
+        owns(context.ownerId, r) &&
         r.consumer === context.consumer &&
         r.reservation?.key === reservation.key,
     );
@@ -232,7 +238,7 @@ export async function assessmentHistory(
     if (params.consumer !== undefined && !ASSESSMENT_CONSUMERS.includes(params.consumer))
       throw new Error('Invalid consumer');
     const records = (await retained())
-      .filter((r) => r.ownerId === ownerId && (!params.consumer || r.consumer === params.consumer))
+      .filter((r) => owns(ownerId, r) && (!params.consumer || r.consumer === params.consumer))
       .sort((a, b) => `${b.startedAt}|${b.id}`.localeCompare(`${a.startedAt}|${a.id}`))
       .filter((r) => !params.before || `${r.startedAt}|${r.id}` < params.before);
     const page = records.slice(0, limit);
@@ -246,7 +252,7 @@ export async function assessmentHistory(
   });
 }
 export async function assessmentRecords(ownerId: string): Promise<AssessmentRecord[]> {
-  return serialized(async () => (await retained()).filter((r) => r.ownerId === ownerId));
+  return serialized(async () => (await retained()).filter((r) => owns(ownerId, r)));
 }
 export async function recordAssessmentFeedback(
   ownerId: string,
@@ -255,7 +261,7 @@ export async function recordAssessmentFeedback(
   return serialized(async () => {
     const record = await load(params.id);
     if (
-      record.ownerId !== ownerId ||
+      !owns(ownerId, record) ||
       Date.parse(record.startedAt) < Date.now() - RETENTION_DAYS * 86400_000
     )
       throw new Error('Assessment not found or expired');
@@ -303,7 +309,7 @@ export async function recordAssessmentFeedback(
 export async function assessmentRecord(ownerId: string, id: string): Promise<AssessmentRecord> {
   const record = await load(id);
   if (
-    record.ownerId !== ownerId ||
+    !owns(ownerId, record) ||
     Date.parse(record.startedAt) < Date.now() - RETENTION_DAYS * 86400_000
   )
     throw new Error('Assessment not found or expired');

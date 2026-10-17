@@ -2577,6 +2577,15 @@ export interface Run {
   id: string;
   /** Authenticated creator, retained for background actions that touch another run's resources. */
   createdByPrincipalId?: string;
+  /** Identity generation of the authenticated creator; omission means zero. */
+  createdByPrincipalGeneration?: number;
+  /**
+   * Admin person who delegated this static review to its native owner. Audit
+   * only: it authorizes no later action. Gateway-derived, never accepted from a request.
+   */
+  requestedByPrincipalId?: string;
+  /** Requester identity generation; omission means zero. */
+  requestedByPrincipalGeneration?: number;
   /** Omission preserves the existing tmux execution path. */
   transport?: WorkerTransport;
   /** Trusted gateway stamp. Native background execution uses this persisted owner. */

@@ -16,6 +16,7 @@ import {
   deliverPromptToRetainedRunnerSession,
   type RunnerSessionReactivationOptions,
 } from '../runners/session-reactivation.js';
+import { samePrincipalOwner } from '../security/work-originator.js';
 
 export interface RepeatReviewResumeBinding {
   reviewId: string;
@@ -98,7 +99,8 @@ export function resolveRepeatReviewResumePlan(
   if (
     requested &&
     (prior.prWork?.kind !== 'review' ||
-      prior.prWork.review?.ownerId !== requested.ownerId ||
+      !prior.prWork.review ||
+      !samePrincipalOwner(prior.prWork.review, requested) ||
       prior.prWork.review.profile !== requested.profile)
   )
     return { kind: 'refused', reason: 'missing-session' };

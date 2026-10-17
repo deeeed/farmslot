@@ -8,6 +8,7 @@ import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { incrementalReviewAvailable } from '../run-engine/engine-decisions.js';
 import { getRunnerDefinition } from '../runners/registry.js';
+import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
 
 type WorkspaceReviewerRun = Pick<
   Run,
@@ -19,16 +20,20 @@ type WorkspaceReviewerRun = Pick<
   | 'transport'
   | 'nativeOwnerPrincipalId'
   | 'createdByPrincipalId'
+  | 'createdByPrincipalGeneration'
   | 'reviewWorkspaceTarget'
 > & { metrics: Pick<Run['metrics'], 'runner' | 'model'> };
 
 /** Shared ownership and runner predicate for both legacy recovery and new-round reuse. */
 export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
   const reviewer = prior.agentContexts?.find((candidate) => candidate.id === 'review');
+  const owner = runPrincipalOwner(run);
+  const priorOwner = runPrincipalOwner(prior);
+  // Native session ownership is id-only; the creator must be the same identity generation.
   const sameOwner =
     Boolean(run.nativeOwnerPrincipalId) &&
     run.nativeOwnerPrincipalId === prior.nativeOwnerPrincipalId &&
-    run.createdByPrincipalId === prior.createdByPrincipalId;
+    Boolean(owner && priorOwner && samePrincipalOwner(owner, priorOwner));
   const compatible =
     run.transport === 'tmux' &&
     prior.transport === 'tmux' &&

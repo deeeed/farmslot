@@ -48,7 +48,7 @@ import {
 } from '../../runners/registry.js';
 import { getRunnerStatusProvider } from '../../runners/status-provider.js';
 import { getAllRuns } from '../../runs/store.js';
-import { resolveReviewWorkspaceOwner } from '../../security/native-worker-owner.js';
+import { resolveStaticReviewOwner } from '../../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../../security/work-originator.js';
 import {
   planSourceRequestSlots,
@@ -1039,7 +1039,7 @@ export async function dispatchPreview(
     const workflowDefaults = await resolveDirectWorkflowDefaults(params, projectConfig, {
       purpose: 'preview',
       ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
-        ? { ownerId: resolveReviewWorkspaceOwner() }
+        ? { ownerId: resolveStaticReviewOwner('live').ownerId }
         : {}),
     });
     params = workflowDefaults.params;
@@ -1062,7 +1062,7 @@ export async function dispatchPreview(
             transport: params.transport,
             nativeProfile: params.nativeProfile,
           },
-          resolveReviewWorkspaceOwner(),
+          resolveStaticReviewOwner('live').ownerId,
         ));
       const projectVars = await loadProjectVars(params.project);
       const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {

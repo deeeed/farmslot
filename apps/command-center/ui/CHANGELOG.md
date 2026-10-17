@@ -4,17 +4,18 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
 - Read the run results card, acceptance tally, report link resolution, web-link check and artifact HTML policy from the shared review-dispatch view model, which Companion now renders too. The output for real reports is unchanged; a malformed web link (no host, or credentials hidden behind a backslash) now loses its link instead of opening.
 
-- List active runs with the rule Companion and `run.list` `active` use: a failed run stays in Active only while it still holds its slot. The Active count follows the global filters, machine filters use the fleet's slot machine, and runs older than the loaded page still appear while active.
+## 0.22.0 - 2026-10-17
 
+- List active runs with the rule Companion and `run.list` `active` use: a failed run stays in Active only while it still holds its slot. The Active count follows the global filters, machine filters use the fleet's slot machine, and runs older than the loaded page still appear while active.
 - Show Send back to agent as the gate's primary action and label Send back reasons apart from PR feedback.
 - Sources panel updates itself from the gateway's source revision: no Refresh, hidden when nothing is configured or pinned, and one summary line with details on demand.
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 - Show the shared no-code-review warning at publication gates.
-
 - Keep async gate and panel layouts stable with component-specific skeletons and visible retries after loading errors.
-
 - Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand.
 
 ## 0.21.0 - 2026-10-16

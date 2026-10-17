@@ -15,6 +15,7 @@ import {
   NodeRpcTimeoutError,
   withNodeReconnectWait,
 } from '../../fleet/node-rpc.js';
+import { principalBindNativeOwner, principalCreate } from '../../methods/principal.js';
 import { createGatewayAuthRuntime } from '../../security/auth.js';
 
 import { requestNativeNode, resolveNativeExecutionNode, routeNativeExecution } from './node.js';
@@ -286,5 +287,64 @@ test('deadline uncertainty is classified only after rechecking live authority', 
   } finally {
     unregisterByWs(ws);
     t.mock.timers.reset();
+  }
+});
+
+test('a replacement at a reused id never routes to a native node or becomes a node owner', () => {
+  const f = issuedFixture();
+  try {
+    const admin = [{ role: 'admin' as const, scope: { kind: 'global' as const } }];
+    const keeper = f.runtime.writer.createPrincipal(
+      { type: 'service', displayName: 'Keeper' },
+      admin,
+    );
+    f.runtime.writer.issueCredential(keeper.id, 'keeper');
+    const person = { type: 'person' as const, displayName: 'Arthur' };
+    f.runtime.writer.createPrincipal(person, admin, 'arthur');
+    f.runtime.writer.retirePrincipals(['arthur']);
+    f.runtime.writer.createPrincipal(person, admin, 'arthur', { reuseRetiredId: true });
+    // A store written before the binding guard can still name the reused id.
+    const machine = 'reused-owner-machine';
+    const node = f.runtime.writer.createPrincipal(
+      { type: 'node', machine, displayName: 'Reused owner node', nativeOwnerPrincipalId: 'arthur' },
+      [],
+    );
+    f.runtime.writer.issueCredential(node.id, 'reused-owner-node');
+    assert.throws(
+      () => resolveNativeExecutionNode('arthur', machine),
+      (error: unknown) =>
+        permanent(error) && /arthur is a replacement identity/.test(String(error)),
+    );
+
+    const unbound = f.runtime.writer.createPrincipal(
+      { type: 'node', machine: 'unbound-machine', displayName: 'Unbound node' },
+      [],
+    );
+    assert.throws(
+      () =>
+        principalBindNativeOwner(
+          { nodePrincipalId: unbound.id, ownerPrincipalId: 'arthur' },
+          f.runtime,
+        ),
+      /arthur is a replacement identity/,
+    );
+    assert.throws(
+      () =>
+        principalCreate(
+          {
+            subject: {
+              type: 'node',
+              machine: 'm2',
+              displayName: 'n2',
+              nativeOwnerPrincipalId: 'arthur',
+            },
+            roles: [],
+          },
+          f.runtime,
+        ),
+      /arthur is a replacement identity/,
+    );
+  } finally {
+    f.cleanup();
   }
 });

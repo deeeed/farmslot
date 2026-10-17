@@ -40,6 +40,12 @@ import {
   getRunWithArchived,
   runRecordPath,
 } from '../runs/store.js';
+import { generationMismatchMessage } from '../security/principal-resolver.js';
+import {
+  principalOwnerOriginator,
+  runWithPrincipalOwner,
+  runWithSystemOriginator,
+} from '../security/work-originator.js';
 
 import { reviewIntentAuthorized } from './intents.js';
 import { publicationForIntent } from './publication-policy.js';
@@ -113,7 +119,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
   constructor(
     private readonly store: PRRuleStore,
     private readonly rules: Pick<PRRuleService, 'refreshTarget' | 'refreshSubmission'>,
-    private readonly authorized: (ownerId: string) => boolean,
+    private readonly authorized: (ownerId: string, generation?: number) => boolean,
     private readonly changed: () => void,
     private readonly resolveExecution: (
       project: string,
@@ -121,6 +127,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       profiles: PRExecutionProfile[],
       context?: PRExecutionContext,
     ) => Promise<{ choices: PRExecutionChoice[]; errors: string[] }> = resolvePRExecution,
+    private readonly replaced: (ownerId: string, generation: number) => boolean = () => false,
   ) {}
 
   start(): void {
@@ -147,13 +154,14 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
   }
   reconcile(): Promise<void> {
     if (this.reconciling) return this.reconciling;
-    this.reconciling = this.reconcileOnce().finally(() => {
+    this.reconciling = runWithSystemOriginator(() => this.reconcileOnce()).finally(() => {
       this.reconciling = undefined;
     });
     return this.reconciling;
   }
 
   private async reconcileOnce(): Promise<void> {
+    await this.store.withdrawReplacedContributions(this.replaced);
     for (const snapshot of this.store.snapshot().intents) {
       let intent = this.store.intent(snapshot.id);
       if (!intent) continue;
@@ -186,6 +194,10 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       }
       if (
         !reviewIntentAuthorized(intent) ||
+        intent.contributions.some(
+          (source) =>
+            source.eligible && !this.authorized(source.ownerId, source.ownerGeneration ?? 0),
+        ) ||
         intent.status === 'withdrawn' ||
         intent.status === 'needs-configuration'
       ) {
@@ -215,13 +227,17 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
         continue;
       }
       const source = intent.contributions.find((item) => item.eligible)!;
-      if (!source.project || !this.authorized(source.ownerId)) continue;
+      if (!source.project || !this.authorized(source.ownerId, source.ownerGeneration ?? 0))
+        continue;
       let parent: Run | undefined;
       if (source.sourceReview) {
         try {
           await validateQaSourceReview({
             runId: source.sourceReview.runId,
             ownerId: source.ownerId,
+            ...(source.ownerGeneration !== undefined
+              ? { ownerGeneration: source.ownerGeneration }
+              : {}),
             project: source.project,
             pr: intent.pr,
             expected: source.sourceReview,
@@ -243,6 +259,9 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       const review = {
         profile: intent.reviewProfile,
         ownerId: source.ownerId,
+        ...(source.ownerGeneration !== undefined
+          ? { ownerGeneration: source.ownerGeneration }
+          : {}),
         options: source.review ?? DEFAULT_PR_REVIEW_OPTIONS,
       };
       const publication = publicationForIntent(intent, this.store);
@@ -267,7 +286,11 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
                 ticketOrPr: `${intent.pr.repo}#${intent.pr.number}`,
                 prWork,
               },
-              getAllRuns().filter((run) => run.createdByPrincipalId === source.ownerId),
+              getAllRuns().filter(
+                (run) =>
+                  run.createdByPrincipalId === source.ownerId &&
+                  (run.createdByPrincipalGeneration ?? 0) === (source.ownerGeneration ?? 0),
+              ),
             )?.domain
           : undefined);
       const profiles = intent.contributions
@@ -275,6 +298,9 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
         .flatMap((item) => (item.execution ? [item.execution] : []));
       const resolved = await this.resolveExecution(source.project, intent.pr.repo, profiles, {
         ownerId: source.ownerId,
+        ...(source.ownerGeneration !== undefined
+          ? { ownerGeneration: source.ownerGeneration }
+          : {}),
       });
       const workspaceRequired = prReviewWorkflow(review.options) === 'review';
       if (
@@ -321,7 +347,8 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
           !isDeepStrictEqual(queued.prWork?.review, review) ||
           !isDeepStrictEqual(queued.prWork?.publication, publication) ||
           originator?.kind !== 'principal' ||
-          originator.principalId !== source.ownerId)
+          originator.principalId !== source.ownerId ||
+          (originator.principalGeneration ?? 0) !== (source.ownerGeneration ?? 0))
       ) {
         await this.store.updateDispatch(intent.id, { queueItemId: undefined, status: 'held' });
         await removeQueueItemInternalNow(queued.id, 'pr-review-remapped');
@@ -371,7 +398,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
                 ? `Validate the PR at ${intent.headSha} using the selected farm QA preset. Record the exact validated SHA, executed recipes and runtime evidence.`
                 : `Review the PR at ${intent.headSha}. Record the exact reviewed SHA. Review profile: ${intent.reviewProfile}. Publication requires the project's normal review policy.`,
           },
-          { kind: 'principal', principalId: source.ownerId },
+          principalOwnerOriginator(source),
         );
       await persistQueueNow();
       const latest = this.store.intent(intent.id);
@@ -438,11 +465,15 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     if (!intent) throw new Error('PR review intent is unavailable');
     for (const source of intent.contributions.filter((entry) => entry.eligible)) {
       if (source.submissionId !== undefined) {
-        const submission = await this.rules.refreshSubmission(source.ownerId, source.submissionId);
+        const submission = await runWithPrincipalOwner(source, () =>
+          this.rules.refreshSubmission(source.ownerId, source.submissionId!),
+        );
         if (submission.error) throw new Error(submission.error);
         continue;
       }
-      const observed = await this.rules.refreshTarget(source.ownerId, source.ruleId, intent.pr);
+      const observed = await runWithPrincipalOwner(source, () =>
+        this.rules.refreshTarget(source.ownerId, source.ruleId!, intent.pr),
+      );
       if (!observed.complete)
         throw new Error(
           `Review source observations are incomplete: ${observed.sourceErrors.join('; ')}`,
@@ -554,7 +585,11 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       return 'QA source review linkage changed';
     if (sourceReview) {
       const originator = queueRecordOriginator(item.id);
-      if (originator?.kind !== 'principal' || originator.principalId !== active[0]?.ownerId)
+      if (
+        originator?.kind !== 'principal' ||
+        originator.principalId !== active[0]?.ownerId ||
+        (originator.principalGeneration ?? 0) !== (active[0]?.ownerGeneration ?? 0)
+      )
         return 'Linked QA must retain the source review owner';
     }
     if (
@@ -567,6 +602,9 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       !isDeepStrictEqual(item.prWork?.review, {
         profile: intent.reviewProfile,
         ownerId: active[0]?.ownerId,
+        ...(active[0]?.ownerGeneration !== undefined
+          ? { ownerGeneration: active[0].ownerGeneration }
+          : {}),
         options,
       })
     )
@@ -579,6 +617,9 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
             {
               runId: source.sourceReview.runId,
               ownerId: source.ownerId,
+              ...(source.ownerGeneration !== undefined
+                ? { ownerGeneration: source.ownerGeneration }
+                : {}),
               project: source.project,
               pr: intent.pr,
               expected: source.sourceReview,
@@ -596,8 +637,13 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       const rule = snapshot.rules.find((entry) => entry.id === source.ruleId);
       const submission = snapshot.submissions?.find((entry) => entry.id === source.submissionId);
       const team = snapshot.teams.find((entry) => entry.id === source.teamId);
+      if (this.replaced(source.ownerId, source.ownerGeneration ?? 0))
+        return generationMismatchMessage(
+          source.ownerId,
+          're-create the rule or submission as the current identity.',
+        );
       if (
-        !this.authorized(source.ownerId) ||
+        !this.authorized(source.ownerId, source.ownerGeneration ?? 0) ||
         (source.ruleId !== undefined
           ? !rule?.enabled || rule.scan.error || rule.revision !== source.ruleRevision
           : !submission || submission.error || submission.revision !== source.submissionRevision) ||
