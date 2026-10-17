@@ -162,7 +162,8 @@ outcome contracts. `acceptance.require` cannot disable successful-completion
 enforcement. Schema-2 verdicts are engine-owned. Local commands refuse every
 change, including an actor-labelled untestable override. A gateway-generated
 `claimReviewGate` contract lets ordinary completion reach human review after the
-canonical SDK reader validates and binds the selected package. Unresolved verdicts
+canonical SDK reader validates and binds the selected package (for a QA case
+ledger, each row's case package). Unresolved verdicts
 still block approval. A credential-backed person uses `farmslot run gate <runId>
 --action mark-untestable --claim <id> --recipe-run <id> --reason <text>`; the gateway
 stores the receipt without changing engine or task bytes. Flows without a human

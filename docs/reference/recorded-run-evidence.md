@@ -529,8 +529,9 @@ through the existing authentication setup before using this operation.
 
 The gateway derives `claimReviewGate` in the existing worker terminal contract
 from the same human-gate/output-review policy used by execution. The completion
-checker uses the public SDK reader and validator to bind the selected package
-before deferring verdict checks. The monitor calls that same checker. Flows with
+checker uses the public SDK reader and validator to bind the selected package,
+and for a [QA case ledger](#qa-case-ledger) each row's case package, before
+deferring verdict checks. The monitor calls that same checker. Flows with
 no applicable human gate keep their completion refusal; projects expose no
 verdict-waiver flag.
 
@@ -1486,16 +1487,20 @@ A task whose handoff flow is `qa` MUST merge each passing execution into
 when the execution addresses the claim, meaning `recipeNodes` is non-empty;
 otherwise the stored row stays. Every row MUST carry `recipeRunId`, its case
 execution; the top-level `recipeRunId` is the execution projected last. A stored
-row whose evidence no longer exists, whose text no longer matches its registration,
-or that sits in an invalid or schema-1 ledger MUST NOT be kept. Row moments MUST
-reference the row's execution. The merge MUST NOT combine verdicts: when two cases
+row whose evidence no longer exists, whose case package (the directory of its
+transported `trace.json`) no longer holds its execution, whose text no longer
+matches its registration, or that sits in an invalid or schema-1 ledger MUST NOT be
+kept. Row moments MUST reference `retainedFrom` when present, else the row's
+execution. The merge MUST NOT combine verdicts: when two cases
 address one claim, the later execution's row stands. Other flows MUST keep the
 single selected execution.
 
 A QA output gate MUST find every row's execution, and the top-level execution,
 among the run's selected case packages, or report `evidence-execution-mismatch`.
 It binds each registered criterion to the package its row names. Claim-verdict
-policy judges, in each package, the claims that package addresses plus the rows
-bound to it. An unaddressed row bound to another package MUST NOT block; an
-addressed weak, missing or failed claim MUST block even when another case proves
-the criterion. Untestable overrides bind to the row's case execution.
+policy judges, in each package, the claims that package addresses, the rows bound
+to it and claims with no ledger row. An unaddressed row bound to another package
+MUST NOT block; an addressed weak, missing or failed claim MUST block even when
+another case proves the criterion. Untestable overrides bind to the row's case
+execution. The completion checker MUST compare each row with the selected claim of
+its own case package, read through the same SDK reader and validator.

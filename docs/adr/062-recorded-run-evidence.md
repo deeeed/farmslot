@@ -780,8 +780,9 @@ For a task whose handoff flow is `qa`, the runtime merges each passing execution
 into the stored ledger by claim id. A row the new execution addresses (one of its
 selected nodes proves the claim) replaces the stored row; every other stored row
 stays. Each row names its case execution in `recipeRunId`; the top-level
-`recipeRunId` names the execution projected last. A stored row whose evidence is
-gone is not kept. The merge selects engine rows; it never combines verdicts, so
+`recipeRunId` names the execution projected last. A stored row is kept only while
+its evidence exists and its case package still holds its execution. The merge
+selects engine rows; it never combines verdicts, so
 when two cases address one criterion the later execution's row stands and the
 gate below still judges the earlier case's claim.
 
@@ -791,13 +792,21 @@ case package answers for the claims it addresses and the rows bound to it, so it
 unaddressed `missing` rows do not block a criterion another case proves. A weak,
 missing or failed claim that a case addresses still blocks, even when another case
 proves the criterion. An untestable override binds to the row's case execution.
+The completion checker that `mark complete` and the monitor's terminal-signal check
+run binds each row to its case package the same way before deferring verdicts.
 
 Other flows keep Amendment 4 unchanged: one selected execution, no row execution.
+
+The shared evidence review model still loads one package, the last projected case,
+so run detail and output review show that case's claims until it supports several
+packages. Deploy the gateway before the node agent-runtime: an older gateway binds
+merged rows to the last execution and refuses them.
 
 ### Public surface
 
 `AcceptanceCriterionStatus` in `@farmslot/protocol` gains optional `recipeRunId`;
-`acceptanceRowExecution` resolves a row's execution. The shared ledger validator
-accepts it and checks the row's moments against it. `setDerivedClaims` in
-`@farmslot/agent-runtime` merges for every existing recipe entry point. There is
-no new command, endpoint or verdict writer.
+`acceptanceRowExecution` in the shared acceptance contract resolves a row's
+execution. The shared ledger validator accepts it and checks the row's moments
+against it. `setDerivedClaims` in `@farmslot/agent-runtime` merges for every
+existing recipe entry point, and its claim review gate binds rows to their case
+packages. There is no new command, endpoint or verdict writer.
