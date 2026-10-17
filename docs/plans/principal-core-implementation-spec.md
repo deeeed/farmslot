@@ -1132,7 +1132,9 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   creating a new device. Old deliveries stay with the old device. Token conflicts
   across principals remain refused.
 - Run creation records `createdByPrincipalGeneration` from the authenticated
-  originator. System-originated child runs inherit it from their parent.
+  originator, except on a delegated static review, whose creator is the native
+  owner at generation zero. System-originated child runs inherit it from their
+  parent.
 - Direct and gated review publication, automatic QA intake, source-review
   validation and reviewer continuity all match owner id and generation.
 - `generation_mismatch` has its own denial text. It names the replaced identity
@@ -1150,28 +1152,43 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   native-session owners refuse any principal whose generation is not zero.
 - Static review runs, whether direct or admitted from a rule or submission, run
   under native execution ownership. So does review publication.
-- Delegated review authorship applies when `run.create`, `dispatch.preview` or the
-  dispatch queue receives a static `review-pr` request from an authenticated admin
-  person who is not the native owner, at any generation.
+- Delegated review authorship applies when `run.create`, `dispatch.preview` or
+  `dispatch.queue.add` receives a static `review-pr` request without `prWork` from
+  an authenticated admin person whose own owner resolution refuses, at any
+  generation. A caller that owns a native profile or node keeps its own ownership.
   - The owner resolves to `FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID` at generation
     zero, through the admin-supervisor branch of `resolveReviewWorkspaceOwner`.
     Workspace placement is inspected against that owner, as for its own requests.
-  - The run stores that owner in `createdByPrincipalId`, `nativeOwnerPrincipalId`
-    and the PR work review owner. It stores the session's id and generation in
-    `requestedByPrincipalId` and `requestedByPrincipalGeneration`, omitting zero.
-    Request parameters that supply requester fields are refused.
-  - Direct publication captured at creation publishes as that owner. Approval and
-    later publication use the existing admin supervision of the owner's runs. The
-    requester fields grant nothing.
-  - A queued delegated request keeps the requester as its originator. Queue
-    admission re-checks that the requester is still an admin at that generation;
-    a failure refuses only that row, through `waitingReason`.
+    The generation-zero native checks apply to that resolved owner, never to the
+    supervising caller.
+  - The run stores that owner, at generation zero, in `createdByPrincipalId`,
+    `nativeOwnerPrincipalId` and, where present, the PR work review owner. It
+    stores the session's id and generation in `requestedByPrincipalId` and
+    `requestedByPrincipalGeneration`, omitting zero. Request parameters that
+    supply requester or delegated-owner fields are refused.
+  - Direct publication captured at creation publishes as that owner, through the
+    owner's PR teams and GitHub account. Approval and gated posting use the
+    existing admin supervision of the owner's runs. `prReview.publish` accepts the
+    publication owner, or an admin person when that owner is the configured
+    native profile owner. It publishes as the recorded owner and re-checks that
+    owner's authority as today. The requester fields grant nothing.
+  - Delegation is decided only on a live admin request. A queued delegated
+    request stores the owner in the gateway-derived
+    `QueueItem.delegatedOwnerPrincipalId` and the requester as its originator.
+    When it fires, queue admission re-checks that the requester is still an admin
+    at that generation, and the native-owner checks for native items and
+    workspace placement use the stored owner. A failure refuses only that row,
+    which stays `queued` with `waitingReason`. Rows that carry `prWork` never
+    delegate.
+  - Delegated runs share the owner's creator id, so they count as the owner's
+    prior reviews and continuity sources.
   - Without a configured native profile owner, delegation is refused with the
     native-ownership denial.
 - Otherwise static review and review publication are refused for a replacement,
   with a native-ownership denial. That includes static review admitted from its
   rules or submissions, which never delegate.
-  - An admitted intent stays `queued` and carries that reason in `waitingReason`.
+  - Such an intent moves to `needs-configuration` and carries that reason in
+    `waitingReason`.
   - The replacement's rules and submissions still drive notifications, monitoring
     and runtime-slot QA on tmux or default transport. A QA profile that selects
     native transport is refused by the native-ownership rule.
@@ -1185,11 +1202,18 @@ invalidation hook, and **the subscribed session makes no request at any point**.
     ownership, direct static review by a non-admin, static review admitted from a
     rule or submission, review publication as its own owner, webhook principals,
     delegators and delegated reviewers.
-  - Delegated review: an admin replacement's direct static review is created
-    under the native owner with its requester recorded, runs, and publishes as
-    that owner. A non-admin person is refused. Client-supplied requester fields
-    are refused. A queued delegated request whose requester lost admin, or was
-    replaced again, refuses only its own row.
+  - Delegated authorship:
+    - An admin replacement's direct static review is created under the native
+      owner with its requester recorded, runs, and publishes as that owner.
+    - The generation-one requester approves the gate and the run publishes. After
+      a transient failure, its manual `prReview.publish` retry publishes as the
+      owner.
+    - A queued native delegated request dispatches under the native owner.
+    - A non-admin person is refused, and an admin that owns a node keeps its own
+      ownership.
+    - Client-supplied requester or delegated-owner fields are refused.
+    - A queued delegated request whose requester lost admin, or was replaced
+      again, refuses only its own row.
   - Team re-save: kept recipients keep their stored generation, newly added ids
     bind the current generation, and unresolved ids are refused.
   - Push: the older-generation binding for the same token is disabled, and

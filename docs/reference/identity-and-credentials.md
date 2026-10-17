@@ -155,9 +155,11 @@ Once a gateway that implements ADR-051 Amendment 5 is rolled out:
 - An admin replacement can still start a static review directly, from Command
   Center or the CLI, and publish it. The review runs and publishes as the
   configured native profile owner, normally the automation service, and the run
-  records the person as its requester. A replacement that is not an admin cannot.
-  A replacement's rules and submissions never start a static review, so an admin
-  starts it directly.
+  records the person as its requester. Publication uses that owner's PR teams and
+  GitHub account, so the automation service needs a team that maps the
+  repository, and `--review-team` must name one of its teams. A replacement that
+  is not an admin cannot do this. A replacement's rules and submissions never
+  start a static review, so an admin starts it directly.
 - Webhook principals and visual-review delegations in project configuration keep
   naming the original identity. Re-point them to another service or person.
 - A team that already lists a reused recipient keeps notifying the old identity.
