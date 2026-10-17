@@ -4,7 +4,7 @@ import { GatewayMethodError } from '../core/method-error.js';
 
 import { isAdminPrincipal } from './authorization.js';
 import { loadCredentialStore } from './credential-store.js';
-import { isGenerationZeroPrincipal, nativeOwnerAssignedMachines } from './native-node.js';
+import { nativeOwnerAssignedMachines, requireGenerationZeroOwner } from './native-node.js';
 import { currentSessionOriginator, currentSessionPrincipal } from './work-originator.js';
 
 function nativeControlOwner(expectedOwner?: string): string | undefined {
@@ -17,16 +17,6 @@ export function isAdminSupervisor(): boolean {
   const principal = currentSessionPrincipal();
   // Supervision authorizes the caller without adopting the runner's identity.
   return principal?.subject.type === 'person' && isAdminPrincipal(principal);
-}
-
-/** Native execution ownership never passes to a replacement at a reused id. */
-function requireGenerationZeroOwner(owner: string): string {
-  if (!isGenerationZeroPrincipal(loadCredentialStore().principals, owner))
-    throw new GatewayMethodError(
-      'AUTH_FORBIDDEN',
-      `${owner} is a replacement identity at a reused id; native execution ownership stays with the original identity, so configure another native owner.`,
-    );
-  return owner;
 }
 
 export function requireNativeProfileOwner(principalId: string | undefined): string {

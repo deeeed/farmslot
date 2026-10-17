@@ -30,6 +30,7 @@ import {
   type CredentialRecord,
   CredentialStoreRefusalError,
 } from '../security/credential-store.js';
+import { requireGenerationZeroOwner } from '../security/native-node.js';
 
 export function principalCreate(
   params: PrincipalCreateParams,
@@ -37,7 +38,17 @@ export function principalCreate(
 ): PrincipalCreateResult {
   const subject = validateSubject(params?.subject);
   const roles = validateRoles(params?.roles);
+  assertGenerationZeroNativeOwner(runtime, subject);
   return { principal: translateWriterError(() => runtime.writer.createPrincipal(subject, roles)) };
+}
+
+/** A node's native owner is never a replacement identity at a reused id. */
+function assertGenerationZeroNativeOwner(
+  runtime: GatewayAuthRuntime,
+  subject: PrincipalSubject | { nativeOwnerPrincipalId: string },
+): void {
+  if ('nativeOwnerPrincipalId' in subject && subject.nativeOwnerPrincipalId)
+    requireGenerationZeroOwner(subject.nativeOwnerPrincipalId, runtime.store.snapshot().principals);
 }
 
 export function principalList(runtime: GatewayAuthRuntime): PrincipalListResult {
@@ -51,6 +62,7 @@ export function principalReuseRetiredId(
   validatePrincipalId(params?.principalId);
   const subject = validateSubject(params?.subject);
   const roles = validateRoles(params?.roles);
+  assertGenerationZeroNativeOwner(runtime, subject);
   return {
     principal: translateWriterError(() =>
       runtime.writer.createPrincipal(subject, roles, params.principalId, { reuseRetiredId: true }),
@@ -64,6 +76,7 @@ export function principalBindNativeOwner(
 ): PrincipalBindNativeOwnerResult {
   validatePrincipalId(params?.nodePrincipalId);
   validatePrincipalId(params?.ownerPrincipalId);
+  assertGenerationZeroNativeOwner(runtime, { nativeOwnerPrincipalId: params.ownerPrincipalId });
   return {
     principal: translateWriterError(() =>
       runtime.writer.bindNativeOwner(params.nodePrincipalId, params.ownerPrincipalId),

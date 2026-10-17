@@ -3,7 +3,11 @@ import type { Principal } from '@farmslot/protocol';
 import { GatewayMethodError } from '../core/method-error.js';
 
 import { loadCredentialStore } from './credential-store.js';
-import { isGenerationZeroPrincipal, nativeOwnerAssignedMachines } from './native-node.js';
+import {
+  isGenerationZeroPrincipal,
+  nativeOwnerAssignedMachines,
+  requireGenerationZeroOwner,
+} from './native-node.js';
 import { currentSessionOriginator } from './work-originator.js';
 
 export function ownsLocalNativeProfile(owner: string): boolean {
@@ -33,7 +37,7 @@ export function requireNativeSessionOwner(): string {
       'AUTH_FORBIDDEN',
       'Native workspace requires an authenticated owner',
     );
-  return originator.principalId;
+  return requireGenerationZeroOwner(originator.principalId);
 }
 
 /** Worker/run APIs still require farm administration; standalone enrollment does not grant it. */
