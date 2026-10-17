@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ReadyGatePayload, SlotPickerPayload } from '../../src/contracts/runs.js';
+import { SEND_BACK_TO_AGENT_ACTION } from '../../src/recipe/repair.js';
 import {
   buildRunDecisionActionRequest,
   buildRunResolveDecisionParams,
@@ -48,6 +49,17 @@ test('ready gate selection lets an interactive surface override draft choices', 
       packageHeadSha: 'abc123',
       operatorNote: 'hold evidence',
     },
+  );
+});
+
+test('Send back resolves the frozen gate decision with no selection data', () => {
+  assert.deepEqual(
+    buildRunResolveDecisionParams({
+      runId: 'run-1',
+      decision: { id: 'decision-1', payload },
+      actionId: SEND_BACK_TO_AGENT_ACTION,
+    }),
+    { runId: 'run-1', decisionId: 'decision-1', actionId: SEND_BACK_TO_AGENT_ACTION },
   );
 });
 

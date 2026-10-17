@@ -138,12 +138,15 @@ function validateAcceptanceStatusLedger(value) {
         entry.assertionIndices.some((index) => !Number.isInteger(index) || index < 0)
       )
         issues.push(`${prefix}.assertionIndices: invalid trace references`);
+      if (entry.retainedFrom !== undefined && !isNonEmptyString(entry.retainedFrom))
+        issues.push(`${prefix}.retainedFrom: expected the retained execution id`);
+      // A repair keeps older proof only with its own original execution's moments.
       if (
         !Array.isArray(entry.moments) ||
         entry.moments.some(
           (moment) =>
             !isRecord(moment) ||
-            moment.recipeRunId !== value.recipeRunId ||
+            moment.recipeRunId !== (entry.retainedFrom ?? value.recipeRunId) ||
             !/^sha256:[a-f0-9]{64}$/.test(moment.videoDigest) ||
             !Number.isInteger(moment.traceIndex) ||
             moment.traceIndex < 0,

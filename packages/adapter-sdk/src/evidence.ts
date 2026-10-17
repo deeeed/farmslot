@@ -33,7 +33,10 @@ export type { EvidenceReviewIssue, EvidenceReviewPackageStatus } from './evidenc
 export type { EvidenceReviewTimelineGroup } from './evidence-review-timeline.js';
 export { formatEvidenceReviewVideoTime } from './evidence-review-timeline.js';
 export type { RecipeValidationResult, RecordedEvidencePackageInput } from '@farmslot/protocol';
+export type { RecordedClaimSource } from '@farmslot/recipe-runner/evidence';
 export {
   deriveReviewedRecipeClaims,
+  recordedClaimSources,
+  selectedRecipeClaims,
   validateRecordedEvidencePackage,
 } from '@farmslot/recipe-runner/evidence';

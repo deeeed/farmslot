@@ -5,10 +5,12 @@ import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ReviewStatus,
   type RunDecision,
+  SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 
 import {
   buildNoChangeGateInputs,
+  CONTINUE_REVIEW_FIX_ACTION,
   isOwnPrApprovalError,
   noChangeDispositionLabel,
   noChangeRejectionMessage,
@@ -703,3 +705,43 @@ for (const verdict of [undefined, 'pass', 'skipped', 'issues'] as const) {
     );
   });
 }
+
+test('Send back is offered as a primary gate action only when admissible', () => {
+  const offered = publicationGateDecisionActions({ reviewSatisfied: false, sendBackToAgent: true });
+  assert.deepEqual(
+    offered.find(({ id }) => id === SEND_BACK_TO_AGENT_ACTION),
+    { id: SEND_BACK_TO_AGENT_ACTION, label: 'Send back to agent', style: 'primary' },
+  );
+  assert.equal(
+    publicationGateDecisionActions({ reviewSatisfied: false }).some(
+      ({ id }) => id === SEND_BACK_TO_AGENT_ACTION,
+    ),
+    false,
+  );
+});
+
+test('a review loop owned by an active Send back continues only through Send back', () => {
+  const pending: ReviewStatus = {
+    id: 'review-1',
+    source: 'human-gate',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'issues',
+    issues: [{ file: 'artifacts/visual-repair-scope.json', description: 'Re-prove AC-2.' }],
+    unresolvedCount: 1,
+    retryCount: 1,
+    maxRetries: 3,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+  };
+  const ids = (visualRepairReviewId?: string) =>
+    publicationGateDecisionActions({
+      reviewSatisfied: false,
+      pendingReviewContinuation: pending,
+      sendBackToAgent: true,
+      ...(visualRepairReviewId ? { visualRepairReviewId } : {}),
+    }).map(({ id }) => id);
+  assert.ok(ids().includes(CONTINUE_REVIEW_FIX_ACTION));
+  assert.ok(!ids('review-1').includes(CONTINUE_REVIEW_FIX_ACTION), 'no second, charged route');
+  assert.ok(ids('review-1').includes(SEND_BACK_TO_AGENT_ACTION));
+});

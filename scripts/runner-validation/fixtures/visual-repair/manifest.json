@@ -1,0 +1,83 @@
+{
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "app.hud": {
+      "description": "Display one concise human intent line from the current recipe node.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "clear": {
+            "type": "boolean"
+          },
+          "display": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "app.hud",
+          "intent": "Show the current goal to the supervising human.",
+          "next": "done"
+        }
+      ]
+    },
+    "ui.press": {
+      "description": "Open a canvas element.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": ["target"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "ui.press",
+          "target": "canvas",
+          "intent": "Open the proof canvas.",
+          "next": "done"
+        }
+      ]
+    },
+    "ui.wait_for": {
+      "description": "Wait until a canvas element shows a value.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": ["selector", "text"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "ui.wait_for",
+          "selector": "square",
+          "text": "green",
+          "intent": "Confirm the square is green.",
+          "next": "done"
+        }
+      ]
+    },
+    "end": {
+      "description": "Finish.",
+      "examples": [
+        {
+          "action": "end",
+          "status": "pass"
+        }
+      ]
+    }
+  }
+}

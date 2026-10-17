@@ -13,6 +13,7 @@ import {
   type RecipeVisualJudgmentKind,
   type RecipeVisualReviewer,
   recordedEvidenceClosureIdentity,
+  type RecordedEvidencePackageInput,
   reviewedVisualFiles,
   type Run,
   type RunRefreshPublishPackageParams,
@@ -26,6 +27,7 @@ import { GatewayMethodError } from '../../core/method-error.js';
 import {
   appliedVisualJudgmentReceiptIds,
   readVisualReviewPolicy,
+  selectedSourceInputs,
 } from '../../run-engine/claim-reviews.js';
 import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
 import {
@@ -42,6 +44,26 @@ export interface VisualClaimReviewDependencies {
   policy?: typeof readVisualReviewPolicy;
   source?: typeof readVisualReviewSource;
   refreshPackage?: (params: RunRefreshPublishPackageParams) => Promise<{ run: Run }>;
+}
+
+/** The execution a package selects for this claim; a repair may select a retained original. */
+function claimExecutions(
+  sources: readonly { input: RecordedEvidencePackageInput }[],
+  claimId: string,
+  recipeRunId: string,
+): RecordedEvidencePackageInput[] {
+  return sources.flatMap(({ input }) =>
+    validateRecordedEvidencePackage(input).status === 'valid'
+      ? selectedSourceInputs(input)
+          .filter(
+            (group) =>
+              group.claimIds.has(claimId) && group.input.claims?.recipeRunId === recipeRunId,
+          )
+          .map((group) => group.input)
+      : input.claims?.recipeRunId === recipeRunId
+        ? [input]
+        : [],
+  );
 }
 
 export async function runReviewVisualClaim(
@@ -89,12 +111,10 @@ export async function runReviewVisualClaim(
   const { subjectKind, delegator, ...approver } = reviewer;
   const read = dependencies.source ?? readVisualReviewSource;
   const source = await read(run, params.decisionId);
-  const matchingSources = source.sources.filter(
-    ({ input }) => input.claims?.recipeRunId === params.recipeRunId,
-  );
+  const matchingSources = claimExecutions(source.sources, claimId, params.recipeRunId);
   if (matchingSources.length !== 1)
     throw new Error('Select one execution from the captured evidence.');
-  const input = matchingSources[0]!.input;
+  const input = matchingSources[0]!;
   if (validateRecordedEvidencePackage(input).status !== 'valid')
     throw new Error('The selected recorded evidence failed integrity validation.');
   const claim = deriveReviewedRecipeClaims(input).find(({ id }) => id === claimId);
@@ -156,9 +176,7 @@ export async function runReviewVisualClaim(
         receipt.approver.principalId === approver.principalId,
     );
   const checked = await read(run, params.decisionId);
-  const checkedInput = checked.sources.find(
-    ({ input: value }) => value.claims?.recipeRunId === params.recipeRunId,
-  )?.input;
+  const checkedInput = claimExecutions(checked.sources, claimId, params.recipeRunId)[0];
   if (
     !checkedInput ||
     validateRecordedEvidencePackage(checkedInput).status !== 'valid' ||

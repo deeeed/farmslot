@@ -10,15 +10,22 @@ import {
   hasUnresolvedRecipeFailure,
   isRecipeVisualCaptureAction,
   RECIPE_ASSERTION_ACTIONS,
+  RECIPE_REPAIR_SCOPE_FILE,
+  RECIPE_REPAIR_SELECTION_FILE,
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestEntry,
   type RecipeClaimLedger,
   type RecipeEvidenceCaptureBinding,
   type RecipeExecutionPlan,
   type RecipeRecordingTimelineDocument,
+  recipeRepairScopeDigest,
+  type RecipeRepairSelection,
   type RecipeVideoTiming,
+  type RecordedEvidencePackageInput,
   type RecordingSegmentRef,
+  selectRepairClaimSources,
   validateRecipeRecordingTarget,
+  validateRecipeRepairScope,
 } from '@farmslot/protocol';
 
 import { proofDocument } from '../evidence/assertions.js';
@@ -29,7 +36,7 @@ import {
   retainRecipeComparisons,
 } from '../evidence/comparisons.js';
 import { occurrenceRecordingCoverage } from '../evidence/moments.js';
-import { validateRecordedEvidencePackage } from '../evidence/package.js';
+import { selectedRecipeClaims, validateRecordedEvidencePackage } from '../evidence/package.js';
 import { planRecipeEvidence, type RecipeEvidencePlan } from '../evidence/plan.js';
 import { materializeEvidenceStill } from '../evidence/stills.js';
 import {
@@ -297,6 +304,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         );
       }
     }
+    if (request.repairScope) assertRecipeRepairRequest(request);
     const rootRef = rootRecipeRef(sourceRecipePath, recipes, recipeSource.digest!);
     const dependencyResolution = resolveRecipeDependencies({
       rootRef,
@@ -425,15 +433,39 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipeRunId,
     );
     const totalByteBudget = videoOptions.maxBytes ?? DEFAULT_RECORDED_EVIDENCE_POLICY.maxBytes;
+    const repairScope = request.repairScope?.scope;
+    // Repair sources reuse the engine's checked closure retention; their bytes never change.
     const comparisons = await retainRecipeComparisons(
-      request.comparisonDependencies ?? [],
+      [
+        ...(request.comparisonDependencies ?? []),
+        ...(repairScope?.sources ?? []).map(
+          (source) => request.repairScope!.sourceRoots[source.recipeRunId]!,
+        ),
+      ],
       artifactsDir,
       recipeRunId,
       totalByteBudget,
     );
+    for (const source of repairScope?.sources ?? []) {
+      if (
+        !comparisons.references.some(
+          (reference) =>
+            reference.recipeRunId === source.recipeRunId &&
+            reference.closureIdentity === source.closureIdentity,
+        )
+      )
+        throw new Error(
+          `Repair source ${source.recipeRunId} no longer matches its frozen closure.`,
+        );
+    }
     if (comparisons.retainedBytes)
       videoOptions.maxBytes = totalByteBudget - comparisons.retainedBytes;
     if (comparisons.references.length) invocation.comparisonDependencies = comparisons.references;
+    if (repairScope)
+      invocation.repair = {
+        repairId: repairScope.repairId,
+        scopeDigest: recipeRepairScopeDigest(repairScope),
+      };
     await artifactWriter.writeInvocation(invocation);
     const captures = new Map<string, RecipeEvidenceCaptureBinding>();
     const registerCapture = (entry: RecipeArtifactManifestEntry, nodeId?: string) => {
@@ -858,6 +890,39 @@ class DefaultRecipeRunner implements RecipeRunner {
       category: 'system',
       label: 'Derived claim evidence',
     });
+    let repair: RecordedEvidencePackageInput['repair'];
+    if (repairScope) {
+      const selection: RecipeRepairSelection = {
+        schemaVersion: 1,
+        repairId: repairScope.repairId,
+        scopeDigest: recipeRepairScopeDigest(repairScope),
+        recipeRunId,
+        claims: selectRepairClaimSources(repairScope, claims.criteria),
+      };
+      await writeFileWithinRoot(
+        artifactsDir,
+        RECIPE_REPAIR_SCOPE_FILE,
+        `${JSON.stringify(repairScope, null, 2)}\n`,
+      );
+      await writeFileWithinRoot(
+        artifactsDir,
+        RECIPE_REPAIR_SELECTION_FILE,
+        `${JSON.stringify(selection, null, 2)}\n`,
+      );
+      artifactWriter.register({
+        path: RECIPE_REPAIR_SCOPE_FILE,
+        type: 'json',
+        category: 'system',
+        label: 'Retained repair scope',
+      });
+      artifactWriter.register({
+        path: RECIPE_REPAIR_SELECTION_FILE,
+        type: 'json',
+        category: 'system',
+        label: 'Engine claim-source selection',
+      });
+      repair = { scope: repairScope, selection };
+    }
     const summary: SummaryDocument = {
       recipeRunId,
       invocationDigest: digestRecipeDocument(invocation),
@@ -954,9 +1019,10 @@ class DefaultRecipeRunner implements RecipeRunner {
       manifestMetadata.comparisonDependencies = comparisons.references;
     await artifactWriter.write(status, this.#runnerProvenance, manifestMetadata);
 
-    const packageValidation = validateRecordedEvidencePackage({
+    const packageInput: RecordedEvidencePackageInput = {
       comparisonDependencies: comparisons.inputs,
       invocation,
+      ...(repair ? { repair } : {}),
       recipeRunId,
       claims,
       artifactDigests: Object.fromEntries([
@@ -1001,7 +1067,8 @@ class DefaultRecipeRunner implements RecipeRunner {
         ),
         ...artifactWriter.list().map((entry) => entry.path),
       ],
-    });
+    };
+    const packageValidation = validateRecordedEvidencePackage(packageInput);
     let retainedPackageBytes = 0;
     if (comparisons.references.length)
       for (const file of new Set([
@@ -1022,6 +1089,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     }
 
     if (finalizationFailed) throw finalizationError;
+    if (repair) result.selectedClaims = selectedRecipeClaims(packageInput);
     return result;
   }
 
@@ -1549,4 +1617,27 @@ async function assertVideoOutputReady(outputPath: string): Promise<void> {
     throw new Error(`Recording output is missing: ${outputPath}`);
   }
   if (stats.size <= 0) throw new Error(`Recording output is empty: ${outputPath}`);
+}
+
+/** A repair is a complete execution of the full registration under a valid gateway scope. */
+function assertRecipeRepairRequest(request: RecipeRunRequest): void {
+  const { scope, sourceRoots } = request.repairScope!;
+  const validation = validateRecipeRepairScope(scope);
+  const refuse = (message: string) => {
+    throw new RecipeResolutionError(
+      'RECIPE_REPAIR_SCOPE_INVALID',
+      message,
+      'run the repair recipe from its task while the gateway repair is active',
+    );
+  };
+  if (validation.status !== 'valid')
+    refuse(
+      `Repair scope is invalid: ${validation.findings.map((finding) => finding.message).join(' ')}`,
+    );
+  if (request.stopAfterNode !== undefined) refuse('A repair must run its complete graph.');
+  if (digestRecipeDocument(request.claims ?? null) !== digestRecipeDocument(scope.claims))
+    refuse('A repair must keep the full task registration.');
+  for (const source of scope.sources)
+    if (!sourceRoots[source.recipeRunId])
+      refuse(`Repair source ${source.recipeRunId} is not available to this task.`);
 }

@@ -57,6 +57,15 @@ export interface RecipeRunRequest {
    * declared teardown. The node must be reachable from workflow.entry.
    */
   stopAfterNode?: string;
+  /** Gateway-authorised rejected-criterion repair, supplied by the hosted task wrapper. */
+  repairScope?: RecipeRunRepairScope;
+}
+
+/** A checked repair scope and the local roots of its retained original packages. */
+export interface RecipeRunRepairScope {
+  scope: import('@farmslot/protocol').RecipeRepairScope;
+  /** Absolute package root for each scope source, keyed by recipeRunId. */
+  sourceRoots: Readonly<Record<string, string>>;
 }
 
 export interface RecipeLibrarySource {
@@ -117,6 +126,8 @@ export interface RecipeRunResult {
   recipePath: string;
   claimsPath: string;
   claims: RecipeClaimLedger;
+  /** A repair's engine-selected rows; retained evidence paths resolve from the attempt root. */
+  selectedClaims?: import('@farmslot/protocol').RecipeClaimEvidence[];
   /** The run video's recording stream stopped early; the partial video was kept. */
   captureInterruption?: RecipeRunCaptureInterruption;
 }

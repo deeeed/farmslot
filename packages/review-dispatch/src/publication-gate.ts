@@ -17,6 +17,7 @@ import {
   type ReviewSummary,
   type Run,
   type RunGateReadiness,
+  SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 
 export interface PublicationGateAction extends DecisionAction {
@@ -27,6 +28,7 @@ export interface PublicationGateClaim extends AcceptanceCriterionView {
   reviewLabels?: readonly string[];
   proofKinds?: EvidenceReviewClaim['proofKinds'];
   evidenceLinked?: boolean;
+  retained?: EvidenceReviewClaim['retained'];
 }
 
 export interface PublicationGateInput {
@@ -127,7 +129,14 @@ export function acceptanceClaimRows(
                 ? 'untestable'
                 : 'pending';
     if (row.tone === 'untestable') row.state = 'Untestable';
-    row.detail = [row.source?.reviewLabels?.join(' · '), row.judgment?.prevalidation?.reason]
+    const retained = row.source?.retained ?? row.judgment?.claim.retained;
+    row.detail = [
+      retained
+        ? `Earlier proof${retained.revision ? ` · ${retained.revision.slice(0, 7)}` : ''}`
+        : undefined,
+      row.source?.reviewLabels?.join(' · '),
+      row.judgment?.prevalidation?.reason,
+    ]
       .filter(Boolean)
       .join(' · ');
   }
@@ -226,6 +235,13 @@ export function publicationGateView(input: PublicationGateInput) {
   const offeredAttestation = actions.find(
     (action) => action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   );
+  // An Issue blocks publication; returning it to the agent is the gate's one primary action.
+  const sendBack = input.resolved
+    ? undefined
+    : actions.find((action) => action.id === SEND_BACK_TO_AGENT_ACTION);
+  const repair = input.run?.engineState?.publishGate?.visualRepairs?.at(-1);
+  const sendBackRecovery =
+    sendBack && repair && repair.status !== 'completed' ? repair.reason : undefined;
   const attestation =
     !input.resolved &&
     !pending.size &&
@@ -234,8 +250,9 @@ export function publicationGateView(input: PublicationGateInput) {
     evidenceAttestationAvailable(input.readiness)
       ? offeredAttestation
       : null;
-  const approval =
-    normal && !normal.disabledReason
+  const approval = sendBack
+    ? null
+    : normal && !normal.disabledReason
       ? normal
       : ((input.attesting ? attestation : null) ?? normal ?? null);
   const refreshRequired =
@@ -260,18 +277,23 @@ export function publicationGateView(input: PublicationGateInput) {
   return {
     warnings: input.reviewSummary?.noCodeReview ? ['No code review ran'] : [],
     claims,
-    status:
-      blockedReason || (attestation ? 'Evidence attestation is available.' : 'Ready to publish'),
+    status: sendBack
+      ? (sendBackRecovery ?? 'Issues found')
+      : blockedReason || (attestation ? 'Evidence attestation is available.' : 'Ready to publish'),
     blockedReason:
       blockedReason ||
       (reasonRequired && !isValidEvidenceAttestationReason(input.attestationReason)
         ? 'Enter an attestation reason before approving.'
         : ''),
     approval,
+    sendBack: sendBack ?? null,
     attestation,
     refreshRequired,
     secondaryActions: actions.filter(
-      (action) => action.id !== normal?.id && action.id !== offeredAttestation?.id,
+      (action) =>
+        action.id !== normal?.id &&
+        action.id !== offeredAttestation?.id &&
+        action.id !== sendBack?.id,
     ),
   };
 }

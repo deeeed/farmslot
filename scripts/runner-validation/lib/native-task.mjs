@@ -23,6 +23,8 @@ export async function writeNativeFixtureTask(taskFile, checklistMarkdown, projec
   const flow = path.basename(path.dirname(taskDir));
   const taskLabel = `.task/${flow}/${title}`;
   const terminalContract = builtinTerminalContract(flow, { mode: 'interactive' });
+  // The gateway writer sets this for runs whose human gate reviews claim evidence.
+  if (options.claimReviewGate) terminalContract.claimReviewGate = true;
   const handoff = buildHandoffMetadata({
     attemptId: randomUUID(),
     surface: 'runner-validation',

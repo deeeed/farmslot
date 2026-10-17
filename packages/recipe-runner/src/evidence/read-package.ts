@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import {
   isRecord,
+  RECIPE_REPAIR_SCOPE_FILE,
+  RECIPE_REPAIR_SELECTION_FILE,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   resolvedRecipeArtifactPath,
@@ -105,6 +107,12 @@ async function readPackage(
     recipeResolution: artifactPathSet.has('recipe-resolution.json')
       ? await readArtifactJsonIfPresent(io, 'recipe-resolution.json')
       : { value: undefined },
+    repairScope: artifactPathSet.has(RECIPE_REPAIR_SCOPE_FILE)
+      ? await readArtifactJsonIfPresent(io, RECIPE_REPAIR_SCOPE_FILE)
+      : { value: undefined },
+    repairSelection: artifactPathSet.has(RECIPE_REPAIR_SELECTION_FILE)
+      ? await readArtifactJsonIfPresent(io, RECIPE_REPAIR_SELECTION_FILE)
+      : { value: undefined },
   };
 
   for (const [requiredPath, read] of [
@@ -142,6 +150,8 @@ async function readPackage(
   for (const [file, read] of [
     ['recipe-invocation.json', reads.invocation],
     ['acceptance-status.json', reads.claims],
+    [RECIPE_REPAIR_SCOPE_FILE, reads.repairScope],
+    [RECIPE_REPAIR_SELECTION_FILE, reads.repairSelection],
   ] as const) {
     consumedPaths.add(file);
     if (artifactPathSet.has(file))
@@ -302,6 +312,10 @@ async function readPackage(
       timelines: timelines as RecordedEvidencePackageInput['timelines'],
       artifactDigests,
       ...(comparisonDependencies.length ? { comparisonDependencies } : {}),
+      ...(artifactPathSet.has(RECIPE_REPAIR_SCOPE_FILE) ||
+      artifactPathSet.has(RECIPE_REPAIR_SELECTION_FILE)
+        ? { repair: { scope: reads.repairScope.value, selection: reads.repairSelection.value } }
+        : {}),
     },
     checks,
   };

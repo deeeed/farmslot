@@ -18,6 +18,8 @@ export interface RecipeInvocationDocument {
   claims?: readonly RecipeClaimDeclaration[];
   recipeRunId?: string;
   comparisonDependencies?: readonly RecipeComparisonDependency[];
+  /** Gateway-authorised repair this execution re-proves; binds the retained scope bytes. */
+  repair?: { repairId: string; scopeDigest: string };
 }
 
 /** Retain typed public inputs without recording credential-bearing fields. */

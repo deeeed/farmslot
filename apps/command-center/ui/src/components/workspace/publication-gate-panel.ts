@@ -97,6 +97,18 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                 Refresh package
               </button>`
             : nothing}
+          ${view.sendBack
+            ? html`<button
+                class="gate-primary"
+                data-testid="gate-send-back"
+                data-action=${view.sendBack.id}
+                type="button"
+                ?disabled=${disabled || Boolean(view.sendBack.disabledReason)}
+                @click=${() => view.sendBack && input.invoke(view.sendBack.id)}
+              >
+                ${input.busy ? 'Sending…' : view.sendBack.label}
+              </button>`
+            : nothing}
           ${view.approval
             ? html`<button
                 class="gate-primary"

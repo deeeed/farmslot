@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  nativeResultJsonSchema,
   type NativeSessionResponse,
   type NativeStructuredResult,
   nativeStructuredResult,
-  PIPELINE_VISUAL_JUDGMENTS_SCHEMA,
+  PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
   PIPELINE_VISUAL_RESULT_SCHEMA,
 } from '@farmslot/protocol';
 
@@ -71,7 +72,7 @@ export const claudeNativeAdapter: NativeAdapter = {
     questions: true,
     interrupt: true,
     resume: true,
-    structuredResultSchemas: [PIPELINE_VISUAL_RESULT_SCHEMA],
+    structuredResultSchemas: [PIPELINE_VISUAL_RESULT_SCHEMA, PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA],
     resumeAcrossWorkspaces: true,
   },
   workspaceResumeUnavailableReason: (version) => {
@@ -380,7 +381,7 @@ export const claudeNativeAdapter: NativeAdapter = {
       [
         ...(options.filesystemPolicy ? ['--settings', '{"disableAllHooks":true}'] : []),
         ...(options.resultSchema
-          ? ['--json-schema', JSON.stringify(PIPELINE_VISUAL_JUDGMENTS_SCHEMA)]
+          ? ['--json-schema', JSON.stringify(nativeResultJsonSchema(options.resultSchema))]
           : []),
         '--print',
         '--input-format',

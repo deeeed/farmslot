@@ -154,6 +154,7 @@ test('native review results qualify on a tmux run without changing worker owners
   const { run, reviewer, snapshot } = fixture();
   const result = collectPipelineVisualResult(run, reviewer, snapshot)!;
   assert.equal(result.binding.commandId, reviewer.nativeSession!.commandId);
+  assert.ok('judgments' in result.result);
   assert.equal(result.result.judgments[0]!.verdict, 'confirmed');
   assert.equal(run.transport, 'tmux');
   assert.equal(run.nativeOwnerPrincipalId, undefined);
@@ -166,7 +167,14 @@ test('a code-only task without a recorded attempt remains reviewable without vis
   await writeFile(path.join(task, 'TASK.md'), '# Code-only task\n');
   await writeFile(path.join(task, 'artifacts/report.md'), 'No visual criteria.\n');
   run.taskFile = path.join(task, 'TASK.md');
-  assert.equal(await capturePipelineVisualInput(run.id, 'a'.repeat(40)), undefined);
+  assert.equal(
+    await capturePipelineVisualInput(
+      run.id,
+      { baseSha: 'b'.repeat(40), headSha: 'a'.repeat(40) },
+      async () => true,
+    ),
+    undefined,
+  );
   assert.equal(run.visualJudgmentReceipts, undefined);
 });
 
@@ -210,6 +218,7 @@ test('visual collection refuses different stills, moments, ACs and execution clo
   for (const field of ['recipeRunId', 'closureIdentity', 'claimId', 'reviewedFiles', 'moments']) {
     const { run, reviewer, snapshot } = fixture();
     const value = snapshot.commands[0]!.structuredResult!.value;
+    assert.ok('judgments' in value);
     if (field === 'recipeRunId') value.recipeRunId = 'other';
     if (field === 'closureIdentity') value.closureIdentity = `sha256:${'b'.repeat(64)}`;
     if (field === 'claimId') value.judgments[0]!.claimId = 'other';

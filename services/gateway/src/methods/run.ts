@@ -59,6 +59,7 @@ import {
   type RunResolveDecisionResult,
   type SafetyTier,
   sameEvidenceAttestationApprover,
+  SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 import {
   assertReviewPolicy,
@@ -160,6 +161,12 @@ import {
   readFreshTerminalSignalForRun,
   resolveMonitorDecision,
 } from '../run-engine/run-monitor.js';
+import {
+  activeVisualRepair,
+  admitVisualRepair,
+  reserveVisualRepair,
+  type VisualRepairAdmission,
+} from '../run-engine/visual-repair.js';
 import { WORKER_QUESTION_CLOSED_ACTION } from '../run-engine/worker-question.js';
 import {
   assertSupportedRunnerSpelling,
@@ -1583,6 +1590,8 @@ export interface RunResolveDecisionDependencies {
    * tmux session.
    */
   restoreGatePark?: (runId: string) => Promise<MachineParkGateRestoreResult>;
+  /** Send back admission; injectable so refusal-before-consumption can be proved. */
+  admitVisualRepair?: typeof admitVisualRepair;
 }
 
 /**
@@ -2033,6 +2042,16 @@ export async function resolveRunDecision(
   }
   if (params.actionId === 'post' && decision.payload?.kind === 'review')
     assertReviewCurationFresh(decision.payload, params.selectionData);
+  // Send back derives every Issue from the frozen gate; refusals leave the gate pending.
+  let visualRepair: VisualRepairAdmission | undefined;
+  if (decision.type === 'engine_human_gate' && params.actionId === SEND_BACK_TO_AGENT_ACTION) {
+    if (params.selectionData && Object.keys(params.selectionData).length)
+      throw new GatewayMethodError(
+        'VISUAL_REPAIR_REFUSED',
+        'Send back derives its Issues from the gate. Send no selection data.',
+      );
+    visualRepair = await (dependencies.admitVisualRepair ?? admitVisualRepair)(existing, decision);
+  }
   // A park that LANDED and freed the slot is restored rather than refused — the
   // operator answering the gate is what asks for the run back. Still before
   // anything READS or consumes the decision, so a refusal leaves it pending.
@@ -2178,7 +2197,8 @@ export async function resolveRunDecision(
         );
     }
     const assertReviewBudgetAtConsumption =
-      decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)
+      decision.type === 'engine_human_gate' &&
+      (isHumanGateReviewRequestAction(params.actionId) || visualRepair)
         ? await prepareReviewRoundAvailabilityCheck(params.runId)
         : undefined;
     assertDecisionStillUnresolved(params.runId, params.decisionId);
@@ -2196,6 +2216,25 @@ export async function resolveRunDecision(
           'Evidence attestation caller changed during validation.',
         );
       decision.evidenceAttestation = attestation;
+    }
+    if (visualRepair) {
+      // Re-check at the consumption point: a concurrent repair or completed identity refuses,
+      // and an identical retry reuses its one reservation instead of charging again.
+      const fresh = getRun(params.runId)!;
+      const repairs = fresh.engineState?.publishGate?.visualRepairs ?? [];
+      const reuse = repairs.find(({ repairId }) => repairId === visualRepair!.scope.repairId);
+      const active = activeVisualRepair(fresh);
+      if (
+        (active && active.repairId !== visualRepair.scope.repairId) ||
+        reuse?.status === 'completed'
+      )
+        throw new GatewayMethodError(
+          'VISUAL_REPAIR_REFUSED',
+          'Another Send back changed this gate. Refresh and try again.',
+        );
+      updateRun(params.runId, {
+        engineState: reserveVisualRepair(fresh, { ...visualRepair, ...(reuse ? { reuse } : {}) }),
+      });
     }
     // Past every refusal now, so the normalization may persist.
     if (normalizedReviews) normalizeExhaustedReviewContinuationsForRun(params.runId);
