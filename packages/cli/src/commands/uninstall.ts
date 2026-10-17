@@ -3,7 +3,6 @@
 // The counterpart to install.sh. Reads persisted state so a custom install
 // (FARMSLOT_WORKSPACE/BIN_DIR/HOME) is removed at its real locations. Run history and
 // the home dir (gateway auth/profiles) default to KEEP — deleting them is opt-in.
-import { readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -17,6 +16,7 @@ import {
   buildUninstallPlan,
   type Disposition,
   executeUninstallPlan,
+  runHistoryCount,
   type UninstallPlan,
 } from '../onboarding/uninstall.js';
 import { readState, resolveWorkspace, type WorkspaceState } from '../onboarding/workspace.js';
@@ -52,14 +52,6 @@ function fromFlags(
   if (keep) return { disposition: 'keep' };
   if (del) return { disposition: 'delete' };
   return { disposition: 'backup', backupPath: backup };
-}
-
-function countEntries(dir: string): number {
-  try {
-    return readdirSync(dir).length;
-  } catch {
-    return 0;
-  }
 }
 
 function defaultBackupPath(label: string): string {
@@ -105,6 +97,10 @@ function printPlan(output: OutputContext, plan: UninstallPlan): void {
   output.write(
     `  run history ${dispo(plan.history, plan.historyBackupPath)} ${dim(plan.runsDir)}\n`,
   );
+  if (plan.history !== 'delete') {
+    for (const { from, to } of plan.historySources)
+      output.write(`              ${dim(`moves ${from} -> ${to}`)}\n`);
+  }
   output.write(`  home/auth   ${dispo(plan.home, plan.homeBackupPath)} ${dim(plan.homeDir)}\n\n`);
 }
 
@@ -115,9 +111,12 @@ export function registerUninstallCommand(program: Command): void {
     .option('--dry-run', 'show what would be removed, change nothing')
     .option('-y, --yes', 'do not prompt; keep run history + home/credentials unless --purge')
     .option('--purge', 'also delete run history and home/credentials (implies --yes)')
-    .option('--keep-history', 'keep <workspace>/runs')
-    .option('--delete-history', 'delete <workspace>/runs')
-    .option('--backup-history <path>', 'archive <workspace>/runs to <path>, then remove it')
+    .option('--keep-history', 'keep run history and task folders, moved under <workspace>/runs')
+    .option('--delete-history', 'delete run history and task folders')
+    .option(
+      '--backup-history <path>',
+      'archive run history and task folders to <path>, then remove them',
+    )
     .option('--keep-home', 'keep the farmslot home dir (gateway auth/profiles/logs)')
     .option('--delete-home', 'delete the farmslot home dir')
     .option('--backup-home <path>', 'archive the home dir to <path>, then remove it')
@@ -176,7 +175,7 @@ export function registerUninstallCommand(program: Command): void {
         const rl = createInterface({ input: process.stdin, output: process.stdout });
         try {
           if (fromFlags(flags.keepHistory, flags.deleteHistory, flags.backupHistory) === null) {
-            const n = countEntries(ws.runsDir);
+            const n = runHistoryCount(ws);
             history = await askDisposition(rl, 'Run history', `(${n} archived)`, 'runs');
           }
           if (

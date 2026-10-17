@@ -104,8 +104,8 @@ Then either:
 - run the dashboard locally from a farmslot checkout via `yarn farmdev`.
 
 From the Command Center you dispatch flows (fix-bug, review-pr, pr-complete,
-feature, …) to free slots. Agents run in isolated slot sandboxes; runs are
-archived under `<workspace>/runs/`.
+feature, …) to free slots. Agents run in isolated slot sandboxes; the gateway
+records runs in the clone's `.runs/` and task folders under `projects/<project>/tasks/`.
 
 ## One-glance lifecycle
 
@@ -136,7 +136,8 @@ farmslot uninstall --yes       # non-interactive; keeps run history + home/crede
 farmslot uninstall --purge     # also delete run history + home/credentials
 ```
 
-Run history (`<workspace>/runs/`) and the home dir (gateway auth/profiles) default
+Run history (the gateway's run records and task folders, moved out of the clone to
+`<workspace>/runs/uninstalled-<time>/`) and the home dir (gateway auth/profiles) default
 to **keep** — deleting them is opt-in (`--delete-history` / `--delete-home` or
 `--purge`); `--backup-history <path>` / `--backup-home <path>` archive them first.
 Only a `farmslot` symlink that resolves **into this workspace** is removed; a

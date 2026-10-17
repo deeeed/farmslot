@@ -9,15 +9,19 @@ import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   lstatSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmdirSync,
   rmSync,
 } from 'node:fs';
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { resolveRunsDir } from '@farmslot/run-bundle';
+import { ORCHESTRATOR_TASK_DIR } from '@farmslot/slot-config';
 
 import { readPool } from './pool-config.js';
 import { type Workspace, type WorkspaceState } from './workspace.js';
@@ -43,6 +47,9 @@ export interface UninstallPlan {
   /** Always removed: state.json. */
   installFiles: string[];
   runsDir: string;
+  /** The gateway's run records and task folders inside the farmslot clone, each moved under
+   *  runsDir before a keep or backup, so the clone removal never takes the history with it. */
+  historySources: Array<{ from: string; to: string }>;
   homeDir: string;
   history: Disposition;
   home: Disposition;
@@ -135,6 +142,31 @@ function resolveOwnedSymlink(binDir: string | undefined, workspaceRoot: string):
   }
 }
 
+/** The gateway's run history inside the clone: its run records and each project's task folders. */
+function gatewayHistory(ws: Workspace): Array<{ rel: string; path: string }> {
+  const sources = [{ rel: 'runs', path: resolveRunsDir(ws.farmslotDir, {}) }];
+  const projects = join(ws.farmslotDir, 'projects');
+  for (const name of existsSync(projects) ? readdirSync(projects) : []) {
+    const rel = join('projects', name, ORCHESTRATOR_TASK_DIR);
+    sources.push({ rel, path: join(ws.farmslotDir, rel) });
+  }
+  return sources.filter((source) =>
+    lstatSync(source.path, { throwIfNoEntry: false })?.isDirectory(),
+  );
+}
+
+/** Run records the gateway kept in the clone, plus anything already under the workspace runs dir. */
+export function runHistoryCount(ws: Workspace): number {
+  const count = (dir: string): number => {
+    try {
+      return readdirSync(dir).length;
+    } catch {
+      return 0;
+    }
+  };
+  return count(resolveRunsDir(ws.farmslotDir, {})) + count(ws.runsDir);
+}
+
 export function buildUninstallPlan(
   ws: Workspace,
   state: WorkspaceState | null,
@@ -160,11 +192,17 @@ export function buildUninstallPlan(
   if (opts.home === 'backup' && opts.homeBackupPath) {
     assertBackupDest(opts.homeBackupPath, [ws.root, homeDir]);
   }
+  // One folder per uninstall, so history kept by an earlier uninstall is never overwritten.
+  const kept = join(ws.runsDir, `uninstalled-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   return {
     workspaceRoot: ws.root,
     installDirs: [ws.farmslotDir, ws.reposDir],
     installFiles: [ws.statePath],
     runsDir: ws.runsDir,
+    historySources: gatewayHistory(ws).map(({ rel, path }) => ({
+      from: path,
+      to: join(kept, rel),
+    })),
     homeDir,
     history: opts.history,
     home: opts.home,
@@ -501,13 +539,40 @@ export async function executeUninstallPlan(
   //    on PATH pointing into a half-removed workspace.
   if (plan.symlink) remove(plan.symlink, `symlink ${plan.symlink}`);
 
-  // 2. History + home. A backup that fails to archive keeps the dir (disposeOf throws before
-  //    deleting) and is recorded as a leftover rather than aborting the run.
+  // 2. History + home. The gateway keeps run records and task folders inside the clone, so a
+  //    keep or backup first moves them under runsDir. If a move fails, the clone stays rather
+  //    than take that history with it. A backup that fails to archive keeps the dir (disposeOf
+  //    throws before deleting) and is recorded as a leftover rather than aborting the run.
+  const stranded: string[] = [];
+  if (plan.history !== 'delete') {
+    for (const { from, to } of plan.historySources) {
+      try {
+        mkdirSync(dirname(to), { recursive: true });
+        renameSync(from, to);
+        hooks.step(`moved ${from} -> ${to}`);
+      } catch (err) {
+        stranded.push(from);
+        const error = errMessage(err);
+        leftovers.push({ path: from, error });
+        hooks.step(`could not move run history ${from}: ${error}`);
+      }
+    }
+  }
   dispose(plan.runsDir, plan.history, plan.historyBackupPath);
   dispose(plan.homeDir, plan.home, plan.homeBackupPath);
 
   // 3. Always-remove install artifacts.
-  for (const dir of plan.installDirs) remove(dir, dir);
+  for (const dir of plan.installDirs) {
+    if (stranded.some((from) => from.startsWith(dir + sep))) {
+      leftovers.push({
+        path: dir,
+        error: 'kept: it still holds run history that could not be moved',
+      });
+      hooks.step(`kept ${dir}: it still holds run history that could not be moved`);
+      continue;
+    }
+    remove(dir, dir);
+  }
   for (const file of plan.installFiles) remove(file, file);
 
   // 4. Workspace dir. --purge removes it wholesale, including files farmslot did not create;

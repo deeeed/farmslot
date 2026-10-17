@@ -5,6 +5,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -18,6 +20,7 @@ import {
   buildUninstallPlan,
   executeUninstallPlan,
   REMOVE_PATH_RETRY_OPTIONS,
+  runHistoryCount,
   shouldSweepCommand,
 } from './uninstall.js';
 import { workspaceAt, type WorkspaceState } from './workspace.js';
@@ -272,6 +275,108 @@ test('executeUninstallPlan removes install artifacts and skips stop when no pidf
     rmSync(root, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
   }
+});
+
+/** A workspace whose gateway kept one run record and one task folder inside the clone. */
+function workspaceWithHistory(prefix: string) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  const homeDir = join(tmpdir(), `fs-home-${root.slice(-8)}`);
+  const clone = join(root, 'farmslot');
+  mkdirSync(join(clone, '.runs'), { recursive: true });
+  writeFileSync(join(clone, '.runs', 'run-1.json'), '{"id":"run-1"}');
+  mkdirSync(join(clone, 'projects', 'app', 'tasks', 'feat', 't-1'), { recursive: true });
+  writeFileSync(join(clone, 'projects', 'app', 'tasks', 'feat', 't-1', 'TASK.md'), '# task');
+  mkdirSync(join(clone, 'projects', 'no-runs'), { recursive: true });
+  mkdirSync(join(root, 'repos'), { recursive: true });
+  mkdirSync(homeDir, { recursive: true });
+  writeFileSync(join(root, 'state.json'), '{}');
+  const cleanup = () => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  };
+  return { root, homeDir, clone, cleanup };
+}
+
+test('keeping history moves the gateway run records and task folders out of the clone', async (t) => {
+  const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-keep-');
+  t.after(cleanup);
+  const ws = workspaceAt(root);
+  assert.equal(runHistoryCount(ws), 1);
+  const plan = buildUninstallPlan(ws, baseState({ home_dir: homeDir }), KEEP);
+  assert.deepEqual(
+    plan.historySources.map(({ from }) => from),
+    [join(clone, '.runs'), join(clone, 'projects', 'app', 'tasks')],
+  );
+
+  const { leftovers } = await executeUninstallPlan(plan, { step: () => {} });
+
+  assert.deepEqual(leftovers, []);
+  assert.equal(existsSync(clone), false);
+  const [kept] = readdirSync(ws.runsDir);
+  assert.match(kept ?? '', /^uninstalled-/);
+  assert.equal(
+    readFileSync(join(ws.runsDir, kept!, 'runs', 'run-1.json'), 'utf8'),
+    '{"id":"run-1"}',
+  );
+  assert.equal(
+    readFileSync(
+      join(ws.runsDir, kept!, 'projects', 'app', 'tasks', 'feat', 't-1', 'TASK.md'),
+      'utf8',
+    ),
+    '# task',
+  );
+});
+
+test('backing up history archives the gateway run records and task folders', async (t) => {
+  const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-backup-');
+  const archive = join(tmpdir(), `fs-history-${root.slice(-8)}.tgz`);
+  t.after(() => {
+    cleanup();
+    rmSync(archive, { force: true });
+  });
+  const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
+    ...KEEP,
+    history: 'backup',
+    historyBackupPath: archive,
+  });
+
+  await executeUninstallPlan(plan, { step: () => {} });
+
+  assert.equal(existsSync(clone), false);
+  assert.equal(existsSync(join(root, 'runs')), false);
+  const listed = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8' }).stdout;
+  assert.match(listed, /runs\/uninstalled-[^/]+\/runs\/run-1\.json/);
+  assert.match(listed, /runs\/uninstalled-[^/]+\/projects\/app\/tasks\/feat\/t-1\/TASK\.md/);
+});
+
+test('a history move that fails keeps the clone instead of deleting its history', async (t) => {
+  const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-stranded-');
+  t.after(cleanup);
+  // A file where the runs dir belongs makes every move fail.
+  writeFileSync(join(root, 'runs'), 'not a directory');
+  const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), KEEP);
+
+  const { leftovers } = await executeUninstallPlan(plan, { step: () => {} });
+
+  assert.equal(readFileSync(join(clone, '.runs', 'run-1.json'), 'utf8'), '{"id":"run-1"}');
+  assert.ok(leftovers.some(({ path }) => path === clone));
+  assert.equal(existsSync(join(root, 'repos')), false);
+});
+
+test('deleting history moves nothing and removes it with the clone', async (t) => {
+  const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-delete-');
+  t.after(cleanup);
+  const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
+    ...KEEP,
+    history: 'delete',
+  });
+  const steps: string[] = [];
+
+  await executeUninstallPlan(plan, { step: (label) => steps.push(label) });
+
+  assert.equal(existsSync(clone), false);
+  assert.equal(existsSync(join(root, 'runs')), false);
+  assert.ok(!steps.some((step) => step.startsWith('moved ')));
 });
 
 test('rejects a backup path that already exists (no overwrite)', () => {
