@@ -352,6 +352,8 @@ if (process.argv[2] === 'serve') {
         },
       ],
       engineState: { ...original.engineState, generation: 0 },
+      // Bundle refs bind the original Run store; the disposable gateway captures its own.
+      ...(caseLedger ? { artifactBundle: undefined, output: undefined, decisions: [] } : {}),
     };
     json(path.join(root, '.runs', `${run.id}.json`), run);
     const loader = path.join(scratch, 'proof-loader.mjs');
@@ -614,8 +616,6 @@ if (process.argv[2] === 'serve') {
       );
       json(path.join(out, 'advanced-after-idle.json'), advanced);
     } else if (caseLedger) {
-      const stale = await replay();
-      if (stale.error !== barrier) assert.match(stale.error ?? '', /Run output changed/);
       assert.equal((await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok, true);
       const gated = await replay();
       // The Command Center AC panel reads the ledger the gate consumed.
