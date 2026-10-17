@@ -372,37 +372,42 @@ try {
   delete env.FARMSLOT_DISABLE_RUN_ENGINE_START;
   mkdirSync(env.TMUX_TMPDIR!, { recursive: true });
   writeJson(path.join(out, 'fixture.json'), { temporary, root, repo, slotId, project, ticket });
-  gateway = spawn(process.execPath, ['--import', 'tsx', 'services/gateway/src/index.ts'], {
-    cwd: source,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  for (const stream of [gateway.stdout, gateway.stderr])
-    stream?.on('data', (data) => {
-      logs += String(data);
-      appendFileSync(path.join(out, 'gateway-live.log'), String(data));
+  // The same private gateway, started again over its retained root after a restart.
+  const startGateway = async () => {
+    const started = spawn(process.execPath, ['--import', 'tsx', 'services/gateway/src/index.ts'], {
+      cwd: source,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-  const healthDeadline = Date.now() + 60_000;
-  for (;;) {
-    assert.equal(gateway.exitCode, null, logs.slice(-4000));
-    try {
-      if ((await fetch(`http://127.0.0.1:${gatewayPort}/health`)).ok) break;
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
+    gateway = started;
+    for (const stream of [started.stdout, started.stderr])
+      stream?.on('data', (data) => {
+        logs += String(data);
+        appendFileSync(path.join(out, 'gateway-live.log'), String(data));
+      });
+    const healthDeadline = Date.now() + 60_000;
+    for (;;) {
+      assert.equal(started.exitCode, null, logs.slice(-4000));
+      try {
+        if ((await fetch(`http://127.0.0.1:${gatewayPort}/health`)).ok) break;
+      } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+      }
+      assert.ok(Date.now() < healthDeadline, 'private gateway did not become healthy');
+      await pause(100);
     }
-    assert.ok(Date.now() < healthDeadline, 'private gateway did not become healthy');
-    await pause(100);
-  }
-  client = new GatewayClient({
-    url: `ws://127.0.0.1:${gatewayPort}/ws`,
-    timeout: 120_000,
-    credential: { token: serviceToken },
-  });
-  reviewer = new GatewayClient({
-    url: `ws://127.0.0.1:${gatewayPort}/ws`,
-    timeout: 120_000,
-    credential: { token: grant.accessToken },
-  });
+    client = new GatewayClient({
+      url: `ws://127.0.0.1:${gatewayPort}/ws`,
+      timeout: 120_000,
+      credential: { token: serviceToken },
+    });
+    reviewer = new GatewayClient({
+      url: `ws://127.0.0.1:${gatewayPort}/ws`,
+      timeout: 120_000,
+      credential: { token: grant.accessToken },
+    });
+  };
+  await startGateway();
 
   // Startup recovery scans active runs once; create the proof run after that scan.
   await pause(15_000);
@@ -519,7 +524,21 @@ try {
     'the client-built Send back persists one reservation; a duplicate resolve is refused',
   );
 
-  // 5. The retained worker repairs only AC-2; the gate returns with retained AC-1.
+  // 5. A gateway restart while the worker repairs neither loses nor recharges the repair.
+  await waitFor(
+    readRun,
+    (run) => {
+      failedRun(run);
+      return run.engineState?.publishGate?.visualRepairs?.[0]?.status === 'delivered';
+    },
+    'repair delivered',
+    10 * 60_000,
+  );
+  await stop(gateway);
+  await startGateway();
+  checks.push('the private gateway restarted while the retained worker repaired');
+
+  // 6. The retained worker repairs only AC-2; the gate returns with retained AC-1.
   const returned = await waitFor(
     readRun,
     (run) => {
