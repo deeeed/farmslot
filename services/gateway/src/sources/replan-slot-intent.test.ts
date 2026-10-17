@@ -8,7 +8,11 @@ import '../runtime/mock-pty.test-support.js';
 
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { getAllRuns } from '../runs/store.js';
-import { runWithWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
+import {
+  currentSessionOriginator,
+  runWithWorkOriginator,
+  type WorkOriginator,
+} from '../security/work-originator.js';
 
 import {
   sourceTestLock,
@@ -18,12 +22,14 @@ import {
 
 const methods = await import('../methods/run.js');
 const validated: Array<string | undefined> = [];
+const plannedAs: WorkOriginator[] = [];
 let plannedQaAfterReview: QaAfterReview | undefined;
 mock.module('../methods/run.js', {
   namedExports: {
     ...methods,
     planRunCreation: async (params: Parameters<typeof methods.planRunCreation>[0]) => {
       validated.push(params.slotId);
+      plannedAs.push(currentSessionOriginator());
       return {
         params,
         workflowExecution: undefined,
@@ -228,5 +234,45 @@ test('source revalidation keeps the creator generation under any actor', async (
     );
     assert.equal(next.createdByPrincipalId, 'creator');
     assert.equal(next.createdByPrincipalGeneration, generation);
+  }
+});
+
+test('a delegated static review replans as its native owner and keeps its requester', async () => {
+  const lock = sourceTestLock('node-1');
+  const sources = {
+    project: 'demo',
+    pack: lock.packBindings.demo,
+    materialization: sourceTestMaterialization(lock, 'gateway'),
+    packs: lock.packBindings,
+  };
+  const actors: WorkOriginator[] = [
+    { kind: 'system' },
+    { kind: 'principal', principalId: 'arthur', principalGeneration: 1 },
+  ];
+  for (const actor of actors) {
+    const run = makeRun({
+      id: 'run-1',
+      project: 'demo',
+      flowType: 'review-pr',
+      status: 'slot-finding',
+      slotId: null,
+    });
+    run.sourcePlan = sourceTestPlan();
+    run.dispatchRequest = {
+      project: 'demo',
+      flowType: 'review-pr',
+      ticketOrPr: 'https://github.com/example/demo/pull/1',
+    };
+    run.createdByPrincipalId = 'farm-automation';
+    run.requestedByPrincipalId = 'arthur';
+    run.requestedByPrincipalGeneration = 1;
+    const next = await runWithWorkOriginator(actor, () =>
+      withProjectSources(sources, () => replanSourceRun(run, { nodeId: 'node-1' })),
+    );
+    assert.deepEqual(plannedAs.at(-1), { kind: 'principal', principalId: 'farm-automation' });
+    assert.equal(next.createdByPrincipalId, 'farm-automation');
+    assert.equal(next.createdByPrincipalGeneration, undefined);
+    assert.equal(next.requestedByPrincipalId, 'arthur');
+    assert.equal(next.requestedByPrincipalGeneration, 1);
   }
 });

@@ -885,7 +885,9 @@ sessions and client actor strings grant neither kind. No agent may use a person'
 credential or be recorded as a person reviewer.
 
 `ProjectVisualClaimReviewPolicy` contains `delegatedReviewerPrincipalIds`,
-`delegatorPrincipalId`. Without an explicit
+`delegatorPrincipalId` and an optional `delegatorPrincipalGeneration`. A bare
+delegator id binds identity generation zero; the pin names a later generation
+(ADR-051 Amendment 5 clarification). Without an explicit
 delegation, agent review is refused. The delegator is an identified person; the
 reviewer must be listed for this project. Policy comes from
 the existing trusted project configuration, never from task/recipe input or a
