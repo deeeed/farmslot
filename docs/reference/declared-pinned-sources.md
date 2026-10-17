@@ -226,7 +226,7 @@ not stable APIs until the reviewed implementation release ships.
 
 ## Live source status
 
-**Status:** Proposed with [ADR-069 Amendment 1](../adr/069-declared-pinned-sources.md#amendment-1-2026-10-17-live-source-status).
+**Status:** Accepted (2026-10-17, lead-approved) with [ADR-069 Amendment 1](../adr/069-declared-pinned-sources.md#amendment-1-2026-10-17-live-source-status).
 This is the pilot slice of ADR-071 (gateway change notifications, proposed and
 not yet published).
 

@@ -112,7 +112,7 @@ manager nor converts any live checkout.
 
 ## Amendment 1 (2026-10-17): Live source status
 
-**Status:** Proposed, awaiting lead approval after paired review
+**Status:** Accepted (2026-10-17, lead-approved)
 
 ### Decision
 
