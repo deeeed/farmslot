@@ -167,6 +167,13 @@ test('operatorAddedFiles preserves only pack-ignored operator files', (t) => {
     join('fixtures', '.js.env'),
     join('fixtures', 'runtime', 'wallet-fixture.json'),
   ]);
+  // A linked project dir is replaced as a whole, so its ignored task files are carried over.
+  symlinkSync(dest, join(root, 'dest-link'));
+  assert.deepEqual(operatorAddedFiles(join(root, 'dest-link'), src).sort(), [
+    join('fixtures', '.js.env'),
+    join('fixtures', 'runtime', 'wallet-fixture.json'),
+    join('tasks', 'feat', 't-1', 'TASK.md'),
+  ]);
   // Fresh dest (first add) has nothing to preserve.
   assert.deepEqual(operatorAddedFiles(join(root, 'missing'), src), []);
 });
@@ -246,12 +253,23 @@ test('a pack re-sync keeps the gateway run task root', (t) => {
   mkdirSync(inputs, { recursive: true });
   writeFileSync(join(inputs, 'handoff.json'), '{"frozen":true}\n', { mode: 0o600 });
   rmSync(join(projSrc, 'old-hook.sh'));
+  // A pack copied from a live project can carry an old snapshot of the same task.
+  const packInputs = join(projSrc, 'tasks', 'feat', 'tat-1', 'inputs');
+  mkdirSync(packInputs, { recursive: true });
+  writeFileSync(join(packInputs, 'handoff.json'), '{"stale":true}\n');
 
   registerProject(proj, packDir, ws, state, 'p', noop);
   assert.equal(readFileSync(join(inputs, 'handoff.json'), 'utf-8'), '{"frozen":true}\n');
   assert.equal(statSync(join(inputs, 'handoff.json')).mode & 0o777, 0o600);
   // Pack content is still fully replaced.
   assert.equal(existsSync(join(dest, 'old-hook.sh')), false);
+
+  // A pack entry named tasks that is a file is skipped as well.
+  rmSync(join(projSrc, 'tasks'), { recursive: true });
+  writeFileSync(join(projSrc, 'tasks'), 'not a folder\n');
+  registerProject(proj, packDir, ws, state, 'p', noop);
+  assert.equal(existsSync(join(dest, 'project.json')), true);
+  assert.equal(readFileSync(join(inputs, 'handoff.json'), 'utf-8'), '{"frozen":true}\n');
 
   // A linked project dir is replaced as a whole; nothing inside its target is deleted.
   const outside = join(root, 'outside');

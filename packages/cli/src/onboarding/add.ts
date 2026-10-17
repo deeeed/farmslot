@@ -290,15 +290,16 @@ function packIgnoredFiles(src: string, paths: string[]): Set<string> {
  * readFileSync would EISDIR on restore), and empty operator dirs are not
  * preserved. A non-git pack source yields no signal → nothing preserved
  * (matches the prior full-replace; real packs are git clones/submodules).
- * The gateway's run task root is never replaced, so it is not scanned.
+ * A real project dir keeps the gateway's run task root in place, so it is not scanned.
  */
 export function operatorAddedFiles(dest: string, src: string): string[] {
   if (!existsSync(dest)) return [];
+  const skipTaskRoot = keepsTaskRoot(dest);
   const candidates: string[] = [];
   const walk = (rel: string): void => {
     for (const entry of readdirSync(join(dest, rel))) {
       if (entry === '.git' || entry === 'node_modules') continue;
-      if (!rel && entry === ORCHESTRATOR_TASK_DIR) continue;
+      if (!rel && skipTaskRoot && entry === ORCHESTRATOR_TASK_DIR) continue;
       const childRel = rel ? join(rel, entry) : entry;
       const stat = lstatSync(join(dest, childRel));
       if (stat.isSymbolicLink()) continue;
@@ -312,6 +313,14 @@ export function operatorAddedFiles(dest: string, src: string): string[] {
   walk('');
   const ignored = packIgnoredFiles(src, candidates);
   return candidates.filter((rel) => ignored.has(rel));
+}
+
+/**
+ * A real project dir keeps the gateway's run task root across a pack replace; a
+ * linked or missing one is replaced as a whole, so nothing inside a link target is deleted.
+ */
+function keepsTaskRoot(dest: string): boolean {
+  return lstatSync(dest, { throwIfNoEntry: false })?.isDirectory() ?? false;
 }
 
 function projectPaths(proj: PackProject, packDir: string, ws: Workspace) {
@@ -387,8 +396,8 @@ export function registerProject(
   // Full replace: packs own their project dirs — files deleted from the pack
   // must disappear here too, not survive as stale hooks/fixtures. The gateway's
   // run task root is not pack content: it holds every run's retained task
-  // inputs and evidence, so it stays in place.
-  if (existsSync(dest) && lstatSync(dest).isDirectory()) {
+  // inputs and evidence, so it stays in place and a pack copy of it is skipped.
+  if (keepsTaskRoot(dest)) {
     for (const entry of readdirSync(dest)) {
       if (entry !== ORCHESTRATOR_TASK_DIR)
         rmSync(join(dest, entry), { recursive: true, force: true });
@@ -396,7 +405,17 @@ export function registerProject(
   } else {
     rmSync(dest, { recursive: true, force: true });
   }
-  cpSync(src, dest, { recursive: true, verbatimSymlinks: true });
+  const packTaskRoot = join(src, ORCHESTRATOR_TASK_DIR);
+  if (lstatSync(packTaskRoot, { throwIfNoEntry: false })) {
+    progress.info(
+      `skipped projects/${name}/${ORCHESTRATOR_TASK_DIR} in the pack: it is the gateway's run task folder`,
+    );
+  }
+  cpSync(src, dest, {
+    recursive: true,
+    verbatimSymlinks: true,
+    filter: (source) => source !== packTaskRoot,
+  });
   // Restore preserved operator files on top of the fresh pack copy.
   for (const file of preserved) {
     const target = join(dest, file.rel);
