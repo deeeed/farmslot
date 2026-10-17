@@ -1,6 +1,5 @@
 import {
-  isCompletionPrerequisiteFailure,
-  isTerminalRunStatus,
+  isActiveListRun,
   monitoredPRKey,
   parseGitHubPullUrl,
   parseGitHubRef,
@@ -59,7 +58,7 @@ export function runOwnsPR(
   pr: NonNullable<QueueItem['prWork']>['pr'],
   mappedProject?: string,
 ): boolean {
-  if (isTerminalRunStatus(run.status) && !isCompletionPrerequisiteFailure(run)) return false;
+  if (!isActiveListRun(run)) return false;
   if (run.prWork) return monitoredPRKey(run.prWork.pr) === monitoredPRKey(pr);
   if (
     run.prPublications?.some((publication) => monitoredPRKey(publication.pr) === monitoredPRKey(pr))
@@ -91,8 +90,7 @@ export function assertNoAutomatedPRConflict(params: RunCreateParams, runs: Run[]
   const ref = PR_BOUND_FLOW_TYPES.has(params.flowType) ? parseGitHubRef(params.ticketOrPr) : null;
   if (!ref && params.prNumber === undefined) return;
   for (const run of runs) {
-    if (!run.prWork || (isTerminalRunStatus(run.status) && !isCompletionPrerequisiteFailure(run)))
-      continue;
+    if (!run.prWork || !isActiveListRun(run)) continue;
     const sameRef =
       ref &&
       ref.repo.toLowerCase() === run.prWork.pr.repo.toLowerCase() &&
@@ -118,11 +116,7 @@ export function assertPRReviewWorktreeHead(
 export function assertPRRunActivation(run: Run, others: Run[]): void {
   const active = others.filter((item) => item.id !== run.id);
   for (const owner of active) {
-    if (
-      owner.prWork &&
-      (!isTerminalRunStatus(owner.status) || isCompletionPrerequisiteFailure(owner)) &&
-      runOwnsPR(run, owner.prWork.pr, owner.project)
-    )
+    if (owner.prWork && isActiveListRun(owner) && runOwnsPR(run, owner.prWork.pr, owner.project))
       throw new Error(`PR execution is owned by run ${owner.id}`);
   }
   if (run.prWork) {
