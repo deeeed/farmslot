@@ -20,6 +20,7 @@ import {
   hasSubmittedQueue,
   nativeState,
   paneIdentity,
+  proofVerification,
   queuedInTranscript,
   queuedPrompt,
   queueProofTimeoutMs,
@@ -27,6 +28,7 @@ import {
   requiresNativeSession,
   sessionSize,
   supportsMidTurnPrompt,
+  verifyTimeoutMs,
   writeSentinel,
 } from './native-evidence.mjs';
 
@@ -620,8 +622,9 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
   };
   if (['queued_input', 'acceptance_unacknowledged'].includes(verification) && ownedRetry(before))
     verification = null;
-  const timeout = Number(process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS || 3000);
-  // Read before any key, so a bad setting never turns a delivered send into an error.
+  // Both settings are read before any key, so a bad value never turns a delivered send into an
+  // error, and a non-numeric one never leaves the wait without an end.
+  const timeout = verifyTimeoutMs();
   const queueProof = queueProofTimeoutMs();
   let scratch = null;
   let locked = false;
@@ -655,7 +658,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
       // paneState has already withdrawn pulled-back proofs; a recalled delivered prompt keeps one.
       if (retry && before.accepted) {
         evidence = before.accepted;
-        verification = queuedInTranscript(runner, evidence) ? 'queued' : 'submitted';
+        verification = proofVerification(runner, evidence);
       } else if (flush || retry) {
         receipt = JSON.parse(fs.readFileSync(files.receipt, 'utf8'));
         if (
@@ -786,7 +789,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                   durableWrite(files.receipt, { ...current, accepted: evidence });
                 else clearAcceptedReceipt(files, current);
               }
-              verification = queuedInTranscript(runner, evidence) ? 'queued' : 'submitted';
+              verification = proofVerification(runner, evidence);
               break;
             }
             if (after.pending_question) {

@@ -939,6 +939,20 @@ test('a Claude queue record written after the wait is confirmed by the same send
   assert.equal(f.keys.length, keys, 'confirming never pastes or presses a key');
 });
 
+test('a non-numeric verify timeout refuses the send before any key', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS = '5s';
+  // Parsed as NaN, it once left the queue-proof wait polling without end under the pane lock.
+  await assert.rejects(
+    send('%1', 'claude', f.payload),
+    /TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS must be a non-negative integer/,
+  );
+  assert.deepEqual(
+    f.keys.filter((args) => ['paste-buffer', 'send-keys'].includes(args[0])),
+    [],
+  );
+});
+
 test('input pulled back during the queue-proof wait gets no second Enter', async (t) => {
   const f = claudeFixture(t, 'busy');
   process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS = '400';

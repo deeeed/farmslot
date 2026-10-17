@@ -57,8 +57,9 @@ Claude transcript records written after the send prove delivery. An exact human 
 `queued_command` attachment Claude adds when its next step takes the input in
 (`native-steering`). The enqueue is usually written at once, but under load it can wait for
 that next step (12 s on one busy worker), so a mid-turn Claude send keeps reading the
-transcript until `TMUX_MODEL_DRIVER_QUEUE_PROOF_MS` after the send started. It presses no key
-in that time, and text that left the composer and came back is never submitted again. With no
+transcript until `TMUX_MODEL_DRIVER_QUEUE_PROOF_MS` after the send started. After its first
+check it presses no key in that time, and this send never submits text that left the composer
+and came back (a later run of the same send may, through the retry path above). With no
 record by then it reports `unverified` and keeps its receipt; the same send run later confirms
 it from the transcript without typing: `queued`, or `submitted` once Claude has taken the input
 as its next prompt. Codex steering proved from its history stays `submitted`; only a rendered
@@ -143,7 +144,7 @@ is refused. Never clear the composer or resend an unverified prompt.
 - `TMUX_MODEL_DRIVER_OBSERVABILITY_DIR`: the runner's `.observability` directory.
   Default is `<pane-current-path>/.agent/.observability`.
 - `TMUX_MODEL_DRIVER_STATE_DIR`: private receipt and lock directory.
-- `TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS`: verification ceiling, default 3000 ms.
+- `TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS`: verification ceiling, non-negative integer, default 3000 ms. Like the queue wait, it is read before any key; an empty or non-numeric value is refused.
 - `TMUX_MODEL_DRIVER_QUEUE_PROOF_MS`: how long a mid-turn Claude send keeps reading its transcript for the queue record, counted from the start of the send; non-negative integer, default 20000, 0 turns the wait off, and an empty value is refused before any key is pressed. The pane's transport lock is held meanwhile, so another send or acknowledgement to that pane gets `driver_busy`. Lane callers' send timeouts must cover it.
 - `TMUX_MODEL_DRIVER_PROBE_TIMEOUT_MS`: positive integer native shell-probe budget in milliseconds, default 10000. Pane state and send preflight use this same budget. Process-owned rollout headers are checked together; large histories retain their full native boundary and question checks. This is separate from the verification retry window. Lane callers must allow enough total time for startup and all probes.
 - `TMUX_MODEL_DRIVER_STAGE_ROOT`: directory for staged shell launch scripts.
