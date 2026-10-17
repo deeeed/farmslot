@@ -52,6 +52,7 @@ import {
   TaskAcceptancePanel,
 } from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { useConnectedRefresh } from '../../hooks/useConnectedRefresh';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import { useRunAcceptance } from '../../hooks/useRunAcceptance';
@@ -554,14 +555,14 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   }, [connection, refreshSourceRun, sourceRunId]);
 
   useEffect(() => {
-    if (!sourceRunId) {
-      setRecipeRuns([]);
-      setRecipeArtifactCount(null);
-      setRecipeAvailabilityError(null);
-      return;
-    }
-    void refreshRecipeRuns('initial load', true);
-  }, [refreshRecipeRuns, sourceRunId]);
+    if (sourceRunId) return;
+    setRecipeRuns([]);
+    setRecipeArtifactCount(null);
+    setRecipeAvailabilityError(null);
+  }, [sourceRunId]);
+
+  // Each reconnect re-reads, as the source run above does, keeping the recipe pairs on screen.
+  useConnectedRefresh(refreshRecipeRuns, Boolean(sourceRunId));
 
   useEffect(() => {
     if (!client || !sourceRunId) return;

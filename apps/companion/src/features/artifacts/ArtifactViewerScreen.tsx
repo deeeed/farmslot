@@ -28,6 +28,7 @@ import { DocumentViewer } from '../../components/DocumentViewer';
 import { MediaViewer } from '../../components/MediaViewer';
 import { RecipeRunControls } from '../../components/RecipeRunControls';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
+import { useConnectedRefresh } from '../../hooks/useConnectedRefresh';
 import {
   type ArtifactStickyChromeLayout,
   artifactStickyChromeThreshold,
@@ -319,9 +320,9 @@ export default function ArtifactViewerScreen() {
     return () => clearInterval(timer);
   }, [client, refreshRun, runId]);
 
-  useEffect(() => {
-    void refreshRecipeRuns('initial load', true);
-  }, [refreshRecipeRuns]);
+  // Each reconnect re-reads, as run detail does, and keeps the open evidence on screen, so
+  // a load paused before the gateway connected, or during a restart, is retried.
+  useConnectedRefresh(refreshRecipeRuns);
 
   const refreshAfterRecipeComplete = useCallback(
     (_requestId: string) => {
