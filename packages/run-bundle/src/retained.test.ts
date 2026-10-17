@@ -692,6 +692,49 @@ test('acquisition media under FARMSLOT_PROJECTS_DIR is charged like the default 
   assert.ok(result.missingData.includes('media-capacity:artifacts/capture.mp4'));
 });
 
+test('a projects dir inside the root sandbox is charged once', async (t) => {
+  const f = await fixture(t);
+  const projects = path.join(f.root, '.sandbox/electron/projects');
+  const previous = process.env.FARMSLOT_PROJECTS_DIR;
+  process.env.FARMSLOT_PROJECTS_DIR = projects;
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_PROJECTS_DIR;
+    else process.env.FARMSLOT_PROJECTS_DIR = previous;
+  });
+  const historical = path.join(projects, 'demo/tasks/qa/deleted-run/artifacts/unique.mp4');
+  await mkdir(path.dirname(historical), { recursive: true });
+  await writeFile(historical, Buffer.alloc(400_000, 1));
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const video = Buffer.alloc(250_000, 2);
+  let transfers = 0;
+  const result = await materializeRunBundle({
+    ...f.request,
+    policy: {
+      maxStoreBytes: 1_000_000,
+      maxBundleBytes: 500_000,
+      metadataReserveBytes: 50_000,
+      mediaRetentionDays: 30,
+    },
+    artifacts: [
+      f.artifacts[0]!,
+      {
+        path: 'artifacts/capture.mp4',
+        purpose: 'video',
+        sha256: createHash('sha256').update(video).digest('hex'),
+        sizeBytes: video.length,
+      },
+    ],
+    acquireMedia: async (_artifact, destination) => {
+      transfers++;
+      await writeFile(destination, video);
+      return { sha256: createHash('sha256').update(video).digest('hex'), bytes: video.length };
+    },
+  });
+  // Charged twice, 800 KB of 1 MB would defer the video; charged once, it fits.
+  assert.equal(transfers, 1);
+  assert.deepEqual(result.missingData, []);
+});
+
 test('preserved acquisition media from another deleted run remains charged before new transport', async (t) => {
   const f = await fixture(t);
   const historical = path.join(f.root, 'projects/demo/tasks/qa/deleted-run/artifacts/unique.mp4');

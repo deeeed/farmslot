@@ -161,16 +161,12 @@ export async function loadPendingDecisions(): Promise<PendingDecision[]> {
   const decisions: PendingDecision[] = [];
 
   // Scan all project task directories for .pending_decision.json files
-  try {
-    for (const { root } of await projectTaskRoots()) {
-      try {
-        await scanDirForDecisions(root, decisions);
-      } catch {
-        /* no tasks dir */
-      }
+  for (const { root } of await projectTaskRoots()) {
+    try {
+      await scanDirForDecisions(root, decisions);
+    } catch {
+      /* no tasks dir */
     }
-  } catch {
-    /* no projects dir */
   }
 
   return decisions;

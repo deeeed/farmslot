@@ -2060,14 +2060,7 @@ export async function cleanupRuns(
   }
 
   // Scan task dirs for orphaned tasks from failed/cancelled runs
-  let taskRoots: Array<{ root: string }> = [];
-  try {
-    taskRoots = await projectTaskRoots();
-  } catch {
-    /* no projects dir */
-  }
-
-  for (const { root: tasksDir } of taskRoots) {
+  for (const { root: tasksDir } of await projectTaskRoots()) {
     let taskDirs: string[];
     try {
       taskDirs = await readdir(tasksDir);

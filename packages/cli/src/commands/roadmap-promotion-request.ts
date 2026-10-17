@@ -6,6 +6,7 @@ import {
   promotionDraftAttachment,
   type RoadmapItem,
 } from '@farmslot/protocol';
+import { orchestratorTaskRoot, resolveProjectsDir } from '@farmslot/protocol/node/farm-layout';
 
 export interface RoadmapPromotionRequestInput {
   itemId: string;
@@ -82,11 +83,13 @@ export async function createRoadmapPromotionRequest(
     expectedBacklogItems > 0
       ? `Review ${expectedBacklogItems} draft${expectedBacklogItems === 1 ? '' : 's'}`
       : 'Review promotion';
+  // The non-mock task root the fleet monitor scans for decisions (farmslot-farm runs in mock mode,
+  // but its decisions belong where the scan looks).
   const decisionDir = path.join(
-    root,
-    'projects',
-    'farmslot-farm',
-    'tasks',
+    orchestratorTaskRoot(
+      { farmslotRoot: root, projectsDir: resolveProjectsDir(root) },
+      'farmslot-farm',
+    ),
     `roadmap-promotion-${itemId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
   );
   const decisionPath = path.join(decisionDir, '.pending_decision.json');
