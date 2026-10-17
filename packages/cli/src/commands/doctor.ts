@@ -28,7 +28,6 @@ import { maybePromptGithubStar, starSupportHint } from '../onboarding/star-promp
 import { resolveWorkspace } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
-import { validateRecipeArtifactDirectory } from './recipe.js';
 import { withLiveRecipeAuthority } from './recipe-live-authority.js';
 import {
   collectRecipeOption,
@@ -466,7 +465,7 @@ export async function runProjectConformance(
         if (!shared.isPathWithin(prepared.checkOptions.artifactsDir, evidence.artifactDir)) {
           throw new Error('Saved live evidence is outside the selected project report directory.');
         }
-        const current = await validateRecipeArtifactDirectory(evidence.artifactDir, {
+        const current = await shared.validateRecipeArtifactDirectory(evidence.artifactDir, {
           requireRunnerProvenance: true,
           liveProof: {
             smokeTarget: evidence.smokeTarget,
@@ -545,7 +544,7 @@ export async function runProjectConformance(
                 throw new Error(
                   `Live smoke failed with exit code ${exitCode}; artifacts: ${artifactDir}`,
                 );
-              const validated = await validateRecipeArtifactDirectory(artifactDir, {
+              const validated = await shared.validateRecipeArtifactDirectory(artifactDir, {
                 requireRunnerProvenance: true,
                 liveProof: {
                   smokeTarget: smokeTarget!,

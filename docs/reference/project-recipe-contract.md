@@ -442,9 +442,11 @@ Every active pack, skill, template, library and completion caller MUST move or b
 
 `runnerRevision(runner: Record<string, unknown>): string | undefined` from `@farmslot/recipe-cli/harness` shares the existing revision-field selection between the root artifact validator and Markdown renderer. It selects the first non-nullish `git_ref`, `gitRef`, `ref` or `commit`, accepting only a string. This extraction preserves existing validation behavior and follows the same minor-release gate.
 
+`renderRetainedArtifactsMarkdown({ directory?, candidates?, command?, out?, validate?, format? })` from `@farmslot/recipe-cli/harness` runs the root CLI's attempt selection, package validation (also exported as `validateRecipeArtifactDirectory`), rendering and guarded `out` write, and returns `{ result, body }`, where `result` is the `--json` document.
+
 The recipe PR-description packager and gateway `renderFailureMessage` MUST migrate their JSON readers: successful exit replaces legacy `command`/`subcommand`/`status` checks; explicit `--out` plus `out`, or stdout `body`, replaces the always-written default file; the task argument supplies `taskDir`; `error.message` replaces the legacy error string. The packager MUST NOT silently fall back to authored prose when the canonical renderer fails.
 
-The additive SDK API requires a reviewed minor release and installed consumer checks. The renderer MUST remain read-only and MUST NOT resolve another attempt after the caller supplies `artifactDir`. The root CLI owns authoritative attempt selection and existing package validation. No provider import is required to render an explicit task.
+The additive SDK API requires a reviewed minor release and installed consumer checks. The renderer MUST remain read-only and MUST NOT resolve another attempt after the caller supplies `artifactDir`. `renderRetainedArtifactsMarkdown` owns authoritative attempt selection and existing package validation; the root CLI and other host CLIs call it rather than reimplementing either. No provider import is required to render an explicit task.
 
 ### Rendering and refusals
 

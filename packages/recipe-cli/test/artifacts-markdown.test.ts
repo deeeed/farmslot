@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import { renderTaskArtifactsMarkdown } from '../src/harness/commands/artifacts-markdown.js';
+import { recordRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
+import { digestRecipeDocument } from '@farmslot/protocol';
+
+import {
+  renderRetainedArtifactsMarkdown,
+  renderTaskArtifactsMarkdown,
+} from '../src/harness/commands/artifacts-markdown.js';
 
 const PROSE =
   '## **Description**\n\nAuthored explanation.\n\n## **Screenshots/Recordings**\n\n![after](after.png)\n\n## **Pre-merge author checklist**\n\n- [x] Guidelines\n';
@@ -150,4 +156,142 @@ test('an incomplete selected report refuses instead of rendering the older repor
     renderTaskArtifactsMarkdown({ taskDir, artifactDir }),
     /must contain its captured recipe and report/,
   );
+});
+
+const RUNNER = { name: 'fixture-runner', source: 'fixture/runner', git_ref: 'fixture-revision' };
+const PACKAGE_RECIPE = {
+  $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+  description: 'Retained package fixture.',
+  ...RECIPE,
+};
+
+async function writeJson(file: string, value: unknown): Promise<void> {
+  await writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function artifactPackage(dir: string, traceRunner: unknown = RUNNER): Promise<string> {
+  await mkdir(dir, { recursive: true });
+  await writeJson(path.join(dir, 'recipe.json'), PACKAGE_RECIPE);
+  await writeJson(path.join(dir, 'recipe-resolution.json'), {
+    schema_version: 1,
+    root: { ref: '$root', digest: digestRecipeDocument(PACKAGE_RECIPE) },
+    dependencies: [],
+    edges: [],
+  });
+  await writeJson(path.join(dir, 'summary.json'), {
+    status: 'pass',
+    startedAt: '2026-05-30T15:00:00Z',
+    completedAt: '2026-05-30T15:00:01Z',
+    durationMs: 1000,
+    total: 1,
+    passed: 1,
+    failed: 0,
+    cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+    runner: RUNNER,
+  });
+  await writeJson(path.join(dir, 'trace.json'), {
+    metadata: { runner: traceRunner },
+    entries: [
+      {
+        nodeId: 'done',
+        action: 'end',
+        startedAt: '2026-05-30T15:00:00Z',
+        endedAt: '2026-05-30T15:00:01Z',
+        durationMs: 1000,
+        ok: true,
+        status: 'pass',
+      },
+    ],
+  });
+  await writeJson(path.join(dir, 'artifact-manifest.json'), {
+    version: 1,
+    runStatus: 'pass',
+    provenance: { runner: RUNNER },
+    artifacts: [
+      { path: 'summary.json', type: 'summary' },
+      { path: 'trace.json', type: 'trace' },
+      { path: 'recipe.json', type: 'recipe' },
+    ],
+  });
+  await writeFile(path.join(dir, 'report.md'), 'Status: pass\nNodes: 1/1 passed\nSELECTED_PROOF\n');
+  return dir;
+}
+
+async function selectedTask(t: TestContext, traceRunner?: unknown): Promise<[string, string]> {
+  const taskDir = await task(t);
+  const attempt = await artifactPackage(
+    path.join(taskDir, 'artifacts/recipe-runs/attempt-2'),
+    traceRunner,
+  );
+  assert.equal(recordRecipeAttemptSelection(taskDir, attempt), true);
+  return [taskDir, attempt];
+}
+
+test('retained Markdown renders and validates the selected attempt of a task', async (t) => {
+  const [taskDir, attempt] = await selectedTask(t);
+  await artifactPackage(path.join(taskDir, 'artifacts/recipe'));
+  const { result, body } = await renderRetainedArtifactsMarkdown({
+    directory: taskDir,
+    validate: true,
+    command: 'farmslot recipe run task/recipe.json',
+  });
+  assert.equal(result.artifactDir, attempt);
+  assert.equal(result.validation?.status, 'pass');
+  assert.deepEqual(result.recipe, {
+    nodes: 1,
+    path: 'artifacts/recipe-runs/attempt-2/recipe.json',
+  });
+  assert.equal(result.body, body);
+  assert.match(body, /Authored explanation\./);
+  assert.match(body, /SELECTED_PROOF/);
+  assert.match(body, /Runner revision: fixture-revision/);
+  assert.match(body, /```bash\nfarmslot recipe run task\/recipe.json\n```/);
+});
+
+test('retained Markdown refuses to render or write a package that fails validation', async (t) => {
+  const [taskDir, attempt] = await selectedTask(t, { ...RUNNER, git_ref: 'other-revision' });
+  const out = path.join(taskDir, 'artifacts/pr-body.md');
+  await assert.rejects(
+    renderRetainedArtifactsMarkdown({ directory: taskDir, out }),
+    /^Error: Artifact validation failed; Markdown was not rendered or written\.$/,
+  );
+  await assert.rejects(
+    renderRetainedArtifactsMarkdown({ directory: attempt, out, validate: true }),
+    /^Error: Artifact validation failed; Markdown was not written\.$/,
+  );
+  await assert.rejects(readFile(out), { code: 'ENOENT' });
+});
+
+test('retained Markdown refuses outputs over authored inputs or retained evidence', async (t) => {
+  const [taskDir, attempt] = await selectedTask(t);
+  for (const out of [
+    path.join(taskDir, 'artifacts/pr-description.md'),
+    path.join(taskDir, 'artifacts/latest-valid-recipe-run.json'),
+    path.join(attempt, 'summary.json'),
+  ]) {
+    const before = await readFile(out, 'utf8');
+    await assert.rejects(
+      renderRetainedArtifactsMarkdown({ directory: taskDir, out }),
+      /--out must not overwrite authored inputs or retained recipe evidence\./,
+    );
+    assert.equal(await readFile(out, 'utf8'), before);
+  }
+});
+
+test('a plain artifact package falls back to its evidence listing', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'artifacts-markdown-package-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const artifactDir = await artifactPackage(path.join(root, 'package'));
+  const out = path.join(root, 'evidence.md');
+  const { result, body } = await renderRetainedArtifactsMarkdown({ directory: artifactDir, out });
+  assert.equal(
+    body,
+    `Recipe evidence: <code>${artifactDir}</code>\n\nResult: <code>pass</code>\n\n- <code>summary.json</code>\n- <code>trace.json</code>\n- <code>recipe.json</code>\n`,
+  );
+  assert.equal(await readFile(out, 'utf8'), body);
+  assert.equal(result.artifactDir, artifactDir);
+  assert.equal(result.out, out);
+  assert.equal(result.body, undefined);
+  assert.equal(result.sections, undefined);
+  assert.equal(result.validation, undefined);
 });

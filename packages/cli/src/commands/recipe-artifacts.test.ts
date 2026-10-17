@@ -20,11 +20,11 @@ import { Command } from 'commander';
 import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import { recordRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
 import { digestRecipeDocument } from '@farmslot/protocol';
-import { writeRunReport } from '@farmslot/recipe-cli/harness';
+import { validateRecipeArtifactDirectory, writeRunReport } from '@farmslot/recipe-cli/harness';
 import { createRecipeRunner } from '@farmslot/recipe-runner';
 import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 
-import { registerRecipeCommand, validateRecipeArtifactDirectory } from './recipe.js';
+import { registerRecipeCommand } from './recipe.js';
 
 const runner = {
   name: 'test-runner',
