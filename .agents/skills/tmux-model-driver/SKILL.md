@@ -51,9 +51,14 @@ delivery at the next tool call, with no new-turn claim. "Queued follow-up inputs
 postponed input and never proves delivery. Its receipt is preserved without another key.
 A marker or shared prefix alone is insufficient. A fresh Enter submission into an empty
 queue can also use its matching truncated steering preview and separate overflow line.
-Claude transcript records written after the send prove delivery: an exact human prompt
-(`native-session`), or input queued during a turn (`native-queue`) that Claude attaches
-at its next step (`native-steering`). A `native-queue` receipt stays until its caller
+Claude transcript records written after the send prove delivery. An exact human prompt
+(`native-session`) reports `submitted`. Input sent during a turn reports `queued` with
+`submitted: true`, proved by its queue records: the enqueue (`native-queue`) and the
+`queued_command` attachment Claude adds at its next step (`native-steering`). Claude writes
+both at that next step, not at Enter, so a mid-turn send keeps reading the transcript for up
+to `TMUX_MODEL_DRIVER_QUEUE_PROOF_MS` (default 20000) and presses no other key meanwhile.
+With no record by then it reports `unverified` and keeps its receipt; the same send run later
+confirms `queued` from the transcript without typing. A `native-queue` receipt stays until its caller
 acknowledges delivery. It is rechecked against the transcript on every inspection: Up pulls
 queued input back (`popAll`), which withdraws it for status, acknowledgement and retries,
 whatever the composer shows next. A delivered prompt recalled from history keeps its proof. Claude's own queued input never blocks a handoff; a draft in its

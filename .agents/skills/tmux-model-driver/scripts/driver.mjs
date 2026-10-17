@@ -20,7 +20,9 @@ import {
   hasSubmittedQueue,
   nativeState,
   paneIdentity,
+  queuedInTranscript,
   queuedPrompt,
+  queueProofTimeoutMs,
   readOptional,
   requiresNativeSession,
   sessionSize,
@@ -650,7 +652,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
       // paneState has already withdrawn pulled-back proofs; a recalled delivered prompt keeps one.
       if (retry && before.accepted) {
         evidence = before.accepted;
-        verification = 'submitted';
+        verification = queuedInTranscript(evidence) ? 'queued' : 'submitted';
       } else if (flush || retry) {
         receipt = JSON.parse(fs.readFileSync(files.receipt, 'utf8'));
         if (
@@ -739,6 +741,11 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
         }
         verification ||= 'unverified';
         let deadline = Date.now() + timeout;
+        // A mid-turn Claude send is proven only by the queue records its next step writes.
+        const queueDeadline =
+          receipt?.steering && requiresNativeSession(runner)
+            ? Date.now() + queueProofTimeoutMs()
+            : 0;
         let retriedEnter = false;
         if (verification === 'unverified') {
           do {
@@ -774,7 +781,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                   durableWrite(files.receipt, { ...current, accepted: evidence });
                 else clearAcceptedReceipt(files, current);
               }
-              verification = 'submitted';
+              verification = queuedInTranscript(evidence) ? 'queued' : 'submitted';
               break;
             }
             if (after.pending_question) {
@@ -795,9 +802,11 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             }
             // Only this receipt's unchanged live composer can authorize another Enter.
             // Historical prompt text and foreign queues never authorize another key.
+            // The queue-proof wait never presses a key: input pulled back for editing stays put.
             if (
               !retriedEnter &&
               !flush &&
+              Date.now() < deadline &&
               !payload.startsWith('/goal ') &&
               ownsComposer(after, runner, receipt)
             ) {
@@ -809,8 +818,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
               deadline = Date.now() + timeout;
               continue;
             }
-            await delay(40);
-          } while (Date.now() < deadline);
+            await delay(Date.now() < deadline ? 40 : 250);
+          } while (Date.now() < Math.max(deadline, queueDeadline));
           if (
             verification === 'unverified' &&
             supportsMidTurnPrompt(runner) &&
@@ -832,7 +841,10 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     before_state: before.state,
     after_state: after.state,
     verification,
-    submitted: verification === 'submitted',
+    // Input Claude's transcript records as queued in its turn was accepted, so it counts as
+    // submitted; a rendered queue (Codex /goal) proves nothing about its turn.
+    submitted:
+      verification === 'submitted' || (verification === 'queued' && queuedInTranscript(evidence)),
     queued: verification === 'queued',
     typed,
     flush,

@@ -102,6 +102,20 @@ export const hasSubmittedQueue = (runner, tail) =>
 export const paneIdentity = (meta) =>
   JSON.stringify([meta.pane_pid, meta.process_started_at, meta.runner_pids]);
 
+// Claude writes input queued during a turn to its transcript at the turn's next step, not at
+// Enter: the `queue-operation` enqueue, then the `queued_command` attachment.
+export const queuedInTranscript = (proof) =>
+  proof?.source === 'native-queue' || proof?.source === 'native-steering';
+
+export function queueProofTimeoutMs() {
+  const timeout = Number(process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS ?? 20000);
+  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 2147483647)
+    throw new Error(
+      'TMUX_MODEL_DRIVER_QUEUE_PROOF_MS must be a non-negative integer in milliseconds',
+    );
+  return timeout;
+}
+
 export function nativeProbeTimeoutMs() {
   const timeout = Number(process.env.TMUX_MODEL_DRIVER_PROBE_TIMEOUT_MS ?? 10000);
   if (!Number.isSafeInteger(timeout) || timeout <= 0 || timeout > 2147483647)

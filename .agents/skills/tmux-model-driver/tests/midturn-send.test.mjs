@@ -25,6 +25,7 @@ function fixture(t) {
     TMUX_MODEL_DRIVER_STATE_DIR: dir,
     TMUX_MODEL_DRIVER_OBSERVABILITY_DIR: path.join(dir, 'obs'),
     TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS: '10',
+    TMUX_MODEL_DRIVER_QUEUE_PROOF_MS: '0',
     TMUX_PANE_STATE_CURRENT_COMMAND: 'codex',
     TMUX_PANE_STATE_CURRENT_PATH: dir,
     TMUX_PANE_STATE_SESSION_NAME: 'fixture',
@@ -826,6 +827,7 @@ test('a busy Claude turn takes Enter input through its native queue', async (t) 
   });
   const result = await send('%1', 'claude', f.payload);
   assert.equal(result.before.phase, 'busy');
+  assert.equal(result.verification, 'queued');
   assert.equal(result.submitted, true);
   assert.equal(result.evidence.source, 'native-queue');
   assert.equal(paneState('%1', 'claude').queued, false, 'its own queue never blocks a handoff');
@@ -849,8 +851,88 @@ test('a busy Claude turn takes Enter input through its native queue', async (t) 
     return claudeBox('');
   });
   const later = await send('%1', 'claude', 'later');
+  assert.equal(later.verification, 'queued');
   assert.equal(later.submitted, true);
   assert.equal(later.evidence.source, 'native-steering');
+});
+
+// Captured from a busy Claude worker on 2026-10-17 (run c1b94e37's note at 15:19Z): input sent
+// mid-turn reaches the transcript only at the turn's next step, as an enqueue 12 s after Enter,
+// then a remove and the queued_command attachment stamped with the send time. Offsets are from
+// the send; records are reduced to their shape and the note.
+const capturedBusyQueue = fs
+  .readFileSync(new URL('./fixtures/claude-busy-queued.jsonl', import.meta.url), 'utf8')
+  .trim()
+  .split('\n')
+  .map((line) => JSON.parse(line));
+
+/** Append the captured records after `sentAt`, at `scale` of their real delay (0: at once). */
+function replayBusyQueue(f, payload, sentAt, scale) {
+  let written = 0;
+  const writeUntil = (offset) => {
+    for (; written < capturedBusyQueue.length; written++) {
+      const { offset_ms: at, record } = capturedBusyQueue[written];
+      // The attachment is stamped with the send time but written after the remove.
+      if (at !== null && at > offset && record.type === 'queue-operation') return;
+      f.record({
+        ...JSON.parse(JSON.stringify(record).replaceAll('{{payload}}', payload)),
+        timestamp: at === null ? undefined : new Date(sentAt + at).toISOString(),
+      });
+    }
+  };
+  if (!scale) return writeUntil(Infinity);
+  for (const { offset_ms: at, record } of capturedBusyQueue)
+    if (record.type === 'queue-operation') setTimeout(() => writeUntil(at), at * scale);
+  const last = Math.max(...capturedBusyQueue.map(({ offset_ms: at }) => at ?? 0));
+  setTimeout(() => writeUntil(Infinity), last * scale + 20);
+}
+const capturedEnqueueAt = capturedBusyQueue.find(
+  ({ record }) => record.operation === 'enqueue',
+).offset_ms;
+
+test('a busy Claude send waits for the queue record its next step writes and reports queued', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS = '2000';
+  let sentAt = 0;
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    sentAt = Date.now();
+    replayBusyQueue(f, pasted, sentAt, 0.01);
+    return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+  });
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.verification, 'queued');
+  assert.equal(result.submitted, true);
+  assert.equal(result.queued, true);
+  // Either queue record proves it; the attachment carries the send time, the enqueue its own.
+  const proofs = { 'native-queue': sentAt + capturedEnqueueAt, 'native-steering': sentAt };
+  assert.equal(result.evidence.observed_at, proofs[result.evidence.source]);
+  assert.deepEqual(
+    f.keys.filter((args) => args[0] === 'send-keys'),
+    [['send-keys', '-t', '%1', 'Enter']],
+    'waiting for the record never presses another key',
+  );
+});
+
+test('a Claude queue record written after the wait is confirmed by the same send without typing', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  process.env.TMUX_MODEL_DRIVER_QUEUE_PROOF_MS = '50';
+  let sentAt = 0;
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    sentAt = Date.now();
+    return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+  });
+  const first = await send('%1', 'claude', f.payload);
+  assert.equal(first.verification, 'unverified', 'no record yet, so no claim');
+  assert.equal(first.submitted, false);
+  assert.equal(first.evidence, null);
+  const keys = f.keys.length;
+  replayBusyQueue(f, f.payload, sentAt, 0);
+  const confirmed = await send('%1', 'claude', f.payload);
+  assert.equal(confirmed.verification, 'queued');
+  assert.equal(confirmed.submitted, true);
+  assert.equal(confirmed.evidence.source, 'native-steering');
+  assert.equal(confirmed.evidence.observed_at, sentAt);
+  assert.equal(f.keys.length, keys, 'confirming never pastes or presses a key');
 });
 
 // Captured Claude 2.1.292 after Up during a busy turn: the queued handoff is back in the composer.
@@ -968,7 +1050,8 @@ for (const delivered of [true, false]) {
     );
     assert.equal(retry.typed, false);
     if (delivered) {
-      assert.equal(retry.verification, 'submitted');
+      assert.equal(retry.verification, 'queued');
+      assert.equal(retry.submitted, true);
       assert.ok(retry.evidence.observed_at >= retriedAt, 'proved by the new enqueue only');
       assert.equal(submits, 2);
     } else {
