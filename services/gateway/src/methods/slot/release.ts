@@ -8,6 +8,7 @@ import {
   agentRoleWindow,
   DEFAULT_BRANCH,
   type FlowType,
+  isCompletionPrerequisiteFailure,
   isReviewerWindowName,
   isTerminalRunStatus,
   primaryRoleForFlow,
@@ -211,7 +212,7 @@ export interface SlotReleasePreflight {
  */
 export async function slotReleasePreflight(
   params: SlotReleaseParams,
-  restartRunId?: string,
+  options?: SlotReleaseOptions,
 ): Promise<SlotReleasePreflight | null> {
   // Cheap early checks (authoritative validation happens atomically at the
   // releasing-marker CAS in slotReleaseImpl, after this preflight). A slot
@@ -259,7 +260,7 @@ export async function slotReleasePreflight(
 
   const ownerRun = boundOwner ? await getRunWithArchived(boundOwner) : undefined;
   const ownerTerminal = !!ownerRun && isTerminalRunStatus(ownerRun.status);
-  const refusal = releaseOwnerRefusal(boundOwner, ownerTerminal, params, restartRunId);
+  const refusal = releaseOwnerRefusal(boundOwner, ownerTerminal, params, options);
   if (refusal) throw new Error(refusal);
 
   // Release runs idle-reset + the project recycle hook (both can reset --hard
@@ -288,11 +289,11 @@ function releaseOwnerRefusal(
   owner: string | null,
   archivedTerminal: boolean,
   params: SlotReleaseParams,
-  restartRunId?: string,
+  options?: SlotReleaseOptions,
 ): string | null {
   if (
     !owner ||
-    restartRunId === owner ||
+    options?.restartRunId === owner ||
     (params.forceReset === true && params.expectedRunId === owner)
   )
     return null;
@@ -301,6 +302,11 @@ function releaseOwnerRefusal(
   // its owner-bound release. An ordinary release cannot borrow that authority.
   if (params.expectedRunId === owner && live?.status === 'blocked' && isRunArchiving(owner))
     return null;
+  // A refused COMPLETE/FINALIZE prerequisite is terminal but keeps its checkout
+  // for a completion replay. An epoch-pinned release frees only a replay's own
+  // fresh claim, never the retained one, so only that rollback may pass.
+  if (live && isCompletionPrerequisiteFailure(live) && options?.expectedSlotEpoch === undefined)
+    return `Slot ${params.slotId} is retained by run ${owner}, whose completion prerequisite failed; replay its completion, or explicitly discard this workspace through slot.release RPC with forceReset:true and expectedRunId:${owner}`;
   if (live ? isTerminalRunStatus(live.status) : archivedTerminal) return null;
   return live
     ? `Slot ${params.slotId} is held by non-terminal run ${owner}; finish it or use farmslot run cancel ${owner} before release`
@@ -346,7 +352,7 @@ async function slotReleaseImpl(
   emit: EventEmitter,
   options?: SlotReleaseOptions,
 ): Promise<{ released: boolean }> {
-  const preflight = await slotReleasePreflight(params, options?.restartRunId);
+  const preflight = await slotReleasePreflight(params, options);
   if (!preflight) return { released: false };
   // Refused before the kill below, so a refusal leaves the worker running. Step 2
   // checks again after the kill for work the worker wrote in between.
@@ -411,7 +417,7 @@ async function slotReleaseImpl(
         owner,
         owner === boundOwner && ownerTerminal,
         params,
-        options?.restartRunId,
+        options,
       );
       if (releaseRefusal) return false;
       releasedOwner = owner;
@@ -442,7 +448,7 @@ async function slotReleaseImpl(
       owner,
       owner === boundOwner && ownerTerminal,
       params,
-      options?.restartRunId,
+      options,
     );
     if (
       row &&

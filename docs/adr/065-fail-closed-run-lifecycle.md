@@ -338,3 +338,34 @@ run.refreshPublishedEvidence '{"runId":"<run-id>"}'`.
   command, protocol field, package format or harness hook is introduced.
 - This additive experimental eligibility change ships with the gateway. The
   person-only adoption contract and normal publication approval remain intact.
+
+## Amendment 6: retained completion slot release, 2026-10-17
+
+**Status:** Proposed.
+**Specification:** [Pipeline settlement](../reference/fail-closed-run-lifecycle.md#pipeline-settlement).
+
+### Decision
+
+A run whose COMPLETE or FINALIZE prerequisite was refused is terminal `failed`
+but keeps its slot and checkout for a completion replay. `slot.release` and
+`slot.recycle` refuse that slot, bound or unbound, unless the request names the
+run in `expectedRunId` and passes `forceReset:true`. Replaying the completion,
+or force-completing a non-QA run, settles the run and lifts the refusal. A replay
+undoing its own epoch-pinned claim may still release it. A failed replay restores
+the retained claim it took over instead of releasing it.
+
+### Rationale and consequences
+
+The owner guard refused only non-terminal runs. A QA worker released its own
+slot after the refused completion turned the run `failed`. The checkout was then
+gone, so a later completion replay could not validate the deterministic receipt
+or confirm the runner idle. Cancel refuses terminal runs and archive requires
+the slot released first, so the named force discard is the explicit operator
+exit. It reuses the existing discard form for a slot held by a missing run.
+
+### Public surface
+
+- No new RPC, protocol field or CLI command. `slot.release` and `slot.recycle`
+  gain one refusal whose message names the replay and discard routes.
+- Archive and delete of such a run still require the slot released first; that
+  release is now the named force discard.

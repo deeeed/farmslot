@@ -67,6 +67,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Freeze the source identity of a QA run whose ref or range scope names exact commits (`expectedHeadSha`/`expectedBaseSha`, or full-SHA `ref`, `head` and `base`), as PR QA does. Prepare checks out that head, detached when the run has no branch, instead of the default-branch tip; dispatch refuses a prepared HEAD that differs and names the frozen head; completion validates against the same identity, also for runs prepared before this change. Start refs also accept 64-hex commit names.
 
+- Refuse `slot.release` and `slot.recycle` of a slot whose run failed a COMPLETE or FINALIZE prerequisite, so a worker or operator can no longer discard the checkout a completion replay needs. Replay the completion, or discard the workspace with `forceReset:true` and `expectedRunId` naming the run. A failed replay of such a run now restores its retained slot claim instead of releasing it.
+
 ## 0.22.1 - 2026-10-16
 
 - Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.

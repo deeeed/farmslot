@@ -6,6 +6,7 @@ import {
   Events,
   FLOW_STEPS,
   type FlowType,
+  isCompletionPrerequisiteFailure,
   isInteractiveDevRun,
   isTerminalRunStatus,
   PipelineSteps as PS,
@@ -1359,9 +1360,11 @@ async function replayRunStep(
                   reclaim.reason === 'owned-by-other'
                     ? ` (run ${reclaim.owner} holds it)`
                     : ` (it is ${reclaim.lifecycle})`;
+              // A retained completion failure still owns its checkout; rollback
+              // restores that claim instead of releasing it.
               if (
                 reclaim.ok &&
-                existing.status === 'blocked' &&
+                (existing.status === 'blocked' || isCompletionPrerequisiteFailure(existing)) &&
                 blockedMonitorOwnsSlot(slot, params.runId)
               ) {
                 priorOwnedSlotFields = {

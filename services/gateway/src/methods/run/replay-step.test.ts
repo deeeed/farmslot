@@ -2808,3 +2808,66 @@ test('a write-task replay re-validates its slot binding before the run reaches p
   assert.deepEqual(refused.steps, second.steps);
   assert.equal(JSON.parse(await readFile(statusFile, 'utf8')).slots[0].current_run_id, first.id);
 });
+
+test('a failed completion replay restores the retained slot claim instead of releasing it', async (t) => {
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const priorInject = process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS;
+  const previousTestContext = process.env.NODE_TEST_CONTEXT;
+  const slotId = 'macwork-ff-7';
+  const taskFile = '/tmp/farmslot-retained-completion/TASK.md';
+  const created = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const completeIdx = created.steps.findIndex((step) => step.name === 'complete');
+  // What a refused COMPLETE prerequisite leaves: failed, slot and checkout retained.
+  const run = updateRun(created.id, {
+    status: 'failed',
+    error: 'A declared deterministic check has no current passing receipt.',
+    taskFile,
+    slotId,
+    steps: created.steps.map((step, i) =>
+      i < completeIdx
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : i === completeIdx
+          ? { ...step, status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }
+          : { ...step, status: 'skipped' },
+    ),
+  });
+  const retained = { lifecycle: 'held', phase: 'occupied', agent: 'idle', current_run_id: run.id };
+  await writeFile(
+    statusFile,
+    JSON.stringify({ slots: [{ slot: slotId, slot_epoch: 3, ...retained }] }, null, 2) + '\n',
+  );
+  // Fail the replay right after its claim, as the disposable gateway recipe does.
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS = run.id;
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (priorInject === undefined) delete process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS;
+    else process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS = priorInject;
+    if (previousTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousTestContext;
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+    updateRun(run.id, { slotId: null });
+    await evictTestRun(run.id, 'failed');
+  });
+
+  await assert.rejects(
+    () =>
+      runReplayStep({ runId: run.id, stepName: 'complete', triggeredBy: 'operator' }, () => {}, {
+        startEngine: async () => {},
+      }),
+    /Injected replay failure after claim/,
+  );
+
+  const slot = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
+  assert.deepEqual(
+    { lifecycle: slot.lifecycle, phase: slot.phase, agent: slot.agent, owner: slot.current_run_id },
+    { lifecycle: 'held', phase: 'occupied', agent: 'idle', owner: run.id },
+    'the retained checkout stays bound to the run',
+  );
+  assert.equal(getRun(run.id)?.slotId, slotId);
+});
