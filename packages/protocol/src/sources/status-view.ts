@@ -201,14 +201,19 @@ export function deriveSourceStatusView(
           ? `${declaration.id} run selection ${draftRef} ${draftResolution?.commit ?? 'unresolved'} ${draftResolution?.status ?? 'unknown'}, reported main base ${mainResolution?.commit ?? 'unresolved'}`
           : recorded
             ? `${declaration.id} run input ${recorded.effectiveRef} ${recorded.commit}${pinSummary}`
-            : `${declaration.id} reported ${row.effective?.effectiveRef ?? declaration.ref ?? 'main'} ${row.resolution?.commit ?? 'unresolved'} ${row.resolution?.status ?? 'unknown'}${pinSummary}`;
+            : `${declaration.id} reported ${ref} ${row.resolution?.commit ?? 'unresolved'} ${row.resolution?.status ?? 'unknown'}${pinSummary}`;
       return {
         ...row,
-        line: !visiblePin
-          ? `${declaration.id} ${ref}`
-          : visiblePin.selection === 'branch'
-            ? `${declaration.id} ${ref} (${visiblePin.scope} pin)`
-            : `${declaration.id} main (${visiblePin.scope} override)`,
+        // A draft names the run selection being prepared, not the farm's current ref.
+        line: draftRef
+          ? selection?.selection === 'main'
+            ? `${declaration.id} main (run override)`
+            : `${declaration.id} ${draftRef} (run pin)`
+          : !visiblePin
+            ? `${declaration.id} ${ref}`
+            : visiblePin.selection === 'branch'
+              ? `${declaration.id} ${ref} (${visiblePin.scope} pin)`
+              : `${declaration.id} main (${visiblePin.scope} override)`,
         summary,
         details: [
           ...(draftRef !== undefined

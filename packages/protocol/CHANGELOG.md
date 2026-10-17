@@ -5,7 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Family readiness counts active runs with `isActiveListRun`: a failed run that still holds its resources counts as active (not failed or settled) and blocks self-learning eligibility as an active run.
-
+- Source status keeps a failed read visible over a context that was empty, and a run draft's line names the selected branch or main.
 - Move run family grouping here from Command Center and Companion: `groupRunsByFamily`, `sortRunsForFamilyView`, `selectRecentRunFamilyGroups` and `RunFamilyGroup`. A family's `activeCount` uses `isActiveListRun`. Remove `ACTIVE_RUN_LIST_LIMIT`: `run.list` `active` is never truncated.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

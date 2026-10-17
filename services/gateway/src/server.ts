@@ -857,7 +857,8 @@ function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
 
 export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?: number): void {
   const payload: unknown = frame.payload;
-  if (frame.event === Events.RUN_UPDATED) {
+  // run.created sets the baseline that a later run.updated, such as a cancel, is compared with.
+  if (frame.event === Events.RUN_UPDATED || frame.event === Events.RUN_CREATED) {
     const run = (payload as { run?: Run } | undefined)?.run;
     if (run) noteRunSourceFacts(run);
   }

@@ -99,8 +99,9 @@ export class SourceStatusController {
       !this.snapshot.busy && !this.snapshot.loading && !this.snapshot.pending;
     this.snapshot.canEdit = this.snapshot.interactive && this.snapshot.view?.editable === true;
     const view = this.snapshot.view;
+    // A failed read stays visible, even over a context that was empty when last read.
     this.snapshot.hidden =
-      view?.hidden === true ||
+      (view?.hidden === true && this.snapshot.error === undefined) ||
       (this.snapshot.error !== undefined && this.deniedRead) ||
       (!view && this.snapshot.error === undefined && !this.snapshot.pending);
     this.snapshot.controls = Boolean(

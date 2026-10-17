@@ -37,13 +37,15 @@ import { assertNodeReconnectCurrent, sendNodeRequest, waitForNode } from '../fle
 import { loadFleetStatus, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
 import type { RunCreateInternalOptions, RunCreationPlan } from '../methods/run.js';
 import { RunTransitionCoordinator } from '../run-lifecycle/transition-coordinator.js';
-import { buildRunRecord, getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { buildRunRecord, getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { currentSessionOriginator, runWithPrincipalOwner } from '../security/work-originator.js';
 
 import { type PreparedSourcePins, SourceAuthority } from './authority.js';
 import {
+  advanceSourceRevision,
   announceSourceChanges,
   noteAuthorityFacts,
+  noteRunSourceFacts,
   noteSourceMaterialized,
 } from './change-signal.js';
 import { captureRunCreationRequest } from './creation-request.js';
@@ -130,6 +132,8 @@ export async function initializeSources(): Promise<void> {
   authority = await SourceAuthority.open(configuration, path.join(home, 'sources'));
   const opened = authority;
   announceSourceChanges();
+  // Restored runs need a baseline too, or their first update after a restart is never compared.
+  for (const run of getAllRuns()) noteRunSourceFacts(run);
   // The first notification, the immediate first poll, records the startup baseline.
   opened.observe(() => noteAuthorityFacts(sourceFactsSignature(opened)));
   await authority.recoverRunCreations((runId) =>
@@ -524,6 +528,8 @@ async function mutateRunSourcePlan(
         save: async (run) => {
           updateRun(run.id, run);
           await persistRunNow(getRun(run.id)!, 'source admission');
+          // Readable now, before the engine's next run.updated.
+          advanceSourceRevision();
         },
       }),
     );
@@ -744,8 +750,10 @@ export async function withRunSources<T>(
   };
   if (existingAttempt === -1) attempts.push(currentAttempt);
   else attempts[existingAttempt] = currentAttempt;
-  if (receiptIds.length !== provenance.receiptIds.length || provenance.attemptId !== attemptId)
+  if (receiptIds.length !== provenance.receiptIds.length || provenance.attemptId !== attemptId) {
     updateRun(run.id, { sourceProvenance: { ...provenance, attemptId, attempts, receiptIds } });
+    advanceSourceRevision();
+  }
   return withProjectSources(
     {
       project: run.project,

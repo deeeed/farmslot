@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Sources detail rows no longer repeat the controls' `data-source-id`.
 - Count a family's active runs with the shared active rule, and load every active run for the terminal's Active Runs and pinned views instead of the newest 1000 runs.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

@@ -33,6 +33,8 @@ const { sourceTestLock, sourceTestMaterialization } = await import('./source.tes
 const { createRun, updateRun, getAllRuns, persistRunNow } = await import('../runs/store.js');
 const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
 const { handleNodeResponse, withNodeReconnectWait } = await import('../fleet/node-rpc.js');
+const { currentSourceResourceChanges } = await import('./change-signal.js');
+const revision = () => currentSourceResourceChanges()!.changes[0].revision;
 
 test('the production source gate and verification wait for reconnect without changing frozen locks', async (t) => {
   t.mock.method(SourceAuthority, 'open', async () => ({
@@ -106,10 +108,12 @@ test('the production source gate and verification wait for reconnect without cha
   t.mock.timers.tick(20_000);
   await Promise.resolve();
   assert.equal(executions, 0);
+  const beforeRegister = revision();
   registerNode(machine, 1, ws);
   t.mock.timers.tick(100);
   await pending;
   assert.equal(executions, 1);
+  assert.equal(revision(), beforeRegister + 2, 'node registration and its first receipt advance');
   assert.deepEqual(run.sourceProvenance, original);
   unregisterByWs(ws);
   const verify = withNodeReconnectWait(
