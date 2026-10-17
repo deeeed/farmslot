@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `review checklist` prints one "Domain patterns" heading and points setup step 2 at the domain's antipatterns file. `review domain` names its source on stderr. An owned-paths file with an empty domain is refused. `recipe logs` words its refusals generically and returns `--events`, undetected-adapter and unknown-adapter errors as usage envelopes. Doctor's recorder failure line includes the recorder detail.
+
 - Run `recipe artifacts`, `recipe artifacts validate` and doctor live-evidence checks through the shared recipe-cli harness exports, with unchanged output and refusals.
 
 - Initialize hosted tasks on the selected node through its immutable CLI, preserving authored task data and refusing relocated receipts or tooling overrides. A template source whose root the node lacks refuses with the source and its environment variable. Only a native slot's device platform (`ios`, `android`) still selects the provider family; other slot kinds use the pack's adapter.
