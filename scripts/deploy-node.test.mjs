@@ -41,6 +41,7 @@ const deployFixture = (t, prefix) => {
     'scripts/deploy-node.sh',
     'scripts/lib/worker-env-prefix.sh',
     'scripts/lib/tmux-bin.sh',
+    'scripts/lib/node-cli-refresh.sh',
     'services/node/package.json',
   ])
     write(relative, fs.readFileSync(path.join(repo, relative)));
@@ -709,6 +710,38 @@ test('deploy-node installs the CLI on a local deploy with --refresh-cli', (t) =>
   );
 });
 
+// The gateway machine's dev stack runs its own node, so a full local deploy there
+// would start a second one: --cli-only refreshes the CLI without the node service.
+// A remote CLI refresh needs no node token either: the service is never touched.
+for (const [where, machine] of [
+  ['local', localMachine],
+  ['remote', () => 'fixture-machine'],
+]) {
+  test(`deploy-node --cli-only installs the ${where} CLI and leaves the node service alone`, (t) => {
+    const fixture = cliFixture(t);
+    link(
+      fixture,
+      '.local/bin/farmslot',
+      path.join(fixture.home, 'farmslot/packages/cli/bin/farmslot.mjs'),
+    );
+
+    const output = fixture.deploy({
+      machine: machine(),
+      args: ['--cli-only'],
+      nodeTokenFile: false,
+    });
+
+    assert.match(output, /installing node CLI snapshot/);
+    assert.doesNotMatch(output, /Update: bash scripts\/deploy-node\.sh/);
+    assert.equal(fs.readlinkSync(path.join(fixture.home, '.local/bin/farmslot')), fixture.entry);
+    assert.deepEqual(
+      fixture.calls().map((call) => call.argv),
+      [['--version'], ['rpc', 'gateway.status']],
+    );
+    assert.deepEqual(fixture.systemctl(), []);
+  });
+}
+
 test('deploy-node verifies in bash -lc without a tmux server, whatever the zsh dotfiles say', (t) => {
   const fixture = cliFixture(t, { tmuxServer: false });
   // A stale CLI first on zsh's PATH must not matter: workers never start in zsh.
@@ -1049,12 +1082,12 @@ test('deploy-node gives up on a verify session that never finishes and kills onl
   assert.match(kills[0], /^kill-session -t =farmslot-cli-verify-\d+$/);
 });
 
-// The node-side refresh script, run straight from deploy-node.sh: contenders
+// The node-side refresh script, run straight from the CLI stage deploy-node.sh sources: contenders
 // started together over a lock left by a dead holder must take it one at a
 // time. Each installs its own revision; the fake yarn brackets the install.
 test('node CLI refreshes started together over a stale lock never overlap', async (t) => {
   const refresh = /CLI_REFRESH=\$\(cat << 'REFRESH'\n([\s\S]*?)\nREFRESH\n/.exec(
-    fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8'),
+    fs.readFileSync(path.join(repo, 'scripts/lib/node-cli-refresh.sh'), 'utf8'),
   )[1];
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-lock-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -1299,7 +1332,10 @@ for (const tmuxServer of [true, false]) {
       }),
     );
     link(fixture, '.local/bin/farmslot', seedSnapshot(fixture, fixture.sha));
-    const script = fs.readFileSync(path.join(fixture.root, 'scripts/deploy-node.sh'), 'utf8');
+    const script = fs.readFileSync(
+      path.join(fixture.root, 'scripts/lib/node-cli-refresh.sh'),
+      'utf8',
+    );
     const start = script.indexOf('  # Verify the way a tmux slot worker runs:');
     const endMarker = script.indexOf('\nVERIFY\n', start);
     const end = script.indexOf('\n  fi\n', endMarker) + '\n  fi\n'.length;
@@ -1358,7 +1394,7 @@ for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success'])
       fixture.write('home/tmux-unresponsive', phase);
       const entry = seedSnapshot(fixture, fixture.sha);
       link(fixture, '.local/bin/farmslot', entry);
-      const script = fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8');
+      const script = fs.readFileSync(path.join(repo, 'scripts/lib/node-cli-refresh.sh'), 'utf8');
       const verify = /<< 'VERIFY'\n([\s\S]*?)\nVERIFY\n/.exec(script)[1];
       const healthFile = path.join(fixture.home, '.farmslot-dev/node-worker-cli-health.json');
       fixture.write(
