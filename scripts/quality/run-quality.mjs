@@ -23,38 +23,10 @@ export const STEPS = [
   ['large-file warning', ['yarn', 'quality:large-files']],
   ['type-escape lint', ['yarn', 'lint:type-escapes']],
   ['review-loop validation contract', ['yarn', 'quality:review-loop']],
-  [
-    'orchestration regression tests',
-    [
-      'python3',
-      '-m',
-      'unittest',
-      'discover',
-      '-s',
-      '.agents/skills/cross-model-orchestrator/tests',
-    ],
-  ],
-  [
-    'model transport regression tests',
-    [
-      'node',
-      '--import',
-      'tsx',
-      '--test',
-      '.agents/skills/tmux-model-driver/tests/pane-state.test.mjs',
-      '.agents/skills/tmux-model-driver/tests/send-and-verify.test.mjs',
-      '.agents/skills/tmux-model-driver/tests/native-evidence.test.mjs',
-      '.agents/skills/tmux-model-driver/tests/probe-budget.test.mjs',
-      '.agents/skills/tmux-model-driver/tests/midturn-send.test.mjs',
-      '.agents/skills/tmux-model-driver/tests/wrappers.test.mjs',
-      '.agents/skills/tmux-model-driver/tests/runner-launch.test.mjs',
-      '.agents/skills/tmux-model-driver/tests/launch-blocker-action.test.mjs',
-    ],
-  ],
-  [
-    'model startup gate regression tests',
-    ['bash', '.agents/skills/tmux-model-driver/tests/resolve-launch-blockers.test.sh'],
-  ],
+  // The model-transport CI job runs these same scripts with a pinned tmux.
+  ['orchestration regression tests', ['yarn', 'test:orchestration']],
+  ['model transport regression tests', ['yarn', 'test:model-transport']],
+  ['model startup gate regression tests', ['yarn', 'test:model-startup-gate']],
   [
     'review artifact migration tests',
     [

@@ -47,6 +47,7 @@ jobs:
       theme: ${{ steps.filter.outputs.theme }}
       gateway: ${{ steps.filter.outputs.gateway }}
       node: ${{ steps.filter.outputs.node }}
+      model_transport: ${{ steps.filter.outputs.model_transport }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -233,6 +234,20 @@ jobs:
               - '.yarnrc.yml'
               - 'packages/protocol/**'
               - 'services/node/**'
+            # The driver loads gateway runner code from source through the gateway tsconfig,
+            # which reaches most workspace packages, and runs the observability installer.
+            model_transport:
+              - '.github/workflows/farmslot-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - '.yarnrc.yml'
+              - '.agents/skills/cross-model-orchestrator/**'
+              - '.agents/skills/tmux-model-driver/**'
+              - 'apps/command-center/tsconfig.base.json'
+              - 'packages/**'
+              - 'scripts/install-runner-observability.mjs'
+              - 'scripts/lib/**'
+              - 'services/gateway/**'
 
   repo:
     name: Repository quality guards
@@ -274,6 +289,53 @@ jobs:
 
       - name: LOC history drift advisory
         run: yarn quality:loc:advisory
+
+  model-transport:
+    name: Model transport and orchestration tests
+    needs: changes
+    if: needs.changes.outputs.model_transport == 'true'
+    # A fixed image keeps the pinned tmux package below installable. The pin is the release
+    # build, so apt may downgrade the image's updates build; `tmux -V` is the real gate.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TMUX_PACKAGE_VERSION: 3.4-1build1
+      TMUX_REPORTED_VERSION: tmux 3.4
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+
+      # The transport suite drives its own private tmux server. A missing or different
+      # tmux fails the job here; no test is skipped for want of it.
+      - name: Install pinned tmux
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends --allow-downgrades "tmux=${TMUX_PACKAGE_VERSION}"
+          tmux -V
+          test "$(tmux -V)" = "${TMUX_REPORTED_VERSION}"
+
+      - name: Orchestration regression tests
+        run: yarn test:orchestration
+
+      - name: Model transport regression tests
+        run: yarn test:model-transport
+
+      - name: Model startup gate regression tests
+        run: yarn test:model-startup-gate
 
   package-readiness:
     name: Package publish readiness
