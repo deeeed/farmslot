@@ -76,6 +76,8 @@ jobs:
               - 'yarn.lock'
               - '.yarnrc.yml'
               - 'apps/command-center/**'
+              # Command Center's run-list parity test imports Companion's list.
+              - 'apps/companion/src/lib/run-list-selection.ts'
               - 'packages/cli/**'
               - 'packages/protocol/**'
               - 'packages/review-dispatch/**'

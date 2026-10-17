@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- List the same active runs as Command Center: failed runs that still hold their slot stay in the Review queue, filters use the shared run-list view model, and archived runs leave the list at once.
+
 - Show Send back to agent as the gate's primary action.
 
 - Stop listing host paths and log lines from step outputs as Evidence files.

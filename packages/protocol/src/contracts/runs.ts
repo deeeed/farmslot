@@ -122,6 +122,32 @@ export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisio
   });
 }
 
+/** A failed deterministic gate keeps its resources until an operator settles or replays it. */
+export function isCompletionPrerequisiteFailure(
+  run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>,
+): boolean {
+  return (
+    run.status === 'failed' &&
+    Boolean(
+      run.steps?.some(
+        (step) =>
+          (step.name === PipelineSteps.COMPLETE || step.name === PipelineSteps.FINALIZE) &&
+          step.status === 'failed' &&
+          step.outputs?.gatePrerequisiteRefusal !== undefined,
+      ),
+    )
+  );
+}
+
+/**
+ * A run every active run list shows: nonterminal, or failed while it still holds
+ * its resources. The gateway's `run.list` `active` filter, Command Center and
+ * Companion all use this rule.
+ */
+export function isActiveListRun(run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>): boolean {
+  return !isTerminalRunStatus(run.status) || isCompletionPrerequisiteFailure(run);
+}
+
 export type RunStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
 export interface RunStep {

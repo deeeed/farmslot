@@ -3,6 +3,7 @@ import {
   DETACHED_HEAD_BRANCH,
   type DispatchPreviewParams,
   isCdpLiveValue,
+  isCompletionPrerequisiteFailure,
   isDispatchScoreStale,
   isGateParkInFlightOrFreed,
   isSlotFreedByPark,
@@ -24,7 +25,6 @@ import {
   slotCapabilityBlocker,
   type SlotCapabilityCatalogs,
 } from '../../run-engine/slot-capability-requirements.js';
-import { isCompletionPrerequisiteFailure } from '../../run-lifecycle/step-status.js';
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 

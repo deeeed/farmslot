@@ -1,8 +1,6 @@
 import { create } from 'zustand';
 
-import type { Run } from '@farmslot/protocol';
-
-import { mergeRunsById } from '../lib/gateway-run-sync';
+import { mergeRunsById, type Run } from '@farmslot/protocol';
 
 interface RunStore {
   runs: Run[];

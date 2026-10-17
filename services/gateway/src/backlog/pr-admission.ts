@@ -1,4 +1,5 @@
 import {
+  isCompletionPrerequisiteFailure,
   isTerminalRunStatus,
   monitoredPRKey,
   parseGitHubPullUrl,
@@ -9,8 +10,6 @@ import {
   type Run,
   type RunCreateParams,
 } from '@farmslot/protocol';
-
-import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
 
 export type PRQueuePreparation =
   | { ready: false; reason: string }

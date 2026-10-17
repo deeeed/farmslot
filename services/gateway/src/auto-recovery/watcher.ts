@@ -8,6 +8,7 @@ import {
   type IntelligenceActionGuard,
   type IntelligenceActionOutcomeReason,
   type IntelligenceActionProposedType,
+  isCompletionPrerequisiteFailure,
   isGateParkInFlightOrFreed,
   isTerminalRunStatus,
   type MonitorViolation,
@@ -22,7 +23,6 @@ import { classifyFailureText } from '../core/failure-patterns.js';
 import { runReplayStep } from '../methods/run/replay-step.js';
 import { slotFixtureRefresh } from '../methods/slot.js';
 import { isRunArchivingRefusal } from '../run-lifecycle/archive-fence.js';
-import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
 
 import { writeAuditRecord } from './audit-writer.js';

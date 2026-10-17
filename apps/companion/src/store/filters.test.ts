@@ -7,7 +7,6 @@ import {
   buildGlobalFilterSources,
   createFilterStore,
   filterDecisions,
-  filterRuns,
   filterSlots,
   type FilterSource,
   GLOBAL_FILTERS_STORAGE_KEY,
@@ -133,42 +132,6 @@ test('filterSlots applies both persisted project and machine filters', () => {
       { projects: ['example-audio-farm'], machines: ['runner-local'] },
     ).map((slot) => slot.slot),
     ['one'],
-  );
-});
-
-test('filterRuns applies project filters directly and machine filters through slot context', () => {
-  const runs: Run[] = [
-    makeRun({ id: 'run-a', project: 'example-audio-farm', slotId: 'slot-a' }),
-    makeRun({ id: 'run-b', project: 'example-audio-farm', slotId: 'slot-b' }),
-    makeRun({ id: 'run-c', project: 'farmslot-farm', slotId: 'slot-c' }),
-    makeRun({ id: 'run-d', project: 'example-audio-farm', slotId: null }),
-  ];
-  const slotById = new Map([
-    ['slot-a', { project: 'example-audio-farm', machine: 'runner-local' }],
-    ['slot-b', { project: 'example-audio-farm', machine: 'runner-a' }],
-    ['slot-c', { project: 'farmslot-farm', machine: 'runner-local' }],
-  ]);
-
-  assert.deepEqual(
-    filterRuns(
-      runs,
-      { projects: ['example-audio-farm'], machines: ['runner-local'] },
-      slotById,
-    ).map((run) => run.id),
-    ['run-a'],
-  );
-});
-
-test('filterRuns applies machine filters from slot id before fleet context is available', () => {
-  const runs: Run[] = [
-    makeRun({ id: 'run-a', project: 'example-mobile-farm', slotId: 'runner-local-mobile-6' }),
-    makeRun({ id: 'run-b', project: 'example-mobile-farm', slotId: 'runner-a-mm-2' }),
-    makeRun({ id: 'run-c', project: 'example-mobile-farm', slotId: null }),
-  ];
-
-  assert.deepEqual(
-    filterRuns(runs, { projects: [], machines: ['runner-local'] }, new Map()).map((run) => run.id),
-    ['run-a'],
   );
 });
 
