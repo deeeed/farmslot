@@ -460,7 +460,7 @@ Before deletion, compare old/new static and selected-attempt rendering, authored
 
 ## Provider operations without a binary (Amendment 6)
 
-**Status:** Proposed by [ADR-068 Amendment 6](../adr/068-project-recipe-binding-and-conformance.md#amendment-6-provider-operations-without-a-provider-binary-2026-10-17). Nothing in this section ships until the amendment is approved and its implementation and coordinated releases are accepted.
+**Status:** Accepted under [ADR-068 Amendment 6](../adr/068-project-recipe-binding-and-conformance.md#amendment-6-provider-operations-without-a-provider-binary-2026-10-17), lead approval 2026-10-17 at `74377d59218ff3e819aeed087e171b459da1d294`. Nothing in this section ships until its implementation and coordinated releases are accepted.
 
 A provider without an executable is reached only through its package module and `farmslot`. Its overlay MUST NOT copy an executable into a checkout. Before removing an executable, the provider maps each of its commands to a `farmslot` route or a provider action, with argument, output, exit-code and refusal translation, or proves the command unused (section 6). Recovery hints and `next` strings MUST name the replacement.
 

@@ -196,7 +196,7 @@ The [hosted task specification](../reference/project-recipe-contract.md#hosted-t
 
 ## Amendment 6: Provider operations without a provider binary, 2026-10-17
 
-**Status:** Proposed. Acceptance follows paired review and lead approval under delegated amendment authority. Earlier decisions retain their status.
+**Status:** Accepted by the lead under delegated amendment authority, 2026-10-17, at content snapshot `74377d59218ff3e819aeed087e171b459da1d294`. Design: [#1249](https://github.com/deeeed/farmslot/pull/1249). Implementation is pending. Earlier decisions retain their status.
 
 ### Decision
 
