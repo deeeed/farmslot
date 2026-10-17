@@ -58,3 +58,31 @@ test('start preserves successful terminal verdicts', async (t) => {
   assert.equal(await handleChecklist(['mark', dir, 'start']), 0);
   assert.equal(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'), completed);
 });
+
+test('an explicit --checklist (or its --signal) that is not a task-local basename is a usage error', async (t) => {
+  const dir = task(t);
+  const signal = JSON.stringify({ status: 'complete' });
+  writeFileSync(path.join(dir, 'SIGNAL.json'), signal);
+  const errors = t.mock.method(console, 'error', () => {});
+  let completeHookRan = false;
+  const options = { beforeComplete: () => (completeHookRan = true) };
+  assert.equal(await handleChecklist(['mark', dir, '--checklist', './TASK.md', '1'], options), 2);
+  assert.equal(
+    await handleChecklist(
+      ['mark', dir, '--checklist', 'TASK.md', '--signal', '../S.json', '1'],
+      options,
+    ),
+    2,
+  );
+  assert.equal(await handleChecklist(['mark', dir, '--checklist', 'TASK', 'complete'], options), 2);
+  assert.deepEqual(
+    errors.mock.calls.map((call) => call.arguments[0]),
+    [
+      '--checklist must be a task-local basename (got ./TASK.md)',
+      '--signal must be a task-local basename (got ../S.json)',
+      '--checklist must end with .md (got TASK)',
+    ],
+  );
+  assert.equal(completeHookRan, false);
+  assert.equal(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'), signal);
+});

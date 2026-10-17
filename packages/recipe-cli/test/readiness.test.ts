@@ -489,7 +489,7 @@ describe('project log views', () => {
     assert.equal(events.result, 2);
     assert.deepEqual(JSON.parse(events.stdout).error, {
       code: 'USAGE',
-      message: '--events must be numeric.',
+      message: '--events must be numeric (got: x).',
       userAction: `${host} logs --events 20`,
     });
     const missing = await capture(() =>
