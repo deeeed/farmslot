@@ -9,8 +9,12 @@
 `@farmslot/protocol` owns the wire types and the portable SDK cache. The proposed
 `@farmslot/protocol/client-cache` entry exports `ResourceKey`, `ResourceRevision`,
 `ResourceQuery`, `ResourceQueryState` and `createGatewayResourceCache`. Command
-Center and Companion are the consumers. The module must run in browser and React
-Native environments without Node APIs or a framework-specific state library.
+Center and Companion are the only consumers. The module must run in browser and
+React Native environments without Node APIs or a framework-specific state library.
+The package rule that protocol holds contracts, not implementations, already has
+portable client controllers as exceptions (`SourceStatusController`,
+`PersonSessionClient`); the first implementation step amends that rule for this
+cache rather than adding another package.
 
 `createGatewayResourceCache` accepts an authenticated request/event/connection
 adapter. It exposes `observe(query, listener)`, `read(query)`, `retry(query)` and
@@ -22,15 +26,21 @@ when present. A failed refetch may retain old data only as explicitly stale data
 
 The proposed `RESOURCE_CHANGED` event constant in
 `@farmslot/protocol/transport/events` has wire name `resource.changed`.
-The authenticated handshake advertises `resourceChanges: { version: 1, epoch }`.
-Successful cacheable read responses add an optional transport-level
-`resourceState: { epoch, dependencies: [{ key, revision }] }` beside `payload`.
-Existing payload DTOs and mutation preconditions remain authoritative.
+`GatewayAuthConnectResult.capabilities.resourceChanges` in
+`@farmslot/protocol/rpc/auth` advertises `{ version: 1, epoch }`. Every
+authenticated principal receives that reply, including native-only principals
+that receive no `hello`. Successful cacheable read responses add an optional
+`ResponseFrame.resourceState: { epoch, dependencies: [{ key, revision }] }` in
+`@farmslot/protocol/transport/frames`, beside `payload`. A negotiated read that
+lacks this metadata leaves its query `stale` (or `unsupported` when the method
+never provides it); the cache never treats such a reply as current. Existing
+payload DTOs and mutation preconditions remain authoritative.
 
 There are no new CLI commands or flags. Existing RPC reads supply data and
-existing mutations perform actions. A harness may consume the shared cache for
-observed state; it cannot emit gateway revisions or infer successful execution
-from an invalidation. The contract starts experimental. Implementation must
+existing mutations perform actions. `@farmslot/cli`, mm-harness and recipe
+workers are not consumers and gain no extension point: the key registry is
+closed to packs and harnesses. Nothing outside the gateway emits revisions, and
+an invalidation never implies that a command succeeded. The contract starts experimental. Implementation must
 publish matching protocol exports and document compatible gateway/client
 versions before consumers cut over. Missing capabilities produce `unsupported`,
 with no silent fallback to panel polling.
@@ -46,13 +56,17 @@ scope. The protocol query registry canonicalizes query parameters, including
 filters, pagination and projection options.
 
 - An epoch is an opaque gateway-process identity. Revisions are nonnegative safe
-  integers, monotonic per key within that epoch. A restart creates a new epoch;
+  integers with one counter per key, never one global sequence, so a principal
+  cannot infer other principals' write volume. A restart creates a new epoch;
   revisions from different epochs are never compared.
 - A committed change advances affected keys and publishes only after their read
-  methods can return that revision or a newer one. A read must capture its data
-  and dependency revisions consistently. If it spans an intervening write, the
-  owner retries the read or returns an explicit stale result rather than stamping
-  old data with the new revision.
+  methods can return that revision or a newer one. Publication happens on the
+  store/writer path after commit, not from a request handler's `emit`, which
+  reaches only the calling socket ([ADR-053](../adr/053-run-lifecycle-transition-routing.md)).
+  Each ordered effect advances its own store's keys after that effect commits.
+- A read samples its dependency revisions before reading the data and stamps the
+  reply with them. The data is then at or above its stamp, and a write landing
+  during the read publishes a newer revision that triggers the next refetch.
 - A writer includes detail, collection and derived projection keys affected by
   insertion, update or deletion. Broad scoped collection invalidation is allowed
   when finer dependency tracking would be unsafe. Filters do not excuse missing
@@ -61,11 +75,16 @@ filters, pagination and projection options.
 - Node observations and filesystem/mirror observers notify through their owning
   gateway service. A completed recipe alone cannot claim that its mirrored
   artifacts are readable. Mirror arrival publishes its own change.
-- Notifications may coalesce to the highest revision per key. Duplicates and
-  out-of-order revisions are harmless. The cache does not treat websocket `seq`
+- Notifications may coalesce to the highest revision per key. Each family
+  declares a minimum publish interval; `workspace`, `progress`, `native-session`
+  and operation-log keys must coalesce so a burst of writes, such as a worker's
+  code generation, cannot drive back-to-back reads. Duplicates and out-of-order
+  revisions are harmless. The cache does not treat websocket `seq`
   gaps as lost changes: existing sequence numbers also cover events filtered out
   by authorization. A dropped event on an otherwise open connection must force
   connection resynchronization; it cannot be silently discarded by backpressure.
+  A receiver whose authorization check throws is disconnected for
+  `resource.changed`, not skipped as broadcasts are skipped today.
 - This is invalidation, without replay guarantees or a durable event log. The
   transport must preserve delivery on a live connection or close it. Reconnect
   invalidates all observed data regardless of whether the epoch changed.
@@ -108,13 +127,20 @@ adding a second implementation of those reads. Projection keys may depend on
 multiple families. A command changes all affected keys through its owning
 writer, not through a client guessing what to refresh after a successful reply.
 Existing stream/data events keep their owners; terminal bytes, video frames and
-chat deltas do not become cache invalidations per frame/token.
+chat deltas do not become cache invalidations per frame/token. Existing domain
+events such as `run.updated`, `decision.*` and `fleet.updated` stay for CLI,
+harness and lifecycle consumers. The shared cache treats them only as
+invalidations of the queries they cover and never adopts their payloads, so one
+update path owns each query during migration.
 
 ## Authorization
 
 Resource notifications must apply the same resource- and principal-level read
-authorization as their queries. The existing event-name broadcast allowlist
-alone is insufficient for a generic notification. Never broadcast another
+authorization as their queries. For `resource.changed`, that per-key read check
+replaces the event-name broadcast allowlist rather than adding to it: a principal
+receives a key exactly when it may call that key's read methods. `native-session`
+and `profiles` keys follow native-owner access, so a native-only principal keeps
+live transcripts and approvals without polling. Never broadcast another
 principal's resource IDs, existence, revisions or scope. Private native sessions,
 profiles, saved reviews and account metadata retain their existing boundaries.
 
@@ -136,30 +162,33 @@ preconditions on the server. Cached freshness is never mutation authorization.
 3. On invalidation, coalesce affected active queries into one refetch each.
    An event arriving during that refetch leaves another read pending if its
    revision is not covered. Unknown dependencies invalidate conservatively.
-4. Inactive queries become stale without immediate reads. The next observer
+4. Cursor and append reads, such as native transcripts and logs, continue from
+   their saved cursor when invalidated. The existing controller keeps paging; the
+   cache only signals that more data is available.
+5. Inactive queries become stale without immediate reads. The next observer
    refetches them. Unsubscribe/dispose cancels owned work and prevents late writes.
    Evict inactive entries with a bounded policy; cache memory cannot grow with
    every run ever opened. This cleanup is not a network freshness timer.
-5. Disconnect marks all entries stale. Reconnect refetches active queries even
+6. Disconnect marks all entries stale. Reconnect refetches active queries even
    under the same epoch. Companion background pauses requests; foreground
    resynchronizes before restoring ready state. Error Retry repeats a read, never
    a mutation. A read failure keeps a visible error/stale state without an
    unbounded retry loop.
-6. Commands execute outside the cache and retain their existing idempotency and
+7. Commands execute outside the cache and retain their existing idempotency and
    confirmation rules. Never replay a command on reconnect. Gate/package identity
    changes invalidate old confirmations. Preserve user drafts and curation keyed
    to their retained identities; refetching must not silently rebind them.
 
 ## What stays polled or manually invoked
 
-| Source/action                                                                                                                                         | Owner and policy                                                                                                                                                                                                                                                                                                            |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GitHub PRs, checks, comments, project fields and account observations without a reliable subscribed feed                                              | One gateway collector per normalized upstream query, shared across viewers. Slow poll at least 60 seconds for passive views, honor rate limits/backoff and visibility. Existing active CI monitor schedules keep their execution policy. Publish a resource change when the observed result or its freshness/error changes. |
-| Remote release refs, package registry channels and provider login/quota state without a change feed                                                   | Gateway integration collector, passive interval at least 60 seconds and slower where quotas require. Separate observed time/error from the last successful value. Installed/node state and operation progress use notifications.                                                                                            |
-| Device-local Expo update availability                                                                                                                 | One Companion update integration. Check on foreground or explicit user request; any background check is at least five minutes. Download and reload remain explicit actions under the existing update policy.                                                                                                                |
-| Retry after a read/transport error                                                                                                                    | Keep a contextual Retry action using the shared cache. It must not become a permanent Refresh control in a healthy panel.                                                                                                                                                                                                   |
-| Recheck diagnostics/availability, force a remote check, rebuild a package, sync artifacts, OAuth refresh, reload a worker or install/reload an update | Keep the existing explicit command and its safety checks. Label the effect. Its completion invalidates gateway observations automatically.                                                                                                                                                                                  |
-| Local elapsed/expiry clocks, confirmation/toast timers, debounces, request deadlines, reconnect backoff, render restoration and media retry           | Keep within their existing UI/transport owners. They do not periodically fetch gateway state.                                                                                                                                                                                                                               |
+| Source/action                                                                                                                                         | Owner and policy                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub PRs, checks, comments, project fields and account observations without a reliable subscribed feed                                              | One gateway collector per normalized upstream query, shared across viewers. Slow poll at least 60 seconds for passive views, honor rate limits/backoff and visibility. Existing active CI monitor schedules keep their execution policy. Pending CI-timeout decisions keep their policy; the client auto-resolve moves into the gateway CI monitor. Publish a resource change when the observed result or its freshness/error changes. |
+| Remote release refs, package registry channels and provider login/quota state without a change feed                                                   | Gateway integration collector, passive interval at least 60 seconds and slower where quotas require. Separate observed time/error from the last successful value. Installed/node state and operation progress use notifications.                                                                                                                                                                                                       |
+| Device-local Expo update availability                                                                                                                 | One Companion update integration. Check on foreground or explicit user request; any background check is at least five minutes. Download and reload remain explicit actions under the existing update policy.                                                                                                                                                                                                                           |
+| Retry after a read/transport error                                                                                                                    | Keep a contextual Retry action using the shared cache. It must not become a permanent Refresh control in a healthy panel.                                                                                                                                                                                                                                                                                                              |
+| Recheck diagnostics/availability, force a remote check, rebuild a package, sync artifacts, OAuth refresh, reload a worker or install/reload an update | Keep the existing explicit command and its safety checks. Label the effect. Its completion invalidates gateway observations automatically.                                                                                                                                                                                                                                                                                             |
+| Local elapsed/expiry clocks, confirmation/toast timers, debounces, request deadlines, reconnect backoff, render restoration and media retry           | Keep within their existing UI/transport owners. They do not periodically fetch gateway state.                                                                                                                                                                                                                                                                                                                                          |
 
 Node-observable filesystem, git, device inventory and native session changes are
 not external polling exemptions merely because they originate outside the
@@ -183,6 +212,8 @@ must prove these scenarios with both real clients against the same gateway:
   restart the gateway. Active queries recover in both cases without command replay.
 - Switch gateway/principal and revoke a permission. No former data, event key or
   late response crosses the authorization boundary.
+- Run a busy writer, such as a worker generating code in a watched workspace.
+  Each observed key refetches at most once per its family's publish interval.
 - With multiple observers, an idle gateway produces no periodic panel reads.
   External collectors remain bounded and shared. Existing streams and explicit
   package rebuild/sync/recheck actions still work.

@@ -9,9 +9,9 @@
 ## Context
 
 Command Center and Companion repeatedly read gateway state because they cannot
-reliably learn when it changes. An audit of both clients found 41 Refresh
-controls and 27 polling loops that only reread gateway-owned or node-observed
-state. For example, the Sources Refresh button only rereads `sources.status`,
+reliably learn when it changes. An audit of both clients found 40 Refresh
+controls and 30 polling loops that reread gateway-owned or node-observed state;
+two of the controls also recheck an external CLI login. For example, the Sources Refresh button only rereads `sources.status`,
 and screens poll runs, progress, native sessions, git status and inventories.
 Opening more screens creates more reads.
 
@@ -39,6 +39,12 @@ dependencies, request deduplication, invalidation, freshness and reconnect
 recovery. Command Center and Companion each instantiate that same implementation
 once per authenticated connection. Their renderers subscribe to shared query
 state. They do not implement separate event-to-query maps or polling policies.
+
+Each notification reaches a principal only if that principal may call the
+key's read methods. For `resource.changed`, this per-key check replaces the
+event-name broadcast allowlist, so native-only principals keep live native
+sessions and approvals. Existing domain events such as `run.updated` stay for
+their current consumers; the cache treats them only as invalidations.
 
 A notification invalidates data; it does not carry a replacement verdict,
 grant authority, approve a gate or replay a command. Clients refetch through the
@@ -68,13 +74,21 @@ and validation rules.
   `ResourceQuery`, `ResourceQueryState` and `createGatewayResourceCache`.
   Both clients consume the same query registry and cache behavior. Existing
   websocket clients provide transport adapters; the cache opens no sockets.
-- The websocket connection handshake advertises notification support and the
-  gateway epoch. Read replies include resource revision metadata without
-  changing their existing domain payloads.
+- `GatewayAuthConnectResult.capabilities.resourceChanges` in
+  `@farmslot/protocol/rpc/auth` advertises notification support and the gateway
+  epoch. Every authenticated principal receives it, including native-only
+  principals that receive no `hello`.
+- `ResponseFrame.resourceState` in `@farmslot/protocol/transport/frames` carries
+  revision metadata on read replies without changing their domain payloads.
 - There are no new CLI commands or flags. Existing read and mutation commands
-  keep their behavior. Harnesses and recipe workers inherit notifications through
-  a shared client when needed; they do not publish authoritative gateway revisions
-  or acquire new execution privileges.
+  keep their behavior. `@farmslot/cli`, mm-harness and recipe workers are not
+  consumers and gain no extension point; the key registry is closed to packs
+  and harnesses.
+
+`packages/README.md` keeps implementations out of `@farmslot/protocol`. Portable
+client controllers (`SourceStatusController`, `PersonSessionClient`) are already
+exceptions, and step 1 amends the rule for this cache rather than adding a
+package.
 
 These additions start experimental and require coordinated protocol/package
 versioning and gateway capability negotiation. Existing published clients do not
@@ -88,29 +102,32 @@ covers runs and families, decisions and gates, slots and nodes, sources, reviews
 packages and artifacts, progress, capabilities, workspaces, native sessions,
 configuration, planning, assessment, analytics and observed upstream state.
 
-Sources is already being piloted through an [ADR-069](069-declared-pinned-sources.md)
-amendment. Its change notification uses the same shape as the `sources` key
-family in the catalog. That pilot is the first consumer, not a second contract:
-step 1 replaces its carrier with `resource.changed` and moves its client
-handling into the shared cache, keeping the key fields.
+Sources is already being piloted through a Proposed
+[ADR-069](069-declared-pinned-sources.md) amendment
+([#1245](https://github.com/deeeed/farmslot/pull/1245)). Its change notification
+uses the same shape as the `sources` key family in the catalog. That pilot is
+the first consumer, not a second contract: step 1 replaces its carrier with
+`resource.changed`, and step 2 moves its client handling into the shared cache,
+keeping the key fields.
 
-After design approval, implementation proceeds in this order:
+After design approval, implementation proceeds in vertical slices. Each slice
+adds its writers' notifications, moves both clients to the shared cache, proves
+write/read/event ordering, and only then removes that slice's polls, delayed
+settle reads and Refresh controls:
 
-1. Add the shared key/query registry, revision metadata, authorization checks and
-   cache conformance tests. Inventory each writer and its affected projections.
-   Swap the Sources pilot's carrier to `resource.changed`.
-2. Add gateway notifications at those owners, including node/file observations,
-   artifact mirror completion and background operations. Add the missing
-   collectors (gateway update status, runner seats, GitHub accounts) and the task
-   progress file changes the current push misses. Prove write/read/event ordering
-   before removing any current freshness mechanism.
-3. Migrate Sources in both clients first, then runs, decisions, gates, reviews,
-   packages and artifacts. Use the same cache for both clients in each slice.
-4. Migrate fleet, slots, capabilities, progress, workspaces and native sessions,
-   then configuration, planning, assessment and analytics. Remove each slice's
-   redundant polls, delayed settle reads and Refresh controls once coverage passes.
-5. Consolidate upstream polling under its collectors, remove remaining duplicate
-   client caches and event mappings, and enforce the panel rule in review/CI.
+1. Foundation: the shared key/query registry, the auth capability, response
+   revision metadata, per-key authorization and cache conformance tests. Swap the
+   Sources pilot's carrier to `resource.changed`.
+2. Sources in both clients.
+3. Runs, decisions, gates, reviews, packages and artifacts, including artifact
+   mirror completion.
+4. Fleet, slots, capabilities, progress, workspaces, workers and native
+   sessions, including node-reported file, git, device and task-progress changes.
+5. Configuration, planning, assessment, analytics and copilot.
+6. Upstream and gateway-update collectors (gateway update status, runner seats,
+   GitHub accounts, PR review threads). The CI-timeout auto-resolve moves into
+   the gateway CI monitor. Remove remaining duplicate client caches and event
+   mappings, and enforce the panel rule in review/CI.
 
 Each implementation PR must name its writer/read/query/event mappings and audit
 rows. Mixed deployment reports unsupported or stale state explicitly; it must
