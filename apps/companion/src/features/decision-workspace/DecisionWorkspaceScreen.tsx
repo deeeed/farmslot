@@ -560,8 +560,10 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       setRecipeAvailabilityError(null);
       return;
     }
-    void refreshRecipeRuns('initial load', true);
-  }, [refreshRecipeRuns, sourceRunId]);
+    // Each reconnect re-reads, as the source run above does.
+    if (connection === null) return;
+    void refreshRecipeRuns('connect', true);
+  }, [connection, refreshRecipeRuns, sourceRunId]);
 
   useEffect(() => {
     if (!client || !sourceRunId) return;

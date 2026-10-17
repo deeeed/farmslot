@@ -28,6 +28,7 @@ import { DocumentViewer } from '../../components/DocumentViewer';
 import { MediaViewer } from '../../components/MediaViewer';
 import { RecipeRunControls } from '../../components/RecipeRunControls';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
+import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import {
   type ArtifactStickyChromeLayout,
   artifactStickyChromeThreshold,
@@ -116,6 +117,7 @@ export default function ArtifactViewerScreen() {
   const router = useRouter();
   const isFocused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
+  const connection = useConnectedTransport();
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const storeRun = useRunStore((s) => s.runs.find((r) => r.id === runId));
@@ -320,8 +322,11 @@ export default function ArtifactViewerScreen() {
   }, [client, refreshRun, runId]);
 
   useEffect(() => {
-    void refreshRecipeRuns('initial load', true);
-  }, [refreshRecipeRuns]);
+    // Each reconnect re-reads, as run detail does: a load paused before the gateway
+    // connected, or during a restart, otherwise leaves the recorded evidence missing.
+    if (connection === null) return;
+    void refreshRecipeRuns('connect', true);
+  }, [connection, refreshRecipeRuns]);
 
   const refreshAfterRecipeComplete = useCallback(
     (_requestId: string) => {
