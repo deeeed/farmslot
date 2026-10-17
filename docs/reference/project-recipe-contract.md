@@ -496,7 +496,7 @@ Each row MUST keep its existing arguments, output fields, exit codes and refusal
 
 ### Overlay check
 
-Plain `doctor` MUST call the selected runtime's `harness.verify` and report its result as check `overlay`. A built-in bridge runs its declared verifier. A headless runtime keeps its existing exemption. A failed or missing verifier fails readiness.
+Plain `doctor` MUST call the selected runtime's `harness.verify` and report its result as check `overlay`. Every runtime that declares a verifier runs it, including built-in bridges and headless runtimes with an overlay, such as Core. A runtime that declares neither an overlay nor a verifier reports the check as not applicable. A failed verifier fails readiness.
 
 The verifier MUST be read-only. It MUST NOT launch, navigate, reload, repair, seed fixtures, call actions or run recipes. It MAY read files and observe a runtime that already exists, for example by classifying a CDP port's holder. Checks a verifier made through an installed runner MUST move to the public host:
 
@@ -509,7 +509,8 @@ The verifier MUST be read-only. It MUST NOT launch, navigate, reload, repair, se
 `doctor --remove-overlay` MUST:
 
 - acquire the checkout lock;
-- run the runtime's existing cleanup leaf, or report no operation for a built-in bridge or headless runtime;
+- run the runtime's existing cleanup leaf when an overlay is installed, including on headless runtimes;
+- report no operation for a built-in bridge, or when no overlay is installed;
 - emit the doctor JSON envelope with `removed: true | false`.
 
 It MUST refuse when combined with `--fix`, `--conformance`, `--live`, `--print-ready` or `--expect-live`. It MUST NOT stop processes, release resources or touch files outside the overlay paths the cleanup leaf owns. `recipe stop` remains the only owned-process stop.
@@ -529,7 +530,7 @@ A graph that mixes both kinds MUST use the normal runtime path. Conformance vali
 
 ### Template selection
 
-`farmslot execution-template list` MUST accept `--domain`, `--domain-dir <domain=path>` (repeatable), `--id` and `--json`. `farmslot execution-template materialize <output>` MUST accept the list selectors plus `--provenance <path>`, `--title` and `--force`. Both delegate to the `@farmslot/agent-runtime` selector, keeping its precedence, shadowing, snapshot and provenance rules from ADR-049. Without `--force`, `materialize` MUST refuse to overwrite.
+`farmslot execution-template list` MUST accept `--domain`, `--domain-dir <domain=path>` (repeatable), `--id` and `--json`. `farmslot execution-template materialize <output>` MUST accept the list selectors plus `--provenance <path>`. Both delegate to the `@farmslot/agent-runtime` selector, keeping its precedence, shadowing, snapshot and provenance rules from ADR-049. `materialize` MUST refuse an existing output or provenance file, as the selector already does.
 
 ### Provider guidance
 
