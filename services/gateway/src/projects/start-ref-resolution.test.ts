@@ -177,6 +177,86 @@ test('resolveStartRefInRepo accepts an advertised head absent from local trackin
   assert.equal(commands.filter((command) => command.includes('merge-base --is-ancestor')).length, 0);
 });
 
+test('resolveStartRefInRepo accepts an older commit of a moved branch the clone does not track', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-start-ref-moved-branch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const source = path.join(root, 'source');
+  const remote = path.join(root, 'origin.git');
+  const clone = path.join(root, 'clone');
+
+  await sh(`git init --bare ${remote}`);
+  // Like GitHub, serve any commit reachable from a ref, not only ref tips.
+  await sh(`git --git-dir=${remote} config uploadpack.allowReachableSHA1InWant true`);
+  await sh(`git init -b main ${source}`);
+  await sh('git config user.email test@example.com', source);
+  await sh('git config user.name Test', source);
+  await sh('printf base > file.txt && git add file.txt && git commit -m base', source);
+  await sh(`git remote add origin ${remote}`, source);
+  await sh('git push origin main', source);
+  await sh(`git --git-dir=${remote} symbolic-ref HEAD refs/heads/main`);
+  // A release-range QA froze this release commit; the branch then moved on.
+  await sh('git checkout -b release/1.0.0', source);
+  await sh('printf frozen > release.txt && git add release.txt && git commit -m frozen', source);
+  const frozen = (await sh('git rev-parse HEAD', source)).stdout.trim();
+  await sh('printf moved > release.txt && git commit -am moved', source);
+  await sh('git push origin release/1.0.0', source);
+  // The slot tracks only main, and the release has no tag.
+  await sh(`git clone --single-branch --branch main ${remote} ${clone}`);
+  const refs = async () => (await sh("git for-each-ref --format='%(refname)'", clone)).stdout;
+  const refsBefore = await refs();
+
+  const resolved = await resolveStartRefInRepo({
+    repo: clone,
+    requestedRef: frozen,
+    exec: (command) => shResult(command),
+  });
+  assert.equal(resolved.resolvedSha, frozen);
+  assert.equal(await refs(), refsBefore, 'the check writes no ref into the slot clone');
+  assert.equal(
+    (await shResult(`git -C ${clone} config --get extensions.partialClone`)).exitCode,
+    1,
+    'the slot clone does not become a partial clone',
+  );
+});
+
+test('resolveStartRefInRepo rejects a commit no advertised branch still contains', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-start-ref-deleted-branch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const source = path.join(root, 'source');
+  const remote = path.join(root, 'origin.git');
+  const clone = path.join(root, 'clone');
+
+  await sh(`git init --bare ${remote}`);
+  await sh(`git --git-dir=${remote} config uploadpack.allowReachableSHA1InWant true`);
+  await sh(`git init -b main ${source}`);
+  await sh('git config user.email test@example.com', source);
+  await sh('git config user.name Test', source);
+  await sh('printf base > file.txt && git add file.txt && git commit -m base', source);
+  await sh(`git remote add origin ${remote}`, source);
+  await sh('git push origin main', source);
+  await sh(`git --git-dir=${remote} symbolic-ref HEAD refs/heads/main`);
+  await sh('git checkout -b abandoned', source);
+  await sh('printf gone > gone.txt && git add gone.txt && git commit -m gone', source);
+  const gone = (await sh('git rev-parse HEAD', source)).stdout.trim();
+  await sh('git push origin abandoned', source);
+  await sh(`git clone --single-branch --branch main ${remote} ${clone}`);
+  // The clone holds the commit object, but the only branch containing it is deleted.
+  await sh(`git fetch origin ${gone}`, clone);
+  await sh('git push origin --delete abandoned', source);
+
+  await assert.rejects(
+    () =>
+      resolveStartRefInRepo({
+        repo: clone,
+        requestedRef: gone,
+        exec: (command) => shResult(command),
+      }),
+    /not reachable from fetched origin refs\/tags/,
+  );
+});
+
 test('resolveStartRefInRepo rejects SHA reachable only from a local tag', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-start-ref-local-tag-'));
   t.after(() => rm(root, { recursive: true, force: true }));

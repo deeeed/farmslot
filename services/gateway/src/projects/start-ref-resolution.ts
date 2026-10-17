@@ -217,6 +217,47 @@ async function verifyCommitish(
   return full.stdout.trim();
 }
 
+/**
+ * Whether the history of any branch the remote advertises contains `sha`. A
+ * frozen QA range head is an older commit of a release branch that has since
+ * moved and that the slot does not track, so neither local refs nor branch
+ * tips show it. Only commit objects of the advertised tips are fetched, into a
+ * throwaway repository: no ref is written to the slot clone (case-colliding
+ * names on macOS) and the clone never becomes a partial clone.
+ */
+async function advertisedHeadHistoryContains(
+  repo: string,
+  exec: StartRefExec,
+  sha: string,
+  remote: string,
+): Promise<boolean> {
+  const scratch = '"$tmp/repo"';
+  const script = [
+    `url=$(git remote get-url ${shellQuote(remote)})`,
+    'tmp=$(mktemp -d "${TMPDIR:-/tmp}/farmslot-start-ref.XXXXXX")',
+    `trap 'rm -rf "$tmp"' EXIT`,
+    `git ls-remote --heads ${shellQuote(remote)} > "$tmp/heads"`,
+    `awk '{print $1}' "$tmp/heads" | sort -u > "$tmp/tips"`,
+    `{ [ -s "$tmp/tips" ] || { echo absent; exit 0; }; }`,
+    `git init -q --bare ${scratch}`,
+    `git -C ${scratch} config remote.origin.url "$url"`,
+    `git -C ${scratch} config remote.origin.promisor true`,
+    `git -C ${scratch} config remote.origin.partialclonefilter tree:0`,
+    `git -C ${scratch} config extensions.partialClone origin`,
+    `git -C ${scratch} fetch -q --no-tags --no-write-fetch-head --filter=tree:0 --stdin origin < "$tmp/tips"`,
+    `git -C ${scratch} rev-list --stdin < "$tmp/tips" > "$tmp/commits"`,
+    `{ if grep -qx ${shellQuote(sha)} "$tmp/commits"; then echo contained; else echo absent; fi; }`,
+  ].join(' && ');
+  const result = await runGit(repo, exec, `(${script})`);
+  const verdict = result.stdout.trim().split('\n').at(-1);
+  if (result.exitCode !== 0 || (verdict !== 'contained' && verdict !== 'absent')) {
+    throw new Error(
+      `startRef remote branch history scan failed: ${result.stderr.slice(-200) || result.stdout.slice(-200)}`,
+    );
+  }
+  return verdict === 'contained';
+}
+
 async function assertReachableFromKnownRemote(
   repo: string,
   exec: StartRefExec,
@@ -246,6 +287,7 @@ async function assertReachableFromKnownRemote(
     );
   }
   if (remoteHeads.stdout.split('\n').some((line) => line.split(/\s+/, 1)[0] === sha)) return;
+  if (await advertisedHeadHistoryContains(repo, exec, sha, remote)) return;
   for (const tagCommitish of await fetchedRemoteTagCommitishes(repo, exec, remote)) {
     const tagCommit = `${tagCommitish}^{commit}`;
     const contains = await runGit(
