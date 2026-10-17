@@ -8,6 +8,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 - Run `recipe artifacts`, `recipe artifacts validate` and doctor live-evidence checks through the shared recipe-cli harness exports, with unchanged output and refusals.
 
+- `farmslot update` and `project add` keep a project's gateway run task folders (`projects/<project>/tasks`) when they re-sync its pack. Before, a changed pack deleted every retained task input and evidence file unless the pack's git ignored `tasks/`.
+
 - Initialize hosted tasks on the selected node through its immutable CLI, preserving authored task data and refusing relocated receipts or tooling overrides. A template source whose root the node lacks refuses with the source and its environment variable. Only a native slot's device platform (`ios`, `android`) still selects the provider family; other slot kinds use the pack's adapter.
 
 - Allow person confirm-visual without --reason while keeping it mandatory for issues and delegated judgments.

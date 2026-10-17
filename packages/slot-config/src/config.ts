@@ -2304,14 +2304,17 @@ export function isMockModeProject(projectJson?: RawProjectJson | null): boolean 
   return Boolean(projectJson?.external?.mock_mode);
 }
 
+/** Gateway-written run task folders inside a project directory; never pack content. */
+export const ORCHESTRATOR_TASK_DIR = 'tasks';
+
 export function getOrchestratorTaskRoot(
   projectName: string,
   projectJson?: RawProjectJson | null,
 ): string {
   if (isMockModeProject(projectJson)) {
-    return path.join(farmslotRoot, '.sandbox', projectName, 'tasks');
+    return path.join(farmslotRoot, '.sandbox', projectName, ORCHESTRATOR_TASK_DIR);
   }
-  return path.join(farmslotRoot, 'projects', projectName, 'tasks');
+  return path.join(farmslotRoot, 'projects', projectName, ORCHESTRATOR_TASK_DIR);
 }
 
 export function resolveTaskRelDir(
