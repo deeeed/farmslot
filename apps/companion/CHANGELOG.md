@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show a Run results card on run detail with the run's retained report, opened as verified text with its per-criterion and per-case verdicts and evidence, the same results Command Center shows. The acceptance tally now matches Command Center and shows no proven count before any criterion is assessed.
+
 - Stop listing host paths and log lines from step outputs as Evidence files.
 
 - Show captured run output in output review Evidence when no step lists it, and keep every publish approval, overrides included, unavailable in the decision workspace while review findings or a fix are open.

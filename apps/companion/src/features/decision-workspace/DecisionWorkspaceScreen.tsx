@@ -13,7 +13,7 @@ import {
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { type EvidenceReviewModel, readEvidenceReviewReport } from '@farmslot/adapter-sdk/evidence';
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionListResult,
@@ -60,7 +60,6 @@ import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
-  artifactUrl,
   artifactUrlForEntry,
   classifyArtifact,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
@@ -81,6 +80,7 @@ import {
 } from '../../lib/evidence-media-items';
 import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
+import { readRunOutputReport } from '../../lib/output-report';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import {
   canResolveWithPostureChoice,
@@ -846,21 +846,11 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     documentAbortRef.current = controller;
     setLoadingDocument(outputReviewPayload?.reportPath ?? null);
     try {
-      const report = await readEvidenceReviewReport(model, async (path) => {
-        const response = await gatewayFetch(
-          artifactUrl(
-            gatewayUrl,
-            presentation.runId!,
-            path,
-            undefined,
-            undefined,
-            model.report?.artifactManifest.find((file) => file.path === path)?.bundleDigest,
-          ),
-          artifactAuthHeaders,
-          { signal: controller.signal },
-        );
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return new Uint8Array(await response.arrayBuffer());
+      const report = await readRunOutputReport(model, {
+        gatewayUrl,
+        runId: presentation.runId,
+        authHeaders: artifactAuthHeaders,
+        signal: controller.signal,
       });
       if (!controller.signal.aborted)
         setDocumentViewer({ title: report.caption, body: report.body, evidenceModel: model });

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share the run results card summary and the acceptance tally, so Command Center and Companion show the same title, badge, copy and counts for a run's retained output.
+
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 - Share the gateway no-code-review warning without disabling publication approval.
 

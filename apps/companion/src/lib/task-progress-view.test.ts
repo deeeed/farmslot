@@ -126,7 +126,7 @@ function ledger(): AcceptanceStatusLedger {
 test('the acceptance panel view separates assessment from proof and colours blocking verdicts as failures', () => {
   const view = acceptanceLedgerView(ledger());
   assert.equal(view.counts, '2/2 assessed · 1 proven');
-  assert.equal(view.countsLabel, 'proven 1, weak 1, missing 0, untestable 0, not assessed 0');
+  assert.equal(view.countsLabel, 'proven 1 · weak 1 · missing 0 · untestable 0 · not assessed 0');
   // A weak criterion is open work, so the compact panel starts expanded.
   assert.equal(view.hasOpenCriteria, true);
   assert.equal(view.rows[0].color, colors.statusOk);
@@ -164,11 +164,12 @@ test('an unjudged criterion is a neutral row counted against the registered tota
   assert.equal(view.countsColor, colors.statusFail);
 });
 
-test('the header shows the proven count even before any verdict is recorded', () => {
+test('the header shows no proven count before any verdict is recorded, as Command Center does', () => {
   const view = acceptanceLedgerView({ schemaVersion: 1, criteria: [] }, [
     { id: 'AC-1', text: 'Not judged yet' },
   ]);
-  assert.equal(view.counts, '0/1 assessed · 0 proven');
+  // Same tally as Command Center: no proven count before anything is assessed.
+  assert.equal(view.counts, '0/1 assessed');
   assert.equal(view.countsColor, colors.statusFail);
 });
 

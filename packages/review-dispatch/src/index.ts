@@ -4,6 +4,7 @@ export * from './checklist-progress.js';
 export * from './execution.js';
 export * from './provenance.js';
 export * from './publication-gate.js';
+export * from './run-results.js';
 export * from './types.js';
 export * from './validation.js';
 export * from './view-model.js';

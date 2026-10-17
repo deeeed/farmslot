@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Read the run results card and acceptance tally from the shared review-dispatch view model; the output is unchanged.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.14.0 - 2026-10-16

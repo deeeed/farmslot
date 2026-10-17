@@ -18,6 +18,7 @@ import {
   isSettledSubtaskStatus,
   type TaskStepSubtaskProgress,
 } from '@farmslot/protocol';
+import { acceptancePanelPresentation } from '@farmslot/review-dispatch';
 // The shared palette, not `./theme`: that module builds StyleSheets, which pulls
 // react-native into this pure module and out of reach of the node test runner.
 import { colors } from '@farmslot/theme';
@@ -127,16 +128,15 @@ export function acceptanceLedgerView(
   model: EvidenceReviewModel = createEvidenceReviewModel({ criteria, ledger, evidenceLinks }),
 ): AcceptanceLedgerView {
   const summary = model.summary;
-  const assessed = summary.total - summary.unrecorded;
+  // Command Center renders the same tally from the same view model.
+  const presentation = acceptancePanelPresentation(ledger, criteria, model);
   return {
-    counts: `${assessed}/${summary.total} assessed · ${summary.proven} proven`,
-    countsLabel:
-      `proven ${summary.proven}, weak ${summary.weak}, missing ${summary.missing}, ` +
-      `untestable ${summary.untestable}, not assessed ${summary.unrecorded}`,
+    counts: presentation.counts,
+    countsLabel: presentation.countsTooltip,
     // An unjudged criterion blocks a publish decision, so the tally must not read as neutral.
     countsColor: summary.unrecorded > 0 ? colors.statusFail : colors.textSecondary,
     unassessed: summary.unrecorded,
-    hasOpenCriteria: summary.proven + summary.untestable < summary.total,
+    hasOpenCriteria: presentation.hasOpenCriteria,
     rows: model.claims.map((criterion) => ({
       display: model.claimDisplay(criterion.id),
       criterion,

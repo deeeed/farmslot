@@ -18,7 +18,7 @@ Object.assign(globalThis, {
 });
 
 const { renderRunEvidence } = await import('./run-detail-renderers.js');
-const { runEvidenceSummary } = await import('./run-detail-model.js');
+const { runResultsSummary } = await import('@farmslot/review-dispatch');
 const { litBinding, litText } = await import('../../testing/lit-text.js');
 
 // An active run with no output yet: the "View operation log" case on TAT-3991.
@@ -59,7 +59,7 @@ const ctx = {
 };
 
 test('a run with no results card still mounts the evidence lightbox', () => {
-  assert.equal(runEvidenceSummary(run, []).shouldRender, false, 'no results card for this run');
+  assert.equal(runResultsSummary(run, 0).shouldRender, false, 'no results card for this run');
   const rendered = renderRunEvidence(run, ctx);
   assert.match(litText(rendered), /<media-lightbox/);
   assert.equal(litBinding(rendered, '.open='), true, 'the opened log is on the page');

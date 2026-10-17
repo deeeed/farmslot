@@ -26,8 +26,7 @@ import type {
   AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
 } from '@farmslot/protocol';
-import { summarizeAcceptanceStatus } from '@farmslot/protocol';
-import { acceptanceClaimRows } from '@farmslot/review-dispatch';
+import { acceptanceClaimRows, acceptancePanelPresentation } from '@farmslot/review-dispatch';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
@@ -37,36 +36,11 @@ import {
   renderAcceptanceClaimList,
 } from './acceptance-claim-list.js';
 
-export interface AcceptancePanelPresentation {
-  /** Assessment progress stays distinct from how many criteria are proven. */
-  counts: string;
-  /** Long-form tally for the header tooltip, including the zero buckets. */
-  countsTooltip: string;
-  /** True while any criterion is unproven — the panel opens in that case. */
-  hasOpenCriteria: boolean;
-}
-
 export interface AcceptanceClaimOverrideEditor {
   claimId: string | null;
   reason: string;
   select: (id: string | null) => void;
   change: (reason: string) => void;
-}
-
-export function acceptancePanelPresentation(
-  ledger: AcceptanceStatusLedger,
-  criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
-  model?: EvidenceReviewModel,
-): AcceptancePanelPresentation {
-  const summary = model?.summary ?? summarizeAcceptanceStatus(ledger, criteria);
-  const assessed = summary.total - summary.unrecorded;
-  return {
-    counts: `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}`,
-    countsTooltip:
-      `proven ${summary.proven} · weak ${summary.weak} · missing ${summary.missing} · ` +
-      `untestable ${summary.untestable} · not assessed ${summary.unrecorded}`,
-    hasOpenCriteria: summary.proven + summary.untestable < summary.total,
-  };
 }
 
 /** Evidence path shown in a row: the basename, with the full path as the tooltip. */

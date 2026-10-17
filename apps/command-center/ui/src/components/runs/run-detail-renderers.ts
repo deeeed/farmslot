@@ -29,6 +29,7 @@ import {
   runOutputCloseUnavailableReason,
   runRecoveryHints,
 } from '@farmslot/protocol';
+import { runResultsSummary } from '@farmslot/review-dispatch';
 
 import '../slot-view/worker-session-history.js';
 import '../shared/workspace-pin.js';
@@ -53,7 +54,6 @@ import {
   isInteractiveCompletionAwaitingOperator,
   reviewTerminalUnavailableReason,
   RUN_OUTPUT_SCOPE,
-  runEvidenceSummary,
 } from './run-detail-model.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
 import { stepInspectorTaskProgress } from './run-pipeline-model.js';
@@ -235,7 +235,7 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
   if (run.reviewWorkspaceTarget)
     return html`${renderReviewProcess(run, ctx)}${renderEvidenceLightbox(ctx)}`;
   const artifacts = collectRunEvidenceArtifacts(run);
-  const evidence = runEvidenceSummary(run, artifacts);
+  const evidence = runResultsSummary(run, artifacts.length);
   // A worker command log link opens here while the run is still active and has
   // no results card yet, so the lightbox renders either way.
   if (!evidence.shouldRender) return renderEvidenceLightbox(ctx);

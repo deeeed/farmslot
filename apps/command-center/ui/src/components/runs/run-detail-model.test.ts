@@ -38,7 +38,6 @@ import {
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
-  runEvidenceSummary,
   runFamilyPrStatus,
   runHasTrimmedDetail,
   shouldAcceptTaskProgressUpdate,
@@ -208,51 +207,6 @@ test('readCiWatchOutputs drops unknown ci-watch fix trigger strings', () => {
   };
 
   assert.equal(readCiWatchOutputs(outputs)?.fixTrigger, undefined);
-});
-
-test('runEvidenceSummary renders artifact-only replay copy and complete-step status', () => {
-  const run = makeRun({
-    completionPolicy: 'artifact-only',
-    startRef: {
-      requestedRef: 'main',
-      resolvedSha: 'abc123',
-    },
-    steps: [{ name: 'complete', status: 'failed', durationMs: 1234 }],
-  });
-
-  const summary = runEvidenceSummary(run, [artifact]);
-
-  assert.equal(summary.shouldRender, true);
-  assert.equal(summary.title, 'Replay evidence');
-  assert.equal(summary.badge, 'comparison · artifact-only');
-  assert.equal(summary.status, 'failed');
-  assert.equal(summary.completeStep?.durationMs, 1234);
-  assert.equal(summary.showEvalPackageHint, true);
-  assert.match(summary.copy, /abc123/);
-  assert.match(summary.copy, /eval Reference and Candidate packages/);
-});
-
-test('runEvidenceSummary hides non-replay runs without collected artifacts', () => {
-  assert.equal(runEvidenceSummary(makeRun({ status: 'done' }), []).shouldRender, false);
-  assert.equal(runEvidenceSummary(makeRun({ status: 'failed' }), [artifact]).status, 'failed');
-});
-
-test('artifact-only output is a run result, not a comparison or a passing verdict', () => {
-  const run = makeRun({ completionPolicy: 'artifact-only', status: 'blocked' });
-  run.output = {
-    workerFinished: true,
-    capturedAt: new Date().toISOString(),
-    artifactManifest: [],
-    manifestDigest: 'digest',
-    reportPath: 'artifacts/report.md',
-  };
-  run.metrics.outcome = 'partial';
-  const summary = runEvidenceSummary(run, []);
-  assert.equal(summary.title, 'Run results');
-  assert.equal(summary.badge, 'partial');
-  assert.equal(summary.shouldRender, true);
-  assert.doesNotMatch(summary.copy, /comparison|replay/i);
-  assert.match(summary.copy, /does not change the verdict/);
 });
 
 test('runEvidenceLightboxItems derives stable captions from artifact provenance', () => {

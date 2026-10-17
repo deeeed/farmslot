@@ -25,8 +25,9 @@ import {
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
+import { publicationReviewBlockingReason, runResultsSummary } from '@farmslot/review-dispatch';
 
+import { DocumentViewer } from '../../components/DocumentViewer';
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
@@ -43,6 +44,7 @@ import { currentFarmConnection } from '../../lib/connection-authority';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { gateReviewHref, openHumanGateDecision } from '../../lib/gate-review';
 import { nativeRunConversationParams } from '../../lib/native-worker-target';
+import { readRunOutputReport } from '../../lib/output-report';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
@@ -95,6 +97,7 @@ import {
 } from './components/run-detail-panels';
 import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
+import { RunResultsCard } from './components/RunResultsCard';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -214,6 +217,45 @@ export default function RunDetailScreen() {
       }),
     [acceptanceCriteria, acceptanceStatus, recordedEvidence, run?.output],
   );
+  const runResults = useMemo(
+    () => (run ? runResultsSummary(run, extractRunArtifactManifest(run).length) : null),
+    [run],
+  );
+  const [reportDocument, setReportDocument] = useState<{ title: string; body: string } | null>(
+    null,
+  );
+  const [loadingReport, setLoadingReport] = useState(false);
+  const reportAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => reportAbortRef.current?.abort(), []);
+  // The shared model verifies the retained report, so it also says when there is none to read.
+  const reportUnavailableReason = !run?.output?.reportPath
+    ? 'This run retained no report.'
+    : evidenceModel.selectReport()
+      ? null
+      : evidenceModel.errors.join('; ') ||
+        (recipeRunsLoaded ? 'The retained report is unavailable.' : 'Loading the retained report…');
+  const openOutputReport = useCallback(async () => {
+    if (!run) return;
+    reportAbortRef.current?.abort();
+    const controller = new AbortController();
+    reportAbortRef.current = controller;
+    setLoadingReport(true);
+    try {
+      const report = await readRunOutputReport(evidenceModel, {
+        gatewayUrl,
+        runId: run.id,
+        authHeaders: artifactAuthHeaders,
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted)
+        setReportDocument({ title: report.caption, body: report.body });
+    } catch (error) {
+      if (!controller.signal.aborted)
+        Alert.alert('Report unavailable', error instanceof Error ? error.message : String(error));
+    } finally {
+      if (!controller.signal.aborted) setLoadingReport(false);
+    }
+  }, [artifactAuthHeaders, evidenceModel, gatewayUrl, run]);
   const loadRecipeRuns = useCallback(
     (selectionHint: string | null) => {
       const requestId = recipeRunsRequestRef.current + 1;
@@ -830,6 +872,15 @@ export default function RunDetailScreen() {
           />
         ) : null}
 
+        {reviewPackageActiveTab === 'evidence' && runResults?.shouldRender ? (
+          <RunResultsCard
+            summary={runResults}
+            reportUnavailableReason={reportUnavailableReason}
+            loadingReport={loadingReport}
+            onReadReport={() => void openOutputReport()}
+          />
+        ) : null}
+
         {reviewPackageActiveTab === 'evidence' ? (
           <RunReviewWorkspaceSummary
             run={run}
@@ -1221,6 +1272,28 @@ export default function RunDetailScreen() {
           style={styles.surfaceEndMarker}
         />
       </Animated.ScrollView>
+      <DocumentViewer
+        visible={Boolean(reportDocument)}
+        title={reportDocument?.title ?? ''}
+        body={reportDocument?.body ?? ''}
+        onClose={() => setReportDocument(null)}
+      >
+        {reportDocument ? (
+          <TaskAcceptancePanel
+            acceptanceStatus={null}
+            evidenceModel={evidenceModel}
+            judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
+            onRecordVisualReview={async (id, verdict, reason) => {
+              await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
+              await loadRecipeRuns(selectedRecipeRunId);
+            }}
+            onOpenEvidence={(criterionId, path) => {
+              setReportDocument(null);
+              router.push(acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId));
+            }}
+          />
+        ) : null}
+      </DocumentViewer>
     </View>
   );
 }
