@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- The sidebar Runs badge, the compare picker's family active count, the dispatch wizard's duplicate-run warning and slot summary use the shared active rule, so they match the Runs Active tab; family grading waits until a run is no longer active.
+- The sidebar Runs badge counts exactly the Runs Active tab, including its global project and machine filters. The compare picker's family active count, the dispatch wizard's duplicate-run warning and slot summary, and the pinned slot's fallback run use the same active rule, and family grading waits until a run is no longer active.
 
 - Sources detail rows no longer repeat the controls' `data-source-id`.
 - Count a family's active runs with the shared active rule, and load every active run for the terminal's Active Runs and pinned views instead of the newest 1000 runs.
