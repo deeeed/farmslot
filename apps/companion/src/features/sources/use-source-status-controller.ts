@@ -11,6 +11,8 @@ import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { useConnectionStore } from '../../store/connection';
 
+import { sourceChangeFeedFor } from './source-change-feed';
+
 export function useSourceStatusController(
   context: SourceStatusViewContext,
   onSelectionsChange?: (selections: SourceSelection[]) => void,
@@ -57,6 +59,10 @@ export function useSourceStatusController(
     if ((changed || transportChanged) && generation !== null && client?.workspaceAccess === 'farm')
       void controller.refresh();
   }, [controller, key, generation, client]);
+  useEffect(
+    () => (client ? controller.attachFeed(sourceChangeFeedFor(client)) : undefined),
+    [controller, client],
+  );
   useEffect(() => {
     let previous = controller.getSnapshot().selections;
     return controller.subscribe(() => {

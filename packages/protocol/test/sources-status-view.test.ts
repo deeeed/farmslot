@@ -54,24 +54,45 @@ test('unknown selection metadata stays unknown and missing revisions disable mut
   assert.deepEqual(deriveSourceStatusView(original, context).actions, []);
 });
 
-test('read-only source context has one explanation and preserves the reported refusal', () => {
+test('a context without sources, pins or recorded inputs is hidden; others read as one line', () => {
   const original = status();
-  original.configured = false;
-  const context = { actions: [] };
-  assert.equal(
-    deriveSourceStatusView(original, context).readOnlyReason,
-    'Source authority is not configured. Retained inputs are read-only.',
-  );
-  original.runSource = {
+  assert.equal(deriveSourceStatusView(original, { actions: [] }).line, 'pack experiment');
+  original.effectiveSelections![0].pin = {
+    sourceId: 'pack',
+    selection: 'branch',
+    ref: 'experiment',
+    scope: 'farm',
+    targetId: 'farm',
+    actor: 'operator',
+    declarationRevision: 1,
+    revision: 2,
+    baseMainCommit: 'a'.repeat(40),
+    createdAt: '2026-10-12T00:00:00Z',
+  };
+  const pinned = deriveSourceStatusView(original, { actions: [] });
+  assert.equal(pinned.hidden, false);
+  assert.equal(pinned.line, 'pack experiment (farm pin)');
+
+  const empty = status();
+  empty.configured = false;
+  empty.declarations = [];
+  empty.locks = [];
+  const hidden = deriveSourceStatusView(empty, { params: { runId: 'retained' }, actions: [] });
+  assert.equal(hidden.hidden, true);
+  assert.equal(hidden.line, '');
+
+  const refused = status();
+  refused.runSource = {
     runId: 'retained',
     state: 'locked',
     canSelectSources: false,
-    selectionRefusal: 'Sources are not configured; retained inputs are read-only.',
+    selectionRefusal: 'Run source inputs are admitted or have effects: retained',
   };
-  const view = deriveSourceStatusView(original, context);
-  assert.equal(view.readOnlyReason, original.runSource.selectionRefusal);
-  assert.equal(view.editable, false);
-  assert.deepEqual(view.actions, []);
+  const locked = deriveSourceStatusView(refused, { params: { runId: 'retained' }, actions: [] });
+  assert.equal(locked.editable, false);
+  assert.deepEqual(locked.actions, []);
+  assert.equal(locked.line, 'pack main');
+  assert.equal('readOnlyReason' in locked, false);
 });
 
 test('admitted and historical inputs remain visible after their declaration is removed', () => {

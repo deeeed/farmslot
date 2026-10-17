@@ -30,20 +30,10 @@ function SourceRow({
   snapshot: SourceStatusSnapshot;
   controller: SourceStatusController;
 }) {
-  const [facts, setFacts] = useState(false);
   const view = snapshot.view!;
   return (
     <View style={styles.row} testID={`source-${row.declaration.id}`}>
-      <Text style={styles.facts}>{row.summary}</Text>
-      <Pressable onPress={() => setFacts(!facts)}>
-        <Text style={baseStyles.textSecondary}>Pin, lock and verification facts</Text>
-      </Pressable>
-      {facts &&
-        row.details.map((line, index) => (
-          <Text key={index} style={styles.facts}>
-            {line}
-          </Text>
-        ))}
+      <Text style={styles.facts}>{row.declaration.id}</Text>
       {view.editable && (
         <TextInput
           accessibilityLabel={`Pushed branch for ${row.declaration.id}`}
@@ -112,21 +102,39 @@ export function SourceStatusSection(props: SourceStatusSectionProps) {
     props.onSelectionsChange,
     props.onSelectionStateChange,
   );
-  if (!visible) return null;
+  const [details, setDetails] = useState(false);
   const view = snapshot.view;
+  // Nothing to show until facts or a failure arrive, and never for an empty context.
+  if (!visible || snapshot.hidden || (!view && !snapshot.error && !snapshot.pending)) return null;
+  const editable = view && (view.editable || view.draft || view.actions.length > 0);
   return (
     <View style={styles.panel} testID="sources-panel">
       <View style={styles.header}>
         <Text style={baseStyles.textPrimary}>Sources</Text>
-        <Pressable testID="sources-refresh" onPress={() => void controller.refresh()}>
-          <Text style={baseStyles.textSecondary}>Refresh</Text>
-        </Pressable>
+        {view && (
+          <Text style={styles.facts} testID="sources-line">
+            {view.line}
+          </Text>
+        )}
       </View>
-      {snapshot.loading && <Text style={baseStyles.textSecondary}>Loading sources...</Text>}
-      {snapshot.error && (
-        <Text style={styles.error} accessibilityRole="alert">
-          {snapshot.error}
+      {snapshot.unsupported && (
+        <Text style={baseStyles.textSecondary} testID="sources-unsupported">
+          Live updates unavailable on this gateway.
         </Text>
+      )}
+      {snapshot.error && (
+        <>
+          <Text style={styles.error} accessibilityRole="alert">
+            {snapshot.error}
+          </Text>
+          <Pressable
+            testID="sources-read-retry"
+            style={styles.button}
+            onPress={() => void controller.refresh()}
+          >
+            <Text style={baseStyles.textPrimary}>Retry</Text>
+          </Pressable>
+        </>
       )}
       {snapshot.operationError && (
         <Text style={styles.error} accessibilityRole="alert" testID="sources-operation-error">
@@ -147,15 +155,43 @@ export function SourceStatusSection(props: SourceStatusSectionProps) {
           </Pressable>
         </>
       )}
-      {view?.readOnlyReason && <Text style={baseStyles.textSecondary}>{view.readOnlyReason}</Text>}
-      {view?.rows.map((row) => (
-        <SourceRow key={row.declaration.id} row={row} snapshot={snapshot} controller={controller} />
-      ))}
       {view?.errors.map((error, index) => (
-        <Text key={index} style={styles.error}>
+        <Text key={index} style={styles.error} testID="sources-status-error">
           {error.nodeId ?? error.sourceId ?? error.project}: {error.reason}
         </Text>
       ))}
+      {editable &&
+        view.rows.map((row) => (
+          <SourceRow
+            key={row.declaration.id}
+            row={row}
+            snapshot={snapshot}
+            controller={controller}
+          />
+        ))}
+      {view && view.rows.length > 0 && (
+        <>
+          <Pressable
+            testID="sources-details-toggle"
+            accessibilityRole="button"
+            style={styles.button}
+            onPress={() => setDetails(!details)}
+          >
+            <Text style={baseStyles.textSecondary}>{details ? 'Hide details' : 'Details'}</Text>
+          </Pressable>
+          {details &&
+            view.rows.map((row) => (
+              <View key={row.declaration.id} style={styles.row}>
+                <Text style={styles.facts}>{row.summary}</Text>
+                {row.details.map((line, index) => (
+                  <Text key={index} style={styles.facts}>
+                    {line}
+                  </Text>
+                ))}
+              </View>
+            ))}
+        </>
+      )}
     </View>
   );
 }

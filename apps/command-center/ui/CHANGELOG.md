@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Show Send back to agent as the gate's primary action and label Send back reasons apart from PR feedback.
+- Sources panel updates itself from the gateway's source revision: no Refresh, hidden when nothing is configured or pinned, and one summary line with details on demand.
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 - Show the shared no-code-review warning at publication gates.
 

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add the Send back repair contract: `RecipeRepairScope`, the engine claim-source selection, the `pipeline-visual-judgments-v2` applicability result, the run-store repair record and a receipt/repair `FeedbackCandidate` variant; the shared decision request sends Send back with no selection data.
+- Live source status: `ResourceChangedPayload` (proposed ADR-071 shape), `ResourceKey`/`ResourceRevision` from the new `client-cache` entry, `sourceResourceChanges` and `SourceChangeFeed`, and controller rereads when the gateway's source revision advances. Source views report `hidden` and a one-line `line`; `readOnlyReason` is removed.
 
 - Add `RunTaskExecution` and optional `RunEngineState.taskExecution`, the start of the dispatch that began the current task identity.
 

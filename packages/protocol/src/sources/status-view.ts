@@ -53,7 +53,10 @@ export interface SourceStatusRowView {
 
 export interface SourceStatusViewModel {
   configured: boolean;
-  readOnlyReason?: string;
+  /** Render nothing: no declared sources, pins or recorded run inputs in this context. */
+  hidden: boolean;
+  /** One line naming each source's effective ref, with branch and scope for pins. */
+  line: string;
   declarationRevision?: number;
   pinRevision?: number;
   target?: SourcePinTarget;
@@ -95,13 +98,10 @@ export function deriveSourceStatusView(
   const hasRevisions =
     Number.isInteger(status.declarationRevision) && Number.isInteger(status.pinRevision);
   const draft = context.selections !== undefined && context.target === undefined;
-  return structuredClone({
+  const view: SourceStatusViewModel = structuredClone({
     configured: status.configured,
-    readOnlyReason:
-      status.runSource?.selectionRefusal ??
-      (!status.configured
-        ? 'Source authority is not configured. Retained inputs are read-only.'
-        : undefined),
+    hidden: false,
+    line: '',
     declarationRevision: status.declarationRevision,
     pinRevision: status.pinRevision,
     target: context.target,
@@ -212,6 +212,21 @@ export function deriveSourceStatusView(
     }),
     errors: status.errors,
   });
+  const locked = status.runSource?.state === 'locked';
+  view.hidden = view.rows.length === 0 && !status.pins?.length;
+  view.line = view.rows.map((row) => sourceLine(row, locked)).join(' · ');
+  return view;
+}
+
+function sourceLine(row: SourceStatusRowView, locked: boolean): string {
+  const recorded = locked ? row.recordedLocks[0]?.entry : undefined;
+  const pin = recorded ? recorded.pin : row.effective?.pin;
+  const ref =
+    recorded?.effectiveRef ?? row.effective?.effectiveRef ?? row.declaration.ref ?? 'main';
+  if (!pin) return `${row.declaration.id} ${ref}`;
+  return pin.selection === 'branch'
+    ? `${row.declaration.id} ${ref} (${pin.scope} pin)`
+    : `${row.declaration.id} main (${pin.scope} override)`;
 }
 
 type SourceStatusRowFacts = Omit<SourceStatusRowView, 'summary' | 'details'>;

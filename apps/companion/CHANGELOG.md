@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Show Send back to agent as the gate's primary action.
+- Sources panel updates itself from the gateway's source revision: no Refresh, hidden when nothing is configured or pinned, and one summary line with details on demand.
 
 - Stop listing host paths and log lines from step outputs as Evidence files.
 

@@ -228,17 +228,11 @@
         "intent": "Assert SOURCE_STATE_STALE came from the real gateway response.",
         "cmd": "node --import tsx ../../scripts/sources-validation/client-scenarios.mts assert-native-stale",
         "timeout_ms": 180000,
-        "next": "stale-refresh"
-      },
-      "stale-refresh": {
-        "action": "ui.press",
-        "intent": "Read current source facts after the definitive rejection.",
-        "test_id": "sources-refresh",
         "next": "stale-after-refresh"
       },
       "stale-after-refresh": {
         "action": "ui.wait_for",
-        "intent": "Refreshing preserves the rejected operation diagnostic.",
+        "intent": "The live reread after the competing change keeps the rejected operation diagnostic.",
         "test_id": "sources-operation-error",
         "text_contains": ["Stale source declaration or pin revision"],
         "timeout_ms": 120000,
@@ -289,17 +283,11 @@
         "intent": "The actual sources.sync response contains per-node diagnostics and the matching operation ID.",
         "cmd": "node --import tsx ../../scripts/sources-validation/client-scenarios.mts assert-native-partial",
         "timeout_ms": 180000,
-        "next": "partial-refresh"
-      },
-      "partial-refresh": {
-        "action": "ui.press",
-        "intent": "Refresh source facts after the owned node has recovered.",
-        "test_id": "sources-refresh",
         "next": "partial-refreshed"
       },
       "partial-after-refresh": {
         "action": "ui.wait_for",
-        "intent": "The operation alert retains the real disconnected-node diagnostic after recovery and refresh.",
+        "intent": "The operation alert keeps the real disconnected-node diagnostic after the live reread.",
         "test_id": "sources-operation-error",
         "text_contains": ["disconnected"],
         "timeout_ms": 120000,
@@ -307,22 +295,21 @@
       },
       "partial-capture-hud": {
         "action": "app.hud",
-        "intent": "Native partial-sync diagnostics survive recovered source facts and manual refresh.",
+        "intent": "Native partial-sync diagnostics survive the live reread of recovered source facts.",
         "status": "running",
         "next": "partial-capture"
       },
       "partial-capture": {
         "action": "ui.screenshot",
-        "intent": "Record retained operation diagnostics after refresh with the recipe HUD.",
+        "intent": "Record retained operation diagnostics after the live reread with the recipe HUD.",
         "path": "screenshots/source-sync-partial.png",
-        "label": "Native partial source sync after refresh",
+        "label": "Native partial source sync after live reread",
         "next": "fleet"
       },
       "fresh-ready": {
         "action": "ui.wait_for",
         "intent": "The stale rejection and current status allow native branch editing again.",
-        "text": "Loading sources...",
-        "expected": "absent",
+        "test_id": "source-proof-pack-branch",
         "timeout_ms": 120000,
         "next": "fresh-edit"
       },
@@ -335,8 +322,8 @@
       },
       "partial-refreshed": {
         "action": "ui.wait_for",
-        "intent": "The refresh completes against the recovered node before checking retained diagnostics.",
-        "text": "Loading sources...",
+        "intent": "The recovered node reconnect rereads source facts without user action.",
+        "test_id": "sources-status-error",
         "expected": "absent",
         "timeout_ms": 120000,
         "next": "partial-after-refresh"

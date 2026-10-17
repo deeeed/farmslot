@@ -41,6 +41,7 @@ import { buildRunRecord, getRun, persistRunNow, updateRun } from '../runs/store.
 import { currentSessionOriginator } from '../security/work-originator.js';
 
 import { type PreparedSourcePins, SourceAuthority } from './authority.js';
+import { announceSourceChanges, noteAuthorityFacts } from './change-signal.js';
 import { captureRunCreationRequest } from './creation-request.js';
 import { assertSourcePinTarget } from './pin-target.js';
 import {
@@ -82,6 +83,17 @@ export async function gatewaySourceStatus(): Promise<SourceNodeStatus | undefine
   return gateway?.status();
 }
 
+/** What `sources.status` reports from the authority, without per-poll timestamps. */
+function sourceFactsSignature(source: SourceAuthority): string {
+  return JSON.stringify([
+    source.configuration.revision,
+    source.pinRevision(),
+    source.pins(),
+    source.locks().map((lock) => [lock.context, lock.generation, lock.digest]),
+    source.resolutions().map((resolution) => ({ ...resolution, resolvedAt: undefined })),
+  ]);
+}
+
 /** The private farm declaration file is outside every pack it bootstraps. */
 export async function initializeSources(): Promise<void> {
   const home = farmslotHome();
@@ -103,6 +115,10 @@ export async function initializeSources(): Promise<void> {
     throw new Error('Source declarations disappeared after cut-over');
   }
   authority = await SourceAuthority.open(configuration, path.join(home, 'sources'));
+  const opened = authority;
+  announceSourceChanges();
+  // The first notification, the immediate first poll, records the startup baseline.
+  opened.observe(() => noteAuthorityFacts(sourceFactsSignature(opened)));
   await authority.recoverRunCreations((runId) =>
     Boolean(getRun(runId)?.sourcePlan || getRun(runId)?.sourceProvenance),
   );

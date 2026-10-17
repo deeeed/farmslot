@@ -49,6 +49,7 @@ import {
 import { notify as browserNotify } from './utils/notifications.js';
 import { safeLsGet, safeLsRemove } from './utils/storage.js';
 import { type ConnectionState, gateway } from './gateway-client.js';
+import { connectSourceChangeFeed } from './source-change-feed.js';
 import {
   filtersHash,
   type GlobalFilters,
@@ -786,6 +787,8 @@ export function initState(): void {
       void fetchInitialState(epoch);
     }
   });
+
+  connectSourceChangeFeed();
 
   // Fleet events
   gateway.subscribe<FleetUpdatedPayload>(Events.FLEET_UPDATED, (p) => {

@@ -37,6 +37,7 @@ interface RenderedSourcePanel {
   text: string;
   inputs: Array<{ disabled: boolean }>;
   buttons: Array<{ id: string; disabled: boolean }>;
+  statusErrors: string[];
   operationErrors: string[];
 }
 const panels = async () =>
@@ -75,9 +76,10 @@ try {
       panel.text.includes('completed with errors'),
   );
   await scenario('assert-web-partial');
-  await cdp('click', hash, '[data-testid="sources-refresh"]');
+  // The recovered node's reconnect advances the source revision; no Refresh exists.
   const refreshed = await wait(
     (panel) =>
+      panel.statusErrors.length === 0 &&
       panel.inputs.length > 0 &&
       !panel.inputs[0].disabled &&
       panel.operationErrors.some((message) => message.includes('disconnected')),
@@ -88,7 +90,7 @@ try {
     path.join(root, 'web-delta-evidence.json'),
     JSON.stringify({ result: 'PASS', initial, partial, refreshed, screenshot }, null, 2) + '\n',
   );
-  console.log('Command Center partial-sync diagnostics PASS after recovery and refresh');
+  console.log('Command Center partial-sync diagnostics PASS after recovery and live reread');
 } finally {
   await cdp('close', hash);
 }

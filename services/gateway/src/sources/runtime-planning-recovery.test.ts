@@ -49,6 +49,7 @@ async function initialize(t: TestContext) {
   t.mock.method(SourceAuthority, 'open', async () => ({
     recoverRunCreations: async () => {},
     startReconciliation: () => () => {},
+    observe: () => () => {},
     activatedAt: () => '2020-01-01T00:00:00Z',
   }));
   t.mock.method(SourceMaterializer.prototype, 'materialize', async (lock: SourceLock) => {
