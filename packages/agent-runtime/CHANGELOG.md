@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.29.1 - 2026-10-17
+
+- Align with `@farmslot/adapter-sdk` 0.18.1 and `@farmslot/recipe-runner` 0.39.1 (network capture summaries redact credential-like path segments).
+
 ## 0.29.0 - 2026-10-17
 
 - Native Claude and Codex adapters advertise and constrain the repair applicability result contract; the evidence review terminal check accepts a repair's retained rows only from the engine selection.

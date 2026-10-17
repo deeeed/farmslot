@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+- Share the run results card summary, the acceptance tally, report link resolution, the web-link check and the artifact HTML policy, so Command Center and Companion show the same results for a run's retained output and open the same artifact from a report link. A review-workspace run shows no results card.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-- Share the run results card summary, the acceptance tally, report link resolution, the web-link check and the artifact HTML policy, so Command Center and Companion show the same results for a run's retained output and open the same artifact from a report link. A review-workspace run shows no results card.
+## 0.2.1 - 2026-10-17
+
+- Align with `@farmslot/adapter-sdk` 0.18.1 and `@farmslot/recipe-runner` 0.39.1 (network capture summaries redact credential-like path segments).
 
 ## 0.2.0 - 2026-10-17
 
