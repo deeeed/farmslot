@@ -234,6 +234,9 @@ function archiveDir(dir: string, destPath: string): void {
   const name = dir.slice(parent.length + 1);
   const result = spawnSync('tar', ['-czf', destPath, '-C', parent, name], { encoding: 'utf-8' });
   if (result.status !== 0) {
+    // A partial archive is not a backup. The path was checked absent before the run, so removing
+    // it is safe, and the history stays held for a re-run with the same path.
+    rmSync(destPath, { force: true });
     throw new Error(`backup failed (tar exited ${result.status}): ${result.stderr || destPath}`);
   }
 }

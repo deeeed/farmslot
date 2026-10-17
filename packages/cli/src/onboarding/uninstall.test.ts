@@ -429,6 +429,32 @@ test('a failed history backup under purge keeps the history and state for a re-r
   assert.equal(existsSync(archive), false);
 });
 
+test('a backup that fails partway leaves no archive and holds the history', async (t) => {
+  const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-partial-');
+  const archiveDir = mkdtempSync(join(tmpdir(), 'fs-partial-archive-'));
+  t.after(() => {
+    cleanup();
+    rmSync(archiveDir, { recursive: true, force: true });
+  });
+  // tar writes the archive, then fails on a run record it cannot read.
+  const unreadable = join(clone, '.runs', 'run-2.json');
+  writeFileSync(unreadable, '{"id":"run-2"}');
+  chmodSync(unreadable, 0o000);
+  const archive = join(archiveDir, 'history.tgz');
+  const ws = workspaceAt(root);
+  const plan = buildUninstallPlan(ws, baseState({ home_dir: homeDir }), {
+    ...KEEP,
+    history: 'backup',
+    historyBackupPath: archive,
+  });
+
+  const { historyHeldAt } = await executeUninstallPlan(plan, { step: () => {} });
+
+  assert.equal(existsSync(archive), false);
+  assert.equal(historyHeldAt, ws.runsDir);
+  assert.equal(existsSync(join(root, 'state.json')), true);
+});
+
 test('deleting history moves nothing and removes it with the clone', async (t) => {
   const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-delete-');
   t.after(cleanup);
