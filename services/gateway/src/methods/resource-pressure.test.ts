@@ -44,6 +44,7 @@ mock.module('../fleet/resource-manager.js', {
       ];
     },
     setResourceWatchesEnabled: async () => ({ ok: true, enabled: true }),
+    slotProbeReachable: async () => true,
   },
 });
 

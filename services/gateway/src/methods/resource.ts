@@ -53,6 +53,7 @@ import {
   pollSlotResources,
   resolveSlotResources,
   setResourceWatchesEnabled,
+  slotProbeReachable,
 } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { DEFAULT_HOST_PRESSURE_THRESHOLDS } from '../runtime-capabilities/host-pressure-config.js';
@@ -261,6 +262,7 @@ export async function resourceCleanup(
       );
       continue;
     }
+    resources = await withProbedDisabledSlotStatus(slot, resources);
     for (const resource of resources) {
       if (exactTargetsEnabled && !exactTargets.has(`${slot.machine}:${slot.slot}:${resource.id}`)) {
         continue;
@@ -639,13 +641,42 @@ export async function resourcePressureSnapshot(
   };
 }
 
+/**
+ * Node watches cover enabled slots only, so whatever a disabled slot left running
+ * stays `unknown` in the status cache. Idle cleanup probes such a slot once, and
+ * the probe fills the cache; a remote slot whose node is not connected stays
+ * unknown rather than waited on.
+ */
+async function withProbedDisabledSlotStatus<T extends { id: string; status: ResourceStatus }>(
+  slot: Pick<SlotStatus, 'slot' | 'enabled'>,
+  resources: T[],
+): Promise<T[]> {
+  if (slot.enabled || !resources.some((resource) => resource.status === 'unknown'))
+    return resources;
+  if (!(await slotProbeReachable(slot.slot))) return resources;
+  const probed = new Map(
+    (await pollSlotResources(slot.slot, { probeInactiveSimulators: true })).map((update) => [
+      update.id,
+      update.status,
+    ]),
+  );
+  return resources.map((resource) => ({
+    ...resource,
+    status: probed.get(resource.id) ?? resource.status,
+  }));
+}
+
 async function resolvePressureResourcesForSlots(slots: SlotStatus[]) {
   const resources = new Map<string, Awaited<ReturnType<typeof resolvePressureSlotResources>>>();
   for (let index = 0; index < slots.length; index += PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY) {
     const batch = slots.slice(index, index + PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY);
     const resolved = await Promise.all(
       batch.map(
-        async (slot) => [slot.slot, await resolvePressureSlotResources(slot.slot)] as const,
+        async (slot) =>
+          [
+            slot.slot,
+            await withProbedDisabledSlotStatus(slot, await resolvePressureSlotResources(slot.slot)),
+          ] as const,
       ),
     );
     for (const [slotId, slotResources] of resolved) resources.set(slotId, slotResources);

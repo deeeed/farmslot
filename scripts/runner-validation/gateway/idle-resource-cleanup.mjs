@@ -36,6 +36,8 @@ const fakeSimctl = path.join(temporaryRoot, 'bin', 'simctl');
 const project = `idle-cleanup-${randomUUID()}`;
 const disabledSlot = `idle-disabled-${randomUUID()}`;
 const readySlot = `idle-ready-${randomUUID()}`;
+// A disabled slot on a machine whose node never connects.
+const offlineSlot = `idle-offline-${randomUUID()}`;
 const tmuxDir = openTmuxSandbox();
 const baseEnv = { ...process.env };
 for (const key of GIT_LOCATION_ENV) delete baseEnv[key];
@@ -77,7 +79,7 @@ try {
     ].join('\n'),
   );
   chmodSync(fakeSimctl, 0o755);
-  for (const slot of [disabledSlot, readySlot])
+  for (const slot of [disabledSlot, readySlot, offlineSlot])
     writeFileSync(path.join(devices, `${slot}.booted`), '');
 
   mkdirSync(path.join(root, 'scripts'), { recursive: true });
@@ -97,8 +99,8 @@ try {
       platform: 'ios',
       repo,
       session: id,
-      enabled,
-      mode: 'dispatch',
+      // A disabled slot is `enabled: false`, which the fleet reads as mode disabled.
+      ...(enabled ? { enabled, mode: 'dispatch' } : { enabled }),
       resources: { 'ios-sim': { simulator: id, headless: true } },
     };
   };
@@ -108,6 +110,13 @@ try {
     ssh_user: os.userInfo().username,
     os: process.platform,
     slots: [slotEntry(disabledSlot, false), slotEntry(readySlot, true)],
+  });
+  writeJson(path.join(root, 'pool', 'offline.json'), {
+    machine: 'idle-offline-node',
+    host: 'idle-offline-node.invalid',
+    ssh_user: os.userInfo().username,
+    os: 'darwin',
+    slots: [slotEntry(offlineSlot, false)],
   });
   writeJson(path.join(root, 'projects', project, 'project.json'), {
     name: project,
@@ -129,7 +138,8 @@ try {
   writeJson(path.join(root, '.farm-status.json'), {
     checked_at: new Date().toISOString(),
     slots: [
-      { slot: disabledSlot, lifecycle: 'disabled', agent: 'idle' },
+      { slot: disabledSlot, lifecycle: 'disabled', agent: '-', enabled: false },
+      { slot: offlineSlot, lifecycle: 'disabled', agent: '-', enabled: false },
       { slot: readySlot, lifecycle: 'ready', agent: 'idle' },
     ],
   });
@@ -188,12 +198,27 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  // Both simulators run on idle slots; one slot is disabled. A probe fills the
-  // status cache, as the node's resource watches do on a live gateway.
-  for (const slot of [disabledSlot, readySlot]) rpc('resource.health', { slotId: slot });
-  assert.deepEqual([status(disabledSlot), status(readySlot)], ['running', 'running']);
+  // Node watches fill the cache for enabled slots only. This gateway has no node,
+  // so one probe stands in for the ready slot's watch; nothing fills the disabled
+  // slots, exactly as on a live gateway after a restart.
+  rpc('resource.health', { slotId: readySlot });
+  assert.deepEqual(
+    [status(disabledSlot), status(offlineSlot), status(readySlot)],
+    ['unknown', 'unknown', 'running'],
+  );
 
-  // The preview offers the disabled slot's simulator too.
+  // The pressure snapshot (Command Center's cleanup preview) probes the local
+  // disabled slot and offers its simulator; the unreachable one is not waited on.
+  const started = Date.now();
+  const snapshot = rpc('resource.pressure.snapshot', {});
+  const snapshotMs = Date.now() - started;
+  assert.deepEqual(
+    snapshot.cleanupCandidates.map((candidate) => candidate.slotId).sort(),
+    [disabledSlot, readySlot].sort(),
+  );
+  assert.ok(snapshotMs < 10000, `snapshot waited ${snapshotMs} ms on an unreachable node`);
+
+  // The cleanup preview offers the disabled slot's simulator too.
   const preview = rpc('resource.cleanup', {
     dryRun: true,
     slotIds: [disabledSlot, readySlot],
@@ -228,6 +253,7 @@ try {
   console.log(
     JSON.stringify({
       disabledSlotOffered: true,
+      unreachableSlotSkippedMs: snapshotMs,
       stopped: result.stopped,
       failed: result.failed,
       verifiedStopped: result.targets.map((target) => target.afterStatus),

@@ -716,6 +716,12 @@ export async function probeResourceStatus(
 /**
  * Poll all resources for a single slot. Updates cache and returns results.
  */
+/** Whether a probe on this slot can run now: this machine, or a connected node. */
+export async function slotProbeReachable(slotId: string): Promise<boolean> {
+  const { isLocal, machine } = await getSlotLocality(slotId);
+  return isLocal || Boolean(getNode(machine));
+}
+
 export async function pollSlotResources(
   slotId: string,
   opts?: { probeInactiveSimulators?: boolean },

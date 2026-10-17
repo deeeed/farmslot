@@ -305,9 +305,7 @@ Gateway expands template vars to absolute paths before sending to the node. The 
 
 **Authority boundary:** Cleanup must use configured resource hooks through `resource.control`/gateway resource-manager paths. It must not hardcode project names, ports, process patterns, or raw `pkill` logic in Farmslot. Projects that need custom teardown semantics should express those semantics in their `project.json` resource shutdown hooks.
 
-**Safety defaults:** Cleanup defaults to dry-run preview and always excludes busy, held, actively working, manual, and current-run slots. Live cleanup additionally requires a non-empty exact reviewed target set. Preview and live target envelopes are capped at 256 entries, and resolution/verification failures remain attached to their exact reviewed row instead of aborting unrelated targets. This keeps pressure relief targeted at stale background resources rather than active or retained runs.
-
-**Disabled slots in idle cleanup (2026-10-18):** Cleanup previews and live cleanup include a disabled slot's running resources. A disabled slot is out of dispatch, not in use, and nothing else stops what it left running; it was previously excluded, which hid such resources from every bulk path. Manual slots stay excluded. Live cleanup verifies each stopped resource with a fresh probe, including a simulator on an idle slot, whose status is otherwise read from the cache.
+**Safety defaults:** Cleanup defaults to dry-run preview and always excludes busy, held, actively working, manual, disabled, and current-run slots. Live cleanup additionally requires a non-empty exact reviewed target set. Preview and live target envelopes are capped at 256 entries, and resolution/verification failures remain attached to their exact reviewed row instead of aborting unrelated targets. This keeps pressure relief targeted at stale background resources rather than active or retained runs.
 
 **Diagnosis boundary:** The read-only pressure snapshot must report the runtime watch state. If watches are paused, cached resource statuses may be `unknown`; machine health and slot activity remain the primary pressure evidence. Resource cleanup is not a substitute for stopping active builds or retained run slots; those require their owning lifecycle controls. Watch pause/resume is persisted in the gateway's local runtime cache so node reconnects or gateway restarts do not silently re-arm an operator-paused watch set.
 
@@ -372,3 +370,15 @@ Bound every tmux client in the deployment worker-shell probe, including cleanup.
 Dev deployment persists the verification outcome in its existing selected home. Node metrics publish failure as optional worker CLI health, and fleet/pressure readers retain it until a later successful verification. Cleanup failure cannot leave a success receipt. This makes an online node's failed worker environment visible without changing worker ownership or process gauges.
 
 Public surface: optional `WorkerCliHealth` on existing `@farmslot/protocol` node metrics and machine health. Private deployment writes the receipt; the node sampler and gateway health readers consume it. No new command, RPC or harness/provider contract. Normative rules are in `docs/reference/node-worker-cli-health.md`.
+
+## Amendment 8: disabled slots in idle cleanup, 2026-10-18
+
+Status: Proposed. A bug-fix amendment under ADR-015's resource pressure controls, routed by the lead; acceptance follows paired review.
+
+Idle cleanup (`resource.cleanup` and the pressure snapshot's cleanup candidates) includes a disabled slot's running resources. This supersedes the disabled entry in the Resource Pressure Controls safety defaults; busy, held, actively working, manual and current-run slots stay excluded. A disabled slot is out of dispatch, not in use, and nothing else stops what it left running: on macpro, two disabled slots kept iOS simulators booted for days, invisible to every bulk path.
+
+Node watches cover enabled slots only, so a disabled slot's resource status stays `unknown` in the gateway cache. When building cleanup candidates, the gateway probes a disabled slot whose resources are `unknown` once, through each resource's configured health hook; the probe fills the cache. A remote slot whose node is not connected is left `unknown` rather than waited on. Live cleanup verifies each stop with a fresh probe, including a simulator on an idle slot, whose status is otherwise served from the cache.
+
+Consequences: cleanup previews may list disabled slots' resources, and a preview may run one health probe per disabled slot whose status is unknown. Cleanup remains an explicit, hook-driven operator action; nothing stops resources automatically.
+
+Public surface: no new RPC, field or command. `resource.cleanup` and `resource.pressure.snapshot` may now return targets on disabled slots.
