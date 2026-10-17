@@ -1,97 +1,36 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { fileURLToPath, URL } from 'node:url';
-import vm from 'node:vm';
-
-import ts from 'typescript';
+import { URL } from 'node:url';
 
 import { isGatewayBackgroundPauseError } from '../lib/recoverable-errors';
 
-import type { Reread } from './useReread';
+import { mountHook } from './hook-harness.fixtures';
+import type { Reread, RereadOptions } from './useReread';
 
-type Read = (() => Promise<string>) | null;
+type Read<T> = (() => Promise<T>) | null;
 
-/** Execute the actual hook with deterministic React scheduling. */
-function mount() {
-  const cells: unknown[] = [];
-  const effects: Array<{ deps: readonly unknown[] }> = [];
-  let cell = 0;
-  let effect = 0;
-  let pending: Array<() => void> = [];
-  const react = {
-    useState(initial: unknown) {
-      const index = cell++;
-      if (!(index in cells)) cells[index] = initial;
-      return [
-        cells[index],
-        (next: unknown) => {
-          cells[index] = typeof next === 'function' ? next(cells[index]) : next;
-        },
-      ];
-    },
-    useRef(initial: unknown) {
-      const index = cell++;
-      if (!(index in cells)) cells[index] = { current: initial };
-      return cells[index];
-    },
-    useCallback(callback: unknown) {
-      return callback;
-    },
-    useEffect(callback: () => unknown, deps: readonly unknown[]) {
-      const index = effect++;
-      const previous = effects[index];
-      if (previous && deps.every((value, at) => Object.is(value, previous.deps[at]))) return;
-      pending.push(() => {
-        callback();
-        effects[index] = { deps };
-      });
-    },
-  };
-  const dependencies: Record<string, unknown> = {
-    react,
-    '../lib/recoverable-errors': { isGatewayBackgroundPauseError },
-  };
-  const exports: Record<string, unknown> = {};
-  const source = readFileSync(fileURLToPath(new URL('./useReread.ts', import.meta.url)), 'utf8');
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  vm.runInNewContext(
-    compiled,
-    {
-      exports,
-      // The test's errors and the hook's instanceof checks share one realm.
-      Error,
-      console: { ...console, warn: () => undefined },
-      require(name: string) {
-        if (!(name in dependencies)) throw new Error(`Unexpected hook dependency ${name}`);
-        return dependencies[name];
-      },
-    },
-    { timeout: 1000 },
+function mount<T = string>(options?: RereadOptions<T>) {
+  const hook = mountHook<[Read<T>, (reason: string, message: string) => string, RereadOptions<T>?]>(
+    new URL('./useReread.ts', import.meta.url),
+    'useReread',
+    { '../lib/recoverable-errors': { isGatewayBackgroundPauseError } },
+    { console: { ...console, warn: () => undefined } },
   );
-  const hook = exports.useReread;
-  if (typeof hook !== 'function') throw new Error('Hook export missing');
-  return (read: Read): Reread<string> => {
-    cell = 0;
-    effect = 0;
-    pending = [];
-    const result = hook(read, (reason: string, message: string) => `${reason}: ${message}`);
-    for (const callback of pending) callback();
-    return result as Reread<string>;
+  return (read: Read<T>) =>
+    hook.render(read, (reason, message) => `${reason}: ${message}`, options) as Reread<T>;
+}
+
+function replies<T>(...outcomes: Array<T | Error>): Read<T> {
+  const queue = [...outcomes];
+  return async () => {
+    if (!queue.length) throw new Error('No reply queued');
+    const next = queue.shift();
+    if (next instanceof Error) throw next;
+    return next as T;
   };
 }
 
-const replies = (...outcomes: Array<string | Error>): Read => {
-  const queue = [...outcomes];
-  return async () => {
-    const next = queue.shift();
-    if (next instanceof Error) throw next;
-    if (next === undefined) throw new Error('No reply queued');
-    return next;
-  };
-};
+const pause = new Error('Gateway paused while app is in the background');
 
 test('a later successful read clears the error an earlier read reported', async () => {
   const render = mount();
@@ -109,11 +48,7 @@ test('a later successful read clears the error an earlier read reported', async 
 
 test('a failed re-read keeps the value on screen; a pause stays quiet', async () => {
   const render = mount();
-  const read = replies(
-    'pairs',
-    new Error('Connection closed'),
-    new Error('Gateway paused while app is in the background'),
-  );
+  const read = replies('pairs', new Error('Connection closed'), pause);
   await render(read).refresh('initial load', true);
   await render(read).refresh('run.updated', false);
   let state = render(read);
@@ -126,20 +61,57 @@ test('a failed re-read keeps the value on screen; a pause stays quiet', async ()
   assert.equal(state.settled, true);
 });
 
-test('a new target starts fresh, no target clears, and only the latest request lands', async () => {
+test('a paused first read settles, so the screen stops waiting for it', async () => {
   const render = mount();
-  const first = replies('old');
+  const read = replies<string>(pause);
+  await render(read).refresh('initial load', true);
+  const state = render(read);
+  assert.deepEqual(
+    { value: state.value, error: state.error, settled: state.settled },
+    { value: null, error: null, settled: true },
+  );
+});
+
+test('a new target starts fresh unless the caller keeps a shared part of the value', async () => {
+  type Groups = { list: string[]; evidence?: string };
+  const render = mount<Groups>({ keepOnReset: ({ list }) => ({ list }) });
+  const first = replies<Groups>({ list: ['a', 'b'], evidence: 'a evidence' });
   await render(first).refresh('initial load', true);
+  const second = replies<Groups>(new Error('Connection closed'));
+  const pending = render(second).refresh('initial load', true);
+  let state = render(second);
+  assert.deepEqual(
+    { value: state.value, settled: state.settled },
+    { value: { list: ['a', 'b'] }, settled: false },
+    'the shared list stays while the new target loads; its evidence does not',
+  );
+  await pending;
+  state = render(second);
+  assert.deepEqual(state.value, { list: ['a', 'b'] }, 'a failed read keeps the kept list');
+  assert.equal(state.error, 'initial load: Connection closed');
+
+  const plain = mount();
+  await plain(replies('old')).refresh('initial load', true);
+  const fresh = replies('new');
+  void plain(fresh).refresh('initial load', true);
+  assert.equal(plain(fresh).value, null, 'without keepOnReset a new target starts empty');
+});
+
+test('only the latest request lands, and no target clears even an in-flight reply', async () => {
+  const render = mount();
   let release: (value: string) => void = () => undefined;
-  const slow: Read = () => new Promise((resolve) => (release = resolve));
-  const next = replies('new');
+  const slow: Read<string> = () => new Promise((resolve) => (release = resolve));
   const stale = render(slow).refresh('initial load', true);
-  assert.equal(render(slow).value, null, 'reset drops the previous target');
+  const next = replies('new');
   await render(next).refresh('initial load', true);
   release('late');
   await stale;
   assert.equal(render(next).value, 'new', 'a superseded reply does not land');
+
+  const pending = render(slow).refresh('initial load', true);
   render(null); // the clearing effect runs after this render
+  release('late again');
+  await pending;
   const cleared = render(null);
   assert.deepEqual(
     { value: cleared.value, error: cleared.error, settled: cleared.settled },

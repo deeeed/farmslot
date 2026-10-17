@@ -16,6 +16,14 @@ export interface Reread<T> extends RereadState<T> {
   refresh: (reason: string, reset: boolean) => Promise<void>;
 }
 
+export interface RereadOptions<T> {
+  /**
+   * What of the value stays on screen when a new target starts, for facts the targets share
+   * (for example a run's recipe-run list across recipe-run selections). Default: nothing.
+   */
+  keepOnReset?: (value: T) => T;
+}
+
 const EMPTY = { value: null, error: null, settled: false } as const;
 
 /**
@@ -28,11 +36,14 @@ const EMPTY = { value: null, error: null, settled: false } as const;
 export function useReread<T>(
   read: (() => Promise<T>) | null,
   describe: (reason: string, message: string) => string,
+  options: RereadOptions<T> = {},
 ): Reread<T> {
   const [state, setState] = useState<RereadState<T>>(EMPTY);
   const request = useRef(0);
   const describeRef = useRef(describe);
   describeRef.current = describe;
+  const keepOnResetRef = useRef(options.keepOnReset);
+  keepOnResetRef.current = options.keepOnReset;
 
   useEffect(() => {
     if (read) return;
@@ -44,7 +55,11 @@ export function useReread<T>(
     async (reason: string, reset: boolean) => {
       const id = ++request.current;
       if (!read) return;
-      if (reset) setState(EMPTY);
+      if (reset)
+        setState((current) => {
+          const keep = keepOnResetRef.current;
+          return { ...EMPTY, value: keep && current.value !== null ? keep(current.value) : null };
+        });
       try {
         const value = await read();
         if (request.current === id) setState({ value, error: null, settled: true });
@@ -52,7 +67,9 @@ export function useReread<T>(
         if (request.current !== id) return;
         const message = error instanceof Error ? error.message : String(error);
         if (isGatewayBackgroundPauseError(error)) {
-          console.warn(`Read paused after ${reason}: ${message}`);
+          console.warn(
+            `${describeRef.current(reason, message)} (paused; the next connection re-reads)`,
+          );
           setState((current) => ({ ...current, settled: true }));
           return;
         }

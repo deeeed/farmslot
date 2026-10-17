@@ -89,6 +89,11 @@ const ARTIFACT_STICKY_NAV_ACTIVATION_LEAD = 96;
 const ARTIFACT_STICKY_NAV_MAX_THRESHOLD = 32;
 const RECIPE_COMPLETION_REFRESH_DELAY_MS = 5500;
 
+const keepRecipeRunList = (result: RunRecipeRunsForRunResult): RunRecipeRunsForRunResult => ({
+  ...result,
+  recordedEvidence: undefined,
+});
+
 export default function ArtifactViewerScreen() {
   const {
     runId,
@@ -243,6 +248,9 @@ export default function ArtifactViewerScreen() {
   const recipeRead = useReread(
     readRecipeRuns,
     (reason, message) => `Failed to refresh recipe runs after ${reason}: ${message}`,
+    // The run's recipe-run list is the same for every selection, so the picker stays while a
+    // newly selected recipe run (or the decision's evidence) loads; its evidence does not.
+    { keepOnReset: keepRecipeRunList },
   );
   const refreshRecipeRuns = recipeRead.refresh;
   const recipeRunGroupsLoaded = recipeRead.settled;

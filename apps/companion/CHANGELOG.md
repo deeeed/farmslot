@@ -4,8 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Artifacts and the decision workspace keep their loaded recipe runs and pairs when a re-read fails, and the error clears after the next successful read. Both screens share one `useReread` hook.
-- Reload a run's recorded evidence each time the gateway reconnects, as run detail already does for the run itself. Run detail, the artifact viewer and the decision workspace opened before the connection was ready, or during a gateway restart, now show the run's report and recipe evidence without being reopened, and a reconnect keeps an open viewer and its position.
+- Reload a run's recorded evidence each time the gateway reconnects, as run detail already does for the run itself. Run detail, the artifact viewer and the decision workspace opened before the connection was ready, or during a gateway restart, now show the run's report and recipe evidence without being reopened, and a reconnect keeps an open viewer and its position. A failed re-read no longer empties the decision workspace's recipe evidence, and the artifact viewer's recipe error clears after the next successful read.
 
 - Show a Run results card on run detail with the run's retained report, the same results Command Center shows. The report bytes are verified against the retained bundle, and an HTML report (a QA run's per-criterion verdicts, coverage gaps and evidence) renders as a page with scripts off. Tapping an evidence link in it opens that retained artifact in Companion, a web link opens in the browser, and nothing else loads; recorded case claims show beneath it. The decision workspace opens reports through the same viewer. The acceptance tally now matches Command Center and shows no proven count before any criterion is assessed.
 

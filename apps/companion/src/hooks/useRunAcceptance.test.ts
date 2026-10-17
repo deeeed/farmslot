@@ -1,15 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { fileURLToPath, URL } from 'node:url';
-import vm from 'node:vm';
-
-import ts from 'typescript';
+import { URL } from 'node:url';
 
 import { Events, Methods } from '@farmslot/protocol';
 
 import { recordVisualClaimReview } from '../lib/visual-claim-review';
 
+import { mountHook } from './hook-harness.fixtures';
 import type { RunAcceptanceSource } from './useRunAcceptance';
 
 const run: RunAcceptanceSource = {
@@ -21,98 +18,31 @@ const progress = { acceptanceCriteria: [], acceptanceStatus: { schemaVersion: 2,
 
 /** Execute the actual hook with deterministic React scheduling and a read-only transport stub. */
 function mount(request: (method: string) => Promise<unknown>) {
-  const cells: unknown[] = [];
-  const effects: Array<{ deps: readonly unknown[]; cleanup?: () => void }> = [];
-  let cell = 0;
-  let effect = 0;
-  let pending: Array<() => void> = [];
   let connection: number | null = 1;
   const client = { request, subscribe: () => () => undefined, authenticatedPrincipal: null };
-  const react = {
-    useState(initial: unknown) {
-      const index = cell++;
-      if (!(index in cells)) cells[index] = typeof initial === 'function' ? initial() : initial;
-      return [
-        cells[index],
-        (next: unknown) => {
-          cells[index] = typeof next === 'function' ? next(cells[index]) : next;
-        },
-      ];
-    },
-    useRef(initial: unknown) {
-      const index = cell++;
-      if (!(index in cells)) cells[index] = { current: initial };
-      return cells[index];
-    },
-    useMemo(calculate: () => unknown) {
-      return calculate();
-    },
-    useEffect(callback: () => unknown, deps: readonly unknown[]) {
-      const index = effect++;
-      const previous = effects[index];
-      if (
-        previous &&
-        deps.length === previous.deps.length &&
-        deps.every((value, at) => Object.is(value, previous.deps[at]))
-      )
-        return;
-      pending.push(() => {
-        previous?.cleanup?.();
-        const cleanup = callback();
-        effects[index] = {
-          deps,
-          ...(typeof cleanup === 'function' ? { cleanup: () => cleanup() } : {}),
-        };
-      });
-    },
-  };
-  const dependencies: Record<string, unknown> = {
-    react,
-    '@farmslot/protocol': { Methods, Events },
-    '@farmslot/adapter-sdk/evidence': { createEvidenceReviewModel: () => null },
-    '../lib/recoverable-errors': { isGatewayBackgroundPauseError: () => false },
-    '../lib/visual-claim-review': { recordVisualClaimReview },
-    '../lib/task-progress': {
-      taskProgressRequestForRun: () => ({ runId: run.id, slotId: run.slotId }),
-      taskProgressUpdateTargetsRun: () => false,
-    },
-    '../lib/task-progress-view': { acceptanceLedgerView: () => ({ rows: [] }) },
-    '../store/connection': {
-      useConnectionStore: (select: (state: { authorityEpoch: number }) => unknown) =>
-        select({ authorityEpoch: 1 }),
-    },
-    './useConnectedTransport': { useConnectedTransport: () => connection },
-  };
-  const exports: Record<string, unknown> = {};
-  const source = readFileSync(
-    fileURLToPath(new URL('./useRunAcceptance.ts', import.meta.url)),
-    'utf8',
-  );
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  vm.runInNewContext(
-    compiled,
+  const hook = mountHook<[typeof client, RunAcceptanceSource]>(
+    new URL('./useRunAcceptance.ts', import.meta.url),
+    'useRunAcceptance',
     {
-      exports,
-      console,
-      require(name: string) {
-        if (!(name in dependencies)) throw new Error(`Unexpected hook dependency ${name}`);
-        return dependencies[name];
+      '@farmslot/protocol': { Methods, Events },
+      '@farmslot/adapter-sdk/evidence': { createEvidenceReviewModel: () => null },
+      '../lib/recoverable-errors': { isGatewayBackgroundPauseError: () => false },
+      '../lib/visual-claim-review': { recordVisualClaimReview },
+      '../lib/task-progress': {
+        taskProgressRequestForRun: () => ({ runId: run.id, slotId: run.slotId }),
+        taskProgressUpdateTargetsRun: () => false,
       },
+      '../lib/task-progress-view': { acceptanceLedgerView: () => ({ rows: [] }) },
+      '../store/connection': {
+        useConnectionStore: (select: (state: { authorityEpoch: number }) => unknown) =>
+          select({ authorityEpoch: 1 }),
+      },
+      './useConnectedTransport': { useConnectedTransport: () => connection },
     },
-    { timeout: 1000 },
   );
-  const hook = exports.useRunAcceptance;
-  assert.equal(typeof hook, 'function');
-  if (typeof hook !== 'function') throw new Error('Hook export missing');
   return {
     render(input = run): Record<string, unknown> {
-      cell = 0;
-      effect = 0;
-      pending = [];
-      const result: unknown = hook(client, input);
-      for (const callback of pending) callback();
+      const result = hook.render(client, input);
       assert.ok(typeof result === 'object' && result !== null);
       if (typeof result !== 'object' || result === null) throw new Error('Invalid hook result');
       return Object.fromEntries(Object.entries(result));
@@ -120,9 +50,7 @@ function mount(request: (method: string) => Promise<unknown>) {
     setConnected(connected: boolean) {
       connection = connected ? 1 : null;
     },
-    cleanup() {
-      for (const entry of effects) entry.cleanup?.();
-    },
+    cleanup: hook.cleanup,
   };
 }
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
