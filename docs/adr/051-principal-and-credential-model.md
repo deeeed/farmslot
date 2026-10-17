@@ -1807,10 +1807,26 @@ Static review runs on a review workspace under native execution ownership. That
 holds whether the review is created directly or admitted from a rule or
 submission. Direct and gated review publication publish as that owner.
 
-A replacement identity is therefore refused static review and review
-publication, with a denial that names native ownership. An admitted intent shows
-that reason while it waits. The replacement keeps rules and submissions for
-notifications, monitoring and runtime-slot QA.
+**Delegated review authorship.** An admin person who is not the native owner may
+still request a static review directly, whatever their generation.
+
+- **Owner.** The gateway makes the configured native profile owner, resolved at
+  generation zero, the run's creator, native owner and review owner. The run
+  executes and publishes as that owner, so native ownership never moves.
+- **Requester.** The run records the person's id and generation as its requester.
+  That record is for audit and never authorizes a later action.
+- **Later actions.** Approval and later publication use the existing admin
+  supervision of the owner's runs.
+- **Queue.** A queued delegated request re-checks at dispatch that its requester
+  is still an admin at the same generation. Otherwise it refuses only its own row.
+- **No owner.** A farm with no configured native profile owner refuses delegation.
+
+Otherwise a replacement identity is refused static review and review
+publication, with a denial that names native ownership. That includes static
+review admitted from its rules or submissions, because background admission has
+no live admin session to delegate. An admitted intent shows that reason while it
+waits. The replacement keeps rules and submissions for notifications, monitoring
+and runtime-slot QA.
 
 ### Rationale
 
@@ -1821,7 +1837,11 @@ older record stays bound to the identity that created it. Separating a permanent
 mismatch from a recoverable loss of authority means a temporary role change never
 destroys held work. Native ownership controls host profiles and long-running
 processes, so it stays fail-closed instead of widening this change. Review paths
-built on native ownership inherit that boundary.
+built on native ownership inherit that boundary. Delegated authorship gives an
+admin person direct static reviews without moving that ownership: the work runs
+and publishes under the generation-zero owner that already controls the host
+profiles, and the requester stays on record. Delegation needs a live admin
+session, so background admission never delegates.
 
 ### Consequences
 
@@ -1833,7 +1853,9 @@ unsupported. Every gateway sharing the identity home and the farm root must run
 this version, which extends Amendment 3's requirement. Background effects re-check
 the stored owner's generation and current authority before acting. A waking
 request never donates authority. A reused person re-creates their PR
-configuration; nothing migrates to them.
+configuration; nothing migrates to them. A delegated static review belongs to
+the native owner and also names its requester, so owner-scoped views list it
+under the native owner.
 
 ### Public surface
 
@@ -1846,6 +1868,8 @@ configuration; nothing migrates to them.
   - `notificationPrincipalGenerations` on `PRTeamProfile`, keyed by recipient id
     and kept outside the client-edited `config`.
   - `createdByPrincipalGeneration` on `Run`.
+  - `requestedByPrincipalId` and `requestedByPrincipalGeneration` on `Run`, present
+    only on a delegated static review.
 - Consumers are the gateway PR, assessment and run stores and dispatchers, the
   notification audience and the push sources. Clients read these fields only
   through existing list and get RPCs.

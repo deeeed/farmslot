@@ -1115,13 +1115,15 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   queue admission re-check current authority before acting. An unrelated waking
   request cannot donate authority.
 - The queue loader validates each stored originator with the shared WorkOriginator
-  check. An invalid row refuses only itself and stays visible as blocked, with its
-  reason.
+  check. An invalid row refuses only itself: it stays `queued` and carries the
+  reason in `waitingReason`, with no new queue status.
 - Rule dispatch matches owner id and generation in its prior-review domain lookup
   and in its requeue check.
 - `PRTeamProfile.notificationPrincipalGenerations` binds the current generation
   of each recipient id newly added to `config.notificationPrincipalIds` at save.
   - Recipients already on the team keep their stored generation.
+  - Removing a recipient drops its entry, so re-adding it in a later save binds
+    the current generation. One save that removes and re-adds it changes nothing.
   - An id that does not resolve at save is refused.
   - Owner-scoped events and notification reads check the recipient session's
     generation as well as its id.
@@ -1144,24 +1146,50 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   actors remain display-only.
 - Native execution ownership remains id-only and matches only a generation-zero
   principal. `requireNativeProfileOwner`, `resolveNativeWorkerOwner`,
-  `resolveReviewWorkspaceOwner`, node bindings and native-session owners refuse
-  any principal whose generation is not zero.
+  `resolveReviewWorkspaceOwner`, `ownsLocalNativeProfile`, node bindings and
+  native-session owners refuse any principal whose generation is not zero.
 - Static review runs, whether direct or admitted from a rule or submission, run
   under native execution ownership. So does review publication.
-  - Both are refused for a replacement, with a native-ownership denial.
-  - An admitted intent shows that reason as its waiting reason.
+- Delegated review authorship applies when `run.create`, `dispatch.preview` or the
+  dispatch queue receives a static `review-pr` request from an authenticated admin
+  person who is not the native owner, at any generation.
+  - The owner resolves to `FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID` at generation
+    zero, through the admin-supervisor branch of `resolveReviewWorkspaceOwner`.
+    Workspace placement is inspected against that owner, as for its own requests.
+  - The run stores that owner in `createdByPrincipalId`, `nativeOwnerPrincipalId`
+    and the PR work review owner. It stores the session's id and generation in
+    `requestedByPrincipalId` and `requestedByPrincipalGeneration`, omitting zero.
+    Request parameters that supply requester fields are refused.
+  - Direct publication captured at creation publishes as that owner. Approval and
+    later publication use the existing admin supervision of the owner's runs. The
+    requester fields grant nothing.
+  - A queued delegated request keeps the requester as its originator. Queue
+    admission re-checks that the requester is still an admin at that generation;
+    a failure refuses only that row, through `waitingReason`.
+  - Without a configured native profile owner, delegation is refused with the
+    native-ownership denial.
+- Otherwise static review and review publication are refused for a replacement,
+  with a native-ownership denial. That includes static review admitted from its
+  rules or submissions, which never delegate.
+  - An admitted intent stays `queued` and carries that reason in `waitingReason`.
   - The replacement's rules and submissions still drive notifications, monitoring
-    and runtime-slot QA.
+    and runtime-slot QA on tmux or default transport. A QA profile that selects
+    native transport is refused by the native-ownership rule.
 - Regressions:
   - For each generation-bound store: a generation-zero record still works for its
     original identity. After reuse it is refused or absent. The replacement's
     fresh record works. For review submissions and contributions, "works" means
-    store admission plus runtime-slot QA dispatch. A background effect for the
-    old record never acts as the replacement.
+    store admission plus runtime-slot QA dispatch on a non-native transport. A
+    background effect for the old record never acts as the replacement.
   - For a replacement, these are refused with their named reasons: native
-    ownership, direct static review, static review admitted from a rule or
-    submission, review publication, webhook principals, delegators and delegated
-    reviewers.
+    ownership, direct static review by a non-admin, static review admitted from a
+    rule or submission, review publication as its own owner, webhook principals,
+    delegators and delegated reviewers.
+  - Delegated review: an admin replacement's direct static review is created
+    under the native owner with its requester recorded, runs, and publishes as
+    that owner. A non-admin person is refused. Client-supplied requester fields
+    are refused. A queued delegated request whose requester lost admin, or was
+    replaced again, refuses only its own row.
   - Team re-save: kept recipients keep their stored generation, newly added ids
     bind the current generation, and unresolved ids are refused.
   - Push: the older-generation binding for the same token is disabled, and

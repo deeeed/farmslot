@@ -148,13 +148,21 @@ Once a gateway that implements ADR-051 Amendment 5 is rolled out:
   replacement's views, and actions on them are refused with a message naming the
   replaced identity. The replacement re-creates the configuration it wants.
 - Static reviews and review publication run under native execution ownership,
-  whether the review is direct or rule-admitted. Native execution ownership never moves to a replacement identity, so
-  keep native profiles owned by the automation service and re-point native owner
+  whether the review is direct or admitted from a rule or submission. Native
+  execution ownership never moves to a replacement identity, so keep native
+  profiles owned by the automation service and re-point native owner
   configuration before reuse.
+- An admin replacement can still start a static review directly, from Command
+  Center or the CLI, and publish it. The review runs and publishes as the
+  configured native profile owner, normally the automation service, and the run
+  records the person as its requester. A replacement that is not an admin cannot.
+  A replacement's rules and submissions never start a static review, so an admin
+  starts it directly.
 - Webhook principals and visual-review delegations in project configuration keep
   naming the original identity. Re-point them to another service or person.
 - A team that already lists a reused recipient keeps notifying the old identity.
-  Remove and re-add that recipient to notify the replacement.
+  To notify the replacement, remove that recipient and save the team, then add
+  them back in a second save.
 
 Until that version is deployed, a reused identity cannot use PR features.
 
