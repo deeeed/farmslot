@@ -5,6 +5,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `checklist mark` refuses a `--checklist` or `--signal` that is not a task-local basename with exit 2, as the mark script does, before reading either file (it exited 1).
+- `logs` names the rejected value in its non-numeric `--events` refusal: `--events must be numeric (got: <value>).`
 
 ## 0.23.0 - 2026-10-17
 

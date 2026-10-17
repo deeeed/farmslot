@@ -58,3 +58,14 @@ test('start preserves successful terminal verdicts', async (t) => {
   assert.equal(await handleChecklist(['mark', dir, 'start']), 0);
   assert.equal(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'), completed);
 });
+
+test('a --checklist or --signal that is not a task-local basename is a usage error', async (t) => {
+  const dir = task(t);
+  writeFileSync(path.join(dir, 'SIGNAL.json'), JSON.stringify({ status: 'complete' }));
+  assert.equal(await handleChecklist(['mark', dir, '--checklist', './TASK.md', '1']), 2);
+  assert.equal(
+    await handleChecklist(['mark', dir, '--checklist', 'TASK.md', '--signal', '../S.json', '1']),
+    2,
+  );
+  assert.doesNotMatch(readFileSync(path.join(dir, 'TASK.md'), 'utf8'), /\[x\] Remaining/);
+});

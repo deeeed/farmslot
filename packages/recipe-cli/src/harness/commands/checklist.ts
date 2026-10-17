@@ -237,6 +237,16 @@ export async function handleChecklist(
     console.error(`usage: ${usage}`);
     return EXIT.usage;
   }
+  // A --checklist or --signal that is not a task-local basename is a usage
+  // error, as the mark script reports it; refuse before anything reads it.
+  if (targetOverrides.checklist) {
+    try {
+      resolveChecklistTargetWithOverrides(resolvedTaskDir, targetOverrides);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return EXIT.usage;
+    }
+  }
   if (preserveTerminalSignal(resolvedTaskDir, step, targetOverrides)) return EXIT.ok;
   const gates = options.stepGates ?? [];
   if (step === 'sub' && forwarded[2] === 'complete') {

@@ -86,7 +86,7 @@ export async function handleLogs(
     return usageOut(
       json,
       'logs',
-      '--events must be numeric.',
+      `--events must be numeric (got: ${events}).`,
       `${harnessHost().name} logs --events 20`,
     );
   }
