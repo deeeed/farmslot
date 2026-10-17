@@ -95,6 +95,14 @@ test('artifact-only replay output gets replay copy and the complete-step status'
   assert.match(summary.copy, /eval Reference and Candidate packages/);
 });
 
+test('a review-workspace run shows its review process, not a results card', () => {
+  const run = makeRun({
+    completionPolicy: 'artifact-only',
+    reviewWorkspaceTarget: { machine: 'macwork' },
+  });
+  assert.equal(runResultsSummary(run, 3).shouldRender, false);
+});
+
 test('a non-replay run without output or artifacts gets no results card', () => {
   assert.equal(runResultsSummary(makeRun({ status: 'done' }), 0).shouldRender, false);
   assert.equal(runResultsSummary(makeRun({ status: 'failed' }), 1).status, 'failed');

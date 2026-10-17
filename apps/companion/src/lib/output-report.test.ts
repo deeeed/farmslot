@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 
-import { isHtmlReport, readRunOutputReport } from './output-report';
+import { readRunOutputReport } from './output-report';
 
 const body = '<h1>Release validation</h1><p>Coverage gaps: none recorded.</p>';
 const sha256 = createHash('sha256').update(body).digest('hex');
@@ -72,10 +72,4 @@ test('a gateway error is reported instead of an empty report', async (t) => {
     }),
     /HTTP 404/,
   );
-});
-
-test('only an HTML report renders as a page', () => {
-  assert.equal(isHtmlReport('artifacts/report.html'), true);
-  assert.equal(isHtmlReport('artifacts/REPORT.HTM'), true);
-  assert.equal(isHtmlReport('artifacts/qa-report.md'), false);
 });

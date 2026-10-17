@@ -1,5 +1,6 @@
 import React, { useContext } from 'react';
 import {
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -11,24 +12,25 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import WebView, { type WebViewNavigation } from 'react-native-webview';
+import WebView from 'react-native-webview';
 
 import { RecipeHudContext } from '../farmslot/RecipeBridgeProvider';
 import { RecipeHud } from '../farmslot/RecipeHud';
 import { formatDocument } from '../lib/document-format';
+import { isolatedReportHtml, REPORT_DOCUMENT_BASE, reportNavigation } from '../lib/document-html';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
-// A retained HTML report renders as a page, never as markup. Scripts stay off and the view never
-// leaves the document: only in-page anchors navigate, so a link cannot load anything else.
-function staysInDocument(request: WebViewNavigation): boolean {
-  return request.url.startsWith('about:blank');
+export interface DocumentHtmlLinks {
+  /** A report-relative link to the retained artifact path it names, or null. */
+  resolveArtifact: (relativeHref: string) => string | null;
+  openArtifact: (artifactPath: string) => void;
 }
 
 export function DocumentViewer({
   visible,
   title,
   body,
-  html = false,
+  html,
   onClose,
   children,
 }: {
@@ -36,8 +38,8 @@ export function DocumentViewer({
   visible: boolean;
   title: string;
   body: string;
-  /** Render the body as an HTML page (a QA run's report.html) instead of formatted text. */
-  html?: boolean;
+  /** Render the body as an isolated HTML page (a QA run's report.html) instead of formatted text. */
+  html?: DocumentHtmlLinks;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
@@ -83,10 +85,24 @@ export function DocumentViewer({
           {html && body.trim() ? (
             <WebView
               testID="companion-document-html"
-              source={{ html: body }}
-              originWhitelist={['about:blank']}
+              source={{ html: isolatedReportHtml(body), baseUrl: REPORT_DOCUMENT_BASE }}
+              // Every URL reaches the decision below; none falls through to the system opener.
+              originWhitelist={['*']}
               javaScriptEnabled={false}
-              onShouldStartLoadWithRequest={staysInDocument}
+              setSupportMultipleWindows={false}
+              nestedScrollEnabled
+              onShouldStartLoadWithRequest={(request) => {
+                // Android reports every navigation as `other`; with scripts off and refresh
+                // redirects removed, a page navigation there can only come from a tap.
+                const tapped =
+                  request.isTopFrame !== false &&
+                  (Platform.OS === 'android' || request.navigationType === 'click');
+                const next = reportNavigation(request.url, html.resolveArtifact, tapped);
+                if (next.kind === 'document') return true;
+                if (next.kind === 'artifact') html.openArtifact(next.path);
+                if (next.kind === 'external') void Linking.openURL(next.url);
+                return false;
+              }}
               style={[styles.htmlPage, { height: Math.round(height * 0.7) }]}
             />
           ) : formatted.length > 0 ? (

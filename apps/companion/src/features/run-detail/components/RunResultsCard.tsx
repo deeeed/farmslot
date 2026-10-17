@@ -13,13 +13,16 @@ import { stepStatusColor } from './run-detail-panels';
  */
 export function RunResultsCard({
   summary,
-  reportUnavailableReason,
+  hasReport,
+  captureError,
   loadingReport,
   onReadReport,
 }: {
   summary: RunResultsSummary;
-  /** Null when the report can be read; otherwise why it cannot. */
-  reportUnavailableReason: string | null;
+  /** The run retained a report; the shared model verifies it when it is opened. */
+  hasReport: boolean;
+  /** Why the worker's files could not be retrieved, shown as the shared empty message. */
+  captureError?: string;
   loadingReport: boolean;
   onReadReport: () => void;
 }) {
@@ -33,11 +36,12 @@ export function RunResultsCard({
         </View>
       </View>
       <Text style={styles.workspaceSummary}>{summary.copy}</Text>
-      {reportUnavailableReason ? (
-        <Text style={baseStyles.textMuted} testID="companion-run-results-report-unavailable">
-          {reportUnavailableReason}
+      {captureError ? (
+        <Text style={baseStyles.textMuted} testID="companion-run-results-capture-error">
+          {summary.emptyMessage}
         </Text>
-      ) : (
+      ) : null}
+      {hasReport ? (
         <Pressable
           style={[styles.focusedArtifactPrimaryButton, { alignSelf: 'flex-start' }]}
           onPress={onReadReport}
@@ -49,7 +53,7 @@ export function RunResultsCard({
             {loadingReport ? 'Reading report…' : 'Read report'}
           </Text>
         </Pressable>
-      )}
+      ) : null}
     </View>
   );
 }

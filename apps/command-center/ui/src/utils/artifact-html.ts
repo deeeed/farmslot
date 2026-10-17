@@ -1,8 +1,6 @@
 import DOMPurify from 'dompurify';
 
-/** Retained HTML is an untrusted document, never part of Command Center's DOM. */
-export const ARTIFACT_HTML_CSP =
-  "default-src 'none'; img-src data:; media-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'";
+import { ARTIFACT_HTML_CSP } from '@farmslot/review-dispatch';
 
 export interface HtmlArtifactTarget {
   mediaUrl: string;

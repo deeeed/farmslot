@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Share the run results card summary and the acceptance tally, so Command Center and Companion show the same title, badge, copy and counts for a run's retained output.
+- Share the run results card summary, the acceptance tally, report link resolution and the artifact HTML policy, so Command Center and Companion show the same results for a run's retained output and open the same artifact from a report link. A review-workspace run shows no results card.
 
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 - Share the gateway no-code-review warning without disabling publication approval.

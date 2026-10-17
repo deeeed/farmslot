@@ -31,12 +31,13 @@ import {
   runResultsSummary,
 } from '@farmslot/review-dispatch';
 
-import { DocumentViewer } from '../../components/DocumentViewer';
+import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
+import { useRunOutputReport } from '../../hooks/useRunOutputReport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
@@ -48,7 +49,6 @@ import { currentFarmConnection } from '../../lib/connection-authority';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { gateReviewHref, openHumanGateDecision } from '../../lib/gate-review';
 import { nativeRunConversationParams } from '../../lib/native-worker-target';
-import { isHtmlReport, readRunOutputReport } from '../../lib/output-report';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
@@ -228,47 +228,12 @@ export default function RunDetailScreen() {
     () => (run ? runResultsSummary(run, extractRunArtifactManifest(run).length) : null),
     [run],
   );
-  const [reportDocument, setReportDocument] = useState<{
-    title: string;
-    body: string;
-    html: boolean;
-  } | null>(null);
-  const [loadingReport, setLoadingReport] = useState(false);
-  const reportAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => () => reportAbortRef.current?.abort(), []);
-  // The shared model verifies the retained report, so it also says when there is none to read.
-  const reportUnavailableReason = !run?.output?.reportPath
-    ? 'This run retained no report.'
-    : evidenceModel.selectReport()
-      ? null
-      : evidenceModel.errors.join('; ') ||
-        (recipeRunsLoaded ? 'The retained report is unavailable.' : 'Loading the retained report…');
-  const openOutputReport = useCallback(async () => {
-    if (!run) return;
-    reportAbortRef.current?.abort();
-    const controller = new AbortController();
-    reportAbortRef.current = controller;
-    setLoadingReport(true);
-    try {
-      const report = await readRunOutputReport(evidenceModel, {
-        gatewayUrl,
-        runId: run.id,
-        authHeaders: artifactAuthHeaders,
-        signal: controller.signal,
-      });
-      if (!controller.signal.aborted)
-        setReportDocument({
-          title: report.caption,
-          body: report.body,
-          html: isHtmlReport(report.path),
-        });
-    } catch (error) {
-      if (!controller.signal.aborted)
-        Alert.alert('Report unavailable', error instanceof Error ? error.message : String(error));
-    } finally {
-      if (!controller.signal.aborted) setLoadingReport(false);
-    }
-  }, [artifactAuthHeaders, evidenceModel, gatewayUrl, run]);
+  const outputReport = useRunOutputReport({
+    evidenceModel,
+    runId: run?.id,
+    gatewayUrl,
+    authHeaders: artifactAuthHeaders,
+  });
   const loadRecipeRuns = useCallback(
     (selectionHint: string | null) => {
       const requestId = recipeRunsRequestRef.current + 1;
@@ -596,6 +561,16 @@ export default function RunDetailScreen() {
   const focusedArtifactIsDiff = Boolean(
     focusedArtifactPath && diffArtifactCandidate([{ path: focusedArtifactPath }]),
   );
+  const recordRunVisualReview = async (
+    id: string,
+    verdict: Parameters<typeof recordVisualClaimReview>[4],
+    reason?: string,
+  ) => {
+    await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
+    await loadRecipeRuns(selectedRecipeRunId);
+  };
+  const openAcceptanceEvidence = (criterionId: string, path: string) =>
+    router.push(acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId));
   const openRunEvidenceArtifact = (
     artifactPath?: string,
     recipeRunId?: string | null,
@@ -888,9 +863,10 @@ export default function RunDetailScreen() {
         {reviewPackageActiveTab === 'evidence' && runResults?.shouldRender ? (
           <RunResultsCard
             summary={runResults}
-            reportUnavailableReason={reportUnavailableReason}
-            loadingReport={loadingReport}
-            onReadReport={() => void openOutputReport()}
+            hasReport={Boolean(run.output?.reportPath)}
+            captureError={run.output?.captureError}
+            loadingReport={outputReport.loading}
+            onReadReport={() => void outputReport.open()}
           />
         ) : null}
 
@@ -1141,18 +1117,11 @@ export default function RunDetailScreen() {
               <TaskAcceptancePanel
                 evidenceModel={evidenceModel}
                 judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
-                onRecordVisualReview={async (id, verdict, reason) => {
-                  await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
-                  await loadRecipeRuns(selectedRecipeRunId);
-                }}
+                onRecordVisualReview={recordRunVisualReview}
                 acceptanceStatus={acceptanceStatus}
                 acceptanceCriteria={acceptanceCriteria}
                 error={acceptanceStatusError}
-                onOpenEvidence={(criterionId, path) =>
-                  router.push(
-                    acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId),
-                  )
-                }
+                onOpenEvidence={openAcceptanceEvidence}
               />
             ) : null}
             {activeTaskProgress ? (
@@ -1285,29 +1254,14 @@ export default function RunDetailScreen() {
           style={styles.surfaceEndMarker}
         />
       </Animated.ScrollView>
-      <DocumentViewer
-        visible={Boolean(reportDocument)}
-        title={reportDocument?.title ?? ''}
-        body={reportDocument?.body ?? ''}
-        html={reportDocument?.html}
-        onClose={() => setReportDocument(null)}
-      >
-        {reportDocument && evidenceModel.claims.length ? (
-          <TaskAcceptancePanel
-            acceptanceStatus={null}
-            evidenceModel={evidenceModel}
-            judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
-            onRecordVisualReview={async (id, verdict, reason) => {
-              await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
-              await loadRecipeRuns(selectedRecipeRunId);
-            }}
-            onOpenEvidence={(criterionId, path) => {
-              setReportDocument(null);
-              router.push(acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId));
-            }}
-          />
-        ) : null}
-      </DocumentViewer>
+      <RunOutputReportViewer
+        report={outputReport}
+        evidenceModel={evidenceModel}
+        judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
+        onRecordVisualReview={recordRunVisualReview}
+        onOpenEvidence={openAcceptanceEvidence}
+        onOpenArtifact={(path) => openRunEvidenceArtifact(path, DECISION_EVIDENCE_RECIPE_RUN_PARAM)}
+      />
     </View>
   );
 }

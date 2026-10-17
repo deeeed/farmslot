@@ -1,12 +1,10 @@
 import { html, nothing } from 'lit';
 
 import type { ArtifactRef } from '@farmslot/protocol';
+import { buildArtifactUrlResolver } from '@farmslot/review-dispatch';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import {
-  buildArtifactUrlResolver,
-  rewriteMarkdownArtifactUrls,
-} from '../../utils/artifact-markdown.js';
+import { rewriteMarkdownArtifactUrls } from '../../utils/artifact-markdown.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 import { gatewayMediaHtml, gatewayMediaSrc } from '../shared/gateway-media-src.js';

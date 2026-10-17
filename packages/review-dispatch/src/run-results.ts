@@ -73,8 +73,10 @@ export function runResultsSummary(run: Run, artifactCount: number): RunResultsSu
   const sourceRef = run.startRef?.resolvedSha ?? run.startRef?.requestedRef;
   const hasOutput = Boolean(run.output);
   return {
+    // A review-workspace run shows its review process instead of a results card.
     shouldRender:
-      hasOutput || run.completionPolicy === 'artifact-only' || isReplay || artifactCount > 0,
+      !run.reviewWorkspaceTarget &&
+      (hasOutput || run.completionPolicy === 'artifact-only' || isReplay || artifactCount > 0),
     completeStep,
     title: isReplay ? 'Replay evidence' : 'Run results',
     badge: isReplay ? 'comparison · artifact-only' : (run.metrics.outcome ?? run.status),

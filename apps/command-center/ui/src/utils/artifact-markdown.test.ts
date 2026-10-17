@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildArtifactUrlResolver, rewriteMarkdownArtifactUrls } from './artifact-markdown.js';
+import { buildArtifactUrlResolver } from '@farmslot/review-dispatch';
+
+import { rewriteMarkdownArtifactUrls } from './artifact-markdown.js';
 
 test('rewriteMarkdownArtifactUrls rewrites html and markdown local artifact URLs', () => {
   const resolveUrl = buildArtifactUrlResolver(
@@ -39,18 +41,6 @@ test('rewriteMarkdownArtifactUrls refuses traversal and unknown relative URLs', 
   assert.equal(rewriteMarkdownArtifactUrls(markdown, resolveUrl), markdown);
 });
 
-test('report links resolve against the document directory, never an ambiguous basename', () => {
-  const resolveUrl = buildArtifactUrlResolver(
-    ['artifacts/report.md', 'artifacts/first/trace.json', 'artifacts/second/trace.json'],
-    (file) => `/files/${file}`,
-    'artifacts/report.md',
-  );
-  assert.equal(resolveUrl('second/trace.json'), '/files/artifacts/second/trace.json');
-  assert.equal(resolveUrl('trace.json'), null);
-  assert.equal(resolveUrl('missing/trace.json'), null);
-  assert.equal(resolveUrl('../TASK.md'), null);
-});
-
 test('frozen previews route explicit screenshot paths absent from the package inventory', () => {
   const resolveUrl = buildArtifactUrlResolver(
     [],
@@ -68,14 +58,4 @@ test('frozen previews route explicit screenshot paths absent from the package in
   assert.equal(resolveUrl('artifacts/../secret.png'), null);
   assert.equal(resolveUrl('missing/trace.json'), null);
   assert.equal(resolveUrl('https://example.com/frame.png'), null);
-});
-
-test('repeated artifact records keep a basename unique until another path shares it', () => {
-  const file = 'artifacts/current/before.png';
-  const resolveUrl = buildArtifactUrlResolver([file, file], (path) => `/files/${path}`);
-  assert.equal(resolveUrl('before.png'), `/files/${file}`);
-  assert.equal(
-    buildArtifactUrlResolver([file, 'artifacts/old/before.png'], (path) => path)('before.png'),
-    null,
-  );
 });
