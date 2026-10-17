@@ -1798,6 +1798,15 @@ generation zero. This covers webhook principals, delegated visual-review
 delegators and delegated reviewer lists. These references never credit or empower
 a replacement. Source-pin actors stay display-only.
 
+**Clarification, 2026-10-17: delegator generation pin.** A project's
+`visual_claim_review` policy may set `delegatorPrincipalGeneration`, a positive
+integer that requires `delegatorPrincipalId`. The delegator then resolves at that
+generation, so a person at a reused id can be a delegator once an admin names
+their current generation. A bare id still binds generation zero, and a pin that
+no longer matches is refused with the replaced-identity denial until it is
+updated. Delegated reviewer lists and webhook principals have no pin and stay at
+generation zero.
+
 Native execution ownership stays id-only and matches only a generation-zero
 principal. That applies to the configured native profile owner, node native-owner
 bindings, and run and native-session owners. Amendment 3's retirement

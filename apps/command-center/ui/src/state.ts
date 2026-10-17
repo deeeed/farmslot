@@ -38,7 +38,6 @@ import type {
   WorkGraphUpdatedPayload,
 } from '@farmslot/protocol';
 import {
-  ACTIVE_RUN_LIST_LIMIT,
   buildRunFamilyReadinessSummaries,
   buildRunProjectAnalyticsSummaries,
   DEFAULT_BRANCH,
@@ -1117,10 +1116,7 @@ async function runFetchInitialState(
       includeFamilySummaries: true,
       includeProjectAnalytics: true,
     }),
-    gateway.request<RunListResult>(Methods.RUN_LIST, {
-      active: true,
-      limit: ACTIVE_RUN_LIST_LIMIT,
-    }),
+    gateway.request<RunListResult>(Methods.RUN_LIST, { active: true }),
   ])
     .then(([r, active]) => {
       if (stillCurrent() && r.runs) updateRuns(mergeRunsById(r.runs, active.runs ?? []), r);

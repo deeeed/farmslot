@@ -11,9 +11,6 @@ import type { SlotStatus } from '../contracts/slots.js';
 
 import { resolveRunSlotId } from './slot-resolution.js';
 
-/** Page size both clients request for `run.list` `active`. */
-export const ACTIVE_RUN_LIST_LIMIT = 200;
-
 /** `active` follows `isActiveListRun`, `history` keeps terminal runs, `all` keeps every run. */
 export type RunListScope = 'active' | 'history' | 'all';
 

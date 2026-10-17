@@ -161,7 +161,10 @@ Once a gateway that implements ADR-051 Amendment 5 is rolled out:
   is not an admin cannot do this. A replacement's rules and submissions never
   start a static review, so an admin starts it directly.
 - Webhook principals and visual-review delegations in project configuration keep
-  naming the original identity. Re-point them to another service or person.
+  naming the original identity. Re-point them to another service or person. A
+  visual-review delegation can instead name the replacement by adding
+  `delegatorPrincipalGeneration` with its current generation to
+  `visual_claim_review`.
 - A team that already lists a reused recipient keeps notifying the old identity.
   To notify the replacement, remove that recipient and save the team, then add
   them back in a second save.

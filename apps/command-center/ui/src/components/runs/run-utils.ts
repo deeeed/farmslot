@@ -14,7 +14,6 @@ import type {
   WorkerTerminalDisposition,
 } from '@farmslot/protocol';
 import {
-  buildFamilySummary,
   deriveRunLifecycleView,
   githubPullUrl,
   interactiveOperatorPacketArtifacts,
@@ -30,23 +29,6 @@ import {
 import { flowColor as _flowColor, flowLabel as _flowLabel } from '@farmslot/theme';
 
 import { colors } from '../../styles/theme-tokens.js';
-
-export interface RunFamilyGroup {
-  familyId: string;
-  familyRootTicketOrPr: string;
-  rootRun: Run | null;
-  // Run that drives header linkage (PR/Jira/branch). Falls back to the newest
-  // run when no production root exists (comparison-only families).
-  representativeRun: Run;
-  // Deterministic family-level summary, computed via the shared protocol helper
-  // so `#runs` family-group headers and the family deep-dive snapshot agree.
-  familySummary: string;
-  runs: Run[];
-  latestCreatedAt: string;
-  activeCount: number;
-  comparisonCount: number;
-  variants: string[];
-}
 
 export function formatCompletionPercent(percent: number): string {
   if (!Number.isFinite(percent)) return '0%';
@@ -673,20 +655,6 @@ function sortByCreatedAtDesc(runs: Run[]): Run[] {
   return [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-function isFamilyRoot(run: Run): boolean {
-  return run.id === run.familyId || run.parentRunId == null;
-}
-
-export function sortRunsForFamilyView(runs: Run[]): Run[] {
-  return [...runs].sort((a, b) => {
-    if (isFamilyRoot(a) !== isFamilyRoot(b)) return isFamilyRoot(a) ? -1 : 1;
-    if ((a.variant ?? null) !== (b.variant ?? null)) {
-      return (a.variant ?? '').localeCompare(b.variant ?? '');
-    }
-    return b.createdAt.localeCompare(a.createdAt);
-  });
-}
-
 export function pickFamilyComparePair(runs: Run[]): [Run, Run] | null {
   const comparisonRuns = sortByCreatedAtDesc(runs.filter((run) => run.lane === 'comparison'));
   if (comparisonRuns.length < 2) return null;
@@ -721,54 +689,6 @@ export function pickComparisonPartner(currentRun: Run, runs: Run[]): Run | null 
 export function isSameFamilyComparisonPair(a: Run, b: Run): boolean {
   if (a.familyId !== b.familyId) return false;
   return a.lane === 'comparison' && b.lane === 'comparison';
-}
-
-export function groupRunsByFamily(runs: readonly Run[]): RunFamilyGroup[] {
-  const grouped = new Map<string, Run[]>();
-  for (const run of runs) {
-    const familyId = run.familyId || run.id;
-    const current = grouped.get(familyId);
-    if (current) current.push(run);
-    else grouped.set(familyId, [run]);
-  }
-
-  return [...grouped.entries()]
-    .map(([familyId, familyRuns]) => {
-      const orderedRuns = sortRunsForFamilyView(familyRuns);
-      const rootRun = orderedRuns.find(isFamilyRoot) ?? null;
-      // sortRunsForFamilyView keeps the family root first; for the
-      // representative-run / family-summary computations we want the genuinely
-      // newest run, which is sortByCreatedAtDesc[0].
-      const newestByCreatedAt = sortByCreatedAtDesc(orderedRuns)[0];
-      const representativeRun = rootRun ?? newestByCreatedAt;
-      const latestCreatedAt = orderedRuns.reduce(
-        (latest, run) => (run.createdAt > latest ? run.createdAt : latest),
-        orderedRuns[0]?.createdAt ?? '',
-      );
-      const variants = [
-        ...new Set(
-          orderedRuns
-            .map((run) => run.variant)
-            .filter((variant): variant is string => Boolean(variant)),
-        ),
-      ];
-      return {
-        familyId,
-        familyRootTicketOrPr:
-          rootRun?.familyRootTicketOrPr ?? orderedRuns[0]?.familyRootTicketOrPr ?? familyId,
-        rootRun,
-        representativeRun,
-        familySummary: buildFamilySummary(rootRun, newestByCreatedAt, orderedRuns),
-        runs: orderedRuns,
-        latestCreatedAt,
-        activeCount: orderedRuns.filter(
-          (run) => !['done', 'failed', 'cancelled'].includes(run.status),
-        ).length,
-        comparisonCount: orderedRuns.filter((run) => run.lane === 'comparison').length,
-        variants,
-      };
-    })
-    .sort((a, b) => b.latestCreatedAt.localeCompare(a.latestCreatedAt));
 }
 
 export const GRADE_COLORS: Record<string, string> = {

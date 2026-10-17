@@ -12,7 +12,7 @@ import type {
   RunListResult,
   RunStep,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Methods, sortRunsForFamilyView } from '@farmslot/protocol';
 
 import '../shared/hydrating-placeholder.js';
 import '../shared/step-artifacts.js';
@@ -31,7 +31,6 @@ import {
   runDisplayColor,
   runDisplayLabel,
   runStatusColor,
-  sortRunsForFamilyView,
   stepStatusColor,
 } from './run-utils.js';
 

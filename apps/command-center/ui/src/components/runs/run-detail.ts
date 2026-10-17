@@ -32,6 +32,7 @@ import {
   Events,
   liveGateParkView,
   Methods,
+  sortRunsForFamilyView,
 } from '@farmslot/protocol';
 import { pendingOutputReview } from '@farmslot/review-dispatch';
 
@@ -152,7 +153,7 @@ import {
   STEP_ARTIFACT_VIEW,
 } from './run-detail-url-state.js';
 import { publicationReviewStepForName } from './run-pipeline-model.js';
-import { collectRunInteractivePacketArtifacts, sortRunsForFamilyView } from './run-utils.js';
+import { collectRunInteractivePacketArtifacts } from './run-utils.js';
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {

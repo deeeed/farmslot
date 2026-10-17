@@ -16,9 +16,11 @@ import type {
 } from '@farmslot/protocol';
 import {
   Events,
+  groupRunsByFamily,
   Methods,
   normalizeRunTags,
   resolveRunSlotId,
+  type RunFamilyGroup,
   selectRunList,
   slotMachineMap,
   summarizeRunEvidence,
@@ -94,13 +96,11 @@ import {
   eligibilityLabel,
   familyCompletionColor,
   familyCompletionLabel,
-  groupRunsByFamily,
   pickFamilyComparePair,
   resolveRunEngine,
   runDisplayColor,
   runDisplayLabel,
   runDisplayTitle,
-  type RunFamilyGroup,
   runStatusColor,
   summarizeEligibilityReasons,
 } from './run-utils.js';

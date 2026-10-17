@@ -1,4 +1,4 @@
-import { ACTIVE_RUN_LIST_LIMIT, Methods, type Run, type RunListResult } from '@farmslot/protocol';
+import { Methods, type Run, type RunListResult } from '@farmslot/protocol';
 
 import type { GatewayClient } from './gateway-client';
 
@@ -11,7 +11,7 @@ export const RUN_LIST_HISTORY_TIMEOUT_MS = 60_000;
 export async function fetchActiveRuns(client: GatewayClient): Promise<Run[]> {
   const result = await client.request<RunListResult>(
     Methods.RUN_LIST,
-    { active: true, limit: ACTIVE_RUN_LIST_LIMIT },
+    { active: true },
     RUN_LIST_ACTIVE_TIMEOUT_MS,
   );
   return result.runs;

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Count a family's active runs with the shared active rule, and load every active run for the terminal's Active Runs and pinned views instead of the newest 1000 runs.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Read the run results card, acceptance tally, report link resolution, web-link check and artifact HTML policy from the shared review-dispatch view model, which Companion now renders too. The output for real reports is unchanged; a malformed web link (no host, or credentials hidden behind a backslash) now loses its link instead of opening.
