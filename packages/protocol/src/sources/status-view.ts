@@ -205,14 +205,15 @@ export function deriveSourceStatusView(
       return {
         ...row,
         // A draft names the run selection being prepared, not the farm's current ref.
-        line:
-          draftRef !== undefined
-            ? `${declaration.id} ${draftRef}${selection?.selection === 'branch' ? ' (run pin)' : ''}`
-            : !visiblePin
-              ? `${declaration.id} ${ref}`
-              : visiblePin.selection === 'branch'
-                ? `${declaration.id} ${ref} (${visiblePin.scope} pin)`
-                : `${declaration.id} main (${visiblePin.scope} override)`,
+        line: draftRef
+          ? selection?.selection === 'main'
+            ? `${declaration.id} main (run override)`
+            : `${declaration.id} ${draftRef} (run pin)`
+          : !visiblePin
+            ? `${declaration.id} ${ref}`
+            : visiblePin.selection === 'branch'
+              ? `${declaration.id} ${ref} (${visiblePin.scope} pin)`
+              : `${declaration.id} main (${visiblePin.scope} override)`,
         summary,
         details: [
           ...(draftRef !== undefined

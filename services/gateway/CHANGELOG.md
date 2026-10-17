@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Advance the source revision as soon as run admission or a new source attempt is saved, and when a restored or newly created run stops accepting pins.
 - `run.list` `active` returns every active run unless the caller sets a limit.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
@@ -14,7 +15,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - `run.list` `active` uses the shared `isActiveListRun` rule that Command Center and Companion list with.
 - Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate. An undelivered or interrupted repair stays retryable under its single charge, and a restart resumes it through fix recovery without refunding or recharging the round.
-- Publish a per-epoch source revision on `hello` and `fleet.updated`, advanced by source declaration, pin, resolution and lock changes, run source plans, provenance and pin eligibility, syncs, a node's first receipt for a lock, and node connects and disconnects.
+- Publish a per-epoch source revision on `hello` and `fleet.updated`, advanced by source declaration, pin, resolution and lock changes, run source plans, syncs and node reconnects.
 - Hand a run to the operator when its worker is waiting on its own question or approval request: the monitor raises an interactive handoff with the captured question instead of nudging it or leaving the run in monitoring with no decision. The handoff clears when the question closes, survives a gateway restart, and ignores unsent composer text.
 - Keep a QA run's evidence window when a dispatch replay resumes the same task. The first dispatch of a task identity records when it began, and QA completion checks recipe evidence against that instead of the latest dispatch. A new task or a fresh dispatch starts a new window. For runs dispatched before this, the primary worker's first launch counts when it happened after the current task was written; their next dispatch records it as the anchor.
 - Point a spent review budget at an extension only when the run can receive one; review-pr, published, artifact-only and archived runs now say why their rounds cannot be extended, and the extension refusal names the same reason.

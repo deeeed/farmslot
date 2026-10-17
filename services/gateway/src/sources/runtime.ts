@@ -37,7 +37,7 @@ import { assertNodeReconnectCurrent, sendNodeRequest, waitForNode } from '../fle
 import { loadFleetStatus, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
 import type { RunCreateInternalOptions, RunCreationPlan } from '../methods/run.js';
 import { RunTransitionCoordinator } from '../run-lifecycle/transition-coordinator.js';
-import { buildRunRecord, getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { buildRunRecord, getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { currentSessionOriginator, runWithPrincipalOwner } from '../security/work-originator.js';
 
 import { type PreparedSourcePins, SourceAuthority } from './authority.js';
@@ -45,6 +45,7 @@ import {
   advanceSourceRevision,
   announceSourceChanges,
   noteAuthorityFacts,
+  noteRunSourceFacts,
   noteSourceMaterialized,
 } from './change-signal.js';
 import { captureRunCreationRequest } from './creation-request.js';
@@ -131,6 +132,8 @@ export async function initializeSources(): Promise<void> {
   authority = await SourceAuthority.open(configuration, path.join(home, 'sources'));
   const opened = authority;
   announceSourceChanges();
+  // Restored runs need a baseline too, or their first update after a restart is never compared.
+  for (const run of getAllRuns()) noteRunSourceFacts(run);
   // The first notification, the immediate first poll, records the startup baseline.
   opened.observe(() => noteAuthorityFacts(sourceFactsSignature(opened)));
   await authority.recoverRunCreations((runId) =>

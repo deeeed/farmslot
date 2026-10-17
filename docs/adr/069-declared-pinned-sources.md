@@ -121,10 +121,11 @@ by `sources.status` changes: declarations, pins, resolution status, commits and
 generations, locks, run source plans, provenance and pin eligibility, execution
 nodes connecting or disconnecting, syncs completed through the gateway and a
 node's first receipt for a lock. A resolution refresh that only updates its
-timestamp does not advance it. The shared source status controller rereads `sources.status` for its
-context when that revision advances, when the gateway epoch changes and after
-every reconnect. Source panels in Command Center and Companion have no Refresh
-control and do not poll. Retry stays available after a failed read.
+timestamp does not advance it. The shared source status controller rereads
+`sources.status` for its context when that revision advances, when the gateway
+epoch changes and after every reconnect. Source panels in Command Center and
+Companion have no Refresh control and do not poll. Retry stays available after a
+failed read.
 
 The signal uses the exact payload, key family and revision rules that ADR-071
 (gateway change notifications, proposed and not yet published) defines for
