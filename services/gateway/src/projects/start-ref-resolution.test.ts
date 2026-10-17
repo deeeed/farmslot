@@ -135,6 +135,19 @@ test('resolveStartRefInRepo rejects local-only commit SHA', async (t) => {
       }),
     /not reachable from fetched origin refs\/tags/,
   );
+  // A failed history scan is still a refusal, and says why.
+  await assert.rejects(
+    () =>
+      resolveStartRefInRepo({
+        repo: clone,
+        requestedRef: localSha,
+        exec: (command) =>
+          command.includes('farmslot-start-ref.')
+            ? Promise.resolve({ stdout: '', stderr: 'scan timed out', exitCode: 124 })
+            : shResult(command),
+      }),
+    /not reachable from fetched origin refs\/tags \(startRef remote branch history scan failed: scan timed out\)/,
+  );
 });
 
 test('resolveStartRefInRepo accepts an advertised head absent from local tracking refs', async (t) => {
@@ -354,6 +367,17 @@ test('resolveStartRefInRepo accepts SHA reachable only from a fetched remote tag
   });
 
   assert.equal(resolved.resolvedSha, tagOnlySha);
+
+  // A failed or timed-out branch-history scan still leaves the tag check to settle it.
+  const scanFailing = await resolveStartRefInRepo({
+    repo: clone,
+    requestedRef: tagOnlySha,
+    exec: (command) =>
+      command.includes('farmslot-start-ref.')
+        ? Promise.resolve({ stdout: '', stderr: 'scan timed out', exitCode: 124 })
+        : shResult(command),
+  });
+  assert.equal(scanFailing.resolvedSha, tagOnlySha);
 });
 
 test('resolveStartRefInRepo rejects unqualified branch and tag name collisions', async (t) => {

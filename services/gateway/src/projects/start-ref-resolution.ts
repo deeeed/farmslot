@@ -236,6 +236,8 @@ async function advertisedHeadHistoryContains(
     `url=$(git remote get-url ${shellQuote(remote)})`,
     'tmp=$(mktemp -d "${TMPDIR:-/tmp}/farmslot-start-ref.XXXXXX")',
     `trap 'rm -rf "$tmp"' EXIT`,
+    // zsh skips the EXIT trap when a signal ends the subshell; exit through it.
+    `trap 'exit 143' TERM INT HUP`,
     `git ls-remote --heads ${shellQuote(remote)} > "$tmp/heads"`,
     `awk '{print $1}' "$tmp/heads" | sort -u > "$tmp/tips"`,
     `{ [ -s "$tmp/tips" ] || { echo absent; exit 0; }; }`,
@@ -264,11 +266,12 @@ async function assertReachableFromKnownRemote(
   sha: string,
   remote: string,
 ): Promise<void> {
-  // Do not fetch every remote branch here: case-colliding refs on macOS can
-  // make all-head refspecs fail even when the requested commit is valid.
-  // Existing remote-tracking refs, advertised heads, and advertised tag
-  // commitishes reject local-only objects while supporting newly published PR
-  // heads and release/tag-only SHAs after the exact SHA is fetched above.
+  // Do not fetch every remote branch into the slot clone: case-colliding refs
+  // on macOS can make all-head refspecs fail even when the requested commit is
+  // valid. Existing remote-tracking refs, advertised heads, the advertised
+  // branches' commit history, and advertised tag commitishes reject local-only
+  // objects while supporting newly published PR heads, older commits of moved
+  // branches and release/tag-only SHAs after the exact SHA is fetched above.
   const containingRefs = await runGit(
     repo,
     exec,
@@ -287,7 +290,13 @@ async function assertReachableFromKnownRemote(
     );
   }
   if (remoteHeads.stdout.split('\n').some((line) => line.split(/\s+/, 1)[0] === sha)) return;
-  if (await advertisedHeadHistoryContains(repo, exec, sha, remote)) return;
+  let historyScanFailure = '';
+  try {
+    if (await advertisedHeadHistoryContains(repo, exec, sha, remote)) return;
+  } catch (error) {
+    // Tags still settle a tag-only commit when the history fetch fails or times out.
+    historyScanFailure = ` (${(error as Error).message})`;
+  }
   for (const tagCommitish of await fetchedRemoteTagCommitishes(repo, exec, remote)) {
     const tagCommit = `${tagCommitish}^{commit}`;
     const contains = await runGit(
@@ -297,7 +306,9 @@ async function assertReachableFromKnownRemote(
     );
     if (contains.exitCode === 0) return;
   }
-  throw new Error(`startRef commit '${sha}' is not reachable from fetched ${remote} refs/tags`);
+  throw new Error(
+    `startRef commit '${sha}' is not reachable from fetched ${remote} refs/tags${historyScanFailure}`,
+  );
 }
 
 export async function resolveStartRefInRepo(args: {
