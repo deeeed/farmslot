@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The family workspace counts active runs with the shared `isActiveListRun` rule: a family whose failed run still holds its slot reports that run as active and the family as active, matching every run list.
+
 - `run.list` `active` returns every active run unless the caller sets a limit.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
