@@ -379,7 +379,7 @@ A pinned provider root may declare no public binaries. Health then checks the pa
 
 - The root declares an exact package name and version.
 - Every provider module that a registered project binding imports from that root resolves inside it, and loads in a child process within the existing command deadline.
-- In every environment a provider caller inherits, the pool's `*_PACKAGE_ROOT` variable is unset or names the same real path. That covers the environment node exec passes to commands, the tmux server's global environment that worker panes inherit, and the login, interactive and non-interactive shells. A process value overrides `pool.env` when `farmslot` resolves a binding, so a stale value in any of them would select another provider.
+- In each place Farmslot starts a command that can resolve a provider, the pool's `*_PACKAGE_ROOT` variable is unset or names the same real path. Those places are the gateway process for slots it runs locally, the environment node exec passes to commands, the tmux server's global environment that worker panes inherit, and the login, interactive and non-interactive shells. A process value overrides `pool.env` when `farmslot` resolves a binding, so a stale value in any of them would select another provider.
 - No shell's global npm installation contains the package, since its leftover binaries would still run outside the pin.
 
 A root that still declares binaries keeps the Amendment 5 checks unchanged. The timeout, retry, cache, retention and pressure rules of Amendments 5 and 6 apply to both forms. A selector or global-install mismatch is a `version-mismatch`; a module that fails to resolve or load is a `probe-error`.
@@ -388,10 +388,10 @@ Rollout of a binary-free root installs and checks the versioned root, selects it
 
 ### Rationale and consequences
 
-Amendment 5 kept SSH callers and workers on one version by requiring every PATH binary to match the pin. Once callers reach the provider only through `farmslot`, drift comes from two places: a stale selector in a shell profile, and an old global install whose binaries still run. Checking both keeps the same guarantee without requiring a binary the provider no longer ships.
+Amendment 5 kept SSH callers and workers on one version by requiring every PATH binary to match the pin. Once callers reach the provider only through `farmslot`, drift comes from two places: a stale selector in any environment that starts provider callers, and an old global install whose binaries still run. Checking both keeps the same guarantee without requiring a binary the provider no longer ships.
 
 A provider can drop its binaries only after this ships and rolls out. Until then, every node would report its pinned root as invalid. Frozen run inputs and retained versioned roots are unchanged.
 
 ### Public surface
 
-`ProviderCliHealth` in `@farmslot/protocol` gains optional `modules` (binding ref, resolved path, load result) and `selectors` (shell scope, variable, value) arrays. Existing nodes may omit them, and status values are unchanged. `@farmslot/slot-config` owns the probe. Its consumers are the node sampler, `scripts/rollout-provider.mjs` and the fleet and pressure readers. No new RPC, command or provider contract is introduced. Normative rules are in `docs/reference/provider-cli-health.md`.
+`ProviderCliHealth` in `@farmslot/protocol` gains optional `modules` (binding ref, resolved path, load result) and `selectors` (scope, variable, value) arrays. Existing nodes may omit them, and status values are unchanged. `@farmslot/slot-config` owns the probe. `@farmslot/recipe-cli/harness` exports the checkout-free `resolveBindingProvider` that the probe's module check loads, and the gateway merges its own selector scope for machines it runs locally. Its consumers are the node sampler, `scripts/rollout-provider.mjs` and the fleet and pressure readers. No new RPC, command or provider contract is introduced. Normative rules are in `docs/reference/provider-cli-health.md`.
