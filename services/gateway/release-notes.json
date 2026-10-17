@@ -1,7 +1,11 @@
 {
-  "version": "0.22.1",
-  "date": "2026-10-16",
+  "version": "0.23.0",
+  "date": "2026-10-17",
   "items": [
-    "Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task."
+    "Send back to agent: a person's Issue goes to the retained worker, which re-proves only the rejected criteria in one existing fix round; the reason is kept as a learning, and an interrupted repair resumes without a second charge",
+    "A worker waiting on its own question or approval hands the run to the operator with the captured question instead of being nudged",
+    "A QA dispatch replay keeps the task's original evidence window",
+    "A spent review budget offers an extension only when the run can receive one, and says why otherwise",
+    "A prompt left unsent in a busy Codex composer is never counted as delivered"
   ]
 }

@@ -4,48 +4,31 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.23.0 - 2026-10-17
+
 - Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate. An undelivered or interrupted repair stays retryable under its single charge, and a restart resumes it through fix recovery without refunding or recharging the round.
-
 - Hand a run to the operator when its worker is waiting on its own question or approval request: the monitor raises an interactive handoff with the captured question instead of nudging it or leaving the run in monitoring with no decision. The handoff clears when the question closes, survives a gateway restart, and ignores unsent composer text.
-
 - Keep a QA run's evidence window when a dispatch replay resumes the same task. The first dispatch of a task identity records when it began, and QA completion checks recipe evidence against that instead of the latest dispatch. A new task or a fresh dispatch starts a new window. For runs dispatched before this, the primary worker's first launch counts when it happened after the current task was written; their next dispatch records it as the anchor.
-
 - Point a spent review budget at an extension only when the run can receive one; review-pr, published, artifact-only and archived runs now say why their rounds cannot be extended, and the extension refusal names the same reason.
-
 - Never count a prompt left unsent in a busy Codex composer as delivered, on any send attempt. Each review-fix prompt now starts with its delivery identity, so a fix round is proven only by its own runner receipt. A fix sent without a receipt is acknowledged only by the worker's fix signal, never by pane activity.
-
 - Resolve a Jira-key run's ticket through the project's Jira source when the run is created, and refuse creation when there is no source, no credentials, or the read fails, instead of storing a key-only placeholder ticket.
-
 - Stop a prepare window's whole process group when the window is torn down or its wrapper is signalled, and give each prepare launch its own exit sentinel, so a re-driven prepare after a gateway restart neither waits on an orphaned tree's lock nor reads its late exit code.
-
 - Accept only the complete next-tool-call steering block as rendered queue proof; the "tab to queue message" hint, postponed follow-ups and queue placeholders never prove delivery. Buffered input uses the runner's normal submit key.
-
 - Deliver lane handoffs to busy Claude sessions with Enter, and treat a draft in Claude's boxed composer as live input that blocks delivery.
-
 - Read `ci.local_check` through the typed project configuration instead of a local cast.
-
 - Prefer Tailscale pairing addresses over LAN and exclude VPN tunnel addresses from phone pairing candidates.
-
 - Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
-
 - Let a new review on a PR whose earlier finished review belonged to a since-retired principal take the caller's ownership while keeping its family lineage; live runs and reused ids keep refusing another owner.
-
 - Re-claim a failed run's slot before replaying write-task, and refuse the replay before any step runs when another live run holds that slot, naming the holder.
-
 - Submit buffered Codex input with Enter, never Tab, and accept only the next-tool-call steering block as delivery proof; queued follow-up input stays undelivered.
-
 - Keep failed dev worker CLI verification visible as critical node and fleet health.
-
 - Reuse verified parent acceptance for PR follow-up completion, retain proof provenance in completion and PR comments, and keep current-checkout CI independent.
-
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
-
 - Restore publication decisions after recovered findings, preserve fix checklists during gate replay, and continue the recorded review mode with the latest completed worker CI receipt.
-
 - Recognize owned follow-up queue previews and keep unsubmitted composer text out of delivery verification.
-
 - Keep confirmed provider CLI drift critical while reporting timed-out probes as unverified load warnings.
-
 - Resolve PR and ticket branches before automatic slot scoring, preferring a free matching checkout without prompting that every branch is stale.
 - Disclose skipped code review in the publish gate and published PR provenance while preserving project approval policy.
 - Resolve CI and review follow-up helpers from the connected node installation and report retained delivery refusals without labelling every held handoff busy.
@@ -54,14 +37,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Read native parent interruption receipts when hooks retain an active turn, preserving child-stop and later-parent activity guards.
 - Encode artifact URL path segments so publication verifies and embeds filenames containing literal percent escapes and other URL characters.
 - Keep runner runtime and observability outside product checkouts, preserve active session paths, and retain explicitly indexed hidden proof files in immutable evidence bundles.
-
 - Run independent pipeline reviews in native sessions, qualify their recorded visual judgments, and audit publication approval against the frozen evidence.
 - Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
-
 - Render `{{node_support_dir}}` in fixtures and `NODE_SUPPORT_DIR` in worker templates from the slot's selected node-support bundle, so pack scripts no longer resolve through the node install root or the old in-checkout support pointer. Fixture checks read the slot's selection without publishing.
-
 - Freeze the source identity of a QA run whose ref or range scope names exact commits (`expectedHeadSha`/`expectedBaseSha`, or full-SHA `ref`, `head` and `base`), as PR QA does. Prepare checks out that head, detached when the run has no branch, instead of the default-branch tip; dispatch refuses a prepared HEAD that differs and names the frozen head; completion validates against the same identity, also for runs prepared before this change. Start refs also accept 64-hex commit names.
 
 ## 0.22.1 - 2026-10-16

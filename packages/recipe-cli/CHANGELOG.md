@@ -4,8 +4,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Pass the task's active repair scope to the engine only for its separate repair recipe; the main task recipe ignores it.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.23.0 - 2026-10-17
+
+- Pass the task's active repair scope to the engine only for its separate repair recipe; the main task recipe ignores it.
 - Export `renderRetainedArtifactsMarkdown` and `validateRecipeArtifactDirectory` from `./harness` so other host CLIs render and validate retained task Markdown with the root CLI's selection and refusals.
 
 ## 0.22.5 - 2026-10-16

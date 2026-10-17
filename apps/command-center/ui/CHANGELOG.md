@@ -4,12 +4,14 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.22.0 - 2026-10-17
+
 - Show Send back to agent as the gate's primary action and label Send back reasons apart from PR feedback.
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 - Show the shared no-code-review warning at publication gates.
-
 - Keep async gate and panel layouts stable with component-specific skeletons and visible retries after loading errors.
-
 - Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand.
 
 ## 0.21.0 - 2026-10-16

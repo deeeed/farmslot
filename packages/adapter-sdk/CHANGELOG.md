@@ -4,8 +4,11 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Present retained repair criteria from their original execution, media and receipts, marked as earlier proof.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.18.0 - 2026-10-17
+
+- Present retained repair criteria from their original execution, media and receipts, marked as earlier proof.
 
 ## 0.17.1 - 2026-10-16
 
