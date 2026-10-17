@@ -26,7 +26,7 @@ workers never read the control-plane source after dispatch begins.
 Farmslot core owns generic discovery, selection, snapshotting, and provenance.
 Project packs configure sources, defaults, domains, and environment. Skills
 own canonical workflow checklists. Team libraries may add domain checklists,
-recipes, and actions. A project harness may provide a thin command boundary
+recipes, and actions. A project harness provides at most a thin command boundary
 for its own skills.
 
 ## Template contract

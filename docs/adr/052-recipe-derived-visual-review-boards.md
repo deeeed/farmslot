@@ -78,7 +78,7 @@ snapshot-scoped. Discovery output may help an agent author stable recipe selecto
 itself proof.
 
 The portable `ui.capture_surface` implementation belongs in the shared harness. A domain harness
-adopts the published capability through its runtime manifests and keeps only project-specific
+should adopt the published capability through its runtime manifests and keep only project-specific
 navigation/setup and reusable screen flows. No project page, route, or locator belongs in Recipe v1.
 
 ### Portable source and feedback documents
