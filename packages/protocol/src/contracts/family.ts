@@ -67,6 +67,8 @@ export interface FamilyObservabilityRunSummary {
   lane: RunLane;
   variant?: string | null;
   status: RunStatus;
+  /** `isActiveListRun` for this run; summaries are trimmed, so clients cannot recompute it. */
+  active?: boolean;
   project: string;
   ticketOrPr: string;
   branch: string | null;

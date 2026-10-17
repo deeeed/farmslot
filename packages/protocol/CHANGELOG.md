@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `FamilyObservabilityRunSummary.active`: whether the run counts as active by `isActiveListRun`, set by the gateway because summaries carry no step outputs.
+
 - A run draft's source line reads "(run selection)", and an empty branch input no longer counts as a selection in the line or the summary.
 - Family readiness counts active runs with `isActiveListRun`: a failed run that still holds its resources counts as active (not failed or settled) and blocks self-learning eligibility as an active run.
 - Add `listProjectTaskRoots` and `ProjectTaskRoot` to `node/farm-layout`: one enumeration of project task roots (real and linked project dirs, no files).

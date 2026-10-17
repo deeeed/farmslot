@@ -559,6 +559,25 @@ test('GC releases terminal and deleted run reservations while retaining active a
   assert.deepEqual(await readdir(path.join(f.store.root, 'reservations')), [`${active.id}.json`]);
 });
 
+test('GC keeps the reservation of a failed run that still holds its resources', async (t) => {
+  const f = await fixture(t);
+  const held: Run = {
+    ...f.run,
+    id: 'held-run',
+    status: 'failed',
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  };
+  await writeFile(path.join(f.store.runsDir, 'held-run.json'), JSON.stringify(held));
+  await writeFile(
+    path.join(f.store.runsDir, 'settled-run.json'),
+    JSON.stringify({ ...f.run, id: 'settled-run', status: 'failed' }),
+  );
+  await reserveRunBundleMetadata(f.store, 'held-run');
+  await reserveRunBundleMetadata(f.store, 'settled-run');
+  await collectRunBundleGarbage(f.store);
+  assert.deepEqual(await readdir(path.join(f.store.root, 'reservations')), ['held-run.json']);
+});
+
 test('an unresolved imported decision pins its target-owned payload through its original digest alias', async (t) => {
   const f = await fixture(t);
   const result = await materializeRunBundle(f.request);

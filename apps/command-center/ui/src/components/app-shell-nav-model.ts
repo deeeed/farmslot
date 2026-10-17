@@ -1,27 +1,14 @@
-import type { Run, RunStatus, RunStep } from '@farmslot/protocol';
+import type { Run, RunStep, SlotStatus } from '@farmslot/protocol';
 import { taskTitleText } from '@farmslot/protocol';
+
+import type { GlobalFilters } from '../state.js';
+
+import { activeRunsForGlobalFilters } from './runs/run-list-model.js';
 
 export const SIDEBAR_WIDTH_PREF_KEY = 'farmslot:sidebar-expanded-width';
 export const DEFAULT_SIDEBAR_WIDTH = 260;
 export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 420;
-
-const SIDEBAR_ACTIVE_STATUSES = new Set<RunStatus>([
-  'created',
-  'grading',
-  'writing-task',
-  'slot-finding',
-  'preparing',
-  'dispatching',
-  'monitoring',
-  'reviewing',
-  'completing',
-  'ci-watching',
-  'human-gating',
-  'blocked',
-  'paused',
-  'failed',
-]);
 
 export function clampSidebarWidth(width: number): number {
   if (!Number.isFinite(width)) return DEFAULT_SIDEBAR_WIDTH;
@@ -33,12 +20,13 @@ export function parseStoredSidebarWidth(value: string | null): number {
   return clampSidebarWidth(Number(value));
 }
 
-export function isSidebarActiveRun(run: Pick<Run, 'status'>): boolean {
-  return SIDEBAR_ACTIVE_STATUSES.has(run.status);
-}
-
-export function activeSidebarRuns(runs: readonly Run[], limit = 8): Run[] {
-  return runs.filter(isSidebarActiveRun).slice(0, limit);
+export function activeSidebarRuns(
+  runs: readonly Run[],
+  globalFilters: GlobalFilters,
+  slots: readonly Pick<SlotStatus, 'slot' | 'machine'>[],
+  limit = 8,
+): Run[] {
+  return activeRunsForGlobalFilters(runs, globalFilters, slots).slice(0, limit);
 }
 
 export function sidebarRunRoute(run: Pick<Run, 'id' | 'slotId' | 'status'>): string {

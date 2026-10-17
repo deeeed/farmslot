@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  isTerminalRunStatus,
   type ReviewGatePayload,
   reviewPublicationPolicyForRun,
   type Run,
@@ -138,7 +139,7 @@ export async function holdWorkspaceReview(runId: string) {
       if (
         !run ||
         (run.engineState?.generation ?? 0) !== generation ||
-        ['cancelled', 'failed', 'done'].includes(run.status)
+        isTerminalRunStatus(run.status)
       )
         throw error;
       // Keep the reviewer and publish workspace available for a corrected choice.

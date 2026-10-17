@@ -4,6 +4,8 @@ import {
   type Run,
   type RunLane,
   type RunStatus,
+  slotMachineMap,
+  type SlotStatus,
 } from '@farmslot/protocol';
 import { isSettledBlockedRun, selectRunList, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 
@@ -21,6 +23,20 @@ export function isArchivableRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>
 }
 
 export const TERMINAL_STATUSES = new Set<RunStatus>(TERMINAL_RUN_STATUSES);
+
+/** The Active tab's runs before its local filters; the sidebar badge and list use the same set. */
+export function activeRunsForGlobalFilters(
+  runs: readonly Run[],
+  globalFilters: GlobalFilters,
+  slots: readonly Pick<SlotStatus, 'slot' | 'machine'>[],
+): Run[] {
+  return selectRunList(runs, {
+    scope: 'active',
+    projects: globalFilters.projects,
+    machines: globalFilters.machines,
+    slotMachines: slotMachineMap(slots),
+  });
+}
 
 /** An unblocked run with no progress for this long is shown as stale. */
 export const RUN_STALE_AFTER_MS = 60 * 60_000;

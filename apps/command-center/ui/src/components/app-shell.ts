@@ -29,6 +29,7 @@ import {
   ACCOUNT_SESSION_CONTROL,
   buildGatewayPairingQrPayload,
   Events,
+  isActiveListRun,
   isTerminalRunStatus,
   Methods,
   personSessionCaption,
@@ -104,7 +105,6 @@ import {
   activeSidebarRuns,
   clampSidebarWidth,
   DEFAULT_SIDEBAR_WIDTH,
-  isSidebarActiveRun,
   parseStoredSidebarWidth,
   SIDEBAR_WIDTH_PREF_KEY,
 } from './app-shell-nav-model.js';
@@ -1492,7 +1492,7 @@ export class FarmApp extends LitElement {
       if (selected) return selected;
     }
     return (
-      this.runs.find((candidate) => candidate.slotId === slotId && isSidebarActiveRun(candidate)) ??
+      this.runs.find((candidate) => candidate.slotId === slotId && isActiveListRun(candidate)) ??
       null
     );
   }
@@ -2228,7 +2228,12 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         ${this.renderAuthScreen()} ${this.renderAccountControl()}`;
     }
     if (gateway.workspaceAccess === 'native') return this.renderNativeWorkspace();
-    const activeRunCount = activeSidebarRuns(this.runs, Number.MAX_SAFE_INTEGER).length;
+    const activeRunCount = activeSidebarRuns(
+      this.runs,
+      this.globalFilters,
+      this.fleetSlots,
+      Number.MAX_SAFE_INTEGER,
+    ).length;
     if (this.route === 'dev' && this.devCaptureMode) {
       return html`
         ${renderAppShellStyles(this._sidebarExpanded, this._sidebarWidth, this._sidebarResizing)}

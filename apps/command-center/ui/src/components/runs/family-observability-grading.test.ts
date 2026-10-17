@@ -73,6 +73,15 @@ test('deriveSemantic summarizes proof target verdict maps', () => {
   assert.equal(deriveSemantic(new Map([['ac1', { verdict: 'fail' }]])), 'bad');
 });
 
+test('canGradeFamilyRun waits while the gateway reports the run active', () => {
+  const settledFailure = run({ status: 'failed', steps: [monitorStep('done')] });
+  assert.equal(canGradeFamilyRun({ ...settledFailure, active: true }), false);
+  assert.equal(canGradeFamilyRun({ ...settledFailure, active: false }), true);
+  // Snapshots without the flag fall back to the terminal status.
+  assert.equal(canGradeFamilyRun(settledFailure), true);
+  assert.equal(canGradeFamilyRun({ ...settledFailure, status: 'monitoring' }), false);
+});
+
 test('canGradeFamilyRun requires a terminal run with a non-pending monitor step', () => {
   assert.equal(
     canGradeFamilyRun(

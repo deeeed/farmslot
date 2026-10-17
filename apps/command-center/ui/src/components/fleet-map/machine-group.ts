@@ -10,6 +10,7 @@ import type {
   SlotStatus,
   TaskProgressStructured,
 } from '@farmslot/protocol';
+import { isTerminalRunStatus } from '@farmslot/protocol';
 
 import './slot-card.js';
 import './machine-health-bar.js';
@@ -1136,7 +1137,7 @@ ${deployHint}"
             <button
               class="nav-btn"
               @click=${() => {
-                location.hash = `family/${run.familyId}${['done', 'failed', 'cancelled'].includes(run.status) ? `?run=${encodeURIComponent(run.id)}` : ''}`;
+                location.hash = `family/${run.familyId}${isTerminalRunStatus(run.status) ? `?run=${encodeURIComponent(run.id)}` : ''}`;
               }}
               title="Retrospective"
             >
@@ -1163,13 +1164,11 @@ ${deployHint}"
             <button
               class="nav-btn"
               @click=${() => {
-                location.hash = ['done', 'failed', 'cancelled'].includes(run.status)
+                location.hash = isTerminalRunStatus(run.status)
                   ? `family/${run.familyId}?run=${encodeURIComponent(run.id)}`
                   : `run/${run.id}`;
               }}
-              title=${['done', 'failed', 'cancelled'].includes(run.status)
-                ? 'Open retrospective'
-                : 'Full run detail'}
+              title=${isTerminalRunStatus(run.status) ? 'Open retrospective' : 'Full run detail'}
             >
               &gt;&gt;
             </button>

@@ -1,11 +1,12 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type {
-  ReadyGatePrPackage,
-  ResultPackageManifest,
-  Run,
-  RunDecision,
+import {
+  isTerminalRunStatus,
+  type ReadyGatePrPackage,
+  type ResultPackageManifest,
+  type Run,
+  type RunDecision,
 } from '@farmslot/protocol';
 
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
@@ -183,7 +184,7 @@ export async function deleteTestRunIfPresent(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
 
-  if (!['done', 'failed', 'cancelled'].includes(run.status)) {
+  if (!isTerminalRunStatus(run.status)) {
     // These fixtures create runs only to exercise isolated package refresh paths.
     // Mark non-terminal test runs cancelled before deletion so cleanup uses the
     // same safety gate as production instead of swallowing delete failures.

@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   type ArtifactRef,
   FLOW_WORKER_REPORT_ARTIFACTS,
+  isTerminalRunStatus,
   type Run,
   runClaimOverrideSnapshotIdentity,
   type RunDecision,
@@ -142,7 +143,7 @@ function outputWorkerFinished(run: Run, workerFinished: boolean): boolean {
     (Boolean(run.output?.workerFinished) &&
       ['monitoring', 'paused', 'blocked', 'human-gating', 'completing'].includes(run.status)) ||
     Boolean(run.completedAt) ||
-    ['done', 'failed', 'cancelled'].includes(run.status)
+    isTerminalRunStatus(run.status)
   );
 }
 

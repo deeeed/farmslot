@@ -436,6 +436,56 @@ test('closed partial execution keeps backlog attention and cannot satisfy a down
   assert.equal(runs.getRun(run.id)?.metrics.outcome, 'partial');
 });
 
+test('a family-done edge waits while a failed run still holds its resources', async () => {
+  const { backlog, queue, runs, workGraph } = await freshStores();
+  const upstream = await createReadyBacklogItem(backlog, 'Held completion');
+  const downstream = await createReadyBacklogItem(backlog, 'Runs after any terminal outcome');
+  const result = await workGraph.createWorkGraph(
+    { project: 'farmslot-farm', title: 'Held family outcome' },
+    { kind: 'system' },
+  );
+  const graphId = result.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_held', backlogItemId: upstream.item.id });
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_after', backlogItemId: downstream.item.id });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    fromNodeId: 'wn_held',
+    toNodeId: 'wn_after',
+    condition: { kind: 'family-done', outcome: 'terminal' },
+  });
+  await workGraph.activateWorkGraph({ graphId });
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === 'wn_held')!;
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: upstream.item.sourceRef,
+    backlogItemId: upstream.item.id,
+    workGraphId: graphId,
+    workNodeId: 'wn_held',
+  });
+  await backlog.markBacklogRunStarted(queued, run);
+  queue.removeQueueItemInternal(queued.id, 'test-started');
+  const downstreamQueued = () =>
+    queue
+      .getQueueSnapshot()
+      .some((item) => item.workGraphId === graphId && item.workNodeId === 'wn_after');
+
+  const held = runs.updateRun(run.id, {
+    status: 'failed',
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  });
+  await backlog.markBacklogRunObserved(held);
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(downstreamQueued(), false, 'a retained failure is still active');
+
+  const settled = runs.updateRun(run.id, { steps: [{ name: 'complete', status: 'failed' }] });
+  await backlog.markBacklogRunObserved(settled);
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(downstreamQueued(), true, 'the settled failure is a terminal outcome');
+});
+
 test('work graph can use an owner scope different from backlog project', async () => {
   const { backlog, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Gateway projection');
