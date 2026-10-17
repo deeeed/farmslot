@@ -288,7 +288,9 @@ try {
     run.steps
       .find((step) => step.name === 'prepare')
       .outputs.subSteps.some(
-        (step) => step.name === 'branch' && /^Left detached/.test(step.detail),
+        (step) =>
+          step.name === 'branch' &&
+          /^(Left detached|Detached) [0-9a-f]+, which origin contains/.test(step.detail),
       );
 
   const moved = await prepareAt(frozenRunId);
@@ -342,9 +344,13 @@ try {
   assert.ok(leftDetached(fresh), 'the fresh prepare moved the slot off its detached head first');
   assert.equal(git(repo, 'rev-parse', 'HEAD'), mainLater);
 
+  // A refused start-ref prepare keeps the detached slot and the changes on it.
+  writeFileSync(path.join(repo, 'later.txt'), 'evidence from the failed run\n');
   const refused = await prepareAt(localOnlyRunId);
   assert.doesNotMatch(refused.error, /Slot is on 'HEAD'|unpushed commits/);
   assert.match(refused.error, /not reachable from fetched origin/);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), mainLater, 'the refusal left HEAD where it was');
+  assert.equal(git(repo, 'status', '--porcelain'), 'M later.txt', 'the refusal kept the change');
 
   console.log(
     JSON.stringify({
@@ -355,6 +361,7 @@ try {
       replayFromDetachedSlot: true,
       freshPrepareFromDetachedSlot: true,
       localOnlyRefused: true,
+      refusalKeptDetachedChanges: true,
     }),
   );
 } catch (error) {

@@ -370,3 +370,37 @@ test('a slot detached at a local-only commit is still refused', budget, async (t
   );
   assert.equal(git(repo, 'rev-parse', 'HEAD'), localOnly);
 });
+
+// A start-ref prepare that refuses keeps the slot, and any changes on it, where
+// the earlier run left them; only its reset to its own head may discard them.
+test(
+  'a refused start-ref prepare leaves a detached slot and its changes alone',
+  budget,
+  async (t) => {
+    git(repo, 'fetch', '-q', 'origin');
+    git(repo, 'checkout', '-q', '--detach', frozen);
+    writeFileSync(path.join(repo, 'frozen.txt'), 'evidence from the failed run\n');
+    const unpublished = git(
+      repo,
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit-tree',
+      'HEAD^{tree}',
+      '-p',
+      'HEAD',
+      '-m',
+      'never pushed',
+    );
+    const run = qaRun(
+      t,
+      selection({ kind: 'ref', ref: unpublished, expectedHeadSha: unpublished }),
+    );
+
+    await assert.rejects(prepare(run.id), /not reachable from fetched origin/);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), frozen);
+    assert.equal(git(repo, 'status', '--porcelain'), 'M frozen.txt');
+    git(repo, 'checkout', '-q', '--', 'frozen.txt');
+  },
+);
