@@ -14,10 +14,10 @@ There is no separate reusable flow artifact. `workflow` is simply the graph insi
 Use progressive disclosure:
 
 ```sh
-mm-harness run --list --json
-mm-harness run <closest-recipe> --describe --json
-mm-harness actions <task-term> --json
-mm-harness actions --action <exact-name> --json
+farmslot recipe run --list --json
+farmslot recipe run <closest-recipe> --describe --json
+farmslot recipe actions <task-term> --json
+farmslot recipe actions --action <exact-name> --json
 ```
 
 The list and search commands stay compact. They provide enough information to select a recipe or action. Exact detail adds schemas and runnable examples only when authoring needs them.

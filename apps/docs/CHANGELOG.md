@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Describe recipe library discovery hosts generically instead of naming one project's harness.
+
 - Align the API reference with the parent acceptance worker release.
 
 - Document node-owned hosted task initialization and workspace dependency retention without changing recipe-library roots.

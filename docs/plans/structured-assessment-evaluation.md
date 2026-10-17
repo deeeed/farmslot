@@ -33,7 +33,7 @@ requiring separate scope approval. None is required to close this goal.
 | Pending decision advice            | Better human choices among existing, meaningful actions               | Same decisions without advice; matched quality, time and cost |
 
 Exclude recipe planning, composition, parameterization, recipe/result quality
-scoring and mm-harness changes. A text-only provider cannot validate screenshot
+scoring and project harness changes. A text-only provider cannot validate screenshot
 pixels. Structured runner state remains authoritative; failure content is only
 assessed after a recorded failure establishes the condition. Publication,
 recovery and dispatch retain existing owners and human gates.
