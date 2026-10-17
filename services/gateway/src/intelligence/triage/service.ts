@@ -36,6 +36,7 @@ import {
   reserveAssessment,
 } from '../../assessment/store.js';
 import { getRunWithArchived } from '../../runs/store.js';
+import { principalIdentityKey } from '../../security/work-originator.js';
 
 import { readTriagePolicy, type TriagePolicy } from './policy.js';
 import { admittedFailureSnapshot, TriageSnapshotUnavailable } from './snapshot.js';
@@ -343,7 +344,11 @@ export async function analyzeFailureTriage(
   const key =
     !params.retryOf && !view.stale && view.record?.reservation
       ? view.record.reservation.key
-      : digest({ ownerId, snapshotHash: ready.snapshotHash, retryOf: params.retryOf });
+      : digest({
+          ownerId: principalIdentityKey(ownerId),
+          snapshotHash: ready.snapshotHash,
+          retryOf: params.retryOf,
+        });
   const existing = pending.get(key);
   if (existing) return existing;
   const operation = (async (): Promise<FailureTriageView> => {

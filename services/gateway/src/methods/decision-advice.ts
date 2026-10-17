@@ -31,7 +31,7 @@ import {
 import { assessmentRecord, assessmentRecords, reserveAssessment } from '../assessment/store.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { getRun } from '../runs/store.js';
-import { currentSessionOriginator } from '../security/work-originator.js';
+import { currentSessionOriginator, principalIdentityKey } from '../security/work-originator.js';
 
 const POLICY_VERSION = 'decision-advice-v1';
 const providers = defaultAssessmentProviders(boundedAssessmentFetch(), fetch);
@@ -397,7 +397,7 @@ export async function decisionAdviceAnalyze(
   if (owner.kind !== 'principal') throw new Error('Authenticated principal required');
   const key = digest([
     POLICY_VERSION,
-    owner.principalId,
+    principalIdentityKey(owner.principalId),
     runId,
     params.decisionId,
     selected.result.snapshotHash,
