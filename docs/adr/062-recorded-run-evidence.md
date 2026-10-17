@@ -762,3 +762,54 @@ matching provisional reference; gateway completion revalidates parent authority.
 both runtime and gateway readers.
 There is no new command, endpoint, verdict writer or client gate component.
 The additive contract follows the existing coordinated package versioning.
+
+## Amendment 14 (2026-10-18): Capture binds before the first proof node
+
+**Status:** Proposed. The lead approves once both paired reviews pass.
+
+### Decision
+
+Full-run capture binds before the first proof node, for every recording target.
+A proof node is a UI node or an assertion node (`assert_output`, `assert_json`,
+`assert_file`, `ui.wait_for`), including one inside a called recipe. After
+binding, the engine waits one `EVIDENCE_PADDING_MS` (1 s) before running that
+node. Setup before it that proves nothing, such as an in-recipe app restart,
+state seeding or a state read, stays unrecorded. Which runs require recording is
+unchanged: a recipe with a UI node requires it, and explicit recording of a
+recipe without UI nodes still starts at run entry.
+
+### Rationale and consequences
+
+Capture used to bind before the first UI node. A recipe that proves claims with
+assertions before its first tap recorded none of them, so the engine downgraded
+its visual claims to weak. In mobile release QA run e29f5a2b, QA-03 started
+recording 75.5 s after its first node, after the app restart, three venue
+`assert_output` nodes and the book gate, and AC-1..3 came out weak; QA-08 left
+about 88 s unrecorded.
+
+The lead-in is needed because a recorder's first frame trails its start, and a
+recorder without clock evidence bounds frame zero only by its lifetime. An
+assertion that ran immediately after binding fell inside that uncertainty: on an
+owned emulator with `adb screenrecord` it measured [-370, +110] ms and its visual
+claim stayed weak. With the lead-in it measured [+635, +1086] ms and the claim
+was awaiting review. QA-03's first recorded segment has a 793 ms window.
+
+One rule serves every target. A device or simulator recorder could start at run
+entry, but setup that proves nothing needs no footage, and a per-target split
+would make the capture window depend on the recorder. Recordings now start
+earlier by the setup between the first assertion and the first UI node, plus the
+1 s lead-in, which uses more of the existing duration and byte limits. Every
+recorded run takes 1 s longer.
+
+Target resolution moves with the bind point. A recipe that launches or replaces
+its browser after an assertion now binds the process that assertion saw, so
+authors keep launch and replacement before the first proof node, as they already
+do before the first UI node.
+
+### Public surface
+
+No new API. `@farmslot/recipe-runner` changes when the existing full-run
+recording starts; `RecordingTargetProvider`, `VideoRecorder`, the recording
+artifacts and the recording-required policy are unchanged. Harnesses inherit it
+with their next recipe-runner version. The normative timing rule is in
+[the recorded-evidence specification](../reference/recorded-run-evidence.md).

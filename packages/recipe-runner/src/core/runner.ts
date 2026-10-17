@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   DEFAULT_RECORDED_EVIDENCE_POLICY,
   digestRecipeDocument,
+  EVIDENCE_PADDING_MS,
   getRecipeActionManifestActionNames,
   hasUnresolvedRecipeFailure,
   isRecipeVisualCaptureAction,
@@ -149,7 +151,7 @@ interface ResolvedRecipeRun {
   executionPlan: RecipeExecutionPlan;
   runLogPaths: ReadonlySet<string>;
   evidencePlan: RecipeEvidencePlan;
-  uiNodeIds: ReadonlySet<string>;
+  proofNodeIds: ReadonlySet<string>;
   recordingRequired: boolean;
   videoOptions: RecipeVideoRecordingOptions & { mode: 'off' | 'full-run' };
 }
@@ -347,12 +349,16 @@ class DefaultRecipeRunner implements RecipeRunner {
       ),
       request.claims,
     );
-    const uiNodeIds = new Set(
+    // Full-run capture binds before the first node that can prove something: a UI action or
+    // an assertion, including one inside a called recipe. Setup before it stays unrecorded.
+    const proofNodeIds = new Set(
       [...evidencePlan.nodes]
-        .filter(([, node]) => node.action.startsWith('ui.'))
+        .filter(
+          ([, node]) => node.action.startsWith('ui.') || RECIPE_ASSERTION_ACTIONS.has(node.action),
+        )
         .map(([nodeId]) => nodeId),
     );
-    const needsUi = uiNodeIds.size > 0;
+    const needsUi = [...evidencePlan.nodes.values()].some((node) => node.action.startsWith('ui.'));
     const videoOptions = normalizeVideoRecordingOptions(
       request.recordVideo,
       needsUi,
@@ -388,7 +394,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       executionPlan,
       runLogPaths,
       evidencePlan,
-      uiNodeIds,
+      proofNodeIds,
       recordingRequired: needsUi,
       videoOptions,
     };
@@ -408,7 +414,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       executionPlan,
       runLogPaths,
       evidencePlan,
-      uiNodeIds,
+      proofNodeIds,
       recordingRequired,
       videoOptions,
     } = await this.#resolveRequest(request);
@@ -509,8 +515,8 @@ class DefaultRecipeRunner implements RecipeRunner {
             `${videoRecorder.name} doctor ${doctor.code}: ${doctor.message}${doctor.suggestedFix ? ` Suggested fix: ${doctor.suggestedFix}` : ''}`,
           );
         }
-        // Session setup can launch or replace a browser. Bind only after setup,
-        // before the first UI action; explicit non-UI recording keeps its run-start boundary.
+        // Session setup can launch or replace a browser. Bind only after setup, before the
+        // first proof node; explicit non-UI recording keeps its run-start boundary.
         if (!recordingRequired) runRecording = await startRunRecording(videoRecorder);
       } catch (error) {
         const message = errorMessage(error);
@@ -580,7 +586,7 @@ class DefaultRecipeRunner implements RecipeRunner {
                 ? await observeRecipeCaptureSource(projectRoot)
                 : {}),
             });
-            if (videoRecorder && !runRecording && uiNodeIds.has(nodeId)) {
+            if (videoRecorder && !runRecording && proofNodeIds.has(nodeId)) {
               try {
                 runRecording = await startRunRecording(videoRecorder);
               } catch (error) {
@@ -590,6 +596,9 @@ class DefaultRecipeRunner implements RecipeRunner {
                   { cause: error },
                 );
               }
+              // A recorder's first frame trails its start, so the first proof node waits one
+              // evidence padding: it lands inside the capture with footage before it.
+              await delay(EVIDENCE_PADDING_MS);
             }
           },
           createContext: (nodeId, activeRecipe, activeOutputs, getOutput) =>
