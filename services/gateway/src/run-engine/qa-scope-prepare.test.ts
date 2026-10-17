@@ -60,6 +60,14 @@ git(author, 'remote', 'add', 'origin', origin);
 const frozen = commit('frozen');
 const later = commit('later');
 git(author, 'push', '-q', 'origin', 'main');
+// A release branch the slot does not track: a range froze its first commit,
+// then the branch moved on. Origin serves reachable commits by SHA, as GitHub does.
+git(origin, 'config', 'uploadpack.allowReachableSHA1InWant', 'true');
+git(author, 'checkout', '-q', '-b', 'release/1.0.0', frozen);
+const releaseFrozen = commit('release-frozen');
+commit('release-moved');
+git(author, 'push', '-q', 'origin', 'release/1.0.0');
+git(author, 'checkout', '-q', 'main');
 
 writeFileSync(
   path.join(root, 'projects', project, 'project.json'),
@@ -278,4 +286,87 @@ test('the post-prepare check refuses a checkout away from the frozen head', budg
     new RegExp(`Prepared QA checkout ${later} differs from the frozen head ${frozen}`),
   );
   assert.equal(git(repo, 'rev-parse', 'HEAD'), later);
+});
+
+// Regression: a QA run that failed after prepare left the slot detached at its
+// head, and the next run's prepare refused "Slot is on 'HEAD', expected 'main'".
+test('a slot another QA run left detached prepares at this run head', budget, async (t) => {
+  git(repo, 'fetch', '-q', 'origin');
+  git(repo, 'checkout', '-q', '--detach', frozen);
+  // A failed deps step can leave tracked files changed that the idle branch lacks.
+  writeFileSync(path.join(repo, 'frozen.txt'), 'changed by a failed prepare\n');
+  const run = qaRun(t, selection({ kind: 'ref', ref: later, expectedHeadSha: later }));
+
+  const result = await prepare(run.id);
+
+  assert.equal(result.outputs?.success, true);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), later);
+  assert.equal(git(repo, 'status', '--porcelain'), '');
+  assert.throws(() => git(repo, 'symbolic-ref', '-q', 'HEAD'), 'HEAD is detached');
+});
+
+// A frozen head of a moved, untracked branch is on no remote-tracking ref, so the
+// unpublished-commit check read it as local work and refused both the next run
+// and a prepare replay of the same run.
+// Two prepares, so twice the per-test budget.
+test(
+  'a slot left detached at a moved branch commit prepares again',
+  { timeout: 2 * budget.timeout },
+  async (t) => {
+    // QA slots fetch only main.
+    const refspec = git(repo, 'config', '--get', 'remote.origin.fetch');
+    git(repo, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+    t.after(() => git(repo, 'config', 'remote.origin.fetch', refspec));
+    for (const ref of git(
+      repo,
+      'for-each-ref',
+      '--format=%(refname)',
+      'refs/remotes/origin/release',
+    ).split('\n'))
+      if (ref) git(repo, 'update-ref', '-d', ref);
+    git(repo, 'fetch', '-q', '--no-tags', 'origin', releaseFrozen);
+    git(repo, 'checkout', '-q', '--detach', releaseFrozen);
+    const replay = qaRun(
+      t,
+      selection({ kind: 'ref', ref: releaseFrozen, expectedHeadSha: releaseFrozen }),
+    );
+    assert.equal((await prepare(replay.id)).outputs?.success, true);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), releaseFrozen);
+
+    const next = qaRun(t, selection({ kind: 'ref', ref: later, expectedHeadSha: later }));
+    assert.equal((await prepare(next.id)).outputs?.success, true);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), later);
+    assert.equal(
+      git(repo, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin/release'),
+      '',
+    );
+  },
+);
+
+test('a slot detached at a local-only commit is still refused', budget, async (t) => {
+  git(repo, 'checkout', '-q', 'main');
+  const localOnly = git(
+    repo,
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'user.email=fixture@example.invalid',
+    'commit-tree',
+    'HEAD^{tree}',
+    '-p',
+    'HEAD',
+    '-m',
+    'local only',
+  );
+  git(repo, 'checkout', '-q', '--detach', localOnly);
+  const run = qaRun(t, selection({ kind: 'ref', ref: later, expectedHeadSha: later }));
+
+  // The refusal names why the remote does not show it.
+  await assert.rejects(
+    prepare(run.id),
+    new RegExp(
+      `Slot is detached at ${localOnly.slice(0, 12)}, which origin does not show \\(startRef commit '${localOnly}' is not reachable`,
+    ),
+  );
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), localOnly);
 });
