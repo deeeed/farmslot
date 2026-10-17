@@ -392,6 +392,32 @@ test('purge keeps history the operator chose to keep', async (t) => {
   assert.equal(existsSync(clone), false);
 });
 
+test('a failed history backup under purge keeps the history and state for a re-run', async (t) => {
+  const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-purge-backup-');
+  t.after(cleanup);
+  const ws = workspaceAt(root);
+  // tar cannot write into a directory that does not exist.
+  const archive = join(tmpdir(), `fs-missing-${root.slice(-8)}`, 'history.tgz');
+  const plan = buildUninstallPlan(ws, baseState({ home_dir: homeDir }), {
+    ...KEEP,
+    history: 'backup',
+    historyBackupPath: archive,
+    purge: true,
+  });
+
+  const { historyHeldAt } = await executeUninstallPlan(plan, { step: () => {} });
+
+  assert.equal(historyHeldAt, ws.runsDir);
+  const [kept] = readdirSync(ws.runsDir);
+  assert.equal(
+    readFileSync(join(ws.runsDir, kept!, 'runs', 'run-1.json'), 'utf8'),
+    '{"id":"run-1"}',
+  );
+  assert.equal(existsSync(join(root, 'state.json')), true);
+  assert.equal(existsSync(clone), false);
+  assert.equal(existsSync(archive), false);
+});
+
 test('deleting history moves nothing and removes it with the clone', async (t) => {
   const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-delete-');
   t.after(cleanup);

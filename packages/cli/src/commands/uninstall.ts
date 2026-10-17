@@ -87,7 +87,8 @@ function printPlan(output: OutputContext, plan: UninstallPlan): void {
   output.write(`\n${bold('farmslot uninstall plan')}${plan.dryRun ? dim('  (dry run)') : ''}\n`);
   output.write(`  workspace   ${dim(plan.workspaceRoot)}\n`);
   if (plan.purge) {
-    output.write(`  ${red('remove')}      ${plan.workspaceRoot} ${dim('(everything)')}\n`);
+    const scope = plan.history === 'keep' ? '(everything except kept run history)' : '(everything)';
+    output.write(`  ${red('remove')}      ${plan.workspaceRoot} ${dim(scope)}\n`);
   }
   for (const dir of plan.installDirs) output.write(`  ${red('remove')}      ${dir}\n`);
   output.write(`  ${red('remove')}      ${plan.installFiles.join(', ')}\n`);
@@ -256,7 +257,14 @@ export function registerUninstallCommand(program: Command): void {
       // visible and re-runnable.
       if (result.leftovers.length > 0) {
         if (output.json) {
-          output.writeJson({ plan, status: 'incomplete', steps, leftovers: result.leftovers });
+          output.writeJson({
+            plan,
+            status: 'incomplete',
+            steps,
+            leftovers: result.leftovers,
+            stranded: result.stranded,
+            historyHeldAt: result.historyHeldAt,
+          });
         } else {
           output.write(`\n${red('farmslot uninstall incomplete')} — could not remove:\n`);
           for (const { path, error } of result.leftovers) {
@@ -269,6 +277,10 @@ export function registerUninstallCommand(program: Command): void {
             );
             for (const { from, to } of result.stranded)
               output.write(`    ${cyan(`mkdir -p ${dirname(to)} && mv ${from} ${to}`)}\n`);
+          } else if (result.historyHeldAt) {
+            output.write(
+              `\n  Next: run history is still at ${result.historyHeldAt}; re-run ${cyan('farmslot uninstall')} with a writable ${cyan('--backup-history <path>')}, or ${cyan('--keep-history')}\n`,
+            );
           } else {
             output.write(
               `\n  Next: re-run ${cyan('farmslot uninstall --purge')}, or remove each path manually: ${cyan('trash <path>')}\n`,
