@@ -38,7 +38,6 @@ export function groupRecipeCaptureComparisons(
   const byId = new Map(rows.map((row) => [row.id, row]));
   const unassigned: RecipeComparisonCapture[] = [];
   const media: RecipeComparisonCapture[] = [];
-  const retained = retainedRepairSources(input);
   const visit = (
     source: RecordedEvidencePackageInput,
     root: string,
@@ -92,16 +91,21 @@ export function groupRecipeCaptureComparisons(
       } else unassigned.push(mediaEntry);
       media.push(mediaEntry);
     }
+    // Each repair, however nested, binds its retained originals to the head they were recorded
+    // at and to the claims it kept from them; an outer repair narrows that set further.
+    const retained = retainedRepairSources(source);
     for (const child of source.comparisonDependencies ?? []) {
-      // A repair's retained original proves only its retained claims, at the head it was recorded.
-      const original =
-        depth === 0 ? retained.get(child.input.claims?.recipeRunId ?? '') : undefined;
+      const original = retained.get(child.input.claims?.recipeRunId ?? '');
+      const kept =
+        original && claimIds
+          ? new Set([...original.claimIds].filter((id) => claimIds.has(id)))
+          : (original?.claimIds ?? claimIds);
       visit(
         child.input,
         `${root}${child.artifactRoot}/`,
         depth + 1,
         original ? revision && { baseSha: revision.baseSha, headSha: original.headSha } : revision,
-        original?.claimIds ?? claimIds,
+        kept,
       );
     }
   };

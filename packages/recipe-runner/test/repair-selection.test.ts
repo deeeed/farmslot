@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  isRecipeRepairScope,
   RECIPE_ACTION_MANIFEST_SCHEMA_URL,
   type RecipeActionManifestDocument,
   type RecipeClaimDeclaration,
@@ -412,4 +413,137 @@ test('retained captures keep their recorded head and prove only their retained c
       .after[0]!.reasonCode,
     'comparison-source-mismatch',
   );
+});
+
+test('a repair of a repair binds each nested original to its own selection and head', async (t) => {
+  const { recipeRunId, scope } = await originalFixture(t);
+  const h1Head = 'a'.repeat(40);
+  const head = 'e'.repeat(40);
+  const after = (runId: string, ac: string, sourceCommit: string) => ({
+    path: `stills/${runId}-${ac}.png`,
+    type: 'screenshot',
+    capture: {
+      recipeRunId: runId,
+      nodeId: 'shot',
+      traceIndex: 1,
+      ac,
+      role: 'after',
+      sourceCommit,
+      sourceDirty: false,
+    },
+  });
+  const ledger = (runId: string) => ({
+    schemaVersion: 2 as const,
+    recipeRunId: runId,
+    criteria: [],
+    recording: { status: 'not-required' as const, segments: [] },
+  });
+  const closureIdentity = scope.sources[0]!.closureIdentity;
+  const retainedFrom = (claimId: string, runId: string) => ({
+    claimId,
+    source: 'retained' as const,
+    recipeRunId: runId,
+    closureIdentity,
+  });
+  const h0: RecordedEvidencePackageInput = {
+    summary: { recipeRunId },
+    manifest: {
+      artifacts: [
+        after(recipeRunId, 'AC-1', scope.packageHeadSha),
+        after(recipeRunId, 'AC-2', scope.packageHeadSha),
+      ],
+    },
+    claims: ledger(recipeRunId),
+    artifactDigests: {},
+    timelines: {},
+  };
+  // The first repair re-proved AC-2 at its own head and kept AC-1 and AC-3 from the original.
+  const h1: RecordedEvidencePackageInput = {
+    summary: { recipeRunId: 'h1' },
+    manifest: { artifacts: [after('h1', 'AC-2', h1Head)] },
+    claims: ledger('h1'),
+    artifactDigests: {},
+    timelines: {},
+    comparisonDependencies: [{ artifactRoot: `comparison-dependencies/${recipeRunId}`, input: h0 }],
+    repair: {
+      scope,
+      selection: {
+        schemaVersion: 1,
+        repairId: scope.repairId,
+        scopeDigest: recipeRepairScopeDigest(scope),
+        recipeRunId: 'h1',
+        claims: [
+          retainedFrom('AC-1', recipeRunId),
+          { claimId: 'AC-2', source: 'fresh' },
+          retainedFrom('AC-3', recipeRunId),
+        ],
+      },
+    },
+  };
+  // The second repair rejects AC-1 and keeps AC-2 and AC-3 from the first repair.
+  const packageHash = 'f'.repeat(64);
+  const second: RecipeRepairScope = {
+    ...scope,
+    repairId: recipeRepairId({ runId: 'run-1', packageHash, receiptIds: ['receipt-1'] }),
+    decisionId: 'decision-2',
+    packageHash,
+    packageHeadSha: h1Head,
+    sources: [
+      {
+        recipeRunId: 'h1',
+        closureIdentity,
+        artifactRoot: 'artifacts/recipe-runs/h1',
+        headSha: h1Head,
+      },
+    ],
+    retained: [
+      { claimId: 'AC-2', recipeRunId: 'h1' },
+      { claimId: 'AC-3', recipeRunId: 'h1' },
+    ],
+    rejected: [
+      { ...scope.rejected[0]!, claimId: 'AC-1', receiptId: 'receipt-1', recipeRunId: 'h1' },
+    ],
+  };
+  assert.ok(isRecipeRepairScope(second));
+  const h2: RecordedEvidencePackageInput = {
+    summary: { recipeRunId: 'h2' },
+    manifest: { artifacts: [after('h2', 'AC-1', head)] },
+    claims: ledger('h2'),
+    artifactDigests: {},
+    timelines: {},
+    comparisonDependencies: [{ artifactRoot: 'comparison-dependencies/h1', input: h1 }],
+    repair: {
+      scope: second,
+      selection: {
+        schemaVersion: 1,
+        repairId: second.repairId,
+        scopeDigest: recipeRepairScopeDigest(second),
+        recipeRunId: 'h2',
+        claims: [
+          { claimId: 'AC-1', source: 'fresh' },
+          retainedFrom('AC-2', 'h1'),
+          retainedFrom('AC-3', 'h1'),
+        ],
+      },
+    },
+  };
+  const grouped = groupRecipeCaptureComparisons(h2, claims, {
+    baseSha: scope.reviewBaseSha,
+    headSha: head,
+  });
+  const rows = (id: string) =>
+    grouped.rows
+      .find((row) => row.id === id)!
+      .after.map(({ path: file, eligible, reasonCode }) => [file, eligible, reasonCode]);
+  assert.deepEqual(rows('AC-1'), [['stills/h2-AC-1.png', true, undefined]]);
+  assert.deepEqual(rows('AC-2'), [
+    ['comparison-dependencies/h1/stills/h1-AC-2.png', true, undefined],
+  ]);
+  // The original's captures were superseded at both levels; neither stands as proof nor goes stale.
+  const nested = `comparison-dependencies/h1/comparison-dependencies/${recipeRunId}/stills`;
+  assert.deepEqual(
+    grouped.unassigned.map(({ path: file }) => file),
+    [`${nested}/${recipeRunId}-AC-1.png`, `${nested}/${recipeRunId}-AC-2.png`],
+  );
+  assert.ok(grouped.media.every(({ reasonCode }) => reasonCode === undefined));
 });

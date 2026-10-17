@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate. An undelivered or interrupted repair stays retryable under its single charge and resumes after a restart.
+- Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate. An undelivered or interrupted repair stays retryable under its single charge, and a restart resumes it through fix recovery without refunding or recharging the round.
 
 - Hand a run to the operator when its worker is waiting on its own question or approval request: the monitor raises an interactive handoff with the captured question instead of nudging it or leaving the run in monitoring with no decision. The handoff clears when the question closes, survives a gateway restart, and ignores unsent composer text.
 

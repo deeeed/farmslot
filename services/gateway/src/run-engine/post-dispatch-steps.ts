@@ -1218,10 +1218,11 @@ export async function executeHumanGateStep(
         await rerunReviewIfReviewedInputsChanged(runId, context);
       return executeReadyGate(runId);
     };
-    // A repair the worker accepted before a restart resumes under its single charge.
-    const acceptedRepairSlotId = getRun(runId)?.slotId ?? current.slotId;
-    if (acceptedRepairSlotId && activeVisualRepair(getRun(runId)!)?.status === 'delivered')
-      await (context.resumeVisualRepairForRun ?? resumeVisualRepair)(runId, acceptedRepairSlotId);
+    // A repair interrupted by a restart resumes under its single charge: fix recovery adopts an
+    // in-flight or deferred delivery, and an undelivered one is delivered once.
+    const repairSlotIdAtEntry = getRun(runId)?.slotId ?? current.slotId;
+    if (repairSlotIdAtEntry && activeVisualRepair(getRun(runId)!))
+      await (context.resumeVisualRepairForRun ?? resumeVisualRepair)(runId, repairSlotIdAtEntry);
     let gateAction = await presentReadyGate();
     while (
       publicationApprovalGate &&

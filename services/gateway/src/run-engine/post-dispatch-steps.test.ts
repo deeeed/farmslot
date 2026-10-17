@@ -1572,104 +1572,107 @@ test('Send back delivers through the retained repair step and re-presents the sa
   assert.equal(gateActions.length, 0, 'the gate is re-presented after the repair step');
 });
 
-test('a Send back the worker accepted before a restart resumes at gate entry', async (t) => {
-  const run = createRun({
-    flowType: 'fix-bug',
-    project: 'example-mobile-farm',
-    ticketOrPr: 'SEND-BACK-RESTART',
-    runner: 'grok',
+for (const status of ['reserved', 'delivered'] as const)
+  test(`a ${status} Send back interrupted by a restart resumes at gate entry`, async (t) => {
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'example-mobile-farm',
+      ticketOrPr: `SEND-BACK-RESTART-${status}`,
+      runner: 'grok',
+    });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    const digest = `sha256:${'a'.repeat(64)}`;
+    const scope: RecipeRepairScope = {
+      schemaVersion: 1,
+      repairId: 'repair-restart',
+      runId: run.id,
+      generation: 0,
+      decisionId: 'gate-1',
+      packageHash: 'b'.repeat(64),
+      packageHeadSha: 'c'.repeat(40),
+      reviewBaseSha: 'd'.repeat(40),
+      reviewId: 'review-1',
+      workerContextId: 'dev',
+      repairRecipe: 'recipes/repair-restart.json',
+      claims: [{ id: 'AC-1', claim: 'The square is green.' }],
+      sources: [
+        {
+          recipeRunId: 'original',
+          closureIdentity: digest,
+          artifactRoot: 'artifacts/r',
+          headSha: 'c'.repeat(40),
+        },
+      ],
+      retained: [],
+      rejected: [
+        {
+          claimId: 'AC-1',
+          proofMode: 'visual',
+          receiptId: 'receipt-1',
+          reason: 'Use the brand green.',
+          recipeRunId: 'original',
+          closureIdentity: digest,
+          reviewedFiles: [],
+          moments: [],
+        },
+      ],
+    };
+    updateRun(run.id, {
+      status: 'human-gating',
+      slotId: 'send-back-slot',
+      engineState: {
+        publishGate: {
+          reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+          reviewSequence: [{ runner: 'grok', model: null, effort: null, mode: 'cold' }],
+          visualRepairs: [
+            {
+              repairId: scope.repairId,
+              scope,
+              scopeDigest: digest,
+              decisionId: 'gate-1',
+              packageHash: scope.packageHash,
+              reviewId: 'review-1',
+              status,
+              reservedRetryCount: 1,
+              reservedAt: '2026-10-16T00:00:00Z',
+              ...(status === 'delivered' ? { deliveredAt: '2026-10-16T00:00:05Z' } : {}),
+              rejected: [
+                { claimId: 'AC-1', receiptId: 'receipt-1', reason: 'Use the brand green.' },
+              ],
+            },
+          ],
+        },
+      },
+      decisions: [
+        {
+          id: 'held',
+          type: 'engine_human_gate',
+          title: 'Gate',
+          description: '',
+          actions: [],
+          createdAt: '2026-10-16T00:00:00Z',
+          resolvedAt: '2026-10-16T00:01:00Z',
+          resolvedAction: 'approve-publish-unresolved',
+          context: { approvalHeldAt: '2026-10-16T00:01:01Z' },
+        },
+      ],
+    });
+    const order: string[] = [];
+    await executeHumanGateStep(run.id, {
+      ...restartReplayContext(),
+      resumeInterruptedPublicationReviewForRun: async () =>
+        assert.fail('an accepted repair is not a Continue Fixing continuation'),
+      resumeVisualRepairForRun: async (runId, slotId) => {
+        order.push(`repair:${runId}:${slotId}`);
+        return null;
+      },
+      executeReadyGate: async () => {
+        order.push('gate');
+        return 'approve-publish';
+      },
+    });
+    assert.deepEqual(order, [`repair:${run.id}:send-back-slot`, 'gate']);
   });
-  t.after(() => deleteTestRunIfPresent(run.id));
-  const digest = `sha256:${'a'.repeat(64)}`;
-  const scope: RecipeRepairScope = {
-    schemaVersion: 1,
-    repairId: 'repair-restart',
-    runId: run.id,
-    generation: 0,
-    decisionId: 'gate-1',
-    packageHash: 'b'.repeat(64),
-    packageHeadSha: 'c'.repeat(40),
-    reviewBaseSha: 'd'.repeat(40),
-    reviewId: 'review-1',
-    workerContextId: 'dev',
-    repairRecipe: 'recipes/repair-restart.json',
-    claims: [{ id: 'AC-1', claim: 'The square is green.' }],
-    sources: [
-      {
-        recipeRunId: 'original',
-        closureIdentity: digest,
-        artifactRoot: 'artifacts/r',
-        headSha: 'c'.repeat(40),
-      },
-    ],
-    retained: [],
-    rejected: [
-      {
-        claimId: 'AC-1',
-        proofMode: 'visual',
-        receiptId: 'receipt-1',
-        reason: 'Use the brand green.',
-        recipeRunId: 'original',
-        closureIdentity: digest,
-        reviewedFiles: [],
-        moments: [],
-      },
-    ],
-  };
-  updateRun(run.id, {
-    status: 'human-gating',
-    slotId: 'send-back-slot',
-    engineState: {
-      publishGate: {
-        reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
-        reviewSequence: [{ runner: 'grok', model: null, effort: null, mode: 'cold' }],
-        visualRepairs: [
-          {
-            repairId: scope.repairId,
-            scope,
-            scopeDigest: digest,
-            decisionId: 'gate-1',
-            packageHash: scope.packageHash,
-            reviewId: 'review-1',
-            status: 'delivered',
-            reservedRetryCount: 1,
-            reservedAt: '2026-10-16T00:00:00Z',
-            deliveredAt: '2026-10-16T00:00:05Z',
-            rejected: [{ claimId: 'AC-1', receiptId: 'receipt-1', reason: 'Use the brand green.' }],
-          },
-        ],
-      },
-    },
-    decisions: [
-      {
-        id: 'held',
-        type: 'engine_human_gate',
-        title: 'Gate',
-        description: '',
-        actions: [],
-        createdAt: '2026-10-16T00:00:00Z',
-        resolvedAt: '2026-10-16T00:01:00Z',
-        resolvedAction: 'approve-publish-unresolved',
-        context: { approvalHeldAt: '2026-10-16T00:01:01Z' },
-      },
-    ],
-  });
-  const order: string[] = [];
-  await executeHumanGateStep(run.id, {
-    ...restartReplayContext(),
-    resumeInterruptedPublicationReviewForRun: async () =>
-      assert.fail('an accepted repair is not a Continue Fixing continuation'),
-    resumeVisualRepairForRun: async (runId, slotId) => {
-      order.push(`repair:${runId}:${slotId}`);
-      return null;
-    },
-    executeReadyGate: async () => {
-      order.push('gate');
-      return 'approve-publish';
-    },
-  });
-  assert.deepEqual(order, [`repair:${run.id}:send-back-slot`, 'gate']);
-});
 
 test('accepted publication resumes its gate without collecting reviews or replacing its package', async (t) => {
   const run = createRun({

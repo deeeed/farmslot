@@ -337,6 +337,14 @@ async function executeOwnedReview(
       artifactScope,
       mode,
       findingsArtifactScope: artifactScope,
+      ...(options.reservedFixPass
+        ? {
+            reservedFixPass: {
+              ...options.reservedFixPass,
+              retryCount: options.resumeFromResult?.retryCount ?? 1,
+            },
+          }
+        : {}),
     });
     if (recoveredFixResult) {
       hasReusableReviewResult =
@@ -1632,6 +1640,7 @@ async function recoverReviewFixPass({
   artifactScope,
   mode = resolveReviewMode(),
   findingsArtifactScope,
+  reservedFixPass,
   setProgressDetail = setReviewProgressDetail,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -1649,9 +1658,13 @@ async function recoverReviewFixPass({
   artifactScope?: string | null;
   mode?: ReviewMode;
   findingsArtifactScope?: string | null;
+  /** A Send back pass whose persisted charge this recovered fix spends. */
+  reservedFixPass?: ReservedFixPass & { retryCount: number };
   setProgressDetail?: (runId: string, detail: string) => void;
 }): Promise<ReviewResult | null> {
   assertNativeReviewOperationCurrent();
+  // A recovered pass keeps the loop's persisted count; it never rolls a reservation back.
+  const recoveredRetryCount = Math.max(1, reservedFixPass?.retryCount ?? 1);
   const run = getRun(runId);
   const recoveryGeneration = run?.engineState?.generation ?? 0;
   const fixContext = run?.agentContexts?.find((ctx) =>
@@ -1861,7 +1874,7 @@ async function recoverReviewFixPass({
             reason: 'Recovered review fix worker exited without a terminal signal',
             issues,
             validationDepth,
-            retryCount: 1,
+            retryCount: recoveredRetryCount,
             maxRetries,
             feedbackSent: true,
             attempts: [
@@ -1931,7 +1944,7 @@ async function recoverReviewFixPass({
           verdict: 'issues',
           issues,
           validationDepth,
-          retryCount: 1,
+          retryCount: recoveredRetryCount,
           maxRetries,
           feedbackSent: true,
           attempts: [
@@ -1958,7 +1971,7 @@ async function recoverReviewFixPass({
         maxRetries,
         reviewTimeoutMs,
         reviewResult: { verdict: 'issues', issues, validationDepth },
-        retryCount: 1,
+        retryCount: recoveredRetryCount,
         validationDepth,
         artifactScope,
         mode,
@@ -1970,6 +1983,8 @@ async function recoverReviewFixPass({
     // signal's authoritative id instead of the entry-time context snapshot, or
     // the settlement CAS can discard a fix that actually completed.
     const terminalAttemptId = fixSignal.attemptId ?? fixContext.signalAttemptId;
+    // This pass's own terminal signal proves a reserved repair reached the worker.
+    reservedFixPass?.onDelivered?.();
 
     const workerBlockReason =
       fixSignal.status === 'blocked'
@@ -2007,7 +2022,7 @@ async function recoverReviewFixPass({
         reason: workerBlockReason,
         issues,
         validationDepth,
-        retryCount: 1,
+        retryCount: recoveredRetryCount,
         maxRetries,
         fixDelta: fixDelta.snapshot,
         attempts: [
@@ -2072,7 +2087,7 @@ async function recoverReviewFixPass({
         fixDelta: fixDelta.snapshot,
         attempts: [initialAttempt, secondAttempt],
         timeline: secondAttempt.timeline,
-        retryCount: 1,
+        retryCount: recoveredRetryCount,
         maxRetries,
         feedbackSent: !pending,
         recoveryContinuationPending: pending,
@@ -2092,7 +2107,7 @@ async function recoverReviewFixPass({
       maxRetries,
       reviewTimeoutMs,
       reviewResult: seededReviewResult,
-      retryCount: 1,
+      retryCount: recoveredRetryCount,
       validationDepth,
       artifactScope,
       mode,
