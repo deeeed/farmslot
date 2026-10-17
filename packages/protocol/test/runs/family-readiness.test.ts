@@ -119,6 +119,25 @@ test('family readiness groups by family and computes counts, completion, and lat
   assert.equal(familyA.completionState, 'active');
 });
 
+test('family readiness counts a failed run that still holds its slot as active, not failed', () => {
+  const held = makeRun({
+    id: 'held',
+    status: 'failed',
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  });
+  const [heldOnly] = buildRunFamilyReadinessSummaries([held]);
+  assert.equal(heldOnly.activeRunCount, 1);
+  assert.equal(heldOnly.terminalRunCount, 0);
+  assert.equal(heldOnly.failedRunCount, 0);
+  assert.equal(heldOnly.completionPercent, 0);
+  assert.equal(heldOnly.completionState, 'active');
+
+  const [settled] = buildRunFamilyReadinessSummaries([makeRun({ id: 'failed', status: 'failed' })]);
+  assert.equal(settled.activeRunCount, 0);
+  assert.equal(settled.failedRunCount, 1);
+  assert.equal(settled.completionState, 'failed');
+});
+
 test('eligibility blocks active runs, pending decisions, and missing successful runs', () => {
   const [summary] = buildRunFamilyReadinessSummaries([
     makeRun({
