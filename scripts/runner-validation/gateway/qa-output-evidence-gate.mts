@@ -291,6 +291,16 @@ if (process.argv[2] === 'serve') {
     json(path.join(root, 'pool/status-local.json'), {
       slots: [{ slot: slotId, lifecycle: 'held', phase: 'occupied', current_run_id: original.id }],
     });
+    // Fixture slot state must not change the checkout inputs a deterministic receipt hashes.
+    const exclude = path.resolve(
+      repo,
+      execFileSync('git', ['rev-parse', '--git-path', 'info/exclude'], {
+        cwd: repo,
+        encoding: 'utf8',
+      }).trim(),
+    );
+    mkdirSync(path.dirname(exclude), { recursive: true });
+    writeFileSync(exclude, '/.farm-status\n', { flag: 'a' });
     json(path.join(repo, '.farm-status'), {
       lifecycle: 'held',
       phase: 'occupied',
