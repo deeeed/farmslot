@@ -137,10 +137,36 @@ creation never reuses a retired id. Offline replacement requires all gateways
 sharing the identity home to be stopped.
 
 Before reuse, upgrade every gateway sharing the identity home to the
-generation-aware version and retire native id-only owner bindings. A pending
-pairing invitation from the retired identity is invalid; create a new invitation
-for the replacement. PR push, monitoring and rule features are unsupported for
-reused ids until their owner records carry identity generations in a follow-up.
+generation-aware version. A pending pairing invitation from the retired identity
+is invalid; create a new invitation for the replacement.
+
+Once a gateway that implements ADR-051 Amendment 5 is rolled out:
+
+- A replacement's fresh PR notifications, watches, teams and rules work. That
+  includes runtime QA admitted by its rules or submissions.
+- Records the old identity created stay bound to it. They are absent from the
+  replacement's views, and actions on them are refused with a message naming the
+  replaced identity. The replacement re-creates the configuration it wants.
+- Static reviews and review publication run under native execution ownership,
+  whether the review is direct or admitted from a rule or submission. Native
+  execution ownership never moves to a replacement identity, so keep native
+  profiles owned by the automation service and re-point native owner
+  configuration before reuse.
+- An admin replacement can still start a static review directly, from Command
+  Center or the CLI, and publish it. The review runs and publishes as the
+  configured native profile owner, normally the automation service, and the run
+  records the person as its requester. Publication uses that owner's PR teams and
+  GitHub account, so the automation service needs a team that maps the
+  repository, and `--review-team` must name one of its teams. A replacement that
+  is not an admin cannot do this. A replacement's rules and submissions never
+  start a static review, so an admin starts it directly.
+- Webhook principals and visual-review delegations in project configuration keep
+  naming the original identity. Re-point them to another service or person.
+- A team that already lists a reused recipient keeps notifying the old identity.
+  To notify the replacement, remove that recipient and save the team, then add
+  them back in a second save.
+
+Until that version is deployed, a reused identity cannot use PR features.
 
 ## Person-device session contract
 

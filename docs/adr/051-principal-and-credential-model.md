@@ -1659,7 +1659,8 @@ be explicitly re-authored. Automation ownership belongs to its service identity,
 not the replacement person.
 PR push, monitoring and rule ownership remains id-only and cannot resolve a reused
 identity. Supporting those features for reused ids needs a separate generation
-propagation change. Native id-only owner bindings must be retired before reuse.
+propagation change (Amendment 5). Native id-only owner bindings must be retired
+before reuse.
 
 ### Public surface
 
@@ -1738,3 +1739,155 @@ clients, refresh failure and sign-out revocation, including HTTP downloads.
 
 The [principal core spec](../plans/principal-core-implementation-spec.md#person-device-sessions)
 owns the normative token, mutation, cutover and regression requirements.
+
+## Amendment 5: generation-bound stored owners, 2026-10-17
+
+**Status:** Accepted. The lead approved it on 2026-10-17 after paired review.
+It completes the generation propagation Amendment 3 deferred; one implementation
+PR follows.
+
+### Decision
+
+A stored owner or author records the identity generation of the principal that
+wrote it, if that record later acts or scopes what a principal can read. Acting
+paths resolve it through `resolvePrincipalId(id, generation)`. Coverage:
+
+- PR monitors, project monitor policies and monitor publication enrollments.
+- PR teams, trigger rules, rule actions, review submissions and contributions.
+- PR work review owners and run creators.
+- Queue originators enqueued by PR monitoring repair and rule dispatch.
+- PR push devices and their acknowledgements.
+- Assessment records and their reports.
+- Team notification recipients.
+
+The gateway takes the generation from the authenticated session, or from the
+stored record it acts for. Clients never supply it.
+
+- **Encoding.** Generation zero is omitted; any other value is a positive safe
+  integer. A missing generation means zero, so existing records keep working for
+  their original identities and never adopt a replacement.
+- **Separation.** Successive generations of one id are separate records. Reads,
+  edits, acknowledgements, idempotency keys and store uniqueness keys all include
+  the generation.
+- **No re-authoring.** No loader re-authors an old record; the replacement
+  re-creates what it wants. Old records are inert for the replacement and stay out
+  of its views. Cleaning them up is deferred.
+
+Team notification recipients bind the current generation of each newly added id
+when the team is saved. Recipients already on the team keep their stored
+generation, and an id that does not resolve at save is refused. Push registration
+may disable only the same token's binding for an older generation of that id,
+inside the authorized registration transaction. Old deliveries stay with the old
+device.
+
+A generation mismatch is permanent.
+
+- **Denials.** They name the replaced identity and the re-create action, and
+  never read as a revocation. They appear on run-bound actions, background
+  effects, webhooks and delegated review. Owner-scoped reads simply omit old
+  records.
+- **Contributions.** A contribution whose owner fails with a mismatch is
+  withdrawn before shared-review admission. Other losses of authority, such as a
+  role change, refuse admission but keep the contribution held. Restoring that
+  authority admits it without re-authoring.
+- **Queue rows.** A stored queue originator that fails validation refuses only
+  its own row.
+
+Admin-authored configuration that names principals stays id-only and binds
+generation zero. This covers webhook principals, delegated visual-review
+delegators and delegated reviewer lists. These references never credit or empower
+a replacement. Source-pin actors stay display-only.
+
+Native execution ownership stays id-only and matches only a generation-zero
+principal. That applies to the configured native profile owner, node native-owner
+bindings, and run and native-session owners. Amendment 3's retirement
+precondition for native bindings still applies; the generation-zero check is the
+runtime backstop.
+
+Static review runs on a review workspace under native execution ownership. That
+holds whether the review is created directly or admitted from a rule or
+submission. Direct and gated review publication publish as that owner.
+
+**Delegated review authorship.** An admin person who holds no native ownership
+may still request a static review directly, whatever their generation.
+
+- **Owner.** The gateway makes the configured native profile owner, resolved at
+  generation zero, the run's creator, native owner and review owner. The run
+  executes and publishes as that owner, so native ownership never moves.
+- **Requester.** The run records the person's id and generation as its requester.
+  That record is for audit and never authorizes a later action.
+- **Later actions.** Approval, gated posting and manual publication retries use
+  admin supervision of the owner's runs, and publish as that owner.
+- **Queue.** Delegation is decided only on a live admin request. A queued
+  delegated request records the owner and re-checks at dispatch that its
+  requester is still an admin at the same generation. Otherwise it refuses only
+  its own row.
+- **No owner.** A farm with no configured native profile owner refuses delegation.
+
+Otherwise a replacement identity is refused static review and review
+publication, with a denial that names native ownership. That includes static
+review admitted from its rules or submissions, because rule and submission
+admission never delegates. An admitted intent shows that reason while it waits.
+The replacement keeps rules and submissions for notifications, monitoring and
+runtime-slot QA.
+
+### Rationale
+
+Amendment 3 made reused ids safe by failing closed. A replacement person then
+cannot use PR notifications, watches, rules or rule-driven QA. Binding the
+generation at write time lets the replacement configure these features. Every
+older record stays bound to the identity that created it. Separating a permanent
+mismatch from a recoverable loss of authority means a temporary role change never
+destroys held work. Native ownership controls host profiles and long-running
+processes, so it stays fail-closed instead of widening this change. Review paths
+built on native ownership inherit that boundary. Delegated authorship gives an
+admin person direct static reviews without moving that ownership: the work runs
+and publishes under the generation-zero owner that already controls the host
+profiles, and the requester stays on record. Delegation is decided only on a
+live admin request, so rule and submission admission never delegates.
+
+### Consequences
+
+The PR monitoring, rule and push stores, assessment records, run records and the
+dispatch queue gain optional generation fields, and their schemas and uniqueness
+keys change. A gateway older than this amendment refuses to load a store that
+holds a replacement's record, so rollback after a replacement writes is
+unsupported. Every gateway sharing the identity home and the farm root must run
+this version, which extends Amendment 3's requirement. Background effects re-check
+the stored owner's generation and current authority before acting. A waking
+request never donates authority. A reused person re-creates their PR
+configuration; nothing migrates to them. A delegated static review belongs to
+the native owner and also names its requester, so owner-scoped views list it
+under the native owner.
+
+### Public surface
+
+- `@farmslot/protocol` adds optional, server-derived fields:
+  - `ownerGeneration` on `PRMonitor`, `PRProjectMonitorPolicy`, `PRTeamProfile`,
+    `PRTriggerRule`, `PRRuleActionRecord`, `PRReviewSubmission`,
+    `PRReviewContribution`, `PRWorkReference.review` and `AssessmentRecord`. It
+    is the owner's identity generation, unrelated to
+    `PRMonitor.observationGeneration`.
+  - `notificationPrincipalGenerations` on `PRTeamProfile`, keyed by recipient id
+    and kept outside the client-edited `config`.
+  - `createdByPrincipalGeneration` on `Run`.
+  - `requestedByPrincipalId` and `requestedByPrincipalGeneration` on `Run`, and
+    `delegatedOwnerPrincipalId` on `QueueItem`, present only on a delegated static
+    review.
+- Consumers are the gateway PR, assessment and run stores and dispatchers, the
+  notification audience and the push sources. Clients read these fields only
+  through existing list and get RPCs.
+  - Request parameters that supply them are refused.
+  - `config` objects never carry them.
+  - Push devices, acknowledgements and monitor publication enrollments stay
+    gateway-internal store fields.
+- Generation-mismatch and native-ownership denials reach Command Center, Companion
+  and the CLI through their existing error surfaces. There is no new RPC, CLI
+  command or flag.
+- These are coordinated farm contracts requiring a protocol release. Harnesses,
+  including mm-harness, call the existing authenticated RPCs, inherit this
+  behaviour and gain no generation-specific extension point.
+
+The [principal core spec](../plans/principal-core-implementation-spec.md) owns
+the normative store, dispatch and regression requirements. The
+[identity reference](../reference/identity-and-credentials.md) owns operator guidance.
