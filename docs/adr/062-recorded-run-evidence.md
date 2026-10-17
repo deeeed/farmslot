@@ -762,3 +762,42 @@ matching provisional reference; gateway completion revalidates parent authority.
 both runtime and gateway readers.
 There is no new command, endpoint, verdict writer or client gate component.
 The additive contract follows the existing coordinated package versioning.
+
+## Amendment 13 (2026-10-18): One QA task ledger across case packages
+
+**Status:** Proposed. Lead-assigned fix for mobile release QA finding I1; needs acceptance.
+**Specification:** [QA case ledger](../reference/recorded-run-evidence.md#qa-case-ledger).
+
+### Decision
+
+A QA run records one engine package per case. Under Amendment 4 each passing
+case replaced the task ledger, so it held only the last case's verdicts. QA
+output gates also bound every criterion to that one execution and required every
+case package to prove every registered criterion, which a suite whose cases prove
+different criteria can never meet.
+
+For a task whose handoff flow is `qa`, the runtime merges each passing execution
+into the stored ledger by claim id. A row the new execution addresses (one of its
+selected nodes proves the claim) replaces the stored row; every other stored row
+stays. Each row names its case execution in `recipeRunId`; the top-level
+`recipeRunId` names the execution projected last. A stored row whose evidence is
+gone is not kept. The merge selects engine rows; it never combines verdicts, so
+when two cases address one criterion the later execution's row stands and the
+gate below still judges the earlier case's claim.
+
+QA output gates bind each criterion to the selected case package its row names.
+A row whose execution is not a selected case package is an execution mismatch. A
+case package answers for the claims it addresses and the rows bound to it, so its
+unaddressed `missing` rows do not block a criterion another case proves. A weak,
+missing or failed claim that a case addresses still blocks, even when another case
+proves the criterion. An untestable override binds to the row's case execution.
+
+Other flows keep Amendment 4 unchanged: one selected execution, no row execution.
+
+### Public surface
+
+`AcceptanceCriterionStatus` in `@farmslot/protocol` gains optional `recipeRunId`;
+`acceptanceRowExecution` resolves a row's execution. The shared ledger validator
+accepts it and checks the row's moments against it. `setDerivedClaims` in
+`@farmslot/agent-runtime` merges for every existing recipe entry point. There is
+no new command, endpoint or verdict writer.

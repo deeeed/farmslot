@@ -23,6 +23,7 @@ import { promisify } from 'node:util';
 import { NativeSessionClient, type NativeWorkerTarget } from '@farmslot/agent-runtime/native';
 import { matchesProcess } from '@farmslot/agent-runtime/native/storage';
 import { NativeProcessTree } from '@farmslot/agent-runtime/native/process-tree';
+import { recordRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
 import { isRecord, type NativeWorkerSessionBinding, type Run } from '@farmslot/protocol';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
@@ -115,8 +116,16 @@ if (process.argv[2] === 'serve') {
     'services/gateway/src/methods/dispatch/slot-scoring.ts',
     'services/gateway/src/run-completion/artifact-mirror.ts',
     'services/gateway/src/qa/completion.ts',
+    'services/gateway/src/run-engine/acceptance-proof.ts',
+    'services/gateway/src/run-engine/claim-overrides.ts',
+    'packages/agent-runtime/scripts/acceptance-ledger.cjs',
+    'packages/recipe-cli/src/harness/acceptance-ledger.ts',
+    'packages/protocol/scripts/acceptance.mjs',
     'scripts/runner-validation/gateway/qa-output-evidence-gate.mts',
   ];
+  // FARMSLOT_QA_OUTPUT_CASE_LEDGER=1: rebuild the copied task ledger from its case
+  // packages through the producer's own transport, then gate that merged ledger.
+  const caseLedger = process.env.FARMSLOT_QA_OUTPUT_CASE_LEDGER === '1';
   execFileSync('git', ['diff', '--quiet', 'HEAD', '--', ...sourceFiles], { cwd: source });
   const hashes = Object.fromEntries(
     sourceFiles.map((file) => [
@@ -195,6 +204,58 @@ if (process.argv[2] === 'serve') {
       assert.ok(isRecord(handoff));
       assert.equal(handoff.attemptId, original.id);
       json(handoffPath, { ...handoff, project });
+    }
+    if (caseLedger) {
+      // Replay the run's ledger writes: each case package in execution order,
+      // through recipe-cli's task transport. Package bytes stay unchanged.
+      const { recordRecipeAcceptance } =
+        await import('../../../packages/recipe-cli/src/harness/acceptance-ledger.js');
+      const artifacts = path.join(workerDir, 'artifacts');
+      const ledgerPath = path.join(artifacts, 'acceptance-status.json');
+      const before = JSON.parse(readFileSync(ledgerPath, 'utf8'));
+      rmSync(ledgerPath);
+      rmSync(path.join(artifacts, 'latest-valid-recipe-run.json'), { force: true });
+      const cases = Object.values(qaResult.packages as Record<string, string>)
+        .map((relative) => {
+          const root = path.join(artifacts, relative);
+          const read = (file: string) => JSON.parse(readFileSync(path.join(root, file), 'utf8'));
+          return {
+            root,
+            claims: read('acceptance-status.json'),
+            startedAt: read('summary.json').startedAt,
+          };
+        })
+        .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
+      assert.ok(cases.length > 1, 'The receipt must record more than one case package.');
+      for (const { root } of cases) {
+        assert.equal(recordRecipeAttemptSelection(workerDir, root), true);
+        recordRecipeAcceptance(workerDir, repo, {
+          tracePath: path.join(root, 'trace.json'),
+          recipePath: path.join(root, 'recipe.json'),
+          claimsPath: path.join(root, 'acceptance-status.json'),
+        });
+      }
+      const merged = JSON.parse(readFileSync(ledgerPath, 'utf8'));
+      // Per claim: the latest case that addresses it, else the latest case.
+      const expected = new Map<string, [string, string]>();
+      for (const { claims } of cases)
+        for (const row of claims.criteria)
+          if (row.recipeNodes.length || !expected.has(row.id))
+            expected.set(row.id, [row.verdict, claims.recipeRunId]);
+      const rowsOf = (ledger: { criteria: Array<Record<string, unknown>> }) =>
+        ledger.criteria.map((row) => [row.id, row.verdict, row.recipeRunId]).sort();
+      assert.deepEqual(
+        rowsOf(merged),
+        [...expected].map(([id, [verdict, runId]]) => [id, verdict, runId]).sort(),
+      );
+      assert.ok(new Set(rowsOf(merged).map((row) => row[2])).size > 1);
+      for (const file of ['acceptance-status.json', 'latest-valid-recipe-run.json'])
+        cpSync(path.join(artifacts, file), path.join(retained, 'artifacts', file));
+      json(path.join(out, 'ledger-retained.json'), before);
+      json(path.join(out, 'ledger-merged.json'), merged);
+      checks.push(
+        `case packages merge into one ledger by criterion: ${JSON.stringify(rowsOf(merged))}; the retained ledger held one execution: ${JSON.stringify(rowsOf(before))}`,
+      );
     }
     symlinkSync(path.join(source, 'scripts'), path.join(root, 'scripts'), 'dir');
     writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable retained QA regression\n');
@@ -311,6 +372,7 @@ if (process.argv[2] === 'serve') {
         'mirror',
         'refresh-fence',
         'claim-policy',
+        'case-binding',
       ].includes(negative),
     );
     json(path.join(out, 'input-receipt.json'), {
@@ -399,7 +461,17 @@ if (process.argv[2] === 'serve') {
         if (!target.test(text)) throw new Error('Transfer failure checkpoint target changed');
         result.source = text.replace(target, match => ${JSON.stringify(`if ((await import('node:fs')).existsSync(${JSON.stringify(failTransfer)})) throw new Error('Controlled mirror transfer failure'); `)} + match);
       }
-      if (${JSON.stringify(negative)} !== '' && ${JSON.stringify(negative)} !== 'claim-policy' && (url.endsWith('/run-engine/gate-prerequisites.ts') ||
+      if (${JSON.stringify(negative)} === 'case-binding' && url.endsWith('/run-engine/acceptance-proof.ts')) {
+        const text = String(result.source);
+        const target = 'input.claims?.recipeRunId === rowExecution(criterion.id) &&';
+        if (!text.includes(target)) throw new Error('Case binding control target changed');
+        const changed = text.replace(target, 'input.claims?.recipeRunId === projectedRunId &&');
+        writeFileSync(${JSON.stringify(path.join(out, 'source-mutation.json'))}, JSON.stringify({mode:'case-binding',url,
+          beforeHash:createHash('sha256').update(text).digest('hex'),
+          loadedHash:createHash('sha256').update(changed).digest('hex')}));
+        return {...result, source: changed};
+      }
+      if (${JSON.stringify(negative)} !== '' && !['claim-policy', 'case-binding'].includes(${JSON.stringify(negative)}) && (url.endsWith('/run-engine/gate-prerequisites.ts') ||
           url.endsWith('/run-completion/artifact-mirror.ts'))) {
         const text = String(result.source);
         const mode = ${JSON.stringify(negative)};
@@ -539,6 +611,46 @@ if (process.argv[2] === 'serve') {
         'native idle advances the same completion attempt through canonical gate and QA guards without replay or output acknowledgement',
       );
       json(path.join(out, 'advanced-after-idle.json'), advanced);
+    } else if (caseLedger) {
+      const stale = await replay();
+      if (stale.error !== barrier) assert.match(stale.error ?? '', /Run output changed/);
+      assert.equal((await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok, true);
+      const gated = await replay();
+      // The Command Center AC panel reads the ledger the gate consumed.
+      const panel = await rpc<{ acceptanceStatus?: { criteria: Array<Record<string, unknown>> } }>(
+        'task.progress',
+        { slotId, taskFile: `tasks/${taskRelative}/TASK.md` },
+      );
+      json(path.join(out, 'task-progress.json'), panel);
+      assert.deepEqual(
+        panel.acceptanceStatus?.criteria.map((row) => [row.id, row.verdict, row.recipeRunId]),
+        JSON.parse(readFileSync(path.join(out, 'ledger-merged.json'), 'utf8')).criteria.map(
+          (row: Record<string, unknown>) => [row.id, row.verdict, row.recipeRunId],
+        ),
+      );
+      checks.push(
+        'task.progress returns the merged ledger with each row naming its case execution',
+      );
+      if (negative === 'case-binding') {
+        assert.match(gated.error ?? '', /structurally invalid or incomplete/);
+        assert.ok(existsSync(path.join(out, 'source-mutation.json')));
+        checks.push(
+          'negative control: binding every criterion to the last case refuses QA completion of the merged ledger',
+        );
+      } else {
+        assert.equal(
+          gated.error,
+          barrier,
+          'the gate binds each criterion to its case package and QA completion passes',
+        );
+        const review = gated.decisions.findLast(
+          (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+        );
+        json(path.join(out, 'output-review.json'), review ?? null);
+        checks.push(
+          'QA completion passes both guards with the merged ledger; unresolved verdicts stay for output review',
+        );
+      }
     } else if (process.env.FARMSLOT_RUN_STATE_PROOF === '1') {
       await rpc('run.refreshMirror', { runId: run.id });
       const activeCommand = randomUUID();

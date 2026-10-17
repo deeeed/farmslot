@@ -5,6 +5,7 @@ import {
   validateRecordedEvidencePackage,
 } from '@farmslot/adapter-sdk/evidence';
 import {
+  acceptanceRowExecution,
   isAuthorizedOverride,
   isRecord,
   type ProjectVisualClaimReviewPolicy,
@@ -98,13 +99,21 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
   const valid =
     inputs.length > 0 &&
     inputs.every((input) => validateRecordedEvidencePackage(input).status === 'valid');
-  const projectedRunId = acceptance.ledger?.recipeRunId;
+  const ledger = acceptance.ledger;
+  const projectedRunId = ledger?.recipeRunId;
+  // A QA ledger row names the case execution it came from; other rows belong to the projection.
+  const rowExecution = (claimId: string) => {
+    const row = ledger?.criteria.find(({ id }) => id === claimId);
+    return row && ledger ? acceptanceRowExecution(ledger, row) : undefined;
+  };
   const projectedIdentityMatches =
     (!qaOutput && acceptance.criteria.length === 0) ||
-    (acceptance.ledger?.schemaVersion === 2 &&
+    (ledger?.schemaVersion === 2 &&
       typeof projectedRunId === 'string' &&
       projectedRunId.length > 0 &&
-      inputs.some((input) => input.claims?.recipeRunId === projectedRunId));
+      [projectedRunId, ...ledger.criteria.map((row) => acceptanceRowExecution(ledger, row))].every(
+        (runId) => inputs.some((input) => input.claims?.recipeRunId === runId),
+      ));
   // A repair's fresh attempt and every retained original must each be a complete passing execution.
   const sources = (input: RecordedEvidencePackageInput) =>
     valid ? selectedSourceInputs(input).map((source) => source.input) : [input];
@@ -127,6 +136,17 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
       ? reviewedRecipeClaims(run, input, visualPolicy, selection)
       : (input.claims?.criteria ?? []),
   );
+  // A QA case package answers for the claims it addresses and the rows bound to it,
+  // not for criteria another case proves. Any other output judges every claim.
+  const judged = (input: RecordedEvidencePackageInput, claimId: string) => {
+    const runId = rowExecution(claimId);
+    return (
+      !qaOutput ||
+      runId === undefined ||
+      runId === input.claims?.recipeRunId ||
+      (selectedRaw(input, claimId)?.recipeNodes.length ?? 0) > 0
+    );
+  };
   const claimsSatisfied = inputs.every(
     (input, index) =>
       input.claims &&
@@ -136,6 +156,7 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
       ) &&
       reviewed[index]!.every(
         (claim) =>
+          !judged(input, claim.id) ||
           claim.verdict === 'proven' ||
           // An output review retains unreviewed visual claims for its
           // reviewer. Completing execution never approves those claims.
@@ -145,7 +166,7 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
           acceptance.criteria.some(
             (criterion) =>
               criterion.id === claim.id &&
-              input.claims?.recipeRunId === projectedRunId &&
+              input.claims?.recipeRunId === rowExecution(claim.id) &&
               input.claims &&
               acceptance.ledger?.criteria.some(
                 (row) =>
@@ -163,7 +184,7 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
   const bound = acceptance.criteria.every((criterion) =>
     inputs.some(
       (input, index) =>
-        input.claims?.recipeRunId === projectedRunId &&
+        input.claims?.recipeRunId === rowExecution(criterion.id) &&
         reviewed[index]?.some(
           (claim) =>
             claim.id === criterion.id &&

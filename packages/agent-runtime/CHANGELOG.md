@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A QA task's acceptance ledger merges its case executions by criterion instead of keeping only the last case: a passing execution replaces the rows it proves and leaves the others, and each row names its case execution.
 
 ## 0.29.0 - 2026-10-17
 

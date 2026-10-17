@@ -5,6 +5,7 @@ import {
   validateRecordedEvidencePackage,
 } from '@farmslot/adapter-sdk/evidence';
 import {
+  acceptanceRowExecution,
   Events,
   type EvidenceAttestationApprover,
   isTerminalRunStatus,
@@ -85,15 +86,18 @@ export async function runOverrideClaim(
     throw new Error('The claim is absent from the selected recorded execution.');
   const sourceRunId = sourceInput.claims.recipeRunId;
   const acceptance = await (dependencies.acceptance ?? readGateAcceptance)(run);
+  const taskRow = acceptance.ledger?.criteria.find(({ id }) => id === claim.id);
   if (
     acceptance.error ||
     acceptance.issues.length ||
     acceptance.ledger?.schemaVersion !== 2 ||
-    acceptance.ledger.recipeRunId !== params.recipeRunId ||
+    // A QA row binds to its own case execution; any other row to the projection.
+    (taskRow
+      ? acceptanceRowExecution(acceptance.ledger, taskRow)
+      : acceptance.ledger.recipeRunId) !== params.recipeRunId ||
     !acceptance.criteria.some(({ id, text }) => id === claim.id && text === claim.text)
   )
     throw new Error('The selected claim does not match the registered task execution.');
-  const taskRow = acceptance.ledger.criteria.find(({ id }) => id === claim.id);
   if (
     !taskRow ||
     taskRow.overrides !== undefined ||

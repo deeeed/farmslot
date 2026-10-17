@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- QA output gates bind each acceptance criterion to the case package that proved it, so a suite whose cases prove different criteria can pass the evidence check. A case's own weak or missing claim still blocks, and an untestable override binds to the case execution of that criterion's row.
 - Idle resource cleanup (`resource.cleanup` and the pressure snapshot's cleanup candidates) now covers disabled slots, so a simulator or dev server a disabled slot left running can be found and stopped; manual slots stay excluded. Disabled slots have no resource watches, so cleanup probes an eligible one at most once a minute, keeping its status at most a minute stale (a remote slot whose node is not connected is skipped, not waited on). A live cleanup verifies each stopped simulator with a fresh probe instead of the cached status, which reported every stopped simulator on an idle slot as still running.
 - Work-graph `family-done` edges wait while a family run is active by `isActiveListRun`, so a failed run that still holds its slot is not yet a terminal outcome, and family snapshots mark each run `active`. The PR dashboard's worker-active flag reads `ACTIVE_RUN_STATUSES`: runs that are fixing or reconciling now show as working, created runs no longer do. Hand-written done/failed/cancelled lists call `isTerminalRunStatus`.
 

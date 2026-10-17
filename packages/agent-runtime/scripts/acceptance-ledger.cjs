@@ -7,7 +7,8 @@ const { atomicWrite, readJson } = require('./mark-io.cjs');
 // and docs/reference/task-directory-contract.md).
 //
 // The engine derives schema-2 verdicts. This module transfers the selected engine
-// ledger into the task namespace; `farmslot-agent ac` only reads it. Retained
+// ledger into the task namespace (a QA task merges its case executions by claim
+// id); `farmslot-agent ac` only reads it. Retained
 // schema-1 ledgers remain display input, never current completion proof. The ids
 // come from task init in inputs/handoff.json; this module never invents one.
 //
@@ -143,10 +144,15 @@ function assertEvidencePath(taskDir, rawPath) {
   return normalized;
 }
 
-/** Transfer one engine-owned execution. Never aggregate sibling attempts. */
+/**
+ * Transfer one engine-owned execution. Never aggregate sibling attempts of one
+ * recipe. A QA task records one package per case, so its ledger merges instead:
+ * see `mergeCaseClaims`.
+ */
 function setDerivedClaims(taskDir, claims) {
   if (claims.schemaVersion !== 2) throw new AcceptanceRefusal('Derived claims require schema 2.');
-  const registered = handoffAcceptanceCriteria(taskDir);
+  const handoff = readJson(path.join(taskDir, HANDOFF_INPUT));
+  const registered = criteriaFromHandoff(handoff);
   for (const criterion of registered) {
     const claim = claims.criteria.find((entry) => entry.id === criterion.id);
     if (!claim || claim.text !== criterion.text)
@@ -162,8 +168,44 @@ function setDerivedClaims(taskDir, claims) {
       throw new AcceptanceRefusal(`Unknown task claim ${claim.id}.`);
     for (const file of claim.evidence) assertEvidencePath(taskDir, file);
   }
-  writeAcceptanceLedger(taskDir, claims);
-  return claims;
+  const ledger = handoff.flow === 'qa' ? mergeCaseClaims(taskDir, registered, claims) : claims;
+  writeAcceptanceLedger(taskDir, ledger);
+  return ledger;
+}
+
+/**
+ * One QA ledger keyed by claim id. A row the new execution addresses (a selected
+ * node proves it) replaces the stored row; every other stored row keeps the case
+ * execution it came from. Each row names its execution, so the gate can bind it
+ * to that case's package.
+ */
+function mergeCaseClaims(taskDir, registered, claims) {
+  let stored;
+  try {
+    stored = readAcceptanceLedger(taskDir);
+  } catch (err) {
+    // An unreadable stored ledger holds no row to keep; this execution replaces it.
+    if (!(err instanceof AcceptanceRefusal)) throw err;
+    stored = null;
+  }
+  const kept = new Map();
+  if (stored?.schemaVersion === 2 && validateAcceptanceStatusLedger(stored).length === 0) {
+    for (const row of stored.criteria) {
+      const registration = registered.find(({ id }) => id === row.id);
+      if (ACCEPTANCE_CRITERION_ID_PATTERN.test(row.id) && registration?.text !== row.text) continue;
+      // A row whose evidence is gone has nothing left to bind; the new row stands.
+      if (!row.evidence.every((file) => fs.existsSync(path.join(taskDir, file)))) continue;
+      kept.set(row.id, { ...row, recipeRunId: row.recipeRunId ?? stored.recipeRunId });
+    }
+  }
+  const criteria = claims.criteria.map((row) =>
+    row.recipeNodes.length === 0 && kept.has(row.id)
+      ? kept.get(row.id)
+      : { ...row, recipeRunId: claims.recipeRunId },
+  );
+  const ids = new Set(criteria.map(({ id }) => id));
+  for (const row of kept.values()) if (!ids.has(row.id)) criteria.push(row);
+  return { ...claims, criteria };
 }
 
 /** Every handoff criterion with its current verdict, or null when unrecorded. */
