@@ -56,6 +56,7 @@ import { parseRunRecordFile } from '@farmslot/run-bundle';
 import { planRunSources } from '@farmslot/slot-config';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
+import { projectTaskRoots } from '../core/config.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { readSlotField } from '../core/state.js';
 import { farmslotRoot, isValidSafetyTier } from '../fleet/state.js';
@@ -2059,16 +2060,14 @@ export async function cleanupRuns(
   }
 
   // Scan task dirs for orphaned tasks from failed/cancelled runs
-  const projectsDir = path.join(farmslotRoot, 'projects');
-  let projectNames: string[] = [];
+  let taskRoots: Array<{ root: string }> = [];
   try {
-    projectNames = await readdir(projectsDir);
+    taskRoots = await projectTaskRoots();
   } catch {
     /* no projects dir */
   }
 
-  for (const proj of projectNames) {
-    const tasksDir = path.join(projectsDir, proj, 'tasks');
+  for (const { root: tasksDir } of taskRoots) {
     let taskDirs: string[];
     try {
       taskDirs = await readdir(tasksDir);

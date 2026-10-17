@@ -6,6 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - A run admission or new source attempt advances the source revision once; the engine's next `run.updated` no longer advances it again.
 - The family workspace counts active runs with the shared `isActiveListRun` rule: a family whose failed run still holds its slot reports that run as active and the family as active, matching every run list.
+
+- Task writes, pending-decision scans and orphaned task cleanup share one task root, so with `FARMSLOT_PROJECTS_DIR` set they all use the override instead of `<root>/projects`.
 - Advance the source revision as soon as run admission or a new source attempt is saved, and when a restored or newly created run stops accepting pins.
 - `run.list` `active` returns every active run unless the caller sets a limit.
 
