@@ -4,25 +4,22 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Add the shared run-list view model: `isActiveListRun` (nonterminal, or failed while it still holds resources after a refused completion prerequisite), `selectRunList`, `slotMachineMap`, `mergeRunsById` and `ACTIVE_RUN_LIST_LIMIT`. `isCompletionPrerequisiteFailure` moves here from the gateway.
-
-- Add the Send back repair contract: `RecipeRepairScope`, the engine claim-source selection, the `pipeline-visual-judgments-v2` applicability result, the run-store repair record and a receipt/repair `FeedbackCandidate` variant; the shared decision request sends Send back with no selection data.
-- Live source status: `ResourceChangedPayload` (proposed ADR-071 shape), `ResourceKey`/`ResourceRevision` from the new `client-cache` entry, `sourceResourceChanges` and `SourceChangeFeed`, and controller rereads when the gateway's source revision advances. Source views report `hidden` and a one-line `line`; `readOnlyReason` is removed.
-
-- Add `RunTaskExecution` and optional `RunEngineState.taskExecution`, the start of the dispatch that began the current task identity.
-
-- `extractRunArtifactManifest` keeps a gate's recorded metadata for files the run output captured again, skips host paths and prose in step outputs, and shares `isRunArtifactImagePath` with clients.
+- Active-development baseline; add user-facing changes here before release or package publication.
 
 - Add gateway-derived identity generation fields (ADR-051 Amendment 5): `ownerGeneration` on PR monitors, monitor policies, teams, trigger rules, rule actions, review submissions, contributions, PR work review owners and `AssessmentRecord`; `PRTeamProfile.notificationPrincipalGenerations`; `Run.createdByPrincipalGeneration`, `Run.requestedByPrincipalId` and `Run.requestedByPrincipalGeneration`; `QueueItem.delegatedOwnerPrincipalId`; and an optional `delegatorPrincipalGeneration` in the project visual claim review policy. Requests that supply these fields are refused.
 
+## 0.54.0 - 2026-10-17
+
+- Add the shared run-list view model: `isActiveListRun` (nonterminal, or failed while it still holds resources after a refused completion prerequisite), `selectRunList`, `slotMachineMap`, `mergeRunsById` and `ACTIVE_RUN_LIST_LIMIT`. `isCompletionPrerequisiteFailure` moves here from the gateway.
+- Add the Send back repair contract: `RecipeRepairScope`, the engine claim-source selection, the `pipeline-visual-judgments-v2` applicability result, the run-store repair record and a receipt/repair `FeedbackCandidate` variant; the shared decision request sends Send back with no selection data.
+- Live source status: `ResourceChangedPayload` (proposed ADR-071 shape), `ResourceKey`/`ResourceRevision` from the new `client-cache` entry, `sourceResourceChanges` and `SourceChangeFeed`, and controller rereads when the gateway's source revision advances. Source views report `hidden` and a one-line `line`; `readOnlyReason` is removed.
+- Add `RunTaskExecution` and optional `RunEngineState.taskExecution`, the start of the dispatch that began the current task identity.
+- `extractRunArtifactManifest` keeps a gate's recorded metadata for files the run output captured again, skips host paths and prose in step outputs, and shares `isRunArtifactImagePath` with clients.
 - Add `extractRunArtifactManifest`, the one run artifact extractor for Command Center and Companion; it includes captured run output and keeps source metadata.
 - Expose optional dev deployment worker CLI verification health on node and fleet metrics.
-
 - Expose optional provider probe status, load, retry and retained mismatch diagnostics.
 - Project skipped code review as a nonblocking publication disclosure.
 - Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.53.0 - 2026-10-16
 
