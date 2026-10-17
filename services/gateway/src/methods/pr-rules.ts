@@ -25,15 +25,14 @@ import { PRRuleService } from '../pr-rules/service.js';
 import { PRSourceCheckpoints } from '../pr-rules/source-checkpoints.js';
 import { PRRuleStore } from '../pr-rules/store.js';
 import { setDirectPublicationAuthority } from '../review-publication/direct.js';
+import { supervisedPublicationOwner } from '../review-publication/supervision.js';
 import { getRunWithArchived } from '../runs/store.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
-import { isAdminPrincipal } from '../security/authorization.js';
+import { ownerAdminAuthority } from '../security/authorization.js';
 import { isAdminSupervisor } from '../security/native-worker-owner.js';
 import {
   assertNoClientOwnerFields,
   currentSessionOriginator,
-  type PrincipalOwner,
-  principalOwnerGeneration,
   runPrincipalOwner,
   runWithPrincipalOwner,
 } from '../security/work-originator.js';
@@ -52,10 +51,7 @@ export function initPRRuleDispatch(
   dispatcher = new PRReviewDispatcher(
     rules.store,
     rules,
-    (id, generation = principalOwnerGeneration(id)) => {
-      const principal = auth.resolver.resolvePrincipalId(id, generation);
-      return principal.ok && isAdminPrincipal(principal.principal);
-    },
+    ownerAdminAuthority(auth),
     () => {
       rules.notifyChanges();
     },
@@ -80,12 +76,10 @@ export async function initPRRules(
   const checkpoints = await PRSourceCheckpoints.load(
     resolve(farmslotRoot, '.pr-source-checkpoints.json'),
   );
+  const isOwnerAdmin = ownerAdminAuthority(auth);
   service = new PRRuleService(
     store,
-    (id, generation = principalOwnerGeneration(id)) => {
-      const principal = auth.resolver.resolvePrincipalId(id, generation);
-      return principal.ok && isAdminPrincipal(principal.principal);
-    },
+    isOwnerAdmin,
     (id) => {
       publish(id, Events.PR_RULES_UPDATED, service!.list(id));
       if (poll) dispatcher?.wake();
@@ -108,9 +102,8 @@ export async function initPRRules(
   );
   setDirectPublicationAuthority({
     teams: (ownerId) => store.list(ownerId).teams,
-    authorize: (ownerId, generation = principalOwnerGeneration(ownerId)) => {
-      const principal = auth.resolver.resolvePrincipalId(ownerId, generation);
-      if (!principal.ok || !isAdminPrincipal(principal.principal))
+    authorize: (ownerId, generation) => {
+      if (!isOwnerAdmin(ownerId, generation))
         throw new Error('Publication owner no longer has automation authority');
     },
   });
@@ -156,28 +149,6 @@ export async function submitRereviewRequest(
     intent: service.store.list(ownerId).intents.find((item) => item.id === submission.intentId),
     schedulerError: service.schedulerError,
   };
-}
-
-/**
- * The recorded owner an admin publishes a review as. An admin supervises the
- * native owner's reviews, delegated ones included, and publication then runs
- * under that owner's own authority and identity checks.
- */
-export function supervisedPublicationOwner(
-  run: Pick<Run, 'reviewPublication' | 'prWork'> | undefined,
-  callerId: string,
-  supervising: boolean,
-): PrincipalOwner | undefined {
-  const recorded =
-    run?.reviewPublication?.gate?.publication ??
-    run?.reviewPublication?.direct ??
-    run?.prWork?.review;
-  return recorded &&
-    supervising &&
-    recorded.ownerId !== callerId &&
-    recorded.ownerId === process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID
-    ? { ownerId: recorded.ownerId, ownerGeneration: recorded.ownerGeneration }
-    : undefined;
 }
 
 export async function prRulesMethod(method: string, value: unknown): Promise<unknown> {

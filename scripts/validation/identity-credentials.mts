@@ -484,6 +484,9 @@ try {
   );
 
   // Seed completed static reviews as setup. All ownership decisions use the public QA RPC.
+  // A replacement cannot create a static review it owns (its direct requests are
+  // delegated to the generation-zero native owner), so the generation-one record
+  // only exercises the source-review generation backstop.
   const { createRun } = await import('../../services/gateway/src/runs/store.js');
   const sourceReviews = [undefined, 1].map((generation) => {
     const run = createRun(
@@ -546,7 +549,7 @@ try {
   const qaIntent = rules.store.intent(refreshedSubmission.submission.intentId!);
   assert.equal(qaIntent?.contributions[0].ownerGeneration, 1);
   claims.push(
-    'public linked QA refuses native-only legacy reviews and admits fresh generation-bound reviews with matching persisted contributions',
+    'public linked QA refuses native-only legacy reviews; its source-review backstop admits only a seeded record of the same generation, with matching persisted contributions',
   );
 
   const newQueue = await freshClient.call<{ item: { id: string } }>('dispatch.queue.add', {

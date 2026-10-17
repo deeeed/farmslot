@@ -161,6 +161,13 @@ export function replacedWorkOriginator(
     : undefined;
 }
 
+/** Stored identity generation: omitted for zero, otherwise a positive safe integer. */
+export const ownerGenerationSchema = {
+  type: 'integer',
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+};
+
 /** Owners and their generations are gateway-derived; a request never supplies them. */
 export function assertNoClientOwnerFields(params: Record<string, unknown>): void {
   for (const key of ['ownerId', 'ownerGeneration', 'notificationPrincipalGenerations'])

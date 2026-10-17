@@ -8,6 +8,7 @@ import { AUTHORIZATION_METHOD_CLASSIFICATION } from './authorization-classificat
 import { activeAdminCredentialCount } from './credential-store.js';
 import { hasNativeWorkspaceAccess } from './native-owner.js';
 import { generationMismatchMessage } from './principal-resolver.js';
+import { principalOwnerGeneration } from './work-originator.js';
 
 const IDENTITY_MANAGEMENT_METHODS = new Set([
   'principal.create',
@@ -184,6 +185,20 @@ export function authorizeStoredRunEffect(
         'edit or requeue the item from a current admin session so its authority is explicit',
     },
   );
+}
+
+/**
+ * Whether a stored PR automation owner still holds admin authority as the
+ * identity generation that wrote it. Callers acting for a stored record pass
+ * its generation; otherwise the session's own generation applies to its id.
+ */
+export function ownerAdminAuthority(
+  runtime: GatewayAuthRuntime,
+): (ownerId: string, generation?: number) => boolean {
+  return (ownerId, generation = principalOwnerGeneration(ownerId)) => {
+    const resolution = runtime.resolver.resolvePrincipalId(ownerId, generation);
+    return resolution.ok && isAdminPrincipal(resolution.principal);
+  };
 }
 
 export function canReceiveBroadcast(

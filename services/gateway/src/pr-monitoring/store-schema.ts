@@ -6,7 +6,7 @@ import {
   monitoredPRKey,
 } from '@farmslot/protocol';
 
-import { samePrincipalOwner } from '../security/work-originator.js';
+import { ownerGenerationSchema, samePrincipalOwner } from '../security/work-originator.js';
 
 import type { PRMonitorStoreData } from './store.js';
 
@@ -55,7 +55,7 @@ const validate = ajv.compile<PRMonitorStoreData>({
         ],
         properties: {
           ownerId: text,
-          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+          ownerGeneration: ownerGenerationSchema,
           project: text,
           revision: { ...counter, minimum: 1 },
           enabled: { type: 'boolean' },
@@ -73,7 +73,7 @@ const validate = ajv.compile<PRMonitorStoreData>({
         required: ['ownerId', 'project', 'runId', 'prKey', 'monitorId'],
         properties: {
           ownerId: text,
-          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+          ownerGeneration: ownerGenerationSchema,
           project: text,
           runId: text,
           prKey: text,
@@ -102,7 +102,7 @@ const validate = ajv.compile<PRMonitorStoreData>({
           revision: { ...counter, minimum: 1 },
           observationGeneration: counter,
           ownerId: text,
-          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+          ownerGeneration: ownerGenerationSchema,
           config: { type: 'object' },
           lifecycle: { enum: ['active', 'paused', 'stopped', 'finished'] },
           createdAt: timestamp,

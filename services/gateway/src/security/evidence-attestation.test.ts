@@ -210,7 +210,7 @@ test('a visual-review delegator binds generation zero unless the policy pins its
         'lead-agent-reviewed',
         { ...bare, delegatorPrincipalGeneration: 1 },
       ),
-    /own active credential/,
+    /has been replaced by a newer identity.*delegatedReviewerPrincipalIds/,
   );
 });
 

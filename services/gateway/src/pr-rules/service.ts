@@ -371,19 +371,13 @@ export class PRRuleService {
       let receipt = this.store
         .snapshot()
         .submissions?.find(
-          (item) =>
-            item.ownerId === ownerId &&
-            (item.ownerGeneration ?? 0) === (owner.ownerGeneration ?? 0) &&
-            item.request.idempotencyKey === key,
+          (item) => samePrincipalOwner(item, owner) && item.request.idempotencyKey === key,
         );
       if (!receipt && followUp.submissionId)
         receipt = this.store
           .snapshot()
           .submissions?.find(
-            (item) =>
-              item.ownerId === ownerId &&
-              (item.ownerGeneration ?? 0) === (owner.ownerGeneration ?? 0) &&
-              item.id === followUp.submissionId,
+            (item) => samePrincipalOwner(item, owner) && item.id === followUp.submissionId,
           );
       if (!receipt && run.status === 'done') {
         const headSha = reviewResultForRun(run)?.reviewSnapshot?.headSha;

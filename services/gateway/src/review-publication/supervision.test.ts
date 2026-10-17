@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import { supervisedPublicationOwner } from './pr-rules.js';
+import { supervisedPublicationOwner } from './supervision.js';
 
 test('an admin publishes the native owner review as that owner, never as itself', (t) => {
   const previous = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;

@@ -160,7 +160,11 @@ export class PRMonitoringService {
   private async refreshOnce(id: string, ownerId: string): Promise<PRMonitor> {
     const monitor = this.store.get(id, ownerId);
     if (monitor.lifecycle !== 'active') return monitor;
-    if (activePRRuns(monitor, this.runs()).length && this.authorized(ownerId)) return monitor;
+    if (
+      activePRRuns(monitor, this.runs()).length &&
+      this.authorized(ownerId, monitor.ownerGeneration ?? 0)
+    )
+      return monitor;
     let result: { observation: PRMonitorObservation } | { error: string; checkedAt: string };
     try {
       this.assertAuthorized(ownerId, monitor.ownerGeneration ?? 0);

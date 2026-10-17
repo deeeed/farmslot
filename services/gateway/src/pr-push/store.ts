@@ -8,6 +8,7 @@ import type { PRPushDelivery, PRPushDevice, PRPushRegisterParams } from '@farmsl
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import {
   matchesPrincipalOwner,
+  ownerGenerationSchema,
   principalOwnerGeneration,
   principalOwnerStamp,
 } from '../security/work-originator.js';
@@ -58,7 +59,7 @@ const validate = new Ajv().compile<PushData>({
         properties: {
           id: text,
           ownerId: text,
-          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+          ownerGeneration: ownerGenerationSchema,
           tokenRevision: integer,
           token: text,
           installationId: text,

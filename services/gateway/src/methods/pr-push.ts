@@ -10,11 +10,10 @@ import { assertPushRegistration, PRPushStore } from '../pr-push/store.js';
 import { teamNotificationAudience } from '../pr-rules/notification-audience.js';
 import type { PRRuleService } from '../pr-rules/service.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
-import { isAdminPrincipal } from '../security/authorization.js';
+import { ownerAdminAuthority } from '../security/authorization.js';
 import {
   assertNoClientOwnerFields,
   currentSessionOriginator,
-  principalOwnerGeneration,
 } from '../security/work-originator.js';
 
 let service: PRPushService | undefined;
@@ -26,10 +25,7 @@ export async function initPRPush(
   publish: (ownerId: string, event: string, payload: unknown) => void,
 ): Promise<void> {
   service?.stop();
-  const authorized = (id: string, generation = principalOwnerGeneration(id)) => {
-    const result = auth.resolver.resolvePrincipalId(id, generation);
-    return result.ok && isAdminPrincipal(result.principal);
-  };
+  const authorized = ownerAdminAuthority(auth);
   service = new PRPushService(
     await PRPushStore.load(resolve(farmslotRoot, '.pr-push.json')),
     authorized,

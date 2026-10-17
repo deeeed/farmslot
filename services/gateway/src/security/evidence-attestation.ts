@@ -49,14 +49,20 @@ export function authorizeVisualClaimReview(
     principal.id === 'legacy-env' ||
     principal.subject.type !== (delegated ? 'service' : 'person') ||
     kind === 'pipeline-reviewed' ||
-    // A listed reviewer id names generation zero; a reused id is never credited.
-    (delegated &&
-      (!policy?.delegatedReviewerPrincipalIds?.includes(principal.id) ||
-        (principal.generation ?? 0) !== 0))
+    (delegated && !policy?.delegatedReviewerPrincipalIds?.includes(principal.id))
   )
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
       "Visual review requires the authorized reviewer's own active credential.",
+    );
+  // A listed reviewer id names generation zero; a reused id is never credited.
+  if (delegated && (principal.generation ?? 0) !== 0)
+    throw new GatewayMethodError(
+      'AUTH_FORBIDDEN',
+      generationMismatchMessage(
+        principal.id,
+        'name another service in visual_claim_review.delegatedReviewerPrincipalIds.',
+      ),
     );
   // A bare delegator id names generation zero; a reused id needs an explicit pin.
   const delegatorId = delegated ? policy?.delegatorPrincipalId : undefined;

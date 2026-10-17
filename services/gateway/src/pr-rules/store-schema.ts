@@ -12,7 +12,7 @@ import {
   prReviewWorkflow,
 } from '@farmslot/protocol';
 
-import { samePrincipalOwner } from '../security/work-originator.js';
+import { ownerGenerationSchema, samePrincipalOwner } from '../security/work-originator.js';
 
 import type { PRRuleStoreData } from './store.js';
 
@@ -74,7 +74,7 @@ const reviewObservation = {
 const common = {
   id: text,
   ownerId: text,
-  ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+  ownerGeneration: ownerGenerationSchema,
   revision,
   config: { type: 'object' },
   createdAt: timestamp,
@@ -119,7 +119,7 @@ const validate = ajv.compile<PRRuleStoreData>({
           requiresFreshValidation: { type: 'boolean' },
           nextValidationAt: timestamp,
           ownerId: text,
-          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+          ownerGeneration: ownerGenerationSchema,
           ruleId: text,
           ruleRevision: revision,
           ruleName: text,
@@ -185,7 +185,7 @@ const validate = ajv.compile<PRRuleStoreData>({
         properties: {
           id: text,
           ownerId: text,
-          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+          ownerGeneration: ownerGenerationSchema,
           revision,
           request: { type: 'object' },
           sourceReview,
@@ -209,7 +209,7 @@ const validate = ajv.compile<PRRuleStoreData>({
           ...common,
           notificationPrincipalGenerations: {
             type: 'object',
-            additionalProperties: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+            additionalProperties: ownerGenerationSchema,
           },
         },
       },
@@ -360,7 +360,7 @@ const validate = ajv.compile<PRRuleStoreData>({
                 teamId: text,
                 teamRevision: revision,
                 ownerId: text,
-                ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+                ownerGeneration: ownerGenerationSchema,
                 reasons: strings,
                 project: text,
                 execution: { type: 'object' },
