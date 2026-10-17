@@ -1254,3 +1254,66 @@ test('an older matching Claude prompt never proves a new send', async (t) => {
     ],
   );
 });
+
+// The pane's transport lock as a killed send leaves it: the directory, and the pid it recorded.
+function leftLock(f, pid) {
+  // The lock is keyed by the server socket, read from $TMUX when no private socket is set.
+  delete process.env.TMUX_MODEL_DRIVER_SOCKET;
+  process.env.TMUX = 'stale-lock-fixture,1,0';
+  const lock = path.join(
+    f.dir,
+    `${createHash('sha256').update('stale-lock-fixture:%1:1:1').digest('hex')}.lock`,
+  );
+  fs.mkdirSync(lock);
+  if (pid !== undefined) fs.writeFileSync(path.join(lock, 'pid'), `${pid}\n`);
+  return lock;
+}
+
+const minuteAgo = (target) => {
+  const then = new Date(Date.now() - 61_000);
+  fs.utimesSync(target, then, then);
+};
+
+const typedKeys = (f) => f.keys.filter((args) => ['paste-buffer', 'send-keys'].includes(args[0]));
+
+test('a lock left by a killed send is reaped and the next send delivers', async (t) => {
+  const f = fixture(t);
+  const gone = childProcess.spawnSync(process.execPath, ['-e', '']).pid;
+  const lock = leftLock(f, gone);
+  const result = await send('%1', 'codex', f.payload);
+  assert.equal(result.submitted, true);
+  assert.equal(fs.existsSync(lock), false);
+  assert.equal(fs.existsSync(`${lock}.reap`), false);
+});
+
+test('a lock whose holder is alive keeps the pane busy and types nothing', async (t) => {
+  const f = fixture(t);
+  const lock = leftLock(f, process.pid);
+  minuteAgo(lock);
+  assert.equal((await send('%1', 'codex', f.payload)).verification, 'driver_busy');
+  assert.deepEqual(typedKeys(f), []);
+  assert.equal(fs.readFileSync(path.join(lock, 'pid'), 'utf8'), `${process.pid}\n`);
+});
+
+test('a lock that never recorded a pid is reaped only a minute on', async (t) => {
+  const f = fixture(t);
+  const lock = leftLock(f);
+  assert.equal((await send('%1', 'codex', f.payload)).verification, 'driver_busy');
+  assert.deepEqual(typedKeys(f), []);
+  minuteAgo(lock);
+  assert.equal((await send('%1', 'codex', f.payload)).submitted, true);
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test('a reaper killed mid-reap blocks reaping for a minute, then its mutex is cleared', async (t) => {
+  const f = fixture(t);
+  const lock = leftLock(f, childProcess.spawnSync(process.execPath, ['-e', '']).pid);
+  fs.mkdirSync(`${lock}.reap`);
+  assert.equal((await send('%1', 'codex', f.payload)).verification, 'driver_busy');
+  assert.equal(fs.existsSync(lock), true);
+  minuteAgo(`${lock}.reap`);
+  assert.equal((await send('%1', 'codex', f.payload)).verification, 'driver_busy');
+  assert.equal(fs.existsSync(`${lock}.reap`), false);
+  assert.equal((await send('%1', 'codex', f.payload)).submitted, true);
+  assert.equal(fs.existsSync(lock), false);
+});
