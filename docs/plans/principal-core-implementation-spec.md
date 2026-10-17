@@ -1146,6 +1146,9 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   `delegatedReviewerPrincipalIds` resolve at generation zero. A replacement is
   never credited or empowered, and the denial names the mismatch. Source-pin
   actors remain display-only.
+- A delegator resolves at `visual_claim_review.delegatorPrincipalGeneration`
+  when the policy sets it (A5 clarification, 2026-10-17). The parser accepts
+  only a positive safe integer next to `delegatorPrincipalId`.
 - Native execution ownership remains id-only and matches only a generation-zero
   principal. `requireNativeProfileOwner`, `resolveNativeWorkerOwner`,
   `resolveReviewWorkspaceOwner`, `ownsLocalNativeProfile`, node bindings and
@@ -1221,6 +1224,9 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   - Contributions: withdrawn on mismatch, held on role loss, admitted after the
     role is restored.
   - Client-supplied generation fields are refused.
+  - Delegator pin: a bare delegator id credits only generation zero; a pin
+    credits only the matching current generation and refuses a stale or future
+    one; the parser refuses a pin without a delegator id or below 1.
   - Each store reloads after both generations of one id have saved records.
   - One live gateway-RPC proof runs on an isolated identity home.
 - Reuse preserves every credential tombstone, unrelated principal tombstones,
