@@ -1254,6 +1254,33 @@ test('runReviewRetryLoop: a reserved Send back pass spends its persisted charge 
   assert.equal(calls.reviewAgent, 1, 'the repair is re-reviewed; no unreserved pass follows');
 });
 
+test('runReviewRetryLoop: a deferred reserved delivery is acknowledged only by its own fix signal', async () => {
+  const run = async (fixSignals: WorkerSignal[]) => {
+    const { deps } = buildDeps({
+      reviewVerdicts: ['pass'],
+      feedbackErrors: [new ReviewFixDeliveryError('unacknowledged retained handoff')],
+      fixSignals,
+    });
+    deps.resumeFixPromptDelivery = async () => ({ status: 'deferred' });
+    let delivered = 0;
+    const result = await runReviewRetryLoop({
+      ...baseArgs,
+      maxRetries: 1,
+      reviewResult: { verdict: 'issues', issues: ISSUES } satisfies ReviewAgentResult,
+      retryCount: 1,
+      reservedFixPass: { onDelivered: () => (delivered += 1) },
+      deps,
+    });
+    return { delivered, result };
+  };
+  const acknowledged = await run([{ status: 'complete', timestamp: new Date().toISOString() }]);
+  assert.equal(acknowledged.delivered, 1, 'the fix signal proves the repair reached the worker');
+  assert.equal(acknowledged.result.retryCount, 1, 'still one charge');
+  const unacknowledged = await run([]);
+  assert.equal(unacknowledged.delivered, 0, 'no signal leaves the repair retryable');
+  assert.equal(unacknowledged.result.retryCount, 1);
+});
+
 test('runReviewRetryLoop: later passes after a reserved Send back spend the normal budget', async () => {
   const { deps, calls } = buildDeps({
     reviewVerdicts: ['issues', 'pass'],

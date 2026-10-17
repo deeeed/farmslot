@@ -88,6 +88,17 @@ function refuse(
   throw new GatewayMethodError('VISUAL_REPAIR_REFUSED', message, { userAction });
 }
 
+/** A worker fix or review still owns the loop, so no repair can be admitted or retried. */
+function visualRepairWorkRunning(run: Run): boolean {
+  return Boolean(
+    run.agentContexts?.some(
+      ({ role, status }) =>
+        ['review', 'review-fix'].includes(role) &&
+        ['launching', 'working', 'waiting'].includes(status),
+    ),
+  );
+}
+
 /** The repair still owed delivery or completion; at most one is active per run. */
 export function activeVisualRepair(run: Run): VisualRepairRecord | undefined {
   const last = run.engineState?.publishGate?.visualRepairs?.at(-1);
@@ -258,21 +269,30 @@ export async function admitVisualRepair(
   run: Run,
   decision: RunDecision,
 ): Promise<VisualRepairAdmission> {
+  if (visualRepairWorkRunning(run))
+    refuse('A worker fix or review is still running.', 'Wait for it to finish.');
+  const active = activeVisualRepair(run);
+  // An undelivered or interrupted repair retries its own frozen scope under its one charge,
+  // even after the gate refreshed its package.
+  if (active) {
+    const review = run.engineState?.publishGate?.reviews?.find(({ id }) => id === active.reviewId);
+    if (!review) refuse('The retained review loop changed before Send back.');
+    if (!run.slotId) refuse('Send back needs the run slot.', 'Restore the run slot first.');
+    const reviewers = new Map(active.rejected.map((row) => [row.receiptId, row.reviewer]));
+    return {
+      scope: active.scope,
+      review,
+      issues: active.scope.rejected.map((row) => {
+        const reviewer = reviewers.get(row.receiptId);
+        return { ...row, ...(reviewer ? { reviewer } : {}) };
+      }),
+      reuse: active,
+    };
+  }
   const plan = await planVisualRepair(run, decision);
   const repairs = run.engineState?.publishGate?.visualRepairs ?? [];
   const reuse = repairs.find(({ repairId }) => repairId === plan.scope.repairId);
-  const active = activeVisualRepair(run);
-  if (active && active.repairId !== plan.scope.repairId)
-    refuse('Another Send back is still in progress.', 'Wait for the agent repair to finish.');
   if (reuse?.status === 'completed') refuse('These Issues were already sent back.');
-  if (
-    run.agentContexts?.some(
-      ({ role, status }) =>
-        ['review', 'review-fix'].includes(role) &&
-        ['launching', 'working', 'waiting'].includes(status),
-    )
-  )
-    refuse('A worker fix or review is still running.', 'Wait for it to finish.');
   if (!reuse && reviewRetryCount(plan.review) >= (plan.review.maxRetries ?? 0))
     refuse(
       'The review loop has no worker-fix round left.',
@@ -360,7 +380,9 @@ export async function visualRepairOffered(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null | undefined,
 ): Promise<boolean> {
-  if (!preparedPackage || activeVisualRepair(run)) return false;
+  if (!preparedPackage) return false;
+  // A charged repair that did not finish stays reachable: Send back retries its delivery.
+  if (activeVisualRepair(run)) return !visualRepairWorkRunning(run);
   const review = visualRepairReviewLoop(run);
   if (!review || reviewRetryCount(review) >= (review.maxRetries ?? 0)) return false;
   let sources: RecordedEvidenceSource[];

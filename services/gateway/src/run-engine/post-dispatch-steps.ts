@@ -103,6 +103,7 @@ import {
 import { recordArtifactOnlyReviewResult } from './review-result.js';
 import { runSupersededSince } from './run-generation.js';
 import { type MonitorResult, monitorRun, probeWorkerSignalForRun } from './run-monitor.js';
+import { activeVisualRepair } from './visual-repair.js';
 
 const S = PipelineSteps;
 
@@ -1217,6 +1218,10 @@ export async function executeHumanGateStep(
         await rerunReviewIfReviewedInputsChanged(runId, context);
       return executeReadyGate(runId);
     };
+    // A repair the worker accepted before a restart resumes under its single charge.
+    const acceptedRepairSlotId = getRun(runId)?.slotId ?? current.slotId;
+    if (acceptedRepairSlotId && activeVisualRepair(getRun(runId)!)?.status === 'delivered')
+      await (context.resumeVisualRepairForRun ?? resumeVisualRepair)(runId, acceptedRepairSlotId);
     let gateAction = await presentReadyGate();
     while (
       publicationApprovalGate &&

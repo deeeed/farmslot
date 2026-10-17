@@ -356,7 +356,8 @@ async function resumeVisualRepairOnce(
         ...reviewResultFromInterruptedReview(review),
         verdict: 'issues',
         issues: visualRepairIssues(repair.scope, taskDir),
-        retryCount: repair.reservedRetryCount,
+        // A retry never rolls the loop's persisted budget back.
+        retryCount: Math.max(repair.reservedRetryCount, review.retryCount ?? 0),
         feedbackSent: false,
         recoveryContinuationPending: false,
       },
@@ -912,6 +913,7 @@ export async function executeReadyGate(
         const fixActions = publicationGateDecisionActions({
           reviewSatisfied: false,
           pendingReviewContinuation: interruptedPublicationReview(getRun(runId)!),
+          visualRepairReviewId: activeVisualRepair(getRun(runId)!)?.reviewId,
         }).filter((action) => action.id === CONTINUE_REVIEW_FIX_ACTION);
         recoveredAction = await decide(
           runId,
@@ -1145,6 +1147,7 @@ export async function executeReadyGate(
           unavailableSnapshotAction,
           pendingReviewContinuation,
           sendBackToAgent: await visualRepairOffered(getRun(runId)!, preparedPackage),
+          visualRepairReviewId: activeVisualRepair(getRun(runId)!)?.reviewId,
           reviews,
           preparedPackage,
         })

@@ -955,9 +955,11 @@ export async function runReviewRetryLoop({
     }
     const fixStartedAt = new Date().toISOString();
     // A reserved pass was charged before delivery; any later pass spends the budget here.
+    let acknowledgeReservedDelivery: (() => void) | undefined;
     if (reserved) {
-      // Deferred acknowledgement is uncertain; recovery keeps the same charge and turn.
-      if (!fixDeliveryDeferred) reserved.onDelivered?.();
+      // Deferred acknowledgement is uncertain until this pass's own fix signal arrives.
+      if (fixDeliveryDeferred) acknowledgeReservedDelivery = reserved.onDelivered;
+      else reserved.onDelivered?.();
       reserved = undefined;
     } else retryCount += 1;
     feedbackSent = true;
@@ -1008,6 +1010,7 @@ export async function runReviewRetryLoop({
       );
       fixCompletedAt = new Date().toISOString();
       assertNativeReviewOperationCurrent();
+      if (fixSignal) acknowledgeReservedDelivery?.();
       if (!fixSignal) {
         console.warn(`[review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`);
         await deps.markAgentContextStatus(runId, 'review-fix', 'failed');

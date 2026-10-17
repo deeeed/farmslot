@@ -80,6 +80,8 @@ export function publicationGateDecisionActions(opts: {
   pendingReviewContinuation?: ReviewStatus;
   /** Qualified Issues can return to the retained worker within the existing fix budget. */
   sendBackToAgent?: boolean;
+  /** The review loop an active Send back owns; its fixes continue only through Send back. */
+  visualRepairReviewId?: string;
   reviews?: ReviewStatus[];
   preparedPackage?: Pick<
     ReadyGatePrPackage,
@@ -88,7 +90,9 @@ export function publicationGateDecisionActions(opts: {
 }): DecisionAction[] {
   const exhausted = latestExhaustedReview(opts.reviews);
   const continueFix =
-    opts.pendingReviewContinuation && !reviewFixRetriesExhausted(opts.pendingReviewContinuation)
+    opts.pendingReviewContinuation &&
+    !reviewFixRetriesExhausted(opts.pendingReviewContinuation) &&
+    opts.pendingReviewContinuation.id !== opts.visualRepairReviewId
       ? opts.pendingReviewContinuation
       : undefined;
   return [

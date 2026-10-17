@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate.
+- Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate. An undelivered or interrupted repair stays retryable under its single charge and resumes after a restart.
 
 - Keep a QA run's evidence window when a dispatch replay resumes the same task. The first dispatch of a task identity records when it began, and QA completion checks recipe evidence against that instead of the latest dispatch. A new task or a fresh dispatch starts a new window. For runs dispatched before this, the primary worker's first launch counts when it happened after the current task was written; their next dispatch records it as the anchor.
 

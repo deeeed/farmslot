@@ -13,6 +13,7 @@ import {
   type RecordedEvidencePackageInput,
   type ReviewStatus,
   type Run,
+  type RunDecision,
   type VisualRepairRecord,
 } from '@farmslot/protocol';
 
@@ -23,10 +24,12 @@ import { stampPublishGateReviewStatusForPackage } from './gate-policy.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
 import {
   activeVisualRepair,
+  admitVisualRepair,
   reserveVisualRepair,
   type VisualRepairAdmission,
   visualRepairEvidenceReasons,
   visualRepairIssues,
+  visualRepairOffered,
 } from './visual-repair.js';
 
 const sha = (text: string) => `sha256:${createHash('sha256').update(text).digest('hex')}`;
@@ -281,6 +284,36 @@ test('the reservation is one persisted increment of the named loop and an identi
   const retried = makeRun({ id: 'run-1', engineState: reserved });
   assert.equal(activeVisualRepair(retried)?.repairId, scope.repairId);
   assert.equal(reserveVisualRepair(retried, { ...admission, reuse: repair }), retried.engineState);
+});
+
+test('an undelivered repair stays offered and retries its frozen scope under its one charge', async () => {
+  const run = repairRun([record({ status: 'reserved', reservedRetryCount: 1 })]);
+  run.slotId = 'slot-1';
+  // The re-presented gate carries a re-prepared package; the retry still names the charged repair.
+  const refreshed = { ...pkg, id: 'pkg-2', packageHash: 'f'.repeat(64) };
+  const gate: RunDecision = {
+    id: 'gate-2',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: '',
+    actions: [],
+    createdAt: '2026-10-16T02:00:00.000Z',
+  };
+  assert.equal(await visualRepairOffered(run, refreshed), true);
+  const admission = await admitVisualRepair(run, gate);
+  assert.equal(admission.reuse?.repairId, scope.repairId);
+  assert.deepEqual(admission.scope, scope);
+  assert.equal(reserveVisualRepair(run, admission), run.engineState, 'no second charge');
+  // While its fix or review runs, the repair is neither offered nor admitted again.
+  run.agentContexts = [
+    ...run.agentContexts!,
+    { ...reviewer('fix', 'review-1'), role: 'review-fix', status: 'working' },
+  ];
+  assert.equal(await visualRepairOffered(run, refreshed), false);
+  await assert.rejects(admitVisualRepair(run, gate), {
+    code: 'VISUAL_REPAIR_REFUSED',
+    message: 'A worker fix or review is still running.',
+  });
 });
 
 test('the existing REVIEW-FIX renderer receives the repair contract and each rejected criterion', () => {

@@ -306,10 +306,12 @@ export function validateRecipeRepairSelection(
     issue('scopeDigest', 'Selection does not bind the retained repair scope.');
   if (value.recipeRunId !== fresh.recipeRunId)
     issue('recipeRunId', 'Selection belongs to another fresh execution.');
-  const registered = scope.claims.map(({ id }) => normalizeRecipeClaimId(id));
+  const registered = new Set(scope.claims.map(({ id }) => normalizeRecipeClaimId(id)));
+  const freshIds = new Set(fresh.criteria.map(({ id }) => id));
   if (
-    fresh.criteria.length !== registered.length ||
-    fresh.criteria.some((claim) => !registered.includes(claim.id))
+    fresh.criteria.length !== registered.size ||
+    freshIds.size !== registered.size ||
+    [...registered].some((id) => !freshIds.has(id))
   )
     issue('claims', 'The fresh execution must keep the full task registration.');
   for (const rejection of scope.rejected) {
