@@ -3,9 +3,8 @@
 // The counterpart to install.sh. Reads persisted state so a custom install
 // (FARMSLOT_WORKSPACE/BIN_DIR/HOME) is removed at its real locations. Run history and
 // the home dir (gateway auth/profiles) default to KEEP — deleting them is opt-in.
-import { readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 
 import type { Command } from 'commander';
@@ -17,6 +16,7 @@ import {
   buildUninstallPlan,
   type Disposition,
   executeUninstallPlan,
+  runHistoryCount,
   type UninstallPlan,
 } from '../onboarding/uninstall.js';
 import { readState, resolveWorkspace, type WorkspaceState } from '../onboarding/workspace.js';
@@ -54,14 +54,6 @@ function fromFlags(
   return { disposition: 'backup', backupPath: backup };
 }
 
-function countEntries(dir: string): number {
-  try {
-    return readdirSync(dir).length;
-  } catch {
-    return 0;
-  }
-}
-
 function defaultBackupPath(label: string): string {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   return join(homedir(), `farmslot-${label}-backup-${stamp}.tgz`);
@@ -95,7 +87,8 @@ function printPlan(output: OutputContext, plan: UninstallPlan): void {
   output.write(`\n${bold('farmslot uninstall plan')}${plan.dryRun ? dim('  (dry run)') : ''}\n`);
   output.write(`  workspace   ${dim(plan.workspaceRoot)}\n`);
   if (plan.purge) {
-    output.write(`  ${red('remove')}      ${plan.workspaceRoot} ${dim('(everything)')}\n`);
+    const scope = plan.history === 'keep' ? '(everything except kept run history)' : '(everything)';
+    output.write(`  ${red('remove')}      ${plan.workspaceRoot} ${dim(scope)}\n`);
   }
   for (const dir of plan.installDirs) output.write(`  ${red('remove')}      ${dir}\n`);
   output.write(`  ${red('remove')}      ${plan.installFiles.join(', ')}\n`);
@@ -105,6 +98,10 @@ function printPlan(output: OutputContext, plan: UninstallPlan): void {
   output.write(
     `  run history ${dispo(plan.history, plan.historyBackupPath)} ${dim(plan.runsDir)}\n`,
   );
+  if (plan.history !== 'delete') {
+    for (const { from, to } of plan.historySources)
+      output.write(`              ${dim(`moves ${from} -> ${to}`)}\n`);
+  }
   output.write(`  home/auth   ${dispo(plan.home, plan.homeBackupPath)} ${dim(plan.homeDir)}\n\n`);
 }
 
@@ -115,9 +112,12 @@ export function registerUninstallCommand(program: Command): void {
     .option('--dry-run', 'show what would be removed, change nothing')
     .option('-y, --yes', 'do not prompt; keep run history + home/credentials unless --purge')
     .option('--purge', 'also delete run history and home/credentials (implies --yes)')
-    .option('--keep-history', 'keep <workspace>/runs')
-    .option('--delete-history', 'delete <workspace>/runs')
-    .option('--backup-history <path>', 'archive <workspace>/runs to <path>, then remove it')
+    .option('--keep-history', 'keep run history and task folders, moved under <workspace>/runs')
+    .option('--delete-history', 'delete run history and task folders')
+    .option(
+      '--backup-history <path>',
+      'archive run history and task folders to <path>, then remove them',
+    )
     .option('--keep-home', 'keep the farmslot home dir (gateway auth/profiles/logs)')
     .option('--delete-home', 'delete the farmslot home dir')
     .option('--backup-home <path>', 'archive the home dir to <path>, then remove it')
@@ -176,7 +176,7 @@ export function registerUninstallCommand(program: Command): void {
         const rl = createInterface({ input: process.stdin, output: process.stdout });
         try {
           if (fromFlags(flags.keepHistory, flags.deleteHistory, flags.backupHistory) === null) {
-            const n = countEntries(ws.runsDir);
+            const n = runHistoryCount(ws);
             history = await askDisposition(rl, 'Run history', `(${n} archived)`, 'runs');
           }
           if (
@@ -257,15 +257,35 @@ export function registerUninstallCommand(program: Command): void {
       // visible and re-runnable.
       if (result.leftovers.length > 0) {
         if (output.json) {
-          output.writeJson({ plan, status: 'incomplete', steps, leftovers: result.leftovers });
+          output.writeJson({
+            plan,
+            status: 'incomplete',
+            steps,
+            leftovers: result.leftovers,
+            stranded: result.stranded,
+            historyHeldAt: result.historyHeldAt,
+          });
         } else {
           output.write(`\n${red('farmslot uninstall incomplete')} — could not remove:\n`);
           for (const { path, error } of result.leftovers) {
             output.write(`  ${red('leftover')}    ${path} ${dim(`(${error})`)}\n`);
           }
-          output.write(
-            `\n  Next: re-run ${cyan('farmslot uninstall --purge')}, or remove each path manually: ${cyan('trash <path>')}\n`,
-          );
+          if (result.stranded.length > 0) {
+            // --purge or trash here would delete the history the operator chose to keep.
+            output.write(
+              '\n  Next: move the run history by hand, then re-run farmslot uninstall:\n',
+            );
+            for (const { from, to } of result.stranded)
+              output.write(`    ${cyan(`mkdir -p ${dirname(to)} && mv ${from} ${to}`)}\n`);
+          } else if (result.historyHeldAt) {
+            output.write(
+              `\n  Next: run history is still at ${result.historyHeldAt}; re-run ${cyan('farmslot uninstall')} with a writable ${cyan('--backup-history <path>')}, or ${cyan('--keep-history')}\n`,
+            );
+          } else {
+            output.write(
+              `\n  Next: re-run ${cyan('farmslot uninstall --purge')}, or remove each path manually: ${cyan('trash <path>')}\n`,
+            );
+          }
         }
         process.exitCode = 1;
         return;

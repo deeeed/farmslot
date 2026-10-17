@@ -194,9 +194,10 @@ farmslot uninstall
 
 Removes this installation at its recorded locations (reads `state.json`, so a custom
 `FARMSLOT_WORKSPACE`/`BIN_DIR`/`HOME` is handled): the framework clone, product-repo
-clones, `state.json`, and the `farmslot` PATH symlink. **Run history**
-(`<workspace>/runs/`) and the **home dir** (gateway auth/profiles) default to _keep_ —
-each is an interactive keep / back-up / delete choice.
+clones, `state.json`, and the `farmslot` PATH symlink. **Run history** (the gateway's
+run records and task folders, moved out of the clone to `<workspace>/runs/uninstalled-<time>/`)
+and the **home dir** (gateway auth/profiles) default to _keep_ — each is an interactive
+keep / back-up / delete choice.
 
 - `--dry-run` — print the plan, remove nothing
 - `--yes` — non-interactive; keeps history + home unless `--purge`
