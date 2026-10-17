@@ -5,7 +5,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- Network capture summaries redact credential-like path segments: 20 or more base64url characters mixing letters and digits, such as an API or write key in the path (`/v1/projects/<key>/settings`, `/v3/<project id>`). Before, only 0x addresses, 64+ hex, JWTs and segments over 64 characters were redacted, so a client write key reached `network/run-summary.json`.
+- Network capture summaries redact credential-like path segments: 20 or more base64url characters mixing letters and digits, such as an API or write key in the path (`/v1/projects/<key>/settings`, `/v3/<project id>`). Before, only 0x addresses, 64+ hex, JWTs and segments over 64 characters were redacted, so a client write key reached `network/run-summary.json`. Long resource ids such as UUIDs and hashes in a path are now redacted as well.
 
 ## 0.39.0 - 2026-10-17
 

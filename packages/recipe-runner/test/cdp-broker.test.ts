@@ -606,9 +606,9 @@ describe('CDP broker network capture', () => {
 
     await client.control('capture-start', { id: 'path-tokens' });
     for (const url of [
-      'https://cdn-settings.segment.com/v1/projects/AbCdEf0123456789GhIjKlMnOpQrStUv/settings',
-      'https://mainnet.infura.io/v3/0123456789abcdef0123456789abcdef',
-      'https://example.com/api/v1/perps-market-overview/btc-usd',
+      'https://analytics.example/v1/projects/AbCdEf0123456789GhIjKlMnOpQrStUv/settings',
+      'https://rpc.example/v3/0123456789abcdef0123456789abcdef',
+      'https://example.com/api/v1/market-overview/btc-usd',
       'https://example.com/static/js/main.a1b2c3d4e5f6a7b8c9d0.js',
     ]) {
       broker.onCdpEvent('device-1', 'Network.requestWillBeSent', {
@@ -624,7 +624,7 @@ describe('CDP broker network capture', () => {
       [
         '/v1/projects/<redacted>/settings',
         '/v3/<redacted>',
-        '/api/v1/perps-market-overview/btc-usd',
+        '/api/v1/market-overview/btc-usd',
         '/static/js/main.a1b2c3d4e5f6a7b8c9d0.js',
       ],
     );

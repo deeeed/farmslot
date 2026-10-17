@@ -65,8 +65,9 @@ function safePrimitive(value) {
 
 // A path segment that reads as an opaque token: 20+ base64url characters that
 // mix letters and digits, such as an API or write key carried in the path
-// (`/v1/projects/<key>/settings`, `/v3/<project id>`). Readable slugs and
-// dotted asset names are kept.
+// (`/v1/projects/<key>/settings`, `/v3/<project id>`). Long ids such as UUIDs
+// and hashes match too, which only costs diagnostics. Segments shorter than 20
+// characters, without a digit, or with a dot (asset names) are kept.
 function opaquePathToken(segment) {
   return /^[A-Za-z0-9_-]{20,}$/u.test(segment) && /[A-Za-z]/u.test(segment) && /\d/u.test(segment);
 }
