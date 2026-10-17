@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Gateway sockets use the `ws` client on every Node version instead of the runtime's WebSocket, and a socket that never opens says why: `Connection failed — is the gateway running? (connect ECONNREFUSED 192.168.128.52:7801)`, `(Unexpected server response: 503)` or `(socket hang up)`. Node 24's WebSocket reported each of these as a bare `TypeError`, so a gateway restart looked like a Node 24 incompatibility.
+
 - `review checklist` prints one "Domain patterns" heading and points setup step 2 at the domain's antipatterns file. `review domain` names its source on stderr. An owned-paths file with an empty domain is refused. `recipe logs` words its refusals generically and returns `--events`, undetected-adapter and unknown-adapter errors as usage envelopes. Doctor's recorder failure line includes the recorder detail.
 
 - Run `recipe artifacts`, `recipe artifacts validate` and doctor live-evidence checks through the shared recipe-cli harness exports, with unchanged output and refusals.

@@ -551,6 +551,14 @@ jobs:
         run: yarn install --immutable
       - name: CLI quality
         run: yarn workspace @farmslot/cli quality
+      # Workers run the CLI under each checkout's pinned Node, and MetaMask checkouts pin 24.16.
+      - name: Setup Node 24.16
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.16.0'
+      - name: CLI gateway transport under Node 24.16
+        working-directory: packages/cli
+        run: node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/gateway-client.test.ts
 
   adapter-rn:
     name: React Native adapter package quality

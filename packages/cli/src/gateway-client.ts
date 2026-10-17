@@ -27,6 +27,18 @@ export class GatewayConnectionError extends Error {
   }
 }
 
+/** A socket that never opened, with the transport's reason: refused, reset, an HTTP status or DNS. */
+function connectionFailed(error: unknown): GatewayConnectionError {
+  // A host with several addresses fails with one error per address tried.
+  const causes = error instanceof AggregateError ? error.errors : [error];
+  const reasons = causes
+    .map((cause) => (cause instanceof Error ? cause.message : ''))
+    .filter(Boolean);
+  return new GatewayConnectionError(
+    `Connection failed — is the gateway running?${reasons.length ? ` (${reasons.join('; ')})` : ''}`,
+  );
+}
+
 /** Structured RPC failure from the gateway; userAction names the exact next command(s). */
 export class GatewayRpcError extends Error {
   readonly code: string;
@@ -139,8 +151,7 @@ export class GatewayClient {
    */
   async connect(): Promise<GatewayConnection> {
     const credential = await this.currentCredentials(true);
-    const WebSocketCtor = globalThis.WebSocket ?? NodeWebSocket;
-    const ws = new WebSocketCtor(this.url);
+    const ws = new NodeWebSocket(this.url);
     const pending = new Map<
       string,
       { resolve: (v: unknown) => void; reject: (e: Error) => void }
@@ -175,7 +186,7 @@ export class GatewayClient {
     ws.addEventListener('message', (evt) => {
       let frame: Frame;
       try {
-        frame = JSON.parse(String((evt as MessageEvent).data)) as Frame;
+        frame = JSON.parse(String(evt.data)) as Frame;
       } catch {
         // Non-JSON frames (binary capture relay) are not for this handler.
         return;
@@ -238,9 +249,9 @@ export class GatewayClient {
             }),
           );
         });
-        ws.addEventListener('error', () => {
+        ws.addEventListener('error', (event) => {
           clearTimeout(opened);
-          reject(new GatewayConnectionError('Connection failed — is the gateway running?'));
+          reject(connectionFailed(event.error));
         });
       });
     } catch (err) {
@@ -344,8 +355,7 @@ export class GatewayClient {
     const reqId = `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
     return new Promise<T>((resolve, reject) => {
-      const WebSocketCtor = globalThis.WebSocket ?? NodeWebSocket;
-      const ws = new WebSocketCtor(this.url);
+      const ws = new NodeWebSocket(this.url);
       let done = false;
       let timer: ReturnType<typeof setTimeout>;
 
@@ -436,10 +446,8 @@ export class GatewayClient {
         }
       });
 
-      ws.addEventListener('error', () => {
-        finish(() =>
-          reject(new GatewayConnectionError('Connection failed — is the gateway running?')),
-        );
+      ws.addEventListener('error', (event) => {
+        finish(() => reject(connectionFailed(event.error)));
       });
 
       ws.addEventListener('close', () => {
