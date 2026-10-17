@@ -18,6 +18,7 @@ import {
   incrementalReviewAvailable,
 } from '../run-engine/engine-decisions.js';
 import { resolveRepeatReviewResumePlan } from '../run-engine/review-session-chain.js';
+import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
 
 /** Saved sessions do not reserve slots; each new round resolves its authorized pool again. */
 export function preferRetainedReviewer(
@@ -47,10 +48,21 @@ export function preferRetainedReviewer(
       sourceId: intent.id,
       pr: intent.pr,
       headSha: intent.headSha,
-      review: { profile: intent.reviewProfile, ownerId: source.ownerId, options },
+      review: {
+        profile: intent.reviewProfile,
+        ownerId: source.ownerId,
+        ...(source.ownerGeneration !== undefined
+          ? { ownerGeneration: source.ownerGeneration }
+          : {}),
+        options,
+      },
     },
   };
-  const prior = findLatestPriorReviewRun(identity, runs);
+  const ownedRuns = runs.filter((run) => {
+    const owner = runPrincipalOwner(run);
+    return owner && samePrincipalOwner(owner, source);
+  });
+  const prior = findLatestPriorReviewRun(identity, ownedRuns);
   if (!prior) return coldChoices;
   // Only picks a retained reviewer. The run's own context build confirms the
   // prior head is an ancestor before it settles on incremental scope.
@@ -77,6 +89,7 @@ export function preferRetainedReviewer(
         transport: choice.transport ?? 'tmux',
         nativeOwnerPrincipalId: source.ownerId,
         createdByPrincipalId: source.ownerId,
+        createdByPrincipalGeneration: source.ownerGeneration,
         reviewWorkspaceTarget: { machine: choice.machine },
         effort: choice.effort ?? undefined,
         metrics: { runner: choice.runner, model: choice.model },

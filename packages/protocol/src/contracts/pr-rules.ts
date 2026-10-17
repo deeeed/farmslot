@@ -195,6 +195,8 @@ export interface PRTeamConfig {
 export interface PRTeamProfile {
   id: string;
   ownerId: string;
+  ownerGeneration?: number;
+  notificationPrincipalGenerations?: Record<string, number>;
   revision: number;
   config: PRTeamConfig;
   createdAt: string;
@@ -265,6 +267,7 @@ export interface PRRuleActionRecord {
   requiresFreshValidation?: boolean;
   nextValidationAt?: string;
   ownerId: string;
+  ownerGeneration?: number;
   ruleId: string;
   ruleRevision: number;
   ruleName: string;
@@ -305,6 +308,7 @@ export interface PRRuleNotification {
 export interface PRTriggerRule {
   id: string;
   ownerId: string;
+  ownerGeneration?: number;
   revision: number;
   config: PRTriggerRuleConfig;
   enabled: boolean;
@@ -330,6 +334,7 @@ export interface PRReviewSubmission {
   sourceReview?: PRQaSourceReview;
   id: string;
   ownerId: string;
+  ownerGeneration?: number;
   revision: number;
   request: PRReviewRequest;
   intentId?: string;
@@ -361,6 +366,7 @@ export type PRReviewContribution = {
   teamId: string;
   teamRevision: number;
   ownerId: string;
+  ownerGeneration?: number;
   reasons: string[];
   project?: string;
   execution?: PRExecutionProfile;

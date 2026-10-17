@@ -343,3 +343,29 @@ test('WARM requires explicit lineage and refuses an unrelated sibling reviewer',
   assert.equal(plan.kind, 'resume');
   if (plan.kind === 'resume') assert.equal(plan.binding.runnerSessionId, 'session-1');
 });
+
+test('reviewer continuity does not cross automation owner generations', () => {
+  const { current, prior } = runs();
+  const work = (ownerGeneration?: number) => ({
+    kind: 'review' as const,
+    id: 'review:one',
+    sourceId: 'intent-one',
+    pr: { host: 'github.com', repo: 'deeeed/farmslot', number: 1 },
+    headSha: 'head-a',
+    review: {
+      ownerId: 'owner',
+      ownerGeneration,
+      profile: 'standard',
+      options: { mode: 'warm' as const },
+    },
+  });
+  const plan = (priorGeneration?: number, currentGeneration?: number) =>
+    resolveRepeatReviewResumePlan(
+      { ...current, prWork: work(currentGeneration) },
+      { ...prior, prWork: work(priorGeneration) },
+      'codex',
+    );
+  assert.deepEqual(plan(undefined, 1), { kind: 'refused', reason: 'missing-session' });
+  assert.deepEqual(plan(1, undefined), { kind: 'refused', reason: 'missing-session' });
+  assert.equal(plan(1, 1).kind, 'resume');
+});

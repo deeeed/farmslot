@@ -4,15 +4,19 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import type { FlowType, MonitoredPRIdentity, Principal, ProjectConfig } from '@farmslot/protocol';
+import type { FlowType, MonitoredPRIdentity, ProjectConfig } from '@farmslot/protocol';
 
 import { addItem } from './backlog/dispatch-queue.js';
 import { loadProjectConfigs } from './fleet/state.js';
 import { isAdminPrincipal } from './security/authorization.js';
+import {
+  generationMismatchMessage,
+  type PrincipalResolution,
+} from './security/principal-resolver.js';
 import { principalWorkOriginator, type WorkOriginator } from './security/work-originator.js';
 
 export type WebhookProvider = 'github' | 'jira';
-export type WebhookPrincipalResolver = (principalId: string) => Principal | null;
+export type WebhookPrincipalResolver = (principalId: string) => PrincipalResolution;
 
 type GitHubRuleEventRouter = (pr: MonitoredPRIdentity) => Promise<'rules' | 'legacy' | 'unknown'>;
 let routeGitHubRuleEvent: GitHubRuleEventRouter | undefined;
@@ -40,10 +44,21 @@ export function resolveWebhookWorkOriginator(
       message: `${configKey} must name a stored admin service principal before ${provider} webhook work can be queued`,
     };
   }
-  const principal = resolvePrincipal(principalId);
-  if (!principal) {
-    return { ok: false, message: `${configKey} names missing principal '${principalId}'` };
+  const resolution = resolvePrincipal(principalId);
+  if (!resolution.ok) {
+    return {
+      ok: false,
+      // Admin-authored config binds generation zero, so a reused id never inherits it.
+      message:
+        resolution.reason === 'generation_mismatch'
+          ? generationMismatchMessage(
+              principalId,
+              `point ${configKey} at another service principal`,
+            )
+          : `${configKey} names missing principal '${principalId}'`,
+    };
   }
+  const principal = resolution.principal;
   if (principal.subject.type !== 'service' || !isAdminPrincipal(principal)) {
     return {
       ok: false,

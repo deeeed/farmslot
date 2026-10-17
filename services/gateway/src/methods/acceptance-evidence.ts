@@ -35,7 +35,7 @@ import {
 } from '../core/slot-io.js';
 import { readReviewWorkspaceProgress } from '../review-workspaces/task.js';
 import { getRun } from '../runs/store.js';
-import { currentSessionOriginator } from '../security/work-originator.js';
+import { currentSessionOriginator, principalIdentityKey } from '../security/work-originator.js';
 import {
   readAcceptanceStatusLedger,
   readHandoffAcceptanceCriteria,
@@ -528,7 +528,7 @@ export async function acceptanceEvidenceAnalyze(
     {
       key: digest([
         VERSION,
-        principalId,
+        principalIdentityKey(principalId),
         params.runId,
         params.criterionId,
         selected.result.snapshotHash,

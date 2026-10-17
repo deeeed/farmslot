@@ -26,6 +26,11 @@ import {
 } from '../backlog/pr-admission.js';
 import { resolvePRExecution, verifyPRRepairExecution } from '../backlog/pr-execution.js';
 import { getAllRuns, runRecordPath } from '../runs/store.js';
+import {
+  principalOwnerOriginator,
+  runWithPrincipalOwner,
+  runWithSystemOriginator,
+} from '../security/work-originator.js';
 
 import { activePRRuns } from './active-work.js';
 import { monitorRepairIsOpen, monitorRepairRefusal } from './repair-plan.js';
@@ -93,7 +98,7 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
   constructor(
     private readonly store: PRMonitorStore,
     private readonly monitors: Pick<PRMonitoringService, 'refresh'>,
-    private readonly authorized: (ownerId: string) => boolean,
+    private readonly authorized: (ownerId: string, generation?: number) => boolean,
     private readonly changed: (monitor: PRMonitor) => void,
     private readonly resolveExecution: typeof resolvePRExecution = resolvePRExecution,
     private readonly verifyExecution: typeof verifyPRRepairExecution = verifyPRRepairExecution,
@@ -122,7 +127,7 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
   }
   reconcile(): Promise<void> {
     if (this.reconciling) return this.reconciling;
-    this.reconciling = this.reconcileOnce().finally(() => {
+    this.reconciling = runWithSystemOriginator(() => this.reconcileOnce()).finally(() => {
       this.reconciling = undefined;
     });
     return this.reconciling;
@@ -180,7 +185,10 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
         }
         continue;
       }
-      if (this.authorized(monitor.ownerId) && !activePRRuns(monitor).length)
+      if (
+        this.authorized(monitor.ownerId, monitor.ownerGeneration ?? 0) &&
+        !activePRRuns(monitor).length
+      )
         await this.store.ensureRepair(monitor.id, monitor.ownerId);
       const previousRevision = monitor.revision;
       monitor = this.store.get(monitor.id, monitor.ownerId);
@@ -277,7 +285,7 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
               )
               .join('\n')}`,
           },
-          { kind: 'principal', principalId: monitor.ownerId },
+          principalOwnerOriginator(monitor),
         );
       await persistQueueNow();
       const after = this.store.get(monitor.id, monitor.ownerId);
@@ -313,7 +321,8 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
     return monitor && repair ? { monitor, repair } : undefined;
   }
   private refusal(monitor: PRMonitor, repair: PRMonitorRepair): string | undefined {
-    if (!this.authorized(monitor.ownerId)) return 'Repair owner no longer has execution authority';
+    if (!this.authorized(monitor.ownerId, monitor.ownerGeneration ?? 0))
+      return 'Repair owner no longer has execution authority';
     const key = monitoredPRKey(monitor.config.pr);
     if (repairRunRevisions().get(key) !== this.reconciledRunRevisions.get(key))
       return 'Repair run outcomes changed; awaiting shared history reconciliation';
@@ -361,7 +370,9 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
     const initial = this.lookup(item);
     if (!initial) throw new Error('Repair request is unavailable');
     const startedAt = Date.now();
-    await this.monitors.refresh(initial.monitor.id, initial.monitor.ownerId);
+    await runWithPrincipalOwner(initial.monitor, () =>
+      this.monitors.refresh(initial.monitor.id, initial.monitor.ownerId),
+    );
     const current = this.lookup(item);
     if (
       !current ||

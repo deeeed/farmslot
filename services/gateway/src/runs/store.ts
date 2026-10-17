@@ -769,6 +769,13 @@ export interface RunRecordOptions {
   /** Trusted internal handoff only. Never copied from RPC parameters. */
   nativeOwnerPrincipalId?: string;
   createdByPrincipalId?: string;
+  createdByPrincipalGeneration?: number;
+  /**
+   * Generation-zero native owner a live admin request delegated this static
+   * review to. It becomes creator and native owner; the session is recorded
+   * only as requester.
+   */
+  delegatedReviewOwner?: string;
   /**
    * When true, skip fire-and-forget persist so the caller can await a
    * durable write after related handoff work (e.g. queue stamp) completes.
@@ -788,7 +795,13 @@ export interface RunRecordBuildOptions extends RunRecordOptions {
 
 export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuildOptions): Run {
   if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
-  if ('nativeOwnerPrincipalId' in params || 'createdByPrincipalId' in params)
+  if (
+    'nativeOwnerPrincipalId' in params ||
+    'createdByPrincipalId' in params ||
+    'createdByPrincipalGeneration' in params ||
+    'requestedByPrincipalId' in params ||
+    'requestedByPrincipalGeneration' in params
+  )
     throw new Error('Run ownership cannot be supplied in run parameters');
   if ('reviewPublication' in params || 'directReviewPublication' in params)
     throw new Error('Publication authority cannot be supplied in run parameters');
@@ -819,7 +832,9 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
   const nativeOwnerPrincipalId =
     transport === 'native' || (transport === 'tmux' && params.reviewWorkspaceTarget)
       ? (params.reviewWorkspaceTarget ? resolveReviewWorkspaceOwner : resolveNativeWorkerOwner)(
-          options?.nativeOwnerPrincipalId ?? inheritableParentOwner(parent),
+          options?.delegatedReviewOwner ??
+            options?.nativeOwnerPrincipalId ??
+            inheritableParentOwner(parent),
         )
       : undefined;
   const selectedProfile = params.nativeProfile;
@@ -833,10 +848,32 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
     params = { ...params, runner: nativeProfile.runner };
   }
   const originator = currentSessionOriginator();
-  const createdByPrincipalId =
-    originator.kind === 'principal'
+  const delegatedReviewOwner = options?.delegatedReviewOwner;
+  // A delegated review belongs to its generation-zero native owner; the
+  // requesting session is kept for audit and grants nothing.
+  const requester =
+    delegatedReviewOwner && originator.kind === 'principal'
+      ? {
+          requestedByPrincipalId: originator.principalId,
+          ...(originator.principalGeneration
+            ? { requestedByPrincipalGeneration: originator.principalGeneration }
+            : {}),
+        }
+      : {};
+  const createdByPrincipalId = delegatedReviewOwner
+    ? delegatedReviewOwner
+    : originator.kind === 'principal'
       ? originator.principalId
       : (options?.createdByPrincipalId ?? parent?.createdByPrincipalId ?? nativeOwnerPrincipalId);
+  const createdByPrincipalGeneration = delegatedReviewOwner
+    ? undefined
+    : originator.kind === 'principal'
+      ? originator.principalGeneration
+      : options?.createdByPrincipalId
+        ? options.createdByPrincipalGeneration
+        : parent && parent.createdByPrincipalId === createdByPrincipalId
+          ? parent.createdByPrincipalGeneration
+          : undefined;
   assertNoAutomatedPRConflict(
     params,
     getAllRuns().filter((run) => run.id !== options?.runId),
@@ -971,6 +1008,8 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
     ...(nativeOwnerPrincipalId ? { nativeOwnerPrincipalId } : {}),
     ...(nativeProfile ? { nativeProfile } : {}),
     ...(createdByPrincipalId ? { createdByPrincipalId } : {}),
+    ...(createdByPrincipalGeneration !== undefined ? { createdByPrincipalGeneration } : {}),
+    ...requester,
     familyId,
     parentRunId: params.parentRunId ?? null,
     familyRootTicketOrPr: params.familyRootTicketOrPr ?? params.ticketOrPr,
@@ -1324,6 +1363,11 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
     partial.createdByPrincipalId !== run.createdByPrincipalId
   )
     throw new Error('Run creator cannot be changed');
+  if (
+    'createdByPrincipalGeneration' in partial &&
+    partial.createdByPrincipalGeneration !== run.createdByPrincipalGeneration
+  )
+    throw new Error('Run creator generation cannot be changed');
   if (
     run.agentContexts?.some((context) => nativeWorkerBindingIsHeld(context.nativeSession)) &&
     (('slotId' in partial && partial.slotId !== run.slotId) ||

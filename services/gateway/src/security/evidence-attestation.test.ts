@@ -129,6 +129,91 @@ test('delegated visual review uses an allowlisted service credential while publi
   );
 });
 
+test('a visual-review delegator binds generation zero unless the policy pins its generation', (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'delegator-generation-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const runtime = createGatewayAuthRuntime({
+    FARMSLOT_HOME: home,
+    FARMSLOT_GATEWAY_AUTH_MODE: 'none',
+  });
+  initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+  const roles = [{ role: 'admin' as const, scope: { kind: 'global' as const } }];
+  const person = { type: 'person' as const, displayName: 'Arthur' };
+  runtime.writer.createPrincipal(person, roles, 'arthur');
+  const service = runtime.writer.createPrincipal(
+    { type: 'service', displayName: 'Lead reviewer' },
+    roles,
+  );
+  const issue = runtime.writer.issueCredential(service.id, 'lead-review');
+  const session = {
+    authenticated: true,
+    authentication: { kind: 'credential' as const, credentialId: issue.record.id },
+  };
+  const bare = { delegatedReviewerPrincipalIds: [service.id], delegatorPrincipalId: 'arthur' };
+  assert.equal(
+    authorizeVisualClaimReview(runtime, session, 'lead-agent-reviewed', bare).delegator
+      ?.principalId,
+    'arthur',
+  );
+  assert.throws(
+    () =>
+      authorizeVisualClaimReview(runtime, session, 'lead-agent-reviewed', {
+        ...bare,
+        delegatorPrincipalGeneration: 1,
+      }),
+    /arthur has been replaced by a newer identity/,
+  );
+
+  runtime.writer.retirePrincipals(['arthur']);
+  runtime.writer.createPrincipal(person, roles, 'arthur', { reuseRetiredId: true });
+  // A policy written for the retired identity never credits its replacement.
+  assert.throws(
+    () => authorizeVisualClaimReview(runtime, session, 'lead-agent-reviewed', bare),
+    /arthur has been replaced by a newer identity.*delegatorPrincipalGeneration/,
+  );
+  assert.deepEqual(
+    authorizeVisualClaimReview(runtime, session, 'lead-agent-reviewed', {
+      ...bare,
+      delegatorPrincipalGeneration: 1,
+    }).delegator,
+    { principalId: 'arthur', displayName: 'Arthur' },
+  );
+  assert.throws(
+    () =>
+      authorizeVisualClaimReview(runtime, session, 'lead-agent-reviewed', {
+        ...bare,
+        delegatorPrincipalGeneration: 2,
+      }),
+    /arthur has been replaced by a newer identity/,
+  );
+
+  // A listed delegated reviewer whose id was reused is not credited either.
+  const keeper = runtime.writer.createPrincipal({ type: 'service', displayName: 'Keeper' }, roles);
+  runtime.writer.issueCredential(keeper.id, 'keeper');
+  runtime.writer.revokeCredential(issue.record.id);
+  runtime.writer.retirePrincipals([service.id]);
+  runtime.writer.createPrincipal(
+    { type: 'service', displayName: 'Lead reviewer' },
+    roles,
+    service.id,
+    { reuseRetiredId: true },
+  );
+  const reissued = runtime.writer.issueCredential(service.id, 'lead-review');
+  assert.throws(
+    () =>
+      authorizeVisualClaimReview(
+        runtime,
+        {
+          authenticated: true,
+          authentication: { kind: 'credential' as const, credentialId: reissued.record.id },
+        },
+        'lead-agent-reviewed',
+        { ...bare, delegatorPrincipalGeneration: 1 },
+      ),
+    /has been replaced by a newer identity.*delegatedReviewerPrincipalIds/,
+  );
+});
+
 function personDevice(runtime: ReturnType<typeof createGatewayAuthRuntime>, credential: string) {
   const grant = runtime.writer.exchangePersonCredential(credential, {
     deviceName: 'Attestation fixture',

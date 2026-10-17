@@ -5,6 +5,7 @@ import path from 'node:path';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { principalIdentityKey } from '../security/work-originator.js';
 
 import { assertNoCredentials } from './record-validation.js';
 
@@ -13,11 +14,12 @@ const MAX_BYTES = 20 * 1024 * 1024;
 const INPUT_MAX_BYTES = 72 * 1024;
 const ID = /^[a-f0-9]{64}$/;
 let tail: Promise<unknown> = Promise.resolve();
+// Generation zero keeps its original directory; a reused id gets a separate one.
 function directory(owner: string, kind: 'reports' | 'evaluations' | 'inputs') {
   return path.join(
     farmslotHome(),
     `assessment-${kind}`,
-    createHash('sha256').update(owner).digest('hex'),
+    createHash('sha256').update(principalIdentityKey(owner)).digest('hex'),
   );
 }
 async function prune(dir: string) {

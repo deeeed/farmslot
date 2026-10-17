@@ -199,6 +199,22 @@ test('workspace automation prefers the machine holding the compatible retained r
   ];
   assert.deepEqual(preferRetainedReviewer(intent, 'project', workspaces, [prior]), [workspaces[1]]);
   assert.deepEqual(preferRetainedReviewer(intent, 'project', [workspaces[0]], [prior]), []);
+  intent.contributions[0].ownerGeneration = 1;
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', workspaces, [prior]), []);
+  prior.createdByPrincipalGeneration = prior.prWork!.review!.ownerGeneration = 1;
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', workspaces, [prior]), [workspaces[1]]);
+});
+
+test('a retained reviewer never crosses owner identity generations', () => {
+  const select = (sourceGeneration?: number, priorGeneration?: number) => {
+    const { intent, prior } = fixture();
+    intent.contributions[0].ownerGeneration = sourceGeneration;
+    prior.prWork!.review!.ownerGeneration = priorGeneration;
+    return preferRetainedReviewer(intent, 'project', choices, [prior]);
+  };
+  assert.deepEqual(select(1, undefined), []);
+  assert.deepEqual(select(undefined, 1), []);
+  assert.deepEqual(select(1, 1), [choices[1]]);
 });
 
 test('WARM requires explicit matching review context even when the PR and runner match', () => {

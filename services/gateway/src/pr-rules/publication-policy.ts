@@ -6,6 +6,8 @@ import {
   type ReviewPublicationPolicy,
 } from '@farmslot/protocol';
 
+import { samePrincipalOwner } from '../security/work-originator.js';
+
 import type { PRRuleStore } from './store.js';
 
 /** Capture account and policy origin with the same contribution used for execution. */
@@ -27,13 +29,13 @@ export function publicationForIntent(
 
 /** Publication authority cannot be inherited from another request sharing execution. */
 export function samePublicationAuthority(
-  left: Pick<PRReviewContribution, 'ownerId' | 'teamId'>,
-  right: Pick<PRReviewContribution, 'ownerId' | 'teamId'>,
+  left: Pick<PRReviewContribution, 'ownerId' | 'ownerGeneration' | 'teamId'>,
+  right: Pick<PRReviewContribution, 'ownerId' | 'ownerGeneration' | 'teamId'>,
   teams: readonly PRTeamProfile[],
 ): boolean {
-  if (left.ownerId !== right.ownerId) return false;
+  if (!samePrincipalOwner(left, right)) return false;
   const account = (source: typeof left) =>
-    teams.find((team) => team.id === source.teamId && team.ownerId === source.ownerId)?.config
+    teams.find((team) => team.id === source.teamId && samePrincipalOwner(team, source))?.config
       .account;
   const a = account(left),
     b = account(right);

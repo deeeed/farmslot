@@ -251,6 +251,8 @@ export interface AssessmentRecord {
   version: 1;
   id: string;
   ownerId: string;
+  /** Owner's identity generation; omission means zero. Gateway-derived, never client-supplied. */
+  ownerGeneration?: number;
   consumer: (typeof ASSESSMENT_CONSUMERS)[number];
   subject: AssessmentSubject;
   startedAt: string;

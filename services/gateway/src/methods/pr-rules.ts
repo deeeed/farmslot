@@ -25,9 +25,17 @@ import { PRRuleService } from '../pr-rules/service.js';
 import { PRSourceCheckpoints } from '../pr-rules/source-checkpoints.js';
 import { PRRuleStore } from '../pr-rules/store.js';
 import { setDirectPublicationAuthority } from '../review-publication/direct.js';
+import { supervisedPublicationOwner } from '../review-publication/supervision.js';
+import { getRunWithArchived } from '../runs/store.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
-import { isAdminPrincipal } from '../security/authorization.js';
-import { currentSessionOriginator } from '../security/work-originator.js';
+import { ownerAdminAuthority } from '../security/authorization.js';
+import { isAdminSupervisor } from '../security/native-worker-owner.js';
+import {
+  assertNoClientOwnerFields,
+  currentSessionOriginator,
+  runPrincipalOwner,
+  runWithPrincipalOwner,
+} from '../security/work-originator.js';
 
 let service: PRRuleService | undefined;
 let dispatcher: PRReviewDispatcher | undefined;
@@ -43,12 +51,14 @@ export function initPRRuleDispatch(
   dispatcher = new PRReviewDispatcher(
     rules.store,
     rules,
-    (id) => {
-      const principal = auth.resolver.resolvePrincipalId(id);
-      return principal.ok && isAdminPrincipal(principal.principal);
-    },
+    ownerAdminAuthority(auth),
     () => {
       rules.notifyChanges();
+    },
+    undefined,
+    (id, generation) => {
+      const principal = auth.resolver.resolvePrincipalId(id, generation);
+      return !principal.ok && principal.reason === 'generation_mismatch';
     },
   );
   initPRQueueAdmission('review', dispatcher);
@@ -66,12 +76,10 @@ export async function initPRRules(
   const checkpoints = await PRSourceCheckpoints.load(
     resolve(farmslotRoot, '.pr-source-checkpoints.json'),
   );
+  const isOwnerAdmin = ownerAdminAuthority(auth);
   service = new PRRuleService(
     store,
-    (id) => {
-      const principal = auth.resolver.resolvePrincipalId(id);
-      return principal.ok && isAdminPrincipal(principal.principal);
-    },
+    isOwnerAdmin,
     (id) => {
       publish(id, Events.PR_RULES_UPDATED, service!.list(id));
       if (poll) dispatcher?.wake();
@@ -82,16 +90,20 @@ export async function initPRRules(
     undefined,
     checkpoints,
     (run) => {
-      const ownerId =
-        run.createdByPrincipalId ?? run.nativeOwnerPrincipalId ?? run.prWork?.review?.ownerId;
-      if (ownerId) publish(ownerId, Events.RUN_UPDATED, { run });
+      const owner = runPrincipalOwner(run);
+      if (owner)
+        runWithPrincipalOwner(owner, () => publish(owner.ownerId, Events.RUN_UPDATED, { run }));
+    },
+    (id) => {
+      auth.store.ensureFresh();
+      const principal = auth.store.findPrincipal(id);
+      return principal ? (principal.generation ?? 0) : undefined;
     },
   );
   setDirectPublicationAuthority({
     teams: (ownerId) => store.list(ownerId).teams,
-    authorize: (ownerId) => {
-      const principal = auth.resolver.resolvePrincipalId(ownerId);
-      if (!principal.ok || !isAdminPrincipal(principal.principal))
+    authorize: (ownerId, generation) => {
+      if (!isOwnerAdmin(ownerId, generation))
         throw new Error('Publication owner no longer has automation authority');
     },
   });
@@ -147,14 +159,28 @@ export async function prRulesMethod(method: string, value: unknown): Promise<unk
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Parameters must be an object');
   const p = value as Record<string, unknown>;
+  assertNoClientOwnerFields(p);
   if (method === Methods.PR_RULE_PROJECT_IMPORT) {
     assertPRSourceAccount(p.account);
     if (typeof p.url !== 'string') throw new Error('A Project/view URL is required');
     return importPRProject(ownerId, { account: p.account, url: p.url });
   }
   if (method === Methods.PR_REVIEW_PUBLISH) {
-    if (typeof p.runId !== 'string' || !p.runId.trim()) throw new Error('runId is required');
-    return { receipt: await service.publishReview(ownerId, p.runId) };
+    const runId = p.runId;
+    if (typeof runId !== 'string' || !runId.trim()) throw new Error('runId is required');
+    const rules = service;
+    const supervised = supervisedPublicationOwner(
+      await getRunWithArchived(runId),
+      ownerId,
+      isAdminSupervisor(),
+    );
+    if (supervised)
+      return {
+        receipt: await runWithPrincipalOwner(supervised, () =>
+          rules.publishReview(supervised.ownerId, runId),
+        ),
+      };
+    return { receipt: await rules.publishReview(ownerId, runId) };
   }
   if (method === Methods.PR_REVIEW_REQUEST) {
     assertPRReviewRequest(p.request);

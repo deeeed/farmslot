@@ -401,6 +401,79 @@ test('WARM preflight uses the retained native reviewer on a tmux producing run, 
   resetWarmReviewerSessionsForTest();
 });
 
+test('WARM preflight continues a tmux reviewer only for its creator generation', async () => {
+  const { assertWarmReviewRequestAvailable } = await import('./review-plan.js');
+  const prior = (generation?: number) => {
+    const run = makeRun({
+      id: 'prior',
+      project: 'project',
+      status: 'done',
+      ticketOrPr: 'owner/repo#42',
+      slotId: 'slot-a',
+      engineState: {
+        publishGate: {
+          reviews: [
+            {
+              ...passing('review-tmux-lineage', 'tmux-conversation'),
+              reviewedHeadSha: 'a'.repeat(40),
+            },
+          ],
+        },
+      },
+    });
+    run.createdByPrincipalId = 'owner';
+    run.createdByPrincipalGeneration = generation;
+    run.agentContexts = [
+      {
+        id: 'review-tmux',
+        role: 'review',
+        label: 'Review',
+        status: 'complete',
+        runId: 'prior',
+        slotId: 'slot-a',
+        reviewId: 'review-tmux-lineage',
+        runner: selection.runner,
+        model: selection.model,
+        effort: selection.effort,
+        target: { session: 'tmux', window: 'review', target: 'tmux:review' },
+        runnerSessionId: 'tmux-conversation',
+        runnerSessionPath: '/tmp/tmux-conversation.jsonl',
+        runnerSessionCapturedAt: '2026-10-16T00:00:00Z',
+        reviewResultValidatedAt: '2026-10-16T00:00:00Z',
+      },
+    ];
+    return run;
+  };
+  const current = (generation?: number) => ({
+    ...makeRun({ id: 'current', project: 'project', ticketOrPr: 'owner/repo#42' }),
+    createdByPrincipalId: 'owner',
+    createdByPrincipalGeneration: generation,
+  });
+  const request = {
+    ...selection,
+    mode: 'warm',
+    context: {
+      reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: 'review-tmux-lineage' }],
+    },
+  };
+  for (const [priorGeneration, currentGeneration] of [
+    [undefined, 1],
+    [1, undefined],
+  ]) {
+    resetWarmReviewerSessionsForTest();
+    assert.throws(
+      () =>
+        assertWarmReviewRequestAvailable(current(currentGeneration), request, [
+          prior(priorGeneration),
+        ]),
+      /no verified retained session/,
+    );
+  }
+  resetWarmReviewerSessionsForTest();
+  assert.doesNotThrow(() => assertWarmReviewRequestAvailable(current(1), request, [prior(1)]));
+  resetWarmReviewerSessionsForTest();
+});
+
 test('fresh-session rechecks of one lineage still count only its latest result', () => {
   const policy = { minimumReviews: 2, requestedBy: 'dispatch' as const };
   assert.equal(

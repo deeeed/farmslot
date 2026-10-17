@@ -31,8 +31,9 @@ test('signed rule-enabled webhook events skip legacy dispatch, while unmatched l
     routed += 1;
     return uncertain ? 'unknown' : enabled ? 'rules' : 'legacy';
   });
+  const missingPrincipal = () => ({ ok: false as const, reason: 'missing_principal' as const });
   const server = createServer((req, res) => {
-    void handleGitHubWebhook(req, res, () => null).catch((error) => {
+    void handleGitHubWebhook(req, res, missingPrincipal).catch((error) => {
       res.writeHead(500);
       res.end(String(error));
     });

@@ -32,7 +32,10 @@ import {
   sendNodeRequest,
 } from '../../fleet/node-rpc.js';
 import { loadCredentialStore } from '../../security/credential-store.js';
-import { nativeOwnerAssignedMachines } from '../../security/native-node.js';
+import {
+  nativeOwnerAssignedMachines,
+  requireGenerationZeroOwner,
+} from '../../security/native-node.js';
 import { ownsLocalNativeProfile } from '../../security/native-owner.js';
 
 import { knownNativeExecutionNodes } from './execution-nodes.js';
@@ -64,6 +67,8 @@ function hasIssuedOfflineAssignment(owner: string, machine: string, principalId?
 
 /** An offline assignment permits waiting only; it never authorizes a request without a live node. */
 export function resolveNativeExecutionNode(owner: string, machine: string): AuthorizedNativeNode {
+  // The shared remote routing boundary: a replacement at a reused id never owns a node.
+  requireGenerationZeroOwner(owner);
   const node = getNode(machine);
   if (!node && hasIssuedOfflineAssignment(owner, machine))
     throw new NodeTransportUnavailableError(

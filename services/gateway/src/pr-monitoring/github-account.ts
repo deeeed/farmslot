@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { assertMonitoredPRIdentity, type PRSourceAccount } from '@farmslot/protocol';
 
 import { ghRequest, type GhRequestOpts } from '../integrations/github-client.js';
+import { principalOwnerGeneration } from '../security/work-originator.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -54,7 +55,11 @@ async function resolveAccount(ownerId: string, account?: PRSourceAccount) {
   const binding = {
     host,
     token,
-    scope: JSON.stringify([ownerId, account?.login ?? 'default-publication']),
+    scope: JSON.stringify([
+      ownerId,
+      principalOwnerGeneration(ownerId),
+      account?.login ?? 'default-publication',
+    ]),
   };
   const { stdout } = await ghRequest(['api', '--hostname', host, 'user'], {
     account: binding,

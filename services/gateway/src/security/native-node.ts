@@ -2,6 +2,8 @@ import type { NativeExecutionNodeDeclaration, Principal } from '@farmslot/protoc
 
 import { GatewayMethodError } from '../core/method-error.js';
 
+import { loadCredentialStore } from './credential-store.js';
+
 export function nativeNodeDeclaration(
   value: unknown,
   machine: string,
@@ -69,11 +71,32 @@ export function assertNativeMachineAssignment(
     );
 }
 
+/** Native execution ownership is id-only, so a replacement at a reused id never holds it. */
+export function isGenerationZeroPrincipal(
+  principals: readonly Principal[],
+  principalId: string,
+): boolean {
+  return (principals.find((principal) => principal.id === principalId)?.generation ?? 0) === 0;
+}
+
+export function requireGenerationZeroOwner(
+  owner: string,
+  principals: readonly Principal[] = loadCredentialStore().principals,
+): string {
+  if (!isGenerationZeroPrincipal(principals, owner))
+    throw new GatewayMethodError(
+      'AUTH_FORBIDDEN',
+      `${owner} is a replacement identity at a reused id; native execution ownership stays with the original identity, so configure another native owner.`,
+    );
+  return owner;
+}
+
 /** Offline inventory comes from issued assignments; remembered hello data is not authority. */
 export function nativeOwnerAssignedMachines(
   principals: readonly Principal[],
   owner: string,
 ): Set<string> {
+  if (!isGenerationZeroPrincipal(principals, owner)) return new Set();
   return new Set(
     principals.flatMap((principal) =>
       principal.subject.type === 'node' && principal.subject.nativeOwnerPrincipalId === owner

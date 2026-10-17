@@ -7,6 +7,8 @@ import type { GatewayAuthRuntime, GatewayAuthSession } from './auth.js';
 import { AUTHORIZATION_METHOD_CLASSIFICATION } from './authorization-classification.generated.js';
 import { activeAdminCredentialCount } from './credential-store.js';
 import { hasNativeWorkspaceAccess } from './native-owner.js';
+import { generationMismatchMessage } from './principal-resolver.js';
+import { principalOwnerGeneration } from './work-originator.js';
 
 const IDENTITY_MANAGEMENT_METHODS = new Set([
   'principal.create',
@@ -163,11 +165,17 @@ export function authorizeStoredRunEffect(
   principal: Principal | null,
   itemLabel: string,
   effectiveSafetyTier: SafetyTier | undefined,
+  replacedPrincipalId?: string,
 ): Principal {
   if (principal && isAdminPrincipal(principal)) return principal;
   const authority = principal
     ? `principal '${principal.subject.displayName}' (${principal.id}) no longer has admin/global authority`
-    : 'its stored originator cannot be resolved';
+    : replacedPrincipalId
+      ? generationMismatchMessage(
+          replacedPrincipalId,
+          'queue the work again as the current identity',
+        )
+      : 'its stored originator cannot be resolved';
   throw new GatewayMethodError(
     'AUTH_FORBIDDEN',
     `Denied queued item '${itemLabel}' at fire time: ${authority}; ` +
@@ -177,6 +185,20 @@ export function authorizeStoredRunEffect(
         'edit or requeue the item from a current admin session so its authority is explicit',
     },
   );
+}
+
+/**
+ * Whether a stored PR automation owner still holds admin authority as the
+ * identity generation that wrote it. Callers acting for a stored record pass
+ * its generation; otherwise the session's own generation applies to its id.
+ */
+export function ownerAdminAuthority(
+  runtime: GatewayAuthRuntime,
+): (ownerId: string, generation?: number) => boolean {
+  return (ownerId, generation = principalOwnerGeneration(ownerId)) => {
+    const resolution = runtime.resolver.resolvePrincipalId(ownerId, generation);
+    return resolution.ok && isAdminPrincipal(resolution.principal);
+  };
 }
 
 export function canReceiveBroadcast(

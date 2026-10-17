@@ -28,6 +28,8 @@ export function validVisualJudgmentReason(
 export interface ProjectVisualClaimReviewPolicy {
   delegatedReviewerPrincipalIds?: string[];
   delegatorPrincipalId?: string;
+  /** Identity generation the delegator must hold. Omission means zero. */
+  delegatorPrincipalGeneration?: number;
 }
 
 export type RecipeVisualReviewer = EvidenceAttestationApprover & {
@@ -48,8 +50,18 @@ export function parseProjectVisualClaimReviewPolicy(
         !value.delegatorPrincipalId.trim() ||
         !Array.isArray(value.delegatedReviewerPrincipalIds) ||
         value.delegatedReviewerPrincipalIds.some((id) => typeof id !== 'string' || !id.trim()))) ||
+    (value.delegatorPrincipalGeneration !== undefined &&
+      (value.delegatorPrincipalId === undefined ||
+        typeof value.delegatorPrincipalGeneration !== 'number' ||
+        !Number.isSafeInteger(value.delegatorPrincipalGeneration) ||
+        value.delegatorPrincipalGeneration < 1)) ||
     Object.keys(value).some(
-      (key) => !['delegatedReviewerPrincipalIds', 'delegatorPrincipalId'].includes(key),
+      (key) =>
+        ![
+          'delegatedReviewerPrincipalIds',
+          'delegatorPrincipalId',
+          'delegatorPrincipalGeneration',
+        ].includes(key),
     )
   )
     throw new TypeError('Invalid project visualClaimReview policy.');
@@ -57,6 +69,9 @@ export function parseProjectVisualClaimReviewPolicy(
     ...(typeof value.delegatorPrincipalId === 'string'
       ? {
           delegatorPrincipalId: value.delegatorPrincipalId,
+          ...(typeof value.delegatorPrincipalGeneration === 'number'
+            ? { delegatorPrincipalGeneration: value.delegatorPrincipalGeneration }
+            : {}),
           delegatedReviewerPrincipalIds: [
             ...new Set(value.delegatedReviewerPrincipalIds as string[]),
           ].sort(),

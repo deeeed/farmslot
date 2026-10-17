@@ -38,7 +38,7 @@ import { loadFleetStatus, loadPoolConfigs, loadProjectConfig } from '../fleet/st
 import type { RunCreateInternalOptions, RunCreationPlan } from '../methods/run.js';
 import { RunTransitionCoordinator } from '../run-lifecycle/transition-coordinator.js';
 import { buildRunRecord, getRun, persistRunNow, updateRun } from '../runs/store.js';
-import { currentSessionOriginator } from '../security/work-originator.js';
+import { currentSessionOriginator, runWithPrincipalOwner } from '../security/work-originator.js';
 
 import { type PreparedSourcePins, SourceAuthority } from './authority.js';
 import {
@@ -209,23 +209,30 @@ async function runNodeId(run: Run): Promise<string | undefined> {
 }
 
 export async function replanSourceRun(run: Run, target: SourceAdmissionTarget): Promise<Run> {
-  if (!run.dispatchRequest) throw new Error('Provisional run has no retained dispatch request');
+  const request = run.dispatchRequest;
+  if (!request) throw new Error('Provisional run has no retained dispatch request');
   const { planRunCreation } = await import('../methods/run.js');
-  const plan = await planRunCreation(
-    {
-      ...structuredClone(run.dispatchRequest),
-      ...(target.slotId ? { slotId: target.slotId } : {}),
-      familyId: run.familyId,
-      parentRunId: run.parentRunId ?? undefined,
-      familyRootTicketOrPr: run.familyRootTicketOrPr,
-    },
-    {
-      replanningRunId: run.id,
-      prWork: run.prWork,
-      workflowExecution: run.workflowExecution,
-      reviewQaContract: run.reviewQaContract,
-    },
-  );
+  const replan = () =>
+    planRunCreation(
+      {
+        ...structuredClone(request),
+        ...(target.slotId ? { slotId: target.slotId } : {}),
+        familyId: run.familyId,
+        parentRunId: run.parentRunId ?? undefined,
+        familyRootTicketOrPr: run.familyRootTicketOrPr,
+      },
+      {
+        replanningRunId: run.id,
+        prWork: run.prWork,
+        workflowExecution: run.workflowExecution,
+        reviewQaContract: run.reviewQaContract,
+      },
+    );
+  // A delegated static review replans as its native owner, not its requester.
+  const plan =
+    run.requestedByPrincipalId && run.createdByPrincipalId
+      ? await runWithPrincipalOwner({ ownerId: run.createdByPrincipalId }, replan)
+      : await replan();
   const originalQa = run.qaAfterReview;
   const plannedQa = plan.qaAfterReview;
   if (
@@ -238,6 +245,7 @@ export async function replanSourceRun(run: Run, target: SourceAdmissionTarget): 
   const next = buildRunRecord(plan.params, {
     runId: run.id,
     createdByPrincipalId: run.createdByPrincipalId,
+    createdByPrincipalGeneration: run.createdByPrincipalGeneration,
     nativeOwnerPrincipalId: run.nativeOwnerPrincipalId,
     dispatchRequest: run.dispatchRequest,
     workflowExecution: plan.workflowExecution,
@@ -256,6 +264,7 @@ export async function replanSourceRun(run: Run, target: SourceAdmissionTarget): 
     decisions: run.decisions,
     queuedAt: run.queuedAt,
     createdByPrincipalId: run.createdByPrincipalId,
+    createdByPrincipalGeneration: run.createdByPrincipalGeneration,
     nativeOwnerPrincipalId: run.nativeOwnerPrincipalId,
     executionTemplate: plan.executionTemplateSnapshot,
     engineState: { ...next.engineState, ...run.engineState },

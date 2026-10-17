@@ -6,6 +6,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Add gateway-derived identity generation fields (ADR-051 Amendment 5): `ownerGeneration` on PR monitors, monitor policies, teams, trigger rules, rule actions, review submissions, contributions, PR work review owners and `AssessmentRecord`; `PRTeamProfile.notificationPrincipalGenerations`; `Run.createdByPrincipalGeneration`, `Run.requestedByPrincipalId` and `Run.requestedByPrincipalGeneration`; `QueueItem.delegatedOwnerPrincipalId`; and an optional `delegatorPrincipalGeneration` in the project visual claim review policy. Requests that supply these fields are refused.
+
 ## 0.54.0 - 2026-10-17
 
 - Add the shared run-list view model: `isActiveListRun` (nonterminal, or failed while it still holds resources after a refused completion prerequisite), `selectRunList`, `slotMachineMap`, `mergeRunsById` and `ACTIVE_RUN_LIST_LIMIT`. `isCompletionPrerequisiteFailure` moves here from the gateway.

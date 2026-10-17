@@ -11,6 +11,7 @@ import { GatewayMethodError } from '../core/method-error.js';
 
 import type { GatewayAuthRuntime, GatewayAuthSession } from './auth.js';
 import { authorizeGatewayMethod } from './authorization.js';
+import { generationMismatchMessage } from './principal-resolver.js';
 
 /** Re-resolve active credentials/roles each time; virtual loopback identity is insufficient. */
 export function authorizeEvidenceAttestation(
@@ -54,10 +55,29 @@ export function authorizeVisualClaimReview(
       'AUTH_FORBIDDEN',
       "Visual review requires the authorized reviewer's own active credential.",
     );
-  const delegator =
-    delegated && policy?.delegatorPrincipalId
-      ? runtime.store.findPrincipal(policy.delegatorPrincipalId)
-      : undefined;
+  // A listed reviewer id names generation zero; a reused id is never credited.
+  if (delegated && (principal.generation ?? 0) !== 0)
+    throw new GatewayMethodError(
+      'AUTH_FORBIDDEN',
+      generationMismatchMessage(
+        principal.id,
+        'name another service in visual_claim_review.delegatedReviewerPrincipalIds.',
+      ),
+    );
+  // A bare delegator id names generation zero; a reused id needs an explicit pin.
+  const delegatorId = delegated ? policy?.delegatorPrincipalId : undefined;
+  const resolution = delegatorId
+    ? runtime.resolver.resolvePrincipalId(delegatorId, policy?.delegatorPrincipalGeneration ?? 0)
+    : undefined;
+  if (delegatorId && resolution && !resolution.ok && resolution.reason === 'generation_mismatch')
+    throw new GatewayMethodError(
+      'AUTH_FORBIDDEN',
+      generationMismatchMessage(
+        delegatorId,
+        'set visual_claim_review.delegatorPrincipalGeneration to its current generation or name another person.',
+      ),
+    );
+  const delegator = resolution?.ok ? resolution.principal : undefined;
   if (delegated && (!delegator || delegator.subject.type !== 'person'))
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
