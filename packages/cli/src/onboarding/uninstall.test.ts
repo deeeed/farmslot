@@ -289,7 +289,7 @@ function workspaceWithHistory(prefix: string) {
   writeFileSync(join(clone, 'projects', 'app', 'tasks', 'feat', 't-1', 'TASK.md'), '# task');
   mkdirSync(join(clone, 'projects', 'no-runs'), { recursive: true });
   // A linked project dir is not removed with the clone, so its tasks are never moved.
-  const linked = join(`${root}-linked-project`);
+  const linked = `${root}-linked-project`;
   mkdirSync(join(linked, 'tasks'), { recursive: true });
   symlinkSync(linked, join(clone, 'projects', 'linked'));
   mkdirSync(join(root, 'repos'), { recursive: true });
@@ -395,7 +395,7 @@ test('purge keeps history the operator chose to keep', async (t) => {
 test('a failed history backup under purge keeps the history and state for a re-run', async (t) => {
   const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-purge-backup-');
   // The PATH link install.sh makes points into the clone.
-  const binDir = join(`${root}-bin`);
+  const binDir = `${root}-bin`;
   t.after(() => {
     cleanup();
     rmSync(binDir, { recursive: true, force: true });

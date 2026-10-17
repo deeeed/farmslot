@@ -42,9 +42,9 @@ export interface UninstallOptions {
 
 export interface UninstallPlan {
   workspaceRoot: string;
-  /** Always removed: the farmslot clone + product-repo clones. */
+  /** Removed unless run history is held: the farmslot clone + product-repo clones. */
   installDirs: string[];
-  /** Always removed: state.json. */
+  /** Removed unless run history is held: state.json. */
   installFiles: string[];
   runsDir: string;
   /** The gateway's run records and task folders inside the farmslot clone, each moved under
@@ -586,8 +586,9 @@ export async function executeUninstallPlan(
 
   dispose(plan.homeDir, plan.home, plan.homeBackupPath);
 
-  // 4. Always-remove install artifacts. While history is held they all stay: the clone may
-  //    hold the history, and the PATH symlink and state.json the re-run needs point into it.
+  // 4. Always-remove install artifacts. While history is held they all stay: the clone may hold
+  //    the history and the PATH symlink points into it, and state.json drives the re-run, which
+  //    then removes them (repos included).
   for (const path of [...plan.installDirs, ...plan.installFiles]) {
     if (historyHeld) {
       hooks.step(`kept ${path}: run history is not yet kept or backed up`);
