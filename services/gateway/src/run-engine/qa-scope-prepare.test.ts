@@ -291,13 +291,17 @@ test('the post-prepare check refuses a checkout away from the frozen head', budg
 // Regression: a QA run that failed after prepare left the slot detached at its
 // head, and the next run's prepare refused "Slot is on 'HEAD', expected 'main'".
 test('a slot another QA run left detached prepares at this run head', budget, async (t) => {
+  git(repo, 'fetch', '-q', 'origin');
   git(repo, 'checkout', '-q', '--detach', frozen);
+  // A failed deps step can leave tracked files changed that the idle branch lacks.
+  writeFileSync(path.join(repo, 'frozen.txt'), 'changed by a failed prepare\n');
   const run = qaRun(t, selection({ kind: 'ref', ref: later, expectedHeadSha: later }));
 
   const result = await prepare(run.id);
 
   assert.equal(result.outputs?.success, true);
   assert.equal(git(repo, 'rev-parse', 'HEAD'), later);
+  assert.equal(git(repo, 'status', '--porcelain'), '');
   assert.throws(() => git(repo, 'symbolic-ref', '-q', 'HEAD'), 'HEAD is detached');
 });
 
@@ -357,6 +361,12 @@ test('a slot detached at a local-only commit is still refused', budget, async (t
   git(repo, 'checkout', '-q', '--detach', localOnly);
   const run = qaRun(t, selection({ kind: 'ref', ref: later, expectedHeadSha: later }));
 
-  await assert.rejects(prepare(run.id), /HEAD has unpushed commits/);
+  // The refusal names why the remote does not show it.
+  await assert.rejects(
+    prepare(run.id),
+    new RegExp(
+      `Slot is detached at ${localOnly.slice(0, 12)}, which origin does not show \\(startRef commit '${localOnly}' is not reachable`,
+    ),
+  );
   assert.equal(git(repo, 'rev-parse', 'HEAD'), localOnly);
 });

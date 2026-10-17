@@ -97,6 +97,13 @@ try {
     env: baseEnv,
     stdio: 'pipe',
   });
+  // Main then moves on: a later run freezes this commit.
+  git(seed, 'checkout', '-q', 'main');
+  writeFileSync(path.join(seed, 'later.txt'), 'later\n');
+  git(seed, 'add', 'later.txt');
+  git(seed, 'commit', '-qm', 'later on main');
+  const mainLater = git(seed, 'rev-parse', 'HEAD');
+  git(seed, 'push', '-q', 'origin', 'main');
   const localOnly = git(
     repo,
     'commit-tree',
@@ -150,7 +157,7 @@ try {
 
   // A release-range QA run as admitted (fceb9861's shape): exact base and head,
   // frozen as the prepare start ref, whose prepare failed resolving that head.
-  const qaRun = (id, headSha) => {
+  const qaRun = (id, headSha, status = 'failed') => {
     const taskFile = path.join(root, 'projects', project, 'tasks', 'qa', id, 'TASK.md');
     mkdirSync(path.dirname(taskFile), { recursive: true });
     writeFileSync(taskFile, '# Release validation proof\nNo implementation work.\n');
@@ -161,8 +168,10 @@ try {
       ticketOrPr: `Release validation proof ${id.slice(0, 8)}`,
       flowType: 'qa',
       mode: 'autonomous',
-      status: 'failed',
-      error: `startRef commit '${headSha}' is not reachable from fetched origin refs/tags`,
+      status,
+      ...(status === 'failed'
+        ? { error: `startRef commit '${headSha}' is not reachable from fetched origin refs/tags` }
+        : {}),
       slotId,
       taskFile,
       prepareProfile: 'proof',
@@ -185,8 +194,10 @@ try {
         name === 'find-slot' || name === 'write-task'
           ? { name, status: 'done', ...(name === 'write-task' ? { outputs: { taskFile } } : {}) }
           : name === 'prepare'
-            ? { name, status: 'failed', detail: 'startRef commit is not reachable' }
-            : { name, status: 'skipped' },
+            ? status === 'failed'
+              ? { name, status: 'failed', detail: 'startRef commit is not reachable' }
+              : { name, status: 'running', startedAt: new Date(Date.now() - 30000).toISOString() }
+            : { name, status: status === 'failed' ? 'skipped' : 'pending' },
       ),
     };
   };
@@ -227,27 +238,38 @@ try {
       ),
     );
 
-  logFd = openSync(path.join(temporaryRoot, 'gateway.log'), 'w');
-  gateway = spawn(process.execPath, ['--import', 'tsx', 'services/gateway/src/index.ts'], {
-    cwd: sourceRoot,
-    env,
-    stdio: ['ignore', logFd, logFd],
-  });
-  for (let attempt = 0; ; attempt++) {
-    if (gateway.exitCode !== null || gateway.signalCode !== null)
-      throw new Error('Fixture gateway exited during startup');
-    try {
-      if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break;
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
+  const startGateway = async (gatewayEnv = env) => {
+    logFd = openSync(path.join(temporaryRoot, 'gateway.log'), 'a');
+    gateway = spawn(process.execPath, ['--import', 'tsx', 'services/gateway/src/index.ts'], {
+      cwd: sourceRoot,
+      env: gatewayEnv,
+      stdio: ['ignore', logFd, logFd],
+    });
+    for (let attempt = 0; ; attempt++) {
+      if (gateway.exitCode !== null || gateway.signalCode !== null)
+        throw new Error('Fixture gateway exited during startup');
+      try {
+        if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) return;
+      } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+      }
+      if (attempt >= 450) throw new Error('Fixture gateway did not start');
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    if (attempt >= 450) throw new Error('Fixture gateway did not start');
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
+  };
+  const stopGateway = async () => {
+    if (gateway && gateway.exitCode === null && gateway.signalCode === null) {
+      const stopped = once(gateway, 'exit');
+      gateway.kill('SIGTERM');
+      await stopped;
+    }
+    if (logFd !== undefined) closeSync(logFd);
+    logFd = undefined;
+  };
+  await startGateway();
 
   // Replay prepare through RPC; the deps hook stops it before any dispatch.
-  const prepareAt = async (runId) => {
-    rpc('run.replayStep', { runId, stepName: 'prepare', triggeredBy: 'operator' });
+  const stopped = async (runId) => {
     for (const deadline = Date.now() + 120000; Date.now() < deadline; ) {
       const current = rpc('run.get', { runId }).run;
       const slot = rpc('fleet.status', {}).fleet.slots.find((s) => s.slot === slotId);
@@ -258,6 +280,16 @@ try {
     }
     throw new Error(`Run ${runId} did not stop at the proof boundary`);
   };
+  const prepareAt = (runId) => {
+    rpc('run.replayStep', { runId, stepName: 'prepare', triggeredBy: 'operator' });
+    return stopped(runId);
+  };
+  const leftDetached = (run) =>
+    run.steps
+      .find((step) => step.name === 'prepare')
+      .outputs.subSteps.some(
+        (step) => step.name === 'branch' && /^Left detached/.test(step.detail),
+      );
 
   const moved = await prepareAt(frozenRunId);
   assert.doesNotMatch(moved.error, /not reachable/, 'the moved-branch commit resolves');
@@ -277,7 +309,39 @@ try {
   // run, then a different run, must prepare from it without an operator release.
   const replayed = await prepareAt(frozenRunId);
   assert.match(replayed.error, /exit 42/, 'a prepare replay from the detached slot reaches deps');
+  assert.ok(leftDetached(replayed), 'the replay moved the slot off its detached head first');
   assert.equal(git(repo, 'rev-parse', 'HEAD'), frozen);
+
+  // A fresh prepare (no replay, so the unpublished-commit check runs): a run left
+  // preparing when the gateway stopped is re-driven by restart recovery.
+  await stopGateway();
+  const freshRunId = randomUUID();
+  writeJson(
+    path.join(root, '.runs', `${freshRunId}.json`),
+    qaRun(freshRunId, mainLater, 'preparing'),
+  );
+  const status = JSON.parse(readFileSync(path.join(root, '.farm-status.json'), 'utf8'));
+  status.slots = status.slots.map((row) =>
+    row.slot === slotId
+      ? {
+          ...row,
+          lifecycle: 'busy',
+          phase: 'preparing',
+          agent: 'orchestrator',
+          current_run_id: freshRunId,
+        }
+      : row,
+  );
+  writeJson(path.join(root, '.farm-status.json'), status);
+  // Startup run recovery is part of orchestration; this root has no backlog or auto-recovery.
+  const { FARMSLOT_DISABLE_ORCHESTRATION: _orchestrationOff, ...recoveringEnv } = env;
+  await startGateway(recoveringEnv);
+  const fresh = await stopped(freshRunId);
+  assert.doesNotMatch(fresh.error, /Slot is on 'HEAD'|unpushed commits/);
+  assert.match(fresh.error, /exit 42/, 'a fresh prepare from the detached slot reaches deps');
+  assert.ok(leftDetached(fresh), 'the fresh prepare moved the slot off its detached head first');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), mainLater);
+
   const refused = await prepareAt(localOnlyRunId);
   assert.doesNotMatch(refused.error, /Slot is on 'HEAD'|unpushed commits/);
   assert.match(refused.error, /not reachable from fetched origin/);
@@ -289,6 +353,7 @@ try {
       preparedToDepsHook: true,
       slotRefsUnchanged: true,
       replayFromDetachedSlot: true,
+      freshPrepareFromDetachedSlot: true,
       localOnlyRefused: true,
     }),
   );
@@ -298,9 +363,9 @@ try {
   throw error;
 } finally {
   if (gateway && gateway.exitCode === null && gateway.signalCode === null) {
-    const stopped = once(gateway, 'exit');
+    const exited = once(gateway, 'exit');
     gateway.kill('SIGTERM');
-    await stopped;
+    await exited;
   }
   if (logFd !== undefined) closeSync(logFd);
   closeTmuxSandbox(tmuxSandboxEnvironment(baseEnv, tmuxDir));
