@@ -4,7 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
-- `review checklist` prints one "Domain patterns" heading and points setup step 2 at the domain's antipatterns file. `review domain` names its source on stderr. An owned-paths file with an empty domain is refused. `recipe logs` words its refusals generically and returns `--events` and undetected-adapter errors as usage envelopes. Doctor's recorder failure line includes the recorder detail.
+- `review checklist` prints one "Domain patterns" heading and points setup step 2 at the domain's antipatterns file. `review domain` names its source on stderr. An owned-paths file with an empty domain is refused. `recipe logs` words its refusals generically and returns `--events`, undetected-adapter and unknown-adapter errors as usage envelopes. Doctor's recorder failure line includes the recorder detail.
 
 - Run `recipe artifacts`, `recipe artifacts validate` and doctor live-evidence checks through the shared recipe-cli harness exports, with unchanged output and refusals.
 

@@ -476,6 +476,12 @@ describe('project log views', () => {
     assert.equal(envelope.error.code, 'USAGE');
     assert.match(envelope.error.message, /^could not detect the .* repo type for /u);
     assert.match(envelope.error.userAction, /--adapter <shop>/u);
+    const unknown = await capture(() =>
+      handleLogs(parseLogs(['--target', target, '--adapter', 'nope', '--json'])),
+    );
+    assert.equal(unknown.result, 2);
+    assert.equal(JSON.parse(unknown.stdout).error.code, 'USAGE');
+    assert.match(JSON.parse(unknown.stdout).error.userAction, /--adapter <shop>/u);
     fs.rmSync(build);
     const events = await capture(() =>
       handleLogs(parseLogs([...args, '--source', 'build', '--events', 'x', '--json'])),

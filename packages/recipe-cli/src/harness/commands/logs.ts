@@ -3,18 +3,16 @@ import path from 'node:path';
 
 import {
   adapterDetectNext,
-  adapterForPlatform,
+  assertAdapter,
   harnessAdapter,
   undetectedAdapterMessage,
 } from '../adapters.js';
-import { contextAdapter } from '../context-state.js';
 import { harnessHost, recipeExecutionSignal } from '../host.js';
 import {
   optionFlag,
   optionString,
   type ParsedArgs,
-  resolveAdapter,
-  targetPath,
+  requestedAdapter,
   usageError,
 } from '../parse-args.js';
 import { EXIT, spawnScriptStreaming, usageOut } from '../shared.js';
@@ -52,15 +50,21 @@ export async function handleLogs(
   config: LogsCommandOptions = {},
 ): Promise<number> {
   const json = optionFlag(options, 'json');
-  const target = targetPath(options);
-  const detected =
-    optionString(options, 'adapter') ??
-    adapterForPlatform(optionString(options, 'platform')) ??
-    contextAdapter(target);
-  if (!detected) {
+  const { adapter, target } = requestedAdapter(options);
+  if (!adapter) {
     return usageOut(json, 'logs', undetectedAdapterMessage(target), adapterDetectNext());
   }
-  const { adapter } = resolveAdapter(options);
+  try {
+    assertAdapter(adapter);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('internal:')) throw error;
+    return usageOut(
+      json,
+      'logs',
+      error instanceof Error ? error.message : String(error),
+      adapterDetectNext(),
+    );
+  }
   const runtime = harnessAdapter(adapter);
   const sources = runtime.logSources(target);
   const app = runtime.appLogSource(target);

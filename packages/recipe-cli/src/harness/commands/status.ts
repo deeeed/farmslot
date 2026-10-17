@@ -9,16 +9,21 @@ import type { AdapterRuntimeStatus } from '@farmslot/adapter-sdk';
 
 import {
   adapterDetectNext,
-  adapterForPlatform,
   assertAdapter,
   harnessAdapter,
   undetectedAdapterMessage,
 } from '../adapters.js';
 import { color } from '../cli-color.js';
 import { readCommandJournal, readLatestProofJournal } from '../command-journal.js';
-import { contextAdapter, harnessContextField } from '../context-state.js';
+import { harnessContextField } from '../context-state.js';
 import { harnessHost } from '../host.js';
-import { optionFlag, optionString, type ParsedArgs, targetPath } from '../parse-args.js';
+import {
+  optionFlag,
+  optionString,
+  type ParsedArgs,
+  requestedAdapter,
+  targetPath,
+} from '../parse-args.js';
 import {
   adapterReadiness,
   type FeatureFlagReport,
@@ -56,10 +61,7 @@ export async function handleStatus(
   }
   const fast = optionFlag(options, 'fast');
   const allDevices = optionFlag(options, 'allDevices');
-  const adapter =
-    optionString(options, 'adapter') ??
-    adapterForPlatform(optionString(options, 'platform')) ??
-    contextAdapter(target);
+  const { adapter } = requestedAdapter(options);
   if (!adapter) {
     return usageOut(json, 'status', undetectedAdapterMessage(target), adapterDetectNext());
   }

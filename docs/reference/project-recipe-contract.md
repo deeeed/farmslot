@@ -361,12 +361,12 @@ The canonical grammar MUST retain each referenced operation's argument mapping, 
 
 `@farmslot/recipe-cli/harness` owns these additive provider options and exports, consumed by the root CLI and project provider composition:
 
-| Surface                                                                      | Contract                                                                                                                             |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `ProjectProvider.commandOptions.task?: ProjectTaskCommandOptions`            | Extends `TaskInitCommandOptions` and `ChecklistCommandOptions`, with required `stepGates: readonly ChecklistStepGate[]`              |
-| `ProjectProvider.commandOptions.recipeQuality?: RecipeQualityCommandOptions` | Existing builder and optional advisor subcommands; `guidance?: string` carries project quality text                                  |
-| `ProjectProvider.commandOptions.review?: ReviewCommandOptions`               | Project rule data: `baseRules?: string`, `runtimeIds?: readonly string[]`, and `parityRuntimeIds?: Readonly<Record<string, string>>` |
-| `ReviewCommandOptions` hooks for host CLIs built with `createHarnessCli`     | `libraries`, `resolveLibrary`, `defaultDomain`, `domainCommand`, `usage`, `runtime`, `header`, `verdictRule`; a binding ignores them |
+| Surface                                                                      | Contract                                                                                                                                                                     |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProjectProvider.commandOptions.task?: ProjectTaskCommandOptions`            | Extends `TaskInitCommandOptions` and `ChecklistCommandOptions`, with required `stepGates: readonly ChecklistStepGate[]`                                                      |
+| `ProjectProvider.commandOptions.recipeQuality?: RecipeQualityCommandOptions` | Existing builder and optional advisor subcommands; `guidance?: string` carries project quality text                                                                          |
+| `ProjectProvider.commandOptions.review?: ReviewCommandOptions`               | Project rule data: `baseRules?: string`, `runtimeIds?: readonly string[]`, and `parityRuntimeIds?: Readonly<Record<string, string>>`                                         |
+| `ReviewCommandOptions` hooks for host CLIs built with `createHarnessCli`     | `libraries`, `resolveLibrary`, `defaultDomain`, `domainCommand`, `usage`, `runtime`, `header`, `verdictRule`, with the exported `ReviewLibrary` type; a binding ignores them |
 
 Generic parsing, task-directory production, marking, quality validation, domain matching and review rendering MUST have one shared implementation. Existing template/library resolution remains authoritative. Providers retain project gate predicates, closeout policy, supported runtime IDs, parity mappings and rule text. They MUST NOT invoke their retired CLI or copy a shared handler.
 

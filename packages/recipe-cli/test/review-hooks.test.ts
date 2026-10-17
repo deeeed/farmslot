@@ -210,3 +210,16 @@ test('an owned-paths file with an empty domain is refused', async (t) => {
     { message: `Invalid owned-paths.json: ${file}`, exitCode: 2 },
   );
 });
+
+test('without resolveLibrary, a declared domain is found among the host libraries', async (t) => {
+  const f = fixture(t);
+  const output = captureOutput(t);
+  await handleReview(['checklist', '--domain', 'cart', '--base', 'trunk', '--json'], {
+    runtimeIds: ['web'],
+    runtime: () => 'shop',
+    libraries: () => [f.library],
+  });
+  const result = JSON.parse(output().stdout);
+  assert.deepEqual(result.library, f.library);
+  assert.match(result.checklist, /^# Review checklist — cart \(shop\)/u);
+});

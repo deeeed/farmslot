@@ -255,11 +255,15 @@ export function parsePort(value: string | undefined, errorMessage: string): numb
 // invocation's context resolved for --target/cwd (as doctor/verify/install
 // take it). Lets `call`, `run --plan`, and `completion-candidates` work in a
 // checkout without a flag.
-export function resolveAdapter(options: CliOptions): { adapter: string; target: string } {
+export function requestedAdapter(options: CliOptions): { adapter?: string; target: string } {
   const target = targetPath(options);
   const explicit =
     optionString(options, 'adapter') ?? adapterForPlatform(optionString(options, 'platform'));
-  const adapter = explicit ?? contextAdapter(target);
+  return { adapter: explicit ?? contextAdapter(target), target };
+}
+
+export function resolveAdapter(options: CliOptions): { adapter: string; target: string } {
+  const { adapter, target } = requestedAdapter(options);
   if (!adapter) {
     throw usageError(`${undetectedAdapterMessage(target)}\n  Next: ${adapterDetectNext()}`);
   }
