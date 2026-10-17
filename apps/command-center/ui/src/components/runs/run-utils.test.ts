@@ -20,7 +20,6 @@ import {
   familyCompletionLabel,
   familyLedgerTurnLabel,
   formatCompletionPercent,
-  groupRunsByFamily,
   isCIWatchWorkerFixActive,
   isEvalCandidateRun,
   isSameFamilyComparisonPair,
@@ -37,7 +36,6 @@ import {
   runStatusColor,
   runTemplateFileName,
   sortProjectAnalyticsForDisplay,
-  sortRunsForFamilyView,
   stepNodeDurationLabel,
   summarizeEligibilityReasons,
 } from './run-utils.js';
@@ -588,138 +586,6 @@ test('familyLedgerTurnLabel describes operator turns from ledger provenance', ()
     'Follow-up code delta',
   );
   assert.equal(familyLedgerTurnLabel(makeLedgerEntry({ changeKind: 'legacy' })), 'Legacy diff');
-});
-
-test('sortRunsForFamilyView keeps the family root first and variants stable', () => {
-  const sorted = sortRunsForFamilyView([
-    makeRun({
-      id: 'run-codex',
-      familyId: 'family-1',
-      parentRunId: 'root-run',
-      lane: 'comparison',
-      variant: 'codex',
-      createdAt: '2026-04-15T10:00:00.000Z',
-    }),
-    makeRun({
-      id: 'run-claude',
-      familyId: 'family-1',
-      parentRunId: 'root-run',
-      lane: 'comparison',
-      variant: 'claude',
-      createdAt: '2026-04-15T11:00:00.000Z',
-    }),
-    makeRun({
-      id: 'family-1',
-      familyId: 'family-1',
-      parentRunId: null,
-      ticketOrPr: 'PROJ-1',
-      createdAt: '2026-04-15T09:00:00.000Z',
-    }),
-  ]);
-  assert.deepEqual(
-    sorted.map((run) => run.id),
-    ['family-1', 'run-claude', 'run-codex'],
-  );
-});
-
-test('groupRunsByFamily groups siblings and orders families by newest activity', () => {
-  const groups = groupRunsByFamily([
-    makeRun({
-      id: 'family-a',
-      familyId: 'family-a',
-      createdAt: '2026-04-15T08:00:00.000Z',
-      ticketOrPr: 'PROJ-1',
-      familyRootTicketOrPr: 'PROJ-1',
-    }),
-    makeRun({
-      id: 'a-claude',
-      familyId: 'family-a',
-      parentRunId: 'family-a',
-      lane: 'comparison',
-      variant: 'claude',
-      createdAt: '2026-04-15T12:00:00.000Z',
-      status: 'done',
-    }),
-    makeRun({
-      id: 'a-codex',
-      familyId: 'family-a',
-      parentRunId: 'family-a',
-      lane: 'comparison',
-      variant: 'codex',
-      createdAt: '2026-04-15T11:00:00.000Z',
-      status: 'monitoring',
-    }),
-    makeRun({
-      id: 'family-b',
-      familyId: 'family-b',
-      createdAt: '2026-04-15T09:00:00.000Z',
-      ticketOrPr: 'PROJ-2',
-      familyRootTicketOrPr: 'PROJ-2',
-      status: 'failed',
-    }),
-  ]);
-
-  assert.deepEqual(
-    groups.map((group) => group.familyId),
-    ['family-a', 'family-b'],
-  );
-  assert.equal(groups[0].familyRootTicketOrPr, 'PROJ-1');
-  assert.equal(groups[0].rootRun?.id, 'family-a');
-  assert.equal(groups[0].activeCount, 2);
-  assert.equal(groups[0].comparisonCount, 2);
-  assert.deepEqual(groups[0].variants, ['claude', 'codex']);
-  assert.deepEqual(
-    groups[0].runs.map((run) => run.id),
-    ['family-a', 'a-claude', 'a-codex'],
-  );
-});
-
-test('groupRunsByFamily picks the family root as representativeRun when one exists', () => {
-  const [group] = groupRunsByFamily([
-    makeRun({
-      id: 'fam-root',
-      familyId: 'fam-root',
-      summary: 'Root summary',
-      createdAt: '2026-04-15T08:00:00.000Z',
-    }),
-    makeRun({
-      id: 'cmp-1',
-      familyId: 'fam-root',
-      parentRunId: 'fam-root',
-      lane: 'comparison',
-      variant: 'claude',
-      summary: 'Variant claude',
-      createdAt: '2026-04-15T12:00:00.000Z',
-    }),
-  ]);
-  assert.equal(group.representativeRun.id, 'fam-root');
-  assert.equal(group.familySummary, 'Root summary · latest follow-up: Variant claude');
-});
-
-test('groupRunsByFamily falls back to the newest run as representativeRun when no root exists', () => {
-  const [group] = groupRunsByFamily([
-    makeRun({
-      id: 'cmp-newest',
-      familyId: 'fam-cmp',
-      parentRunId: 'missing-root',
-      lane: 'comparison',
-      variant: 'claude',
-      summary: 'Cursor variant fix',
-      createdAt: '2026-04-15T12:00:00.000Z',
-    }),
-    makeRun({
-      id: 'cmp-older',
-      familyId: 'fam-cmp',
-      parentRunId: 'missing-root',
-      lane: 'comparison',
-      variant: 'codex',
-      summary: 'Codex variant fix',
-      createdAt: '2026-04-15T10:00:00.000Z',
-    }),
-  ]);
-  assert.equal(group.rootRun, null);
-  assert.equal(group.representativeRun.id, 'cmp-newest');
-  assert.equal(group.familySummary, 'Cursor variant fix');
 });
 
 test('pickFamilyComparePair prefers the newest comparison runs with distinct variants', () => {

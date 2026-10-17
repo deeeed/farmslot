@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Move run family grouping here from Command Center and Companion: `groupRunsByFamily`, `sortRunsForFamilyView`, `selectRecentRunFamilyGroups` and `RunFamilyGroup`. A family's `activeCount` uses `isActiveListRun`. Remove `ACTIVE_RUN_LIST_LIMIT`: `run.list` `active` is never truncated.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Add gateway-derived identity generation fields (ADR-051 Amendment 5): `ownerGeneration` on PR monitors, monitor policies, teams, trigger rules, rule actions, review submissions, contributions, PR work review owners and `AssessmentRecord`; `PRTeamProfile.notificationPrincipalGenerations`; `Run.createdByPrincipalGeneration`, `Run.requestedByPrincipalId` and `Run.requestedByPrincipalGeneration`; `QueueItem.delegatedOwnerPrincipalId`; and an optional `delegatorPrincipalGeneration` in the project visual claim review policy. Requests that supply these fields are refused.

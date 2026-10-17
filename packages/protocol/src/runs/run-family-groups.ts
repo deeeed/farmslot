@@ -1,4 +1,6 @@
-import { buildFamilySummary, type Run } from '@farmslot/protocol';
+import { isActiveListRun, type Run } from '../contracts/runs.js';
+
+import { buildFamilySummary } from './family-readiness.js';
 
 export interface RunFamilyGroup {
   familyId: string;
@@ -16,17 +18,15 @@ export interface RunFamilyGroup {
   variants: string[];
 }
 
-const TERMINAL_RUN_STATUSES = new Set(['done', 'failed', 'cancelled']);
-
 function isFamilyRoot(run: Run): boolean {
   return run.id === run.familyId || run.parentRunId == null;
 }
 
-function sortByCreatedAtDesc(runs: Run[]): Run[] {
+function sortByCreatedAtDesc(runs: readonly Run[]): Run[] {
   return [...runs].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
-export function sortRunsForFamilyView(runs: Run[]): Run[] {
+export function sortRunsForFamilyView(runs: readonly Run[]): Run[] {
   return [...runs].sort((left, right) => {
     if (isFamilyRoot(left) !== isFamilyRoot(right)) return isFamilyRoot(left) ? -1 : 1;
     if ((left.variant ?? null) !== (right.variant ?? null)) {
@@ -36,7 +36,8 @@ export function sortRunsForFamilyView(runs: Run[]): Run[] {
   });
 }
 
-export function groupRunsByFamily(runs: Run[]): RunFamilyGroup[] {
+/** Runs grouped by project and family, newest family first; Command Center and Companion share it. */
+export function groupRunsByFamily(runs: readonly Run[]): RunFamilyGroup[] {
   const grouped = new Map<string, { familyId: string; project: string; runs: Run[] }>();
   for (const run of runs) {
     const familyId = run.familyId || run.id;
@@ -80,7 +81,7 @@ export function groupRunsByFamily(runs: Run[]): RunFamilyGroup[] {
         familySummary: buildFamilySummary(rootRun, newestByCreatedAt, orderedRuns),
         runs: orderedRuns,
         latestCreatedAt,
-        activeCount: orderedRuns.filter((run) => !TERMINAL_RUN_STATUSES.has(run.status)).length,
+        activeCount: orderedRuns.filter(isActiveListRun).length,
         comparisonCount: orderedRuns.filter((run) => run.lane === 'comparison').length,
         retrospectiveCount: retrospectiveDecisions.length,
         pendingRetrospectiveCount: retrospectiveDecisions.filter((decision) => !decision.resolvedAt)
@@ -91,7 +92,7 @@ export function groupRunsByFamily(runs: Run[]): RunFamilyGroup[] {
     .sort((left, right) => right.latestCreatedAt.localeCompare(left.latestCreatedAt));
 }
 
-export function selectRecentRunFamilyGroups(runs: Run[], limit: number): RunFamilyGroup[] {
+export function selectRecentRunFamilyGroups(runs: readonly Run[], limit: number): RunFamilyGroup[] {
   if (limit <= 0) return [];
   return groupRunsByFamily(runs).slice(0, limit);
 }

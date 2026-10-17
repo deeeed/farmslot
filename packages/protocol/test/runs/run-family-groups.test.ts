@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
-
+import type { Run } from '../../src/contracts/runs.js';
 import {
   groupRunsByFamily,
   selectRecentRunFamilyGroups,
   sortRunsForFamilyView,
-} from './run-family-groups';
+} from '../../src/runs/run-family-groups.js';
 
 function run(overrides: Partial<Run>): Run {
   return {
@@ -56,7 +55,7 @@ test('sortRunsForFamilyView keeps root first then variants and newest siblings',
   );
 });
 
-test('groupRunsByFamily mirrors command-center family grouping metadata', () => {
+test('groupRunsByFamily summarizes family metadata', () => {
   const root = run({ id: 'family-a', familyId: 'family-a', summary: 'Root summary' });
   const followUp = run({
     id: 'run-follow-up',
@@ -184,4 +183,111 @@ test('selectRecentRunFamilyGroups returns latest family workspaces for mobile em
     ['newest-family', 'middle-family'],
   );
   assert.deepEqual(selectRecentRunFamilyGroups([olderFamily], 0), []);
+});
+
+test('groupRunsByFamily orders families by newest activity and counts variants', () => {
+  const groups = groupRunsByFamily([
+    run({
+      id: 'family-a',
+      familyId: 'family-a',
+      status: 'monitoring',
+      createdAt: '2026-04-15T08:00:00.000Z',
+    }),
+    run({
+      id: 'a-claude',
+      familyId: 'family-a',
+      parentRunId: 'family-a',
+      lane: 'comparison',
+      variant: 'claude',
+      createdAt: '2026-04-15T12:00:00.000Z',
+    }),
+    run({
+      id: 'a-codex',
+      familyId: 'family-a',
+      parentRunId: 'family-a',
+      lane: 'comparison',
+      variant: 'codex',
+      status: 'monitoring',
+      createdAt: '2026-04-15T11:00:00.000Z',
+    }),
+    run({
+      id: 'family-b',
+      familyId: 'family-b',
+      ticketOrPr: 'PROJ-2',
+      familyRootTicketOrPr: 'PROJ-2',
+      status: 'failed',
+      createdAt: '2026-04-15T09:00:00.000Z',
+    }),
+  ]);
+
+  assert.deepEqual(
+    groups.map((group) => group.familyId),
+    ['family-a', 'family-b'],
+  );
+  assert.equal(groups[0].familyRootTicketOrPr, 'PROJ-1');
+  assert.equal(groups[0].rootRun?.id, 'family-a');
+  assert.equal(groups[0].activeCount, 2);
+  assert.equal(groups[0].comparisonCount, 2);
+  assert.deepEqual(groups[0].variants, ['claude', 'codex']);
+  assert.deepEqual(
+    groups[0].runs.map((item) => item.id),
+    ['family-a', 'a-claude', 'a-codex'],
+  );
+});
+
+test('groupRunsByFamily represents a family by its root, else by its newest run', () => {
+  const [rooted] = groupRunsByFamily([
+    run({ id: 'fam-root', familyId: 'fam-root', createdAt: '2026-04-15T08:00:00.000Z' }),
+    run({
+      id: 'cmp-1',
+      familyId: 'fam-root',
+      parentRunId: 'fam-root',
+      lane: 'comparison',
+      variant: 'claude',
+      summary: 'Variant claude',
+      createdAt: '2026-04-15T12:00:00.000Z',
+    }),
+  ]);
+  assert.equal(rooted.representativeRun.id, 'fam-root');
+  assert.equal(rooted.familySummary, 'Root summary · latest follow-up: Variant claude');
+
+  const [rootless] = groupRunsByFamily([
+    run({
+      id: 'cmp-newest',
+      familyId: 'fam-cmp',
+      parentRunId: 'missing-root',
+      lane: 'comparison',
+      variant: 'claude',
+      summary: 'Cursor variant fix',
+      createdAt: '2026-04-15T12:00:00.000Z',
+    }),
+    run({
+      id: 'cmp-older',
+      familyId: 'fam-cmp',
+      parentRunId: 'missing-root',
+      lane: 'comparison',
+      variant: 'codex',
+      summary: 'Codex variant fix',
+      createdAt: '2026-04-15T10:00:00.000Z',
+    }),
+  ]);
+  assert.equal(rootless.rootRun, null);
+  assert.equal(rootless.representativeRun.id, 'cmp-newest');
+  assert.equal(rootless.familySummary, 'Cursor variant fix');
+});
+
+test('groupRunsByFamily counts active runs with the run-list active rule', () => {
+  const [group] = groupRunsByFamily([
+    run({ id: 'family-a', status: 'blocked' }),
+    run({
+      id: 'held',
+      parentRunId: 'family-a',
+      status: 'failed',
+      steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+    }),
+    run({ id: 'failed', parentRunId: 'family-a', status: 'failed' }),
+    run({ id: 'done', parentRunId: 'family-a', status: 'done' }),
+  ]);
+
+  assert.equal(group.activeCount, 2);
 });

@@ -565,6 +565,22 @@ test('listRuns uses higher default limit for family queries', async (t) => {
   assert.equal(listRuns({ familyId: root.familyId }).runs.length, 251);
 });
 
+test('listRuns returns every active run without a limit', async (t) => {
+  const ids: string[] = [];
+  const ticket = `PROJ-${Date.now()}-many-active`;
+  // One more than the open-ended default page: created runs are active.
+  for (let i = 0; i <= 500; i++) {
+    ids.push(createRun({ flowType: 'dev', project: 'example-mobile-farm', ticketOrPr: ticket }).id);
+  }
+
+  t.after(async () => {
+    for (const id of ids.reverse()) await cleanupRun(id);
+  });
+
+  const listed = new Set(listRuns({ active: true }).runs.map((run) => run.id));
+  assert.equal(ids.filter((id) => listed.has(id)).length, 501);
+});
+
 test('archiveRun stamps archivedAt before moving terminal runs out of active timelines', async (t) => {
   const run = createRun({
     flowType: 'dev',

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- `run.list` `active` returns every active run unless the caller sets a limit.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Bind stored PR, push, assessment and run owners to the identity generation that wrote them (ADR-051 Amendment 5), so a person re-created at a reused id can use PR notifications, watches, rules and rule-driven QA without inheriting the retired identity's records. Native execution ownership stays with generation zero. An admin person without native ownership can still request a static review directly; it runs and publishes as the configured native owner and records the person as requester. Denials for a reused identity name it as replaced rather than revoked.

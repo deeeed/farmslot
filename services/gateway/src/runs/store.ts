@@ -1245,9 +1245,13 @@ export function listRuns(filter?: ListRunsFilter): { runs: Run[]; totalCount: nu
       result.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
+  // Active, family, PR and tag lists are complete by default; only the open-ended list pages.
   const limit =
     filter?.limit ??
-    (filter?.familyId || filter?.prNumber != null || normalizeRunTags(filter?.tags).length > 0
+    (filter?.active ||
+    filter?.familyId ||
+    filter?.prNumber != null ||
+    normalizeRunTags(filter?.tags).length > 0
       ? result.length
       : 500);
   return { runs: result.slice(0, limit), totalCount };

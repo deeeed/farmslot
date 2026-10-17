@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Count a family's active runs with the shared active rule, and load every active run for the terminal's Active Runs and pinned views instead of the newest 1000 runs.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.22.0 - 2026-10-17
