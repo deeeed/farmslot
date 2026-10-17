@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- Native Claude and Codex adapters advertise and constrain the repair applicability result contract; the evidence review terminal check accepts a repair's retained rows only from the engine selection.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.29.0 - 2026-10-17
+
+- Native Claude and Codex adapters advertise and constrain the repair applicability result contract; the evidence review terminal check accepts a repair's retained rows only from the engine selection.
 - Retain hosted task tooling under the expanded machine home, so a `~/` FARMSLOT_HOME no longer places task pins inside the product checkout.
 
 ## 0.28.0 - 2026-10-16
