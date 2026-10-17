@@ -2382,32 +2382,38 @@ test('runReplayStep clears skipPrepare when chained follow-up replays from find-
   assert.equal(replayed.engineState?.flags?.skipPrepare, undefined);
 });
 
-test('find-slot replay preserves a blocked run while its old slot is still releasing', async (t) => {
-  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
-  const run = createRun({
-    flowType: 'fix-bug',
-    project: 'farmslot-farm',
-    ticketOrPr: `PROJ-${Date.now()}`,
-  });
-  const slotId = 'macwork-ff-releasing';
-  updateRun(run.id, { status: 'blocked', slotId });
-  await writeFile(
-    statusFile,
-    `${JSON.stringify({ slots: [{ slot: slotId, lifecycle: 'busy', phase: 'releasing', current_run_id: run.id }] })}\n`,
-  );
-  t.after(async () => {
-    if (priorStatus === null) await rm(statusFile, { force: true });
-    else await writeFile(statusFile, priorStatus);
-    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
-  });
+// Any run the slot row still names releases it before re-selection, not only a
+// blocked one. A release fence the replay cannot take keeps the claim and the binding.
+for (const status of ['blocked', 'failed', 'monitoring'] as const) {
+  test(`find-slot replay preserves a ${status} run while its old slot is still releasing`, async (t) => {
+    const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: `PROJ-${Date.now()}`,
+    });
+    const slotId = `macwork-ff-releasing-${status}`;
+    updateRun(run.id, { status, slotId });
+    await writeFile(
+      statusFile,
+      `${JSON.stringify({ slots: [{ slot: slotId, lifecycle: 'busy', phase: 'releasing', current_run_id: run.id }] })}\n`,
+    );
+    t.after(async () => {
+      if (priorStatus === null) await rm(statusFile, { force: true });
+      else await writeFile(statusFile, priorStatus);
+      if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+    });
 
-  await assert.rejects(
-    runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}),
-    /could not be released/,
-  );
-  assert.equal(getRun(run.id)?.slotId, slotId);
-  assert.equal(getRun(run.id)?.status, 'blocked');
-});
+    await assert.rejects(
+      runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}, {
+        startEngine: async () => {},
+      }),
+      /could not be released/,
+    );
+    assert.equal(getRun(run.id)?.slotId, slotId);
+    assert.equal(getRun(run.id)?.status, status);
+  });
+}
 
 test('runReplayStep preserves skipPrepare for review-pr chained follow-up replays', async (t) => {
   const parent = createRun({
@@ -2910,4 +2916,201 @@ test('a later-step replay of a refused completion is refused before it touches t
     owner: run.id,
     epoch: 3,
   });
+});
+
+test('a find-slot replay of a refused completion is refused while the run still holds its slot', async (t) => {
+  const run = await retainedCompletionRun(t, 'macwork-ff-5');
+  const before = structuredClone(getRun(run.id)!.steps);
+
+  await assert.rejects(
+    () =>
+      runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}, {
+        startEngine: async () => {},
+      }),
+    /retains slot macwork-ff-5 for a refused completion prerequisite; a fresh slot selection would abandon it/,
+  );
+
+  assert.equal(getRun(run.id)?.slotId, 'macwork-ff-5', 'the run still names its retained slot');
+  assert.deepEqual(getRun(run.id)?.steps, before, 'the refused COMPLETE is not normalized');
+  assert.equal(isCompletionPrerequisiteFailure(getRun(run.id)!), true);
+  assert.deepEqual(await retainedSlotRow(), {
+    lifecycle: 'held',
+    phase: 'occupied',
+    agent: 'idle',
+    owner: run.id,
+    epoch: 3,
+  });
+});
+
+/** A pool slot outside the operator root, so release guards past the owner check pass. */
+async function disposablePoolSlot(t: test.TestContext, label: string): Promise<string> {
+  const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { poolDir } = await import('../../core/config.js');
+  const repo = mkdtempSync(path.join(os.tmpdir(), `farmslot-replay-${label}-`));
+  const slotId = `replay-${label}-${process.pid}`;
+  const poolFile = path.join(poolDir, `replay-${label}-fixture-${process.pid}.json`);
+  t.after(() => {
+    rmSync(poolFile, { force: true });
+    rmSync(repo, { recursive: true, force: true });
+  });
+  writeFileSync(
+    poolFile,
+    JSON.stringify({
+      machine: os.hostname(),
+      project: 'farmslot-farm',
+      platform: 'cli',
+      host: 'localhost',
+      ssh_user: os.userInfo().username,
+      // Disabled and with its own dev-server, like the demo pool, so it never joins
+      // another test's device catalog.
+      slots: [
+        {
+          id: slotId,
+          enabled: false,
+          repo,
+          session: slotId,
+          resources: { 'dev-server': { port: 47779, metro_port: 47849 } },
+        },
+      ],
+    }),
+  );
+  return slotId;
+}
+
+/** `run` holds `slotId` as its only slot row; the prior status file returns afterwards. */
+async function holdOnlySlot(t: test.TestContext, slotId: string, row: Record<string, unknown>) {
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  await writeFile(statusFile, `${JSON.stringify({ slots: [{ slot: slotId, ...row }] })}\n`);
+  t.after(async () => {
+    if (priorStatus === null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+  });
+}
+
+test('a find-slot replay of a gate-held run is refused before its engine is cancelled', async (t) => {
+  const priorDemoPool = process.env.FARMSLOT_DEMO_POOL;
+  process.env.FARMSLOT_DEMO_POOL = '1';
+  const slotId = 'demo-work-1';
+  const created = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    slotId,
+  });
+  const run = updateRun(created.id, {
+    status: 'human-gating',
+    steps: created.steps.map((step) =>
+      step.name === 'complete'
+        ? { ...step, status: 'done', outputs: { slotDisposition: 'gate-held' } }
+        : step.name === 'human-gate'
+          ? { ...step, status: 'running' }
+          : step,
+    ),
+  });
+  await holdOnlySlot(t, slotId, { lifecycle: 'busy', phase: 'working', current_run_id: run.id });
+  t.after(async () => {
+    if (priorDemoPool === undefined) delete process.env.FARMSLOT_DEMO_POOL;
+    else process.env.FARMSLOT_DEMO_POOL = priorDemoPool;
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  const generation = getRun(run.id)?.engineState?.generation;
+
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
+    new RegExp(`gate-held for run ${run.id}`),
+  );
+  assert.equal(getRun(run.id)?.engineState?.generation, generation, 'the gate driver still runs');
+  assert.equal(getRun(run.id)?.status, 'human-gating');
+  assert.equal(getRun(run.id)?.slotId, slotId);
+});
+
+test('a find-slot replay whose run fails its completion prerequisite meanwhile keeps the slot', async (t) => {
+  const slotId = await disposablePoolSlot(t, 'completing');
+  const created = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    slotId,
+  });
+  const run = updateRun(created.id, { status: 'completing' });
+  await holdOnlySlot(t, slotId, {
+    lifecycle: 'busy',
+    phase: 'working',
+    current_run_id: run.id,
+    slot_epoch: 2,
+  });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { slotId: null });
+    await evictTestRun(run.id, 'failed');
+  });
+  const generation = getRun(run.id)?.engineState?.generation;
+
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+      // The live engine refuses COMPLETE while replay reads device requirements.
+      afterSlotPlanning: async () => {
+        updateRun(run.id, {
+          status: 'failed',
+          steps: getRun(run.id)!.steps.map((step) =>
+            step.name === 'complete'
+              ? { ...step, status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }
+              : step,
+          ),
+        });
+      },
+    }),
+    /Run changed while reading replay device requirements/,
+  );
+  assert.equal(isCompletionPrerequisiteFailure(getRun(run.id)!), true);
+  assert.equal(getRun(run.id)?.engineState?.generation, generation);
+  assert.equal(getRun(run.id)?.slotId, slotId);
+  const row = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
+  assert.deepEqual([row.current_run_id, row.phase, row.slot_epoch], [run.id, 'working', 2]);
+});
+
+test('a find-slot replay whose run reaches its publication gate meanwhile keeps the gate driver', async (t) => {
+  const slotId = await disposablePoolSlot(t, 'gating');
+  const created = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    slotId,
+  });
+  const run = updateRun(created.id, { status: 'completing' });
+  await holdOnlySlot(t, slotId, { lifecycle: 'busy', phase: 'working', current_run_id: run.id });
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  const generation = getRun(run.id)?.engineState?.generation;
+
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+      // The live engine finishes COMPLETE and holds the slot for its gate.
+      afterSlotPlanning: async () => {
+        updateRun(run.id, {
+          status: 'human-gating',
+          steps: getRun(run.id)!.steps.map((step) =>
+            step.name === 'complete'
+              ? { ...step, status: 'done', outputs: { slotDisposition: 'gate-held' } }
+              : step.name === 'human-gate'
+                ? { ...step, status: 'running' }
+                : step,
+          ),
+        });
+      },
+    }),
+    new RegExp(`gate-held for run ${run.id}`),
+  );
+  assert.equal(getRun(run.id)?.engineState?.generation, generation, 'the gate driver still runs');
+  assert.equal(getRun(run.id)?.status, 'human-gating');
+  assert.equal(getRun(run.id)?.slotId, slotId);
 });

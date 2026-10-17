@@ -231,32 +231,8 @@ export async function slotReleasePreflight(
     return null;
   }
   const vars = await loadSlotVars(params.slotId);
+  assertReleaseRunGuards(params, boundOwner);
   const forceReset = params.forceReset ?? false;
-  const preserveAgents = params.preserveAgents ?? false;
-  assertNativeSlotReplacementOwner(params.slotId, params.expectedRunId ?? boundOwner ?? undefined);
-  const gateHeldRun = findActiveGateHeldRunForSlot(params.slotId);
-  if (gateHeldRun && !preserveAgents && !forceReset) {
-    throw new Error(
-      `Slot ${params.slotId} is gate-held for run ${gateHeldRun.id} — resolve or cancel the publication gate before release`,
-    );
-  }
-  // A gate-parked run (ADR-054 `free-slot`) gave the slot up but keeps a park
-  // record whose restore target is this workspace. Releasing destroys it, so
-  // refuse — but only when this release is aimed at the parked run itself.
-  // Once another run claims the freed slot, ITS release must still work, which
-  // is the whole point of freeing the slot. `preserveAgents` does not bypass:
-  // there are no agents left to preserve, and the record dies either way.
-  const gateParkedRun = findGateParkedRunForSlot(params.slotId);
-  if (gateParkedRun && !forceReset) {
-    const targetsParkedRun = params.expectedRunId
-      ? params.expectedRunId === gateParkedRun.id
-      : boundOwner === null || boundOwner === gateParkedRun.id;
-    if (targetsParkedRun) {
-      throw new Error(
-        `Slot ${params.slotId} holds the park record for gate-parked run ${gateParkedRun.id} — cancel that run or pass forceReset before release`,
-      );
-    }
-  }
 
   const ownerRun = boundOwner ? await getRunWithArchived(boundOwner) : undefined;
   const ownerTerminal = !!ownerRun && isTerminalRunStatus(ownerRun.status);
@@ -285,28 +261,59 @@ export async function slotReleasePreflight(
   return { vars, boundOwner, ownerTerminal, projectVars, projectJson, defaultBranch, unmergedWork };
 }
 
+/**
+ * The release guards that read only run state: native owner, publication gate
+ * and park record. Synchronous, so a caller can recheck them with no await
+ * before a step it cannot undo.
+ */
+export function assertReleaseRunGuards(params: SlotReleaseParams, boundOwner: string | null): void {
+  const forceReset = params.forceReset ?? false;
+  const preserveAgents = params.preserveAgents ?? false;
+  assertNativeSlotReplacementOwner(params.slotId, params.expectedRunId ?? boundOwner ?? undefined);
+  const gateHeldRun = findActiveGateHeldRunForSlot(params.slotId);
+  if (gateHeldRun && !preserveAgents && !forceReset) {
+    throw new Error(
+      `Slot ${params.slotId} is gate-held for run ${gateHeldRun.id} — resolve or cancel the publication gate before release`,
+    );
+  }
+  // A gate-parked run (ADR-054 `free-slot`) gave the slot up but keeps a park
+  // record whose restore target is this workspace. Releasing destroys it, so
+  // refuse — but only when this release is aimed at the parked run itself.
+  // Once another run claims the freed slot, ITS release must still work, which
+  // is the whole point of freeing the slot. `preserveAgents` does not bypass:
+  // there are no agents left to preserve, and the record dies either way.
+  const gateParkedRun = findGateParkedRunForSlot(params.slotId);
+  if (gateParkedRun && !forceReset) {
+    const targetsParkedRun = params.expectedRunId
+      ? params.expectedRunId === gateParkedRun.id
+      : boundOwner === null || boundOwner === gateParkedRun.id;
+    if (targetsParkedRun) {
+      throw new Error(
+        `Slot ${params.slotId} holds the park record for gate-parked run ${gateParkedRun.id} — cancel that run or pass forceReset before release`,
+      );
+    }
+  }
+}
+
 function releaseOwnerRefusal(
   owner: string | null,
   archivedTerminal: boolean,
   params: SlotReleaseParams,
   options?: SlotReleaseOptions,
 ): string | null {
-  if (
-    !owner ||
-    options?.restartRunId === owner ||
-    (params.forceReset === true && params.expectedRunId === owner)
-  )
-    return null;
+  if (!owner || (params.forceReset === true && params.expectedRunId === owner)) return null;
   const live = getRun(owner);
+  // A refused COMPLETE/FINALIZE prerequisite is terminal but keeps its checkout
+  // for a completion replay. An epoch-pinned release frees only a replay's own
+  // fresh claim, never the retained one, so only that rollback may pass. A
+  // restart is no exception: its run may have failed that way mid-replay.
+  if (live && isCompletionPrerequisiteFailure(live) && options?.expectedSlotEpoch === undefined)
+    return `Slot ${params.slotId} is retained by run ${owner}, whose completion prerequisite failed; replay its completion, or explicitly discard this workspace through slot.release RPC with forceReset:true and expectedRunId:${owner}`;
+  if (options?.restartRunId === owner) return null;
   // Archive already fenced a settled blocked run against replay before invoking
   // its owner-bound release. An ordinary release cannot borrow that authority.
   if (params.expectedRunId === owner && live?.status === 'blocked' && isRunArchiving(owner))
     return null;
-  // A refused COMPLETE/FINALIZE prerequisite is terminal but keeps its checkout
-  // for a completion replay. An epoch-pinned release frees only a replay's own
-  // fresh claim, never the retained one, so only that rollback may pass.
-  if (live && isCompletionPrerequisiteFailure(live) && options?.expectedSlotEpoch === undefined)
-    return `Slot ${params.slotId} is retained by run ${owner}, whose completion prerequisite failed; replay its completion, or explicitly discard this workspace through slot.release RPC with forceReset:true and expectedRunId:${owner}`;
   if (live ? isTerminalRunStatus(live.status) : archivedTerminal) return null;
   return live
     ? `Slot ${params.slotId} is held by non-terminal run ${owner}; finish it or use farmslot run cancel ${owner} before release`

@@ -84,6 +84,7 @@ import { isActiveSlotHolder, slotClaimBlockedByRelease } from '../dispatch/slot-
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 import { slotOwnershipFieldsForRun } from '../fleet.js';
 import { runtimeCapabilityStatus } from '../runtime-capabilities.js';
+import { assertReleaseRunGuards, slotReleasePreflight } from '../slot/release.js';
 
 import {
   isInternalArtifactOnlyEvalTicket,
@@ -108,6 +109,8 @@ export function rollbackReclaimedSlotReleaseOptions(
 export interface RunReplayStepHooks {
   /** Test-only: pause after the replay-owned generation bump. */
   afterGenerationBump?(): Promise<void>;
+  /** Test-only: pause after reading device requirements, while the engine still runs. */
+  afterSlotPlanning?(): Promise<void>;
   /** Test-only: retain a controlled engine observer without starting workers. */
   startEngine?(runId: string): Promise<void>;
   /**
@@ -762,6 +765,21 @@ function assertReplayKeepsCompletionRefusal(
     );
 }
 
+/**
+ * Only the named discard may release a retained completion slot, so a replay
+ * that selects a fresh slot cannot settle the claim the run still holds.
+ */
+function assertReselectionKeepsRetainedSlot(
+  run: NonNullable<ReturnType<typeof getRun>>,
+  slot: Readonly<Record<string, unknown>> | null,
+  stepName: string,
+): void {
+  if (slot?.current_run_id !== run.id) return;
+  throw new Error(
+    `Cannot replay ${stepName}: run ${run.id} retains slot ${run.slotId} for a refused completion prerequisite; a fresh slot selection would abandon it. Replay a step after ${PS.FIND_SLOT} to keep its checkout, or discard it first through slot.release RPC with forceReset:true and expectedRunId:${run.id}`,
+  );
+}
+
 function assertReplayAfterDispatchAllowed(
   existing: NonNullable<ReturnType<typeof getRun>>,
   flowSteps: readonly string[] | undefined,
@@ -1166,10 +1184,27 @@ async function replayRunStep(
     assertCancelledReplayNodeAvailable(existing, params.runId);
   }
 
+  // A replay from find-slot or earlier clears the run's slot binding, so the
+  // claim its slot row still holds must be settled before re-selection.
+  const reselectsSlot = targetIdx >= 0 && targetIdx <= findSlotIdx;
+  const priorSlotId = reselectsSlot ? existing.slotId : null;
+  const priorSlotRow = priorSlotId ? await readSlotRow(priorSlotId) : null;
+  // The release that settles it runs after the engine is cancelled, so its
+  // guards (gate hold, park record, native owner) refuse before that, leaving
+  // the run driven: here, and again with no await before the cancel.
+  const priorRelease =
+    priorSlotId && priorSlotRow?.current_run_id === params.runId
+      ? { slotId: priorSlotId, keepWork: true, expectedRunId: params.runId }
+      : null;
+  if (priorRelease && !isCompletionPrerequisiteFailure(getRun(params.runId) ?? existing))
+    await slotReleasePreflight(priorRelease, { restartRunId: params.runId });
   const replaySnapshot = getRun(params.runId) ?? existing;
   const retainsCompletionSlot = isCompletionPrerequisiteFailure(replaySnapshot);
-  if (retainsCompletionSlot)
+  if (retainsCompletionSlot) {
     assertReplayKeepsCompletionRefusal(replaySnapshot, flowSteps, targetIdx);
+    if (reselectsSlot)
+      assertReselectionKeepsRetainedSlot(replaySnapshot, priorSlotRow, replayStepName);
+  }
   assertReplayAfterDispatchAllowed(
     replaySnapshot,
     flowSteps,
@@ -1229,17 +1264,22 @@ async function replayRunStep(
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   try {
-    const slotCapabilities =
-      targetIdx >= 0 && targetIdx <= findSlotIdx
-        ? await withRunSources(existing, () => replaySlotCapabilityRequirements(existing), {
-            planning: true,
-          })
-        : undefined;
+    const slotCapabilities = reselectsSlot
+      ? await withRunSources(existing, () => replaySlotCapabilityRequirements(existing), {
+          planning: true,
+        })
+      : undefined;
+    if (hooks.afterSlotPlanning) await hooks.afterSlotPlanning();
+    const planned = getRun(params.runId);
     if (
-      getRun(params.runId)?.slotId !== priorRunSlotId ||
-      getRun(params.runId)?.engineState?.generation !== selectionGeneration
+      planned?.slotId !== priorRunSlotId ||
+      planned?.engineState?.generation !== selectionGeneration ||
+      // The engine still runs here and may have failed COMPLETE/FINALIZE.
+      (planned && isCompletionPrerequisiteFailure(planned) !== retainsCompletionSlot)
     )
       throw new Error('Run changed while reading replay device requirements');
+    // The engine ran on through planning and may have reached a publication gate.
+    if (priorRelease) assertReleaseRunGuards(priorRelease, params.runId);
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
     // Do this only after replay entry validation so rejected replays do not leave a
     // synthetic in-progress recovery lane behind.
@@ -1298,7 +1338,9 @@ async function replayRunStep(
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
 
-    if (replayStepName === PS.FIND_SLOT && existing.status === 'blocked' && existing.slotId) {
+    // Release the claim whatever the run's status: once the run stops naming
+    // this slot, nothing else frees it.
+    if (reselectsSlot && existing.slotId) {
       const slot = await readSlotRow(existing.slotId);
       if (slot?.current_run_id === params.runId) {
         const { slotRelease } = await import('../slot.js');
@@ -1307,7 +1349,8 @@ async function replayRunStep(
           emit,
           { restartRunId: params.runId },
         );
-        if (!released) {
+        // A release this one queued behind (the run's own teardown) may have freed it.
+        if (!released && (await readSlotRow(existing.slotId))?.current_run_id === params.runId) {
           throw new Error(
             `Slot ${existing.slotId} could not be released before restarting this run`,
           );
@@ -1338,7 +1381,7 @@ async function replayRunStep(
     }
 
     // If replaying from find-slot or earlier, clear slot so it picks fresh
-    if (targetIdx >= 0 && targetIdx <= findSlotIdx) {
+    if (reselectsSlot) {
       replayTaskFile = null;
       effectiveSlotId = null;
       updateRun(params.runId, {
