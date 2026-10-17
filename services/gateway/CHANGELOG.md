@@ -6,6 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate. An undelivered or interrupted repair stays retryable under its single charge and resumes after a restart.
 
+- Hand a run to the operator when its worker is waiting on its own question or approval request: the monitor raises an interactive handoff with the captured question instead of nudging it or leaving the run in monitoring with no decision. The handoff clears when the question closes, survives a gateway restart, and ignores unsent composer text.
+
 - Keep a QA run's evidence window when a dispatch replay resumes the same task. The first dispatch of a task identity records when it began, and QA completion checks recipe evidence against that instead of the latest dispatch. A new task or a fresh dispatch starts a new window. For runs dispatched before this, the primary worker's first launch counts when it happened after the current task was written; their next dispatch records it as the anchor.
 
 - Point a spent review budget at an extension only when the run can receive one; review-pr, published, artifact-only and archived runs now say why their rounds cannot be extended, and the extension refusal names the same reason.
@@ -13,6 +15,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Never count a prompt left unsent in a busy Codex composer as delivered, on any send attempt. Each review-fix prompt now starts with its delivery identity, so a fix round is proven only by its own runner receipt; a fix sent before this change is still recognized, but only by a receipt after its own delivery. A fix sent without a receipt is acknowledged only by the worker's fix signal, never by pane activity.
 
 - Resolve a Jira-key run's ticket through the project's Jira source when the run is created, and refuse creation when there is no source, no credentials, or the read fails, instead of storing a key-only placeholder ticket.
+
+- Stop a prepare window's whole process group when the window is torn down or its wrapper is signalled, and give each prepare launch its own exit sentinel, so a re-driven prepare after a gateway restart neither waits on an orphaned tree's lock nor reads its late exit code.
 
 - Accept only the complete next-tool-call steering block as rendered queue proof; the "tab to queue message" hint, postponed follow-ups and queue placeholders never prove delivery. Buffered input uses the runner's normal submit key.
 

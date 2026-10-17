@@ -1,3 +1,5 @@
+import { runnerPaneWithoutComposer } from './runner-pane-input.js';
+
 function normalizeRunnerId(runnerId?: string | null): string {
   return String(runnerId ?? '')
     .trim()
@@ -166,6 +168,26 @@ function detectLaunchBlocker(
   if (runner && detectUsageLimit(pane)) return { kind: 'usage-limit', autoAction: null };
   if (runner && detectAuthRequired(pane)) return { kind: 'auth-required', autoAction: null };
   return { kind: null, autoAction: null };
+}
+
+/**
+ * The question or selection menu a runner pane is waiting on, or null. A menu
+ * shows its keyboard hint in the footer; a plain prompt asks in the last lines.
+ */
+export function paneOpenQuestion(tail: string): string | null {
+  const lines = tail.trimEnd().split('\n');
+  const footer = lines.slice(-5).join('\n');
+  const menu = /enter (?:to )?(?:confirm|select)|esc (?:to cancel|back)|use arrow keys/i.test(
+    footer,
+  );
+  if (menu) return lines.slice(-25).join('\n');
+  // Unsent input in the live composer is not a question the runner waits on.
+  const asked = runnerPaneWithoutComposer(tail).trimEnd().split('\n').slice(-5).join('\n');
+  return /(?:\[y\/n\]|\[Y\/n\]|\[y\/N\]|do you (?:want|wish)|would you like|select an option)/i.test(
+    asked,
+  )
+    ? asked
+    : null;
 }
 
 /** Classify captured pane text in-process so gateway polling never blocks on child processes. */
