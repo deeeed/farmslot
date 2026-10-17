@@ -72,6 +72,9 @@ export interface UninstallPlan {
  *  caller reports the list and exits non-zero when anything remains. */
 export interface UninstallResult {
   leftovers: Array<{ path: string; error: string }>;
+  /** Run history that could not be moved out of the clone; the clone, state.json and the
+   *  PATH symlink stay so the operator can move it by hand and re-run uninstall. */
+  stranded: Array<{ from: string; to: string }>;
 }
 
 /** Refuse to operate on obviously unsafe roots (a bug in state.json must never rm $HOME). */
@@ -147,6 +150,8 @@ function gatewayHistory(ws: Workspace): Array<{ rel: string; path: string }> {
   const sources = [{ rel: 'runs', path: resolveRunsDir(ws.farmslotDir, {}) }];
   const projects = join(ws.farmslotDir, 'projects');
   for (const name of existsSync(projects) ? readdirSync(projects) : []) {
+    // A linked project dir is not removed with the clone, so its task folders stay put.
+    if (!lstatSync(join(projects, name)).isDirectory()) continue;
     const rel = join('projects', name, ORCHESTRATOR_TASK_DIR);
     sources.push({ rel, path: join(ws.farmslotDir, rel) });
   }
@@ -155,16 +160,14 @@ function gatewayHistory(ws: Workspace): Array<{ rel: string; path: string }> {
   );
 }
 
-/** Run records the gateway kept in the clone, plus anything already under the workspace runs dir. */
+/** Run records the gateway kept in the clone. */
 export function runHistoryCount(ws: Workspace): number {
-  const count = (dir: string): number => {
-    try {
-      return readdirSync(dir).length;
-    } catch {
-      return 0;
-    }
-  };
-  return count(resolveRunsDir(ws.farmslotDir, {})) + count(ws.runsDir);
+  try {
+    return readdirSync(resolveRunsDir(ws.farmslotDir, {})).filter((name) => name.endsWith('.json'))
+      .length;
+  } catch {
+    return 0;
+  }
 }
 
 export function buildUninstallPlan(
@@ -481,7 +484,8 @@ export async function executeUninstallPlan(
   hooks: UninstallHooks,
 ): Promise<UninstallResult> {
   const leftovers: UninstallResult['leftovers'] = [];
-  if (plan.dryRun) return { leftovers };
+  const stranded: UninstallResult['stranded'] = [];
+  if (plan.dryRun) return { leftovers, stranded };
 
   // Each removal is wrapped: a failed step records the leftover path and CONTINUES, so one
   // stuck directory can never abort the rest of the plan (notably the PATH symlink removal,
@@ -535,51 +539,60 @@ export async function executeUninstallPlan(
   await safeStop('watchman', () => stopWatchmanForWorkspace(plan.workspaceRoot, hooks));
   await safeStop('process sweep', () => sweepWorkspaceProcesses(plan.workspaceRoot, hooks));
 
-  // 1. Remove the PATH symlink early — a later failure must never leave a dangling `farmslot`
-  //    on PATH pointing into a half-removed workspace.
-  if (plan.symlink) remove(plan.symlink, `symlink ${plan.symlink}`);
-
-  // 2. History + home. The gateway keeps run records and task folders inside the clone, so a
-  //    keep or backup first moves them under runsDir. If a move fails, the clone stays rather
-  //    than take that history with it. A backup that fails to archive keeps the dir (disposeOf
-  //    throws before deleting) and is recorded as a leftover rather than aborting the run.
-  const stranded: string[] = [];
+  // 1. The gateway keeps run records and task folders inside the clone, so a keep or backup
+  //    first moves them under runsDir. A move that fails keeps the clone, state.json and the
+  //    PATH symlink (step 2 onwards), so nothing takes that history with it and a re-run works.
   if (plan.history !== 'delete') {
-    for (const { from, to } of plan.historySources) {
+    for (const source of plan.historySources) {
       try {
-        mkdirSync(dirname(to), { recursive: true });
-        renameSync(from, to);
-        hooks.step(`moved ${from} -> ${to}`);
+        mkdirSync(dirname(source.to), { recursive: true });
+        renameSync(source.from, source.to);
+        hooks.step(`moved ${source.from} -> ${source.to}`);
       } catch (err) {
-        stranded.push(from);
+        stranded.push(source);
         const error = errMessage(err);
-        leftovers.push({ path: from, error });
-        hooks.step(`could not move run history ${from}: ${error}`);
+        leftovers.push({ path: source.from, error: `run history not moved: ${error}` });
+        hooks.step(`could not move run history ${source.from}: ${error}`);
       }
     }
   }
+  const keepsStranded = (path: string): boolean =>
+    stranded.some(({ from }) => from === path || from.startsWith(path + sep));
+
+  // 2. Remove the PATH symlink early — a later failure must never leave a dangling `farmslot`
+  //    on PATH pointing into a half-removed workspace.
+  if (plan.symlink && stranded.length === 0) remove(plan.symlink, `symlink ${plan.symlink}`);
+
+  // 3. History + home. A backup that fails to archive keeps the dir (disposeOf throws before
+  //    deleting) and is recorded as a leftover rather than aborting the run.
   dispose(plan.runsDir, plan.history, plan.historyBackupPath);
   dispose(plan.homeDir, plan.home, plan.homeBackupPath);
 
-  // 3. Always-remove install artifacts.
-  for (const dir of plan.installDirs) {
-    if (stranded.some((from) => from.startsWith(dir + sep))) {
-      leftovers.push({
-        path: dir,
-        error: 'kept: it still holds run history that could not be moved',
-      });
-      hooks.step(`kept ${dir}: it still holds run history that could not be moved`);
+  // 4. Always-remove install artifacts, except a clone that still holds unmoved history.
+  for (const path of [...plan.installDirs, ...plan.installFiles]) {
+    if (stranded.length > 0 && (keepsStranded(path) || plan.installFiles.includes(path))) {
+      hooks.step(`kept ${path}: run history could not be moved out of the clone`);
       continue;
     }
-    remove(dir, dir);
+    remove(path, path);
   }
-  for (const file of plan.installFiles) remove(file, file);
 
-  // 4. Workspace dir. --purge removes it wholesale, including files farmslot did not create;
-  //    otherwise only an empty root is removed (kept history/home files are preserved).
+  // 5. Workspace dir. --purge removes it wholesale, including files farmslot did not create,
+  //    but never history kept on request or left unmoved; otherwise only an empty root is
+  //    removed (kept history/home files are preserved).
   if (existsSync(plan.workspaceRoot)) {
-    if (plan.purge) {
+    const kept = [
+      ...(plan.history === 'keep' ? [plan.runsDir] : []),
+      ...(stranded.length > 0 ? [...plan.installDirs, ...plan.installFiles] : []),
+    ].filter((path) => existsSync(path));
+    if (plan.purge && kept.length === 0) {
       remove(plan.workspaceRoot, `workspace ${plan.workspaceRoot} (everything)`);
+    } else if (plan.purge) {
+      for (const entry of readdirSync(plan.workspaceRoot)) {
+        const path = join(plan.workspaceRoot, entry);
+        if (!kept.includes(path)) remove(path, path);
+      }
+      hooks.step(`kept ${kept.join(', ')} in workspace ${plan.workspaceRoot}`);
     } else {
       try {
         if (readdirSync(plan.workspaceRoot).length === 0) {
@@ -596,5 +609,5 @@ export async function executeUninstallPlan(
     }
   }
 
-  return { leftovers };
+  return { leftovers, stranded };
 }

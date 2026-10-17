@@ -284,15 +284,21 @@ function workspaceWithHistory(prefix: string) {
   const clone = join(root, 'farmslot');
   mkdirSync(join(clone, '.runs'), { recursive: true });
   writeFileSync(join(clone, '.runs', 'run-1.json'), '{"id":"run-1"}');
+  mkdirSync(join(clone, '.runs', 'quarantine'));
   mkdirSync(join(clone, 'projects', 'app', 'tasks', 'feat', 't-1'), { recursive: true });
   writeFileSync(join(clone, 'projects', 'app', 'tasks', 'feat', 't-1', 'TASK.md'), '# task');
   mkdirSync(join(clone, 'projects', 'no-runs'), { recursive: true });
+  // A linked project dir is not removed with the clone, so its tasks are never moved.
+  const linked = join(`${root}-linked-project`);
+  mkdirSync(join(linked, 'tasks'), { recursive: true });
+  symlinkSync(linked, join(clone, 'projects', 'linked'));
   mkdirSync(join(root, 'repos'), { recursive: true });
   mkdirSync(homeDir, { recursive: true });
   writeFileSync(join(root, 'state.json'), '{}');
   const cleanup = () => {
     rmSync(root, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
+    rmSync(linked, { recursive: true, force: true });
   };
   return { root, homeDir, clone, cleanup };
 }
@@ -356,11 +362,34 @@ test('a history move that fails keeps the clone instead of deleting its history'
   writeFileSync(join(root, 'runs'), 'not a directory');
   const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), KEEP);
 
-  const { leftovers } = await executeUninstallPlan(plan, { step: () => {} });
+  const { stranded } = await executeUninstallPlan(plan, { step: () => {} });
 
+  assert.deepEqual(
+    stranded.map(({ from }) => from),
+    plan.historySources.map(({ from }) => from),
+  );
   assert.equal(readFileSync(join(clone, '.runs', 'run-1.json'), 'utf8'), '{"id":"run-1"}');
-  assert.ok(leftovers.some(({ path }) => path === clone));
+  // state.json stays so the operator can move the history by hand and re-run uninstall.
+  assert.equal(existsSync(join(root, 'state.json')), true);
   assert.equal(existsSync(join(root, 'repos')), false);
+});
+
+test('purge keeps history the operator chose to keep', async (t) => {
+  const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-purge-keep-');
+  t.after(cleanup);
+  writeFileSync(join(root, '.install-log'), 'not created by farmslot');
+  const ws = workspaceAt(root);
+  const plan = buildUninstallPlan(ws, baseState({ home_dir: homeDir }), { ...KEEP, purge: true });
+
+  await executeUninstallPlan(plan, { step: () => {} });
+
+  assert.deepEqual(readdirSync(root), ['runs']);
+  const [kept] = readdirSync(ws.runsDir);
+  assert.equal(
+    readFileSync(join(ws.runsDir, kept!, 'runs', 'run-1.json'), 'utf8'),
+    '{"id":"run-1"}',
+  );
+  assert.equal(existsSync(clone), false);
 });
 
 test('deleting history moves nothing and removes it with the clone', async (t) => {

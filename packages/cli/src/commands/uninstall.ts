@@ -4,7 +4,7 @@
 // (FARMSLOT_WORKSPACE/BIN_DIR/HOME) is removed at its real locations. Run history and
 // the home dir (gateway auth/profiles) default to KEEP — deleting them is opt-in.
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 
 import type { Command } from 'commander';
@@ -262,9 +262,18 @@ export function registerUninstallCommand(program: Command): void {
           for (const { path, error } of result.leftovers) {
             output.write(`  ${red('leftover')}    ${path} ${dim(`(${error})`)}\n`);
           }
-          output.write(
-            `\n  Next: re-run ${cyan('farmslot uninstall --purge')}, or remove each path manually: ${cyan('trash <path>')}\n`,
-          );
+          if (result.stranded.length > 0) {
+            // --purge or trash here would delete the history the operator chose to keep.
+            output.write(
+              '\n  Next: move the run history by hand, then re-run farmslot uninstall:\n',
+            );
+            for (const { from, to } of result.stranded)
+              output.write(`    ${cyan(`mkdir -p ${dirname(to)} && mv ${from} ${to}`)}\n`);
+          } else {
+            output.write(
+              `\n  Next: re-run ${cyan('farmslot uninstall --purge')}, or remove each path manually: ${cyan('trash <path>')}\n`,
+            );
+          }
         }
         process.exitCode = 1;
         return;
