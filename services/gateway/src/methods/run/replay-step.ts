@@ -750,15 +750,15 @@ function assertReplayKeepsCompletionRefusal(
   targetIdx: number,
 ): void {
   if (!flowSteps) return;
-  const refused = run.steps.find(
-    (step) =>
-      (step.name === PS.COMPLETE || step.name === PS.FINALIZE) &&
-      step.status === 'failed' &&
-      step.outputs?.gatePrerequisiteRefusal !== undefined,
-  );
-  if (refused && targetIdx > flowSteps.indexOf(refused.name))
+  // Normalization marks every flow step before the target done; the refusal
+  // must still hold on the steps it leaves alone.
+  const untouched = run.steps.filter((step) => {
+    const idx = flowSteps.indexOf(step.name);
+    return idx < 0 || idx >= targetIdx;
+  });
+  if (!isCompletionPrerequisiteFailure({ status: run.status, steps: untouched }))
     throw new Error(
-      `Cannot replay ${flowSteps[targetIdx]}: run ${run.id} retains its slot for a refused ${refused.name} prerequisite — replay from ${refused.name} or earlier`,
+      `Cannot replay ${flowSteps[targetIdx]}: run ${run.id} retains its slot for a refused completion prerequisite — replay from the refused step or earlier`,
     );
 }
 

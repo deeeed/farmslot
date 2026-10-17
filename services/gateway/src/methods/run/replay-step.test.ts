@@ -2898,7 +2898,7 @@ test('a later-step replay of a refused completion is refused before it touches t
       runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {}, {
         startEngine: async () => {},
       }),
-    /retains its slot for a refused complete prerequisite — replay from complete or earlier/,
+    /retains its slot for a refused completion prerequisite — replay from the refused step or earlier/,
   );
 
   assert.deepEqual(getRun(run.id)?.steps, before, 'the refused COMPLETE is not normalized');
