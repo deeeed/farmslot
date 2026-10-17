@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -22,8 +23,11 @@ import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
 import {
   buildPrepareIdentityReapCommand,
+  buildPrepareKillWindowsByNameCommand,
+  buildPrepareStaleLaunchCleanupCommand,
   buildPrepareWrappedCommand,
   clearStalePrepareProcess,
+  parsePrepareSentinel,
   prepareSignalHint,
 } from './prepare-command.js';
 
@@ -364,4 +368,189 @@ test('clearStalePrepareProcess returns false when there is no live tracked prefl
   ]);
 
   assert.equal(killed, false);
+});
+
+function isRunning(pid: number): boolean {
+  const stat = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+  return stat.stdout.trim() !== '' && !stat.stdout.trim().startsWith('Z');
+}
+
+async function waitFor(condition: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return condition();
+}
+
+test('a closed prepare pane stops a command that ignores SIGHUP and SIGTERM at once', async () => {
+  // corepack/yarn ignored the window close: the wrapper waited on its
+  // foreground subshell, so its HUP trap never ran and the tree kept the lock.
+  const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-wrapper-hup-'));
+  const sentinel = path.join(root, 'deps.exit');
+  const pidFile = path.join(root, 'child.pid');
+  const script = path.join(root, 'deps.sh');
+  const nonce = 'a1b2c3d4e5f6';
+  writeFileSync(
+    script,
+    buildPrepareWrappedCommand(
+      `trap '' HUP TERM; sleep 300 & echo $! > ${shellQuote(pidFile)}; wait`,
+      sentinel,
+      root,
+      { attemptNonce: nonce },
+    ),
+  );
+  const pane = spawn('bash', [script], { detached: true, stdio: 'ignore' });
+  assert.ok(pane.pid && pane.pid > 1);
+  pane.unref();
+  let child = 0;
+  try {
+    assert.ok(
+      await waitFor(
+        () => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '',
+        5_000,
+      ),
+    );
+    child = Number(readFileSync(pidFile, 'utf8').trim());
+    // A closed pane hangs up its whole foreground group.
+    process.kill(-pane.pid, 'SIGHUP');
+
+    // The trap's own grace is about 2s; the bound only has to sit well below
+    // the command's 300s and leave room for a loaded host.
+    assert.ok(
+      await waitFor(() => existsSync(sentinel), 20_000),
+      'the trap must run without waiting for the command',
+    );
+    assert.equal(readFileSync(sentinel, 'utf8').trim(), `129 ${nonce}`);
+    assert.ok(!isRunning(child), 'the HUP- and TERM-ignoring child must be stopped');
+  } finally {
+    try {
+      process.kill(-pane.pid, 'SIGKILL');
+    } catch {
+      // Already stopped.
+    }
+    if (child && isRunning(child)) process.kill(child, 'SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// execLocal and Linux nodes run tmux snippets under bash, remote macOS nodes
+// under `zsh -f`.
+const snippetShells = [
+  { bin: '/bin/bash', args: ['-c'] },
+  { bin: '/bin/zsh', args: ['-f', '-c'] },
+].filter(({ bin }) => existsSync(bin));
+
+for (const shell of snippetShells) {
+  test(`tearing down a prepare window stops its group without touching a renumbered neighbour (${path.basename(shell.bin)})`, async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-window-teardown-'));
+    const bin = path.join(root, 'bin');
+    const state = path.join(root, 'windows');
+    const log = path.join(root, 'tmux.log');
+    mkdirSync(bin);
+    // A stand-in tmux; no server is started. Like a session with
+    // renumber-windows and remain-on-exit off, a window whose pane exited is gone
+    // and the windows after it move up one index.
+    writeFileSync(
+      path.join(bin, 'tmux'),
+      [
+        '#!/bin/sh',
+        'live() { ps -o stat= -p "$1" 2>/dev/null | grep -q "^[^Z]"; }',
+        ': > "$STATE.next"',
+        'while read -r id name pid; do if live "$pid"; then echo "$id $name $pid" >> "$STATE.next"; fi; done < "$STATE"',
+        'mv "$STATE.next" "$STATE"',
+        'cmd="$1"; shift; target=""; format=""',
+        'while [ $# -gt 0 ]; do case "$1" in -t) target="$2"; shift 2 ;; -F) format="$2"; shift 2 ;; *) shift ;; esac; done',
+        'target="${target#*:}"; n=0; : > "$STATE.next"',
+        'while read -r id name pid; do',
+        '  n=$((n+1))',
+        '  case "$cmd" in',
+        '    list-windows) case "$format" in *window_id*) echo "$id:$name" ;; *) echo "$n:$name" ;; esac ;;',
+        '    list-panes) if [ "$target" = "$id" ] || [ "$target" = "$n" ]; then echo "$pid"; fi ;;',
+        '    kill-window) if [ "$target" = "$id" ] || [ "$target" = "$n" ]; then echo "closed $name" >> "$LOG"; kill -KILL -"$pid" 2>/dev/null; continue; fi ;;',
+        '  esac',
+        '  echo "$id $name $pid" >> "$STATE.next"',
+        'done < "$STATE"',
+        'if [ "$cmd" = kill-window ]; then mv "$STATE.next" "$STATE"; else rm -f "$STATE.next"; fi',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+    const prepare = spawn('bash', ['-c', `trap '' HUP TERM; sleep 30 & wait`], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    const worker = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+    assert.ok(prepare.pid && prepare.pid > 1 && worker.pid && worker.pid > 1);
+    prepare.unref();
+    worker.unref();
+    writeFileSync(state, `@7 prepare-run12345-deps ${prepare.pid}\n@8 worker ${worker.pid}\n`);
+    try {
+      const result = spawnSync(
+        shell.bin,
+        [...shell.args, buildPrepareKillWindowsByNameCommand('mm-1', 'prepare-run12345-deps')],
+        {
+          encoding: 'utf8',
+          // A hang guard only: the teardown's 2s grace stretches on a loaded host.
+          timeout: 20_000,
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STATE: state, LOG: log },
+        },
+      );
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.ok(!isRunning(prepare.pid), 'the SIGHUP- and SIGTERM-ignoring group was stopped');
+      assert.ok(isRunning(worker.pid), 'the worker window that moved into the old index survives');
+      assert.ok(!existsSync(log) || !readFileSync(log, 'utf8').includes('closed worker'));
+      assert.equal(readFileSync(state, 'utf8').trim(), `@8 worker ${worker.pid}`);
+      assert.equal(result.stdout.trim(), '@7:prepare-run12345-deps');
+    } finally {
+      for (const pid of [prepare.pid, worker.pid]) {
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {
+          // Already stopped.
+        }
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const shell of snippetShells) {
+  test(`staging clears only earlier launches of the same phase (${path.basename(shell.bin)})`, () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-stage-cleanup-'));
+    const command = buildPrepareStaleLaunchCleanupCommand(root, 'mm-1-prepare-run1-deps');
+    try {
+      // A first launch has nothing to clear; a glob would abort `zsh -f` here.
+      const first = spawnSync(shell.bin, [...shell.args, command], { encoding: 'utf8' });
+      assert.equal(first.status, 0, first.stderr);
+
+      const stale = [
+        'mm-1-prepare-run1-deps.exit',
+        'mm-1-prepare-run1-deps.sh',
+        'mm-1-prepare-run1-deps-0123456789ab.exit',
+        'mm-1-prepare-run1-deps-0123456789ab.sh',
+      ];
+      const kept = [
+        'mm-1-prepare-run1-deps.log',
+        'mm-1-prepare-run1-deps-fix-0123456789ab.exit',
+        'mm-1-prepare-run2-deps-0123456789ab.exit',
+      ];
+      for (const name of [...stale, ...kept]) writeFileSync(path.join(root, name), '129\n');
+      const second = spawnSync(shell.bin, [...shell.args, command], { encoding: 'utf8' });
+
+      assert.equal(second.status, 0, second.stderr);
+      assert.deepEqual(readdirSync(root).sort(), [...kept].sort());
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('a prepare sentinel without this launch nonce is not a result', () => {
+  assert.equal(parsePrepareSentinel('0 a1b2c3d4e5f6\n', 'a1b2c3d4e5f6'), 0);
+  assert.equal(parsePrepareSentinel('129 a1b2c3d4e5f6', 'a1b2c3d4e5f6'), 129);
+  assert.equal(parsePrepareSentinel('129\n', 'a1b2c3d4e5f6'), null, 'a pre-nonce orphan');
+  assert.equal(parsePrepareSentinel('143 0123456789ab', 'a1b2c3d4e5f6'), null, 'another launch');
+  assert.equal(parsePrepareSentinel('', 'a1b2c3d4e5f6'), null);
 });

@@ -131,7 +131,9 @@ export function freshDispatchEngineStateForReplay(
   const flags = { ...engineState?.flags };
   delete flags.warmSessionReuse;
   delete flags.warmHandoffSucceeded;
-  return { ...engineState, flags };
+  // A fresh dispatch starts a new task identity, so its own dispatch opens the evidence window.
+  const { taskExecution: _resumedTask, ...rest } = engineState ?? {};
+  return { ...rest, flags };
 }
 
 function assertReplayOwnsRun(

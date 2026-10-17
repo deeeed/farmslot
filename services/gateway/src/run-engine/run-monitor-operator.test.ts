@@ -13,8 +13,14 @@ import '../runtime/mock-pty.test-support.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 
-import { type MonitorObservations, monitorRun, resolveMonitorDecision } from './run-monitor.js';
+import {
+  type MonitorObservations,
+  monitorRun,
+  rearmInteractiveHandoffAutoRecovery,
+  resolveMonitorDecision,
+} from './run-monitor.js';
 import { deleteTestRunIfPresent } from './test-fixtures.js';
+import { trackOpenQuestion } from './worker-question.js';
 
 async function fixture(t: TestContext, consumedBeforeWaitMs = 2000) {
   const project = `operator-monitor-${randomUUID()}`;
@@ -371,3 +377,144 @@ test('an explicit pause removes the live wait projection', { timeout: 4000 }, as
   assert.equal(getRun(f.run.id)!.status, 'paused');
   assert.equal(getRun(f.run.id)!.waitingForOperator, undefined);
 });
+
+test(
+  'an open worker question raises an interactive handoff with the question and clears when answered',
+  { timeout: 4000 },
+  async (t) => {
+    // QA run 3e2f400a sat in monitoring with no decision while its worker asked a question.
+    const f = await fixture(t);
+    await f.writeSignal({ ...f.waiting, waitingForOperator: undefined });
+    const question = 'Detach the checkout to the frozen scope head before testing?';
+    let open: boolean | 'unreadable' = true;
+    let nudgeable = 0;
+    let unreadableProbes = 0;
+    const execution = f.start({
+      workerStatus: async () => 'working',
+      violations: async (_run, _slot, state) => {
+        if (trackOpenQuestion(state, open ? question : null, true) === null) nudgeable++;
+        return [];
+      },
+      question: async () => {
+        if (open === 'unreadable') {
+          unreadableProbes++;
+          throw new Error('worker pane capture is empty');
+        }
+        return open ? question : null;
+      },
+    });
+    const handoff = async () => {
+      for (let i = 0; i < 200; i++) {
+        const decision = getRun(f.run.id)!.decisions.find(
+          (entry) => entry.type === 'monitor_interactive_handoff',
+        );
+        if (decision) return decision;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      return assert.fail('no handoff for the open question');
+    };
+    const decision = await handoff();
+    assert.match(
+      decision.description,
+      new RegExp(`\`\`\`text\n${question.replace(/\?/g, '\\?')}\n\`\`\``),
+    );
+    assert.equal(getRun(f.run.id)!.status, 'blocked');
+    assert.equal(nudgeable, 0, 'an open question is never classified for a nudge');
+    assert.equal(decision.context?.workerQuestion, true);
+    assert.deepEqual(
+      decision.actions.map((action) => action.id),
+      ['signal-written', 'question-closed', 'abort'],
+    );
+
+    // An unreadable pane or session is not an answer.
+    open = 'unreadable';
+    for (let i = 0; i < 200 && unreadableProbes < 3; i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(unreadableProbes >= 3);
+    assert.equal(getRun(f.run.id)!.decisions[0]?.resolvedAt, undefined);
+
+    open = false;
+    for (let i = 0; i < 200 && !getRun(f.run.id)!.decisions[0]?.resolvedAt; i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    const resolved = getRun(f.run.id)!.decisions.find((entry) => entry.id === decision.id)!;
+    assert.equal(resolved.resolvedAction, 'question-closed');
+    assert.equal(getRun(f.run.id)!.status, 'monitoring');
+    f.controller.abort();
+    await execution;
+  },
+);
+
+test(
+  'after a restart the re-armed handoff resolves question-closed once the question closes',
+  { timeout: 4000 },
+  async (t) => {
+    const f = await fixture(t);
+    const decision = {
+      id: `question-${randomUUID()}`,
+      type: 'monitor_interactive_handoff' as const,
+      title: 'Worker question',
+      description: 'The worker asked a question and is waiting for an answer.',
+      actions: [
+        { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' as const },
+        { id: 'question-closed', label: 'Resume monitoring', style: 'primary' as const },
+        { id: 'abort', label: 'Abort Run', style: 'danger' as const },
+      ],
+      createdAt: new Date().toISOString(),
+      context: { signalFile: null, workerQuestion: true },
+    };
+    updateRun(f.run.id, { status: 'blocked', decisions: [decision] });
+    let open = true;
+    const resolved: string[] = [];
+    const disarm = rearmInteractiveHandoffAutoRecovery(
+      getRun(f.run.id)!,
+      async (_runId, _decisionId, actionId) => {
+        resolved.push(actionId);
+      },
+      { question: async () => (open ? 'Detach?' : null), pollMs: 5 },
+    );
+    t.after(() => disarm?.());
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(resolved, [], 'an open question keeps the handoff');
+    open = false;
+    for (let i = 0; i < 200 && !resolved.length; i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(resolved, ['question-closed']);
+  },
+);
+
+test(
+  'a monitor started after a restart adopts the pending question handoff instead of raising another',
+  { timeout: 4000 },
+  async (t) => {
+    // The live Claude case keeps the run in monitoring while its question handoff is pending.
+    const f = await fixture(t);
+    await f.writeSignal({ ...f.waiting, waitingForOperator: undefined });
+    const pending = {
+      id: `question-${randomUUID()}`,
+      type: 'monitor_interactive_handoff' as const,
+      title: 'Worker question',
+      description: 'The worker asked a question and is waiting for an answer.',
+      actions: [{ id: 'question-closed', label: 'Resume monitoring', style: 'primary' as const }],
+      createdAt: new Date().toISOString(),
+      context: { signalFile: null, workerQuestion: true },
+    };
+    updateRun(f.run.id, { status: 'monitoring', decisions: [pending] });
+    let open = true;
+    const execution = f.start({
+      workerStatus: async () => 'working',
+      violations: async () => [],
+      question: async () => (open ? 'Detach?' : null),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(getRun(f.run.id)!.decisions[0].resolvedAt, undefined);
+    open = false;
+    for (let i = 0; i < 200 && !getRun(f.run.id)!.decisions[0].resolvedAt; i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    const decisions = getRun(f.run.id)!.decisions;
+    assert.equal(decisions.length, 1, 'the pending handoff is adopted, not duplicated');
+    assert.equal(decisions[0].resolvedAction, 'question-closed');
+    assert.equal(getRun(f.run.id)!.status, 'monitoring');
+    f.controller.abort();
+    await execution;
+  },
+);

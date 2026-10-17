@@ -7,7 +7,10 @@ import { fileURLToPath } from 'node:url';
 
 import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
-import { readPaneStateFromCapture } from '../../../../services/gateway/src/runners/pane-state-script.ts';
+import {
+  paneOpenQuestion,
+  readPaneStateFromCapture,
+} from '../../../../services/gateway/src/runners/pane-state-script.ts';
 import { runnerLaunchBlockerAutoActionKey } from '../../../../services/gateway/src/runners/registry.ts';
 import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
@@ -158,16 +161,7 @@ export function processState(meta) {
 // Rendered text vetoes unsafe sends. Only receipt-bound steering can prove delivery.
 export function paneSafety(tail, runner) {
   const lines = tail.trimEnd().split('\n');
-  const footer = lines.slice(-5).join('\n');
-  const menu = /enter (?:to )?(?:confirm|select)|esc (?:to cancel|back)|use arrow keys/i.test(
-    footer,
-  );
-  const active = menu ? lines.slice(-25).join('\n') : footer;
-  const pending =
-    menu ||
-    /(?:\[y\/n\]|\[Y\/n\]|\[y\/N\]|do you (?:want|wish)|would you like|select an option)/i.test(
-      active,
-    );
+  const question = paneOpenQuestion(tail);
   const queued =
     hasSubmittedQueue(runner, tail) ||
     lines
@@ -180,12 +174,12 @@ export function paneSafety(tail, runner) {
   const busy = /tab to queue message/i.test(tail);
   const blocker = readPaneStateFromCapture(tail, runner);
   return {
-    pending_question: pending,
+    pending_question: question !== null,
     queued,
     busy,
     launch_blocker: blocker.launchBlocker,
     auto_action: blocker.autoAction,
-    question: pending ? { source: 'pane-safety', text: active } : null,
+    question: question === null ? null : { source: 'pane-safety', text: question },
   };
 }
 
@@ -262,6 +256,42 @@ function wasAcknowledged(files, id) {
   return JSON.parse(readOptional(files.acknowledged) || '[]').includes(id);
 }
 
+// An inspection may finish after another process has acknowledged or sent. Persist only
+// under the shared mutation lock (taken here unless the caller holds it) and for the same
+// receipt; a null change writes nothing.
+function updateReceipt(files, receipt, change, held = false) {
+  if (process.env.TMUX_MODEL_DRIVER_READ_ONLY === '1') return;
+  const owned = !held && acquireLock(files);
+  if (!held && !owned) return;
+  try {
+    const current = readReceipt(files);
+    if (
+      current &&
+      receiptIdentity(current) === receiptIdentity(receipt) &&
+      current.payload_hash === receipt.payload_hash
+    ) {
+      const next = change(current);
+      if (next) durableWrite(files.receipt, next);
+    }
+  } finally {
+    if (owned) fs.rmdirSync(files.lock);
+  }
+}
+
+// A rendered steering proof is stamped with the time it was seen; every other field, and every
+// other source's timestamp, comes from the runner and must match exactly.
+function sameProof(saved, fresh) {
+  if (!saved || saved.source !== fresh.source) return false;
+  const fields = (proof) =>
+    JSON.stringify(
+      Object.keys(proof)
+        .filter((key) => !(key === 'observed_at' && proof.source === 'runner-steering'))
+        .sort()
+        .map((key) => [key, proof[key]]),
+    );
+  return fields(saved) === fields(fresh);
+}
+
 function clearAcceptedReceipt(files, receipt) {
   const ids = JSON.parse(readOptional(files.acknowledged) || '[]');
   const id = receiptIdentity(receipt);
@@ -274,6 +304,7 @@ export function paneState(pane, expectedRunner, selection) {
   const meta = metadata(pane);
   const state = processState(meta);
   const runner = expectedRunner || state;
+  const capturedAt = Date.now();
   const tail =
     process.env.TMUX_PANE_STATE_TAIL_CAPTURE ??
     tmux(['capture-pane', '-p', '-t', pane, '-S', '-40']);
@@ -302,38 +333,39 @@ export function paneState(pane, expectedRunner, selection) {
   const ownedBuffer = buffered && bufferedPrompt({ ...meta, tail }, state, receipt);
   // Pulled-back input is not delivered. Claude's queue proof is rechecked against the
   // transcript (popAll) whatever the composer shows; Codex's rendered steering proof yields
-  // to its owned text back in the composer (⇧←). Native proofs are recomputed below.
-  if (
-    accepted?.source === 'native-queue' ||
-    (accepted?.source === 'runner-steering' && ownedBuffer)
-  )
-    accepted = null;
+  // to its owned text back in the composer (⇧←), unless a retry proved it after this capture.
+  // Native proofs are recomputed below.
+  const pulledBack =
+    accepted?.source === 'runner-steering' && ownedBuffer && !(accepted.observed_at > capturedAt)
+      ? accepted
+      : null;
+  if (accepted?.source === 'native-queue' || pulledBack) accepted = null;
   if (receipt && runners.has(state)) {
     if (!accepted) {
       accepted = acceptedPrompt({ ...meta, tail }, state, obs, receipt);
       if (accepted) {
         accepted.payload_hash = receipt.payload_hash;
         accepted.receipt_id = receiptIdentity(receipt);
-        // An inspection may finish after another process has acknowledged or sent.
-        // Persist only under the shared mutation lock and for the same receipt.
-        if (process.env.TMUX_MODEL_DRIVER_READ_ONLY !== '1' && acquireLock(files)) {
-          try {
-            const current = readReceipt(files);
-            if (
-              current &&
-              receiptIdentity(current) === accepted.receipt_id &&
-              current.payload_hash === accepted.payload_hash
-            ) {
-              durableWrite(files.receipt, {
-                ...current,
-                session_id: accepted.session_id,
-                accepted,
-              });
-            }
-          } finally {
-            fs.rmdirSync(files.lock);
-          }
-        }
+        // Re-proving the saved proof changes nothing, so it takes neither the lock nor a write.
+        if (sameProof(receipt.accepted, accepted) && receipt.session_id === accepted.session_id)
+          accepted = receipt.accepted;
+        else
+          updateReceipt(
+            files,
+            receipt,
+            (current) => ({ ...current, session_id: accepted.session_id, accepted }),
+            selection?.held,
+          );
+      } else if (pulledBack) {
+        // The steering block is gone, so a later edit or clear of the composer must not bring
+        // the old proof back. A proof saved meanwhile by a retry is newer and stays.
+        updateReceipt(
+          files,
+          receipt,
+          ({ accepted: saved, ...current }) =>
+            JSON.stringify(saved) === JSON.stringify(pulledBack) ? current : null,
+          selection?.held,
+        );
       }
     }
   }
@@ -413,7 +445,8 @@ export function acknowledgeAcceptance(pane, runner, receiptId) {
         verification = wasAcknowledged(files, receiptId) ? 'already_acknowledged' : 'driver_busy';
     }
     if (!verification) {
-      const current = paneState(pane, runner, selection);
+      // Under this lock, so a withdrawal seen only now is saved too.
+      const current = paneState(pane, runner, { ...selection, held: true });
       if (current.state !== runner) verification = 'wrong_runner';
       else if (wasAcknowledged(files, receiptId)) {
         const pending = readReceipt(files);

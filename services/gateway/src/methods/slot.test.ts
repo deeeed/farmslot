@@ -202,18 +202,18 @@ test('buildPrepareNewWindowCommand uses an explicit session target', () => {
   assert.equal(prepareSessionTarget('core-5'), 'core-5:');
 });
 
-test('buildPrepareKillWindowsByNameCommand targets windows by index, not name', () => {
+test('buildPrepareKillWindowsByNameCommand targets windows by id, not name or index', () => {
   const command = buildPrepareKillWindowsByNameCommand('ff-3', 'prepare-6fb60a78-deps');
 
   assert.match(command, /TMUX_BIN="\$\(command -v tmux 2>\/dev\/null \|\| true\)"/);
   assert.match(command, /\[ -n "\$TMUX_BIN" \] \|\| \{ echo "tmux not found" >&2; exit 127; \}/);
-  assert.match(command, /list-windows -t 'ff-3' -F '#\{window_index\}:#\{window_name\}'/);
+  assert.match(command, /list-windows -t 'ff-3' -F '#\{window_id\}:#\{window_name\}'/);
   assert.match(
     command,
     /awk -F: -v want='prepare-6fb60a78-deps' '\$2 == want \{ print \$1 ":" \$2 \}'/,
   );
-  assert.match(command, /sort -t: -nr -k1,1/);
-  assert.match(command, /kill-window -t 'ff-3':"\$idx"/);
+  assert.match(command, /kill-window -t "\$id"/);
+  assert.doesNotMatch(command, /window_index/);
   assert.doesNotMatch(command, /kill-window -t 'ff-3':prepare-6fb60a78-deps/);
 });
 
@@ -222,13 +222,12 @@ test('buildPreparePreLaunchSweepCommand preserves same-run prepare windows', () 
 
   assert.match(command, /TMUX_BIN="\$\(command -v tmux 2>\/dev\/null \|\| true\)"/);
   assert.match(command, /\[ -n "\$TMUX_BIN" \] \|\| \{ echo "tmux not found" >&2; exit 127; \}/);
-  assert.match(command, /list-windows -t 'ff-3' -F '#\{window_index\}:#\{window_name\}'/);
+  assert.match(command, /list-windows -t 'ff-3' -F '#\{window_id\}:#\{window_name\}'/);
   assert.match(
     command,
     /awk -F: -v keep='\^prepare-6fb60a78\(\$\|-\)' '\$2 ~ \/\^prepare-\/ && \$2 !~ keep \{ print \$1 ":" \$2 \}'/,
   );
-  assert.match(command, /sort -t: -nr -k1,1/);
-  assert.match(command, /kill-window -t 'ff-3':"\$idx"/);
+  assert.match(command, /kill-window -t "\$id"/);
   assert.doesNotMatch(command, /kill-window -t 'ff-3':prepare-/);
 });
 
@@ -358,14 +357,16 @@ test('buildPrepareNewWindowCommand recreates a missing tmux session before openi
 test('buildPrepareWrappedCommand writes sentinel and preserves output flush on success', () => {
   const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep');
 
-  assert.match(command, /echo "\$__farmslot_status" > '\/tmp\/prep\.exit'/);
+  assert.match(command, /printf '%s\\n' "\$__farmslot_status" > '\/tmp\/prep\.exit'/);
   assert.match(command, /sleep 1\nexit "\$__farmslot_status"/);
   assert.doesNotMatch(command, /\(echo ok; echo \$\? >/);
 });
 
 test('buildPrepareWrappedCommand disarms traps before writing the final child status', () => {
   const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep');
-  const finalTrapIdx = command.indexOf('trap - HUP INT TERM\n' + 'echo "$__farmslot_status"');
+  const finalTrapIdx = command.indexOf(
+    'trap - HUP INT TERM\n' + `printf '%s\\n' "$__farmslot_status"`,
+  );
   const signalTrapIdx = command.indexOf('__farmslot_signal_exit()');
 
   assert(finalTrapIdx > signalTrapIdx);
@@ -378,7 +379,10 @@ test('buildPrepareWrappedCommand runs cmd in a subshell so `exec` inside the hoo
     '/tmp/prep',
   );
 
-  assert.match(command, /\(\nexec bash preflight\.sh\n\)\n__farmslot_status=\$\?/);
+  assert.match(
+    command,
+    /\(\nexec bash preflight\.sh\n\) <&0 &\nwait "\$!"\n__farmslot_status=\$\?/,
+  );
 });
 
 test('buildPrepareWrappedCommand without keepAliveOnSuccess exits normally after sentinel write', () => {
