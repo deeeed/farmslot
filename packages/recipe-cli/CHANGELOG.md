@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.23.2 - 2026-10-17
+
+- Align with `@farmslot/recipe-runner` 0.39.1, whose network capture summaries redact credential-like path segments.
+
 ## 0.23.1 - 2026-10-17
 
 - `checklist mark` refuses an explicit `--checklist` (or the `--signal` given with it) that is not a task-local basename with exit 2 and the mark script's message, before reading either file or running `beforeComplete`. A `start` or numeric step used to exit 1.
