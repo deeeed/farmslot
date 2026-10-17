@@ -30,7 +30,12 @@ A root whose manifest declares no `bin` is a binary-free provider.
 
 ### Selection at resolution
 
-When binding resolution has a pool selection, it compares the inherited value of the binding's `recipe.provider.root.env` variable with that pool's `env` value. Both are compared as real paths. If both exist and differ, resolution MUST refuse with `PROVIDER_SELECTION_CONFLICT` before importing any provider. The refusal reports the variable, both paths and the action: unset the variable, or select the root in the pool. An absent or equal inherited value is accepted. Without a pool selection, the existing precedence still applies. The rule lives in the shared resolver, so it covers commands started by the gateway, node exec, tmux panes and shells alike.
+Binding resolution takes the authoritative root from the first of these that applies:
+
+1. The task's frozen provenance, when it runs inside a task that froze the provider at initialization.
+2. The pool's `env` value, when a pool slot is selected.
+
+It compares the inherited value of the binding's `recipe.provider.root.env` variable with that root. Both are compared as real paths. If both exist and differ, resolution MUST refuse with `PROVIDER_SELECTION_CONFLICT` before importing any provider. Worker launches export the pool value current at dispatch. After a rollout, such a worker still matches its task's frozen root, so in-flight tasks are unaffected. The refusal reports the variable, both paths and the action: unset the variable, or select the root in the pool. An absent or equal inherited value is accepted. Without a task or pool selection, the existing precedence still applies. The rule lives in the shared resolver, so it covers commands started by the gateway, node exec, tmux panes and shells alike.
 
 ### Health probe
 

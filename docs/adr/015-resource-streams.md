@@ -377,7 +377,7 @@ Status: Proposed. Continues the approved ADR-015 routing for provider health; ac
 
 A pinned provider root may declare no public binaries. Its callers then reach it only by resolving a project binding through `farmslot`. Two rules replace the PATH binary checks.
 
-**The pool selection wins at resolution.** When `farmslot` resolves a binding for a pool-selected slot, an inherited value of the binding's `*_PACKAGE_ROOT` variable that names a different real path refuses with `PROVIDER_SELECTION_CONFLICT`, before any provider import. An absent or equal value is accepted. Without a pool selection, the process value still selects the root, as today. This applies to every command that resolves a binding, whatever started it.
+**The authoritative selection wins at resolution.** Inside a task whose provenance froze the provider, the frozen root is authoritative. Otherwise, for a pool-selected slot, the pool's value is. When `farmslot` resolves a binding, an inherited value of the binding's `*_PACKAGE_ROOT` variable that names a different real path refuses with `PROVIDER_SELECTION_CONFLICT`, before any provider import. An absent or equal value is accepted. A worker launched before a rollout therefore keeps its task's frozen root instead of refusing. Without a task or pool selection, the process value still selects the root, as today. This applies to every command that resolves a binding, whatever started it.
 
 **Health checks the package itself:**
 
