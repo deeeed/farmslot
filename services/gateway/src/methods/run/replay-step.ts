@@ -36,11 +36,12 @@ import {
   removeQueueItemInternal,
   renewQueueClaim,
 } from '../../backlog/dispatch-queue.js';
-import { execOnSlot } from '../../core/exec.js';
+import { execOnSlot, isLocal } from '../../core/exec.js';
 import { claimSlotStatusIf, readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
+import { getNode } from '../../fleet/machine-registry.js';
 import { captureRunOutput } from '../../run-completion/output.js';
 import { retainedMaintenanceStepOutputs } from '../../run-engine/branch-maintenance.js';
 import {
@@ -780,6 +781,24 @@ function assertReselectionKeepsRetainedSlot(
   );
 }
 
+/**
+ * Release must confirm the old worker stopped on the slot's machine, so an
+ * offline machine keeps the slot held: neither a retry nor the discard can
+ * finish until it returns.
+ */
+function unreleasedPriorSlotError(
+  slotId: string,
+  runId: string,
+  cause: string,
+  origin?: unknown,
+): Error {
+  return new Error(
+    `Slot ${slotId} could not be released before restarting this run (${cause}). ` +
+      `If its machine is offline, bring it back first; then replay again, or discard the workspace through slot.release RPC with forceReset:true and expectedRunId:${runId}`,
+    origin === undefined ? undefined : { cause: origin },
+  );
+}
+
 function assertReplayAfterDispatchAllowed(
   existing: NonNullable<ReturnType<typeof getRun>>,
   flowSteps: readonly string[] | undefined,
@@ -1196,8 +1215,17 @@ async function replayRunStep(
     priorSlotId && priorSlotRow?.current_run_id === params.runId
       ? { slotId: priorSlotId, keepWork: true, expectedRunId: params.runId }
       : null;
-  if (priorRelease && !isCompletionPrerequisiteFailure(getRun(params.runId) ?? existing))
-    await slotReleasePreflight(priorRelease, { restartRunId: params.runId });
+  if (priorRelease && !isCompletionPrerequisiteFailure(getRun(params.runId) ?? existing)) {
+    const preflight = await slotReleasePreflight(priorRelease, { restartRunId: params.runId });
+    // Remote commands wait for a disconnected node, then fail and leave the slot held.
+    const vars = preflight?.vars;
+    if (vars && !isLocal(vars.host, vars.machine) && !getNode(vars.machine))
+      throw unreleasedPriorSlotError(
+        priorRelease.slotId,
+        params.runId,
+        `machine ${vars.machine} is not connected`,
+      );
+  }
   const replaySnapshot = getRun(params.runId) ?? existing;
   const retainsCompletionSlot = isCompletionPrerequisiteFailure(replaySnapshot);
   if (retainsCompletionSlot) {
@@ -1344,15 +1372,27 @@ async function replayRunStep(
       const slot = await readSlotRow(existing.slotId);
       if (slot?.current_run_id === params.runId) {
         const { slotRelease } = await import('../slot.js');
-        const { released } = await slotRelease(
-          { slotId: existing.slotId, keepWork: true, expectedRunId: params.runId },
-          emit,
-          { restartRunId: params.runId },
-        );
+        let released: boolean;
+        try {
+          ({ released } = await slotRelease(
+            { slotId: existing.slotId, keepWork: true, expectedRunId: params.runId },
+            emit,
+            { restartRunId: params.runId },
+          ));
+        } catch (error) {
+          throw unreleasedPriorSlotError(
+            existing.slotId,
+            params.runId,
+            error instanceof Error ? error.message : String(error),
+            error,
+          );
+        }
         // A release this one queued behind (the run's own teardown) may have freed it.
         if (!released && (await readSlotRow(existing.slotId))?.current_run_id === params.runId) {
-          throw new Error(
-            `Slot ${existing.slotId} could not be released before restarting this run`,
+          throw unreleasedPriorSlotError(
+            existing.slotId,
+            params.runId,
+            'it is still being released or another release holds it',
           );
         }
         assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);

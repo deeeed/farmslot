@@ -2408,7 +2408,10 @@ for (const status of ['blocked', 'failed', 'monitoring'] as const) {
       runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}, {
         startEngine: async () => {},
       }),
-      /could not be released/,
+      // The refusal names its exits: the slot needs its machine back before either works.
+      new RegExp(
+        `could not be released before restarting this run \\(.+\\)\\. If its machine is offline, bring it back first; then replay again, or discard the workspace through slot\\.release RPC with forceReset:true and expectedRunId:${run.id}`,
+      ),
     );
     assert.equal(getRun(run.id)?.slotId, slotId);
     assert.equal(getRun(run.id)?.status, status);
@@ -2942,8 +2945,15 @@ test('a find-slot replay of a refused completion is refused while the run still 
   });
 });
 
-/** A pool slot outside the operator root, so release guards past the owner check pass. */
-async function disposablePoolSlot(t: test.TestContext, label: string): Promise<string> {
+/**
+ * A pool slot outside the operator root, so release guards past the owner check
+ * pass. `remote` puts it on a machine whose node never connects.
+ */
+async function disposablePoolSlot(
+  t: test.TestContext,
+  label: string,
+  remote?: { machine: string; host: string },
+): Promise<string> {
   const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
   const os = await import('node:os');
   const path = await import('node:path');
@@ -2958,10 +2968,10 @@ async function disposablePoolSlot(t: test.TestContext, label: string): Promise<s
   writeFileSync(
     poolFile,
     JSON.stringify({
-      machine: os.hostname(),
+      machine: remote?.machine ?? os.hostname(),
       project: 'farmslot-farm',
       platform: 'cli',
-      host: 'localhost',
+      host: remote?.host ?? 'localhost',
       ssh_user: os.userInfo().username,
       // Disabled and with its own dev-server, like the demo pool, so it never joins
       // another test's device catalog.
@@ -3113,4 +3123,43 @@ test('a find-slot replay whose run reaches its publication gate meanwhile keeps 
   assert.equal(getRun(run.id)?.engineState?.generation, generation, 'the gate driver still runs');
   assert.equal(getRun(run.id)?.status, 'human-gating');
   assert.equal(getRun(run.id)?.slotId, slotId);
+});
+
+test('a find-slot replay whose old slot is on a disconnected machine is refused before mutation', async (t) => {
+  const slotId = await disposablePoolSlot(t, 'offline', {
+    machine: 'replay-offline-node',
+    host: 'replay-offline-node.invalid',
+  });
+  const created = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    slotId,
+  });
+  const run = updateRun(created.id, { status: 'failed', completedAt: new Date().toISOString() });
+  await holdOnlySlot(t, slotId, {
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: run.id,
+    slot_epoch: 4,
+  });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { slotId: null });
+    await evictTestRun(run.id, 'failed');
+  });
+  const generation = getRun(run.id)?.engineState?.generation;
+
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
+    new RegExp(
+      `Slot ${slotId} could not be released before restarting this run \\(machine replay-offline-node is not connected\\)\\. If its machine is offline, bring it back first; then replay again, or discard the workspace through slot\\.release RPC with forceReset:true and expectedRunId:${run.id}`,
+    ),
+  );
+  assert.equal(getRun(run.id)?.engineState?.generation, generation, 'refused before mutation');
+  assert.equal(getRun(run.id)?.slotId, slotId);
+  const row = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
+  assert.deepEqual([row.current_run_id, row.phase], [run.id, 'occupied']);
 });

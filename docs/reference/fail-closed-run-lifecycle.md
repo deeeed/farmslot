@@ -424,6 +424,9 @@ way while the run's slot row still names the run. Any other run replayed from th
 MUST release the slot it still holds before dropping its binding; nothing frees a
 slot whose owner no longer names it. A release guard that would refuse refuses before
 the replay changes the run, and a restart release never bypasses this retention.
+Release must confirm the old worker stopped on the slot's machine, so a slot whose
+machine is offline stays refused; the refusal names the exits: bring the machine
+back, then replay again or make the named discard.
 After that explicit discard, archive/delete MAY evict it only when native
 bindings and owner capability cleanup are confirmed released. Archive preserves
 the failed verdict, step history and evidence; unresolved provider cleanup still
