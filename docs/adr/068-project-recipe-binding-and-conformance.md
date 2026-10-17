@@ -200,23 +200,23 @@ The [hosted task specification](../reference/project-recipe-contract.md#hosted-t
 
 ### Decision
 
-Finish the Phase 3 disposition so a project provider ships no binary, public or internal. Every remaining operation reaches the provider through `farmslot`:
+A project provider may be a package module with no executable, public or internal. Every operation then reaches it through `farmslot`. Add the generic operations such a provider still needs:
 
-1. **Overlay verification.** Plain `farmslot doctor` runs the selected runtime's declared `harness.verify` as its `overlay` check. That verifier is read-only and non-launching. It may observe a runtime that already exists, but never navigates, repairs or executes actions.
-2. **End-to-end proof.** A provider proves itself through the public host, not through an executable copied into the checkout. Live end-to-end checks that drove an installed runner use the shared paths instead: `recipe launch --verify` for readiness, the provider's action manifest, and `doctor --conformance --live` for the declared smoke. The overlay installs bridge files only.
+1. **Overlay check.** Plain `farmslot doctor` runs the selected runtime's declared `harness.verify` as its `overlay` check. The verifier is read-only and non-launching. It may observe a runtime that already exists, but never navigates, repairs or executes actions.
+2. **Proof through the public host.** Verification that needs a live runtime uses the shared paths: `recipe launch --verify` for readiness, the provider manifest that doctor already validates, and `doctor --conformance --live` for an end-to-end smoke. An overlay installs bridge files only, never an executable.
 3. **Overlay removal.** `doctor --remove-overlay` runs the runtime's existing cleanup leaf under the checkout lock. Root doctor already owns overlay installation and repair; removal joins them as one more explicit switch.
-4. **Runtime-free actions.** An action manifest entry may declare `runtime: "none"`. When every action in a resolved call or graph declares it, the host executes without healing, attaching, launching or capturing a runtime. All other authorization and lifecycle contracts still apply. Fixtures, Runway provisioning, Extension target resolution, viewer stop, the diff check and setup steps become such provider actions.
-5. **Template materialization.** Root `execution-template` gains the standalone selection that `mm-harness execution-template` provided: domain sources, exact id, JSON output and `materialize`. It delegates to the same ADR-049 selector. This replaces ADR-049's provider command boundary.
+4. **Runtime-free actions.** An action manifest entry may declare `runtime: "none"`. When every action in a resolved call or graph declares it, the host executes without healing, attaching, launching or capturing a runtime. Every other authorization and lifecycle contract still applies. Setup, fixture, provisioning and target-resolution steps that must run before an app exists use this form.
+5. **Template selection.** Root `execution-template` gains the standalone selection options of the ADR-049 selector: domain sources, exact id, JSON output and `materialize`. This supersedes ADR-049's statement that a provider supplies that command boundary.
 6. **Provider guidance.** `farmslot recipe --help` appends the resolved provider's versioned guidance, as `recipe quality` already does.
 
-All other remaining commands map to existing surfaces, listed in the [specification](../reference/project-recipe-contract.md#provider-operations-without-a-binary-amendment-6). Pack runner hooks for projects with a `recipe` binding are already superseded: since #936 the gateway builds the `farmslot` commands itself. The `recipe_harness_*` hooks have no consumer. The eval-harness lifecycle that runs them needs a source containing `scripts/recipe-harness.sh`; the Core and Mobile catalogs name a path deleted from MetaMask/skills, and the provider ships no such script. Packs delete both kinds of hook.
+A provider that drops its executable maps each of its commands to a `farmslot` route or a provider action and proves equivalence under the base decision's cutover rule. That map belongs to the provider and its packs, not to this record.
 
 ### Rationale
 
-ADR-068 already states that one CLI owns checkout operations, so no project keeps per-project command glue. Leaving one internal runner binary would keep a second entry point with its own argument parsing and version drift. It would also keep verification proving a copied runner instead of the provider that callers actually use. A runtime-free declaration is needed because setup and resolution actions currently require a launched app before they can run, which is the wrong order.
+ADR-068 already gives checkout operations to one CLI. A provider executable duplicates its parsing and selection and can drift from the provider `farmslot` loads. A check run through a copied executable proves the copy, not the provider callers use. Some actions must run before any runtime exists, and today call and run always prepare one first.
 
 ### Consequences and public surface
 
-`@farmslot/protocol` owns the optional `runtime` action declaration and its validator. `@farmslot/adapter-sdk` carries it in `ActionCatalog`. `@farmslot/recipe-cli/harness` consumes it in call/run/conformance, owns overlay removal and adds the help guidance option. `@farmslot/agent-runtime` keeps the template selector. The named consumers are pack cleanup, setup and fixture scripts, the Extension and Mobile providers, and the Skills recipe-cook template scripts. No engine, recorder, evidence writer, resource allocator or compatibility alias is added.
+`@farmslot/protocol` owns the optional `runtime` action declaration and its validator. `@farmslot/adapter-sdk` carries it in `ActionCatalog`. `@farmslot/recipe-cli/harness` consumes it in call, run and conformance, owns overlay removal and adds the help guidance option. `@farmslot/agent-runtime` keeps the template selector. No engine, recorder, evidence writer, resource allocator or compatibility alias is added.
 
-These are pre-1.0 minor releases with coordinated pins. The provider adopts them and every caller moves before the binary and its glue are deleted, as in the base decision's equivalence rule. Implementation PRs follow content approval.
+These are pre-1.0 minor releases with coordinated pins. Implementation PRs follow content approval.
