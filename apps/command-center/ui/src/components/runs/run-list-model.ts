@@ -5,7 +5,7 @@ import {
   type RunLane,
   type RunStatus,
 } from '@farmslot/protocol';
-import { isSettledBlockedRun, resolveRunSlotId, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
+import { isSettledBlockedRun, selectRunList, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
@@ -14,7 +14,6 @@ import { compareInventoryValues, sortInventoryRows } from '../shared/work-invent
 import { familyLearningTimeAgo } from './family-observability-run-detail-renderers.js';
 import { type RunInventorySortKey, runInventorySortValue } from './run-list-inventory.js';
 import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
-import { dispositionLabel } from './run-utils.js';
 
 /** Runs the gateway lets `run.archive` evict: terminal, or blocked with nothing left to advance. */
 export function isArchivableRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {
@@ -22,11 +21,6 @@ export function isArchivableRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>
 }
 
 export const TERMINAL_STATUSES = new Set<RunStatus>(TERMINAL_RUN_STATUSES);
-
-/** Matches Runs list "Active" tab — non-terminal runs, with failed kept visible. */
-export function isRunListActiveRun(run: Pick<Run, 'status'>): boolean {
-  return !TERMINAL_STATUSES.has(run.status) || run.status === 'failed';
-}
 
 /** An unblocked run with no progress for this long is shown as stale. */
 export const RUN_STALE_AFTER_MS = 60 * 60_000;
@@ -130,13 +124,6 @@ export function runProgressSummary(
     : summary('none', '');
 }
 
-function runMatchesMachineFilter(slotId: string | null | undefined, machines: string[]): boolean {
-  if (machines.length === 0) return true;
-  const normalized = slotId?.trim();
-  if (!normalized) return false;
-  return machines.some((machine) => normalized === machine || normalized.startsWith(`${machine}-`));
-}
-
 export function runGradeColor(semantic: string): string {
   switch (semantic) {
     case 'good':
@@ -157,6 +144,8 @@ export interface FilterRunListInput {
   tagRuns: readonly Run[] | null;
   runs: readonly Run[];
   globalFilters: GlobalFilters;
+  /** Fleet slot to machine, for the machine filter. */
+  slotMachines: ReadonlyMap<string, string>;
   tab: TabFilter;
   statusFilter: StatusFilter;
   flowFilter: FlowType | '';
@@ -176,45 +165,19 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
         ? withLive(input.tagRuns)
         : input.runs
       : input.runs;
-  if (input.globalFilters.projects.length > 0) {
-    result = result.filter((run) => input.globalFilters.projects.includes(run.project));
-  }
-  if (input.globalFilters.machines.length > 0) {
-    result = result.filter((run) =>
-      runMatchesMachineFilter(resolveRunSlotId(run), input.globalFilters.machines),
-    );
-  }
-  if (input.tab === 'active') {
-    result = result.filter((run) => isRunListActiveRun(run));
-  }
-  if (input.tab === 'history') {
-    result = result.filter((run) => TERMINAL_STATUSES.has(run.status));
-  }
-  if (input.statusFilter !== 'all' && input.tab !== 'active') {
-    result = result.filter((run) => run.status === input.statusFilter);
-  }
-  if (input.flowFilter) {
-    result = result.filter((run) => run.flowType === input.flowFilter);
-  }
-  if (input.laneFilter) {
-    result = result.filter((run) => run.lane === input.laneFilter);
-  }
+  result = selectRunList(result, {
+    scope: input.tab,
+    projects: input.globalFilters.projects,
+    machines: input.globalFilters.machines,
+    slotMachines: input.slotMachines,
+    status: input.tab === 'active' || input.statusFilter === 'all' ? undefined : input.statusFilter,
+    flow: input.flowFilter || undefined,
+    lane: input.laneFilter || undefined,
+    tag: input.tagFilter,
+    search: input.searchQuery,
+  });
   if (input.familyFilter) {
     result = result.filter((run) => run.familyId === input.familyFilter);
-  }
-  const tag = input.tagFilter.trim().toLowerCase();
-  if (tag) {
-    result = result.filter((run) => run.tags?.some((candidate) => candidate === tag));
-  }
-  const query = input.searchQuery.trim().toLowerCase();
-  if (query) {
-    result = result.filter(
-      (run) =>
-        run.ticketOrPr.toLowerCase().includes(query) ||
-        Boolean(run.summary?.toLowerCase().includes(query)) ||
-        Boolean(dispositionLabel(run.metrics.disposition).includes(query)) ||
-        Boolean(run.tags?.some((tag) => tag.includes(query))),
-    );
   }
   switch (input.sortBy) {
     case 'oldest':

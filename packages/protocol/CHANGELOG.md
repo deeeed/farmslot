@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add the shared run-list view model: `isActiveListRun` (nonterminal, or failed while it still holds resources after a refused completion prerequisite), `selectRunList`, `slotMachineMap`, `mergeRunsById` and `ACTIVE_RUN_LIST_LIMIT`. `isCompletionPrerequisiteFailure` moves here from the gateway.
+
 - Add the Send back repair contract: `RecipeRepairScope`, the engine claim-source selection, the `pipeline-visual-judgments-v2` applicability result, the run-store repair record and a receipt/repair `FeedbackCandidate` variant; the shared decision request sends Send back with no selection data.
 
 - Add `RunTaskExecution` and optional `RunEngineState.taskExecution`, the start of the dispatch that began the current task identity.

@@ -354,16 +354,20 @@ test('selectActiveRunSlotIds resolves active runs from agentContexts when curren
   ]);
 });
 
-test('selectActiveRunSlotIds includes failed runs like the Runs active tab', () => {
+test('selectActiveRunSlotIds follows the Runs active tab for failed runs', () => {
   const slots = [
-    makeSlot('macwork-mm-7', {
-      lifecycle: 'ready',
-      currentRunId: 'run-failed',
-    }),
+    makeSlot('macwork-mm-7', { lifecycle: 'ready', currentRunId: 'run-held' }),
+    makeSlot('macwork-mm-8', { lifecycle: 'ready', currentRunId: 'run-failed' }),
   ];
   const runs = [
-    makeRun('run-failed', {
+    makeRun('run-held', {
       slotId: 'macwork-mm-7',
+      status: 'failed',
+      steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+      updatedAt: '2026-06-30T12:00:00.000Z',
+    }),
+    makeRun('run-failed', {
+      slotId: 'macwork-mm-8',
       status: 'failed',
       updatedAt: '2026-06-30T12:00:00.000Z',
     }),

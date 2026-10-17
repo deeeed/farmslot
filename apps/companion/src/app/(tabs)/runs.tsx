@@ -6,9 +6,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   extractRunArtifactManifest,
-  isTerminalRunStatus,
   normalizeRunTags,
   type Run,
+  selectRunList,
+  slotMachineMap,
 } from '@farmslot/protocol';
 import { FLOW_COLORS, FLOW_LABELS, projectColor, RUNNER_COLORS } from '@farmslot/theme';
 
@@ -35,6 +36,7 @@ import {
   type RunFamilyGroup,
   selectRecentRunFamilyGroups,
 } from '../../lib/run-family-groups';
+import { selectCompanionRunList } from '../../lib/run-list-selection';
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
 import {
   selectReadyWorkspaceDecision,
@@ -47,7 +49,7 @@ import {
   targetWorkspaceRouteContextParams,
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
-import { filterRuns, useFilterStore } from '../../store/filters';
+import { useFilterStore } from '../../store/filters';
 import { useFleetStore } from '../../store/fleet';
 import { useRunFilterStore } from '../../store/run-filters';
 import { useRunStore } from '../../store/runs';
@@ -711,57 +713,32 @@ export default function RunsScreen() {
       ? 'Downloading active runs…'
       : null;
 
-  const slotById = useMemo(
-    () =>
-      new Map(
-        (fleet?.slots ?? []).map(
-          (slot) => [slot.slot, { project: slot.project, machine: slot.machine }] as const,
-        ),
-      ),
-    [fleet],
-  );
+  const slotMachines = useMemo(() => slotMachineMap(fleet?.slots ?? []), [fleet]);
   const filteredRuns = useMemo(
-    () => filterRuns(runs, filters, slotById),
-    [filters, runs, slotById],
+    () =>
+      selectRunList(runs, {
+        scope: 'all',
+        projects: filters.projects,
+        machines: filters.machines,
+        slotMachines,
+      }),
+    [filters, runs, slotMachines],
   );
   const activeRuns = useMemo(
-    () => filteredRuns.filter((run) => !isTerminalRunStatus(run.status)),
+    () => selectRunList(filteredRuns, { scope: 'active' }),
     [filteredRuns],
   );
-  const localFilteredRuns = useMemo(() => {
-    let result = showAllRuns ? filteredRuns : activeRuns;
-    if (runFilters.flow) {
-      result = result.filter((r) => r.flowType === runFilters.flow);
-    }
-    if (runFilters.lane) {
-      result = result.filter((r) => r.lane === runFilters.lane);
-    }
-    if (runFilters.tag.trim()) {
-      const [tag] = normalizeRunTags([runFilters.tag]);
-      result = tag ? result.filter((r) => normalizeRunTags(r.tags).includes(tag)) : result;
-    }
-    if (runFilters.search.trim()) {
-      const q = runFilters.search.trim().toLowerCase();
-      result = result.filter(
-        (r) =>
-          r.ticketOrPr.toLowerCase().includes(q) ||
-          (r.summary ?? '').toLowerCase().includes(q) ||
-          (r.slotId ?? '').toLowerCase().includes(q) ||
-          normalizeRunTags(r.tags).some((tag) => tag.includes(q)),
-      );
-    }
-    if (runFilters.sort === 'oldest') {
-      result = [...result].sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-      );
-    } else if (runFilters.sort === 'duration') {
-      result = [...result].sort(
-        (a, b) => (b.metrics?.durationMs ?? 0) - (a.metrics?.durationMs ?? 0),
-      );
-    }
-    return result;
-  }, [showAllRuns, filteredRuns, activeRuns, runFilters]);
-  const visibleRuns = localFilteredRuns;
+  const visibleRuns = useMemo(
+    () =>
+      selectCompanionRunList(runs, {
+        ...runFilters,
+        scope: showAllRuns ? 'all' : 'active',
+        projects: filters.projects,
+        machines: filters.machines,
+        slotMachines,
+      }),
+    [filters, runFilters, runs, showAllRuns, slotMachines],
+  );
   const recentFamilyShortcuts = useMemo(
     () => selectRecentRunFamilyGroups(filteredRuns, 3),
     [filteredRuns],

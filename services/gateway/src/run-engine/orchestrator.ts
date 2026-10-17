@@ -7,6 +7,7 @@ import {
   FLOW_STEPS,
   type FlowType,
   humanGateEnabled,
+  isCompletionPrerequisiteFailure,
   isGateParkInFlightOrFreed,
   isTerminalRunStatus,
   PipelineSteps,
@@ -54,7 +55,7 @@ import {
   reserveRunArtifactMetadata,
   retainedRunArtifactManifest,
 } from '../run-completion/retained-artifacts.js';
-import { isCompletionPrerequisiteFailure, STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
+import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import {
   routeTerminalRunTransition,
   type TerminalTransitionCollaborators,
