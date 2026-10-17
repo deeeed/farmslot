@@ -18,6 +18,7 @@ import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { getRun } from '../runs/store.js';
+import { advanceSourceRevision } from '../sources/change-signal.js';
 import { assertSourcePinTarget } from '../sources/pin-target.js';
 import {
   gatewaySourceStatus,
@@ -266,6 +267,8 @@ export async function sourcesSync(
       };
     },
   );
+  // Node receipts and locks from this sync are readable now; open panels reread.
+  advanceSourceRevision();
   caller.authorize();
   return result;
 }

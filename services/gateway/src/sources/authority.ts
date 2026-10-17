@@ -82,6 +82,7 @@ export function sourceDependencies(value: unknown): SourceEntryRef[] {
 export class SourceAuthority {
   private pending = Promise.resolve();
   private resolving = new Map<string, Promise<void>>();
+  private observers = new Set<() => void>();
   private state: AuthorityState;
 
   private constructor(
@@ -379,15 +380,18 @@ export class SourceAuthority {
           prepared.operation,
         );
       await this.persist(next, false);
+      let result: T;
       try {
         assertTarget();
-        const result = publish();
+        result = publish();
         this.state = next;
-        return result;
       } catch (error) {
         await this.persist(previous);
         throw error;
       }
+      // Outside the rollback: observers learn of a pin that is already published.
+      this.notify();
+      return result;
     });
   }
 
@@ -455,7 +459,20 @@ export class SourceAuthority {
     const temporary = path.join(this.root, `authority.${randomUUID()}.tmp`);
     await writeFile(temporary, JSON.stringify(state), { flag: 'wx', mode: 0o600 });
     await rename(temporary, path.join(this.root, 'authority.json'));
-    if (publish) this.state = state;
+    if (publish) {
+      this.state = state;
+      this.notify();
+    }
+  }
+
+  /** Called after each published write and each poll, so time-derived staleness is seen too. */
+  observe(listener: () => void): () => void {
+    this.observers.add(listener);
+    return () => this.observers.delete(listener);
+  }
+
+  private notify(): void {
+    for (const listener of this.observers) listener();
   }
 
   /** Each selected source/ref resolves independently. One failure does not stale unrelated records. */
@@ -507,6 +524,7 @@ export class SourceAuthority {
           );
         }
       }
+      this.notify();
       timer = setTimeout(poll, this.configuration.pollIntervalMs);
       timer.unref();
     };

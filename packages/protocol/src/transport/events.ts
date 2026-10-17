@@ -1,5 +1,6 @@
 // Event definitions — server pushes to subscribed clients
 
+import type { ResourceKey, ResourceRevision } from '../client-cache/index.js';
 import type {
   AgentRole,
   BacklogItem,
@@ -153,8 +154,18 @@ export const Events = {
 // ─── Event payload types ───
 // Every event subscriber gets a typed payload via GatewayClient.subscribe<T>()
 
+/** Invalidation-only change notice; clients reread through existing methods. */
+export interface ResourceChangedPayload {
+  version: 1;
+  /** Opaque gateway process identity; revisions are never compared across epochs. */
+  epoch: string;
+  changes: Array<{ key: ResourceKey; revision: ResourceRevision; kind: 'updated' | 'deleted' }>;
+}
+
 export interface FleetUpdatedPayload {
   fleet: FleetStatus;
+  /** Carrier for ResourceChangedPayload until `resource.changed` exists (ADR-069 Amendment 1). */
+  resourceChanges?: ResourceChangedPayload;
 }
 
 export interface SlotChangedPayload {
@@ -380,6 +391,8 @@ export interface MachinePauseUpdatedPayload {
 
 export interface HelloPayload {
   fleet: FleetStatus | null;
+  /** Present when the gateway announces live source status (ADR-069 Amendment 1). */
+  resourceChanges?: ResourceChangedPayload;
 }
 
 export interface ChatResponsePayload {
