@@ -1,4 +1,4 @@
-import { deriveReviewedRecipeClaims } from '@farmslot/adapter-sdk/evidence';
+import { deriveReviewedRecipeClaims, recordedClaimSources } from '@farmslot/adapter-sdk/evidence';
 import {
   type ProjectVisualClaimReviewPolicy,
   type RecipeVisualReviewAuthority,
@@ -35,6 +35,27 @@ export function visualReviewAuthority(
   };
 }
 
+/** Each recorded source a validated package selects claims from; a repair may keep originals. */
+export function selectedSourceInputs(
+  input: RecordedEvidencePackageInput,
+): Array<{ input: RecordedEvidencePackageInput; claimIds: Set<string> }> {
+  const groups = new Map<RecordedEvidencePackageInput, Set<string>>();
+  for (const source of recordedClaimSources(input)) {
+    const claims = groups.get(source.input) ?? new Set<string>();
+    claims.add(source.claimId);
+    groups.set(source.input, claims);
+  }
+  return [...groups].map(([source, claimIds]) => ({ input: source, claimIds }));
+}
+
+/** The recorded source whose closure qualifies receipts for one selected claim. */
+export function claimSourceInput(
+  input: RecordedEvidencePackageInput,
+  claimId: string,
+): RecordedEvidencePackageInput | undefined {
+  return recordedClaimSources(input).find((source) => source.claimId === claimId)?.input;
+}
+
 export interface VisualReviewReadSelection {
   capturedIds?: readonly string[];
   historical?: boolean;
@@ -62,16 +83,20 @@ export function appliedVisualJudgmentReceiptIds(
     ...new Set(
       inputs.flatMap((input) =>
         input.claims
-          ? recordedVisualJudgments(
-              input,
-              visualReviewAuthority(
-                run,
-                input,
-                selection.capturedIds,
-                policy,
-                selection.historical,
-              ),
-            ).map(({ receiptId }) => receiptId)
+          ? selectedSourceInputs(input).flatMap((source) =>
+              recordedVisualJudgments(
+                source.input,
+                visualReviewAuthority(
+                  run,
+                  source.input,
+                  selection.capturedIds,
+                  policy,
+                  selection.historical,
+                ),
+              )
+                .filter(({ claimId }) => source.claimIds.has(claimId))
+                .map(({ receiptId }) => receiptId),
+            )
           : [],
       ),
     ),

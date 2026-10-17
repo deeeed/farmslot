@@ -18,6 +18,7 @@ import {
   type RequestFrame,
   type ResponseFrame,
   ReviewQaConfigurationError,
+  type Run,
 } from '@farmslot/protocol';
 import { SlotConfigError } from '@farmslot/slot-config';
 
@@ -73,6 +74,11 @@ import { isGatewayOriginAllowed } from './security/origin.js';
 import { personSessionMethods, routePersonSessionMethod } from './security/person-sessions.js';
 import type { ClientState } from './server/client-state.js';
 import { routeMethod } from './server/route-method.js';
+import {
+  currentSourceResourceChanges,
+  noteRunSourceFacts,
+  setSourceChangePublisher,
+} from './sources/change-signal.js';
 import { handleAgentFsChanged } from './tasks/watcher.js';
 
 let eventSeq = 0;
@@ -474,6 +480,14 @@ export function initServerGlobals(): void {
 
   // Init thumbnail cache (demand-driven — only polls when clients subscribe)
   initThumbnailCache(broadcastEvent);
+  setSourceChangePublisher(() => {
+    loadFleetStatus()
+      .then((fleet) => broadcastEvent(Events.FLEET_UPDATED, { fleet }))
+      .catch((err) => {
+        // Revisions only grow, so the next fleet.updated or hello carries this change.
+        console.warn(`[server] source change broadcast failed: ${(err as Error).message}`);
+      });
+  });
 
   // Watch for fleet state changes and broadcast
   const publishFleetChange = (fleet: FleetStatus) => {
@@ -524,13 +538,19 @@ function handleNodeBinaryFrame(raw: Buffer): void {
   ingestNodeFrame(decoded.slotId, decoded.payload, decoded.keyFrame, decoded.width, decoded.height);
 }
 
+/** Live source status rides on hello and fleet.updated until resource.changed exists. */
+function withSourceChanges<T extends object>(payload: T): T {
+  const resourceChanges = currentSourceResourceChanges();
+  return resourceChanges ? { ...payload, resourceChanges } : payload;
+}
+
 async function sendHello(ws: WebSocket): Promise<void> {
   try {
     const fleet = await loadFleetStatus();
-    sendEvent(ws, Events.HELLO, { fleet });
+    sendEvent(ws, Events.HELLO, withSourceChanges({ fleet }));
   } catch (err) {
     console.warn(`[server] sendHello fleet load failed: ${(err as Error).message}`);
-    sendEvent(ws, Events.HELLO, { fleet: null });
+    sendEvent(ws, Events.HELLO, withSourceChanges({ fleet: null }));
   }
 }
 
@@ -835,7 +855,17 @@ function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
 }
 
 export function broadcast(frame: EventFrame, ownerId?: string): void {
-  const msg = JSON.stringify(frame);
+  const payload: unknown = frame.payload;
+  if (frame.event === Events.RUN_UPDATED) {
+    const run = (payload as { run?: Run } | undefined)?.run;
+    if (run) noteRunSourceFacts(run);
+  }
+  // fleet.updated reaches only principals that may read sources.status.
+  const outgoing =
+    frame.event === Events.FLEET_UPDATED && payload && typeof payload === 'object'
+      ? { ...frame, payload: withSourceChanges(payload) }
+      : frame;
+  const msg = JSON.stringify(outgoing);
   let authorizationFaultLogged = false;
   for (const [ws, state] of clients) {
     if (ws.readyState !== WebSocket.OPEN || activeAuthRuntime === null) continue;

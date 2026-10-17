@@ -2,6 +2,7 @@ import { LitElement } from 'lit';
 import { state } from 'lit/decorators.js';
 
 import type {
+  FleetStatus,
   FlowType,
   PRStatus,
   QueueItem,
@@ -114,6 +115,7 @@ export abstract class RunListState extends LitElement {
   @state() sortBy: SortOption = 'newest';
   @state() searchQuery = '';
   @state() globalFilters: GlobalFilters = { projects: [], machines: [] };
+  @state() fleet: FleetStatus | null = null;
   @state() selectedIds = new Set<string>();
   @state() selectedRunId = '';
   @state() narrowViewport = false;

@@ -576,7 +576,7 @@ export class DecisionInbox extends LitElement {
         ${payload.feedbackSummary
           ? html`
               <div class="retro-row">
-                <span class="retro-label">PR feedback</span>
+                <span class="retro-label">Feedback</span>
                 <span class="retro-value" data-testid="feedback-summary"
                   >${feedbackSummaryLabel(payload.feedbackSummary)}</span
                 >

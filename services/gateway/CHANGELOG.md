@@ -4,6 +4,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- `run.list` `active` uses the shared `isActiveListRun` rule that Command Center and Companion list with.
+
+- Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate. An undelivered or interrupted repair stays retryable under its single charge, and a restart resumes it through fix recovery without refunding or recharging the round.
+- Publish a per-epoch source revision on `hello` and `fleet.updated`, advanced by source declaration, pin, resolution and lock changes, run source plans, syncs and node reconnects.
+
 - Hand a run to the operator when its worker is waiting on its own question or approval request: the monitor raises an interactive handoff with the captured question instead of nudging it or leaving the run in monitoring with no decision. The handoff clears when the question closes, survives a gateway restart, and ignores unsent composer text.
 
 - Keep a QA run's evidence window when a dispatch replay resumes the same task. The first dispatch of a task identity records when it began, and QA completion checks recipe evidence against that instead of the latest dispatch. A new task or a fresh dispatch starts a new window. For runs dispatched before this, the primary worker's first launch counts when it happened after the current task was written; their next dispatch records it as the anchor.
@@ -59,6 +64,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Render `{{node_support_dir}}` in fixtures and `NODE_SUPPORT_DIR` in worker templates from the slot's selected node-support bundle, so pack scripts no longer resolve through the node install root or the old in-checkout support pointer. Fixture checks read the slot's selection without publishing.
+
+- Freeze the source identity of a QA run whose ref or range scope names exact commits (`expectedHeadSha`/`expectedBaseSha`, or full-SHA `ref`, `head` and `base`), as PR QA does. Prepare checks out that head, detached when the run has no branch, instead of the default-branch tip; dispatch refuses a prepared HEAD that differs and names the frozen head; completion validates against the same identity, also for runs prepared before this change. Start refs also accept 64-hex commit names.
 
 ## 0.22.1 - 2026-10-16
 

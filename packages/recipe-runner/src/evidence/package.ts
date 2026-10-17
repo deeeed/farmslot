@@ -1,10 +1,14 @@
 import {
   digestRecipeDocument,
   isRecord,
+  normalizeRecipeClaimId,
   type QualifiedRecipeVisualJudgment,
   type RecipeArtifactManifestEntry,
   type RecipeClaimDeclaration,
   type RecipeClaimEvidence,
+  type RecipeRepairScope,
+  recipeRepairScopeDigest,
+  type RecipeRepairSelection,
   type RecipeResolutionDocument,
   recipeTraceEntries,
   type RecipeValidationFinding,
@@ -18,6 +22,8 @@ import {
   validateAcceptanceStatusLedger,
   validateRecipeArtifactPackage,
   validateRecipeRecordingTimelineBinding,
+  validateRecipeRepairScope,
+  validateRecipeRepairSelection,
 } from '@farmslot/protocol';
 
 import type { ProofDocument, ProofTraceEntry } from './assertions.js';
@@ -65,6 +71,73 @@ function deriveClaimsFromInput(
   );
 }
 
+/** A claim's engine-selected recorded source; fresh claims come from the package itself. */
+export interface RecordedClaimSource {
+  claimId: string;
+  input: RecordedEvidencePackageInput;
+  /** Root of a retained original inside the fresh package; absent for fresh proof. */
+  artifactRoot?: string;
+}
+
+interface CheckedRepair {
+  scope: RecipeRepairScope;
+  selection: RecipeRepairSelection;
+}
+
+/** Callers validate the package first; the selection then names one source per claim. */
+export function recordedClaimSources(input: RecordedEvidencePackageInput): RecordedClaimSource[] {
+  if (!input.repair)
+    return (input.claims?.criteria ?? []).map((claim) => ({ claimId: claim.id, input }));
+  const { selection } = input.repair as CheckedRepair;
+  return selection.claims.map((row) => {
+    if (row.source === 'fresh') return { claimId: row.claimId, input };
+    const dependency = input.comparisonDependencies!.find(
+      (entry) => entry.input.claims?.recipeRunId === row.recipeRunId,
+    )!;
+    return { claimId: row.claimId, input: dependency.input, artifactRoot: dependency.artifactRoot };
+  });
+}
+
+/** A retained source inherits the caller's authority only when it vouches for the fresh package. */
+export function recordedSourceAuthority<T extends { recipeRunId: string; closureIdentity: string }>(
+  input: RecordedEvidencePackageInput,
+  source: RecordedEvidencePackageInput,
+  authority: T | undefined,
+): T | undefined {
+  if (source === input) return authority;
+  return authority &&
+    authority.recipeRunId === input.claims?.recipeRunId &&
+    authority.closureIdentity === recordedEvidenceClosureIdentity(input)
+    ? {
+        ...authority,
+        recipeRunId: source.claims!.recipeRunId,
+        closureIdentity: recordedEvidenceClosureIdentity(source),
+      }
+    : undefined;
+}
+
+/** Retained media stays in its original package; display paths resolve from the fresh root. */
+function selectedRow(
+  row: RecipeClaimEvidence,
+  source: Pick<RecordedClaimSource, 'input' | 'artifactRoot'>,
+): RecipeClaimEvidence {
+  return source.artifactRoot
+    ? {
+        ...row,
+        evidence: row.evidence.map((file) => `${source.artifactRoot}/${file}`),
+        retainedFrom: source.input.claims!.recipeRunId,
+      }
+    : row;
+}
+
+/** Engine-selected raw claim rows; a repair never fabricates a combined execution. */
+export function selectedRecipeClaims(input: RecordedEvidencePackageInput): RecipeClaimEvidence[] {
+  if (!input.repair) return input.claims?.criteria ?? [];
+  return recordedClaimSources(input).map((source) =>
+    selectedRow(source.input.claims!.criteria.find(({ id }) => id === source.claimId)!, source),
+  );
+}
+
 /** Current human review is a projection; original package bytes and facts remain intact. */
 export function deriveReviewedRecipeClaims(
   input: RecordedEvidencePackageInput,
@@ -73,11 +146,106 @@ export function deriveReviewedRecipeClaims(
   const validation = validateRecordedEvidencePackage(input);
   if (validation.status !== 'valid' || !input.claims)
     throw new TypeError('Visual review requires a valid retained engine claim package.');
-  return deriveClaimsFromInput(
-    input,
-    [],
-    authority ? recordedVisualJudgments(input, authority) : [],
+  const reviewed = new Map<RecordedEvidencePackageInput, RecipeClaimEvidence[]>();
+  const rows = (source: RecordedEvidencePackageInput) => {
+    let derived = reviewed.get(source);
+    if (!derived) {
+      // Each source keeps the receipts qualified for its own execution and closure.
+      const scoped = recordedSourceAuthority(input, source, authority);
+      derived = deriveClaimsFromInput(
+        source,
+        [],
+        scoped ? recordedVisualJudgments(source, scoped) : [],
+      );
+      reviewed.set(source, derived);
+    }
+    return derived;
+  };
+  if (!input.repair) return rows(input);
+  return recordedClaimSources(input).map((source) =>
+    selectedRow(rows(source.input).find(({ id }) => id === source.claimId)!, source),
   );
+}
+
+/** A retained source supplies only its own fresh claims, with the registered text. */
+function repairFindings(
+  input: RecordedEvidencePackageInput,
+  references: readonly unknown[],
+): Array<[string, string]> {
+  const findings: Array<[string, string]> = [];
+  const invocationRepair = isRecord(input.invocation) ? input.invocation.repair : undefined;
+  if (!input.repair)
+    return [['repair-selection.json', 'Repair execution has no retained selection.']];
+  const scopeCheck = validateRecipeRepairScope(input.repair.scope);
+  if (scopeCheck.status !== 'valid')
+    return scopeCheck.findings.map((finding) => [
+      `repair-scope.json.${finding.path}`,
+      finding.message,
+    ]);
+  const scope = input.repair.scope as RecipeRepairScope;
+  if (
+    !isRecord(invocationRepair) ||
+    invocationRepair.repairId !== scope.repairId ||
+    invocationRepair.scopeDigest !== recipeRepairScopeDigest(scope)
+  )
+    findings.push(['recipe-invocation.json.repair', 'Execution does not bind this repair scope.']);
+  if (
+    !isRecord(input.invocation) ||
+    digestRecipeDocument(input.invocation.claims) !== digestRecipeDocument(scope.claims)
+  )
+    findings.push(['recipe-invocation.json.claims', 'Repair changed the task registration.']);
+  if (isRecord(input.summary) && input.summary.stopAfterNode !== undefined)
+    findings.push(['summary.json.stopAfterNode', 'A repair must run its complete graph.']);
+  if (!input.claims) return findings;
+  const selectionCheck = validateRecipeRepairSelection(input.repair.selection, scope, {
+    recipeRunId: input.claims.recipeRunId,
+    criteria: input.claims.criteria,
+  });
+  findings.push(
+    ...selectionCheck.findings.map((finding): [string, string] => [
+      `repair-selection.json.${finding.path}`,
+      finding.message,
+    ]),
+  );
+  for (const source of scope.sources) {
+    if (
+      !references.some(
+        (ref) =>
+          isRecord(ref) &&
+          ref.recipeRunId === source.recipeRunId &&
+          ref.closureIdentity === source.closureIdentity,
+      )
+    )
+      findings.push([
+        `repair-scope.json.sources.${source.recipeRunId}`,
+        'A retained source is not an engine-retained closure.',
+      ]);
+  }
+  if (selectionCheck.status !== 'valid') return findings;
+  for (const row of (input.repair.selection as RecipeRepairSelection).claims) {
+    if (row.source !== 'retained') continue;
+    const dependency = input.comparisonDependencies?.find(
+      (entry) => entry.input.claims?.recipeRunId === row.recipeRunId,
+    )?.input;
+    const claim = dependency?.claims?.criteria.find(({ id }) => id === row.claimId);
+    const registered = scope.claims.find(({ id }) => normalizeRecipeClaimId(id) === row.claimId);
+    const nested = dependency?.repair?.selection;
+    const ownSelection =
+      isRecord(nested) && Array.isArray(nested.claims)
+        ? nested.claims.find((entry) => isRecord(entry) && entry.claimId === row.claimId)
+        : undefined;
+    if (
+      !dependency ||
+      !claim ||
+      claim.text !== registered?.claim ||
+      (dependency.repair && (!isRecord(ownSelection) || ownSelection.source !== 'fresh'))
+    )
+      findings.push([
+        `repair-selection.json.claims.${row.claimId}`,
+        "Retained proof must be its source execution's own claim with the registered text.",
+      ]);
+  }
+  return findings;
 }
 
 /** Validate actual package identities before consumers derive a moment or publish evidence. */
@@ -180,7 +348,8 @@ function validatePackage(
     } catch (error) {
       issue(String(ref.artifactRoot), error instanceof Error ? error.message : String(error));
     }
-    const validation = validatePackage(child, nextAncestors, snapshot);
+    // A repair keeps original proof at the revision it was recorded; only the fresh attempt binds this head.
+    const validation = validatePackage(child, nextAncestors, input.repair ? undefined : snapshot);
     findings.push(
       ...validation.findings.map((finding) => ({
         ...finding,
@@ -196,6 +365,8 @@ function validatePackage(
         );
     }
   }
+  if (input.repair || (isRecord(input.invocation) && input.invocation.repair !== undefined))
+    for (const [path, message] of repairFindings(input, dependencies)) issue(path, message);
   if (input.claims?.schemaVersion === 2) {
     const captures = groupRecipeCaptureComparisons(input, input.claims.criteria, snapshot);
     for (const media of captures.media) {

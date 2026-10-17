@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
+import {
+  selectedRecipeClaims,
+  validateRecordedEvidencePackage,
+} from '@farmslot/adapter-sdk/evidence';
 import {
   Events,
   type EvidenceAttestationApprover,
@@ -20,6 +23,7 @@ import {
   appliedClaimOverrideReceiptIds,
   claimOverrideAuthority,
 } from '../../run-engine/claim-overrides.js';
+import { claimSourceInput } from '../../run-engine/claim-reviews.js';
 import {
   readGateAcceptance,
   readGateRecordedEvidence,
@@ -74,9 +78,12 @@ export async function runOverrideClaim(
   )
     throw new Error('The selected recorded evidence failed integrity validation.');
   const input = inputs.find((input) => input.claims?.recipeRunId === params.recipeRunId);
-  const claim = input?.claims?.criteria.find(({ id }) => id === claimId);
-  if (!input || !claim)
+  const claim = input && selectedRecipeClaims(input).find(({ id }) => id === claimId);
+  // A repair may select a retained original; the override binds to that execution.
+  const sourceInput = input && claimSourceInput(input, claimId);
+  if (!input || !claim || !sourceInput?.claims)
     throw new Error('The claim is absent from the selected recorded execution.');
+  const sourceRunId = sourceInput.claims.recipeRunId;
   const acceptance = await (dependencies.acceptance ?? readGateAcceptance)(run);
   if (
     acceptance.error ||
@@ -96,7 +103,7 @@ export async function runOverrideClaim(
     throw new Error(
       'Unverified task overrides or changed projections require a canonical engine projection.',
     );
-  const authority = claimOverrideAuthority(run, input);
+  const authority = claimOverrideAuthority(run, sourceInput);
   const rechecked = await (dependencies.evidence ?? readGateRecordedEvidence)(
     run,
     prepared ?? null,
@@ -105,10 +112,13 @@ export async function runOverrideClaim(
   const checked = rechecked.find(
     (candidate) => candidate.claims?.recipeRunId === params.recipeRunId,
   );
+  const checkedSource =
+    checked && validateRecordedEvidencePackage(checked).status === 'valid'
+      ? claimSourceInput(checked, claimId)
+      : undefined;
   if (
-    !checked ||
-    validateRecordedEvidencePackage(checked).status !== 'valid' ||
-    claimOverrideAuthority(run, checked).closureIdentity !== authority.closureIdentity
+    !checkedSource ||
+    claimOverrideAuthority(run, checkedSource).closureIdentity !== authority.closureIdentity
   )
     throw new Error('Selected evidence changed while the override was being checked.');
   const matching = (current: Run) =>
@@ -116,7 +126,7 @@ export async function runOverrideClaim(
       (receipt) =>
         receipt.runId === current.id &&
         receipt.claimId === claim.id &&
-        receipt.recipeRunId === params.recipeRunId &&
+        receipt.recipeRunId === sourceRunId &&
         receipt.closureIdentity === authority.closureIdentity &&
         receipt.reason === reason &&
         receipt.approver.principalId === approver.principalId,
@@ -147,10 +157,12 @@ export async function runOverrideClaim(
         runId: run.id,
         decisionId: decision.id,
         claimId: claim.id,
-        recipeRunId: params.recipeRunId,
+        recipeRunId: sourceRunId,
         closureIdentity: authority.closureIdentity,
-        priorVerdict: projectClaimUntestableOverride(claim, claimOverrideAuthority(current, input))
-          .verdict,
+        priorVerdict: projectClaimUntestableOverride(
+          claim,
+          claimOverrideAuthority(current, sourceInput),
+        ).verdict,
         approver,
         reason,
         overriddenAt: new Date().toISOString(),

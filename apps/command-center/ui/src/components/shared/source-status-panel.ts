@@ -9,6 +9,7 @@ import {
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { sourceChangeFeed } from '../../source-change-feed.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
 
 @customElement('source-status-panel')
@@ -35,6 +36,7 @@ export class SourceStatusPanel extends LitElement {
   );
   private unsubscribe?: () => void;
   private connectionUnsubscribe?: () => void;
+  private feedUnsubscribe?: () => void;
   private selectionsKey = '';
 
   static styles = css`
@@ -55,7 +57,10 @@ export class SourceStatusPanel extends LitElement {
     }
     header h3 {
       margin: 0;
+    }
+    header p {
       flex: 1;
+      margin: 0;
     }
     article {
       border-top: 1px solid ${unsafeCSS(colors.bgCardHover)};
@@ -108,6 +113,7 @@ export class SourceStatusPanel extends LitElement {
       }
     });
     this.connectionUnsubscribe = gateway.onConnectionChange(() => this.load(true));
+    this.feedUnsubscribe = this.controller.attachFeed(sourceChangeFeed);
     this.load(true);
   }
 
@@ -115,6 +121,7 @@ export class SourceStatusPanel extends LitElement {
     super.disconnectedCallback();
     this.unsubscribe?.();
     this.connectionUnsubscribe?.();
+    this.feedUnsubscribe?.();
   }
 
   protected updated(changed: Map<string, unknown>): void {
@@ -134,22 +141,21 @@ export class SourceStatusPanel extends LitElement {
     if (!gateway.isGlobalAdmin) return nothing;
     const state = this.controller.getSnapshot();
     const view = state.view;
+    if (state.hidden) return nothing;
     return html`<section data-testid="sources-panel">
       <header>
         <h3>Sources</h3>
-        <span
-          >${view?.target
-            ? `${view.target.scope} ${view.target.targetId}`
-            : view?.draft
-              ? 'Run selections'
-              : 'Farm'}</span
-        >
-        <button data-testid="sources-refresh" @click=${() => this.controller.refresh()}>
-          Refresh
-        </button>
+        ${view ? html`<p class="facts" data-testid="sources-line">${view.line}</p>` : nothing}
       </header>
-      ${state.loading ? html`<p>Loading sources...</p>` : nothing}
-      ${state.error ? html`<p class="error" role="alert">${state.error}</p>` : nothing}
+      ${state.unsupported
+        ? html`<p data-testid="sources-unsupported">Live updates unavailable on this gateway.</p>`
+        : nothing}
+      ${state.error
+        ? html`<p class="error" role="alert">${state.error}</p>
+            <button data-testid="sources-read-retry" @click=${() => this.controller.refresh()}>
+              Retry
+            </button>`
+        : nothing}
       ${state.operationError
         ? html`<p class="error" role="alert" data-testid="sources-operation-error">
             ${state.operationError}
@@ -166,64 +172,76 @@ export class SourceStatusPanel extends LitElement {
               Retry this request
             </button>`
         : nothing}
-      ${view?.readOnlyReason ? html`<p>${view.readOnlyReason}</p>` : nothing}
-      ${view?.rows.map(
-        (row) =>
-          html`<article data-source-id=${row.declaration.id}>
-            <p class="facts">${row.summary}</p>
-            <details>
-              <summary>Pin, lock and verification facts</summary>
-              ${row.details.map((line) => html`<p class="facts">${line}</p>`)}
-            </details>
-            ${view.editable
-              ? html`<input
-                  aria-label="Pushed branch for ${row.declaration.id}"
-                  data-testid="source-${row.declaration.id}-branch"
-                  placeholder="Pushed branch"
-                  .value=${row.selection?.ref ?? ''}
-                  ?disabled=${!state.canEdit}
-                  @input=${(event: InputEvent) =>
-                    this.controller.select({
-                      sourceId: row.declaration.id,
-                      selection: 'branch',
-                      ref: (event.target as HTMLInputElement).value,
-                    })}
-                />`
-              : nothing}
-            ${row.selectionErrors.map((error) => html`<p class="error">${error}</p>`)}
-            ${view.draft
-              ? html`<button
-                    ?disabled=${!state.canEdit}
-                    data-testid="source-${row.declaration.id}-main"
-                    @click=${() =>
-                      this.controller.select({ sourceId: row.declaration.id, selection: 'main' })}
-                  >
-                    Use main</button
-                  ><button
-                    ?disabled=${!state.canEdit}
-                    @click=${() => this.controller.clearSelection(row.declaration.id)}
-                  >
-                    Inherit scope
-                  </button>`
-              : nothing}
-            ${view.actions.map(
-              (action) =>
-                html`<button
-                  data-testid="source-${row.declaration.id}-${action}"
-                  ?disabled=${!state.interactive || (action === 'pin' && !row.canPin)}
-                  @click=${() => this.controller.apply(action, row.declaration.id)}
-                >
-                  ${SOURCE_VIEW_ACTION_LABELS[action]}
-                </button>`,
-            )}
-          </article>`,
-      )}
       ${view?.errors.map(
         (error) =>
-          html`<p class="error">
+          html`<p class="error" data-testid="sources-status-error">
             ${error.nodeId ?? error.sourceId ?? error.project}: ${error.reason}
           </p>`,
       )}
+      ${view && state.controls
+        ? view.rows.map(
+            (row) =>
+              html`<article data-source-id=${row.declaration.id}>
+                <p class="facts">${row.declaration.id}</p>
+                ${view.editable
+                  ? html`<input
+                      aria-label="Pushed branch for ${row.declaration.id}"
+                      data-testid="source-${row.declaration.id}-branch"
+                      placeholder="Pushed branch"
+                      .value=${row.selection?.ref ?? ''}
+                      ?disabled=${!state.canEdit}
+                      @input=${(event: InputEvent) =>
+                        this.controller.select({
+                          sourceId: row.declaration.id,
+                          selection: 'branch',
+                          ref: (event.target as HTMLInputElement).value,
+                        })}
+                    />`
+                  : nothing}
+                ${row.selectionErrors.map((error) => html`<p class="error">${error}</p>`)}
+                ${view.draft
+                  ? html`<button
+                        ?disabled=${!state.canEdit}
+                        data-testid="source-${row.declaration.id}-main"
+                        @click=${() =>
+                          this.controller.select({
+                            sourceId: row.declaration.id,
+                            selection: 'main',
+                          })}
+                      >
+                        Use main</button
+                      ><button
+                        ?disabled=${!state.canEdit}
+                        @click=${() => this.controller.clearSelection(row.declaration.id)}
+                      >
+                        Inherit scope
+                      </button>`
+                  : nothing}
+                ${view.actions.map(
+                  (action) =>
+                    html`<button
+                      data-testid="source-${row.declaration.id}-${action}"
+                      ?disabled=${!state.interactive || (action === 'pin' && !row.canPin)}
+                      @click=${() => this.controller.apply(action, row.declaration.id)}
+                    >
+                      ${SOURCE_VIEW_ACTION_LABELS[action]}
+                    </button>`,
+                )}
+              </article>`,
+          )
+        : nothing}
+      ${view?.rows.length
+        ? html`<details data-testid="sources-details">
+            <summary>Details</summary>
+            ${view.rows.map(
+              (row) =>
+                html`<article data-source-id=${row.declaration.id}>
+                  <p class="facts">${row.summary}</p>
+                  ${row.details.map((line) => html`<p class="facts">${line}</p>`)}
+                </article>`,
+            )}
+          </details>`
+        : nothing}
     </section>`;
   }
 }

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Send back to agent",
+  "description": "Manual release proof through an isolated gateway and a real retained native worker. Needs ffmpeg and runner credentials.",
+  "workflow": {
+    "entry": "visual-repair",
+    "nodes": {
+      "visual-repair": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/visual-repair.mts",
+        "timeout_ms": 5400000,
+        "intent": "A person Issue on one visual criterion goes back to the retained worker with one reserved fix round; the worker re-proves only that criterion, and the gate returns with the other criterion kept from its earlier proof.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

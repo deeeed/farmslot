@@ -129,7 +129,7 @@ export interface AgentContext {
   reviewLoopNumber?: number | null;
   /** Gateway validation completed for the structured reviewer result and archived artifacts. */
   reviewResultValidatedAt?: string;
-  pipelineVisualReviewInput?: import('../recipe/pipeline-visual-judgments.js').PipelineVisualReviewInput;
+  pipelineVisualReviewInput?: import('../recipe/pipeline-visual-judgments.js').PipelineReviewInput;
   pipelineVisualReviewResult?: import('../recipe/pipeline-visual-judgments.js').PipelineVisualReviewResult;
   runner?: string | null;
   model?: string | null;

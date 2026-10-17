@@ -41,9 +41,7 @@ export function renderFeedbackCandidates(
   if (!candidates?.length) return nothing;
   return html`
     <details class="retro-details feedback-candidates" data-testid="feedback-candidates">
-      <summary>
-        PR feedback candidates${summary ? ` (${feedbackSummaryLabel(summary)})` : ''}
-      </summary>
+      <summary>Feedback candidates${summary ? ` (${feedbackSummaryLabel(summary)})` : ''}</summary>
       <div class="feedback-list">
         ${candidates.map(
           (candidate) => html`
@@ -55,10 +53,13 @@ export function renderFeedbackCandidates(
             >
               <div class="feedback-head">
                 <span class="feedback-kind">${candidate.authorKind}</span>
-                <strong>${candidate.authorLogin ?? 'unknown author'}</strong>
-                <span class="muted">${candidate.kind}</span>
+                ${candidate.provider === 'github'
+                  ? html`<strong>${candidate.authorLogin ?? 'unknown author'}</strong>
+                      <span class="muted">${candidate.kind}</span>`
+                  : html`<strong>${candidate.reviewer ?? 'Reviewer'}</strong>
+                      <span class="muted">Send back · ${candidate.claimId}</span>`}
                 <span class="muted">${feedbackStateLabel(candidate)}</span>
-                ${candidate.url
+                ${candidate.provider === 'github' && candidate.url
                   ? html`<a
                       class="retro-open"
                       href=${candidate.url}
@@ -73,15 +74,17 @@ export function renderFeedbackCandidates(
                 : nothing}
               <div class="feedback-meta muted">
                 ${candidate.path ? html`<span>${candidate.path}</span>` : nothing}
-                <span
-                  >reviewed
-                  ${candidate.reviewedCommit
-                    ? candidate.reviewedCommit.slice(0, 8)
-                    : 'unknown'}</span
-                >
-                ${candidate.observedHead
-                  ? html`<span>head ${candidate.observedHead.slice(0, 8)}</span>`
-                  : nothing}
+                ${candidate.provider === 'github'
+                  ? html`<span
+                        >reviewed
+                        ${candidate.reviewedCommit
+                          ? candidate.reviewedCommit.slice(0, 8)
+                          : 'unknown'}</span
+                      >
+                      ${candidate.observedHead
+                        ? html`<span>head ${candidate.observedHead.slice(0, 8)}</span>`
+                        : nothing}`
+                  : html`<span>repair ${candidate.repairId.slice(0, 15)}</span>`}
                 <span>rev ${candidate.revision.slice(0, 8)}</span>
                 <span
                   >runs ${candidate.runIds.map((id) => id.slice(0, 8)).join(', ') || 'none'}</span

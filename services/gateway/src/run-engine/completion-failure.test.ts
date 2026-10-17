@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import { FLOW_STEPS, PipelineSteps as S, type Run } from '@farmslot/protocol';
+import {
+  FLOW_STEPS,
+  isCompletionPrerequisiteFailure,
+  PipelineSteps as S,
+  type Run,
+} from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
 import { GatewayMethodError } from '../core/method-error.js';
-import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
 
 import { makeRun } from './test-fixtures.js';
 

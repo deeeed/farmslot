@@ -11,6 +11,8 @@ import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { useConnectionStore } from '../../store/connection';
 
+import { sourceChangeFeedFor } from './source-change-feed';
+
 export function useSourceStatusController(
   context: SourceStatusViewContext,
   onSelectionsChange?: (selections: SourceSelection[]) => void,
@@ -48,6 +50,11 @@ export function useSourceStatusController(
     generation: number | null;
   } | null>(null);
   contextRef.current = connectedContext;
+  // Attached before the first read so that read records the revision it covers.
+  useEffect(
+    () => (client ? controller.attachFeed(sourceChangeFeedFor(client)) : undefined),
+    [controller, client],
+  );
   useEffect(() => {
     const changed = controller.setContext(contextRef.current);
     const transportChanged =

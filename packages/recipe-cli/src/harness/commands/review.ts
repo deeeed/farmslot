@@ -4,9 +4,17 @@ import path from 'node:path';
 
 import { isRecord } from '@farmslot/protocol';
 
-import { harnessContext } from '../context-state.js';
+import { type HarnessContext, harnessContext } from '../context-state.js';
 import { harnessHost } from '../host.js';
 import { optionFlag, optionString, parseArgs, usageError } from '../parse-args.js';
+
+export interface ReviewLibrary {
+  name: string;
+  root: string;
+  /** Where the host found the library. */
+  source?: string;
+  revision?: string | null;
+}
 
 export interface ReviewCommandOptions {
   baseRules?: string;
@@ -17,16 +25,43 @@ export interface ReviewCommandOptions {
     referenceMissing?: string;
     steps: readonly string[];
   };
+  // Host hooks for a CLI without a project binding: each is ignored when
+  // context.project is set, so the binding always wins.
+  /** Libraries `domain` classifies changed files against. */
+  libraries?(input: { target: string; runtime: string }): readonly ReviewLibrary[];
+  /** The library for a declared domain; undefined gives the default refusal. */
+  resolveLibrary?(input: {
+    domain: string;
+    target: string;
+    runtime: string;
+  }): ReviewLibrary | undefined;
+  /** Used when --domain is absent; `label` names the source in the domain detail line. */
+  defaultDomain?: { read(): string | undefined; label: string };
+  /** Default 'farmslot review domain'. */
+  domainCommand?: string;
+  /** Default 'Use farmslot review checklist|domain.' */
+  usage?: string;
+  /** Maps the adapter to a review runtime; throw to refuse. Replaces the runtimeIds check. */
+  runtime?(input: {
+    action: 'checklist' | 'domain';
+    adapter?: HarnessContext['adapter'];
+    domain?: string;
+  }): string;
+  /** Lines between the checklist title and Scope. */
+  header?(input: {
+    runtime: string;
+    target: string;
+    domain?: string;
+    library?: ReviewLibrary;
+    reference?: { adapter: string; root: string; source: string };
+    referenceMissing?: string;
+  }): readonly string[];
+  verdictRule?: string;
 }
 
 interface KnowledgeSection {
   title: string;
   summary: string;
-}
-interface DomainLibrary {
-  name: string;
-  root: string;
-  revision?: string;
 }
 
 function globToRegExp(glob: string): RegExp {
@@ -178,13 +213,18 @@ function plainText(markdown: string): string {
 }
 
 function ownedPaths(
-  library: DomainLibrary,
+  library: ReviewLibrary,
   runtime: string,
 ): { domain: string; globs: string[] } | undefined {
   const file = path.join(library.root, 'owned-paths.json');
   if (!fs.existsSync(file)) return undefined;
   const value: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (!isRecord(value) || typeof value.domain !== 'string' || !isRecord(value.repos))
+  if (
+    !isRecord(value) ||
+    typeof value.domain !== 'string' ||
+    !value.domain ||
+    !isRecord(value.repos)
+  )
     throw usageError(`Invalid owned-paths.json: ${file}`);
   const globs: unknown = value.repos[runtime] ?? [];
   if (!Array.isArray(globs) || !globs.every((entry): entry is string => typeof entry === 'string'))
@@ -199,19 +239,34 @@ export async function handleReview(
 ): Promise<number> {
   const { positional, options } = parseArgs(argv);
   const action = positional[0];
-  if (action !== 'checklist' && action !== 'domain')
-    throw usageError('Use farmslot review checklist|domain.');
   const context = harnessContext();
+  const project = context?.project;
+  const hooks = project ? undefined : policy;
+  if (action !== 'checklist' && action !== 'domain')
+    throw usageError(hooks?.usage ?? 'Use farmslot review checklist|domain.');
   const target = context?.target.value ?? path.resolve(optionString(options, 'target') ?? '.');
-  const runtime = context?.adapter?.value ?? 'unscoped';
-  if (policy.runtimeIds && !policy.runtimeIds.includes(runtime))
+  const flagDomain = optionString(options, 'domain');
+  const fallback = project
+    ? { read: () => project.domain, label: 'project.json' }
+    : hooks?.defaultDomain;
+  const domain = flagDomain ?? fallback?.read();
+  const declaredVia = flagDomain === undefined && fallback ? fallback.label : '--domain';
+  const runtime = hooks?.runtime
+    ? hooks.runtime({ action, adapter: context?.adapter, domain })
+    : (context?.adapter?.value ?? 'unscoped');
+  if (!hooks?.runtime && policy.runtimeIds && !policy.runtimeIds.includes(runtime))
     throw usageError(`Review runtime must be one of ${policy.runtimeIds.join(', ')}.`);
-  const libraries: DomainLibrary[] = context?.project?.libraries ?? [];
-  const domain = optionString(options, 'domain') ?? context?.project?.domain;
+  const authorized = (): readonly ReviewLibrary[] =>
+    project ? project.libraries : (hooks?.libraries?.({ target, runtime }) ?? []);
+  const domainCommand = hooks?.domainCommand ?? 'farmslot review domain';
   if (action === 'domain') {
     let result;
-    if (domain) result = { domain, source: 'declared', adapter: runtime, target };
-    else {
+    let detail;
+    if (domain) {
+      result = { domain, source: 'declared', adapter: runtime, target };
+      detail = `declared via ${declaredVia}`;
+    } else {
+      const libraries = authorized();
       const changed = changedFiles(target, optionString(options, 'base'));
       const matches = libraries
         .flatMap((library) => {
@@ -232,23 +287,59 @@ export async function handleReview(
         libraries,
         matches,
       };
+      detail = matches[0]
+        ? `owned-paths match in ${matches[0].library} (${matches[0].matched.length} of ${changed.files.length} changed files)`
+        : `no library owns the ${changed.files.length} changed files (base ${changed.base}; libraries scanned: ${libraries.length})`;
     }
+    const json = optionFlag(options, 'json');
     process.stdout.write(
-      optionFlag(options, 'json')
+      json
         ? `${JSON.stringify({ command: 'domain', ...result }, null, 2)}\n`
         : `${result.domain ?? 'none'}\n`,
     );
+    if (!json) process.stderr.write(`domain: ${detail}\n`);
     return 0;
   }
-  const library = domain ? libraries.find((entry) => entry.name === domain) : undefined;
+  const library = domain
+    ? hooks?.resolveLibrary
+      ? hooks.resolveLibrary({ domain, target, runtime })
+      : authorized().find((entry) => entry.name === domain)
+    : undefined;
   if (domain && !library)
     throw usageError(`No authorized recipe library found for domain "${domain}".`);
   const base = optionString(options, 'base') ?? defaultBaseRef(target);
   const since = optionString(options, 'since');
   const range = since ? `${since}..HEAD` : `${base}...HEAD`;
+  const patternFiles = library
+    ? ['antipatterns.md', `antipatterns.${runtime}.md`].filter((name) =>
+        fs.existsSync(path.join(library.root, 'review', name)),
+      )
+    : [];
+  const hasParityGuide = Boolean(
+    library && fs.existsSync(path.join(library.root, 'review/parity.md')),
+  );
+  const parity = policy.parityRuntimeIds?.[runtime];
+  const projectParity = policy.parity?.({ runtime, target, hasParityGuide });
+  const reference =
+    !projectParity && parity
+      ? process.env[`${harnessHost().envPrefix}_REF_${parity.toUpperCase()}`]
+      : undefined;
+  const referenceMissing = projectParity
+    ? projectParity.referenceMissing
+    : parity && !reference
+      ? `no ${parity} checkout found`
+      : undefined;
   const lines = [
     `# Review checklist — ${domain ? `${domain} (${runtime})` : runtime}`,
     '',
+    ...(hooks?.header?.({
+      runtime,
+      target,
+      domain,
+      library,
+      reference: projectParity?.reference,
+      referenceMissing,
+    }) ?? []),
     `Scope: \`git diff ${range}\`${since ? ' (incremental re-review since the last verdict)' : ''}.`,
     '',
     '## Setup',
@@ -264,45 +355,33 @@ export async function handleReview(
   );
   item(
     domain
-      ? `Confirm the domain is ${domain} (\`farmslot review domain\`) and read the domain library.`
-      : 'Run `farmslot review domain` to check whether a team library owns the changed files; if one does, re-run with --domain.',
+      ? `Confirm the domain is ${domain} (\`${domainCommand}\`) and open ${patternFiles[0] ? `review/${patternFiles[0]}` : 'the domain library'} once before reading the diff.`
+      : `Run \`${domainCommand}\` to check whether a team library owns the changed files; if one does, re-run with --domain.`,
   );
   lines.push('', '## Base review');
   for (const rule of (policy.baseRules ?? '').split('\n').filter((line) => line.trim())) item(rule);
-  if (library) {
-    const files = ['antipatterns.md', `antipatterns.${runtime}.md`];
-    for (const name of files) {
-      const file = path.join(library.root, 'review', name);
-      if (fs.existsSync(file)) {
-        lines.push('', `## Domain patterns (${domain})`);
-        for (const section of parseSections(fs.readFileSync(file, 'utf8')).sections)
-          item(`${section.title}: ${section.summary}`);
-      }
-    }
+  if (library && patternFiles.length) {
+    lines.push('', `## Domain patterns (${domain})`);
+    for (const name of patternFiles)
+      for (const section of parseSections(
+        fs.readFileSync(path.join(library.root, 'review', name), 'utf8'),
+      ).sections)
+        item(`${section.title}: ${section.summary}`);
   }
   lines.push('', '## Parity');
-  const parity = policy.parityRuntimeIds?.[runtime];
-  const projectParity = policy.parity?.({
-    runtime,
-    target,
-    hasParityGuide: Boolean(library && fs.existsSync(path.join(library.root, 'review/parity.md'))),
-  });
-  const reference =
-    !projectParity && parity
-      ? process.env[`${harnessHost().envPrefix}_REF_${parity.toUpperCase()}`]
-      : undefined;
   if (projectParity) {
     for (const rule of projectParity.steps) item(rule);
   } else if (parity)
     item(
       reference
-        ? `Compare touched behavior with ${parity} at ${reference}${library && fs.existsSync(path.join(library.root, 'review/parity.md')) ? ' using review/parity.md' : ''}; record every divergence under the library parity rule.`
+        ? `Compare touched behavior with ${parity} at ${reference}${hasParityGuide ? ' using review/parity.md' : ''}; record every divergence under the library parity rule.`
         : `Parity with ${parity}: not checked. Record the missing reference in the verdict.`,
     );
   else item('Check consumers of each changed public contract.');
   lines.push('', '## Verdict');
   item(
-    'Post APPROVE or REQUEST CHANGES, findings ordered by severity with file:line; state what was not checked and why.',
+    hooks?.verdictRule ??
+      'Post APPROVE or REQUEST CHANGES, findings ordered by severity with file:line; state what was not checked and why.',
   );
   const checklist = `${lines.join('\n')}\n`;
   const out = optionString(options, 'out');
@@ -312,7 +391,7 @@ export async function handleReview(
   }
   process.stdout.write(
     optionFlag(options, 'json')
-      ? `${JSON.stringify({ command: 'review', subcommand: 'checklist', target, adapter: runtime, domain: domain ?? null, library: library ?? null, reference: projectParity ? (projectParity.reference ?? null) : (reference ?? null), referenceMissing: projectParity ? (projectParity.referenceMissing ?? null) : parity && !reference ? `no ${parity} checkout found` : null, base, since: since ?? null, out: out ? path.resolve(out) : null, checklist }, null, 2)}\n`
+      ? `${JSON.stringify({ command: 'review', subcommand: 'checklist', target, adapter: runtime, domain: domain ?? null, library: library ?? null, reference: projectParity ? (projectParity.reference ?? null) : (reference ?? null), referenceMissing: referenceMissing ?? null, base, since: since ?? null, out: out ? path.resolve(out) : null, checklist }, null, 2)}\n`
       : out
         ? `review checklist: ${path.resolve(out)}\n`
         : checklist,

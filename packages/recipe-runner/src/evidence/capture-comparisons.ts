@@ -1,4 +1,5 @@
 import {
+  isRecipeRepairScope,
   isRecord,
   type RecipeClaimDeclaration,
   type RecipeEvidenceCaptureBinding,
@@ -37,7 +38,13 @@ export function groupRecipeCaptureComparisons(
   const byId = new Map(rows.map((row) => [row.id, row]));
   const unassigned: RecipeComparisonCapture[] = [];
   const media: RecipeComparisonCapture[] = [];
-  const visit = (source: RecordedEvidencePackageInput, root: string, depth: number) => {
+  const visit = (
+    source: RecordedEvidencePackageInput,
+    root: string,
+    depth: number,
+    revision = snapshot,
+    claimIds?: ReadonlySet<string>,
+  ) => {
     if (depth > 16) return; // Canonical validation refuses deeper or cyclic declarations.
     const entries =
       isRecord(source.manifest) && Array.isArray(source.manifest.artifacts)
@@ -61,9 +68,10 @@ export function groupRecipeCaptureComparisons(
         source,
         eligible: false,
       };
-      const row = capture?.ac ? byId.get(capture.ac) : undefined;
+      const row =
+        capture?.ac && (!claimIds || claimIds.has(capture.ac)) ? byId.get(capture.ac) : undefined;
       if (capture?.role && row) {
-        const expected = capture.role === 'before' ? snapshot?.baseSha : snapshot?.headSha;
+        const expected = capture.role === 'before' ? revision?.baseSha : revision?.headSha;
         if (capture.role === 'review') mediaEntry.eligible = true;
         else if (
           capture.sourceDirty ||
@@ -83,8 +91,23 @@ export function groupRecipeCaptureComparisons(
       } else unassigned.push(mediaEntry);
       media.push(mediaEntry);
     }
-    for (const child of source.comparisonDependencies ?? [])
-      visit(child.input, `${root}${child.artifactRoot}/`, depth + 1);
+    // Each repair, however nested, binds its retained originals to the head they were recorded
+    // at and to the claims it kept from them; an outer repair narrows that set further.
+    const retained = retainedRepairSources(source);
+    for (const child of source.comparisonDependencies ?? []) {
+      const original = retained.get(child.input.claims?.recipeRunId ?? '');
+      const kept =
+        original && claimIds
+          ? new Set([...original.claimIds].filter((id) => claimIds.has(id)))
+          : (original?.claimIds ?? claimIds);
+      visit(
+        child.input,
+        `${root}${child.artifactRoot}/`,
+        depth + 1,
+        original ? revision && { baseSha: revision.baseSha, headSha: original.headSha } : revision,
+        kept,
+      );
+    }
   };
   visit(input, '', 0);
   return { rows, unassigned, media };
@@ -109,4 +132,26 @@ function readCaptureBinding(value: unknown): RecipeEvidenceCaptureBinding | unde
     ...(typeof value.sourceCommit === 'string' ? { sourceCommit: value.sourceCommit } : {}),
     ...(typeof value.sourceDirty === 'boolean' ? { sourceDirty: value.sourceDirty } : {}),
   };
+}
+
+/** Retained sources of a repair package, by execution; malformed repairs retain nothing. */
+function retainedRepairSources(input: RecordedEvidencePackageInput) {
+  const sources = new Map<string, { headSha: string; claimIds: Set<string> }>();
+  const scope = input.repair?.scope;
+  const selection = input.repair?.selection;
+  if (!isRecipeRepairScope(scope) || !isRecord(selection) || !Array.isArray(selection.claims))
+    return sources;
+  for (const source of scope.sources) {
+    const claimIds = new Set<string>();
+    for (const row of selection.claims)
+      if (
+        isRecord(row) &&
+        row.source === 'retained' &&
+        row.recipeRunId === source.recipeRunId &&
+        typeof row.claimId === 'string'
+      )
+        claimIds.add(row.claimId);
+    sources.set(source.recipeRunId, { headSha: source.headSha, claimIds });
+  }
+  return sources;
 }

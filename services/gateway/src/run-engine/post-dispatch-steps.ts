@@ -18,6 +18,7 @@ import {
   type ReviewValidationDepth,
   type Run,
   type RunSubtaskMetrics,
+  SEND_BACK_TO_AGENT_ACTION,
   type SlotReleaseParams,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -83,6 +84,7 @@ import { verifyWorkerPushedBranch } from './push-verification.js';
 import {
   type PublishGateReviewPlanResult,
   resumeInterruptedPublicationReview,
+  resumeVisualRepair,
 } from './ready-gate.js';
 import {
   normalizeExhaustedReviewContinuationsForRun,
@@ -101,6 +103,7 @@ import {
 import { recordArtifactOnlyReviewResult } from './review-result.js';
 import { runSupersededSince } from './run-generation.js';
 import { type MonitorResult, monitorRun, probeWorkerSignalForRun } from './run-monitor.js';
+import { activeVisualRepair } from './visual-repair.js';
 
 const S = PipelineSteps;
 
@@ -178,6 +181,7 @@ export interface PostDispatchStepContext {
   prepareCompletionPackageForRun?: typeof prepareCompletionPackage;
   executeReviewForRun?: typeof executeReview;
   resumeInterruptedPublicationReviewForRun?: typeof resumeInterruptedPublicationReview;
+  resumeVisualRepairForRun?: typeof resumeVisualRepair;
   probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
   refreshRunLinks: (runId: string) => Promise<void>;
   stepPartialIO: Map<string, StepIO>;
@@ -1214,6 +1218,11 @@ export async function executeHumanGateStep(
         await rerunReviewIfReviewedInputsChanged(runId, context);
       return executeReadyGate(runId);
     };
+    // A repair interrupted by a restart resumes under its single charge: fix recovery adopts an
+    // in-flight or deferred delivery, and an undelivered one is delivered once.
+    const repairSlotIdAtEntry = getRun(runId)?.slotId ?? current.slotId;
+    if (repairSlotIdAtEntry && activeVisualRepair(getRun(runId)!))
+      await (context.resumeVisualRepairForRun ?? resumeVisualRepair)(runId, repairSlotIdAtEntry);
     let gateAction = await presentReadyGate();
     while (
       publicationApprovalGate &&
@@ -1242,6 +1251,14 @@ export async function executeHumanGateStep(
             gateAction,
           );
         }
+        gateAction = await presentReadyGate();
+        continue;
+      }
+      if (gateAction === SEND_BACK_TO_AGENT_ACTION) {
+        const repairSlotId = getRun(runId)?.slotId ?? current.slotId;
+        // A refused or undelivered repair keeps its single charge; the gate is always re-presented.
+        if (repairSlotId)
+          await (context.resumeVisualRepairForRun ?? resumeVisualRepair)(runId, repairSlotId);
         gateAction = await presentReadyGate();
         continue;
       }

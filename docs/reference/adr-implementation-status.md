@@ -298,14 +298,14 @@ shipped because the human review loop and promotion-to-backlog UX still need clo
 
 **Implementation: Implemented; final remote multi-node operational proof remains**
 
-| ADR requirement                                              | Status        | Evidence / gap                                                                    |
-| ------------------------------------------------------------ | ------------- | --------------------------------------------------------------------------------- |
-| Markdown catalog, lint, authoring, selection                 | Implemented   | `packages/agent-runtime/src/execution-template/`                                  |
-| Source-aware portable provenance and immutable task snapshot | Implemented   | protocol execution-template contract + gateway task writer/eval package store     |
-| Gateway, API, CLI, and Command Center integration            | Implemented   | shared gateway catalog consumed by preview/create/options and dispatch UI         |
-| Direct skill and hosted-resume parity                        | Implemented   | thin `mm-harness execution-template` delegation and canonical Consensys templates |
-| Project/domain configuration and MetaMask migration          | Implemented   | generic project schema plus MetaMask farm-pack configuration                      |
-| Remote control-plane/worker separation                       | Pending proof | Requires an online remote registered node; local contract/snapshot tests pass     |
+| ADR requirement                                              | Status        | Evidence / gap                                                                |
+| ------------------------------------------------------------ | ------------- | ----------------------------------------------------------------------------- |
+| Markdown catalog, lint, authoring, selection                 | Implemented   | `packages/agent-runtime/src/execution-template/`                              |
+| Source-aware portable provenance and immutable task snapshot | Implemented   | protocol execution-template contract + gateway task writer/eval package store |
+| Gateway, API, CLI, and Command Center integration            | Implemented   | shared gateway catalog consumed by preview/create/options and dispatch UI     |
+| Direct skill and hosted-resume parity                        | Implemented   | thin harness `execution-template` delegation and canonical skill templates    |
+| Project/domain configuration and MetaMask migration          | Implemented   | generic project schema plus MetaMask farm-pack configuration                  |
+| Remote control-plane/worker separation                       | Pending proof | Requires an online remote registered node; local contract/snapshot tests pass |
 
 **Follow-up:** capture one genuine remote-node snapshot/environment proof when a registered node is available.
 
@@ -320,7 +320,7 @@ shipped because the human review loop and promotion-to-backlog UX still need clo
 | Child unit is a checklist plus signal under `subtasks/`  | Shipped       | protocol child-unit contract, `mark sub` verbs and materializer in `@farmslot/agent-runtime` (#681)                               |
 | Parent step owned by its child until settled             | Shipped       | `isSettledSubtaskStatus` drives every refusal in `mark` and the gateway terminal check (#681, #682)                               |
 | Recursive progress projection, watched and broadcast     | Shipped       | gateway watch + projection for slot runs (#682); review-workspace monitor-loop publisher with the same projection (#692)          |
-| Clients render the child under its parent step           | Shipped       | Command Center and Companion (#683); `mm-harness` 0.61.0 `status --watch`                                                         |
+| Clients render the child under its parent step           | Shipped       | Command Center and Companion (#683); project harness `status --watch`                                                             |
 | Farmslot spawns nothing                                  | Shipped       | registration writes files only; no tmux, process, or session code was added                                                       |
 | Acceptance criteria as a verdict ledger                  | Shipped       | `farmslot-agent ac` writes `artifacts/acceptance-status.json`; run-detail AC panel (#685)                                         |
 | Enforcement of the ledger at terminal marks              | Opt-in        | deviation: gated on project `worker_terminal.acceptance`, informational otherwise                                                 |

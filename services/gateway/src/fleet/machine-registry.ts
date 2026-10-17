@@ -2,6 +2,8 @@ import type { WebSocket } from 'ws';
 
 import type { NativeExecutionNodeDeclaration, NodeInfo } from '@farmslot/protocol';
 
+import { advanceSourceRevision } from '../sources/change-signal.js';
+
 export interface ConnectedNode {
   machine: string;
   pid: number;
@@ -55,12 +57,15 @@ export function registerNode(
     gatewayUrl: workerGatewayUrl(gatewayUrl),
     ...(execCancellation ? { execCancellation: true } : {}),
   });
+  // Source status reads node receipts live; a reconnect changes what it can report.
+  advanceSourceRevision();
 }
 
 export function unregisterByWs(ws: WebSocket): string | null {
   for (const [machine, node] of nodes) {
     if (node.ws === ws) {
       nodes.delete(machine);
+      advanceSourceRevision();
       return machine;
     }
   }

@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { Events, isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import {
+  Events,
+  isCompletionPrerequisiteFailure,
+  isTerminalRunStatus,
+  type Run,
+} from '@farmslot/protocol';
 
 import {
   execOnSlot,
@@ -35,8 +40,6 @@ import { isShellProcessCommand, probeRunnerDescendantPid } from '../runners/sess
 import { contextPaneId } from '../runners/session-record.js';
 import { getRun, getRunWithArchived, listRuns, updateRun } from '../runs/store.js';
 import { unwatchSlot } from '../tasks/watcher.js';
-
-import { isCompletionPrerequisiteFailure } from './step-status.js';
 
 export interface RunSlotCleanupFence {
   before: Readonly<Record<string, unknown>> | null;

@@ -4,10 +4,11 @@ import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 
 import {
+  nativeResultJsonSchema,
   type NativeSessionResponse,
   type NativeStructuredResult,
   nativeStructuredResult,
-  PIPELINE_VISUAL_JUDGMENTS_SCHEMA,
+  PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
   PIPELINE_VISUAL_RESULT_SCHEMA,
 } from '@farmslot/protocol';
 
@@ -89,7 +90,7 @@ export const codexNativeAdapter: NativeAdapter = {
     questions: false,
     interrupt: true,
     resume: true,
-    structuredResultSchemas: [PIPELINE_VISUAL_RESULT_SCHEMA],
+    structuredResultSchemas: [PIPELINE_VISUAL_RESULT_SCHEMA, PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA],
     resumeAcrossWorkspaces: true,
   },
   async start(options, emit) {
@@ -328,7 +329,9 @@ export const codexNativeAdapter: NativeAdapter = {
           await (startingTurn = process.request('turn/start', {
             threadId: nativeSessionId,
             input: [{ type: 'text', text }],
-            ...(options.resultSchema ? { outputSchema: PIPELINE_VISUAL_JUDGMENTS_SCHEMA } : {}),
+            ...(options.resultSchema
+              ? { outputSchema: nativeResultJsonSchema(options.resultSchema) }
+              : {}),
             ...(options.effort ? { effort: options.effort } : {}),
             ...(options.mode === 'plan'
               ? {

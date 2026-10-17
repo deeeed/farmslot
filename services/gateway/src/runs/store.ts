@@ -27,6 +27,8 @@ import {
   DEFAULT_DEV_INTERACTIVE_PROFILE,
   FLOW_STEPS,
   type FlowType,
+  isActiveListRun,
+  isCompletionPrerequisiteFailure,
   isReviewMode,
   isReviewValidationDepth,
   isSettledBlockedRun,
@@ -67,7 +69,6 @@ import {
   beginRunArchive,
   endRunArchive,
 } from '../run-lifecycle/archive-fence.js';
-import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
@@ -1135,9 +1136,7 @@ export function listRuns(filter?: ListRunsFilter): { runs: Run[]; totalCount: nu
   if (filter?.status) {
     result = result.filter((r) => r.status === filter.status);
   } else if (filter?.active) {
-    result = result.filter(
-      (r) => ACTIVE_STATUSES.has(r.status) || isCompletionPrerequisiteFailure(r),
-    );
+    result = result.filter(isActiveListRun);
   }
 
   if (filter?.flowType) {

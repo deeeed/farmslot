@@ -60,13 +60,19 @@ export function registeredTaskClaims(task: string | null): RecipeClaimDeclaratio
 export function recordRecipeAcceptance(
   taskDir: string,
   _target: string,
-  result: { tracePath: string; recipePath: string; claimsPath?: string },
+  result: {
+    tracePath: string;
+    recipePath: string;
+    claimsPath?: string;
+    selectedClaims?: RecipeClaimEvidence[];
+  },
 ): RecipeAcceptanceRecord {
   if (!result.claimsPath) throw new Error('The engine returned no derived claim package.');
   const claims = JSON.parse(fs.readFileSync(result.claimsPath, 'utf8')) as RecipeClaimLedger;
   const root = path.dirname(result.claimsPath);
   const realTask = fs.realpathSync(taskDir);
-  const criteria = claims.criteria.map((claim) => ({
+  // A repair transports the engine selection; retained rows keep their original verdicts.
+  const criteria = (result.selectedClaims ?? claims.criteria).map((claim) => ({
     ...claim,
     evidence: [
       ...new Set([result.tracePath, ...claim.evidence.map((file) => path.resolve(root, file))]),

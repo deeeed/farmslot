@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 
-import type { PRMonitorIncident, Run } from '@farmslot/protocol';
+import type {
+  FeedbackCandidate,
+  GitHubFeedbackCandidate,
+  PRMonitorIncident,
+  Run,
+} from '@farmslot/protocol';
 
 import { makeRun } from '../family-observability/test-fixtures.js';
 
@@ -88,6 +93,12 @@ const HUMAN_TRIAGE = {
   fixed_in_commit: null,
 };
 
+/** The PR builder only produces GitHub candidates; narrow before reading provider fields. */
+function github(candidate: FeedbackCandidate | undefined): GitHubFeedbackCandidate {
+  assert.ok(candidate?.provider === 'github');
+  return candidate;
+}
+
 test('identity is the provider comment id, so duplicate scans and repair pushes yield one candidate', () => {
   const first = incident({
     signal: {
@@ -117,7 +128,7 @@ test('identity is the provider comment id, so duplicate scans and repair pushes 
   assert.deepEqual(candidate!.sources, ['comments-triage', 'pr-monitor']);
   assert.deepEqual(candidate!.runIds, ['follow', 'follow-2', 'monitor-origin-run']);
   assert.equal(candidate!.authorKind, 'human');
-  assert.equal(candidate!.reviewedCommit, 'a93b2a48b007b9f4ca0c0d4b3fb8b8ea66cf4b08');
+  assert.equal(github(candidate).reviewedCommit, 'a93b2a48b007b9f4ca0c0d4b3fb8b8ea66cf4b08');
   // Provider revision wins over the body hash when the monitor observed the comment.
   assert.equal(candidate!.revision, 'rev-1');
   assert.equal(candidate!.bodyRevision, sha256('Late defaults overwrite what the user typed.'));
@@ -206,8 +217,8 @@ test('a new reviewed SHA does not create a second candidate; head and reviewed c
     ledger: EMPTY_LEDGER,
   });
   assert.equal(candidates.length, 1);
-  assert.equal(candidates[0]!.reviewedCommit, '47dfbf15ed95d0f2ce4ce11d502476d3766b1e57');
-  assert.equal(candidates[0]!.observedHead, 'ffffffffffffffffffffffffffffffffffffffff');
+  assert.equal(github(candidates[0]).reviewedCommit, '47dfbf15ed95d0f2ce4ce11d502476d3766b1e57');
+  assert.equal(github(candidates[0]).observedHead, 'ffffffffffffffffffffffffffffffffffffffff');
 });
 
 test('bot, human and unknown feedback stay distinguishable and are summarised separately', () => {
@@ -412,7 +423,7 @@ test('the latest monitor observation of a comment wins over its retained earlier
   });
   assert.equal(candidate!.revision, 'rev-2');
   assert.equal(candidate!.excerpt, 'edited text');
-  assert.equal(candidate!.reviewedCommit, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  assert.equal(github(candidate).reviewedCommit, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
   assert.equal(candidate!.resolution.state, 'open', 'an edited open comment is not stale-resolved');
   // The provider summary is truncated, so it is never a body fingerprint.
   assert.equal(candidate!.bodyRevision, undefined);

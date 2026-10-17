@@ -4,7 +4,11 @@ import type { EvidenceMomentRef } from './evidence.js';
 import { validateRecipeParams } from './params.js';
 
 export const PIPELINE_VISUAL_RESULT_SCHEMA = 'pipeline-visual-judgments-v1';
-export type NativeResultSchema = typeof PIPELINE_VISUAL_RESULT_SCHEMA;
+/** Authorised repair review: per-source visual results plus retained-claim applicability. */
+export const PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA = 'pipeline-visual-judgments-v2';
+export type NativeResultSchema =
+  | typeof PIPELINE_VISUAL_RESULT_SCHEMA
+  | typeof PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA;
 
 export interface PipelineVisualJudgment {
   claimId: string;
@@ -21,10 +25,27 @@ export interface PipelineVisualJudgments {
   judgments: PipelineVisualJudgment[];
 }
 
-export interface NativeStructuredResult {
-  schema: NativeResultSchema;
-  value: PipelineVisualJudgments;
+/** A reviewer's explicit current-head classification of one retained criterion. */
+export interface PipelineRepairApplicability {
+  claimId: string;
+  recipeRunId: string;
+  closureIdentity: string;
+  unaffected: boolean;
+  reason: string;
 }
+
+export interface PipelineRepairVisualJudgments {
+  schemaVersion: 2;
+  headSha: string;
+  scopeDigest: string;
+  /** Existing visual-judgment results, one per fresh source with claims awaiting review. */
+  sources: PipelineVisualJudgments[];
+  retained: PipelineRepairApplicability[];
+}
+
+export type NativeStructuredResult =
+  | { schema: typeof PIPELINE_VISUAL_RESULT_SCHEMA; value: PipelineVisualJudgments }
+  | { schema: typeof PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA; value: PipelineRepairVisualJudgments };
 
 /** Gateway-captured review input; shared task files cannot supply it. */
 export interface PipelineVisualReviewInput {
@@ -35,11 +56,36 @@ export interface PipelineVisualReviewInput {
   claims: Array<Omit<PipelineVisualJudgment, 'verdict' | 'reason'> & { text: string }>;
 }
 
+/** Gateway-captured repair review input: fresh visual sources and retained criteria to classify. */
+export interface PipelineRepairVisualReviewInput {
+  schemaVersion: 2;
+  headSha: string;
+  repairId: string;
+  scopeDigest: string;
+  sources: PipelineVisualReviewInput[];
+  retained: Array<{
+    claimId: string;
+    text: string;
+    recipeRunId: string;
+    closureIdentity: string;
+    /** The source's recorded revision; the reviewer diffs from here to headSha. */
+    sourceHeadSha: string;
+  }>;
+}
+
+export type PipelineReviewInput = PipelineVisualReviewInput | PipelineRepairVisualReviewInput;
+
+export function isPipelineRepairVisualReviewInput(
+  input: PipelineReviewInput,
+): input is PipelineRepairVisualReviewInput {
+  return 'schemaVersion' in input && input.schemaVersion === 2;
+}
+
 /** Validated completed native turn retained until a matching package is prepared. */
 export interface PipelineVisualReviewResult {
   headSha: string;
   binding: PipelineVisualReviewerBinding;
-  result: PipelineVisualJudgments;
+  result: PipelineVisualJudgments | PipelineRepairVisualJudgments;
   completedAt: string;
 }
 
@@ -93,8 +139,42 @@ export const PIPELINE_VISUAL_JUDGMENTS_SCHEMA = {
   },
 };
 
+export const PIPELINE_REPAIR_VISUAL_JUDGMENTS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['schemaVersion', 'headSha', 'scopeDigest', 'sources', 'retained'],
+  properties: {
+    schemaVersion: { type: 'integer', enum: [2] },
+    headSha: { type: 'string', pattern: '^[a-f0-9]{40,64}$' },
+    scopeDigest: digest,
+    sources: { type: 'array', items: PIPELINE_VISUAL_JUDGMENTS_SCHEMA },
+    retained: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['claimId', 'recipeRunId', 'closureIdentity', 'unaffected', 'reason'],
+        properties: {
+          claimId: text,
+          recipeRunId: text,
+          closureIdentity: digest,
+          unaffected: { type: 'boolean' },
+          reason: text,
+        },
+      },
+    },
+  },
+};
+
 export function isNativeResultSchema(value: unknown): value is NativeResultSchema {
-  return value === PIPELINE_VISUAL_RESULT_SCHEMA;
+  return value === PIPELINE_VISUAL_RESULT_SCHEMA || value === PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA;
+}
+
+/** The JSON schema a provider is constrained with for a declared result contract. */
+export function nativeResultJsonSchema(schema: NativeResultSchema): Record<string, unknown> {
+  return schema === PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA
+    ? PIPELINE_REPAIR_VISUAL_JUDGMENTS_SCHEMA
+    : PIPELINE_VISUAL_JUDGMENTS_SCHEMA;
 }
 
 export function isPipelineVisualJudgments(value: unknown): value is PipelineVisualJudgments {
@@ -120,11 +200,37 @@ export function isPipelineVisualJudgments(value: unknown): value is PipelineVisu
   return true;
 }
 
+export function isPipelineRepairVisualJudgments(
+  value: unknown,
+): value is PipelineRepairVisualJudgments {
+  if (
+    !isRecord(value) ||
+    validateRecipeParams(value, PIPELINE_REPAIR_VISUAL_JUDGMENTS_SCHEMA).status !== 'valid' ||
+    !Array.isArray(value.sources) ||
+    !Array.isArray(value.retained) ||
+    !value.sources.every(isPipelineVisualJudgments)
+  )
+    return false;
+  const sources = new Set<string>();
+  for (const source of value.sources as PipelineVisualJudgments[]) {
+    if (sources.has(source.recipeRunId)) return false;
+    sources.add(source.recipeRunId);
+  }
+  const retained = new Set<string>();
+  for (const row of value.retained as PipelineRepairApplicability[]) {
+    if (retained.has(row.claimId)) return false;
+    retained.add(row.claimId);
+  }
+  return true;
+}
+
 export function nativeStructuredResult(
   schema: unknown,
   value: unknown,
 ): NativeStructuredResult | undefined {
-  return isNativeResultSchema(schema) && isPipelineVisualJudgments(value)
-    ? { schema, value }
-    : undefined;
+  if (schema === PIPELINE_VISUAL_RESULT_SCHEMA && isPipelineVisualJudgments(value))
+    return { schema, value };
+  if (schema === PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA && isPipelineRepairVisualJudgments(value))
+    return { schema, value };
+  return undefined;
 }

@@ -172,23 +172,6 @@ export function filterSlots<T extends { project?: string | null; machine?: strin
   });
 }
 
-export function filterRuns(
-  runs: Run[],
-  filters: GlobalFilters,
-  slotById: Map<string, SlotFilterContext>,
-): Run[] {
-  const normalized = normalizeFilters(filters);
-  return runs.filter((run) => {
-    if (normalized.projects.length > 0 && !normalized.projects.includes(run.project)) return false;
-    if (normalized.machines.length > 0) {
-      const context = run.slotId ? slotById.get(run.slotId) : undefined;
-      const machine = context?.machine ?? getMachineFromSlotId(run.slotId);
-      if (!machine || !normalized.machines.includes(machine)) return false;
-    }
-    return true;
-  });
-}
-
 export function filterDecisions(
   decisions: PendingDecision[],
   filters: GlobalFilters,

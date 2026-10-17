@@ -26,8 +26,8 @@ workers never read the control-plane source after dispatch begins.
 Farmslot core owns generic discovery, selection, snapshotting, and provenance.
 Project packs configure sources, defaults, domains, and environment. Skills
 own canonical workflow checklists. Team libraries may add domain checklists,
-recipes, and actions. `mm-harness` provides only the thin command boundary
-needed by MetaMask skills.
+recipes, and actions. A project harness provides at most a thin command boundary
+for its own skills.
 
 ## Template contract
 
@@ -228,23 +228,23 @@ before slot mutation. Command Center keeps run mode and execution template as
 separate controls, refreshes options when an input changes, and displays source
 and digest provenance.
 
-The standalone `recipe-cook` skill calls `mm-harness execution-template`,
+A standalone skill calls its harness's thin `execution-template` command,
 which delegates to the published `@farmslot/agent-runtime`. The skill contains
 no second resolver. In Farmslot-hosted mode it resumes the already materialized
 checklist and does not create another task.
 
 ## Ownership boundaries
 
-| Layer            | Owns                                                                 |
-| ---------------- | -------------------------------------------------------------------- |
-| Farmslot core    | Generic catalog, selection, snapshot, provenance, launch surfaces    |
-| Project pack     | Sources, defaults, domains, environment, fixtures, ports, hooks      |
-| Consensys skills | Canonical MetaMask workflow checklists and direct entry point        |
-| `mm-harness`     | MetaMask app control, recipe/action execution, thin template command |
-| Team library     | Domain actions, composable recipes, optional distinct checklists     |
-| Product repo     | Product UI, controllers, routes, test ids, business logic            |
+| Layer           | Owns                                                                |
+| --------------- | ------------------------------------------------------------------- |
+| Farmslot core   | Generic catalog, selection, snapshot, provenance, launch surfaces   |
+| Project pack    | Sources, defaults, domains, environment, fixtures, ports, hooks     |
+| Workflow skills | Canonical workflow checklists and direct entry point                |
+| Project harness | Project app control, recipe/action execution, thin template command |
+| Team library    | Domain actions, composable recipes, optional distinct checklists    |
+| Product repo    | Product UI, controllers, routes, test ids, business logic           |
 
-No MetaMask domain, team, route, or recipe behavior belongs in Farmslot core.
+No project domain, team, route, or recipe behavior belongs in Farmslot core.
 
 ## Consequences
 

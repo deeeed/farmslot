@@ -47,8 +47,8 @@ package with the same protocol CLI:
 
 ```sh
 cd apps/command-center
-yarn farmslot recipe artifacts validate <mm-harness-artifacts-dir> \
-  --recipe <mm-harness-artifacts-dir>/recipe.json --json
+yarn farmslot recipe artifacts validate <harness-artifacts-dir> \
+  --recipe <harness-artifacts-dir>/recipe.json --json
 ```
 
 Schema divergence is blocking unless it is captured as an explicit follow-up.

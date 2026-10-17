@@ -1,0 +1,37 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Show the proof canvas",
+  "description": "Record the header bar and the square of the proof canvas.",
+  "proofTargets": [
+    { "id": "AC-1", "claim": "The header bar is blue." },
+    { "id": "AC-2", "claim": "The square is green." }
+  ],
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "ui.press",
+        "target": "canvas",
+        "intent": "Open the proof canvas.",
+        "next": "header"
+      },
+      "header": {
+        "action": "ui.wait_for",
+        "selector": "header",
+        "text": "blue",
+        "proves": ["AC-1"],
+        "intent": "Confirm the header bar is blue.",
+        "next": "square"
+      },
+      "square": {
+        "action": "ui.wait_for",
+        "selector": "square",
+        "text": "green",
+        "proves": ["AC-2"],
+        "intent": "Confirm the square is green.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

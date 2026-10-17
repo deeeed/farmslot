@@ -62,6 +62,8 @@ export interface AcceptanceCriterionStatus {
   parentId?: string;
   assertionIndices?: number[];
   moments?: EvidenceMomentRef[];
+  /** Repair selection only: the original execution whose proof this row keeps. */
+  retainedFrom?: string;
 }
 
 export interface AcceptanceStatusLedger {

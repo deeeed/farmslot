@@ -93,6 +93,7 @@ test('retrospective payload carries deduplicated feedback candidates from triage
     open: 1,
   });
   const human = payload.feedbackCandidates!.find((c) => c.authorKind === 'human')!;
+  assert.ok(human.provider === 'github');
   assert.equal(
     human.sourceKey,
     'github.com/metamask/metamask-mobile#34865:review-comment:3916065775',

@@ -79,6 +79,8 @@ export type RecipeEngineRunOptions = RecipeRunOptions & {
   /** Command-resolved task registration; the engine never reads ambient task paths. */
   claims?: RecipeRunRequest['claims'];
   comparisonDependencies?: RecipeRunRequest['comparisonDependencies'];
+  /** Gateway repair scope bound to its separate task-owned repair recipe. */
+  repairScope?: RecipeRunRequest['repairScope'];
   signal?: AbortSignal;
   // The engine's trusted mutation reads its own flags from it; `run` passes it,
   // `call` does not.
@@ -326,6 +328,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     recordingReason: runtimeOptions.recordingReason,
     claims: runtimeOptions.claims,
     comparisonDependencies: runtimeOptions.comparisonDependencies,
+    ...(runtimeOptions.repairScope ? { repairScope: runtimeOptions.repairScope } : {}),
     ...trust,
     ...(librarySources ? { librarySources } : {}),
     adapter,

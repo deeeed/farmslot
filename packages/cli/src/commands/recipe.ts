@@ -1,28 +1,19 @@
-import { existsSync, statSync } from 'node:fs';
-import path from 'node:path';
-
 import { type Command, Option } from 'commander';
 
 import {
-  readRecordedEvidencePackage,
-  type RecordedEvidencePackageReadResult,
-} from '@farmslot/adapter-sdk';
-import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
-import { readRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
-import {
-  digestRecipeDocument,
   getRecipeActionManifestActionNames,
-  isRecord,
   Methods,
   type RecipeActionManifestDocument,
-  type RecipeConformanceLiveEvidence,
   type RecipeProjectHookCommandResult,
   type RecipeProjectHookName,
   type RecipeProjectHookRunResult,
   type RecipeValidationFinding,
   type RecipeValidationResult,
 } from '@farmslot/protocol';
-import { runnerRevision } from '@farmslot/recipe-cli/harness';
+import type {
+  ArtifactValidationResult,
+  RecipeArtifactsValidateOptions,
+} from '@farmslot/recipe-cli/harness';
 import {
   applyTaskLocalInvocationTrust,
   createRecipeRunner,
@@ -34,7 +25,6 @@ import {
 import {
   parseRecipeParamAssignments,
   readRecipeCliJsonFile,
-  readRecipeCliJsonFileWithinRoot,
   resolveRecipeCliPath,
   validateRecipeCliInput,
 } from '@farmslot/recipe-runner/cli/support';
@@ -61,15 +51,6 @@ interface RecipeValidateOptions {
   artifactDir?: string;
   actionManifest?: string;
   librarySource?: string[];
-}
-
-interface RecipeArtifactsValidateOptions {
-  recipe?: string;
-  requireRunnerProvenance?: boolean;
-  liveProof?: Pick<
-    RecipeConformanceLiveEvidence,
-    'smokeTarget' | 'teardownTarget' | 'captureRequired' | 'hudRequired'
-  >;
 }
 
 interface RecipeRunOptions {
@@ -106,238 +87,6 @@ function statusLabel(status: RecipeValidationResult['status']): string {
 function findingLabel(finding: RecipeValidationFinding): string {
   const prefix = finding.severity === 'error' ? red('error') : yellow('warning');
   return `${prefix} ${finding.code} ${finding.path}: ${finding.message}`;
-}
-
-interface ArtifactValidationCheck {
-  id: string;
-  status: 'pass' | 'fail';
-  message: string;
-}
-
-interface ArtifactValidationResult {
-  status: 'pass' | 'fail';
-  artifactDir: string;
-  checks: ArtifactValidationCheck[];
-  recipe: RecipeValidationResult;
-  liveEvidence?: RecipeConformanceLiveEvidence;
-  warnings?: string[];
-}
-
-const TERMINAL_RECIPE_STATUSES = new Set(['pass', 'fail', 'unknown']);
-
-function addArtifactCheck(
-  checks: ArtifactValidationCheck[],
-  id: string,
-  status: ArtifactValidationCheck['status'],
-  message: string,
-): void {
-  checks.push({ id, status, message });
-}
-
-function hasSummaryRunnerProvenance(summary: unknown): boolean {
-  return readRunnerProvenance(summary, 'runner') !== null;
-}
-
-function hasTraceRunnerProvenance(trace: unknown): boolean {
-  return isRecord(trace) && readRunnerProvenance(trace.metadata, 'runner') !== null;
-}
-
-function hasManifestRunnerProvenance(manifest: unknown): boolean {
-  return isRecord(manifest) && readRunnerProvenance(manifest.provenance, 'runner') !== null;
-}
-
-function readRunnerProvenance(parent: unknown, field: string): Record<string, unknown> | null {
-  if (!isRecord(parent)) return null;
-  const runner = parent[field];
-  if (!isRecord(runner)) return null;
-  const source = runner.source;
-  const ref = runnerRevision(runner);
-  if (typeof source !== 'string' || source.trim() === '') return null;
-  if (typeof ref !== 'string' || ref.trim() === '') return null;
-  return runner;
-}
-
-function canonicalRunnerIdentity(runner: Record<string, unknown>): string | null {
-  const source = runner.source;
-  const ref = runnerRevision(runner);
-  if (typeof source !== 'string' || source.trim() === '') return null;
-  if (typeof ref !== 'string' || ref.trim() === '') return null;
-  return JSON.stringify({ source: source.trim(), ref: ref.trim() });
-}
-
-function runnerProvenanceMatches(summary: unknown, trace: unknown, manifest: unknown): boolean {
-  const summaryRunner = readRunnerProvenance(summary, 'runner');
-  const traceRunner = isRecord(trace) ? readRunnerProvenance(trace.metadata, 'runner') : null;
-  const manifestRunner = isRecord(manifest)
-    ? readRunnerProvenance(manifest.provenance, 'runner')
-    : null;
-  if (!summaryRunner || !traceRunner || !manifestRunner) return false;
-  const canonical = canonicalRunnerIdentity(summaryRunner);
-  return (
-    canonical !== null &&
-    canonicalRunnerIdentity(traceRunner) === canonical &&
-    canonicalRunnerIdentity(manifestRunner) === canonical
-  );
-}
-
-export async function validateRecipeArtifactDirectory(
-  artifactDirInput: string,
-  opts: RecipeArtifactsValidateOptions,
-): Promise<ArtifactValidationResult> {
-  const artifactDir = resolveRecipeCliPath(artifactDirInput);
-  return validateRecipeArtifactRead(
-    artifactDir,
-    opts,
-    await readRecordedEvidencePackage(artifactDir),
-  );
-}
-
-async function validateRecipeArtifactRead(
-  artifactDir: string,
-  opts: RecipeArtifactsValidateOptions,
-  loaded: RecordedEvidencePackageReadResult,
-): Promise<ArtifactValidationResult> {
-  const checks: ArtifactValidationCheck[] = loaded.checks;
-  const retained = loaded.input;
-  const { summary, trace, manifest, artifactDigests } = retained;
-  const artifactPaths = retained.artifactPaths ?? [];
-  // --recipe cross-checks the retained root; it cannot replace a recorded package's root.
-  const recipe = opts.recipe ? await readRecipeCliJsonFile(opts.recipe) : retained.recipe;
-  const bundle = { ...retained, recipe };
-  if (opts.recipe && retained.recipe !== undefined) {
-    addArtifactCheck(
-      checks,
-      'recipe.matches_retained',
-      digestRecipeDocument(recipe) === digestRecipeDocument(retained.recipe) ? 'pass' : 'fail',
-      'The supplied recipe must match the retained root recipe.',
-    );
-  }
-  const recorded =
-    (isRecord(summary) && typeof summary.recipeRunId === 'string') ||
-    artifactPaths.includes('acceptance-status.json');
-  const recipeValidation = validateRecordedEvidencePackage({
-    ...bundle,
-    recipe: recorded ? retained.recipe : recipe,
-  });
-  let captures: string[] = [];
-  const warnings: string[] = [];
-  if (opts.liveProof) {
-    const { validateRuntimeProof } = await import('@farmslot/recipe-cli/harness');
-    try {
-      captures = validateRuntimeProof(
-        bundle,
-        opts.liveProof.smokeTarget,
-        opts.liveProof.teardownTarget,
-        { ...opts.liveProof, hudRequired: false },
-      );
-      addArtifactCheck(
-        checks,
-        'runtime.proof',
-        'pass',
-        'Runtime effect and authored teardown assertions passed.',
-      );
-      if (opts.liveProof.hudRequired) {
-        // The same immutable bundle already passed state, capture and cleanup checks.
-        // HUD observations are advisory; their absence cannot invalidate that proof.
-        try {
-          validateRuntimeProof(
-            bundle,
-            opts.liveProof.smokeTarget,
-            opts.liveProof.teardownTarget,
-            opts.liveProof,
-          );
-        } catch (error) {
-          warnings.push(error instanceof Error ? error.message : String(error));
-        }
-      }
-    } catch (error) {
-      addArtifactCheck(
-        checks,
-        'runtime.proof',
-        'fail',
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-  }
-
-  const summaryStatus = isRecord(summary) ? summary.status : undefined;
-  addArtifactCheck(
-    checks,
-    'summary.status',
-    typeof summaryStatus === 'string' && TERMINAL_RECIPE_STATUSES.has(summaryStatus)
-      ? 'pass'
-      : 'fail',
-    'summary.json must include terminal status pass, fail, or unknown.',
-  );
-
-  addArtifactCheck(
-    checks,
-    'trace.shape',
-    Array.isArray(trace) || (isRecord(trace) && Array.isArray(trace.entries)) ? 'pass' : 'fail',
-    'trace.json must be an array or an object with entries[].',
-  );
-  const manifestStatus = isRecord(manifest) ? manifest.runStatus : undefined;
-  addArtifactCheck(
-    checks,
-    'manifest.status_matches_summary',
-    typeof summaryStatus === 'string' && manifestStatus === summaryStatus ? 'pass' : 'fail',
-    'artifact-manifest.json runStatus must match summary.json status.',
-  );
-
-  if (opts.requireRunnerProvenance) {
-    addArtifactCheck(
-      checks,
-      'runner.provenance.summary',
-      hasSummaryRunnerProvenance(summary) ? 'pass' : 'fail',
-      'summary.json must include runner provenance at summary.runner.',
-    );
-    addArtifactCheck(
-      checks,
-      'runner.provenance.trace',
-      hasTraceRunnerProvenance(trace) ? 'pass' : 'fail',
-      'trace.json must include runner provenance at trace.metadata.runner.',
-    );
-    addArtifactCheck(
-      checks,
-      'runner.provenance.manifest',
-      hasManifestRunnerProvenance(manifest) ? 'pass' : 'fail',
-      'artifact-manifest.json must include runner provenance at provenance.runner.',
-    );
-    addArtifactCheck(
-      checks,
-      'runner.provenance.matches',
-      runnerProvenanceMatches(summary, trace, manifest) ? 'pass' : 'fail',
-      'Runner provenance must identify the same source/ref in summary, trace metadata, and artifact manifest.',
-    );
-  }
-
-  const status =
-    checks.some((check) => check.status === 'fail') || recipeValidation.status === 'invalid'
-      ? 'fail'
-      : 'pass';
-  const liveEvidence =
-    status === 'pass' && opts.liveProof
-      ? {
-          ...opts.liveProof,
-          hudRequired: false,
-          ...(opts.liveProof.captureRequired || opts.liveProof.hudRequired ? { captures } : {}),
-          artifactDir,
-          artifacts: await Promise.all(
-            [...artifactPaths].sort().map(async (file) => ({
-              path: file,
-              digest: artifactDigests[file]!,
-            })),
-          ),
-        }
-      : undefined;
-  return {
-    status,
-    artifactDir,
-    checks,
-    recipe: recipeValidation,
-    ...(liveEvidence ? { liveEvidence } : {}),
-    ...(warnings.length ? { warnings } : {}),
-  };
 }
 
 function formatArtifactValidationResult(result: ArtifactValidationResult): string {
@@ -379,77 +128,6 @@ function formatValidationResult(result: RecipeValidationResult): string {
   }
   lines.push('');
   return `${lines.join('\n')}\n`;
-}
-
-function artifactManifestPaths(manifest: unknown): string[] {
-  const entries = isRecord(manifest) && Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
-  return entries.flatMap((entry) =>
-    isRecord(entry) && typeof entry.path === 'string' ? [entry.path] : [],
-  );
-}
-
-function evidenceMarkdown(
-  artifactDir: string,
-  summary: unknown,
-  artifactPaths: readonly string[],
-): string {
-  const literal = (value: string) =>
-    `<code>${value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</code>`;
-  return [
-    `Recipe evidence: ${literal(artifactDir)}`,
-    '',
-    `Result: ${literal(isRecord(summary) ? String(summary.status) : 'unknown')}`,
-    '',
-    ...artifactPaths.map((file) => `- ${literal(file)}`),
-    '',
-  ].join('\n');
-}
-
-async function writeArtifactsMarkdown(
-  out: string,
-  body: string,
-  taskDir: string | undefined,
-  artifactDir: string | undefined,
-  artifactPaths: readonly string[],
-): Promise<void> {
-  const shared = await import('@farmslot/recipe-cli/harness');
-  let parent = path.dirname(out);
-  while (!existsSync(parent)) parent = path.dirname(parent);
-  const destination = existsSync(out) ? statSync(out, { bigint: true }) : undefined;
-  const protectedPaths = [
-    ...(artifactDir
-      ? [...artifactPaths, 'report.md'].map((file) => path.resolve(artifactDir, file))
-      : []),
-    ...(taskDir
-      ? [
-          'recipe-runs',
-          'recipe-run',
-          'recipe',
-          'recipe.json',
-          'workflow.mmd',
-          'pr-description.md',
-          'latest-valid-recipe-run.json',
-        ].map((file) => path.join(taskDir, 'artifacts', file))
-      : []),
-  ];
-  if (
-    protectedPaths.some((file) => {
-      const input = destination && existsSync(file) ? statSync(file, { bigint: true }) : undefined;
-      return (
-        out === path.resolve(file) ||
-        (input && destination && input.dev === destination.dev && input.ino === destination.ino) ||
-        shared.isPathWithin(file, parent) ||
-        shared.isPathWithin(file, out)
-      );
-    })
-  )
-    throw new Error('--out must not overwrite authored inputs or retained recipe evidence.');
-  await shared.writeContainedArtifact(
-    path.dirname(out),
-    path.basename(out),
-    body,
-    'Markdown output',
-  );
 }
 
 export function registerRecipeCommand(program: Command): void {
@@ -546,102 +224,18 @@ export function registerRecipeCommand(program: Command): void {
           : await shared.resolveProjectContext(
               await projectRecipeHostOptions('artifacts', undefined, options),
             );
-        const taskDir = directory ? path.resolve(directory) : undefined;
-        const selection =
-          taskDir && !existsSync(path.join(taskDir, 'artifact-manifest.json'))
-            ? readRecipeAttemptSelection(taskDir)
-            : null;
-        const selectedDir =
-          taskDir && selection
-            ? path.join(taskDir, 'artifacts', selection.relativeArtifactRoot)
-            : undefined;
-        if (
-          taskDir &&
-          selectedDir &&
-          !shared.isPathWithin(path.join(taskDir, 'artifacts'), selectedDir)
-        )
-          throw new Error('Selected recipe attempt is missing or resolves outside its root.');
-        const candidates = taskDir
-          ? [taskDir]
-          : (shared.readLatestProofJournal(context!.target.value, context!.project!.runtimeDir)
-              .record?.evidencePaths ?? []);
-        const packages = selectedDir
-          ? [selectedDir]
-          : candidates
-              .flatMap((candidate) => [
-                candidate,
-                path.join(candidate, 'artifacts'),
-                path.join(candidate, 'artifacts/recipe'),
-              ])
-              .filter((candidate) => existsSync(path.join(candidate, 'artifact-manifest.json')));
-        const distinct = [...new Set(packages)];
-        const authoredTask =
-          taskDir &&
-          options.format === 'markdown' &&
-          !existsSync(path.join(taskDir, 'artifact-manifest.json')) &&
-          existsSync(path.join(taskDir, 'artifacts'));
-        if (distinct.length > 1 || (distinct.length === 0 && (!authoredTask || options.validate)))
-          throw new Error(
-            distinct.length
-              ? `More than one artifact package matches; select a directory: ${distinct.join(', ')}`
-              : 'No retained artifact package found; pass its directory explicitly.',
-          );
-        const artifactDir = distinct[0];
-        const summary = artifactDir
-          ? await readRecipeCliJsonFileWithinRoot(artifactDir, 'summary.json')
-          : undefined;
-        const manifest = artifactDir
-          ? await readRecipeCliJsonFileWithinRoot(artifactDir, 'artifact-manifest.json')
-          : undefined;
-        const artifactPaths = artifactManifestPaths(manifest);
-        const retained =
-          artifactDir && (options.validate || authoredTask || options.out)
-            ? await readRecordedEvidencePackage(artifactDir)
-            : undefined;
-        const checked =
-          artifactDir && retained && (options.validate || authoredTask)
-            ? await validateRecipeArtifactRead(
-                artifactDir,
-                { requireRunnerProvenance: true },
-                retained,
-              )
-            : undefined;
-        if (authoredTask && checked?.status === 'fail')
-          throw new Error('Artifact validation failed; Markdown was not rendered or written.');
-        const validation = options.validate ? checked : undefined;
-        const markdown = authoredTask
-          ? await shared.renderTaskArtifactsMarkdown({
-              taskDir,
-              artifactDir,
-              command: options.command,
-            })
-          : undefined;
-        const body =
-          markdown?.body ??
-          (artifactDir ? evidenceMarkdown(artifactDir, summary, artifactPaths) : '');
-        const out = options.out ? path.resolve(options.out) : undefined;
-        if (out) {
-          if (
-            validation?.status === 'fail' ||
-            retained?.checks.some((check) => check.status === 'fail')
-          )
-            throw new Error('Artifact validation failed; Markdown was not written.');
-          await writeArtifactsMarkdown(
-            out,
-            body,
-            authoredTask ? taskDir : undefined,
-            artifactDir,
-            retained?.input.artifactPaths ?? [],
-          );
-        }
-        const result = {
-          artifactDir,
-          summary,
-          manifest,
-          ...(validation ? { validation } : {}),
-          ...(markdown ? { ...markdown, ...(out ? { body: undefined } : {}) } : {}),
-          ...(out ? { out } : {}),
-        };
+        const { result, body } = await shared.renderRetainedArtifactsMarkdown({
+          directory,
+          candidates: context
+            ? shared.readLatestProofJournal(context.target.value, context.project!.runtimeDir)
+                .record?.evidencePaths
+            : undefined,
+          command: options.command,
+          out: options.out,
+          validate: options.validate,
+          format: options.format === 'markdown' ? 'markdown' : 'text',
+        });
+        const { artifactDir, summary, validation, out } = result;
         if (output.json) output.writeJson(result);
         else if (options.format === 'markdown') {
           output.write(out ? `Markdown: ${out}\n` : body);
@@ -673,6 +267,7 @@ export function registerRecipeCommand(program: Command): void {
       const output = new OutputContext(Boolean(globals.json));
 
       try {
+        const { validateRecipeArtifactDirectory } = await import('@farmslot/recipe-cli/harness');
         const result = await validateRecipeArtifactDirectory(artifactDir, opts);
         if (output.json) {
           output.writeJson(result);

@@ -9,16 +9,21 @@ import type { AdapterRuntimeStatus } from '@farmslot/adapter-sdk';
 
 import {
   adapterDetectNext,
-  adapterForPlatform,
   assertAdapter,
   harnessAdapter,
   undetectedAdapterMessage,
 } from '../adapters.js';
 import { color } from '../cli-color.js';
 import { readCommandJournal, readLatestProofJournal } from '../command-journal.js';
-import { contextAdapter, harnessContextField } from '../context-state.js';
+import { harnessContextField } from '../context-state.js';
 import { harnessHost } from '../host.js';
-import { optionFlag, optionString, type ParsedArgs, targetPath } from '../parse-args.js';
+import {
+  optionFlag,
+  optionString,
+  type ParsedArgs,
+  requestedAdapter,
+  targetPath,
+} from '../parse-args.js';
 import {
   adapterReadiness,
   type FeatureFlagReport,
@@ -56,10 +61,7 @@ export async function handleStatus(
   }
   const fast = optionFlag(options, 'fast');
   const allDevices = optionFlag(options, 'allDevices');
-  const adapter =
-    optionString(options, 'adapter') ??
-    adapterForPlatform(optionString(options, 'platform')) ??
-    contextAdapter(target);
+  const { adapter } = requestedAdapter(options);
   if (!adapter) {
     return usageOut(json, 'status', undetectedAdapterMessage(target), adapterDetectNext());
   }
@@ -97,14 +99,17 @@ export async function handleStatus(
     : {};
   const discoveryNext = discovery.deviceDiscoveryErrors?.[0]?.userAction;
   const viewField = view ? { view: view.json } : {};
-  const journal = readCommandJournal(target, optionString(options, 'runtimeDir'));
-  const journalFields = {
-    journalPath: journal.file,
-    lastCommand: journal.record,
-    latestProof:
-      readLatestProofJournal(target, optionString(options, 'runtimeDir')).record?.evidencePaths ??
-      [],
-  };
+  const journal =
+    commandOptions.journal === false
+      ? undefined
+      : readCommandJournal(target, optionString(options, 'runtimeDir'));
+  const latestProof = journal
+    ? (readLatestProofJournal(target, optionString(options, 'runtimeDir')).record?.evidencePaths ??
+      [])
+    : [];
+  const journalFields = journal
+    ? { journalPath: journal.file, lastCommand: journal.record, latestProof }
+    : {};
 
   if (json) {
     // One envelope, after the probes (unless --fast or no devices).
@@ -171,10 +176,10 @@ export async function handleStatus(
   // sees the device list without waiting for the probe window to close.
   const out: Paint = (style, text) => color(style, text, { stream: process.stdout });
   console.log(`${out('label', 'status')} ${out('bold', adapter)} ${out('dim', target)}`);
-  if (journal.record) {
+  if (journal?.record) {
     console.log(`Last command: ${journal.record.command} (${journal.record.verdict})`);
   }
-  for (const evidence of journalFields.latestProof) console.log(`Evidence: ${evidence}`);
+  for (const evidence of latestProof) console.log(`Evidence: ${evidence}`);
   if (view) console.log(view.text);
   if (!fast) {
     const taskView = collectTaskView(target, findTaskDir(target), Date.now());

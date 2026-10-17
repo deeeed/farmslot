@@ -6,10 +6,14 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Show a Run results card on run detail with the run's retained report, the same results Command Center shows. The report bytes are verified against the retained bundle, and an HTML report (a QA run's per-criterion verdicts, coverage gaps and evidence) renders as a page with scripts off. Tapping an evidence link in it opens that retained artifact in Companion, a web link opens in the browser, and nothing else loads; recorded case claims show beneath it. The decision workspace opens reports through the same viewer. The acceptance tally now matches Command Center and shows no proven count before any criterion is assessed.
 
+- List the same active runs as Command Center: failed runs that still hold their slot stay in the Review queue, filters use the shared run-list view model, and archived runs leave the list at once.
+
+- Show Send back to agent as the gate's primary action.
+- Sources panel updates itself from the gateway's source revision: no Refresh, hidden when nothing is configured or pinned, and one summary line with details on demand.
+
 - Stop listing host paths and log lines from step outputs as Evidence files.
 
 - Show captured run output in output review Evidence when no step lists it, and keep every publish approval, overrides included, unavailable in the decision workspace while review findings or a fix are open.
-
 - Show evidence loading and Retry independently of acceptance criteria, retaining loaded evidence if a refresh fails.
 
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.

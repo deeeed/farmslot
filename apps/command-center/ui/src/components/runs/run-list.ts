@@ -19,6 +19,8 @@ import {
   Methods,
   normalizeRunTags,
   resolveRunSlotId,
+  selectRunList,
+  slotMachineMap,
   summarizeRunEvidence,
 } from '@farmslot/protocol';
 import { projectColor } from '@farmslot/theme';
@@ -184,6 +186,7 @@ export class RunList extends RunListState {
     this.runProjectAnalytics = s.runProjectAnalytics;
     this.queueItems = s.queueItems;
     this.globalFilters = s.globalFilters;
+    this.fleet = s.fleet;
     this.hydrating = isHydrating(s, 'runs');
     this.bootstrapFailed = s.bootstrapFailed.runs;
     this.unsub = subscribe((s) => {
@@ -194,6 +197,7 @@ export class RunList extends RunListState {
       this.runProjectAnalytics = s.runProjectAnalytics;
       this.queueItems = s.queueItems;
       this.globalFilters = s.globalFilters;
+      this.fleet = s.fleet;
       this.hydrating = isHydrating(s, 'runs');
       this.bootstrapFailed = s.bootstrapFailed.runs;
       void this.fetchInitialTaskProgress(s.runs);
@@ -322,6 +326,7 @@ export class RunList extends RunListState {
       tagRuns: this.tagRuns,
       runs: this.runs,
       globalFilters: this.globalFilters,
+      slotMachines: slotMachineMap(this.fleet?.slots ?? []),
       tab: this.tab,
       statusFilter: this.statusFilter,
       flowFilter: this.flowFilter,
@@ -514,9 +519,12 @@ export class RunList extends RunListState {
       Boolean(this.familyFilter) ||
       this.laneFilter === 'comparison' ||
       familyGroups.some((group) => group.runs.length > 1);
-    const activeCount = this.runs.filter(
-      (r) => !TERMINAL_STATUSES.has(r.status) || r.status === 'failed',
-    ).length;
+    const activeCount = selectRunList(this.runs, {
+      scope: 'active',
+      projects: this.globalFilters.projects,
+      machines: this.globalFilters.machines,
+      slotMachines: slotMachineMap(this.fleet?.slots ?? []),
+    }).length;
     const showStatusFilter = this.tab === 'history' || this.tab === 'all';
     const showCheckboxes = this.manageMode;
     const selCount = this.selectedIds.size;
