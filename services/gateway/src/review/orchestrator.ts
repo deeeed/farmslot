@@ -1370,9 +1370,6 @@ function reviewFixProgressContract(taskDir: string, taskFile: string): string {
   );
 }
 
-// Gateway delivery boundaries and slot receipt clocks can disagree; fix rounds are minutes apart.
-const LEGACY_FIX_RECEIPT_CLOCK_TOLERANCE_MS = 60_000;
-
 // The delivery identity leads the prompt: a runner's prompt receipt digests only its start, so
 // every fix of the same REVIEW-FIX.md would otherwise share one receipt across rounds.
 function reviewFixPrompt(basePrompt: string, taskDir: string, taskFile: string, delivery: string) {
@@ -1497,19 +1494,7 @@ export async function resumeReviewFixPromptDelivery(
     sendLogPrefix: 'review-fix-recovery',
     forceBusyPoll: true,
   };
-  let result = await deps.deliver(deliveryOptions);
-  const boundaryMs = Date.parse(deliveryStartedAt ?? '');
-  if (!result.delivered && priorPromptSendAttempted && Number.isFinite(boundaryMs)) {
-    // A fix sent before prompts led with their identity carried this exact text, which
-    // hook digests share across rounds and native readers compare whole. Probe it without
-    // sending, accepting a receipt only after this delivery's own boundary.
-    const legacy = await deps.deliver({
-      ...deliveryOptions,
-      prompt: `${basePrompt}\n\n${reviewFixProgressContract(taskDir, taskFile)}\n\nFarmslot fix delivery attempt: ${attemptStartedAt}`,
-      acknowledgementSinceMs: boundaryMs - LEGACY_FIX_RECEIPT_CLOCK_TOLERANCE_MS,
-    });
-    if (legacy.delivered) result = legacy;
-  }
+  const result = await deps.deliver(deliveryOptions);
   if (result.delivered) {
     if (result.acknowledgement === 'structured' && result.turnToken && deliveryStartedAt)
       await deps.rememberAcceptedTurn?.(

@@ -630,7 +630,7 @@ test('a recovered fix prompt is the sent text and its receipt never matches anot
   assert.notEqual(runnerPromptDigest(prompts[0]), runnerPromptDigest(prompts[1]));
 });
 
-test('recovery recognizes a fix sent in the old prompt format only after its own boundary', async () => {
+test('recovery probes only the identity-led fix prompt and defers while it is unproven', async () => {
   const run = {
     id: 'run-1',
     project: 'farmslot-farm',
@@ -638,7 +638,7 @@ test('recovery recognizes a fix sent in the old prompt format only after its own
     metrics: { runner: 'claude', model: 'opus' },
     agentContexts: [],
   };
-  const calls: Array<{ prompt: string; sinceMs?: number; prior?: boolean }> = [];
+  const calls: Array<{ prompt: string; prior?: boolean }> = [];
   const remembered: string[] = [];
   const boundary = '2026-10-16T10:53:17.568Z';
   const result = await resumeReviewFixPromptDelivery(
@@ -663,36 +663,21 @@ test('recovery recognizes a fix sent in the old prompt format only after its own
       ensureTarget: async () => 'ff-1:bugfix',
       persistTarget: async () => {},
       deliver: async (options) => {
-        calls.push({
-          prompt: options.prompt,
-          sinceMs: options.acknowledgementSinceMs,
-          prior: options.priorPromptSendAttempted,
-        });
-        return options.acknowledgementSinceMs === undefined
-          ? { delivered: false, disposition: 'hold', reason: 'unacknowledged', retryable: true }
-          : { delivered: true, acknowledgement: 'structured', turnToken: 'legacy-turn' };
+        calls.push({ prompt: options.prompt, prior: options.priorPromptSendAttempted });
+        return { delivered: false, disposition: 'hold', reason: 'unacknowledged', retryable: true };
       },
       rememberAcceptedTurn: async (_runId, _runner, turnToken) => {
         remembered.push(turnToken);
       },
     },
   );
-  assert.deepEqual(result, { status: 'delivered', turnToken: 'legacy-turn' });
-  assert.deepEqual(remembered, ['legacy-turn']);
-  assert.equal(calls.length, 2);
-  assert.ok(
-    calls.every((call) => call.prior === true),
-    'recovery only probes, never resends',
-  );
+  // A fix is proven only by its own identity-led receipt; nothing else is probed.
+  assert.deepEqual(result, { status: 'deferred' });
+  assert.deepEqual(remembered, []);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].prior, true, 'recovery only probes, never resends');
   assert.match(calls[0].prompt, /^Farmslot fix delivery 2026-10-16T10:53:17\.568Z\./);
-  // Byte-equal to the text the previous release sent and rebuilt, so native readers that
-  // compare the whole prompt (Codex, Grok) and prefix digests (Claude) both recognize it.
-  const mark = 'tasks/run-1/mark --checklist REVIEW-FIX.md --signal REVIEW-FIX-SIGNAL.json';
-  assert.equal(
-    calls[1].prompt,
-    `read tasks/run-1/REVIEW-FIX.md\n\nFollow tasks/run-1/REVIEW-FIX.md top-to-bottom. After EVERY checklist step run ${mark} N (bootstrap with ${mark} start). Skipping ${mark} leaves the fix timeout blind to real progress. On success finish with ${mark} complete --mark-last; when applicable use ${mark} no-change --reason \"…\" or ${mark} blocked --reason \"…\" instead.\n\nFarmslot fix delivery attempt: 2026-10-16T10:54:03.119Z`,
-  );
-  assert.equal(calls[1].sinceMs, Date.parse(boundary) - 60_000);
+  assert.doesNotMatch(calls[0].prompt, /Farmslot fix delivery attempt:/);
 });
 
 test('restart recovery preserves a persisted fix prompt delivery boundary when the runner exits', async () => {
