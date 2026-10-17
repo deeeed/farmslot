@@ -15,11 +15,9 @@ import {
   Events,
   extractRunArtifactManifest,
   Methods,
-  type RecipeRunArtifactGroup,
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
-  type RunRecordedEvidenceReview,
   type RunRefreshMirrorResult,
 } from '@farmslot/protocol';
 
@@ -29,6 +27,7 @@ import { MediaViewer } from '../../components/MediaViewer';
 import { RecipeRunControls } from '../../components/RecipeRunControls';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { useConnectedRefresh } from '../../hooks/useConnectedRefresh';
+import { useReread } from '../../hooks/useReread';
 import {
   type ArtifactStickyChromeLayout,
   artifactStickyChromeThreshold,
@@ -121,14 +120,8 @@ export default function ArtifactViewerScreen() {
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const storeRun = useRunStore((s) => s.runs.find((r) => r.id === runId));
   const [run, setRun] = useState<Run | null>(storeRun ?? null);
-  const [recipeRunSelection, setRecipeRunSelection] = useState<{
-    recipeRuns: RecipeRunArtifactGroup[];
-    gatewaySelectedRecipeRunId: string | null;
-  }>({ recipeRuns: [], gatewaySelectedRecipeRunId: null });
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
-  const [recipeRunGroupsLoaded, setRecipeRunGroupsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [recordedEvidence, setRecordedEvidence] = useState<RunRecordedEvidenceReview | null>(null);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [documentViewer, setDocumentViewer] = useState<{ title: string; body: string } | null>(
     null,
@@ -144,10 +137,8 @@ export default function ArtifactViewerScreen() {
   const documentAbortRef = useRef<AbortController | null>(null);
   const runRefreshRequestRef = useRef(0);
   const runRefreshRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const recipeRunRefreshRequestRef = useRef(0);
   const recipeCompletionRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { recipeRuns, gatewaySelectedRecipeRunId } = recipeRunSelection;
   const frozenDecision = useMemo(
     () =>
       selectArtifactWorkspaceDecision(
@@ -229,51 +220,35 @@ export default function ArtifactViewerScreen() {
     if (storeRun?.id === runId) setRun(storeRun);
   }, [runId, storeRun]);
 
-  const refreshRecipeRuns = useCallback(
-    async (reason: string, reset: boolean) => {
-      const requestId = recipeRunRefreshRequestRef.current + 1;
-      recipeRunRefreshRequestRef.current = requestId;
-      if (!client || !runId) {
-        setRecipeRunSelection({ recipeRuns: [], gatewaySelectedRecipeRunId: null });
-        setRecipeRunGroupsLoaded(false);
-        return;
-      }
-      if (reset) {
-        setRecipeRunGroupsLoaded(false);
-        setRecordedEvidence(null);
-      }
-      try {
-        const result = await client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-          runId,
-          includeRecordedEvidence: true,
-          ...(frozenDecision
-            ? { decisionId: frozenDecision.id, evidenceSnapshotHash: frozenHash }
-            : {}),
-          ...(requestedRecipeRunId && requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
-            ? { recipeRunId: requestedRecipeRunId }
-            : {}),
-        });
-        if (recipeRunRefreshRequestRef.current !== requestId) return;
-        setRecordedEvidence(result.recordedEvidence ?? null);
-        setRecipeRunSelection({
-          recipeRuns: result.recipeRuns,
-          gatewaySelectedRecipeRunId: result.selectedRecipeRunId,
-        });
-        setRecipeRunGroupsLoaded(true);
-      } catch (err) {
-        if (recipeRunRefreshRequestRef.current !== requestId) return;
-        setRecipeRunGroupsLoaded(true);
-        if (isGatewayBackgroundPauseError(err)) {
-          // Route screenshot transitions can background the gateway briefly; the
-          // current artifact list is still the primary review surface.
-          console.warn(`Recipe runs unavailable after ${reason}: ${(err as Error).message}`);
-          return;
-        }
-        setError(`Failed to refresh recipe runs after ${reason}: ${(err as Error).message}`);
-      }
-    },
-    [client, requestedRecipeRunId, runId, frozenDecision?.id, frozenHash],
+  const frozenDecisionId = frozenDecision?.id;
+  const readRecipeRuns = useMemo(
+    () =>
+      client && runId
+        ? () =>
+            client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
+              runId,
+              includeRecordedEvidence: true,
+              ...(frozenDecisionId
+                ? { decisionId: frozenDecisionId, evidenceSnapshotHash: frozenHash }
+                : {}),
+              ...(requestedRecipeRunId &&
+              requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+                ? { recipeRunId: requestedRecipeRunId }
+                : {}),
+            })
+        : null,
+    [client, requestedRecipeRunId, runId, frozenDecisionId, frozenHash],
   );
+  // Its error is its own: a later successful read clears it, whatever else failed meanwhile.
+  const recipeRead = useReread(
+    readRecipeRuns,
+    (reason, message) => `Failed to refresh recipe runs after ${reason}: ${message}`,
+  );
+  const refreshRecipeRuns = recipeRead.refresh;
+  const recipeRunGroupsLoaded = recipeRead.settled;
+  const recordedEvidence = recipeRead.value?.recordedEvidence ?? null;
+  const recipeRuns = useMemo(() => recipeRead.value?.recipeRuns ?? [], [recipeRead.value]);
+  const gatewaySelectedRecipeRunId = recipeRead.value?.selectedRecipeRunId ?? null;
 
   useEffect(() => {
     if (!client || !runId) return;
@@ -777,9 +752,9 @@ export default function ArtifactViewerScreen() {
           <Text style={styles.emptyText}>No files match the current filter.</Text>
         }
       />
-      {(error ?? acceptanceViewer.error) && (
+      {(error ?? recipeRead.error ?? acceptanceViewer.error) && (
         <Text style={[styles.errorText, { paddingBottom: spacing.lg + insets.bottom }]}>
-          {error ?? acceptanceViewer.error}
+          {error ?? recipeRead.error ?? acceptanceViewer.error}
         </Text>
       )}
       <MediaViewer

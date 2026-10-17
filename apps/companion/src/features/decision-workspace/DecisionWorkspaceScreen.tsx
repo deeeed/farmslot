@@ -22,7 +22,6 @@ import {
   isValidEvidenceAttestationReason,
   liveGateParkView,
   Methods,
-  type RecipeRunArtifactGroup,
   RESOURCE_POSTURE_TRANSITION_POLL_LIMIT,
   type ResourcePostureGateChoice,
   resourcePostureTransitionBaseline,
@@ -55,6 +54,7 @@ import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedRefresh } from '../../hooks/useConnectedRefresh';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
+import { useReread } from '../../hooks/useReread';
 import { useRunAcceptance } from '../../hooks/useRunAcceptance';
 import { useRunOutputReport } from '../../hooks/useRunOutputReport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
@@ -226,9 +226,6 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       reviewContext: reviewRequestContextForRun(sourceRun),
     });
   }, [reviewPicker, sourceRun]);
-  const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
-  const [recipeArtifactCount, setRecipeArtifactCount] = useState<number | null>(null);
-  const [recipeAvailabilityError, setRecipeAvailabilityError] = useState<string | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
   const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const [loadingDocument, setLoadingDocument] = useState<string | null>(null);
@@ -239,7 +236,6 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const sectionOffsetsRef = useRef<Partial<Record<DecisionSectionKey, number>>>({});
   const documentAbortRef = useRef<AbortController | null>(null);
   const sourceRunRequestRef = useRef(0);
-  const recipeRunsRequestRef = useRef(0);
   const requestedArtifactPath = routeParamString(routeArtifactPath).trim();
 
   const refreshDecision = useCallback(() => {
@@ -501,48 +497,33 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     [client, sourceRunId],
   );
 
-  const refreshRecipeRuns = useCallback(
-    async (reason: string, reset: boolean) => {
-      if (!client || !sourceRunId) return;
-      const requestId = recipeRunsRequestRef.current + 1;
-      recipeRunsRequestRef.current = requestId;
-      if (reset) {
-        setRecipeRuns([]);
-        setRecipeArtifactCount(null);
-        setRecipeAvailabilityError(null);
-      }
-      try {
-        const result = await client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-          runId: sourceRunId,
-        });
-        if (recipeRunsRequestRef.current !== requestId) return;
-        setRecipeRuns(result.recipeRuns);
-        setRecipeArtifactCount(
-          result.recipeRuns.reduce(
-            (count, group) => count + artifactsForRecipeRun(group).length,
-            0,
-          ),
-        );
-        setRecipeAvailabilityError(null);
-      } catch (err) {
-        if (recipeRunsRequestRef.current !== requestId) return;
-        if (isGatewayBackgroundPauseError(err)) {
-          // App transitions can pause gateway refreshes; keep cached decision
-          // evidence visible instead of replacing the workspace with noise.
-          console.warn(
-            `Recipe evidence availability paused after ${reason}: ${(err as Error).message}`,
-          );
-          return;
-        }
-        setRecipeRuns([]);
-        setRecipeArtifactCount(null);
-        setRecipeAvailabilityError(
-          `Failed to refresh recipe evidence availability after ${reason}: ${(err as Error).message}`,
-        );
-      }
-    },
+  const readRecipeRuns = useMemo(
+    () =>
+      client && sourceRunId
+        ? async () =>
+            (
+              await client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
+                runId: sourceRunId,
+              })
+            ).recipeRuns
+        : null,
     [client, sourceRunId],
   );
+  // A failed re-read keeps the recipe pairs, and an open fallback viewer, on screen.
+  const recipeRead = useReread(
+    readRecipeRuns,
+    (reason, message) =>
+      `Failed to refresh recipe evidence availability after ${reason}: ${message}`,
+  );
+  const refreshRecipeRuns = recipeRead.refresh;
+  const recipeRuns = useMemo(() => recipeRead.value ?? [], [recipeRead.value]);
+  const recipeArtifactCount = useMemo(
+    () =>
+      recipeRead.value?.reduce((count, group) => count + artifactsForRecipeRun(group).length, 0) ??
+      null,
+    [recipeRead.value],
+  );
+  const recipeAvailabilityError = recipeRead.error;
 
   useEffect(() => {
     if (!sourceRunId) {
@@ -553,13 +534,6 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     if (connection === null) return;
     void refreshSourceRun('connect');
   }, [connection, refreshSourceRun, sourceRunId]);
-
-  useEffect(() => {
-    if (sourceRunId) return;
-    setRecipeRuns([]);
-    setRecipeArtifactCount(null);
-    setRecipeAvailabilityError(null);
-  }, [sourceRunId]);
 
   // Each reconnect re-reads, as the source run above does, keeping the recipe pairs on screen.
   useConnectedRefresh(refreshRecipeRuns, Boolean(sourceRunId));
