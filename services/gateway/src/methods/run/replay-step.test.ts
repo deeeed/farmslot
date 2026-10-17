@@ -3074,3 +3074,43 @@ test('a find-slot replay whose run fails its completion prerequisite meanwhile k
   const row = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
   assert.deepEqual([row.current_run_id, row.phase, row.slot_epoch], [run.id, 'working', 2]);
 });
+
+test('a find-slot replay whose run reaches its publication gate meanwhile keeps the gate driver', async (t) => {
+  const slotId = await disposablePoolSlot(t, 'gating');
+  const created = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    slotId,
+  });
+  const run = updateRun(created.id, { status: 'completing' });
+  await holdOnlySlot(t, slotId, { lifecycle: 'busy', phase: 'working', current_run_id: run.id });
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  const generation = getRun(run.id)?.engineState?.generation;
+
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+      // The live engine finishes COMPLETE and holds the slot for its gate.
+      afterSlotPlanning: async () => {
+        updateRun(run.id, {
+          status: 'human-gating',
+          steps: getRun(run.id)!.steps.map((step) =>
+            step.name === 'complete'
+              ? { ...step, status: 'done', outputs: { slotDisposition: 'gate-held' } }
+              : step.name === 'human-gate'
+                ? { ...step, status: 'running' }
+                : step,
+          ),
+        });
+      },
+    }),
+    new RegExp(`gate-held for run ${run.id}`),
+  );
+  assert.equal(getRun(run.id)?.engineState?.generation, generation, 'the gate driver still runs');
+  assert.equal(getRun(run.id)?.status, 'human-gating');
+  assert.equal(getRun(run.id)?.slotId, slotId);
+});

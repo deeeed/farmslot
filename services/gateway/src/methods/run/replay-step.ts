@@ -84,6 +84,7 @@ import { isActiveSlotHolder, slotClaimBlockedByRelease } from '../dispatch/slot-
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 import { slotOwnershipFieldsForRun } from '../fleet.js';
 import { runtimeCapabilityStatus } from '../runtime-capabilities.js';
+import { assertReleaseRunGuards, slotReleasePreflight } from '../slot/release.js';
 
 import {
   isInternalArtifactOnlyEvalTicket,
@@ -1189,19 +1190,14 @@ async function replayRunStep(
   const priorSlotId = reselectsSlot ? existing.slotId : null;
   const priorSlotRow = priorSlotId ? await readSlotRow(priorSlotId) : null;
   // The release that settles it runs after the engine is cancelled, so its
-  // read-only guards (gate hold, park record, native owner) refuse here instead,
-  // leaving the run driven.
-  if (
-    priorSlotId &&
-    priorSlotRow?.current_run_id === params.runId &&
-    !isCompletionPrerequisiteFailure(getRun(params.runId) ?? existing)
-  ) {
-    const { slotReleasePreflight } = await import('../slot/release.js');
-    await slotReleasePreflight(
-      { slotId: priorSlotId, keepWork: true, expectedRunId: params.runId },
-      { restartRunId: params.runId },
-    );
-  }
+  // guards (gate hold, park record, native owner) refuse before that, leaving
+  // the run driven: here, and again with no await before the cancel.
+  const priorRelease =
+    priorSlotId && priorSlotRow?.current_run_id === params.runId
+      ? { slotId: priorSlotId, keepWork: true, expectedRunId: params.runId }
+      : null;
+  if (priorRelease && !isCompletionPrerequisiteFailure(getRun(params.runId) ?? existing))
+    await slotReleasePreflight(priorRelease, { restartRunId: params.runId });
   const replaySnapshot = getRun(params.runId) ?? existing;
   const retainsCompletionSlot = isCompletionPrerequisiteFailure(replaySnapshot);
   if (retainsCompletionSlot) {
@@ -1282,6 +1278,8 @@ async function replayRunStep(
       (planned && isCompletionPrerequisiteFailure(planned) !== retainsCompletionSlot)
     )
       throw new Error('Run changed while reading replay device requirements');
+    // The engine ran on through planning and may have reached a publication gate.
+    if (priorRelease) assertReleaseRunGuards(priorRelease, params.runId);
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
     // Do this only after replay entry validation so rejected replays do not leave a
     // synthetic in-progress recovery lane behind.
