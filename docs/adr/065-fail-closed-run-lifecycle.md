@@ -338,3 +338,38 @@ run.refreshPublishedEvidence '{"runId":"<run-id>"}'`.
   command, protocol field, package format or harness hook is introduced.
 - This additive experimental eligibility change ships with the gateway. The
   person-only adoption contract and normal publication approval remain intact.
+
+## Amendment 6: retained completion slot release, 2026-10-17
+
+**Status:** Accepted (lead, 2026-10-17), approved at `2e5cd7a53822c91c0d7c12ddf48d1af30ede56de` after paired review.
+**Specification:** [Pipeline settlement](../reference/fail-closed-run-lifecycle.md#pipeline-settlement).
+
+### Decision
+
+A run whose COMPLETE or FINALIZE prerequisite was refused is terminal `failed`
+but keeps its slot and checkout for a completion replay. `slot.release` and
+`slot.recycle` refuse that slot. Only a `slot.release` that names the run in
+`expectedRunId` and passes `forceReset:true` discards it. Replaying the completion,
+or force-completing a non-QA run, settles the run and lifts the refusal. A replay
+must start at the refused step or earlier, because a later-step retry would mark
+the refusal done and drop the retention. A replay undoing its own epoch-pinned
+claim may still release it; a failed replay restores the retained claim it took
+over instead of releasing it.
+
+### Rationale and consequences
+
+The owner guard refused only non-terminal runs. A QA worker released its own
+slot after the refused completion turned the run `failed`. The checkout was then
+gone, so a later completion replay could not validate the deterministic receipt
+or confirm the runner idle. Cancel refuses terminal runs and archive requires
+the slot released first, so the named force discard is the explicit operator
+exit. It reuses the existing discard form for a slot held by a missing run.
+
+### Public surface
+
+- No new RPC, protocol field or CLI command. `slot.release` and `slot.recycle`
+  gain one refusal whose message names the replay and discard routes, and
+  `run.replayStep` refuses a target after the refused step. The orphaned-slot
+  recovery card no longer proposes releasing such a slot.
+- Archive and delete of such a run still require the slot released first; that
+  release is now the named force discard.

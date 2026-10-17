@@ -8,6 +8,7 @@ import {
   type ChatNextStep,
   type ChatSuggestedAction,
   type FailureCategory,
+  isCompletionPrerequisiteFailure,
   type OperatorSnapshotResult,
   RECOVERABLE_FAILURE_CATEGORIES,
   type Run,
@@ -571,10 +572,11 @@ function recoveryDescriptors(
   // gate is intentionally NOT routed through evidenceSupportsActions
   // (which couples on selected-step failure + recoverable category). A
   // dispatch-step failure with category=undefined still leaves an orphaned
-  // slot the operator can free.
+  // slot the operator can free. A refused completion prerequisite is not
+  // orphaned: it keeps its slot for replay and release refuses it.
   const runIsTerminal =
     run.status === 'failed' || run.status === 'cancelled' || run.status === 'done';
-  if (runIsTerminal && run.slotId) {
+  if (runIsTerminal && run.slotId && !isCompletionPrerequisiteFailure(run)) {
     descriptors.push({
       id: 'release-orphaned-slot',
       label: 'Release orphaned slot',

@@ -6,6 +6,7 @@ import {
   Events,
   FLOW_STEPS,
   type FlowType,
+  isCompletionPrerequisiteFailure,
   isInteractiveDevRun,
   isTerminalRunStatus,
   PipelineSteps as PS,
@@ -738,6 +739,29 @@ function recoverReplaySlotId(
   return afterSelection ? resolveRunSlotId(existing) : null;
 }
 
+/**
+ * A later-step retry would normalize the refused COMPLETE/FINALIZE to done, and
+ * the run would stop retaining its slot even when the retry fails. Retry the
+ * refused step itself, or an earlier one.
+ */
+function assertReplayKeepsCompletionRefusal(
+  run: NonNullable<ReturnType<typeof getRun>>,
+  flowSteps: readonly string[] | undefined,
+  targetIdx: number,
+): void {
+  if (!flowSteps) return;
+  // Normalization marks every flow step before the target done; the refusal
+  // must still hold on the steps it leaves alone.
+  const untouched = run.steps.filter((step) => {
+    const idx = flowSteps.indexOf(step.name);
+    return idx < 0 || idx >= targetIdx;
+  });
+  if (!isCompletionPrerequisiteFailure({ status: run.status, steps: untouched }))
+    throw new Error(
+      `Cannot replay ${flowSteps[targetIdx]}: run ${run.id} retains its slot for a refused completion prerequisite — replay from the refused step or earlier`,
+    );
+}
+
 function assertReplayAfterDispatchAllowed(
   existing: NonNullable<ReturnType<typeof getRun>>,
   flowSteps: readonly string[] | undefined,
@@ -1143,6 +1167,9 @@ async function replayRunStep(
   }
 
   const replaySnapshot = getRun(params.runId) ?? existing;
+  const retainsCompletionSlot = isCompletionPrerequisiteFailure(replaySnapshot);
+  if (retainsCompletionSlot)
+    assertReplayKeepsCompletionRefusal(replaySnapshot, flowSteps, targetIdx);
   assertReplayAfterDispatchAllowed(
     replaySnapshot,
     flowSteps,
@@ -1359,9 +1386,11 @@ async function replayRunStep(
                   reclaim.reason === 'owned-by-other'
                     ? ` (run ${reclaim.owner} holds it)`
                     : ` (it is ${reclaim.lifecycle})`;
+              // A retained completion failure still owns its checkout; rollback
+              // restores that claim instead of releasing it.
               if (
                 reclaim.ok &&
-                existing.status === 'blocked' &&
+                (existing.status === 'blocked' || retainsCompletionSlot) &&
                 blockedMonitorOwnsSlot(slot, params.runId)
               ) {
                 priorOwnedSlotFields = {
