@@ -39,7 +39,7 @@ export function RunResultsCard({
         </Text>
       ) : (
         <Pressable
-          style={styles.focusedArtifactPrimaryButton}
+          style={[styles.focusedArtifactPrimaryButton, { alignSelf: 'flex-start' }]}
           onPress={onReadReport}
           disabled={loadingReport}
           accessibilityRole="button"

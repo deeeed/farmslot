@@ -9,10 +9,25 @@ import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type AcceptanceCriterionRef,
   type AcceptanceStatusLedger,
+  type OutputReviewPayload,
   type Run,
+  type RunDecision,
   type RunStep,
   summarizeAcceptanceStatus,
 } from '@farmslot/protocol';
+
+export type OutputReviewDecision = RunDecision & { payload: OutputReviewPayload };
+
+function isPendingOutputReview(decision: RunDecision): decision is OutputReviewDecision {
+  return !decision.resolvedAt && decision.payload?.kind === 'output-review';
+}
+
+/** The run's open output review, whose report snapshot run detail checks the retained report against. */
+export function pendingOutputReview(
+  run: Pick<Run, 'decisions'> | null | undefined,
+): OutputReviewDecision | undefined {
+  return run?.decisions.find(isPendingOutputReview);
+}
 
 export interface AcceptancePanelPresentation {
   /** Assessment progress stays distinct from how many criteria are proven. */

@@ -80,7 +80,7 @@ import {
 } from '../../lib/evidence-media-items';
 import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
-import { readRunOutputReport } from '../../lib/output-report';
+import { isHtmlReport, readRunOutputReport } from '../../lib/output-report';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import {
   canResolveWithPostureChoice,
@@ -216,6 +216,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const [documentViewer, setDocumentViewer] = useState<{
     title: string;
     body: string;
+    html?: boolean;
     evidenceModel?: EvidenceReviewModel;
   } | null>(null);
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
@@ -853,7 +854,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         signal: controller.signal,
       });
       if (!controller.signal.aborted)
-        setDocumentViewer({ title: report.caption, body: report.body, evidenceModel: model });
+        setDocumentViewer({
+          title: report.caption,
+          body: report.body,
+          html: isHtmlReport(report.path),
+          evidenceModel: model,
+        });
     } catch (error) {
       if (!controller.signal.aborted)
         Alert.alert('Report unavailable', error instanceof Error ? error.message : String(error));
@@ -2001,6 +2007,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           visible={isFocused && !!documentViewer}
           title={documentViewer?.title ?? ''}
           body={documentViewer?.body ?? ''}
+          html={documentViewer?.html}
           onClose={() => setDocumentViewer(null)}
         >
           {documentViewer?.evidenceModel && sourceRunId ? (

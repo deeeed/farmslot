@@ -43,3 +43,8 @@ export function readRunOutputReport(
     return new Uint8Array(await response.arrayBuffer());
   });
 }
+
+/** A QA worker writes report.html; it renders as a page rather than as text. */
+export function isHtmlReport(path: string): boolean {
+  return /\.html?$/i.test(path);
+}

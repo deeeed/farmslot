@@ -25,7 +25,11 @@ import {
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { publicationReviewBlockingReason, runResultsSummary } from '@farmslot/review-dispatch';
+import {
+  pendingOutputReview,
+  publicationReviewBlockingReason,
+  runResultsSummary,
+} from '@farmslot/review-dispatch';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { RunPipelineFull } from '../../components/RunPipeline';
@@ -44,7 +48,7 @@ import { currentFarmConnection } from '../../lib/connection-authority';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { gateReviewHref, openHumanGateDecision } from '../../lib/gate-review';
 import { nativeRunConversationParams } from '../../lib/native-worker-target';
-import { readRunOutputReport } from '../../lib/output-report';
+import { isHtmlReport, readRunOutputReport } from '../../lib/output-report';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
@@ -153,6 +157,8 @@ export default function RunDetailScreen() {
   const run = loadedRun?.scope === readScope.current ? loadedRun.run : (storeRun ?? null);
   const setRun = (value: Run) => setLoadedRun({ scope: readScope.current, run: value });
   const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
+  // The open output review's snapshot is what the retained report is checked against.
+  const outputReview = useMemo(() => pendingOutputReview(run), [run]);
   const [recordedEvidence, setRecordedEvidence] = useState<RunRecordedEvidenceReview | null>(null);
   const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
@@ -201,6 +207,7 @@ export default function RunDetailScreen() {
     () =>
       createEvidenceReviewModel({
         context: 'run-detail',
+        reportSnapshot: outputReview?.payload,
         comparisonSnapshot: recordedEvidence?.comparisonSnapshot,
         artifacts: run ? extractRunArtifactManifest(run) : [],
         criterionSourceUrl: run?.links?.find((link) => link.label === 'Jira')?.url,
@@ -215,15 +222,17 @@ export default function RunDetailScreen() {
         criteria: acceptanceCriteria ?? undefined,
         report: recordedEvidence?.report,
       }),
-    [acceptanceCriteria, acceptanceStatus, recordedEvidence, run?.output],
+    [acceptanceCriteria, acceptanceStatus, outputReview, recordedEvidence, run?.output],
   );
   const runResults = useMemo(
     () => (run ? runResultsSummary(run, extractRunArtifactManifest(run).length) : null),
     [run],
   );
-  const [reportDocument, setReportDocument] = useState<{ title: string; body: string } | null>(
-    null,
-  );
+  const [reportDocument, setReportDocument] = useState<{
+    title: string;
+    body: string;
+    html: boolean;
+  } | null>(null);
   const [loadingReport, setLoadingReport] = useState(false);
   const reportAbortRef = useRef<AbortController | null>(null);
   useEffect(() => () => reportAbortRef.current?.abort(), []);
@@ -248,7 +257,11 @@ export default function RunDetailScreen() {
         signal: controller.signal,
       });
       if (!controller.signal.aborted)
-        setReportDocument({ title: report.caption, body: report.body });
+        setReportDocument({
+          title: report.caption,
+          body: report.body,
+          html: isHtmlReport(report.path),
+        });
     } catch (error) {
       if (!controller.signal.aborted)
         Alert.alert('Report unavailable', error instanceof Error ? error.message : String(error));
@@ -1276,9 +1289,10 @@ export default function RunDetailScreen() {
         visible={Boolean(reportDocument)}
         title={reportDocument?.title ?? ''}
         body={reportDocument?.body ?? ''}
+        html={reportDocument?.html}
         onClose={() => setReportDocument(null)}
       >
-        {reportDocument ? (
+        {reportDocument && evidenceModel.claims.length ? (
           <TaskAcceptancePanel
             acceptanceStatus={null}
             evidenceModel={evidenceModel}

@@ -11,16 +11,24 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import WebView, { type WebViewNavigation } from 'react-native-webview';
 
 import { RecipeHudContext } from '../farmslot/RecipeBridgeProvider';
 import { RecipeHud } from '../farmslot/RecipeHud';
 import { formatDocument } from '../lib/document-format';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
+// A retained HTML report renders as a page, never as markup. Scripts stay off and the view never
+// leaves the document: only in-page anchors navigate, so a link cannot load anything else.
+function staysInDocument(request: WebViewNavigation): boolean {
+  return request.url.startsWith('about:blank');
+}
+
 export function DocumentViewer({
   visible,
   title,
   body,
+  html = false,
   onClose,
   children,
 }: {
@@ -28,17 +36,19 @@ export function DocumentViewer({
   visible: boolean;
   title: string;
   body: string;
+  /** Render the body as an HTML page (a QA run's report.html) instead of formatted text. */
+  html?: boolean;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const recipeHud = useContext(RecipeHudContext);
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const topInset = Math.max(
     insets.top,
     Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight ?? 0),
   );
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
-  const formatted = formatDocument(title, body);
+  const formatted = html ? [] : formatDocument(title, body);
   const minCodeWidth = Math.max(320, width - spacing.xl * 2);
   if (!visible) return null;
   return (
@@ -70,7 +80,16 @@ export function DocumentViewer({
           style={styles.body}
           contentContainerStyle={styles.bodyContent}
         >
-          {formatted.length > 0 ? (
+          {html && body.trim() ? (
+            <WebView
+              testID="companion-document-html"
+              source={{ html: body }}
+              originWhitelist={['about:blank']}
+              javaScriptEnabled={false}
+              onShouldStartLoadWithRequest={staysInDocument}
+              style={[styles.htmlPage, { height: Math.round(height * 0.7) }]}
+            />
+          ) : formatted.length > 0 ? (
             formatted.map((block, index) =>
               block.kind === 'separator' ? (
                 <View key={`${block.kind}-${index}`} style={styles.separator} />
@@ -119,6 +138,10 @@ export function DocumentViewer({
 }
 
 const styles = StyleSheet.create({
+  htmlPage: {
+    borderRadius: radii.md,
+    overflow: 'hidden',
+  },
   container: {
     flex: 1,
     backgroundColor: colors.bgBase,

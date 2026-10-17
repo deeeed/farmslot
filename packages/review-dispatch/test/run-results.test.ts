@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import type { AcceptanceCriterionStatus, AcceptanceStatusLedger, Run } from '@farmslot/protocol';
 
-import { acceptancePanelPresentation, runResultsSummary } from '../src/run-results.js';
+import {
+  acceptancePanelPresentation,
+  pendingOutputReview,
+  runResultsSummary,
+} from '../src/run-results.js';
 
 function criterion(overrides: Partial<AcceptanceCriterionStatus> = {}): AcceptanceCriterionStatus {
   return {
@@ -113,4 +117,30 @@ test('a finished QA run is a result to read, not a comparison or a passing verdi
   assert.doesNotMatch(summary.copy, /comparison|replay/i);
   assert.match(summary.copy, /findings and coverage gaps/);
   assert.match(summary.copy, /does not change the verdict/);
+});
+
+const outputReview = (resolvedAt?: string): Run['decisions'][number] => ({
+  id: 'decision-output',
+  type: 'engine_output_review',
+  title: 'Review run output',
+  description: 'QA output',
+  actions: [],
+  createdAt: '2026-10-16T20:11:33.507Z',
+  ...(resolvedAt ? { resolvedAt } : {}),
+  payload: {
+    kind: 'output-review',
+    reportPath: 'artifacts/report.html',
+    manifestDigest: 'manifest-digest',
+  },
+});
+
+test('only an open output review is the one run detail checks the report against', () => {
+  const open = makeRun({ flowType: 'qa', decisions: [outputReview()] });
+  assert.equal(pendingOutputReview(open)?.payload.manifestDigest, 'manifest-digest');
+  const closed = makeRun({
+    flowType: 'qa',
+    decisions: [outputReview('2026-10-17T00:00:00.000Z')],
+  });
+  assert.equal(pendingOutputReview(closed), undefined);
+  assert.equal(pendingOutputReview(null), undefined);
 });
