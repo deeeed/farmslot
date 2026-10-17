@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Prepare at a frozen head of a moved release branch",
+  "description": "Use a disposable gateway, run ledger, project and slot to verify that a release-range QA run whose frozen head is an older commit of a moved, untracked branch prepares at that head through run.replayStep, and that a commit no advertised branch contains is still refused. The dependency hook stops prepare before dispatch. No operator runs or slots are used.",
+  "workflow": {
+    "entry": "moved-branch-prepare",
+    "nodes": {
+      "moved-branch-prepare": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/start-ref-moved-branch.mjs",
+        "timeout_ms": 180000,
+        "intent": "A frozen release head stays preparable after its branch moves; an unadvertised commit is refused.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
