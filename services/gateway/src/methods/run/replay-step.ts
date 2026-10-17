@@ -739,6 +739,29 @@ function recoverReplaySlotId(
   return afterSelection ? resolveRunSlotId(existing) : null;
 }
 
+/**
+ * A later-step retry would normalize the refused COMPLETE/FINALIZE to done, and
+ * the run would stop retaining its slot even when the retry fails. Retry the
+ * refused step itself, or an earlier one.
+ */
+function assertReplayKeepsCompletionRefusal(
+  run: NonNullable<ReturnType<typeof getRun>>,
+  flowSteps: readonly string[] | undefined,
+  targetIdx: number,
+): void {
+  if (!flowSteps) return;
+  const refused = run.steps.find(
+    (step) =>
+      (step.name === PS.COMPLETE || step.name === PS.FINALIZE) &&
+      step.status === 'failed' &&
+      step.outputs?.gatePrerequisiteRefusal !== undefined,
+  );
+  if (refused && targetIdx > flowSteps.indexOf(refused.name))
+    throw new Error(
+      `Cannot replay ${flowSteps[targetIdx]}: run ${run.id} retains its slot for a refused ${refused.name} prerequisite — replay from ${refused.name} or earlier`,
+    );
+}
+
 function assertReplayAfterDispatchAllowed(
   existing: NonNullable<ReturnType<typeof getRun>>,
   flowSteps: readonly string[] | undefined,
@@ -1144,8 +1167,9 @@ async function replayRunStep(
   }
 
   const replaySnapshot = getRun(params.runId) ?? existing;
-  // Read before normalization marks a refused COMPLETE done for a later-step retry.
   const retainsCompletionSlot = isCompletionPrerequisiteFailure(replaySnapshot);
+  if (retainsCompletionSlot)
+    assertReplayKeepsCompletionRefusal(replaySnapshot, flowSteps, targetIdx);
   assertReplayAfterDispatchAllowed(
     replaySnapshot,
     flowSteps,
