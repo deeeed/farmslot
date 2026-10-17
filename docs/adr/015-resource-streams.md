@@ -390,7 +390,7 @@ Rollout of a binary-free root installs and checks the versioned root, selects it
 
 Amendment 5 kept SSH callers and workers on one version by requiring every PATH binary to match the pin. Once callers reach the provider only through `farmslot`, drift comes from two places: a stale selector in a shell profile, and an old global install whose binaries still run. Checking both keeps the same guarantee without requiring a binary the provider no longer ships.
 
-This has to ship and roll out before the MetaMask provider drops its binary. Until then, every node would report that provider's pinned root as invalid. Frozen run inputs and retained versioned roots are unchanged.
+A provider can drop its binaries only after this ships and rolls out. Until then, every node would report its pinned root as invalid. Frozen run inputs and retained versioned roots are unchanged.
 
 ### Public surface
 
