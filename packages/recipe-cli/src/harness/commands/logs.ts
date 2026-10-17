@@ -1,13 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { harnessAdapter } from '../adapters.js';
-import { recipeExecutionSignal } from '../host.js';
+import {
+  adapterDetectNext,
+  adapterForPlatform,
+  harnessAdapter,
+  undetectedAdapterMessage,
+} from '../adapters.js';
+import { contextAdapter } from '../context-state.js';
+import { harnessHost, recipeExecutionSignal } from '../host.js';
 import {
   optionFlag,
   optionString,
   type ParsedArgs,
   resolveAdapter,
+  targetPath,
   usageError,
 } from '../parse-args.js';
 import { EXIT, spawnScriptStreaming, usageOut } from '../shared.js';
@@ -35,6 +42,8 @@ export interface LogsWindowResult {
 export interface LogsCommandOptions {
   compact?(request: LogsViewRequest): Promise<number>;
   window?(request: LogsWindowRequest): Promise<LogsWindowResult>;
+  /** Called before any live follow when the output is not --json. */
+  announce?(request: { source: string; logFile: string; mode: 'compact' | 'full' | 'raw' }): void;
 }
 
 /** Read only the selected runtime's declared logs; followers use owned-child cancellation. */
@@ -42,27 +51,52 @@ export async function handleLogs(
   { options }: ParsedArgs,
   config: LogsCommandOptions = {},
 ): Promise<number> {
-  const { adapter, target } = resolveAdapter(options);
+  const json = optionFlag(options, 'json');
+  const target = targetPath(options);
+  const detected =
+    optionString(options, 'adapter') ??
+    adapterForPlatform(optionString(options, 'platform')) ??
+    contextAdapter(target);
+  if (!detected) {
+    return usageOut(json, 'logs', undetectedAdapterMessage(target), adapterDetectNext());
+  }
+  const { adapter } = resolveAdapter(options);
   const runtime = harnessAdapter(adapter);
   const sources = runtime.logSources(target);
   const app = runtime.appLogSource(target);
   const requested = optionString(options, 'source');
-  const sourceName =
-    requested ?? (app && app.label !== 'app' ? app.label : (sources[0]?.label ?? app?.label));
+  const defaultSource = app && app.label !== 'app' ? app.label : (sources[0]?.label ?? app?.label);
+  const sourceName = requested ?? defaultSource;
   const isAppSource = app && (sourceName === 'app' || sourceName === app.label);
   const source = isAppSource ? app : sources.find((entry) => entry.label === sourceName);
   const labels = [
     ...new Set([...sources.map((entry) => entry.label), ...(app ? [app.label, 'app'] : [])]),
   ];
-  const json = optionFlag(options, 'json');
   if (!source) {
+    if (requested && defaultSource) {
+      return usageOut(
+        json,
+        'logs',
+        `--source must be one of: ${labels.join(', ')}.`,
+        `${harnessHost().name} logs --source ${defaultSource}`,
+      );
+    }
     return usageOut(
       json,
       'logs',
-      requested
-        ? `Unknown log source ${requested}. Available: ${labels.join(', ') || 'none'}.`
+      runtime.headless
+        ? `${adapter} is headless; it has no dev server logs.`
         : `Runtime ${adapter} declares no logs for this target.`,
       runtime.hints.launch,
+    );
+  }
+  const events = optionString(options, 'events');
+  if (events !== undefined && !/^\d+$/u.test(events)) {
+    return usageOut(
+      json,
+      'logs',
+      '--events must be numeric.',
+      `${harnessHost().name} logs --events 20`,
     );
   }
   if (!fs.existsSync(source.path)) {
@@ -86,19 +120,20 @@ export async function handleLogs(
           ),
         );
       } else {
-        console.error(`logs: ${message}\n  Next: ${runtime.hints.launch}`);
+        console.error(`✗ logs: ${message}\n  Next: ${runtime.hints.launch}`);
       }
       return EXIT.runtime;
     }
-    return usageOut(json, 'logs', `Log file is unavailable: ${source.path}`, runtime.hints.launch);
+    return usageOut(
+      json,
+      'logs',
+      `nothing running for this checkout (no ${path.basename(source.path)}).`,
+      runtime.hints.launch,
+    );
   }
   const lines = optionString(options, 'lines') ?? '20';
   if (!/^\d+$/u.test(lines) || !Number.isSafeInteger(Number(lines))) {
     throw usageError('--lines must be a nonnegative integer.');
-  }
-  const events = optionString(options, 'events');
-  if (events !== undefined && !/^\d+$/u.test(events)) {
-    throw usageError('--events must be numeric.');
   }
   const full = optionFlag(options, 'full');
   const raw = optionString(options, 'lines') !== undefined || optionFlag(options, 'follow');
@@ -149,7 +184,10 @@ export async function handleLogs(
     );
     return EXIT.ok;
   }
+  const announce = (mode: 'compact' | 'full' | 'raw'): void =>
+    config.announce?.({ source: sourceName ?? source.label, logFile: source.path, mode });
   if (!full && !raw && config.compact) {
+    announce('compact');
     return config.compact({
       target,
       logFile: source.path,
@@ -158,6 +196,7 @@ export async function handleLogs(
       signal,
     });
   }
+  if (full || optionFlag(options, 'follow')) announce(full ? 'full' : 'raw');
   const result = await spawnScriptStreaming(
     'tail',
     [

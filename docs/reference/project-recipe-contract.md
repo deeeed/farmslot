@@ -97,6 +97,7 @@ interface LogsWindowResult {
 interface LogsCommandOptions {
   compact?(request: LogsViewRequest): Promise<number>;
   window?(request: LogsWindowRequest): Promise<LogsWindowResult>;
+  announce?(request: { source: string; logFile: string; mode: 'compact' | 'full' | 'raw' }): void;
 }
 ```
 
@@ -301,6 +302,8 @@ The referenced grammar inventories exact selection/provider flags. This specific
 | `@farmslot/recipe-cli/harness` | Existing `resolveProjectContext`, `loadProjectProvider`, `withProjectRecipeHost`, `ProjectProvider`; optional doctor/status/stop/logs `commandOptions` | Public CLI and executable project providers                                                                                   |
 | `@farmslot/recipe-cli/harness` | Shared `handleDoctor`, `handleLaunch`, `LaunchCommandOptions`, `handleLogs`, status/reload/stop handlers                                               | Public lifecycle CLI; harnesses inherit mechanics and supply runtime hooks                                                    |
 | `@farmslot/recipe-cli/harness` | `LogsCommandOptions`, `LogsViewRequest`, `LogsWindowRequest`, `LogsWindowResult`                                                                       | Shared logs handler and project compact/window provider helpers; same pre-1.0 release policy below                            |
+| `@farmslot/recipe-cli/harness` | `LogsCommandOptions.announce`: called with the source, log file and mode before a live follow, never under `--json`                                    | Host CLIs built with `createHarnessCli`                                                                                       |
+| `@farmslot/recipe-cli/harness` | `ReadinessViewOptions.journal?: boolean`, default true; `false` drops the journal fields and lines from status                                         | Host CLIs built with `createHarnessCli`                                                                                       |
 | `@farmslot/recipe-cli/harness` | `DoctorFixResult`, asynchronous doctor repair contract, `doctorReady`, `renderDoctorRecorder`                                                          | Shared readiness and project doctor composition                                                                               |
 | `@farmslot/recipe-cli/harness` | `HarnessHost.doctorCommand`, host journal configuration, `readLatestProofJournal`                                                                      | Public recovery hints, status and artifact defaults                                                                           |
 | `@farmslot/recipe-cli/harness` | Existing conformance identity/check/write/reuse APIs and extended runtime-proof validation                                                             | Root doctor and retained evidence verification                                                                                |
@@ -363,6 +366,7 @@ The canonical grammar MUST retain each referenced operation's argument mapping, 
 | `ProjectProvider.commandOptions.task?: ProjectTaskCommandOptions`            | Extends `TaskInitCommandOptions` and `ChecklistCommandOptions`, with required `stepGates: readonly ChecklistStepGate[]`              |
 | `ProjectProvider.commandOptions.recipeQuality?: RecipeQualityCommandOptions` | Existing builder and optional advisor subcommands; `guidance?: string` carries project quality text                                  |
 | `ProjectProvider.commandOptions.review?: ReviewCommandOptions`               | Project rule data: `baseRules?: string`, `runtimeIds?: readonly string[]`, and `parityRuntimeIds?: Readonly<Record<string, string>>` |
+| `ReviewCommandOptions` hooks for host CLIs built with `createHarnessCli`     | `libraries`, `resolveLibrary`, `defaultDomain`, `domainCommand`, `usage`, `runtime`, `header`, `verdictRule`; a binding ignores them |
 
 Generic parsing, task-directory production, marking, quality validation, domain matching and review rendering MUST have one shared implementation. Existing template/library resolution remains authoritative. Providers retain project gate predicates, closeout policy, supported runtime IDs, parity mappings and rule text. They MUST NOT invoke their retired CLI or copy a shared handler.
 
