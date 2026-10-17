@@ -8,7 +8,12 @@ import { AUTHORIZATION_METHOD_CLASSIFICATION } from './authorization-classificat
 import { activeAdminCredentialCount } from './credential-store.js';
 import { hasNativeWorkspaceAccess } from './native-owner.js';
 import { generationMismatchMessage } from './principal-resolver.js';
-import { principalOwnerGeneration } from './work-originator.js';
+import {
+  principalOwnerGeneration,
+  replacedWorkOriginator,
+  resolveWorkOriginator,
+  type WorkOriginator,
+} from './work-originator.js';
 
 const IDENTITY_MANAGEMENT_METHODS = new Set([
   'principal.create',
@@ -184,6 +189,21 @@ export function authorizeStoredRunEffect(
       userAction:
         'edit or requeue the item from a current admin session so its authority is explicit',
     },
+  );
+}
+
+/** Fire-time authority of a queued item's stored originator, naming a replaced identity. */
+export function authorizeQueuedOriginator(
+  runtime: GatewayAuthRuntime,
+  originator: WorkOriginator | undefined,
+  itemLabel: string,
+  effectiveSafetyTier: SafetyTier | undefined,
+): Principal {
+  return authorizeStoredRunEffect(
+    resolveWorkOriginator(runtime, originator),
+    itemLabel,
+    effectiveSafetyTier,
+    replacedWorkOriginator(runtime, originator),
   );
 }
 

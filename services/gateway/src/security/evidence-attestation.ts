@@ -69,14 +69,24 @@ export function authorizeVisualClaimReview(
   const resolution = delegatorId
     ? runtime.resolver.resolvePrincipalId(delegatorId, policy?.delegatorPrincipalGeneration ?? 0)
     : undefined;
-  if (delegatorId && resolution && !resolution.ok && resolution.reason === 'generation_mismatch')
+  if (delegatorId && resolution && !resolution.ok && resolution.reason === 'generation_mismatch') {
+    const pinned = policy?.delegatorPrincipalGeneration ?? 0;
+    const current = runtime.store.findPrincipal(delegatorId)?.generation ?? 0;
+    const action =
+      'set visual_claim_review.delegatorPrincipalGeneration to its current generation or name another person.';
+    // A pin above the current generation names an identity that does not exist yet.
+    // The parser refuses a pin of 0, so a generation-zero delegator needs the pin removed.
+    const repin =
+      current === 0
+        ? 'Remove visual_claim_review.delegatorPrincipalGeneration'
+        : `Set visual_claim_review.delegatorPrincipalGeneration to ${current}`;
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
-      generationMismatchMessage(
-        delegatorId,
-        'set visual_claim_review.delegatorPrincipalGeneration to its current generation or name another person.',
-      ),
+      pinned > current
+        ? `${delegatorId} has no identity generation ${pinned}; its current generation is ${current}. ${repin} or name another person.`
+        : generationMismatchMessage(delegatorId, action),
     );
+  }
   const delegator = resolution?.ok ? resolution.principal : undefined;
   if (delegated && (!delegator || delegator.subject.type !== 'person'))
     throw new GatewayMethodError(

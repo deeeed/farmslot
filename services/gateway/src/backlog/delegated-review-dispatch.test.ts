@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
 import type { QueueItem } from '@farmslot/protocol';
+
+import '../runtime/mock-pty.test-support.js';
 
 const root = mkdtempSync(path.join(tmpdir(), 'delegated-review-dispatch-'));
 for (const dir of [
@@ -140,7 +142,8 @@ test('a live static review request from an admin replacement plans under the nat
   const plan = await runWithSessionOriginator(arthur, () =>
     planRunCreation(review, { reviewDelegation: 'live' }),
   );
-  assert.equal(existsSync(ghCalls), false);
+  // Shows each recorded gh argv on failure.
+  assert.equal(existsSync(ghCalls) ? readFileSync(ghCalls, 'utf8') : '', '');
   assert.deepEqual(plan.staticReviewOwner, {
     ownerId: 'farm-automation',
     requester: { principalId: 'arthur', principalGeneration: 1 },

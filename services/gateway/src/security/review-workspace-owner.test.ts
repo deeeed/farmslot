@@ -9,7 +9,7 @@ import { CredentialStoreRuntime, CredentialStoreWriter } from '@farmslot/credent
 import { buildRunRecord } from '../runs/store.js';
 
 import { createGatewayAuthRuntime } from './auth.js';
-import { authorizeStoredRunEffect } from './authorization.js';
+import { authorizeQueuedOriginator } from './authorization.js';
 import { nativeOwnerAssignedMachines } from './native-node.js';
 import { ownsLocalNativeProfile } from './native-owner.js';
 import {
@@ -20,8 +20,6 @@ import {
 } from './native-worker-owner.js';
 import {
   currentSessionPrincipal,
-  replacedWorkOriginator,
-  resolveWorkOriginator,
   runWithSessionOriginator,
   runWithSystemOriginator,
 } from './work-originator.js';
@@ -267,13 +265,7 @@ test('a queued delegated request fires only while its requester is still that ad
   auth.writer.retirePrincipals(['arthur']);
   auth.writer.createPrincipal(person, admin, 'arthur', { reuseRetiredId: true });
   const requester = { kind: 'principal' as const, principalId: 'arthur', principalGeneration: 1 };
-  const fire = () =>
-    authorizeStoredRunEffect(
-      resolveWorkOriginator(auth, requester),
-      'delegated review',
-      undefined,
-      replacedWorkOriginator(auth, requester),
-    );
+  const fire = () => authorizeQueuedOriginator(auth, requester, 'delegated review', undefined);
   assert.equal(fire().id, 'arthur');
   auth.writer.revokeRole('arthur', 'admin', { kind: 'global' });
   assert.throws(fire, /no longer has admin\/global authority/);
