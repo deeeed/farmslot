@@ -1,11 +1,9 @@
-import {
-  Events,
-  isCompletionPrerequisiteFailure,
-  isSlotFreedByPark,
-  PipelineSteps,
-} from '@farmslot/protocol';
+import { Events, isSlotFreedByPark, refusedCompletionStep } from '@farmslot/protocol';
 
+import { markBacklogRunObserved } from '../../backlog/store.js';
+import { scheduledGraphOf } from '../../run-engine/stack-base.js';
 import { getRun, listRuns, updateRun, updateRunStep } from '../../runs/store.js';
+import { schedulerTick } from '../../work-graph/store.js';
 import { slotPinIsRequestOnly } from '../dispatch/slot-scoring.js';
 
 type Emit = (event: string, payload: unknown) => void;
@@ -46,19 +44,29 @@ export function detachRunsForReleasedSlot(
  * The named forced release of a run whose completion prerequisite was refused
  * discards its retained workspace. Stamp the refused step so every active run
  * list treats the run as settled; the refusal stays as history.
+ *
+ * The request emit reaches only the caller, so publish to every client and
+ * settle the backlog and the family edge here, as the observed lane would.
  */
-export function markCompletionFailureDiscarded(runId: string, emit: Emit): void {
+export async function markCompletionFailureDiscarded(
+  runId: string,
+  broadcast?: Emit,
+): Promise<void> {
   const run = getRun(runId);
-  if (!run || !isCompletionPrerequisiteFailure(run)) return;
-  const refused = run.steps.find(
-    (step) =>
-      (step.name === PipelineSteps.COMPLETE || step.name === PipelineSteps.FINALIZE) &&
-      step.status === 'failed' &&
-      step.outputs?.gatePrerequisiteRefusal !== undefined,
-  );
+  const refused = run ? refusedCompletionStep(run) : undefined;
   if (!refused || refused.outputs?.gatePrerequisiteDiscardedAt !== undefined) return;
   const updated = updateRunStep(runId, refused.name, {
     outputs: { ...refused.outputs, gatePrerequisiteDiscardedAt: new Date().toISOString() },
   });
-  emit(Events.RUN_UPDATED, { run: updated });
+  const publish = broadcast ?? (await import('../../server.js')).broadcastEvent;
+  publish(Events.RUN_UPDATED, { run: updated });
+  // The slot is already released and the stamp is durable; a failed settle is
+  // logged like the observed lane's, not reported as a failed release.
+  try {
+    await markBacklogRunObserved(updated);
+    const graphId = scheduledGraphOf(updated);
+    if (graphId) await schedulerTick({ graphId });
+  } catch (err) {
+    console.error(`[slot.release] discarded run ${runId} settle failed: ${(err as Error).message}`);
+  }
 }

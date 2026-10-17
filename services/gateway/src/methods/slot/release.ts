@@ -951,7 +951,7 @@ async function slotReleaseImpl(
     }
   }
   if (params.forceReset && params.expectedRunId && params.expectedRunId === releasedOwner) {
-    markCompletionFailureDiscarded(params.expectedRunId, emit);
+    await markCompletionFailureDiscarded(params.expectedRunId);
   }
 
   emit('slot.release.done', { requestId, slotId: params.slotId, keepWarm });

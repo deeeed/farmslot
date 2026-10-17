@@ -122,21 +122,24 @@ export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisio
   });
 }
 
+/** The failed COMPLETE or FINALIZE step that recorded a refused completion prerequisite. */
+export function refusedCompletionStep(
+  run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>,
+): RunStep | undefined {
+  if (run.status !== 'failed') return undefined;
+  return run.steps?.find(
+    (step) =>
+      (step.name === PipelineSteps.COMPLETE || step.name === PipelineSteps.FINALIZE) &&
+      step.status === 'failed' &&
+      step.outputs?.gatePrerequisiteRefusal !== undefined,
+  );
+}
+
 /** A failed deterministic gate keeps its resources until an operator settles or replays it. */
 export function isCompletionPrerequisiteFailure(
   run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>,
 ): boolean {
-  return (
-    run.status === 'failed' &&
-    Boolean(
-      run.steps?.some(
-        (step) =>
-          (step.name === PipelineSteps.COMPLETE || step.name === PipelineSteps.FINALIZE) &&
-          step.status === 'failed' &&
-          step.outputs?.gatePrerequisiteRefusal !== undefined,
-      ),
-    )
-  );
+  return refusedCompletionStep(run) !== undefined;
 }
 
 /**
@@ -147,10 +150,10 @@ export function isCompletionPrerequisiteFailure(
 export function isSettledCompletionFailure(
   run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps' | 'archivedAt'>>,
 ): boolean {
+  const refused = refusedCompletionStep(run);
   return (
-    isCompletionPrerequisiteFailure(run) &&
-    (Boolean(run.archivedAt) ||
-      Boolean(run.steps?.some((step) => step.outputs?.gatePrerequisiteDiscardedAt !== undefined)))
+    refused !== undefined &&
+    (Boolean(run.archivedAt) || refused.outputs?.gatePrerequisiteDiscardedAt !== undefined)
   );
 }
 

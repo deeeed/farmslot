@@ -150,14 +150,14 @@ test('markCompletionFailureDiscarded settles a refused completion once, keeping 
   assert.equal(isActiveListRun(getRun(run.id)!), true);
   const events: string[] = [];
 
-  markCompletionFailureDiscarded(run.id, (event) => events.push(event));
+  await markCompletionFailureDiscarded(run.id, (event) => events.push(event));
   const outputs = getRun(run.id)!.steps.find((step) => step.name === 'complete')!.outputs!;
   assert.deepEqual(outputs.gatePrerequisiteRefusal, { reason: 'no receipt' });
   assert.equal(typeof outputs.gatePrerequisiteDiscardedAt, 'string');
   assert.equal(isActiveListRun(getRun(run.id)!), false);
   assert.deepEqual(events, ['run.updated']);
 
-  markCompletionFailureDiscarded(run.id, (event) => events.push(event));
+  await markCompletionFailureDiscarded(run.id, (event) => events.push(event));
   assert.deepEqual(events, ['run.updated'], 'a second discard does not restamp');
 });
 
@@ -170,6 +170,6 @@ test('markCompletionFailureDiscarded leaves other runs alone', async (t) => {
   t.after(() => cleanupRun(run.id));
   updateRun(run.id, { status: 'failed' });
   const before = getRun(run.id)!.steps;
-  markCompletionFailureDiscarded(run.id, () => assert.fail('no event for a plain failure'));
+  await markCompletionFailureDiscarded(run.id, () => assert.fail('no event for a plain failure'));
   assert.deepEqual(getRun(run.id)!.steps, before);
 });

@@ -480,21 +480,13 @@ test('a family-done edge waits while a failed run still holds its resources', as
   await workGraph.schedulerTick({ graphId });
   assert.equal(downstreamQueued(), false, 'a retained failure is still active');
 
-  // The operator discards the retained workspace: the refusal stays, and the run settles.
-  const settled = runs.updateRun(run.id, {
-    steps: [
-      {
-        name: 'complete',
-        status: 'failed',
-        outputs: {
-          gatePrerequisiteRefusal: {},
-          gatePrerequisiteDiscardedAt: new Date().toISOString(),
-        },
-      },
-    ],
-  });
-  await backlog.markBacklogRunObserved(settled);
-  await workGraph.schedulerTick({ graphId });
+  // The operator discards the retained workspace. The discard itself settles the
+  // family edge: slot.release's own emit reaches only its caller.
+  const { markCompletionFailureDiscarded } =
+    await import('../methods/slot/release-run-ownership.js');
+  const published: string[] = [];
+  await markCompletionFailureDiscarded(run.id, (event) => published.push(event));
+  assert.deepEqual(published, ['run.updated']);
   assert.equal(downstreamQueued(), true, 'the discarded failure is a terminal outcome');
 });
 

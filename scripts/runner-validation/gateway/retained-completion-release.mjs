@@ -18,6 +18,8 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import WebSocket from 'ws';
+
 import { FLOW_STEPS } from '@farmslot/protocol';
 
 import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
@@ -56,6 +58,7 @@ const baseEnv = { ...process.env };
 for (const key of GIT_LOCATION_ENV) delete baseEnv[key];
 let gateway;
 let logFd;
+let observer;
 
 function writeJson(file, value) {
   mkdirSync(path.dirname(file), { recursive: true });
@@ -68,6 +71,35 @@ function git(cwd, ...args) {
     ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args],
     { cwd, env: baseEnv, stdio: 'pipe' },
   );
+}
+
+// A second client that never calls slot.release; it records the run's updates.
+async function watchRunUpdates(url, token, id) {
+  const ws = new WebSocket(url);
+  const updates = [];
+  await new Promise((resolve, reject) => {
+    ws.once('error', reject);
+    ws.once('open', () =>
+      ws.send(
+        JSON.stringify({
+          type: 'req',
+          id: 'auth',
+          method: 'auth.connect',
+          params: { clientKind: 'ui', clientName: 'retained-completion-observer', token },
+        }),
+      ),
+    );
+    ws.on('message', (data) => {
+      const frame = JSON.parse(String(data));
+      if (frame.id === 'auth') {
+        if (frame.ok) resolve();
+        else reject(new Error('The observer client was refused'));
+      } else if (frame.event === 'run.updated' && frame.payload?.run?.id === id) {
+        updates.push(frame.payload.run);
+      }
+    });
+  });
+  return { updates, close: () => ws.close() };
 }
 
 async function freePort() {
@@ -294,7 +326,7 @@ try {
   });
 
   const port = await freePort();
-  testGatewayIdentity(path.join(temporaryRoot, 'home'), `ws://127.0.0.1:${port}`);
+  const token = testGatewayIdentity(path.join(temporaryRoot, 'home'), `ws://127.0.0.1:${port}`);
   const env = tmuxSandboxEnvironment(
     {
       ...baseEnv,
@@ -396,6 +428,7 @@ try {
   };
   assert.equal(listedActive(), true, 'the retained run is listed as active');
   assert.equal(familyActive(), true, 'the family view counts the retained run as active');
+  observer = await watchRunUpdates(`ws://127.0.0.1:${port}`, token, runId);
 
   // The named force discard releases it and settles the run; archive is then reachable.
   const discarded = rpc('slot.release', { slotId, expectedRunId: runId, forceReset: true });
@@ -408,6 +441,15 @@ try {
   const refusedStep = discardedRun.steps.find((step) => step.name === 'complete');
   assert.ok(refusedStep.outputs.gatePrerequisiteRefusal, 'the refusal stays as history');
   assert.equal(typeof refusedStep.outputs.gatePrerequisiteDiscardedAt, 'string');
+  // The release's own events go to its caller only; the discard reaches every client.
+  const observedDiscard = () =>
+    observer.updates.some(
+      (run) =>
+        run.steps.find((step) => step.name === 'complete')?.outputs?.gatePrerequisiteDiscardedAt,
+    );
+  for (let attempt = 0; !observedDiscard() && attempt < 50; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(observedDiscard(), true, 'another client receives the discarded run');
   assert.equal(rpc('run.archive', { runId }).ok, true);
   assert.equal(listedActive(), false, 'the archived run is not listed as active');
 
@@ -463,6 +505,7 @@ try {
       namedDiscardReleased: discarded.released,
       listedActiveWhileHeld: true,
       settledAfterDiscard: { runList: false, familyView: false },
+      otherClientSawDiscard: true,
       archivedAfterDiscard: true,
       findSlotReplayRefused: true,
       gateHeldReplayRefusedBeforeMutation: true,
@@ -475,6 +518,7 @@ try {
     console.error(readFileSync(path.join(temporaryRoot, 'gateway.log'), 'utf8').slice(-4500));
   throw error;
 } finally {
+  observer?.close();
   if (gateway && gateway.exitCode === null && gateway.signalCode === null) {
     const stopped = once(gateway, 'exit');
     gateway.kill('SIGTERM');
