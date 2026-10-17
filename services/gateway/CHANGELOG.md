@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Idle resource cleanup (`resource.cleanup` and the pressure snapshot's cleanup candidates) now covers disabled slots, so a simulator or dev server a disabled slot left running can be found and stopped; manual slots stay excluded. A live cleanup verifies each stopped simulator with a fresh probe instead of the cached status, which reported every stopped simulator on an idle slot as still running.
 - A run admission or new source attempt advances the source revision once; the engine's next `run.updated` no longer advances it again.
 - The family workspace counts active runs with the shared `isActiveListRun` rule: a family whose failed run still holds its slot reports that run as active and the family as active, matching every run list.
 - Advance the source revision as soon as run admission or a new source attempt is saved, and when a restored or newly created run stops accepting pins.

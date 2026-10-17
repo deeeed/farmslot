@@ -210,8 +210,9 @@ export class ResourceCleanupPreview extends LitElement {
           Farmslot does not kill attributed processes directly.
         </p>
         <div class="exclusion-note">
-          Active, held, manual, disabled, working, and current-run slots are excluded. Manual and
-          system/unmapped process groups are never cleanup targets.
+          Active, held, manual, working, and current-run slots are excluded; a disabled slot is
+          included, since nothing else stops what it left running. Manual and system/unmapped
+          process groups are never cleanup targets.
         </div>
         ${candidates.length > 0
           ? html`<div class="selection-controls">

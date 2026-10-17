@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- The idle resource cleanup preview states that a disabled slot's running resources are included; manual, active, held, working and current-run slots stay excluded.
 - Sources detail rows no longer repeat the controls' `data-source-id`.
 - Count a family's active runs with the shared active rule, and load every active run for the terminal's Active Runs and pinned views instead of the newest 1000 runs.
 

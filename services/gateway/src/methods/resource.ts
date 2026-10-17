@@ -222,8 +222,6 @@ export async function resourceCleanup(
   const exactTargetsEnabled = params.targets !== undefined;
   const fleet = await loadFleetStatus();
   const slots = fleet.slots.filter((slot) => {
-    if (!slot.enabled) return false;
-    if (slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') return false;
     if (!slotAllowsDefaultResourceCleanup(slot)) return false;
     if (machineFilterPresent && !machineFilter.has(slot.machine)) return false;
     if (projectFilterPresent && !projectFilter.has(slot.project)) return false;
@@ -318,7 +316,9 @@ export async function resourceCleanup(
       ...new Set(targets.filter((target) => target.ok !== false).map((target) => target.slotId)),
     ];
     for (const slotId of slotsToVerify) {
-      const statuses = await pollSlotResources(slotId);
+      // Probe, not the cache: an idle slot's simulator is otherwise only read from
+      // the cache, which still says running right after the shutdown.
+      const statuses = await pollSlotResources(slotId, { probeInactiveSimulators: true });
       const statusByResource = new Map(statuses.map((status) => [status.id, status.status]));
       for (const target of targets.filter((item) => item.slotId === slotId)) {
         const afterStatus = statusByResource.get(target.resourceId);
@@ -769,7 +769,6 @@ function pressureCleanupCandidates(
 ): ResourcePressureCleanupCandidate[] {
   const targets: ResourcePressureCleanupCandidate[] = [];
   for (const slot of slots) {
-    if (!slot.enabled || slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') continue;
     if (!slotAllowsDefaultResourceCleanup(slot)) continue;
     for (const resource of resourcesBySlot.get(slot.slot) ?? []) {
       if (resource.status !== 'running' && resource.status !== 'stale') continue;
@@ -892,10 +891,16 @@ function emptyPressureSnapshot(
   };
 }
 
+/**
+ * Idle cleanup may stop this slot's resources. A disabled slot qualifies: it is
+ * out of dispatch, not in use, and nothing else stops what it left running. A
+ * manual slot belongs to a person.
+ */
 export function slotAllowsDefaultResourceCleanup(
   slot: Pick<SlotStatus, 'agent' | 'currentRunId' | 'lifecycle'>,
 ): boolean {
-  if (slot.lifecycle === 'busy' || slot.lifecycle === 'held') return false;
+  if (slot.lifecycle === 'busy' || slot.lifecycle === 'held' || slot.lifecycle === 'manual')
+    return false;
   if (slot.agent === 'working') return false;
   return !slot.currentRunId;
 }

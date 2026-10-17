@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Idle resource cleanup reaches disabled slots and verifies stopped simulators",
+  "description": "Use a disposable gateway, project and two idle slots, one disabled, each with a fake simctl simulator over a flag file, to verify through resource.cleanup that the preview offers the disabled slot's running simulator and that live cleanup reports both simulators stopped by probing them rather than reading the cache. No real device, operator slot or run is used.",
+  "workflow": {
+    "entry": "idle-cleanup",
+    "nodes": {
+      "idle-cleanup": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/idle-resource-cleanup.mjs",
+        "timeout_ms": 120000,
+        "intent": "Idle cleanup stops what a disabled slot left running and reports a stopped simulator as stopped.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
