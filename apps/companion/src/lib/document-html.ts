@@ -4,20 +4,34 @@
  * open the retained artifact they name, web links open outside the app on a tap, and
  * nothing else loads.
  */
-import { ARTIFACT_HTML_CSP, buildArtifactUrlResolver } from '@farmslot/review-dispatch';
+import {
+  ARTIFACT_HTML_CSP,
+  buildArtifactUrlResolver,
+  decodeArtifactLink,
+  isExternalWebLink,
+} from '@farmslot/review-dispatch';
 
-const REPORT_HOST = 'farmslot-report.invalid';
+/** The page's own origin: unreachable, so a relative link arrives as a URL that maps back. */
+const REPORT_ORIGIN = 'https://farmslot-report.invalid/';
+export const REPORT_DOCUMENT_BASE = `${REPORT_ORIGIN}document/`;
 
-/** The page's own URL: unreachable, so a relative link arrives as a URL that maps back. */
-export const REPORT_DOCUMENT_BASE = `https://${REPORT_HOST}/document/`;
+const META_TAG = /<meta\b[^>]*>/gi;
 
-/** The report behind the shared CSP, without refresh redirects that could leave the page unasked. */
+/**
+ * The report behind the shared CSP. Every authored meta tag goes, as Command Center's
+ * sanitizer drops them: a refresh could leave the page unasked, however its value is
+ * encoded. Removal repeats so that it cannot join the pieces of a new tag.
+ */
 export function isolatedReportHtml(html: string): string {
-  const meta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_HTML_CSP}">`;
-  const withoutRefresh = html.replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh[^>]*>/gi, '');
-  return /<head\b[^>]*>/i.test(withoutRefresh)
-    ? withoutRefresh.replace(/<head\b[^>]*>/i, (head) => `${head}${meta}`)
-    : `${meta}${withoutRefresh}`;
+  let stripped = html;
+  for (let previous = ''; previous !== stripped; ) {
+    previous = stripped;
+    stripped = stripped.replace(META_TAG, '');
+  }
+  const head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_HTML_CSP}">`;
+  return /<head\b[^>]*>/i.test(stripped)
+    ? stripped.replace(/<head\b[^>]*>/i, (tag) => `${tag}${head}`)
+    : `${head}${stripped}`;
 }
 
 /** Report links resolve to retained artifacts exactly as Command Center resolves them. */
@@ -44,24 +58,10 @@ export function reportNavigation(
   if (target === REPORT_DOCUMENT_BASE || target === 'about:blank') return { kind: 'document' };
   if (!userInitiated) return { kind: 'blocked' };
   if (target.startsWith(REPORT_DOCUMENT_BASE)) {
-    try {
-      const path = resolveArtifact(decodeURIComponent(target.slice(REPORT_DOCUMENT_BASE.length)));
-      return path ? { kind: 'artifact', path } : { kind: 'blocked' };
-    } catch {
-      return { kind: 'blocked' };
-    }
+    const href = decodeArtifactLink(target.slice(REPORT_DOCUMENT_BASE.length));
+    const path = href === null ? null : resolveArtifact(href);
+    return path ? { kind: 'artifact', path } : { kind: 'blocked' };
   }
-  try {
-    const external = new URL(url);
-    if (
-      ['http:', 'https:'].includes(external.protocol) &&
-      external.hostname !== REPORT_HOST &&
-      !external.username &&
-      !external.password
-    )
-      return { kind: 'external', url };
-  } catch {
-    // Not a URL at all: nothing to open.
-  }
+  if (!url.startsWith(REPORT_ORIGIN) && isExternalWebLink(url)) return { kind: 'external', url };
   return { kind: 'blocked' };
 }

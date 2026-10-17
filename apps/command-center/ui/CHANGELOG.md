@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Read the run results card, acceptance tally, report link resolution and artifact HTML policy from the shared review-dispatch view model, which Companion now renders too; the output is unchanged.
+- Read the run results card, acceptance tally, report link resolution, web-link check and artifact HTML policy from the shared review-dispatch view model, which Companion now renders too. The output for real reports is unchanged; a malformed web link (no host, or credentials hidden behind a backslash) now loses its link instead of opening.
 
 - List active runs with the rule Companion and `run.list` `active` use: a failed run stays in Active only while it still holds its slot. The Active count follows the global filters, machine filters use the fleet's slot machine, and runs older than the loaded page still appear while active.
 

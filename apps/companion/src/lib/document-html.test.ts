@@ -20,18 +20,31 @@ const resolve = reportArtifactResolver(
   'artifacts/report.html',
 );
 
-test('the report carries the shared artifact CSP and loses refresh redirects', () => {
+test('the report carries the shared artifact CSP and keeps no authored meta tag', () => {
   const html = isolatedReportHtml(
     '<!doctype html><html><head><meta http-equiv="refresh" content="0;url=https://example.com"><style>p{}</style></head><body><p>x</p></body></html>',
   );
   assert.match(
     html,
     new RegExp(
-      `<head><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_HTML_CSP.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}">`,
+      `<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_HTML_CSP.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"><style>`,
     ),
   );
   assert.doesNotMatch(html, /refresh/i);
-  assert.match(isolatedReportHtml('<p>no head</p>'), /^<meta http-equiv="Content-Security-Policy"/);
+  assert.match(isolatedReportHtml('<p>no head</p>'), /^<meta charset="utf-8">/);
+});
+
+test('a refresh cannot survive by encoding, quoting or splitting its tag', () => {
+  for (const source of [
+    '<head><meta http-equiv="re&#102;resh" content="0;url=https://example.com"></head>',
+    '<head><meta content="a>b" http-equiv=refresh></head>',
+    '<head><me<meta charset="utf-8">ta http-equiv=refresh content="0;url=https://example.com"></head>',
+    '<head><META HTTP-EQUIV=Refresh CONTENT="0;url=https://example.com"></head>',
+  ]) {
+    const html = isolatedReportHtml(source);
+    assert.equal(html.match(/<meta\b/gi)?.length, 3, source);
+    assert.doesNotMatch(html, /<meta\b[^>]*http-equiv\s*=\s*["']?re/i, source);
+  }
 });
 
 test('in-page anchors and the initial load stay in the report', () => {

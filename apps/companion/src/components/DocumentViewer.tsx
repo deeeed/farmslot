@@ -1,5 +1,6 @@
-import React, { useContext } from 'react';
+import React, { useContext, useMemo } from 'react';
 import {
+  Alert,
   Linking,
   Modal,
   Platform,
@@ -51,6 +52,8 @@ export function DocumentViewer({
   );
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
   const formatted = html ? [] : formatDocument(title, body);
+  const isHtml = Boolean(html);
+  const page = useMemo(() => (isHtml ? isolatedReportHtml(body) : ''), [isHtml, body]);
   const minCodeWidth = Math.max(320, width - spacing.xl * 2);
   if (!visible) return null;
   return (
@@ -85,22 +88,28 @@ export function DocumentViewer({
           {html && body.trim() ? (
             <WebView
               testID="companion-document-html"
-              source={{ html: isolatedReportHtml(body), baseUrl: REPORT_DOCUMENT_BASE }}
+              source={{ html: page, baseUrl: REPORT_DOCUMENT_BASE }}
               // Every URL reaches the decision below; none falls through to the system opener.
               originWhitelist={['*']}
               javaScriptEnabled={false}
               setSupportMultipleWindows={false}
               nestedScrollEnabled
               onShouldStartLoadWithRequest={(request) => {
-                // Android reports every navigation as `other`; with scripts off and refresh
-                // redirects removed, a page navigation there can only come from a tap.
+                // Android passes neither the frame nor the navigation type. With scripts
+                // off and authored meta tags removed, a page navigation there comes from a tap.
                 const tapped =
                   request.isTopFrame !== false &&
                   (Platform.OS === 'android' || request.navigationType === 'click');
                 const next = reportNavigation(request.url, html.resolveArtifact, tapped);
                 if (next.kind === 'document') return true;
                 if (next.kind === 'artifact') html.openArtifact(next.path);
-                if (next.kind === 'external') void Linking.openURL(next.url);
+                if (next.kind === 'external')
+                  Linking.openURL(next.url).catch((error: unknown) =>
+                    Alert.alert(
+                      'Link unavailable',
+                      error instanceof Error ? error.message : String(error),
+                    ),
+                  );
                 return false;
               }}
               style={[styles.htmlPage, { height: Math.round(height * 0.7) }]}

@@ -12,6 +12,26 @@ export function isHtmlArtifactPath(path: string): boolean {
   return /\.html?$/i.test(path);
 }
 
+/**
+ * A report link that may open outside the page: an absolute http(s) URL with no credentials.
+ * A string check rather than `URL`, so both clients decide alike: React Native's `URL` is not
+ * the WHATWG parser.
+ */
+export function isExternalWebLink(href: string): boolean {
+  const authority = /^https?:\/\/([^/?#]*)/i.exec(href)?.[1] ?? '';
+  return authority !== '' && !authority.includes('@');
+}
+
+/** A link as written in the page, percent-decoded; null when it cannot be decoded. */
+export function decodeArtifactLink(href: string): string | null {
+  try {
+    return decodeURIComponent(href);
+  } catch (error) {
+    if (error instanceof URIError) return null;
+    throw error;
+  }
+}
+
 function normalizeArtifactCandidate(rawUrl: string): string | null {
   const trimmed = rawUrl.trim();
   if (!trimmed) return null;
