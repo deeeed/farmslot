@@ -155,7 +155,7 @@ test('a draft shows the selected branch and main base without claiming a publish
   assert.match(view.rows[0].summary, /run selection experiment\/run/);
   assert.equal(
     view.line,
-    'pack experiment/run (run pin)',
+    'pack experiment/run (run selection)',
     'the line names the draft, not the farm ref',
   );
   const draftLine = (selection: { selection: 'main' } | { selection: 'branch'; ref: string }) =>
@@ -163,8 +163,17 @@ test('a draft shows the selected branch and main base without claiming a publish
       actions: [],
       selections: [{ sourceId: 'pack', ...selection }],
     }).line;
-  assert.equal(draftLine({ selection: 'main' }), 'pack main (run override)');
+  assert.equal(draftLine({ selection: 'main' }), 'pack main (run selection)');
   assert.equal(draftLine({ selection: 'branch', ref: '' }), 'pack experiment', 'an empty input');
+  const empty = deriveSourceStatusView(original, {
+    actions: [],
+    selections: [{ sourceId: 'pack', selection: 'branch', ref: '' }],
+  });
+  assert.doesNotMatch(
+    empty.rows[0].summary,
+    /run selection/,
+    'line and summary agree on an empty input',
+  );
   assert(view.rows[0].summary.includes('d'.repeat(40)));
   assert(view.rows[0].details.some((line) => line.includes('Draft main base ' + 'c'.repeat(40))));
   assert.deepEqual(view.actions, []);

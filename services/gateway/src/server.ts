@@ -18,7 +18,6 @@ import {
   type RequestFrame,
   type ResponseFrame,
   ReviewQaConfigurationError,
-  type Run,
 } from '@farmslot/protocol';
 import { SlotConfigError } from '@farmslot/slot-config';
 
@@ -77,7 +76,7 @@ import type { ClientState } from './server/client-state.js';
 import { routeMethod } from './server/route-method.js';
 import {
   currentSourceResourceChanges,
-  noteRunSourceFacts,
+  noteRunEvent,
   setSourceChangePublisher,
 } from './sources/change-signal.js';
 import { handleAgentFsChanged } from './tasks/watcher.js';
@@ -857,11 +856,7 @@ function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
 
 export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?: number): void {
   const payload: unknown = frame.payload;
-  // run.created sets the baseline that a later run.updated, such as a cancel, is compared with.
-  if (frame.event === Events.RUN_UPDATED || frame.event === Events.RUN_CREATED) {
-    const run = (payload as { run?: Run } | undefined)?.run;
-    if (run) noteRunSourceFacts(run);
-  }
+  noteRunEvent(frame.event, payload);
   // fleet.updated reaches only principals that may read sources.status.
   const outgoing =
     frame.event === Events.FLEET_UPDATED && payload && typeof payload === 'object'

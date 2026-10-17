@@ -112,7 +112,7 @@ manager nor converts any live checkout.
 
 ## Amendment 1 (2026-10-17): Live source status
 
-**Status:** Accepted (2026-10-17, lead-approved)
+**Status:** Accepted (2026-10-17, lead-approved); clarified 2026-10-18 after implementation review (#1266 and its follow-up)
 
 ### Decision
 
@@ -141,8 +141,9 @@ shown as not supporting live source status. Clients do not fall back to polling.
 
 A source panel shows nothing when its context has no declared sources, no pins
 and no recorded run inputs, or when the viewer cannot read `sources.status`.
-Otherwise it summarizes the context's sources in one line, keeps errors visible
-and puts other details behind a toggle. It does not repeat the run ID or explain
+Otherwise it summarizes the context's sources in one line, keeps errors visible,
+even over a context that was empty when last read, and puts other details behind
+a toggle. It does not repeat the run ID or explain
 read-only state.
 
 ### Rationale and consequences
@@ -165,7 +166,8 @@ defined until ADR-071 is accepted. `HelloPayload` and `FleetUpdatedPayload` gain
 optional `resourceChanges`. The `@farmslot/protocol` sources module exports the
 carrier decoder `sourceResourceChanges`, the per-connection `SourceChangeFeed`
 (`createSourceChangeFeed`), `connectSourceChangeFeed` for host gateway clients and
-the revision comparison `isNewerSourceRevision`; the existing
+the revision comparison `isNewerSourceRevision`, with their supporting types
+`SourceRevisionMark`, `SourceChangeFeedState` and `SourceChangeConnection`; the existing
 `SourceStatusController` gains `attachFeed` and snapshot `hidden`, `controls` and
 `unsupported` flags. Command Center and Companion consume them through their host
 connections and thin renderers. The gateway is the only producer.

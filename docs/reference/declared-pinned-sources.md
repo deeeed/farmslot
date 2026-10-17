@@ -253,8 +253,9 @@ their verification time.
 `hello` MUST carry the current payload as `resourceChanges` when sources are
 configured, that is when `sources.status` reports `configured: true`. Until ADR-071
 is accepted, every `fleet.updated` from such a gateway MUST carry it too, and each
-revision advance MUST broadcast `fleet.updated` with the current fleet. The gateway
-MAY attach the payload at one point for every `hello` and `fleet.updated` send. The
+revision advance MUST be followed by a `fleet.updated` broadcast with the current
+fleet. Advances in one burst MAY share a broadcast; if that broadcast fails, the
+next `fleet.updated` or `hello` carries the revision. The gateway MAY attach the payload at one point for every `hello` and `fleet.updated` send. The
 payload MUST reach only principals that may read
 `sources.status`; events delivered to other principals, such as `run.*`, MUST NOT
 carry it. Duplicate and older revisions are harmless.
@@ -278,7 +279,8 @@ by the gateway, keep its last read and reread only after reconnect.
 A source panel MUST render nothing when its context has no declared sources, no
 pins and no recorded run inputs, or when the viewer cannot read `sources.status`.
 Otherwise it MUST show one line naming each source's effective ref, with branch
-and scope for pins. Errors from `sources.status` MUST stay visible. Resolved and
+and scope for pins. Errors from `sources.status` MUST stay visible, including a
+failed read of a context that was empty when last read. Resolved and
 base commits, shadowed pins, locks and node receipts sit behind a one-line
 toggle, which satisfies the view requirements in Scoped branch pins. The panel
 MUST NOT repeat the run ID or add explanatory text for read-only contexts. Pin
