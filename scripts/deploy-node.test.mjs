@@ -1612,6 +1612,20 @@ test('build-dist-atomic leaves dist/ as it was when a build fails', (t) => {
   assert.deepEqual(builds(), kept);
 });
 
+test('build-dist-atomic spares a build another run is still compiling', (t) => {
+  const f = atomicFixture(t);
+  const dir = path.join(f.root, 'packages/a');
+  // Another run's compile in progress, and one a crash left behind two hours ago.
+  fs.mkdirSync(path.join(dir, '.dist-build-running'));
+  fs.mkdirSync(path.join(dir, '.dist-build-crashed'));
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  fs.utimesSync(path.join(dir, '.dist-build-crashed'), twoHoursAgo, twoHoursAgo);
+  f.build('@fixture/a');
+  const entries = fs.readdirSync(dir);
+  assert.ok(entries.includes('.dist-build-running'));
+  assert.ok(!entries.includes('.dist-build-crashed'));
+});
+
 test('build-dist-atomic reads only plain tsc build scripts', () => {
   const { parseBuild } = atomicModule;
   assert.deepEqual(parseBuild('rm -rf dist && tsc --project tsconfig.build.json'), {

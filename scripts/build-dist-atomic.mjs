@@ -76,6 +76,11 @@ function tscBinary(repoRoot) {
   return fs.existsSync(local) ? local : 'tsc';
 }
 
+// Another build of the same package may be compiling (`.dist-build-*`) or switching (`.dist-link-*`)
+// right now; those are only removed once a crash has clearly left them behind.
+const IN_PROGRESS = ['.dist-build-', '.dist-link-'];
+const STALE_IN_PROGRESS_MS = 60 * 60 * 1000;
+
 /** Point `dist` at `buildName` in one rename, then drop builds older than the previous one. */
 export function switchDist(packageDir, buildName, stamp) {
   const dist = path.join(packageDir, 'dist');
@@ -91,8 +96,13 @@ export function switchDist(packageDir, buildName, stamp) {
   fs.symlinkSync(buildName, link);
   fs.renameSync(link, dist);
   for (const entry of fs.readdirSync(packageDir)) {
-    if (entry.startsWith('.dist-') && !keep.has(entry))
-      fs.rmSync(path.join(packageDir, entry), { recursive: true, force: true });
+    if (!entry.startsWith('.dist-') || keep.has(entry)) continue;
+    const file = path.join(packageDir, entry);
+    if (IN_PROGRESS.some((prefix) => entry.startsWith(prefix))) {
+      const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+      if (!stat || Date.now() - stat.mtimeMs < STALE_IN_PROGRESS_MS) continue;
+    }
+    fs.rmSync(file, { recursive: true, force: true });
   }
 }
 
@@ -111,20 +121,22 @@ export function buildDistAtomic(repoRoot, names, log = console.log) {
       continue;
     }
     const stamp = `${Date.now()}-${process.pid}-${builds++}`;
+    const building = `.dist-build-${stamp}`;
     const buildName = `.dist-${stamp}`;
     log(`[build-dist-atomic] building ${name} into ${buildName}...`);
     const result = spawnSync(
       tscBinary(repoRoot),
-      ['--project', plan.tsconfig, '--outDir', buildName],
+      ['--project', plan.tsconfig, '--outDir', building],
       {
         cwd: dir,
         stdio: 'inherit',
       },
     );
     if (result.status !== 0) {
-      fs.rmSync(path.join(dir, buildName), { recursive: true, force: true });
+      fs.rmSync(path.join(dir, building), { recursive: true, force: true });
       throw new Error(`build-dist-atomic: ${name} build failed; its dist/ is unchanged`);
     }
+    fs.renameSync(path.join(dir, building), path.join(dir, buildName));
     switchDist(dir, buildName, stamp);
   }
 }
