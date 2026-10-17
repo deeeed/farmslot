@@ -1742,8 +1742,9 @@ owns the normative token, mutation, cutover and regression requirements.
 
 ## Amendment 5: generation-bound stored owners, 2026-10-17
 
-**Status:** Proposed. This completes the generation propagation Amendment 3
-deferred. The lead approves it after paired review; one implementation PR follows.
+**Status:** Accepted. The lead approved it on 2026-10-17 after paired review.
+It completes the generation propagation Amendment 3 deferred; one implementation
+PR follows.
 
 ### Decision
 
