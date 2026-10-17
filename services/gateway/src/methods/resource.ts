@@ -641,25 +641,48 @@ export async function resourcePressureSnapshot(
   };
 }
 
+const DEFAULT_DISABLED_SLOT_PROBE_TTL_MS = 60_000;
+const disabledSlotProbedAt = new Map<string, number>();
+
+/** How long a disabled slot's probed status is trusted; the env override serves disposable proofs. */
+function disabledSlotProbeTtlMs(): number {
+  const override = Number(process.env.FARMSLOT_DISABLED_SLOT_PROBE_TTL_MS);
+  return Number.isFinite(override) && override >= 0 ? override : DEFAULT_DISABLED_SLOT_PROBE_TTL_MS;
+}
+
 /**
- * Node watches cover enabled slots only, so whatever a disabled slot left running
- * stays `unknown` in the status cache. Idle cleanup probes such a slot once, and
- * the probe fills the cache; a remote slot whose node is not connected stays
- * unknown rather than waited on.
+ * Node watches cover enabled slots only, so nothing keeps a disabled slot's
+ * resource status current: what it left running stays `unknown`, and a probed
+ * status goes stale when something boots or stops it later. When building idle
+ * cleanup candidates, probe an eligible disabled slot unless it was probed within
+ * the TTL; the probe also fills the cache. A remote slot whose node is not
+ * connected is left as cached rather than waited on.
  */
-async function withProbedDisabledSlotStatus<T extends { id: string; status: ResourceStatus }>(
-  slot: Pick<SlotStatus, 'slot' | 'enabled'>,
-  resources: T[],
-): Promise<T[]> {
-  if (slot.enabled || !resources.some((resource) => resource.status === 'unknown'))
+async function withProbedDisabledSlotStatus<
+  T extends { id: string; status: ResourceStatus; definition: { hooks?: { health?: string } } },
+>(slot: SlotStatus, resources: T[]): Promise<T[]> {
+  if (slot.enabled || !slotAllowsDefaultResourceCleanup(slot)) return resources;
+  if (!resources.some((resource) => resource.definition.hooks?.health)) return resources;
+  const probedAt = disabledSlotProbedAt.get(slot.slot);
+  if (probedAt !== undefined && Date.now() - probedAt < disabledSlotProbeTtlMs()) return resources;
+  let reachable: boolean;
+  try {
+    reachable = await slotProbeReachable(slot.slot);
+  } catch (error) {
+    // A slot config the resource list accepts can still fail locality (a placeholder
+    // or a relative remote repo). Such a slot cannot be probed; skip it rather than
+    // fail every other slot's cleanup preview.
+    if (!(error instanceof SlotConfigError)) throw error;
     return resources;
-  if (!(await slotProbeReachable(slot.slot))) return resources;
+  }
+  if (!reachable) return resources;
   const probed = new Map(
     (await pollSlotResources(slot.slot, { probeInactiveSimulators: true })).map((update) => [
       update.id,
       update.status,
     ]),
   );
+  disabledSlotProbedAt.set(slot.slot, Date.now());
   return resources.map((resource) => ({
     ...resource,
     status: probed.get(resource.id) ?? resource.status,

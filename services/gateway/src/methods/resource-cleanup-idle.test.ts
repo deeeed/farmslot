@@ -3,6 +3,8 @@ import { mock, test } from 'node:test';
 
 import type { ResourceStatus } from '@farmslot/protocol';
 
+import { SlotConfigError } from '../core/config.js';
+
 const machine = 'test-machine';
 const remoteMachine = 'offline-machine';
 const definition = {
@@ -20,13 +22,22 @@ const cache = new Map<string, ResourceStatus>();
 const probed: string[] = [];
 const shutdowns: string[] = [];
 function reset() {
-  for (const slot of ['disabled-slot', 'remote-disabled-slot', 'manual-slot', 'ready-slot'])
+  for (const slot of [
+    'disabled-slot',
+    'remote-disabled-slot',
+    'bound-disabled-slot',
+    'broken-disabled-slot',
+    'manual-slot',
+    'ready-slot',
+  ])
     booted.add(slot);
   cache.clear();
   cache.set('ready-slot', 'running');
   cache.set('manual-slot', 'running');
   probed.length = 0;
   shutdowns.length = 0;
+  // Probe on every read unless a test sets the TTL itself.
+  process.env.FARMSLOT_DISABLED_SLOT_PROBE_TTL_MS = '0';
 }
 
 mock.module('../fleet/resource-manager.js', {
@@ -54,18 +65,31 @@ mock.module('../fleet/resource-manager.js', {
     ],
     setResourceWatchesEnabled: async () => ({ enabled: true }),
     // The remote machine's node is not connected.
-    slotProbeReachable: async (slotId: string) => slotId !== 'remote-disabled-slot',
+    slotProbeReachable: async (slotId: string) => {
+      if (slotId === 'broken-disabled-slot')
+        throw new SlotConfigError(
+          'INVALID_SLOT',
+          "Slot 'broken-disabled-slot' has a relative repo",
+        );
+      return slotId !== 'remote-disabled-slot';
+    },
   },
 });
 
-const fleetSlot = (slot: string, enabled: boolean, lifecycle: string, slotMachine = machine) => ({
+const fleetSlot = (
+  slot: string,
+  enabled: boolean,
+  lifecycle: string,
+  slotMachine = machine,
+  currentRunId: string | null = null,
+) => ({
   slot,
   machine: slotMachine,
   project: 'farmslot-farm',
   enabled,
   lifecycle,
   agent: enabled ? 'idle' : '-',
-  currentRunId: null,
+  currentRunId,
 });
 
 mock.module('../fleet/state.js', {
@@ -75,6 +99,8 @@ mock.module('../fleet/state.js', {
       slots: [
         fleetSlot('disabled-slot', false, 'disabled'),
         fleetSlot('remote-disabled-slot', false, 'disabled', remoteMachine),
+        fleetSlot('bound-disabled-slot', false, 'disabled', machine, 'run-1'),
+        fleetSlot('broken-disabled-slot', false, 'disabled'),
         fleetSlot('manual-slot', true, 'manual'),
         fleetSlot('ready-slot', true, 'ready'),
       ],
@@ -95,7 +121,8 @@ test('idle cleanup probes a disabled slot to offer what it left running, never a
       ['ready-slot', 'running'],
     ],
   );
-  // The disconnected remote slot is not waited on; the enabled slots are not probed.
+  // Not probed: the disconnected remote, a disabled slot still bound to a run, one
+  // whose config fails locality (skipped, not fatal), and the enabled slots.
   assert.deepEqual(probed, ['disabled-slot']);
 });
 
@@ -122,4 +149,28 @@ test('idle cleanup stops a disabled slot simulator and verifies it with a probe'
     ],
   );
   assert.deepEqual([result.stopped, result.failed], [2, 0]);
+});
+
+test('a disabled slot is probed again once its probed status is older than the TTL', async (t) => {
+  reset();
+  process.env.FARMSLOT_DISABLED_SLOT_PROBE_TTL_MS = '60000';
+  // Past the earlier tests' probes, which ran on the real clock.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 120_000 });
+  const offered = async () =>
+    (await resourceCleanup({ dryRun: true, slotIds: ['disabled-slot'] })).targets.length === 1;
+
+  assert.equal(await offered(), true);
+  // Stopped outside the gateway: within the TTL the probed status is reused.
+  booted.delete('disabled-slot');
+  t.mock.timers.tick(30_000);
+  assert.equal(await offered(), true);
+  assert.deepEqual(probed, ['disabled-slot']);
+  // After it, a fresh probe sees it stopped.
+  t.mock.timers.tick(31_000);
+  assert.equal(await offered(), false);
+  // Booted again (a provisioning run): offered after the next TTL.
+  booted.add('disabled-slot');
+  t.mock.timers.tick(61_000);
+  assert.equal(await offered(), true);
+  assert.deepEqual(probed, ['disabled-slot', 'disabled-slot', 'disabled-slot']);
 });

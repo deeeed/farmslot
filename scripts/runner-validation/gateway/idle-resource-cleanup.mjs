@@ -38,6 +38,9 @@ const disabledSlot = `idle-disabled-${randomUUID()}`;
 const readySlot = `idle-ready-${randomUUID()}`;
 // A disabled slot on a machine whose node never connects.
 const offlineSlot = `idle-offline-${randomUUID()}`;
+// A disabled slot still bound to a run: never a cleanup target, never probed.
+const boundSlot = `idle-bound-${randomUUID()}`;
+const simctlCalls = path.join(temporaryRoot, 'simctl-calls.log');
 const tmuxDir = openTmuxSandbox();
 const baseEnv = { ...process.env };
 for (const key of GIT_LOCATION_ENV) delete baseEnv[key];
@@ -70,6 +73,7 @@ try {
     [
       '#!/bin/sh',
       `flag="${devices}/$2.booted"`,
+      `printf '%s %s\\n' "$1" "$2" >> "${simctlCalls}"`,
       'case "$1" in',
       '  booted) test -f "$flag" ;;',
       '  shutdown) rm -f "$flag" ;;',
@@ -79,7 +83,7 @@ try {
     ].join('\n'),
   );
   chmodSync(fakeSimctl, 0o755);
-  for (const slot of [disabledSlot, readySlot, offlineSlot])
+  for (const slot of [disabledSlot, readySlot, offlineSlot, boundSlot])
     writeFileSync(path.join(devices, `${slot}.booted`), '');
 
   mkdirSync(path.join(root, 'scripts'), { recursive: true });
@@ -109,7 +113,11 @@ try {
     host: 'localhost',
     ssh_user: os.userInfo().username,
     os: process.platform,
-    slots: [slotEntry(disabledSlot, false), slotEntry(readySlot, true)],
+    slots: [
+      slotEntry(disabledSlot, false),
+      slotEntry(readySlot, true),
+      slotEntry(boundSlot, false),
+    ],
   });
   writeJson(path.join(root, 'pool', 'offline.json'), {
     machine: 'idle-offline-node',
@@ -140,6 +148,13 @@ try {
     slots: [
       { slot: disabledSlot, lifecycle: 'disabled', agent: '-', enabled: false },
       { slot: offlineSlot, lifecycle: 'disabled', agent: '-', enabled: false },
+      {
+        slot: boundSlot,
+        lifecycle: 'disabled',
+        agent: '-',
+        enabled: false,
+        current_run_id: randomUUID(),
+      },
       { slot: readySlot, lifecycle: 'ready', agent: 'idle' },
     ],
   });
@@ -165,6 +180,8 @@ try {
       FARMSLOT_GATEWAY_PASSWORD: '',
       FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
       FARMSLOT_RPC_TIMEOUT_MS: '25000',
+      // A disabled slot's probed status is trusted this long (60 s by default).
+      FARMSLOT_DISABLED_SLOT_PROBE_TTL_MS: '1500',
       TSX_TSCONFIG_PATH: path.join(sourceRoot, 'services/gateway/tsconfig.json'),
     },
     tmuxDir,
@@ -250,10 +267,28 @@ try {
   assert.deepEqual([booted(disabledSlot), booted(readySlot)], [false, false]);
   assert.deepEqual([status(disabledSlot), status(readySlot)], ['stopped', 'stopped']);
 
+  // Something boots the disabled slot's simulator again (a provisioning run); once
+  // its probed status is older than the TTL, the snapshot offers it again.
+  writeFileSync(path.join(devices, `${disabledSlot}.booted`), '');
+  let reoffered = false;
+  for (let attempt = 0; attempt < 20 && !reoffered; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    reoffered = rpc('resource.pressure.snapshot', {}).cleanupCandidates.some(
+      (candidate) => candidate.slotId === disabledSlot,
+    );
+  }
+  assert.ok(reoffered, 'a re-booted simulator on a disabled slot was not offered again');
+  assert.ok(
+    !readFileSync(simctlCalls, 'utf8').includes(` ${boundSlot}`),
+    'a disabled slot bound to a run was probed',
+  );
+
   console.log(
     JSON.stringify({
       disabledSlotOffered: true,
       unreachableSlotSkippedMs: snapshotMs,
+      rebootedSimulatorReoffered: reoffered,
+      boundSlotProbed: false,
       stopped: result.stopped,
       failed: result.failed,
       verifiedStopped: result.targets.map((target) => target.afterStatus),
