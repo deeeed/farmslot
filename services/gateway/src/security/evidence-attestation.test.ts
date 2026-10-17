@@ -186,6 +186,32 @@ test('a visual-review delegator binds generation zero unless the policy pins its
       }),
     /arthur has been replaced by a newer identity/,
   );
+
+  // A listed delegated reviewer whose id was reused is not credited either.
+  const keeper = runtime.writer.createPrincipal({ type: 'service', displayName: 'Keeper' }, roles);
+  runtime.writer.issueCredential(keeper.id, 'keeper');
+  runtime.writer.revokeCredential(issue.record.id);
+  runtime.writer.retirePrincipals([service.id]);
+  runtime.writer.createPrincipal(
+    { type: 'service', displayName: 'Lead reviewer' },
+    roles,
+    service.id,
+    { reuseRetiredId: true },
+  );
+  const reissued = runtime.writer.issueCredential(service.id, 'lead-review');
+  assert.throws(
+    () =>
+      authorizeVisualClaimReview(
+        runtime,
+        {
+          authenticated: true,
+          authentication: { kind: 'credential' as const, credentialId: reissued.record.id },
+        },
+        'lead-agent-reviewed',
+        { ...bare, delegatorPrincipalGeneration: 1 },
+      ),
+    /own active credential/,
+  );
 });
 
 function personDevice(runtime: ReturnType<typeof createGatewayAuthRuntime>, credential: string) {

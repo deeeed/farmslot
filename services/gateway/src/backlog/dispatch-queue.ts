@@ -65,6 +65,7 @@ import {
   resolveReviewWorkspaceOwner,
 } from '../security/native-worker-owner.js';
 import {
+  isWorkOriginator,
   runWithSystemOriginator,
   runWithWorkOriginator,
   type WorkOriginator,
@@ -319,7 +320,14 @@ export async function loadQueue(): Promise<void> {
         ...publicItem,
         queueKind: item.queueKind ?? 'dispatch',
       };
-      if (storedOriginator) setQueueOriginator(normalized, storedOriginator);
+      // An invalid row refuses only itself: it stays queued, cannot fire, and
+      // says why. A missing originator already fails closed at fire time.
+      if (storedOriginator && !isWorkOriginator(storedOriginator))
+        normalized.waitingReason = 'Stored originator is invalid; queue the work again';
+      else if (normalized.delegatedOwnerPrincipalId && !delegatesStaticReview(normalized)) {
+        delete normalized.delegatedOwnerPrincipalId;
+        normalized.waitingReason = 'Only a direct static review can be delegated; queue it again';
+      } else if (storedOriginator) setQueueOriginator(normalized, storedOriginator);
       if (normalized.status === 'queued') {
         // Crash after create/revive can leave a still-queued disk row while a
         // live Run already owns the work — drop rather than double-dispatch.
@@ -425,6 +433,15 @@ function normalizeAllowedSlots(allowedSlots: string[] | null | undefined): strin
   return Array.isArray(allowedSlots) && allowedSlots.length > 0 ? [...allowedSlots] : null;
 }
 
+/** Rule, submission and repair work (prWork) never delegates authorship. */
+function delegatesStaticReview(
+  item: Pick<QueueItem, 'flowType' | 'reviewValidationDepth' | 'prWork'>,
+): boolean {
+  return (
+    item.flowType === 'review-pr' && item.reviewValidationDepth !== 'full-live' && !item.prWork
+  );
+}
+
 function assertEvalQueueItem(params: InternalDispatchQueueAddParams): void {
   if ((params.queueKind ?? 'dispatch') !== 'eval-cell') return;
   const cell = params.evalCell;
@@ -440,7 +457,11 @@ function assertEvalQueueItem(params: InternalDispatchQueueAddParams): void {
 export function addItem(
   params: InternalDispatchQueueAddParams,
   originator: WorkOriginator,
+  /** Set only by a live admin dispatch.queue.add that delegated static review. */
+  { delegatedOwnerPrincipalId }: { delegatedOwnerPrincipalId?: string } = {},
 ): QueueItem {
+  if (delegatedOwnerPrincipalId && !delegatesStaticReview(params))
+    throw new Error('Only a direct static review can be delegated');
   if (params.sourceSelections !== undefined) {
     const errors = validateSourceSelections(params.sourceSelections);
     if (errors.length) throw new Error(errors.join(' '));
@@ -467,7 +488,8 @@ export function addItem(
   if (transport === 'native') {
     if (params.reviewWorkspaceTarget)
       resolveReviewWorkspaceOwner(
-        originator.kind === 'principal' ? originator.principalId : undefined,
+        delegatedOwnerPrincipalId ??
+          (originator.kind === 'principal' ? originator.principalId : undefined),
       );
     else
       requireNativeProfileOwner(
@@ -523,6 +545,7 @@ export function addItem(
     launchAttempt: params.launchAttempt,
     label: params.label,
     flowType: params.flowType,
+    ...(delegatedOwnerPrincipalId ? { delegatedOwnerPrincipalId } : {}),
     ...(transport ? { transport } : {}),
     ...(nativeProfile ? { nativeProfile } : {}),
     ...(params.skipPrepare !== undefined ? { skipPrepare: params.skipPrepare } : {}),

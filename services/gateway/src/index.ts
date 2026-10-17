@@ -125,7 +125,11 @@ import { authorizeStoredRunEffect } from './security/authorization.js';
 import { registerGatewayPresence } from './security/gateway-presence.js';
 import { requireNativeProfileOwner } from './security/native-worker-owner.js';
 import { applyGatewayCors } from './security/origin.js';
-import { resolveWorkOriginator, runWithSessionOriginator } from './security/work-originator.js';
+import {
+  replacedWorkOriginator,
+  resolveWorkOriginator,
+  runWithSessionOriginator,
+} from './security/work-originator.js';
 import { initializeSources, stopSourceReconciliation } from './sources/runtime.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
@@ -492,10 +496,12 @@ async function main(): Promise<void> {
         resolveWorkOriginator(gatewayAuthRuntime, item.originator),
         itemLabel,
         effectiveSafetyTier,
+        replacedWorkOriginator(gatewayAuthRuntime, item.originator),
       );
     const creatingPrincipal = authorizeOriginator();
     if (item.transport === 'native') {
-      requireNativeProfileOwner(creatingPrincipal.id);
+      // A delegated static review runs as its stored native owner, not its requester.
+      requireNativeProfileOwner(item.delegatedOwnerPrincipalId ?? creatingPrincipal.id);
       if (item.queueKind && item.queueKind !== 'dispatch')
         throw new Error('Native worker transport is only supported for dispatch queue items');
     }
@@ -508,7 +514,7 @@ async function main(): Promise<void> {
       if (currentPrincipal.id !== creatingPrincipal.id)
         throw new Error('Queued worker originator changed before creation');
       if (item.transport === 'native') {
-        requireNativeProfileOwner(currentPrincipal.id);
+        requireNativeProfileOwner(item.delegatedOwnerPrincipalId ?? currentPrincipal.id);
       }
       assertPRQueueAdmission(prDispatchSelection);
     };
@@ -623,6 +629,9 @@ async function main(): Promise<void> {
     } satisfies import('@farmslot/protocol').RunCreateParams;
     const createQueuedRun = () =>
       runCreate(runParams, broadcastEvent, {
+        ...(item.delegatedOwnerPrincipalId
+          ? { reviewDelegation: { ownerId: item.delegatedOwnerPrincipalId } }
+          : {}),
         prWork: item.prWork,
         workflowExecution: item.workflowExecution,
         reviewQaContract: item.reviewQaContract,
@@ -662,10 +671,8 @@ async function main(): Promise<void> {
   // Shared request handler for the plaintext HTTP server and (when TLS is
   // configured) the HTTPS server — identical health/file/artifact/webhook/
   // static-UI routing regardless of transport.
-  const resolveWebhookPrincipal = (principalId: string) => {
-    const resolution = gatewayAuthRuntime.resolver.resolvePrincipalId(principalId);
-    return resolution.ok ? resolution.principal : null;
-  };
+  const resolveWebhookPrincipal = (principalId: string) =>
+    gatewayAuthRuntime.resolver.resolvePrincipalId(principalId);
 
   const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
     if (!applyGatewayCors(req, res)) {

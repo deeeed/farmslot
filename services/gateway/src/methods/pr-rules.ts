@@ -25,10 +25,13 @@ import { PRRuleService } from '../pr-rules/service.js';
 import { PRSourceCheckpoints } from '../pr-rules/source-checkpoints.js';
 import { PRRuleStore } from '../pr-rules/store.js';
 import { setDirectPublicationAuthority } from '../review-publication/direct.js';
+import { getRunWithArchived } from '../runs/store.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import { isAdminPrincipal } from '../security/authorization.js';
+import { isAdminSupervisor } from '../security/native-worker-owner.js';
 import {
   currentSessionOriginator,
+  type PrincipalOwner,
   principalOwnerGeneration,
   runPrincipalOwner,
   runWithPrincipalOwner,
@@ -148,6 +151,28 @@ export async function submitRereviewRequest(
   };
 }
 
+/**
+ * The recorded owner an admin publishes a review as. An admin supervises the
+ * native owner's reviews, delegated ones included, and publication then runs
+ * under that owner's own authority and identity checks.
+ */
+export function supervisedPublicationOwner(
+  run: Pick<Run, 'reviewPublication' | 'prWork'> | undefined,
+  callerId: string,
+  supervising: boolean,
+): PrincipalOwner | undefined {
+  const recorded =
+    run?.reviewPublication?.gate?.publication ??
+    run?.reviewPublication?.direct ??
+    run?.prWork?.review;
+  return recorded &&
+    supervising &&
+    recorded.ownerId !== callerId &&
+    recorded.ownerId === process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID
+    ? { ownerId: recorded.ownerId, ownerGeneration: recorded.ownerGeneration }
+    : undefined;
+}
+
 export async function prRulesMethod(method: string, value: unknown): Promise<unknown> {
   if (!service) throw new Error('PR rules are not initialized');
   const originator = currentSessionOriginator();
@@ -162,8 +187,21 @@ export async function prRulesMethod(method: string, value: unknown): Promise<unk
     return importPRProject(ownerId, { account: p.account, url: p.url });
   }
   if (method === Methods.PR_REVIEW_PUBLISH) {
-    if (typeof p.runId !== 'string' || !p.runId.trim()) throw new Error('runId is required');
-    return { receipt: await service.publishReview(ownerId, p.runId) };
+    const runId = p.runId;
+    if (typeof runId !== 'string' || !runId.trim()) throw new Error('runId is required');
+    const rules = service;
+    const supervised = supervisedPublicationOwner(
+      await getRunWithArchived(runId),
+      ownerId,
+      isAdminSupervisor(),
+    );
+    if (supervised)
+      return {
+        receipt: await runWithPrincipalOwner(supervised, () =>
+          rules.publishReview(supervised.ownerId, runId),
+        ),
+      };
+    return { receipt: await rules.publishReview(ownerId, runId) };
   }
   if (method === Methods.PR_REVIEW_REQUEST) {
     assertPRReviewRequest(p.request);

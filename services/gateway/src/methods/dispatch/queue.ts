@@ -35,7 +35,7 @@ import {
   inspectReviewWorkspaceTarget,
 } from '../../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../../review-workspaces/direct-defaults.js';
-import { resolveReviewWorkspaceOwner } from '../../security/native-worker-owner.js';
+import { resolveStaticReviewOwner } from '../../security/native-worker-owner.js';
 import { currentSessionOriginator, workAuthorshipNotice } from '../../security/work-originator.js';
 import { captureRunCreationRequest } from '../../sources/creation-request.js';
 import { sourceAuthority, withSourceRequestPlanning } from '../../sources/runtime.js';
@@ -92,6 +92,8 @@ export async function dispatchQueueAdd(
       'dispatch.queue.add cannot accept backlog handoff metadata; use backlog.enqueue',
     );
   }
+  if ('delegatedOwnerPrincipalId' in params)
+    throw new Error('Static review delegation is gateway-owned');
   if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
   if (params.reviewPolicy) assertReviewPolicy(params.reviewPolicy);
   if (params.reviewSequenceContext)
@@ -106,6 +108,10 @@ export async function dispatchQueueAdd(
     if (repo) params.ticketOrPr = await resolvePrRef(params.ticketOrPr, repo);
     validateTicketRef(params.ticketOrPr, 'review-pr');
   }
+  const staticReviewOwner =
+    params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
+      ? resolveStaticReviewOwner('live')
+      : undefined;
   const workflowDefaults = await resolveDirectWorkflowDefaults(
     params,
     {
@@ -119,9 +125,7 @@ export async function dispatchQueueAdd(
     },
     {
       purpose: 'queue',
-      ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
-        ? { ownerId: resolveReviewWorkspaceOwner() }
-        : {}),
+      ...(staticReviewOwner ? { ownerId: staticReviewOwner.ownerId } : {}),
     },
   );
   params = workflowDefaults.params;
@@ -139,7 +143,7 @@ export async function dispatchQueueAdd(
           transport: params.transport,
           nativeProfile: params.nativeProfile,
         },
-        resolveReviewWorkspaceOwner(),
+        staticReviewOwner?.ownerId ?? resolveStaticReviewOwner('live').ownerId,
       )))
     : undefined;
   if (workspaceAdmission) {
@@ -201,6 +205,7 @@ export async function dispatchQueueAdd(
       ...(executionTemplate ? { executionTemplate: { ...executionTemplate } } : {}),
     },
     currentSessionOriginator(),
+    staticReviewOwner?.requester ? { delegatedOwnerPrincipalId: staticReviewOwner.ownerId } : {},
   );
   return { item };
 }

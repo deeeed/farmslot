@@ -49,7 +49,10 @@ export function authorizeVisualClaimReview(
     principal.id === 'legacy-env' ||
     principal.subject.type !== (delegated ? 'service' : 'person') ||
     kind === 'pipeline-reviewed' ||
-    (delegated && !policy?.delegatedReviewerPrincipalIds?.includes(principal.id))
+    // A listed reviewer id names generation zero; a reused id is never credited.
+    (delegated &&
+      (!policy?.delegatedReviewerPrincipalIds?.includes(principal.id) ||
+        (principal.generation ?? 0) !== 0))
   )
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',

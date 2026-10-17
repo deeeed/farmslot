@@ -179,7 +179,9 @@ import {
 } from '../runs/store.js';
 import {
   assertNativeRunOwner,
-  resolveReviewWorkspaceOwner,
+  resolveStaticReviewOwner,
+  type StaticReviewDelegation,
+  type StaticReviewOwner,
 } from '../security/native-worker-owner.js';
 import { currentSessionOriginator, currentSessionPrincipal } from '../security/work-originator.js';
 import { captureRunCreationRequest } from '../sources/creation-request.js';
@@ -342,6 +344,8 @@ export function assertExpectedQaSelection(
 
 export interface RunCreateInternalOptions {
   sourcePlanningPurpose?: 'run' | 'preview' | 'queue';
+  /** Static-review delegation: only live admin RPCs and stamped queue rows set it. */
+  reviewDelegation?: StaticReviewDelegation;
   sourceCallerRequest?: RunCreateParams;
   sourceCreationSeal?: SourceCreationSeal;
   /** Reserved by source planning, never accepted from the wire. */
@@ -424,6 +428,7 @@ export interface RunCreationPlan {
   directReviewPublication: ReturnType<typeof captureDirectReviewPublication> | undefined;
   executionTemplateSnapshot: ExecutionTemplateReference | undefined;
   workspaceAdmission: ReviewWorkspaceAdmission | undefined;
+  staticReviewOwner: StaticReviewOwner | undefined;
 }
 
 /** One config-derived planner serves creation and queued source revalidation. */
@@ -489,13 +494,18 @@ export async function planRunCreation(
       params.ticketOrPr = await resolvePrRef(params.ticketOrPr, projectConfig.ci.repo);
     validateTicketRef(params.ticketOrPr, params.flowType);
   }
+  // Rule, submission and repair work (prWork) never delegates authorship.
+  const reviewOwner = () =>
+    resolveStaticReviewOwner(options.prWork ? undefined : options.reviewDelegation);
+  const staticReviewOwner =
+    params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
+      ? reviewOwner()
+      : undefined;
   const workflowDefaults = await resolveDirectWorkflowDefaults(params, projectConfig, {
     purpose: options.sourcePlanningPurpose ?? 'run',
     execution: options.workflowExecution,
     excludingRunId: options.replanningRunId,
-    ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
-      ? { ownerId: resolveReviewWorkspaceOwner() }
-      : {}),
+    ...(staticReviewOwner ? { ownerId: staticReviewOwner.ownerId } : {}),
   });
   params = workflowDefaults.params;
   if (
@@ -503,12 +513,7 @@ export async function planRunCreation(
     (params.flowType !== 'review-pr' || params.reviewValidationDepth === 'full-live')
   )
     throw new Error('Publication flags require static review-pr');
-  const publicationOwner =
-    !options.prWork &&
-    params.flowType === 'review-pr' &&
-    params.reviewValidationDepth !== 'full-live'
-      ? resolveReviewWorkspaceOwner()
-      : undefined;
+  const publicationOwner = options.prWork ? undefined : staticReviewOwner?.ownerId;
   const directPublication = publicationOwner
     ? captureDirectReviewPublication(params, projectConfig, publicationOwner)
     : undefined;
@@ -537,7 +542,7 @@ export async function planRunCreation(
           transport: params.transport,
           nativeProfile: params.nativeProfile,
         },
-        resolveReviewWorkspaceOwner(),
+        reviewOwner().ownerId,
         options.replanningRunId,
       ));
     params.executionTemplateId =
@@ -795,7 +800,7 @@ export async function planRunCreation(
         transport: params.transport,
         nativeProfile: params.nativeProfile,
       },
-      resolveReviewWorkspaceOwner(),
+      reviewOwner().ownerId,
       options.replanningRunId,
     );
   }
@@ -823,6 +828,7 @@ export async function planRunCreation(
     directReviewPublication: directPublication,
     executionTemplateSnapshot,
     workspaceAdmission,
+    staticReviewOwner,
   };
 }
 
@@ -859,6 +865,9 @@ async function runCreateWithSources(
       reviewQa: plan.reviewQa,
       qaAfterReview: plan.qaAfterReview,
       directReviewPublication: plan.directReviewPublication,
+      ...(plan.staticReviewOwner?.requester
+        ? { delegatedReviewOwner: plan.staticReviewOwner.ownerId }
+        : {}),
     });
     if (run.sourcePlan && options.sourceCallerRequest) {
       run.slotId = options.sourceCallerRequest.slotId ?? null;

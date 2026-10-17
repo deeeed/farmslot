@@ -7,6 +7,7 @@ import type { GatewayAuthRuntime, GatewayAuthSession } from './auth.js';
 import { AUTHORIZATION_METHOD_CLASSIFICATION } from './authorization-classification.generated.js';
 import { activeAdminCredentialCount } from './credential-store.js';
 import { hasNativeWorkspaceAccess } from './native-owner.js';
+import { generationMismatchMessage } from './principal-resolver.js';
 
 const IDENTITY_MANAGEMENT_METHODS = new Set([
   'principal.create',
@@ -163,11 +164,17 @@ export function authorizeStoredRunEffect(
   principal: Principal | null,
   itemLabel: string,
   effectiveSafetyTier: SafetyTier | undefined,
+  replacedPrincipalId?: string,
 ): Principal {
   if (principal && isAdminPrincipal(principal)) return principal;
   const authority = principal
     ? `principal '${principal.subject.displayName}' (${principal.id}) no longer has admin/global authority`
-    : 'its stored originator cannot be resolved';
+    : replacedPrincipalId
+      ? generationMismatchMessage(
+          replacedPrincipalId,
+          'queue the work again as the current identity',
+        )
+      : 'its stored originator cannot be resolved';
   throw new GatewayMethodError(
     'AUTH_FORBIDDEN',
     `Denied queued item '${itemLabel}' at fire time: ${authority}; ` +

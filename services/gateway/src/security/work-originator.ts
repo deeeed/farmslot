@@ -146,6 +146,21 @@ export function resolveWorkOriginator(
   return resolution.ok ? resolution.principal : null;
 }
 
+/** The id a stored originator names when an explicit reuse replaced that identity. */
+export function replacedWorkOriginator(
+  runtime: GatewayAuthRuntime,
+  originator: WorkOriginator | undefined,
+): string | undefined {
+  if (originator?.kind !== 'principal') return undefined;
+  const resolution = runtime.resolver.resolvePrincipalId(
+    originator.principalId,
+    originator.principalGeneration,
+  );
+  return !resolution.ok && resolution.reason === 'generation_mismatch'
+    ? originator.principalId
+    : undefined;
+}
+
 export function isWorkOriginator(value: unknown): value is WorkOriginator {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;

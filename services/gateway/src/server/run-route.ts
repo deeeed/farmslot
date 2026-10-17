@@ -211,9 +211,11 @@ export async function routeRunMethod(
           );
         context.authorizeSourceSelections();
       }
-      const options = selectsSources
-        ? { beforeCreate: context.authorizeSourceSelections }
-        : undefined;
+      // A live admin request may delegate static-review authorship.
+      const options = {
+        reviewDelegation: 'live' as const,
+        ...(selectsSources ? { beforeCreate: context.authorizeSourceSelections } : {}),
+      };
       if (method === Methods.RUN_CREATE_NATIVE) {
         if (runParams.transport !== undefined && runParams.transport !== 'native')
           throw new Error('run.createNative requires native transport');

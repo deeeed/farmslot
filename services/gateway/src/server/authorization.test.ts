@@ -16,7 +16,6 @@ import {
   type GatewayAuthConnectResult,
   Methods,
   NODE_FRAME_MAGIC,
-  type Principal,
   type PrincipalCreateResult,
   type ProjectConfig,
   type RequestFrame,
@@ -755,8 +754,8 @@ test('activation-latching issuance returns both one-time secrets before closing 
 test('webhook ingress requires a configured stored admin service principal', () => {
   const runtime = isolatedRuntime();
   const project = { webhooks: { auto_dispatch: true } } as ProjectConfig;
-  const principals = new Map<string, Principal>();
-  const resolvePrincipal = (principalId: string) => principals.get(principalId) ?? null;
+  const resolvePrincipal = (principalId: string) =>
+    runtime.resolver.resolvePrincipalId(principalId);
 
   const missingConfiguration = resolveWebhookWorkOriginator(project, 'github', resolvePrincipal);
   assert.equal(missingConfiguration.ok, false);
@@ -766,7 +765,6 @@ test('webhook ingress requires a configured stored admin service principal', () 
     { type: 'service', displayName: 'github-ingress' },
     [{ role: 'admin', scope: { kind: 'global' } }],
   );
-  principals.set(authority.id, authority);
   const configured = resolveWebhookWorkOriginator(
     {
       ...project,
@@ -779,6 +777,14 @@ test('webhook ingress requires a configured stored admin service principal', () 
     ok: true,
     originator: { kind: 'principal', principalId: authority.id },
   });
+  // Config binds generation zero: a reused id is named as replaced, not missing.
+  const replaced = resolveWebhookWorkOriginator(
+    { ...project, webhooks: { ...project.webhooks, github_principal_id: authority.id } },
+    'github',
+    () => ({ ok: false, reason: 'generation_mismatch' }),
+  );
+  assert.equal(replaced.ok, false);
+  if (!replaced.ok) assert.match(replaced.message, /has been replaced by a newer identity/u);
 });
 
 test('scoped source mutations require admin credentials and never trust wire actor fields', async () => {

@@ -13,7 +13,7 @@ function nativeControlOwner(expectedOwner?: string): string | undefined {
   return originator.principalId;
 }
 
-function isAdminSupervisor(): boolean {
+export function isAdminSupervisor(): boolean {
   const principal = currentSessionPrincipal();
   // Supervision authorizes the caller without adopting the runner's identity.
   return principal?.subject.type === 'person' && isAdminPrincipal(principal);
@@ -65,6 +65,62 @@ export function resolveReviewWorkspaceOwner(expectedOwner?: string): string {
     );
   }
   return owner;
+}
+
+export interface StaticReviewOwner {
+  ownerId: string;
+  /** Present only when an admin person delegated authorship to the native owner. */
+  requester?: { principalId: string; principalGeneration?: number };
+}
+
+/**
+ * `live` marks a request an authenticated admin is making now; a queued
+ * delegated row replays the owner it recorded. Anything else never delegates.
+ */
+export type StaticReviewDelegation = 'live' | { ownerId: string };
+
+function sessionRequester(): StaticReviewOwner['requester'] {
+  const originator = currentSessionOriginator();
+  return originator.kind === 'principal'
+    ? {
+        principalId: originator.principalId,
+        ...(originator.principalGeneration
+          ? { principalGeneration: originator.principalGeneration }
+          : {}),
+      }
+    : undefined;
+}
+
+/**
+ * The owner of a new static review. An admin person whose own resolution is
+ * refused may delegate authorship: the review runs and publishes as the
+ * configured native owner, and the person is recorded only as its requester.
+ */
+export function resolveStaticReviewOwner(delegation?: StaticReviewDelegation): StaticReviewOwner {
+  if (delegation && delegation !== 'live') {
+    if (!isAdminSupervisor())
+      throw new GatewayMethodError(
+        'AUTH_FORBIDDEN',
+        'Delegated static review requires its requester to remain an admin person',
+      );
+    return {
+      ownerId: resolveReviewWorkspaceOwner(delegation.ownerId),
+      requester: sessionRequester(),
+    };
+  }
+  try {
+    return { ownerId: resolveReviewWorkspaceOwner() };
+  } catch (error) {
+    const configured = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    if (
+      delegation !== 'live' ||
+      !configured ||
+      !isAdminSupervisor() ||
+      !(error instanceof GatewayMethodError)
+    )
+      throw error;
+    return { ownerId: resolveReviewWorkspaceOwner(configured), requester: sessionRequester() };
+  }
 }
 
 /**

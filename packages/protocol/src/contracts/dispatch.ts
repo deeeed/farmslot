@@ -38,6 +38,11 @@ export interface QueueItem {
   recipeStrategy?: string;
   /** Gateway-frozen direct-dispatch choices; public requests cannot supply this snapshot. */
   workflowExecution?: import('./pr-monitoring.js').PRExecutionProfile;
+  /**
+   * Native owner a live admin request delegated this static review to. Its
+   * originator stays the requester. Gateway-derived, never accepted from a request.
+   */
+  delegatedOwnerPrincipalId?: string;
   transport?: import('./agents.js').WorkerTransport;
   nativeProfile?: import('../rpc/native-profile.js').NativeProfileReference;
   skipPrepare?: boolean;

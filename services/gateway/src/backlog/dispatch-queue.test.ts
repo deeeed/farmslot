@@ -31,6 +31,7 @@ import {
   mutateQueueItemForTests,
   persistQueueNow,
   QueueClaimLostError,
+  queueRecordOriginator,
   reclaimExpiredClaims,
   releaseQueueClaim,
   removeItem,
@@ -2180,4 +2181,53 @@ test('queue source selections survive snapshots and preview and reject unsupport
   assert.deepEqual(listItems().find((row) => row.id === item.id)?.sourceSelections, [
     { sourceId: 'pack', selection: 'main' },
   ]);
+});
+
+test('a stored row with an invalid originator or delegation refuses only itself', async () => {
+  assert.throws(
+    () =>
+      addItem(
+        { flowType: 'fix-bug', project: 'farmslot-farm', ticketOrPr: 'PROJ-delegate-refused' },
+        { kind: 'system' },
+        { delegatedOwnerPrincipalId: 'farm-automation' },
+      ),
+    /Only a direct static review can be delegated/,
+  );
+  const invalid = addItem(
+    { flowType: 'fix-bug', project: 'farmslot-farm', ticketOrPr: 'PROJ-invalid-originator' },
+    { kind: 'principal', principalId: 'person' },
+  );
+  const delegated = addItem(
+    { flowType: 'fix-bug', project: 'farmslot-farm', ticketOrPr: 'PROJ-invalid-delegation' },
+    { kind: 'principal', principalId: 'person' },
+  );
+  const valid = addItem(
+    { flowType: 'fix-bug', project: 'farmslot-farm', ticketOrPr: 'PROJ-valid-originator' },
+    { kind: 'principal', principalId: 'person', principalGeneration: 1 },
+  );
+  // Generation zero is never stored explicitly, so this record is invalid.
+  mutateQueueItemForTests(invalid.id, (record) => {
+    record.originator = { kind: 'principal', principalId: 'person', principalGeneration: 0 };
+  });
+  mutateQueueItemForTests(delegated.id, (record) => {
+    record.delegatedOwnerPrincipalId = 'farm-automation';
+  });
+  await persistQueueNow();
+  try {
+    await loadQueue();
+    const rows = new Map(getQueueSnapshot().map((row) => [row.id, row]));
+    assert.equal(rows.get(invalid.id)?.status, 'queued');
+    assert.match(rows.get(invalid.id)?.waitingReason ?? '', /originator is invalid/);
+    assert.equal(queueRecordOriginator(invalid.id), undefined);
+    assert.equal(rows.get(delegated.id)?.delegatedOwnerPrincipalId, undefined);
+    assert.match(rows.get(delegated.id)?.waitingReason ?? '', /Only a direct static review/);
+    assert.equal(queueRecordOriginator(delegated.id), undefined);
+    assert.deepEqual(queueRecordOriginator(valid.id), {
+      kind: 'principal',
+      principalId: 'person',
+      principalGeneration: 1,
+    });
+  } finally {
+    for (const row of [invalid, delegated, valid]) removeItem(row.id);
+  }
 });
