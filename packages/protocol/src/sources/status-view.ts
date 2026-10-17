@@ -134,8 +134,13 @@ export function deriveSourceStatusView(
       const selectionErrors = selection
         ? validateSourceSelection(selection, status.declarations)
         : [];
+      // An empty branch input is not a selection yet.
       const draftRef =
-        draft && selection ? (selection.selection === 'main' ? 'main' : selection.ref) : undefined;
+        draft && selection
+          ? selection.selection === 'main'
+            ? 'main'
+            : selection.ref || undefined
+          : undefined;
       const draftResolution = draftRef
         ? status.resolutions.find(
             (resolution) =>
@@ -205,15 +210,14 @@ export function deriveSourceStatusView(
       return {
         ...row,
         // A draft names the run selection being prepared, not the farm's current ref.
-        line: draftRef
-          ? selection?.selection === 'main'
-            ? `${declaration.id} main (run override)`
-            : `${declaration.id} ${draftRef} (run pin)`
-          : !visiblePin
-            ? `${declaration.id} ${ref}`
-            : visiblePin.selection === 'branch'
-              ? `${declaration.id} ${ref} (${visiblePin.scope} pin)`
-              : `${declaration.id} main (${visiblePin.scope} override)`,
+        line:
+          draftRef !== undefined
+            ? `${declaration.id} ${draftRef} (run selection)`
+            : !visiblePin
+              ? `${declaration.id} ${ref}`
+              : visiblePin.selection === 'branch'
+                ? `${declaration.id} ${ref} (${visiblePin.scope} pin)`
+                : `${declaration.id} main (${visiblePin.scope} override)`,
         summary,
         details: [
           ...(draftRef !== undefined

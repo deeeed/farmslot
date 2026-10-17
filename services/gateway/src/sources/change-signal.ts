@@ -2,7 +2,7 @@
 // gateway state imports so the run store, node registry and server can all advance it.
 import { randomUUID } from 'node:crypto';
 
-import type { ResourceChangedPayload, Run } from '@farmslot/protocol';
+import { Events, type ResourceChangedPayload, type Run } from '@farmslot/protocol';
 
 import { runSourcesSelectable } from './pin-target.js';
 
@@ -55,18 +55,41 @@ export function noteAuthorityFacts(signature: string): void {
 }
 
 /** Run facts that `sources.status` reports for a run: its plan, lock and pin eligibility. */
-export function noteRunSourceFacts(run: Run): void {
-  if (!configured || (!run.sourcePlan && !run.sourceProvenance)) return;
-  const signature = JSON.stringify([
+function runSourceSignature(run: Run): string {
+  return JSON.stringify([
     runSourcesSelectable(run),
     run.sourcePlan?.lock.digest ?? null,
     run.sourceProvenance?.lock.digest ?? null,
     run.sourceProvenance?.attemptId ?? null,
   ]);
+}
+
+/** Records the run's facts and returns the previous record. */
+function recordRunSourceFacts(run: Run): string | undefined {
   const previous = runFacts.get(run.id);
   if (['done', 'failed', 'cancelled'].includes(run.status)) runFacts.delete(run.id);
-  else runFacts.set(run.id, signature);
-  if (previous !== undefined && previous !== signature) advanceSourceRevision();
+  else runFacts.set(run.id, runSourceSignature(run));
+  return previous;
+}
+
+export function noteRunSourceFacts(run: Run): void {
+  if (!configured || (!run.sourcePlan && !run.sourceProvenance)) return;
+  const previous = recordRunSourceFacts(run);
+  if (previous !== undefined && previous !== runSourceSignature(run)) advanceSourceRevision();
+}
+
+/** run.created sets the baseline that a later run.updated, such as a cancel, is compared with. */
+export function noteRunEvent(event: string, payload: unknown): void {
+  if (event !== Events.RUN_UPDATED && event !== Events.RUN_CREATED) return;
+  const run = (payload as { run?: Run } | undefined)?.run;
+  if (run) noteRunSourceFacts(run);
+}
+
+/** A gateway write of a run's plan or provenance: one advance, which the run's next update shares. */
+export function noteRunSourceWrite(run: Run): void {
+  if (!configured) return;
+  if (run.sourcePlan || run.sourceProvenance) recordRunSourceFacts(run);
+  advanceSourceRevision();
 }
 
 /**
