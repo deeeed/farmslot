@@ -384,6 +384,7 @@ export class SourceAuthority {
         assertTarget();
         const result = publish();
         this.state = next;
+        this.notify();
         return result;
       } catch (error) {
         await this.persist(previous);
