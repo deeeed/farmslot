@@ -14,6 +14,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Resolve a Jira-key run's ticket through the project's Jira source when the run is created, and refuse creation when there is no source, no credentials, or the read fails, instead of storing a key-only placeholder ticket.
 
+- Stop a prepare window's whole process group when the window is torn down or its wrapper is signalled, and give each prepare launch its own exit sentinel, so a re-driven prepare after a gateway restart neither waits on an orphaned tree's lock nor reads its late exit code.
+
 - Accept only the complete next-tool-call steering block as rendered queue proof; the "tab to queue message" hint, postponed follow-ups and queue placeholders never prove delivery. Buffered input uses the runner's normal submit key.
 
 - Deliver lane handoffs to busy Claude sessions with Enter, and treat a draft in Claude's boxed composer as live input that blocks delivery.

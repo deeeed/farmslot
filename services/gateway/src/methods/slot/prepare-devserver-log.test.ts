@@ -79,10 +79,11 @@ test('buildDevServerLogTailWindowCommand replaces any prior window then opens a 
     '/home/dev/mm',
   );
 
-  // Idempotent replace: kill every exact-name match by index before recreating
-  // it, avoiding tmux's ambiguous name targeting when duplicates already exist.
+  // Idempotent replace: kill every exact-name match by window id before
+  // recreating it, avoiding tmux's ambiguous name targeting when duplicates
+  // already exist.
   assert.match(command, /-v want='devserver-log'/);
-  assert.match(command, /kill-window -t 'mm-2':"\$idx"/);
+  assert.match(command, /kill-window -t "\$id"/);
   // Detached window so it never steals operator focus.
   assert.match(command, /new-window -d -t 'mm-2:'/);
   assert.match(command, /-n 'devserver-log'/);
@@ -102,7 +103,7 @@ test('buildDevServerLogTailWindowCommand honours a custom window name', () => {
 test('buildCloseDevServerLogTailWindowCommand closes the tail window and never fails', () => {
   const command = buildCloseDevServerLogTailWindowCommand('mm-2');
   assert.match(command, /-v want='devserver-log'/);
-  assert.match(command, /kill-window -t 'mm-2':"\$idx" 2>\/dev\/null \|\| true/);
+  assert.match(command, /kill-window -t "\$id" 2>\/dev\/null \|\| true/);
 });
 
 test('DEVSERVER_LOG_WINDOW_NAME is the stable default handle', () => {
