@@ -237,9 +237,10 @@ export async function handleChecklist(
     console.error(`usage: ${usage}`);
     return EXIT.usage;
   }
-  // A --checklist or --signal that is not a task-local basename is a usage
-  // error, as the mark script reports it; refuse before anything reads it.
-  if (targetOverrides.checklist) {
+  // An explicit --checklist (or the --signal given with it) that is not a
+  // task-local basename is a usage error, as the mark script reports it;
+  // refuse before any hook or file read. `sub` never reads the overrides.
+  if (targetOverrides.checklist && step !== 'sub') {
     try {
       resolveChecklistTargetWithOverrides(resolvedTaskDir, targetOverrides);
     } catch (error) {
