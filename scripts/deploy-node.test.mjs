@@ -39,12 +39,22 @@ const deployFixture = (t, prefix) => {
   };
   for (const relative of [
     'scripts/deploy-node.sh',
+    'scripts/build-dist-atomic.mjs',
     'scripts/lib/worker-env-prefix.sh',
     'scripts/lib/tmux-bin.sh',
     'scripts/lib/node-cli-refresh.sh',
     'services/node/package.json',
   ])
     write(relative, fs.readFileSync(path.join(repo, relative)));
+  // Built dist/ and its atomic builds stay out of git, as in the checkout.
+  write(
+    '.gitignore',
+    fs
+      .readFileSync(path.join(repo, '.gitignore'), 'utf8')
+      .split('\n')
+      .filter((line) => line.startsWith('packages/*/'))
+      .join('\n'),
+  );
   for (const name of [
     'protocol',
     'capabilities',
@@ -69,8 +79,24 @@ const deployFixture = (t, prefix) => {
     ).outputText,
   );
   write('node-token', 'fixture-node-credential');
+  // tsc for the atomic dist builds: logs the package it builds and emits the current dist
+  // (plus a BUILT stamp) into the requested outDir.
+  write('bin/tsc-stub.cjs', FAKE_TSC);
+  write('bin/tsc', '#!/bin/sh\nexec node "$(dirname "$0")/tsc-stub.cjs" "$@"\n', true);
   return { root, write };
 };
+
+const FAKE_TSC = `const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+const home = process.env.FAKE_TSC_HOME || process.env.HOME;
+fs.appendFileSync(path.join(home, 'tsc.log'), path.basename(process.cwd()) + '\\n');
+if (fs.existsSync(path.join(home, 'tsc-fails'))) process.exit(1);
+const out = args[args.indexOf('--outDir') + 1];
+if (fs.existsSync('dist')) fs.cpSync('dist', out, { recursive: true, dereference: true });
+else fs.mkdirSync(out, { recursive: true });
+fs.writeFileSync(path.join(out, 'BUILT'), String(process.hrtime.bigint()));
+`;
 
 // The deploy installs the node CLI from a committed revision of its checkout.
 // Signing and hooks from the user's git config must not reach fixture commits.
@@ -389,6 +415,11 @@ elif command.startswith('test -d '): sys.exit(1)
     syncOf('packages/agent-runtime/bin', 'node_modules/@farmslot/agent-runtime/bin'),
     `agent-runtime bin/ is not synced under node_modules. rsync invocations:\n${invocations.join('\n')}`,
   );
+  // The task-helper copy of agent-runtime ships without dist/ or the atomic builds beside it.
+  assert.match(
+    invocations.find((line) => line.endsWith(`${remote}/packages/agent-runtime/`)) ?? '',
+    / --exclude dist --exclude \.dist-\* /,
+  );
 
   // A package that publishes neither directory issues no such rsync: the sync
   // is conditional on the source existing, not unconditional.
@@ -560,6 +591,7 @@ esac
       );
     },
     calls: () => read('cli-calls.jsonl').map((line) => JSON.parse(line)),
+    tscBuilds: () => read('tsc.log'),
     systemctl: () => read('systemctl.log'),
     tmuxLaunches: () => read('tmux.log'),
     tmuxKills: () => read('tmux-kills.log'),
@@ -596,6 +628,18 @@ for (const instance of ['prod', 'dev']) {
     link(fixture, '.npm-global/bin/farmslot', checkoutCli);
 
     const output = fixture.deploy({ instance });
+
+    // Every dist-shipping package was built atomically: protocol's dist/ holds the new build, still
+    // a real directory, with nothing left beside it.
+    assert.ok(fixture.tscBuilds().includes('protocol'));
+    const protocol = path.join(fixture.root, 'packages/protocol');
+    assert.ok(fs.lstatSync(path.join(protocol, 'dist')).isDirectory());
+    assert.ok(fs.existsSync(path.join(protocol, 'dist/BUILT')));
+    assert.ok(fs.existsSync(path.join(protocol, 'dist/node/slot-by-repo.js')));
+    assert.deepEqual(
+      fs.readdirSync(protocol).filter((entry) => entry.startsWith('.dist-')),
+      [],
+    );
 
     const archive = execFileSync('git', ['archive', '--format=tar', fixture.sha], {
       cwd: fixture.root,
@@ -739,8 +783,19 @@ for (const [where, machine] of [
       [['--version'], ['rpc', 'gateway.status']],
     );
     assert.deepEqual(fixture.systemctl(), []);
+    // No node bundle ships, and the protocol dist the CLI stage reads is present: nothing builds.
+    assert.deepEqual(fixture.tscBuilds(), []);
   });
 }
+
+test('deploy-node --cli-only builds only the protocol dist, and only when it is missing', (t) => {
+  const fixture = cliFixture(t);
+  fs.rmSync(path.join(fixture.root, 'packages/protocol/dist/node/slot-by-repo.js'));
+
+  fixture.deploy({ machine: 'fixture-machine', args: ['--cli-only'], nodeTokenFile: false });
+
+  assert.deepEqual(fixture.tscBuilds(), ['protocol']);
+});
 
 test('deploy-node verifies in bash -lc without a tmux server, whatever the zsh dotfiles say', (t) => {
   const fixture = cliFixture(t, { tmuxServer: false });
@@ -1485,3 +1540,190 @@ for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success'])
     },
   );
 }
+
+// build-dist-atomic exchanges a package's dist/ with its new build in one rename, so a process
+// importing it from a live checkout never finds dist/ missing mid-build.
+const atomicFixture = (t) => {
+  const { buildDistAtomic } = atomicModule;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'build-dist-atomic-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const write = (relative, content) => {
+    fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+    fs.writeFileSync(path.join(root, relative), content);
+  };
+  const plain = 'rm -rf dist && tsc --project tsconfig.json';
+  write(
+    'packages/a/package.json',
+    JSON.stringify({ name: '@fixture/a', main: 'dist/index.js', scripts: { build: plain } }),
+  );
+  write(
+    'packages/b/package.json',
+    JSON.stringify({
+      name: '@fixture/b',
+      main: 'dist/index.js',
+      dependencies: { '@fixture/a': 'workspace:*' },
+      scripts: { build: `yarn workspace @fixture/a build && ${plain}` },
+    }),
+  );
+  write('packages/a/dist/BUILT', 'legacy');
+  write('bin/tsc-stub.cjs', FAKE_TSC);
+  write('bin/tsc', '#!/bin/sh\nexec node "$(dirname "$0")/tsc-stub.cjs" "$@"\n');
+  fs.chmodSync(path.join(root, 'bin/tsc'), 0o755);
+  const saved = { PATH: process.env.PATH, FAKE_TSC_HOME: process.env.FAKE_TSC_HOME };
+  process.env.PATH = `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`;
+  process.env.FAKE_TSC_HOME = root;
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const dir = path.join(root, 'packages/a');
+  const build = (...names) => buildDistAtomic(root, names, () => {});
+  const builds = () => fs.readFileSync(path.join(root, 'tsc.log'), 'utf8').trim().split('\n');
+  const built = () => fs.readFileSync(path.join(dir, 'dist/BUILT'), 'utf8');
+  const leftovers = () => fs.readdirSync(dir).filter((entry) => entry.startsWith('.dist-'));
+  return { root, dir, build, builds, built, leftovers };
+};
+const atomicModule = await import(path.join(repo, 'scripts/build-dist-atomic.mjs'));
+
+test('build-dist-atomic builds dependencies first and replaces dist/ in place', (t) => {
+  const f = atomicFixture(t);
+  f.build('@fixture/b', '@fixture/a');
+  assert.deepEqual(f.builds(), ['a', 'b']);
+  // Like `yarn workspace @fixture/b build`, building b alone also builds the a it chains.
+  f.build('@fixture/b');
+  assert.deepEqual(f.builds(), ['a', 'b', 'a', 'b']);
+  // dist/ stays a real directory (packing and the gateway refuse a linked one) with the new build.
+  const before = f.built();
+  f.build('@fixture/a');
+  assert.ok(fs.lstatSync(path.join(f.dir, 'dist')).isDirectory());
+  assert.notEqual(f.built(), before);
+  assert.deepEqual(f.leftovers(), []);
+});
+
+test('build-dist-atomic leaves dist/ as it was when a build fails', (t) => {
+  const f = atomicFixture(t);
+  f.build('@fixture/a');
+  const before = f.built();
+  fs.writeFileSync(path.join(f.root, 'tsc-fails'), '');
+  assert.throws(() => f.build('@fixture/a'), /build failed; its dist\/ is unchanged/);
+  assert.equal(f.built(), before);
+  // The failed build's partial output is gone.
+  assert.deepEqual(f.leftovers(), []);
+});
+
+test('build-dist-atomic exchanges the new build with dist/ in one step', (t) => {
+  const f = atomicFixture(t);
+  fs.mkdirSync(path.join(f.dir, '.dist-build-next'));
+  fs.writeFileSync(path.join(f.dir, '.dist-build-next/BUILT'), 'next');
+  assert.equal(atomicModule.switchDist(f.dir, '.dist-build-next'), 'exchanged');
+  assert.equal(f.built(), 'next');
+  assert.deepEqual(f.leftovers(), []);
+});
+
+test('build-dist-atomic moves the build into place where dist/ cannot be exchanged', (t) => {
+  const f = atomicFixture(t);
+  fs.mkdirSync(path.join(f.dir, '.dist-build-next'));
+  fs.writeFileSync(path.join(f.dir, '.dist-build-next/BUILT'), 'next');
+  assert.match(
+    atomicModule.switchDist(f.dir, '.dist-build-next', () => 'unsupported'),
+    /no exchange: unsupported/,
+  );
+  assert.equal(f.built(), 'next');
+  assert.deepEqual(f.leftovers(), []);
+});
+
+test('build-dist-atomic spares a build another run is still compiling', (t) => {
+  const f = atomicFixture(t);
+  // Another run's compile in progress, and one a crash left behind two hours ago.
+  fs.mkdirSync(path.join(f.dir, '.dist-build-running'));
+  fs.mkdirSync(path.join(f.dir, '.dist-build-crashed'));
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  fs.utimesSync(path.join(f.dir, '.dist-build-crashed'), twoHoursAgo, twoHoursAgo);
+  f.build('@fixture/a');
+  assert.deepEqual(f.leftovers(), ['.dist-build-running']);
+});
+
+test('build-dist-atomic reads only plain tsc build scripts', () => {
+  const { parseBuild } = atomicModule;
+  assert.deepEqual(parseBuild('rm -rf dist && tsc --project tsconfig.build.json'), {
+    chain: [],
+    tsconfig: 'tsconfig.build.json',
+  });
+  assert.deepEqual(
+    parseBuild('yarn workspace x build && yarn workspace y build && tsc --project tsconfig.json'),
+    { chain: ['x', 'y'], tsconfig: 'tsconfig.json' },
+  );
+  assert.equal(parseBuild('tsc --project tsconfig.json && node copy-assets.mjs'), null);
+  assert.equal(parseBuild('node codegen.mjs && tsc --project tsconfig.json'), null);
+  assert.equal(parseBuild(undefined), null);
+});
+
+const READER = `const fs = require('node:fs');
+const [file, stop, ready] = process.argv.slice(2);
+let reads = 0;
+let misses = 0;
+fs.writeFileSync(ready, '');
+const tick = () => {
+  if (fs.existsSync(stop)) {
+    process.stdout.write(JSON.stringify({ reads, misses }));
+    return;
+  }
+  try {
+    fs.readFileSync(file);
+    reads++;
+  } catch {
+    misses++;
+  }
+  setImmediate(tick);
+};
+tick();
+`;
+
+// Reads `file` in a child process, as fast as it can, while `rebuild` runs.
+async function readWhile(t, root, file, rebuild) {
+  const stop = path.join(root, 'reader-stop');
+  const ready = path.join(root, 'reader-ready');
+  fs.rmSync(stop, { force: true });
+  fs.rmSync(ready, { force: true });
+  fs.writeFileSync(path.join(root, 'reader.cjs'), READER);
+  const reader = spawn(process.execPath, [path.join(root, 'reader.cjs'), file, stop, ready]);
+  t.after(() => reader.kill());
+  let out = '';
+  reader.stdout.on('data', (chunk) => (out += chunk));
+  const exited = new Promise((resolve) => reader.on('exit', resolve));
+  const deadline = Date.now() + 5000;
+  while (!fs.existsSync(ready)) {
+    if (Date.now() > deadline) throw new Error('the reader did not start within 5 s');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  try {
+    rebuild();
+  } finally {
+    fs.writeFileSync(stop, '');
+  }
+  await exited;
+  return JSON.parse(out);
+}
+
+test('a reader never finds dist/ missing while it is rebuilt atomically', async (t) => {
+  const f = atomicFixture(t);
+  const file = path.join(f.dir, 'dist/BUILT');
+  const atomic = await readWhile(t, f.root, file, () => {
+    for (let i = 0; i < 10; i++) f.build('@fixture/a');
+  });
+  assert.ok(atomic.reads > 0);
+  assert.equal(atomic.misses, 0);
+  // The reader does see the gap a remove-then-write rebuild leaves.
+  const dist = path.join(f.dir, 'dist');
+  const plain = await readWhile(t, f.root, file, () => {
+    for (let i = 0; i < 10; i++) {
+      fs.rmSync(dist, { recursive: true, force: true });
+      execFileSync('sleep', ['0.01']);
+      fs.mkdirSync(dist);
+      fs.writeFileSync(path.join(dist, 'BUILT'), String(i));
+    }
+  });
+  assert.ok(plain.misses > 0);
+});
