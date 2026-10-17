@@ -173,6 +173,11 @@ test('an empty context is hidden and a gateway that does not announce is unsuppo
     false,
     'unconfigured is not unsupported',
   );
+  panel.respond(async () => {
+    throw new Error('Execution node is disconnected');
+  });
+  await panel.controller.refresh();
+  assert.equal(panel.controller.getSnapshot().hidden, false, 'a failed read stays visible');
 
   panel.respond(async () => sourceStatusFixture());
   await panel.controller.refresh();

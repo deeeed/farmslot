@@ -235,7 +235,7 @@ export class SourceStatusPanel extends LitElement {
             <summary>Details</summary>
             ${view.rows.map(
               (row) =>
-                html`<article data-source-id=${row.declaration.id}>
+                html`<article data-source-details=${row.declaration.id}>
                   <p class="facts">${row.summary}</p>
                   ${row.details.map((line) => html`<p class="facts">${line}</p>`)}
                 </article>`,
