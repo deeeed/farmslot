@@ -40,6 +40,7 @@ import {
   getRunWithArchived,
   runRecordPath,
 } from '../runs/store.js';
+import { generationMismatchMessage } from '../security/principal-resolver.js';
 import {
   principalOwnerOriginator,
   runWithPrincipalOwner,
@@ -126,6 +127,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       profiles: PRExecutionProfile[],
       context?: PRExecutionContext,
     ) => Promise<{ choices: PRExecutionChoice[]; errors: string[] }> = resolvePRExecution,
+    private readonly replaced: (ownerId: string, generation: number) => boolean = () => false,
   ) {}
 
   start(): void {
@@ -159,7 +161,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
   }
 
   private async reconcileOnce(): Promise<void> {
-    await this.store.withdrawUnauthorizedContributions(this.authorized);
+    await this.store.withdrawReplacedContributions(this.replaced);
     for (const snapshot of this.store.snapshot().intents) {
       let intent = this.store.intent(snapshot.id);
       if (!intent) continue;
@@ -192,6 +194,10 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       }
       if (
         !reviewIntentAuthorized(intent) ||
+        intent.contributions.some(
+          (source) =>
+            source.eligible && !this.authorized(source.ownerId, source.ownerGeneration ?? 0),
+        ) ||
         intent.status === 'withdrawn' ||
         intent.status === 'needs-configuration'
       ) {
@@ -631,6 +637,11 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       const rule = snapshot.rules.find((entry) => entry.id === source.ruleId);
       const submission = snapshot.submissions?.find((entry) => entry.id === source.submissionId);
       const team = snapshot.teams.find((entry) => entry.id === source.teamId);
+      if (this.replaced(source.ownerId, source.ownerGeneration ?? 0))
+        return generationMismatchMessage(
+          source.ownerId,
+          're-create the rule or submission as the current identity.',
+        );
       if (
         !this.authorized(source.ownerId, source.ownerGeneration ?? 0) ||
         (source.ruleId !== undefined

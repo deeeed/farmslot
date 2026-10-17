@@ -99,13 +99,14 @@ export class PRRuleStore {
     return structuredClone(this.data);
   }
 
-  async withdrawUnauthorizedContributions(
-    authorized: (ownerId: string, generation?: number) => boolean,
+  /** Other authority loss keeps a contribution held so restored authority admits it unchanged. */
+  async withdrawReplacedContributions(
+    replaced: (ownerId: string, generation: number) => boolean,
   ): Promise<void> {
     if (
       !this.data.intents.some((intent) =>
         intent.contributions.some(
-          (source) => source.eligible && !authorized(source.ownerId, source.ownerGeneration ?? 0),
+          (source) => source.eligible && replaced(source.ownerId, source.ownerGeneration ?? 0),
         ),
       )
     )
@@ -113,7 +114,7 @@ export class PRRuleStore {
     await this.change(async (data) => {
       for (const intent of data.intents) {
         for (const source of intent.contributions)
-          if (source.eligible && !authorized(source.ownerId, source.ownerGeneration ?? 0))
+          if (source.eligible && replaced(source.ownerId, source.ownerGeneration ?? 0))
             source.eligible = false;
         await reconcileReviewIntent(intent, data.teams);
       }

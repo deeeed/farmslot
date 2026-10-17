@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { CredentialStoreWriter } from '@farmslot/credential-store';
 import {
   intersectPRExecutionProfiles,
   type PRExecutionProfile,
@@ -20,6 +21,8 @@ import {
 } from '../backlog/dispatch-queue.js';
 import { migrateQueuedReviewQa } from '../backlog/review-qa-migration.js';
 import { createRun, deleteRun, persistRunNow, updateRun } from '../runs/store.js';
+import { createGatewayAuthRuntime } from '../security/auth.js';
+import { isAdminPrincipal } from '../security/authorization.js';
 import { runWithPrincipalOwner } from '../security/work-originator.js';
 
 import { PRReviewDispatcher } from './dispatch.js';
@@ -664,4 +667,90 @@ test('replacement review dispatch preserves its generation under an unrelated wa
     principalGeneration: 1,
   });
   assert.equal((await dispatcher.prepare(item)).ready, true);
+});
+
+const admin = { role: 'admin', scope: { kind: 'global' } } as const;
+
+/** The production owner checks, over a temp credential store holding the rule owner. */
+async function ownerAuthority(t: test.TestContext, store: PRRuleStore) {
+  const home = await mkdtemp(join(tmpdir(), 'pr-review-authority-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
+  const writer = new CredentialStoreWriter(auth.store, true);
+  writer.createPrincipal({ type: 'service', displayName: 'owner' }, [admin], 'owner');
+  // Retiring the owner for id reuse requires another active admin credential.
+  writer.createPrincipal({ type: 'service', displayName: 'keeper' }, [admin], 'keeper');
+  writer.issueCredential('keeper', 'keeper');
+  const dispatcher = new PRReviewDispatcher(
+    store,
+    new PRRuleService(
+      store,
+      () => true,
+      () => {},
+    ),
+    (id, generation = 0) => {
+      const principal = auth.resolver.resolvePrincipalId(id, generation);
+      return principal.ok && isAdminPrincipal(principal.principal);
+    },
+    () => {},
+    async (_project, _repo, profiles) => ({
+      choices: intersectPRExecutionProfiles(profiles),
+      errors: [],
+    }),
+    (id, generation) => {
+      const principal = auth.resolver.resolvePrincipalId(id, generation);
+      return !principal.ok && principal.reason === 'generation_mismatch';
+    },
+  );
+  return { writer, dispatcher };
+}
+
+test('role loss holds a contribution and restored authority admits it without re-authoring', async (t) => {
+  const f = await fixture(t);
+  const { writer, dispatcher } = await ownerAuthority(t, f.store);
+  const queued = () => getQueueSnapshot().find((row) => row.prWork?.sourceId === f.intent.id);
+  await dispatcher.reconcile();
+  const item = queued();
+  assert.ok(item);
+  writer.revokeRole('owner', 'admin', admin.scope);
+  assert.deepEqual(await dispatcher.prepare(item), {
+    ready: false,
+    reason: 'Current rule, profile or originator authority is unavailable',
+  });
+  await dispatcher.reconcile();
+  const held = f.store.intent(f.intent.id)!;
+  assert.equal(held.status, 'held');
+  assert.equal(held.contributions[0].eligible, true);
+  assert.equal(queued(), undefined);
+  writer.grantRole('owner', 'admin', admin.scope);
+  await dispatcher.reconcile();
+  const admitted = f.store.intent(f.intent.id)!;
+  assert.equal(admitted.status, 'queued');
+  assert.deepEqual(admitted.contributions, held.contributions);
+  assert.equal(admitted.queueItemId, queued()?.id);
+});
+
+test('a replaced owner is refused as replaced and its contribution is withdrawn before admission', async (t) => {
+  const f = await fixture(t);
+  const { writer, dispatcher } = await ownerAuthority(t, f.store);
+  await dispatcher.reconcile();
+  const item = getQueueSnapshot().find((row) => row.prWork?.sourceId === f.intent.id);
+  assert.ok(item);
+  writer.retirePrincipals(['owner']);
+  writer.createPrincipal({ type: 'service', displayName: 'owner' }, [admin], 'owner', {
+    reuseRetiredId: true,
+  });
+  assert.deepEqual(await dispatcher.prepare(item), {
+    ready: false,
+    reason:
+      'owner has been replaced by a newer identity at the same id; re-create the rule or submission as the current identity.',
+  });
+  await dispatcher.reconcile();
+  const withdrawn = f.store.intent(f.intent.id)!;
+  assert.equal(withdrawn.status, 'withdrawn');
+  assert.equal(withdrawn.contributions[0].eligible, false);
+  assert.equal(
+    getQueueSnapshot().some((row) => row.prWork?.sourceId === f.intent.id),
+    false,
+  );
 });

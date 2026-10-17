@@ -58,6 +58,11 @@ export function initPRRuleDispatch(
     () => {
       rules.notifyChanges();
     },
+    undefined,
+    (id, generation) => {
+      const principal = auth.resolver.resolvePrincipalId(id, generation);
+      return !principal.ok && principal.reason === 'generation_mismatch';
+    },
   );
   initPRQueueAdmission('review', dispatcher);
   if (poll) dispatcher.start();
