@@ -219,21 +219,22 @@ export function requiredOption(options: CliOptions, key: string, message: string
   return value;
 }
 
-// An unknown adapter is a usage error; an empty registry is an internal one
-// and keeps its own error.
-function adapterUsageError(error: unknown): Error {
-  if (error instanceof Error && error.message.startsWith('internal:')) return error;
-  return usageError(error instanceof Error ? error.message : String(error));
+// An unknown adapter is a usage refusal; an empty registry is an internal
+// error and keeps its own error.
+export function checkAdapter(adapter: unknown): { adapter: string } | { refusal: string } {
+  try {
+    assertAdapter(adapter);
+    return { adapter };
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('internal:')) throw error;
+    return { refusal: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export function adapterOption(options: CliOptions): string {
-  const adapter = optionString(options, 'adapter');
-  try {
-    assertAdapter(adapter);
-  } catch (error) {
-    throw adapterUsageError(error);
-  }
-  return adapter;
+  const checked = checkAdapter(optionString(options, 'adapter'));
+  if ('refusal' in checked) throw usageError(checked.refusal);
+  return checked.adapter;
 }
 
 export function targetPath(options: CliOptions): string {
@@ -267,12 +268,9 @@ export function resolveAdapter(options: CliOptions): { adapter: string; target: 
   if (!adapter) {
     throw usageError(`${undetectedAdapterMessage(target)}\n  Next: ${adapterDetectNext()}`);
   }
-  try {
-    assertAdapter(adapter);
-  } catch (error) {
-    throw adapterUsageError(error);
-  }
-  return { adapter, target };
+  const checked = checkAdapter(adapter);
+  if ('refusal' in checked) throw usageError(checked.refusal);
+  return { adapter: checked.adapter, target };
 }
 
 export function shellQuote(value: string): string {

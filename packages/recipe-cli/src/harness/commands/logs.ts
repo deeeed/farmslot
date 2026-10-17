@@ -1,14 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import {
-  adapterDetectNext,
-  assertAdapter,
-  harnessAdapter,
-  undetectedAdapterMessage,
-} from '../adapters.js';
+import { adapterDetectNext, harnessAdapter, undetectedAdapterMessage } from '../adapters.js';
 import { harnessHost, recipeExecutionSignal } from '../host.js';
 import {
+  checkAdapter,
   optionFlag,
   optionString,
   type ParsedArgs,
@@ -54,17 +50,8 @@ export async function handleLogs(
   if (!adapter) {
     return usageOut(json, 'logs', undetectedAdapterMessage(target), adapterDetectNext());
   }
-  try {
-    assertAdapter(adapter);
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith('internal:')) throw error;
-    return usageOut(
-      json,
-      'logs',
-      error instanceof Error ? error.message : String(error),
-      adapterDetectNext(),
-    );
-  }
+  const checked = checkAdapter(adapter);
+  if ('refusal' in checked) return usageOut(json, 'logs', checked.refusal, adapterDetectNext());
   const runtime = harnessAdapter(adapter);
   const sources = runtime.logSources(target);
   const app = runtime.appLogSource(target);
