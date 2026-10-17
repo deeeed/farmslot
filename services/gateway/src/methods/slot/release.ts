@@ -291,22 +291,19 @@ function releaseOwnerRefusal(
   params: SlotReleaseParams,
   options?: SlotReleaseOptions,
 ): string | null {
-  if (
-    !owner ||
-    options?.restartRunId === owner ||
-    (params.forceReset === true && params.expectedRunId === owner)
-  )
-    return null;
+  if (!owner || (params.forceReset === true && params.expectedRunId === owner)) return null;
   const live = getRun(owner);
+  // A refused COMPLETE/FINALIZE prerequisite is terminal but keeps its checkout
+  // for a completion replay. An epoch-pinned release frees only a replay's own
+  // fresh claim, never the retained one, so only that rollback may pass. A
+  // restart is no exception: its run may have failed that way mid-replay.
+  if (live && isCompletionPrerequisiteFailure(live) && options?.expectedSlotEpoch === undefined)
+    return `Slot ${params.slotId} is retained by run ${owner}, whose completion prerequisite failed; replay its completion, or explicitly discard this workspace through slot.release RPC with forceReset:true and expectedRunId:${owner}`;
+  if (options?.restartRunId === owner) return null;
   // Archive already fenced a settled blocked run against replay before invoking
   // its owner-bound release. An ordinary release cannot borrow that authority.
   if (params.expectedRunId === owner && live?.status === 'blocked' && isRunArchiving(owner))
     return null;
-  // A refused COMPLETE/FINALIZE prerequisite is terminal but keeps its checkout
-  // for a completion replay. An epoch-pinned release frees only a replay's own
-  // fresh claim, never the retained one, so only that rollback may pass.
-  if (live && isCompletionPrerequisiteFailure(live) && options?.expectedSlotEpoch === undefined)
-    return `Slot ${params.slotId} is retained by run ${owner}, whose completion prerequisite failed; replay its completion, or explicitly discard this workspace through slot.release RPC with forceReset:true and expectedRunId:${owner}`;
   if (live ? isTerminalRunStatus(live.status) : archivedTerminal) return null;
   return live
     ? `Slot ${params.slotId} is held by non-terminal run ${owner}; finish it or use farmslot run cancel ${owner} before release`

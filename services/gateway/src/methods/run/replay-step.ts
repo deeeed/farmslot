@@ -108,6 +108,8 @@ export function rollbackReclaimedSlotReleaseOptions(
 export interface RunReplayStepHooks {
   /** Test-only: pause after the replay-owned generation bump. */
   afterGenerationBump?(): Promise<void>;
+  /** Test-only: pause after reading device requirements, while the engine still runs. */
+  afterSlotPlanning?(): Promise<void>;
   /** Test-only: retain a controlled engine observer without starting workers. */
   startEngine?(runId: string): Promise<void>;
   /**
@@ -1184,7 +1186,22 @@ async function replayRunStep(
   // A replay from find-slot or earlier clears the run's slot binding, so the
   // claim its slot row still holds must be settled before re-selection.
   const reselectsSlot = targetIdx >= 0 && targetIdx <= findSlotIdx;
-  const priorSlotRow = reselectsSlot && existing.slotId ? await readSlotRow(existing.slotId) : null;
+  const priorSlotId = reselectsSlot ? existing.slotId : null;
+  const priorSlotRow = priorSlotId ? await readSlotRow(priorSlotId) : null;
+  // The release that settles it runs after the engine is cancelled, so its
+  // read-only guards (gate hold, park record, native owner) refuse here instead,
+  // leaving the run driven.
+  if (
+    priorSlotId &&
+    priorSlotRow?.current_run_id === params.runId &&
+    !isCompletionPrerequisiteFailure(getRun(params.runId) ?? existing)
+  ) {
+    const { slotReleasePreflight } = await import('../slot/release.js');
+    await slotReleasePreflight(
+      { slotId: priorSlotId, keepWork: true, expectedRunId: params.runId },
+      { restartRunId: params.runId },
+    );
+  }
   const replaySnapshot = getRun(params.runId) ?? existing;
   const retainsCompletionSlot = isCompletionPrerequisiteFailure(replaySnapshot);
   if (retainsCompletionSlot) {
@@ -1251,15 +1268,18 @@ async function replayRunStep(
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   try {
-    const slotCapabilities =
-      targetIdx >= 0 && targetIdx <= findSlotIdx
-        ? await withRunSources(existing, () => replaySlotCapabilityRequirements(existing), {
-            planning: true,
-          })
-        : undefined;
+    const slotCapabilities = reselectsSlot
+      ? await withRunSources(existing, () => replaySlotCapabilityRequirements(existing), {
+          planning: true,
+        })
+      : undefined;
+    if (hooks.afterSlotPlanning) await hooks.afterSlotPlanning();
+    const planned = getRun(params.runId);
     if (
-      getRun(params.runId)?.slotId !== priorRunSlotId ||
-      getRun(params.runId)?.engineState?.generation !== selectionGeneration
+      planned?.slotId !== priorRunSlotId ||
+      planned?.engineState?.generation !== selectionGeneration ||
+      // The engine still runs here and may have failed COMPLETE/FINALIZE.
+      (planned && isCompletionPrerequisiteFailure(planned) !== retainsCompletionSlot)
     )
       throw new Error('Run changed while reading replay device requirements');
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
@@ -1331,7 +1351,8 @@ async function replayRunStep(
           emit,
           { restartRunId: params.runId },
         );
-        if (!released) {
+        // A release this one queued behind (the run's own teardown) may have freed it.
+        if (!released && (await readSlotRow(existing.slotId))?.current_run_id === params.runId) {
           throw new Error(
             `Slot ${existing.slotId} could not be released before restarting this run`,
           );

@@ -33,6 +33,7 @@ const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'farmslot-retained-comp
 const root = path.join(temporaryRoot, 'root');
 const repo = path.join(temporaryRoot, 'repo');
 const heldRepo = path.join(temporaryRoot, 'held-repo');
+const gateRepo = path.join(temporaryRoot, 'gate-repo');
 const origin = path.join(temporaryRoot, 'origin.git');
 const project = `retained-completion-${randomUUID()}`;
 const slotId = `retained-completion-${randomUUID()}`;
@@ -40,6 +41,9 @@ const runId = randomUUID();
 // A failed run whose worker shutdown was never confirmed: its slot stays held.
 const heldSlotId = `held-${randomUUID()}`;
 const heldRunId = randomUUID();
+// A run waiting at its publication gate: its slot is gate-held.
+const gateSlotId = `gate-${randomUUID()}`;
+const gateRunId = randomUUID();
 const taskFile = path.join(repo, 'tasks', runId, 'TASK.md');
 const statusFile = path.join(root, '.farm-status.json');
 const tmuxDir = openTmuxSandbox();
@@ -92,6 +96,7 @@ try {
   git(repo, 'remote', 'add', 'origin', origin);
   git(repo, 'push', '-q', '-u', 'origin', 'main');
   git(temporaryRoot, 'clone', '-q', origin, heldRepo);
+  git(temporaryRoot, 'clone', '-q', origin, gateRepo);
   mkdirSync(path.join(root, 'scripts'), { recursive: true });
   writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable retained-completion fixture\n');
   writeFileSync(path.join(root, 'scripts', 'dev.sh'), '#!/bin/sh\n');
@@ -122,6 +127,15 @@ try {
         platform: 'cli',
         repo: heldRepo,
         session: heldSlotId,
+        enabled: true,
+        mode: 'dispatch',
+      },
+      {
+        id: gateSlotId,
+        project,
+        platform: 'cli',
+        repo: gateRepo,
+        session: gateSlotId,
         enabled: true,
         mode: 'dispatch',
       },
@@ -178,6 +192,29 @@ try {
       status: i < monitorIdx ? 'done' : i === monitorIdx ? 'failed' : 'pending',
     })),
   });
+  writeJson(path.join(root, '.runs', `${gateRunId}.json`), {
+    id: gateRunId,
+    project,
+    ticketOrPr: 'PROJ-999995',
+    flowType: 'dev',
+    mode: 'autonomous',
+    status: 'human-gating',
+    slotId: gateSlotId,
+    engineState: { generation: 4 },
+    createdAt: new Date(Date.now() - 120000).toISOString(),
+    updatedAt: new Date(Date.now() - 60000).toISOString(),
+    decisions: [],
+    metrics: { nudgeCount: 0, runner: 'scripted', model: null },
+    steps: steps.map((name, i) =>
+      i < completeIdx
+        ? { name, status: 'done' }
+        : name === 'complete'
+          ? { name, status: 'done', outputs: { slotDisposition: 'gate-held' } }
+          : name === 'human-gate'
+            ? { name, status: 'running' }
+            : { name, status: 'pending' },
+    ),
+  });
   mkdirSync(path.dirname(taskFile), { recursive: true });
   writeFileSync(taskFile, '# Disposable retained completion\n');
   writeJson(statusFile, {
@@ -198,6 +235,14 @@ try {
         agent: 'idle',
         current_run_id: heldRunId,
         slot_epoch: 2,
+      },
+      {
+        slot: gateSlotId,
+        lifecycle: 'busy',
+        phase: 'working',
+        agent: 'idle',
+        current_run_id: gateRunId,
+        slot_epoch: 5,
       },
     ],
   });
@@ -303,6 +348,20 @@ try {
   assert.equal(rpc('run.get', { runId }).run.slotId, null);
   assert.equal(rpc('run.archive', { runId }).ok, true);
 
+  // A gate-held run's release would be refused, so its replay is refused before
+  // it cancels the gate driver: generation, status and slot are unchanged.
+  assert.throws(
+    () =>
+      rpc('run.replayStep', { runId: gateRunId, stepName: 'find-slot', triggeredBy: 'operator' }),
+    new RegExp(`gate-held for run ${gateRunId}`),
+  );
+  const gateRun = rpc('run.get', { runId: gateRunId }).run;
+  assert.deepEqual(
+    [gateRun.status, gateRun.engineState?.generation, gateRun.slotId],
+    ['human-gating', 4, gateSlotId],
+  );
+  assert.deepEqual(slotRow(gateSlotId), { lifecycle: 'busy', phase: 'working', owner: gateRunId });
+
   // Any other run releases the slot it still holds before it selects a fresh one.
   assert.deepEqual(slotRow(heldSlotId), { lifecycle: 'held', phase: 'occupied', owner: heldRunId });
   const reselected = rpc('run.replayStep', {
@@ -325,6 +384,7 @@ try {
       namedDiscardReleased: discarded.released,
       archivedAfterDiscard: true,
       findSlotReplayRefused: true,
+      gateHeldReplayRefusedBeforeMutation: true,
       reselectionReleasedHeldSlot: slotRow(heldSlotId),
     }),
   );

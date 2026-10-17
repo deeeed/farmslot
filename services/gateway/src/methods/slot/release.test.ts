@@ -558,6 +558,13 @@ test('a retained completion failure keeps its slot until replay or a named disca
     new RegExp(`retained by run ${run.id}, whose completion prerequisite failed`),
   );
   await assert.rejects(slotRelease({ slotId, keepWork: true }, noopEmit), /retained by run/);
+  // A find-slot replay's restart release, once the run failed that way mid-replay.
+  await assert.rejects(
+    slotRelease({ slotId, keepWork: true, expectedRunId: run.id }, noopEmit, {
+      restartRunId: run.id,
+    }),
+    /retained by run/,
+  );
   assert.equal(await readSlotField(slotId, 'current_run_id'), run.id);
   assert.equal(await readSlotField(slotId, 'phase'), 'occupied', 'the slot was never fenced');
   assert.equal(getRun(run.id)?.slotId, slotId);

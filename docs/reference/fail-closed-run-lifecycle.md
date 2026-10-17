@@ -422,7 +422,8 @@ Replay MUST start at the refused step or earlier, refused before any mutation.
 A replay from `find-slot` or earlier selects a fresh slot, so it is refused the same
 way while the run's slot row still names the run. Any other run replayed from there
 MUST release the slot it still holds before dropping its binding; nothing frees a
-slot whose owner no longer names it.
+slot whose owner no longer names it. A release guard that would refuse refuses before
+the replay changes the run, and a restart release never bypasses this retention.
 After that explicit discard, archive/delete MAY evict it only when native
 bindings and owner capability cleanup are confirmed released. Archive preserves
 the failed verdict, step history and evidence; unresolved provider cleanup still
