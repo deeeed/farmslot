@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Move run family grouping here from Command Center and Companion: `groupRunsByFamily`, `sortRunsForFamilyView`, `selectRecentRunFamilyGroups` and `RunFamilyGroup`. A family's `activeCount` uses `isActiveListRun`. Remove `ACTIVE_RUN_LIST_LIMIT`: `run.list` `active` is never truncated.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.54.0 - 2026-10-17

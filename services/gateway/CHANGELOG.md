@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- `run.list` `active` returns every active run unless the caller sets a limit.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.23.0 - 2026-10-17

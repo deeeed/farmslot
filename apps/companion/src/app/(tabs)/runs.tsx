@@ -6,8 +6,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   extractRunArtifactManifest,
+  groupRunsByFamily,
   normalizeRunTags,
   type Run,
+  type RunFamilyGroup,
+  selectRecentRunFamilyGroups,
   selectRunList,
   slotMachineMap,
 } from '@farmslot/protocol';
@@ -31,11 +34,6 @@ import {
   runEvidenceSignalRouteTarget,
   summarizeRunEvidenceSignals,
 } from '../../lib/run-evidence-signals';
-import {
-  groupRunsByFamily,
-  type RunFamilyGroup,
-  selectRecentRunFamilyGroups,
-} from '../../lib/run-family-groups';
 import { selectCompanionRunList } from '../../lib/run-list-selection';
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
 import {

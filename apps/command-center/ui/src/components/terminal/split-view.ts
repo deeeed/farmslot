@@ -18,8 +18,8 @@ import type {
 import {
   Events,
   flattenTmuxWorkers,
-  isActiveListRun,
   isTmuxWorkerWatched,
+  mergeRunsById,
   Methods,
   reconcileTmuxWorkerWatchlist,
   removeTmuxWorkerWatchItem,
@@ -513,10 +513,16 @@ export class TerminalSplitView extends LitElement {
     localStorage.setItem(WORKER_WATCHLIST_KEY, JSON.stringify(items));
   }
 
+  /** Every active run, over the runs this view already holds; the views below list only active runs. */
+  private async _refreshActiveRuns(): Promise<Run[]> {
+    const result = await gateway.request<RunListResult>(Methods.RUN_LIST, { active: true });
+    this._runs = mergeRunsById(this._runs, result.runs ?? []);
+    return result.runs ?? [];
+  }
+
   private async _fetchRuns() {
     try {
-      const result = await gateway.request<RunListResult>(Methods.RUN_LIST, { limit: 1000 });
-      this._runs = result.runs;
+      await this._refreshActiveRuns();
     } catch (error) {
       this._workerListError = `Could not load worktree reviews: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -623,17 +629,16 @@ export class TerminalSplitView extends LitElement {
 
   private async _showActiveRuns() {
     try {
-      const [fleetResult, runResult] = await Promise.all([
+      const [fleetResult, active] = await Promise.all([
         gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
-        gateway.request<RunListResult>(Methods.RUN_LIST, { limit: 1000 }),
+        this._refreshActiveRuns(),
       ]);
       const activeRuns = selectActiveRunSlotIds(
         fleetResult.fleet.slots,
-        (runResult.runs ?? []).filter(isActiveListRun),
+        active,
         this._globalFilters,
       );
-      this._runs = runResult.runs;
-      this._selectedRuns = selectWorkspaceRuns(runResult.runs, this._globalFilters)
+      this._selectedRuns = selectWorkspaceRuns(active, this._globalFilters)
         .slice(0, 8)
         .map((run) => run.id);
       this._selectedSlots = activeRuns.slice(0, 8 - this._selectedRuns.length);
@@ -648,11 +653,10 @@ export class TerminalSplitView extends LitElement {
 
   private async _showPinnedSlots() {
     try {
-      const [fleetResult, runResult] = await Promise.all([
+      const [fleetResult] = await Promise.all([
         gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
-        gateway.request<RunListResult>(Methods.RUN_LIST, { limit: 1000 }),
+        this._refreshActiveRuns(),
       ]);
-      this._runs = runResult.runs;
       const availableRuns = new Set(
         selectWorkspaceRuns(this._runs, this._globalFilters).map((run) => run.id),
       );
