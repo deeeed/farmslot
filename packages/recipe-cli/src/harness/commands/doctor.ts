@@ -662,7 +662,9 @@ function emitExpectLiveVerdict(
   console.error(`${out('err', verdict)} ${out('bold', adapter)} ${detail} ${out('dim', target)}`);
   for (const reason of runtime?.reasons ?? []) console.error(`  ${out('dim', reason)}`);
   if (recorder?.status === 'fail') {
-    console.error(`  ${out('err', 'recorder:')} ${recorder.message}`);
+    console.error(
+      `  ${out('err', 'recorder:')} ${recorder.message}${recorder.detail ? ` ${out('dim', recorder.detail)}` : ''}`,
+    );
     if (recorder.userAction) console.error(`  Next: ${recorder.userAction}`);
     return;
   }

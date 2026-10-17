@@ -34,6 +34,9 @@ export interface ReadinessViewOptions {
   };
   // Device targeting, previewed: the same target run/call would use.
   previewDevice?: DevicePreview;
+  // Default true. False leaves the command journal out of status: no
+  // journalPath/lastCommand/latestProof fields and no Last command/Evidence lines.
+  journal?: boolean;
 }
 
 export function adapterReadiness(adapter: ProjectRuntime): AdapterReadiness {

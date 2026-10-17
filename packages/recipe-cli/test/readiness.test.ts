@@ -28,12 +28,14 @@ import {
   type HarnessContext,
   harnessHost,
   parseArgs,
+  recordCommandEvidence,
   requiredDoctorCheckSummary,
   resolveHarnessContext,
   runnerInstallKind,
   runStatusWatch,
   setHarnessContext,
   shellQuote,
+  withCommandJournal,
 } from '../src/harness/index.js';
 import { RECIPE_CLI_VERSION } from '../src/index.js';
 
@@ -304,14 +306,53 @@ describe('runtime log selection', () => {
       ),
     );
     assert.equal(result.result, 2);
-    assert.match(result.stdout, /Available: build, client, app/u);
+    assert.deepEqual(JSON.parse(result.stdout).error, {
+      code: 'USAGE',
+      message: '--source must be one of: build, client, app.',
+      userAction: `${harnessHost().name} logs --source client`,
+    });
+  });
+
+  test('a missing selected app log is a marked failure in human output', async () => {
+    const target = logAdapter('client', false);
+    const { result, stderr } = await capture(() =>
+      handleLogs(parseArgs(['--adapter', 'shop', '--target', target])),
+    );
+    assert.equal(result, 1);
+    assert.equal(
+      stderr,
+      '✗ logs: application console unavailable for this checkout (console.log is absent).\n  Next: launch shop',
+    );
+  });
+
+  test('a runtime without logs says whether it is headless', async () => {
+    useAdapters(fakeAdapter('core', { headless: true }), fakeAdapter('plain'));
+    for (const [adapter, extra, message] of [
+      ['core', [], 'core is headless; it has no dev server logs.'],
+      ['core', ['--source', 'build'], 'core is headless; it has no dev server logs.'],
+      ['plain', [], 'Runtime plain declares no logs for this target.'],
+    ] as const) {
+      const { result, stdout } = await capture(() =>
+        handleLogs(parseArgs(['--adapter', adapter, '--target', tempRoot(), ...extra, '--json'])),
+      );
+      assert.equal(result, 2);
+      assert.deepEqual(JSON.parse(stdout).error, {
+        code: 'USAGE',
+        message,
+        userAction: `launch ${adapter}`,
+      });
+    }
   });
 });
 
 describe('project log views', () => {
   const parseLogs = (argv: string[]) =>
     parseArgs(argv, {
-      optionSpecs: { '--window': { kind: 'boolean' }, '--follow': { kind: 'boolean' } },
+      optionSpecs: {
+        '--window': { kind: 'boolean' },
+        '--follow': { kind: 'boolean' },
+        '--full': { kind: 'boolean' },
+      },
     });
   function setup() {
     const target = tempRoot();
@@ -389,14 +430,77 @@ describe('project log views', () => {
     for (const extra of [
       ['--events', '2', '--lines', '1'],
       ['--events', '2', '--follow'],
-      ['--events', 'bad'],
     ]) {
       await assert.rejects(() => handleLogs(parseLogs([...args, ...extra])), /--events/);
     }
-    for (const extra of [['--events', '2'], ['--window']]) {
+    for (const extra of [['--events', '2'], ['--window'], ['--events', 'bad']]) {
       const result = await capture(() => handleLogs(parseLogs([...args, ...extra, '--json'])));
       assert.equal(result.result, 2);
     }
+  });
+
+  test('announce precedes each live follow, never JSON or a bounded tail', async () => {
+    const { args, app, build } = setup();
+    process.env[`${harnessHost().envPrefix}_SCRIPT_BIN_TAIL`] = '/usr/bin/true';
+    const seen: unknown[] = [];
+    const announce = (request: unknown) => {
+      seen.push(request);
+    };
+    const compact = async () => {
+      seen.push('compact');
+      return 0;
+    };
+    assert.equal(await handleLogs(parseLogs(args), { announce, compact }), 0);
+    assert.equal(await handleLogs(parseLogs([...args, '--full']), { announce, compact }), 0);
+    assert.equal(
+      await handleLogs(parseLogs([...args, '--source', 'build', '--follow']), { announce }),
+      0,
+    );
+    assert.equal(await handleLogs(parseLogs([...args, '--lines', '1']), { announce }), 0);
+    assert.equal(await handleLogs(parseLogs(args), { announce }), 0);
+    await capture(() => handleLogs(parseLogs([...args, '--json']), { announce, compact }));
+    assert.deepEqual(seen, [
+      { source: 'client', logFile: app, mode: 'compact' },
+      'compact',
+      { source: 'client', logFile: app, mode: 'full' },
+      { source: 'build', logFile: build, mode: 'raw' },
+    ]);
+  });
+
+  test('refusals reach --json callers as envelopes, --events before the log file', async () => {
+    const { args, target, build } = setup();
+    const host = harnessHost().name;
+    const undetected = await capture(() => handleLogs(parseLogs(['--target', target, '--json'])));
+    assert.equal(undetected.result, 2);
+    const envelope = JSON.parse(undetected.stdout);
+    assert.equal(envelope.error.code, 'USAGE');
+    assert.match(envelope.error.message, /^could not detect the .* repo type for /u);
+    assert.match(envelope.error.userAction, /--adapter <shop>/u);
+    const unknown = await capture(() =>
+      handleLogs(parseLogs(['--target', target, '--adapter', 'nope', '--json'])),
+    );
+    assert.equal(unknown.result, 2);
+    assert.equal(JSON.parse(unknown.stdout).error.code, 'USAGE');
+    assert.match(JSON.parse(unknown.stdout).error.userAction, /--adapter <shop>/u);
+    fs.rmSync(build);
+    const events = await capture(() =>
+      handleLogs(parseLogs([...args, '--source', 'build', '--events', 'x', '--json'])),
+    );
+    assert.equal(events.result, 2);
+    assert.deepEqual(JSON.parse(events.stdout).error, {
+      code: 'USAGE',
+      message: '--events must be numeric.',
+      userAction: `${host} logs --events 20`,
+    });
+    const missing = await capture(() =>
+      handleLogs(parseLogs([...args, '--source', 'build', '--json'])),
+    );
+    assert.equal(missing.result, 2);
+    assert.deepEqual(JSON.parse(missing.stdout).error, {
+      code: 'USAGE',
+      message: 'nothing running for this checkout (no build.log).',
+      userAction: 'launch shop',
+    });
   });
 });
 
@@ -817,6 +921,35 @@ describe('doctor', () => {
     assert.equal(ready.stdout, 'READY');
   });
 
+  test('a failing recorder line carries its detail', async () => {
+    shopHost();
+    process.env.NO_COLOR = '1';
+    useAdapters(
+      fakeAdapter('shop', {
+        readiness: {
+          recorder: async () => ({
+            id: 'recorder',
+            required: true,
+            status: 'fail',
+            message: 'Device recorder',
+            detail: 'screen capture permission denied',
+            userAction: 'repair recorder',
+          }),
+        },
+      }),
+    );
+    const { result, stderr } = await capture(() =>
+      handleDoctor(parseArgs(['--adapter', 'shop', '--target', doctorTarget(), '--expect-live']), {
+        manifest: manifestOk,
+      }),
+    );
+    assert.equal(result, 1);
+    assert.match(
+      stderr,
+      /^ {2}recorder: Device recorder screen capture permission denied\n {2}Next: repair recorder$/mu,
+    );
+  });
+
   test('--fix lists the host next steps first, then the shared ones, and lets the host word the error', async () => {
     shopHost();
     process.env.SHOP_HARNESS_EXECUTABLE = '/opt/bin/shop-harness';
@@ -1120,6 +1253,44 @@ describe('status', () => {
       'next',
     ]);
     assert.equal(probes.count, 1);
+  });
+
+  test('journal: false leaves the command journal out of the envelope and the text', async () => {
+    shopHost();
+    configureHarnessHost({ ...harnessHost(), journaledCommands: ['run'] });
+    useAdapters(fakeAdapter('shop'));
+    const target = tempRoot();
+    const evidence = path.join(target, 'artifacts');
+    await withCommandJournal(
+      'run',
+      ['run', 'smoke'],
+      async () => {
+        recordCommandEvidence(evidence);
+        return 0;
+      },
+      { target },
+    );
+    const argv = ['--adapter', 'shop', '--target', target, '--fast'];
+    const journaled = await capture(() => handleStatus(parseArgs([...argv, '--json'])));
+    const full = JSON.parse(journaled.stdout) as Record<string, unknown>;
+    assert.equal((full.lastCommand as { command: string }).command, 'run');
+    assert.deepEqual(full.latestProof, [evidence]);
+    const text = await capture(() => handleStatus(parseArgs(argv)));
+    assert.match(text.stdout, /^Last command: run \(pass\)$/mu);
+    assert.ok(text.stdout.split('\n').includes(`Evidence: ${evidence}`));
+
+    const omitted = await capture(() =>
+      handleStatus(parseArgs([...argv, '--json']), { journal: false }),
+    );
+    const envelope = JSON.parse(omitted.stdout) as Record<string, unknown>;
+    assert.deepEqual(
+      Object.keys(envelope),
+      Object.keys(full).filter(
+        (key) => !['journalPath', 'lastCommand', 'latestProof'].includes(key),
+      ),
+    );
+    const hidden = await capture(() => handleStatus(parseArgs(argv), { journal: false }));
+    assert.doesNotMatch(hidden.stdout, /Last command:|Evidence:/u);
   });
 
   test('a ready runtime points at the host logs; --task must be a directory', async () => {

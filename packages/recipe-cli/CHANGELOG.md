@@ -7,6 +7,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 - Pass the task's active repair scope to the engine only for its separate repair recipe; the main task recipe ignores it.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Export `renderRetainedArtifactsMarkdown` and `validateRecipeArtifactDirectory` from `./harness` so other host CLIs render and validate retained task Markdown with the root CLI's selection and refusals.
+- Add `ReviewCommandOptions` hooks (`libraries`, `resolveLibrary`, `defaultDomain`, `domainCommand`, `usage`, `runtime`, `header`, `verdictRule`) and export `ReviewLibrary`, so host CLIs built with `createHarnessCli` route review and domain to the shared handler. A project binding ignores the hooks.
+- Review resolves the domain before the runtime, prints one "Domain patterns" heading, names the domain source on stderr in human mode, words setup step 2 through the domain command, and refuses an owned-paths file with an empty domain.
+- Add `LogsCommandOptions.announce`, called before a live follow outside `--json`. Logs now report an undetected or unknown adapter and a non-numeric `--events` through the usage envelope, check `--events` before the log file, and word the invalid-source, missing-file, headless and missing-console refusals generically.
+- Doctor prints a failing recorder's detail on stderr; `ReadinessViewOptions.journal: false` leaves the command journal out of status.
 
 ## 0.22.5 - 2026-10-16
 
