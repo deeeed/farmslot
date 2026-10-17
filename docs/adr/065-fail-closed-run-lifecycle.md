@@ -348,8 +348,8 @@ run.refreshPublishedEvidence '{"runId":"<run-id>"}'`.
 
 A run whose COMPLETE or FINALIZE prerequisite was refused is terminal `failed`
 but keeps its slot and checkout for a completion replay. `slot.release` and
-`slot.recycle` refuse that slot, bound or unbound, unless the request names the
-run in `expectedRunId` and passes `forceReset:true`. Replaying the completion,
+`slot.recycle` refuse that slot. Only a `slot.release` that names the run in
+`expectedRunId` and passes `forceReset:true` discards it. Replaying the completion,
 or force-completing a non-QA run, settles the run and lifts the refusal. A replay
 undoing its own epoch-pinned claim may still release it. A failed replay restores
 the retained claim it took over instead of releasing it.
@@ -366,6 +366,7 @@ exit. It reuses the existing discard form for a slot held by a missing run.
 ### Public surface
 
 - No new RPC, protocol field or CLI command. `slot.release` and `slot.recycle`
-  gain one refusal whose message names the replay and discard routes.
+  gain one refusal whose message names the replay and discard routes. The
+  orphaned-slot recovery card no longer proposes releasing such a slot.
 - Archive and delete of such a run still require the slot released first; that
   release is now the named force discard.

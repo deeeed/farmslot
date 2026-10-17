@@ -1144,6 +1144,8 @@ async function replayRunStep(
   }
 
   const replaySnapshot = getRun(params.runId) ?? existing;
+  // Read before normalization marks a refused COMPLETE done for a later-step retry.
+  const retainsCompletionSlot = isCompletionPrerequisiteFailure(replaySnapshot);
   assertReplayAfterDispatchAllowed(
     replaySnapshot,
     flowSteps,
@@ -1364,7 +1366,7 @@ async function replayRunStep(
               // restores that claim instead of releasing it.
               if (
                 reclaim.ok &&
-                (existing.status === 'blocked' || isCompletionPrerequisiteFailure(existing)) &&
+                (existing.status === 'blocked' || retainsCompletionSlot) &&
                 blockedMonitorOwnsSlot(slot, params.runId)
               ) {
                 priorOwnedSlotFields = {

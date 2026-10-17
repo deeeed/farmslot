@@ -372,5 +372,34 @@ await test('orphaned slot release fires even when failureCategory is undefined',
   }
 });
 
+await test('a refused completion keeps its slot out of the orphaned-slot release', async () => {
+  const { run, taskDir } = createRecoveryTestRun({ withArtifact: false });
+  try {
+    updateRun(run.id, {
+      status: 'failed',
+      slotId: 'runner-browser-4',
+      steps: [
+        {
+          name: 'complete',
+          status: 'failed',
+          detail: 'A declared deterministic check has no current passing receipt.',
+          startedAt: new Date().toISOString(),
+          outputs: { gatePrerequisiteRefusal: {} },
+        },
+      ],
+    });
+    const { proposal } = await runRecoveryProposal({ runId: run.id, stepName: 'complete' });
+    assert(
+      !findDescriptor(
+        proposal as { remediationDescriptors?: Array<{ id: string }> },
+        'release-orphaned-slot',
+      ),
+      'a retained completion slot is not orphaned',
+    );
+  } finally {
+    await cleanupRun(run.id, taskDir);
+  }
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

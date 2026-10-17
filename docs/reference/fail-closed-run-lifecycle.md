@@ -414,8 +414,8 @@ released slot unavailable. Ticket and PR admission retain the unfinished executi
 until operator settlement. A linked backlog item and work-graph node observe the
 pipeline failure through the existing ordered transition effects.
 Restart MUST skip engine startup and runtime reconciliation for this retained
-failure. Slot release and recycle MUST refuse its slot unless the request names the
-run with `expectedRunId` and passes `forceReset:true` (Amendment 6, 2026-10-17). A
+failure. Slot release and recycle MUST refuse its slot; only a release that names the
+run with `expectedRunId` and passes `forceReset:true` discards it (Amendment 6). A
 replay rolling back the claim it took at its own epoch is the only other exception;
 a failed replay MUST restore the retained claim it took over rather than release it.
 After that explicit discard, archive/delete MAY evict it only when native
