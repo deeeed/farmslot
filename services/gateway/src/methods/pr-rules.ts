@@ -30,6 +30,7 @@ import type { GatewayAuthRuntime } from '../security/auth.js';
 import { isAdminPrincipal } from '../security/authorization.js';
 import { isAdminSupervisor } from '../security/native-worker-owner.js';
 import {
+  assertNoClientOwnerFields,
   currentSessionOriginator,
   type PrincipalOwner,
   principalOwnerGeneration,
@@ -187,6 +188,7 @@ export async function prRulesMethod(method: string, value: unknown): Promise<unk
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Parameters must be an object');
   const p = value as Record<string, unknown>;
+  assertNoClientOwnerFields(p);
   if (method === Methods.PR_RULE_PROJECT_IMPORT) {
     assertPRSourceAccount(p.account);
     if (typeof p.url !== 'string') throw new Error('A Project/view URL is required');
@@ -234,8 +236,6 @@ export async function prRulesMethod(method: string, value: unknown): Promise<unk
   const id = p.id as string | undefined;
   const revision = p.revision as number | undefined;
   if (method === Methods.PR_TEAM_SAVE) {
-    if (p.notificationPrincipalGenerations !== undefined)
-      throw new Error('Unsupported property: notificationPrincipalGenerations');
     assertPRTeamConfig(p.config);
     const config = p.config;
     const previous = id ? service.store.team(id, ownerId).config.account : undefined;

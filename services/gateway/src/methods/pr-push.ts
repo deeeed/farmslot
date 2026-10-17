@@ -11,7 +11,11 @@ import { teamNotificationAudience } from '../pr-rules/notification-audience.js';
 import type { PRRuleService } from '../pr-rules/service.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import { isAdminPrincipal } from '../security/authorization.js';
-import { currentSessionOriginator, principalOwnerGeneration } from '../security/work-originator.js';
+import {
+  assertNoClientOwnerFields,
+  currentSessionOriginator,
+  principalOwnerGeneration,
+} from '../security/work-originator.js';
 
 let service: PRPushService | undefined;
 export async function initPRPush(
@@ -63,6 +67,7 @@ export async function prPushMethod(method: string, value: unknown): Promise<unkn
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Parameters must be an object');
   const p = value as Record<string, unknown>;
+  assertNoClientOwnerFields(p);
   if (method === Methods.PR_PUSH_LIST) return service.list(id);
   if (method === Methods.PR_PUSH_REGISTER) {
     assertPushRegistration(p);

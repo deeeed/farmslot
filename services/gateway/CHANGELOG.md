@@ -10,6 +10,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Point a spent review budget at an extension only when the run can receive one; review-pr, published, artifact-only and archived runs now say why their rounds cannot be extended, and the extension refusal names the same reason.
 
+- Bind stored PR, push, assessment and run owners to the identity generation that wrote them (ADR-051 Amendment 5), so a person re-created at a reused id can use PR notifications, watches, rules and rule-driven QA without inheriting the retired identity's records. Native execution ownership stays with generation zero. An admin person without native ownership can still request a static review directly; it runs and publishes as the configured native owner and records the person as requester. Denials for a reused identity name it as replaced rather than revoked.
+
 - Never count a prompt left unsent in a busy Codex composer as delivered, on any send attempt. Each review-fix prompt now starts with its delivery identity, so a fix round is proven only by its own runner receipt. A fix sent without a receipt is acknowledged only by the worker's fix signal, never by pane activity.
 
 - Resolve a Jira-key run's ticket through the project's Jira source when the run is created, and refuse creation when there is no source, no credentials, or the read fails, instead of storing a key-only placeholder ticket.

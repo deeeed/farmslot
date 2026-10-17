@@ -22,6 +22,7 @@ import { PRMonitorStore } from '../pr-monitoring/store.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import { isAdminPrincipal } from '../security/authorization.js';
 import {
+  assertNoClientOwnerFields,
   currentSessionOriginator,
   principalOwnerGeneration,
   runWithPrincipalOwner,
@@ -95,7 +96,9 @@ export async function initPRMonitoring(
 function params(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Parameters must be an object');
-  return value as Record<string, unknown>;
+  const p = value as Record<string, unknown>;
+  assertNoClientOwnerFields(p);
+  return p;
 }
 
 function string(value: unknown, name: string): string {

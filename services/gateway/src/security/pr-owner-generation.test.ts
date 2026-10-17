@@ -13,7 +13,11 @@ import { PRPushStore } from '../pr-push/store.js';
 import { PRRuleService } from '../pr-rules/service.js';
 import { PRRuleStore } from '../pr-rules/store.js';
 
-import { principalOwnerGeneration, runWithPrincipalOwner } from './work-originator.js';
+import {
+  assertNoClientOwnerFields,
+  principalOwnerGeneration,
+  runWithPrincipalOwner,
+} from './work-originator.js';
 
 const owner = 'reused-person';
 const replacement = { ownerId: owner, ownerGeneration: 1 };
@@ -276,4 +280,13 @@ test('team re-save keeps kept recipients bound and binds only newly added ids', 
     /Notification recipient ghost does not resolve to a principal/,
   );
   assert.equal(store.list(owner).teams[0].revision, unchanged.revision);
+});
+
+test('PR requests that supply an owner or its generation are refused', () => {
+  for (const key of ['ownerId', 'ownerGeneration', 'notificationPrincipalGenerations'])
+    assert.throws(
+      () => assertNoClientOwnerFields({ id: 'team', [key]: 1 }),
+      /Unsupported property/,
+    );
+  assert.doesNotThrow(() => assertNoClientOwnerFields({ id: 'team', config: {} }));
 });

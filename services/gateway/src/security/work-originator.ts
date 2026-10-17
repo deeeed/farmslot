@@ -161,6 +161,12 @@ export function replacedWorkOriginator(
     : undefined;
 }
 
+/** Owners and their generations are gateway-derived; a request never supplies them. */
+export function assertNoClientOwnerFields(params: Record<string, unknown>): void {
+  for (const key of ['ownerId', 'ownerGeneration', 'notificationPrincipalGenerations'])
+    if (key in params) throw new Error(`Unsupported property: ${key}`);
+}
+
 export function isWorkOriginator(value: unknown): value is WorkOriginator {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;

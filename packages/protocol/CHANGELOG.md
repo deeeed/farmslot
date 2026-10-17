@@ -8,6 +8,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - `extractRunArtifactManifest` keeps a gate's recorded metadata for files the run output captured again, skips host paths and prose in step outputs, and shares `isRunArtifactImagePath` with clients.
 
+- Add gateway-derived identity generation fields (ADR-051 Amendment 5): `ownerGeneration` on PR monitors, monitor policies, teams, trigger rules, rule actions, review submissions, contributions, PR work review owners and `AssessmentRecord`; `PRTeamProfile.notificationPrincipalGenerations`; `Run.createdByPrincipalGeneration`, `Run.requestedByPrincipalId` and `Run.requestedByPrincipalGeneration`; `QueueItem.delegatedOwnerPrincipalId`; and an optional `delegatorPrincipalGeneration` in the project visual claim review policy. Requests that supply these fields are refused.
+
 - Add `extractRunArtifactManifest`, the one run artifact extractor for Command Center and Companion; it includes captured run output and keeps source metadata.
 
 - Expose optional dev deployment worker CLI verification health on node and fleet metrics.
