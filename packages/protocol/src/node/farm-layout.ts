@@ -64,11 +64,18 @@ export async function listProjectTaskRoots(layout: FarmLayout): Promise<ProjectT
   return roots;
 }
 
-/** A link's target, or null when it does not resolve (dangling, looping or unreadable). */
+/** stat codes meaning a link is dangling, looping or unreadable: not a project dir. */
+const UNRESOLVABLE_LINK_CODES = new Set(['ENOENT', 'ELOOP', 'EACCES', 'EPERM', 'ENOTDIR']);
+
+/**
+ * A link's target, or null when the link does not resolve. Any other stat failure (EIO,
+ * EMFILE) is a failing read, not a missing project, so it is rethrown.
+ */
 async function linkTarget(link: string) {
   try {
     return await stat(link);
-  } catch {
-    return null;
+  } catch (err) {
+    if (UNRESOLVABLE_LINK_CODES.has((err as NodeJS.ErrnoException).code ?? '')) return null;
+    throw err;
   }
 }
