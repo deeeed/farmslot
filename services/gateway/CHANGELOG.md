@@ -8,6 +8,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## 0.23.0 - 2026-10-17
 
+- `run.list` `active` uses the shared `isActiveListRun` rule that Command Center and Companion list with.
 - Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate. An undelivered or interrupted repair stays retryable under its single charge, and a restart resumes it through fix recovery without refunding or recharging the round.
 - Hand a run to the operator when its worker is waiting on its own question or approval request: the monitor raises an interactive handoff with the captured question instead of nudging it or leaving the run in monitoring with no decision. The handoff clears when the question closes, survives a gateway restart, and ignores unsent composer text.
 - Keep a QA run's evidence window when a dispatch replay resumes the same task. The first dispatch of a task identity records when it began, and QA completion checks recipe evidence against that instead of the latest dispatch. A new task or a fresh dispatch starts a new window. For runs dispatched before this, the primary worker's first launch counts when it happened after the current task was written; their next dispatch records it as the anchor.

@@ -7,9 +7,9 @@ import type {
   TmuxWorkerWatchEntry,
   TmuxWorkerWatchItem,
 } from '@farmslot/protocol';
+import { isActiveListRun } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
-import { isRunListActiveRun } from '../runs/run-list-model.js';
 
 /** Stable pane ordering when multiple active runs share a slot. */
 const ACTIVE_RUN_TERMINAL_PRIORITY: Partial<Record<RunStatus, number>> = {
@@ -52,7 +52,7 @@ export function selectWorkspaceRuns(runs: readonly Run[], filters: GlobalFilters
       (run) =>
         run.reviewWorkspace &&
         !run.reviewWorkspace.cleanedAt &&
-        isRunListActiveRun(run) &&
+        isActiveListRun(run) &&
         (!filters.projects.length || filters.projects.includes(run.project)) &&
         (!filters.machines.length || filters.machines.includes(run.reviewWorkspace.machine)),
     )
@@ -233,20 +233,20 @@ function activeRunForSlot(
 ): Run | null {
   let best: Run | null = null;
   for (const run of runs) {
-    if (run.slotId !== slot.slot || !isRunListActiveRun(run)) continue;
+    if (run.slotId !== slot.slot || !isActiveListRun(run)) continue;
     if (!best || compareTerminalRuns(run, best) > 0) best = run;
   }
   if (best) return best;
 
   if (slot.currentRunId) {
     const linked = runsById.get(slot.currentRunId);
-    if (linked && isRunListActiveRun(linked)) return linked;
+    if (linked && isActiveListRun(linked)) return linked;
   }
 
   for (const context of slot.agentContexts ?? []) {
     if (!context.runId) continue;
     const contextRun = runsById.get(context.runId);
-    if (!contextRun || !isRunListActiveRun(contextRun)) continue;
+    if (!contextRun || !isActiveListRun(contextRun)) continue;
     if (!best || compareTerminalRuns(contextRun, best) > 0) best = contextRun;
   }
   return best;
@@ -255,12 +255,12 @@ function activeRunForSlot(
 export function slotHasActiveRunTerminal(slot: SlotStatus, runsById: Map<string, Run>): boolean {
   if (slot.currentRunId) {
     const run = runsById.get(slot.currentRunId);
-    if (run) return isRunListActiveRun(run);
+    if (run) return isActiveListRun(run);
   }
   for (const context of slot.agentContexts ?? []) {
     if (!context.runId) continue;
     const run = runsById.get(context.runId);
-    if (run && isRunListActiveRun(run)) return true;
+    if (run && isActiveListRun(run)) return true;
   }
   return slot.lifecycle === 'busy' && slot.phase === 'working';
 }

@@ -5,6 +5,7 @@ import {
   Events,
   FLOW_STEPS,
   type FlowType,
+  isCompletionPrerequisiteFailure,
   isGateParkInFlightOrFreed,
   isSettledBlockedRun,
   PipelineSteps,
@@ -18,7 +19,7 @@ import {
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../core/state.js';
 import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
-import { isCompletionPrerequisiteFailure, STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
+import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import { runDecisionWaitingStatus, type RunProgressObservation } from '../runners/run-progress.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 import { withSourcePlanning } from '../sources/runtime.js';
