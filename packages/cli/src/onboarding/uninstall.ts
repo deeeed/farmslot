@@ -72,11 +72,12 @@ export interface UninstallPlan {
  *  caller reports the list and exits non-zero when anything remains. */
 export interface UninstallResult {
   leftovers: Array<{ path: string; error: string }>;
-  /** Run history that could not be moved out of the clone; the clone, state.json and the
-   *  PATH symlink stay so the operator can move it by hand and re-run uninstall. */
+  /** Run history that could not be moved out of the clone; the install (clone, state.json,
+   *  PATH symlink) stays so the operator can move it by hand and re-run uninstall. */
   stranded: Array<{ from: string; to: string }>;
-  /** Where moved run history still sits after its backup failed; state.json and the PATH
-   *  symlink stay so uninstall can be re-run with a working backup path. */
+  /** Where moved run history still sits after its backup archive could not be written; the
+   *  install (clone, state.json, PATH symlink) stays so uninstall can be re-run with a working
+   *  backup path. */
   historyHeldAt: string | null;
 }
 
@@ -506,7 +507,7 @@ export async function executeUninstallPlan(
       hooks.step(`could not remove ${label}: ${error}`);
     }
   };
-  /** Returns false when the disposition failed and the dir is still there. */
+  /** Returns false when the disposition threw. */
   const dispose = (
     dir: string,
     disposition: Disposition,
@@ -567,13 +568,13 @@ export async function executeUninstallPlan(
       }
     }
   }
-  const keepsStranded = (path: string): boolean =>
-    stranded.some(({ from }) => from === path || from.startsWith(path + sep));
-
-  // 2. History. A backup that fails to archive keeps the dir (disposeOf throws before
-  //    deleting): the history is then held like unmoved history, never removed below.
+  // 2. History. A backup whose archive could not be written keeps the dir (disposeOf throws
+  //    before deleting): the history is then held like unmoved history, never removed below.
   const historyDisposed = dispose(plan.runsDir, plan.history, plan.historyBackupPath);
-  const historyHeldAt = historyDisposed || !existsSync(plan.runsDir) ? null : plan.runsDir;
+  const backupMissing =
+    plan.history === 'backup' && !(plan.historyBackupPath && existsSync(plan.historyBackupPath));
+  const historyHeldAt =
+    !historyDisposed && backupMissing && existsSync(plan.runsDir) ? plan.runsDir : null;
   const historyHeld = stranded.length > 0 || historyHeldAt !== null;
 
   // 3. Remove the PATH symlink early — a later failure must never leave a dangling `farmslot`
@@ -582,10 +583,10 @@ export async function executeUninstallPlan(
 
   dispose(plan.homeDir, plan.home, plan.homeBackupPath);
 
-  // 4. Always-remove install artifacts, except a clone that still holds unmoved history and,
-  //    while history is held, state.json.
+  // 4. Always-remove install artifacts. While history is held they all stay: the clone may
+  //    hold the history, and the PATH symlink and state.json the re-run needs point into it.
   for (const path of [...plan.installDirs, ...plan.installFiles]) {
-    if (keepsStranded(path) || (historyHeld && plan.installFiles.includes(path))) {
+    if (historyHeld) {
       hooks.step(`kept ${path}: run history is not yet kept or backed up`);
       continue;
     }

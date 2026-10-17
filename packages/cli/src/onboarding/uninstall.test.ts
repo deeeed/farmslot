@@ -369,9 +369,9 @@ test('a history move that fails keeps the clone instead of deleting its history'
     plan.historySources.map(({ from }) => from),
   );
   assert.equal(readFileSync(join(clone, '.runs', 'run-1.json'), 'utf8'), '{"id":"run-1"}');
-  // state.json stays so the operator can move the history by hand and re-run uninstall.
+  // The install stays so the operator can move the history by hand and re-run uninstall.
   assert.equal(existsSync(join(root, 'state.json')), true);
-  assert.equal(existsSync(join(root, 'repos')), false);
+  assert.equal(existsSync(join(root, 'repos')), true);
 });
 
 test('purge keeps history the operator chose to keep', async (t) => {
@@ -394,11 +394,21 @@ test('purge keeps history the operator chose to keep', async (t) => {
 
 test('a failed history backup under purge keeps the history and state for a re-run', async (t) => {
   const { root, homeDir, clone, cleanup } = workspaceWithHistory('fs-uninstall-purge-backup-');
-  t.after(cleanup);
+  // The PATH link install.sh makes points into the clone.
+  const binDir = join(`${root}-bin`);
+  t.after(() => {
+    cleanup();
+    rmSync(binDir, { recursive: true, force: true });
+  });
+  mkdirSync(join(clone, 'packages', 'cli', 'bin'), { recursive: true });
+  writeFileSync(join(clone, 'packages', 'cli', 'bin', 'farmslot.mjs'), '');
+  mkdirSync(binDir);
+  const link = join(binDir, 'farmslot');
+  symlinkSync(join(clone, 'packages', 'cli', 'bin', 'farmslot.mjs'), link);
   const ws = workspaceAt(root);
   // tar cannot write into a directory that does not exist.
   const archive = join(tmpdir(), `fs-missing-${root.slice(-8)}`, 'history.tgz');
-  const plan = buildUninstallPlan(ws, baseState({ home_dir: homeDir }), {
+  const plan = buildUninstallPlan(ws, baseState({ home_dir: homeDir, bin_dir: binDir }), {
     ...KEEP,
     history: 'backup',
     historyBackupPath: archive,
@@ -414,7 +424,8 @@ test('a failed history backup under purge keeps the history and state for a re-r
     '{"id":"run-1"}',
   );
   assert.equal(existsSync(join(root, 'state.json')), true);
-  assert.equal(existsSync(clone), false);
+  // The re-run the advice names still resolves through the kept link.
+  assert.equal(existsSync(link), true);
   assert.equal(existsSync(archive), false);
 });
 

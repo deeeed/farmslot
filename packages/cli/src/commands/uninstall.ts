@@ -279,7 +279,7 @@ export function registerUninstallCommand(program: Command): void {
               output.write(`    ${cyan(`mkdir -p ${dirname(to)} && mv ${from} ${to}`)}\n`);
           } else if (result.historyHeldAt) {
             output.write(
-              `\n  Next: run history is still at ${result.historyHeldAt}; re-run ${cyan('farmslot uninstall')} with a writable ${cyan('--backup-history <path>')}, or ${cyan('--keep-history')}\n`,
+              `\n  Next: run history is still at ${result.historyHeldAt}; re-run ${cyan(`farmslot uninstall${plan.purge ? ' --purge' : ''}`)} with a writable ${cyan('--backup-history <path>')}, or ${cyan('--keep-history')}\n`,
             );
           } else {
             output.write(
