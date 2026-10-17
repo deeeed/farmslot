@@ -10,6 +10,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Bind stored PR, push, assessment and run owners to the identity generation that wrote them (ADR-051 Amendment 5), so a person re-created at a reused id can use PR notifications, watches, rules and rule-driven QA without inheriting the retired identity's records. Native execution ownership stays with generation zero. An admin person without native ownership can still request a static review directly; it runs and publishes as the configured native owner and records the person as requester. Denials for a reused identity name it as replaced rather than revoked.
 
+- A visual-review delegator pinned above its current identity generation is refused with a message naming both generations, instead of reading as a replaced identity.
+
 ## 0.23.0 - 2026-10-17
 
 - `run.list` `active` uses the shared `isActiveListRun` rule that Command Center and Companion list with.

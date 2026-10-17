@@ -161,7 +161,7 @@ test('a visual-review delegator binds generation zero unless the policy pins its
         ...bare,
         delegatorPrincipalGeneration: 1,
       }),
-    /arthur has been replaced by a newer identity/,
+    /arthur has no identity generation 1; its current generation is 0\./,
   );
 
   runtime.writer.retirePrincipals(['arthur']);
@@ -184,7 +184,7 @@ test('a visual-review delegator binds generation zero unless the policy pins its
         ...bare,
         delegatorPrincipalGeneration: 2,
       }),
-    /arthur has been replaced by a newer identity/,
+    /arthur has no identity generation 2; its current generation is 1\./,
   );
 
   // A listed delegated reviewer whose id was reused is not credited either.
