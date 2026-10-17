@@ -26,23 +26,23 @@ Keep the current and immediately previous versioned provider, plus versions refe
 
 Status: Proposed by [ADR-015 Amendment 8](../adr/015-resource-streams.md#amendment-8-provider-packages-without-public-binaries-2026-10-17).
 
-A root whose manifest declares no `bin` is a binary-free provider. Its probe replaces the PATH binary check with these checks, in order:
+A root whose manifest declares no `bin` is a binary-free provider.
+
+### Selection at resolution
+
+When binding resolution has a pool selection, it compares the inherited value of the binding's `recipe.provider.root.env` variable with that pool's `env` value. Both are compared as real paths. If both exist and differ, resolution MUST refuse with `PROVIDER_SELECTION_CONFLICT` before importing any provider. The refusal reports the variable, both paths and the action: unset the variable, or select the root in the pool. An absent or equal inherited value is accepted. Without a pool selection, the existing precedence still applies. The rule lives in the shared resolver, so it covers commands started by the gateway, node exec, tmux panes and shells alike.
+
+### Health probe
+
+The probe replaces the PATH binary check with these checks, in order:
 
 1. **Package.** `package.json` declares an exact name and version, as above.
-2. **Modules.** Use the registry the node's CLI resolves, through the CLI's own registry function rather than a restatement of its fallback order. For each binding whose `recipe.provider.root.env` names this pool variable, resolve and import `recipe.provider.module` in a child Node process, with the probe environment and the 5-second command deadline. Resolution MUST use a checkout-free provider resolver exported from `@farmslot/recipe-cli/harness` (`resolveBindingProvider`), loaded from the node's installed CLI. It shares the code `farmslot` uses for the same binding and is not a second implementation. The target must stay inside the root, and the binding's export (default `createProvider`) must be a function. With no matching binding, the module check is skipped; the selector and global-install checks still apply.
-3. **Selectors.** Read the pool variable in each place Farmslot starts a command that can resolve a provider:
-   - **gateway:** for a machine whose slots the gateway executes locally, the gateway's own process environment. The gateway checks it against that machine's pool selection and merges the result into that machine's `providerCliHealth`;
-   - **node exec:** the environment shell-mode node exec passes to commands: the node process environment merged with its login capture, which lasts for the node's lifetime. Build it with the same shared helper exec uses, not a copy;
-   - **tmux:** the tmux server's global environment, which worker panes inherit. Check for a server with `list-sessions` under the Amendment 7 client deadline and skip the scope when none is running. Otherwise read the unnamed `tmux show-environment -g` listing and look up the variable. A missing or removed (`-VAR`) entry is absent;
-   - **shells:** the non-interactive, login and interactive shells, from the same marker-delimited startup output used for PATH.
+2. **Modules.** In a child Node process, with the probe environment and the 5-second command deadline, call `resolveBindingProvider` from `@farmslot/recipe-cli/harness`, loaded from the node's installed CLI. It resolves the registry and each binding exactly as `farmslot` does, so the probe passes no registry or resolution rules of its own. For each binding whose `recipe.provider.root.env` names this pool variable, the provider module must resolve inside the root and import, and the binding's export (default `createProvider`) must be a function. With no matching binding, the module check is skipped, and the global-install check still applies.
+3. **Global installs.** In the node exec environment and in the non-interactive, login and interactive shells, wherever `npm` is on PATH, `<npm root -g>/<package>` must not exist. If it does, that is a `version-mismatch` with reason `<scope> global install: <path>`.
 
-   In each scope the variable must be absent or resolve to the root's real path. A process value overrides `pool.env` when `farmslot` resolves a binding.
+Child probe environments drop inherited `*_BIN` and `*_PACKAGE_ROOT` selectors before executing anything. Load failures, unresolved modules and contained-path violations are `probe-error`. Deadlines are `probe-timeout`, handled as above.
 
-4. **Global installs.** In each scope where `npm` is on PATH, `<npm root -g>/<package>` must not exist. If it does, that is a `version-mismatch` with reason `<scope> global install: <path>`.
-
-Step 3 reads the gateway, node exec and tmux values before any sanitizing. Child probe environments still drop inherited `*_BIN` and `*_PACKAGE_ROOT` selectors before executing anything, so each shell reports only what its own startup sets. Load failures, unresolved modules and contained-path violations are `probe-error`. Deadlines are `probe-timeout`, handled as above.
-
-Diagnostics add `modules: [{ ref, path, ok, reason? }]` and `selectors: [{ scope, name, value? }]`, where `scope` is `gateway`, `node-exec`, `tmux`, `non-interactive`, `login` or `interactive`. `binaries` stays empty for this form. A confirmed mismatch is retained in `confirmedMismatch` until requalification or a changed pool selection, as for binaries.
+Diagnostics add `modules: [{ ref, path, ok, reason? }]`. `binaries` stays empty for this form. A confirmed mismatch is retained in `confirmedMismatch` until requalification or a changed pool selection, as for binaries.
 
 ### Rollout without binaries
 
@@ -51,6 +51,6 @@ For a binary-free provider, `scripts/rollout-provider.mjs`:
 1. installs the exact version into its immutable versioned root and runs the module check against it;
 2. selects that root in the operator and node pool copies;
 3. removes the package's global installation under each node's `--prefix` with `npm uninstall --global <package>`, after the reference check above: no active run, retained gate or live process may still use it. If any reference remains, the rollout stops before uninstalling and reports them;
-4. runs the shared probe on every node, then waits up to 120 seconds, two sampling intervals after the pool change invalidates the cache, for each node's own `node.health` diagnostics for the new root to report `verified`. Only the node and gateway see the gateway, node exec and tmux scopes. Any other status, `probe-timeout` included, fails the rollout.
+4. runs the shared probe on every node, then waits up to 120 seconds for each node's own `node.health` diagnostics for the new root to report `verified`. Any other status, `probe-timeout` included, fails the rollout.
 
-The final check replaces `<public-bin> --version`. On each node, for each binding that names the pool variable and has a slot in that node's pool, run `farmslot doctor --project <project> --target <that slot's checkout> --json` over plain non-interactive SSH, adding the slot's `--adapter` where the project declares several runtimes. Invoke the node's installed CLI, `$FARMSLOT_CLI` or the standard installer's `~/.local/bin/farmslot`, never a bare PATH lookup. Add or remove no selectors, so the result shows what an SSH caller gets. Only the `provider` fields decide the check: `provider.version` and the real path of `provider.root` must equal the pin, even when doctor exits non-zero for an unrelated readiness failure. Installation-mode `farmslot doctor` without a project reports no provider and cannot be used. Retention and pruning rules are unchanged.
+The final check replaces `<public-bin> --version`. On each node, for each binding that names the pool variable and has a slot in that node's pool, run `farmslot doctor --project <project> --target <that slot's checkout> --json` over plain non-interactive SSH, adding the slot's `--adapter` where the project declares several runtimes. Invoke the node's installed CLI, `$FARMSLOT_CLI` or the standard installer's `~/.local/bin/farmslot`, never a bare PATH lookup. Add or remove no selectors, so the result shows what an SSH caller gets; a stale selector refuses with `PROVIDER_SELECTION_CONFLICT` and fails the check. Only the `provider` fields decide it otherwise: `provider.version` and the real path of `provider.root` must equal the pin, even when doctor exits non-zero for an unrelated readiness failure. Installation-mode `farmslot doctor` without a project reports no provider and cannot be used. Retention and pruning rules are unchanged.
