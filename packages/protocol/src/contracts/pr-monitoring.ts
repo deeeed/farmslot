@@ -62,6 +62,7 @@ export interface PRWorkReference {
   review?: {
     profile: string;
     ownerId: string;
+    ownerGeneration?: number;
     options: import('./pr-rules.js').PRReviewOptions;
   };
 }
@@ -185,6 +186,7 @@ export interface PRMonitorRepair {
 
 export interface PRProjectMonitorPolicy {
   ownerId: string;
+  ownerGeneration?: number;
   project: string;
   revision: number;
   enabled: boolean;
@@ -204,6 +206,7 @@ export interface PRMonitor {
   /** Changes only when policy or lifecycle invalidates an in-flight provider read. */
   observationGeneration?: number;
   ownerId: string;
+  ownerGeneration?: number;
   config: PRMonitorConfig;
   lifecycle: PRMonitorLifecycle;
   /** Live gateway projection. Active work suspends checks without changing saved lifecycle. */

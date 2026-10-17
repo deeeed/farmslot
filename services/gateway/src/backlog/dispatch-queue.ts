@@ -64,7 +64,11 @@ import {
   requireNativeProfileOwner,
   resolveReviewWorkspaceOwner,
 } from '../security/native-worker-owner.js';
-import { runWithSystemOriginator, type WorkOriginator } from '../security/work-originator.js';
+import {
+  runWithSystemOriginator,
+  runWithWorkOriginator,
+  type WorkOriginator,
+} from '../security/work-originator.js';
 
 import { preparePRQueueAdmission } from './pr-admission.js';
 import { migrateQueuedReviewQa } from './review-qa-migration.js';
@@ -1502,7 +1506,10 @@ async function tryDispatchNextOnce(): Promise<void> {
       }
     }
     if (item.prWork) {
-      const admission = await preparePRQueueAdmission(item);
+      const admission = await runWithWorkOriginator(
+        queueRecordOriginator(item.id) ?? { kind: 'system' },
+        () => preparePRQueueAdmission(item),
+      );
       if (!liveQueuedItem(item.id)) continue;
       if (!admission.ready) {
         if (item.waitingReason !== admission.reason) {

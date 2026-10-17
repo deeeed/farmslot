@@ -24,6 +24,7 @@ export interface ReviewPublicationReceipt {
   state: 'prepared' | 'posting' | 'published';
   runId: string;
   ownerId: string;
+  ownerGeneration?: number;
   account: PRSourceAccount;
   pr: MonitoredPRIdentity;
   headSha: string;
@@ -42,6 +43,7 @@ export interface ReviewPublicationReceipt {
 /** Gateway-created authority for a direct static run, independent of PR-intake intent state. */
 export interface DirectReviewPublication {
   ownerId: string;
+  ownerGeneration?: number;
   pr: MonitoredPRIdentity;
   requested?: boolean;
   policy:

@@ -14,7 +14,13 @@ try {
   await mkdir(join(scratch, 'projects', 'proof'), { recursive: true });
   await writeFile(
     join(scratch, 'projects', 'proof', 'project.json'),
-    JSON.stringify({ name: 'proof' }),
+    JSON.stringify({
+      name: 'proof',
+      qa: {
+        default_profile: 'changes',
+        profiles: [{ id: 'changes', title: 'Changes', template_id: 'validation/shared' }],
+      },
+    }),
   );
   for (const marker of ['CLAUDE.md', 'scripts/dev.sh', 'services/gateway/package.json']) {
     const file = join(scratch, marker);
@@ -23,6 +29,11 @@ try {
   }
   await mkdir(join(scratch, 'bin'), { recursive: true });
   await writeFile(join(scratch, 'bin', 'tmux'), '#!/bin/sh\nexit 77\n', { mode: 0o700 });
+  await writeFile(
+    join(scratch, 'bin', 'gh'),
+    `#!${process.execPath}\n${await readFile(new URL('./identity-pr-upstream.mjs', import.meta.url), 'utf8')}`,
+    { mode: 0o700 },
+  );
   process.env.PATH = `${join(scratch, 'bin')}:${process.env.PATH}`;
   process.env.GATEWAY_HOST = '127.0.0.1';
   // A synthetic obsolete value must neither create identity nor authenticate.
@@ -59,7 +70,7 @@ try {
   const { createWebSocketServer } = await import('../../services/gateway/src/server.js');
   const { queueRecordOriginator, persistQueueNow, loadQueue } =
     await import('../../services/gateway/src/backlog/dispatch-queue.js');
-  const { resolveWorkOriginator } =
+  const { resolveWorkOriginator, runWithPrincipalOwner } =
     await import('../../services/gateway/src/security/work-originator.js');
   const { authorizeStoredRunEffect } =
     await import('../../services/gateway/src/security/authorization.js');
@@ -95,6 +106,15 @@ try {
   assert.equal((await stat(store.path)).ino, migratedStamp.ino);
   assert.equal((await stat(store.path)).mtimeMs, migratedStamp.mtimeMs);
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+  const { Methods } = await import('@farmslot/protocol');
+  const { initPRMonitoring } = await import('../../services/gateway/src/methods/pr-watch.js');
+  const { initPRRules } = await import('../../services/gateway/src/methods/pr-rules.js');
+  const { initPRPush } = await import('../../services/gateway/src/methods/pr-push.js');
+  const { broadcastPrincipalEvent } = await import('../../services/gateway/src/server.js');
+  const monitoring = await initPRMonitoring(runtime, broadcastPrincipalEvent, false);
+  const rules = await initPRRules(runtime, broadcastPrincipalEvent, false, monitoring);
+  await initPRPush(runtime, monitoring, rules, false, broadcastPrincipalEvent);
+
   const httpServer = createServer((req, res) => {
     if (authorizeHttpRequest({ runtime, req, res, resource: 'file' })) {
       res.writeHead(204);
@@ -230,6 +250,44 @@ try {
     credential: { token: oldCredential.secret },
   });
   await oldClient.call('principal.list', {});
+  const monitorConfig = {
+    pr: { host: 'github.com', repo: 'example/proof', number: 1 },
+    account: { host: 'github.com', login: 'reader' },
+    policy: { mode: 'notify-only' },
+    pollIntervalMs: 60_000,
+    watchedChecks: [],
+    automaticAttemptLimit: 1,
+    cooldownMs: 60_000,
+  };
+  const teamConfig = {
+    name: 'Proof team',
+    account: monitorConfig.account,
+    sources: [{ kind: 'repository', repo: 'example/proof' }],
+    predicate: { kind: 'compare', field: 'state', operator: 'equals', value: 'open' },
+    repositories: [
+      { repo: 'example/proof', project: 'proof', reviewProfile: 'standard', excludedLabels: [] },
+    ],
+    githubTeams: [],
+    notificationPrincipalIds: [],
+  };
+  const oldMonitor = await oldClient.call<{ monitor: { id: string; revision: number } }>(
+    Methods.PR_WATCH_SUBSCRIBE,
+    { config: monitorConfig },
+  );
+  const oldTeam = await oldClient.call<{ team: { id: string; revision: number } }>(
+    Methods.PR_TEAM_SAVE,
+    { config: teamConfig },
+  );
+  const pushConfig = {
+    installationId: 'phone',
+    profileId: 'proof',
+    platform: 'ios',
+    token: 'ExpoPushToken[old]',
+    enabled: true,
+    sound: false,
+  };
+  await oldClient.call(Methods.PR_PUSH_REGISTER, pushConfig);
+
   const staleInvitation = await client.call<{ code: string }>('pairing.create', {
     gatewayUrl: url,
     authority: { kind: 'existing-principal', principalId: obsolete.principal.id },
@@ -332,6 +390,162 @@ try {
     credential: { token: fresh.secret },
   });
   await freshClient.call('principal.list', {});
+  assert.equal(
+    (await freshClient.call<{ devices: unknown[] }>(Methods.PR_PUSH_LIST, {})).devices.length,
+    0,
+  );
+  await freshClient.call(Methods.PR_PUSH_REGISTER, pushConfig);
+  assert.equal(
+    (await freshClient.call<{ devices: unknown[] }>(Methods.PR_PUSH_LIST, {})).devices.length,
+    1,
+  );
+  const beforeMonitors = await freshClient.call<{ monitors: unknown[] }>(Methods.PR_WATCH_LIST, {});
+  assert.equal(beforeMonitors.monitors.length, 0);
+  await assert.rejects(freshClient.call(Methods.PR_WATCH_GET, { id: oldMonitor.monitor.id }));
+  await assert.rejects(
+    freshClient.call(Methods.PR_TEAM_SAVE, {
+      id: oldTeam.team.id,
+      revision: oldTeam.team.revision,
+      config: teamConfig,
+    }),
+  );
+  const freshMonitor = await freshClient.call<{ monitor: { id: string; ownerGeneration: number } }>(
+    Methods.PR_WATCH_SUBSCRIBE,
+    { config: monitorConfig },
+  );
+  assert.notEqual(freshMonitor.monitor.id, oldMonitor.monitor.id);
+  assert.equal(freshMonitor.monitor.ownerGeneration, 1);
+  const freshTeam = await freshClient.call<{ team: { id: string; ownerGeneration: number } }>(
+    Methods.PR_TEAM_SAVE,
+    { config: teamConfig },
+  );
+  assert.equal(freshTeam.team.ownerGeneration, 1);
+  const freshRule = await freshClient.call<{
+    rule: { id: string; revision: number; ownerGeneration: number };
+  }>(Methods.PR_RULE_SAVE, {
+    config: {
+      name: 'Proof notification',
+      teamId: freshTeam.team.id,
+      predicate: teamConfig.predicate,
+      actions: [{ kind: 'notify' }],
+      pollIntervalMs: 60_000,
+      maxAdmissionsPerScan: 1,
+      rereviewOnHeadChange: false,
+    },
+  });
+  assert.equal(freshRule.rule.ownerGeneration, 1);
+  await freshClient.call(Methods.PR_RULE_SET_ENABLED, {
+    id: freshRule.rule.id,
+    revision: freshRule.rule.revision,
+    enabled: true,
+    backfill: true,
+  });
+  const oldObservation = monitoring.store
+    .snapshot()
+    .monitors.find((m) => m.id === oldMonitor.monitor.id)?.observation;
+  const previousRuleCheck = rules.store.snapshot().rules.find((r) => r.id === freshRule.rule.id)
+    ?.scan.checkedAt;
+  await monitoring.tick(Date.now() + 60_001);
+  await rules.tick(Date.now() + 60_001);
+  assert.notEqual(
+    rules.store.snapshot().rules.find((r) => r.id === freshRule.rule.id)?.scan.checkedAt,
+    previousRuleCheck,
+    'background rule tick must persist a new observation under its stored generation',
+  );
+  const afterMonitors = await freshClient.call<{
+    monitors: Array<{ id: string; observation?: unknown; observationError?: string }>;
+  }>(Methods.PR_WATCH_LIST, {});
+  assert.deepEqual(
+    afterMonitors.monitors.map((m) => m.id),
+    [freshMonitor.monitor.id],
+  );
+  assert.equal(afterMonitors.monitors[0].observationError, undefined);
+  assert.ok(afterMonitors.monitors[0].observation);
+  assert.deepEqual(
+    monitoring.store.snapshot().monitors.find((m) => m.id === oldMonitor.monitor.id)?.observation,
+    oldObservation,
+  );
+  const ruleState = await freshClient.call<{
+    actions: Array<{ ownerGeneration: number }>;
+    notifications: unknown[];
+  }>(Methods.PR_RULES_LIST, {});
+  assert.equal(
+    rules.store.snapshot().rules.find((r) => r.id === freshRule.rule.id)?.scan.error,
+    undefined,
+  );
+  assert.equal(ruleState.actions.length, 1);
+  assert.equal(ruleState.actions[0].ownerGeneration, 1);
+  assert.equal(ruleState.notifications.length, 1);
+  claims.push(
+    'fresh PR push reuses the same phone installation and token; monitors, teams and rules work for the replacement; background collectors retain generation one and old records stay isolated',
+  );
+
+  // Seed completed static reviews as setup. All ownership decisions use the public QA RPC.
+  const { createRun } = await import('../../services/gateway/src/runs/store.js');
+  const sourceReviews = [undefined, 1].map((generation) => {
+    const run = createRun(
+      { flowType: 'review-pr', project: 'proof', ticketOrPr: 'example/proof#1' },
+      {
+        deferBackgroundPersist: true,
+        createdByPrincipalId: obsolete.principal.id,
+        createdByPrincipalGeneration: generation,
+      },
+    );
+    run.status = 'done';
+    run.nativeOwnerPrincipalId = obsolete.principal.id;
+    if (generation === undefined) delete run.createdByPrincipalId;
+    run.reviewResult = {
+      recommendation: 'REQUEST_CHANGES',
+      reviewMd: 'Confirmed isolated static review',
+      lineComments: [],
+      reviewSnapshot: {
+        source: 'github-pr',
+        headSha: 'a'.repeat(40),
+        capturedAt: new Date().toISOString(),
+      },
+    };
+    return run;
+  });
+  const qaRequest = {
+    teamId: freshTeam.team.id,
+    pr: monitorConfig.pr,
+    autoStart: false,
+    review: { mode: 'cold', workflow: 'qa' },
+    source: { client: 'identity-proof' },
+  };
+  await assert.rejects(
+    freshClient.call(Methods.PR_REVIEW_REQUEST, {
+      request: {
+        ...qaRequest,
+        sourceReviewRunId: sourceReviews[0].id,
+        idempotencyKey: 'old-source',
+      },
+    }),
+    /not owned by this principal/,
+  );
+  const freshSubmission = await freshClient.call<{
+    submission: { id: string; ownerGeneration: number };
+  }>(Methods.PR_REVIEW_REQUEST, {
+    request: {
+      ...qaRequest,
+      sourceReviewRunId: sourceReviews[1].id,
+      idempotencyKey: 'fresh-source',
+    },
+  });
+  assert.equal(freshSubmission.submission.ownerGeneration, 1);
+  await runWithPrincipalOwner({ ownerId: obsolete.principal.id, ownerGeneration: 1 }, () =>
+    rules.refreshSubmission(obsolete.principal.id, freshSubmission.submission.id),
+  );
+  const refreshedSubmission = await freshClient.call<{
+    submission: { error?: string; intentId?: string };
+  }>(Methods.PR_REVIEW_REQUEST_GET, { id: freshSubmission.submission.id });
+  assert.equal(refreshedSubmission.submission.error, undefined);
+  const qaIntent = rules.store.intent(refreshedSubmission.submission.intentId!);
+  assert.equal(qaIntent?.contributions[0].ownerGeneration, 1);
+  claims.push(
+    'public linked QA refuses native-only legacy reviews and admits fresh generation-bound reviews with matching persisted contributions',
+  );
+
   const newQueue = await freshClient.call<{ item: { id: string } }>('dispatch.queue.add', {
     ...queueParams,
     ticketOrPr: 'MANUAL-000002',

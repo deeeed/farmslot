@@ -2,6 +2,11 @@ import { monitoredPRKey, type PRProjectMonitorPolicy, type Run } from '@farmslot
 
 import { loadProjectConfig } from '../fleet/state.js';
 import { getAllRuns } from '../runs/store.js';
+import {
+  matchesPrincipalOwner,
+  runWithPrincipalOwner,
+  runWithSystemOriginator,
+} from '../security/work-originator.js';
 
 import type { PRMonitoringService } from './service.js';
 import type { PRMonitorStore } from './store.js';
@@ -11,13 +16,13 @@ export class PRPublicationEnrollment {
   private pending?: Promise<void>;
   private readonly failures = new Map<
     string,
-    { ownerId: string; project: string; message: string }
+    { ownerId: string; ownerGeneration?: number; project: string; message: string }
   >();
 
   constructor(
     private readonly store: PRMonitorStore,
     private readonly monitors: Pick<PRMonitoringService, 'enrolled'>,
-    private readonly authorized: (ownerId: string) => boolean,
+    private readonly authorized: (ownerId: string, generation?: number) => boolean,
     private readonly runs: () => Run[] = getAllRuns,
     private readonly repository: (project: string) => Promise<string | undefined> = async (
       project,
@@ -27,7 +32,7 @@ export class PRPublicationEnrollment {
   errors(ownerId: string): Record<string, string> {
     return Object.fromEntries(
       [...this.failures.values()]
-        .filter((entry) => entry.ownerId === ownerId)
+        .filter((entry) => matchesPrincipalOwner(entry, ownerId))
         .map((entry) => [entry.project, entry.message]),
     );
   }
@@ -45,27 +50,30 @@ export class PRPublicationEnrollment {
   }
   reconcile(): Promise<void> {
     if (this.pending) return this.pending;
-    this.pending = this.reconcileOnce().finally(() => {
+    this.pending = runWithSystemOriginator(() => this.reconcileOnce()).finally(() => {
       this.pending = undefined;
     });
     return this.pending;
   }
   private async reconcileOnce(): Promise<void> {
     for (const policy of this.store.snapshot().projectPolicies ?? []) {
-      const key = JSON.stringify([policy.ownerId, policy.project]);
+      const key = JSON.stringify([policy.ownerId, policy.ownerGeneration ?? 0, policy.project]);
       if (!policy.enabled) {
         this.failures.delete(key);
         continue;
       }
       try {
-        if (!this.authorized(policy.ownerId))
+        if (!this.authorized(policy.ownerId, policy.ownerGeneration ?? 0))
           throw new Error('Publication policy owner no longer has monitoring authority');
-        await this.enroll(policy);
+        await runWithPrincipalOwner(policy, () => this.enroll(policy));
         this.failures.delete(key);
       } catch (error) {
         // Enrollment is retried from durable publication records, with a visible owner-scoped error.
         this.failures.set(key, {
           ownerId: policy.ownerId,
+          ...(policy.ownerGeneration !== undefined
+            ? { ownerGeneration: policy.ownerGeneration }
+            : {}),
           project: policy.project,
           message: error instanceof Error ? error.message : String(error),
         });
@@ -93,7 +101,7 @@ export class PRPublicationEnrollment {
         if (
           !current?.enabled ||
           current.revision !== policy.revision ||
-          !this.authorized(policy.ownerId)
+          !this.authorized(policy.ownerId, policy.ownerGeneration ?? 0)
         )
           return;
         if (
@@ -101,7 +109,7 @@ export class PRPublicationEnrollment {
             .snapshot()
             .publicationEnrollments?.some(
               (entry) =>
-                entry.ownerId === policy.ownerId &&
+                matchesPrincipalOwner(entry, policy.ownerId) &&
                 entry.project === policy.project &&
                 entry.runId === run.id &&
                 entry.prKey === prKey,
@@ -114,7 +122,7 @@ export class PRPublicationEnrollment {
           policy.revision,
           run,
           publication,
-          () => this.authorized(policy.ownerId),
+          () => this.authorized(policy.ownerId, policy.ownerGeneration ?? 0),
         );
         if (!monitor) return;
         await this.monitors.enrolled(monitor.id, policy.ownerId);

@@ -71,6 +71,7 @@ import type { CredentialStoreChange } from './security/credential-store.js';
 import { nativeOwnerCanUseWorkers } from './security/native-owner.js';
 import { isGatewayOriginAllowed } from './security/origin.js';
 import { personSessionMethods, routePersonSessionMethod } from './security/person-sessions.js';
+import { principalOwnerGeneration } from './security/work-originator.js';
 import type { ClientState } from './server/client-state.js';
 import { routeMethod } from './server/route-method.js';
 import { handleAgentFsChanged } from './tasks/watcher.js';
@@ -834,7 +835,7 @@ function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
   ws.send(JSON.stringify(frame));
 }
 
-export function broadcast(frame: EventFrame, ownerId?: string): void {
+export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?: number): void {
   const msg = JSON.stringify(frame);
   let authorizationFaultLogged = false;
   for (const [ws, state] of clients) {
@@ -844,7 +845,11 @@ export function broadcast(frame: EventFrame, ownerId?: string): void {
       canReceive = canReceiveBroadcast(activeAuthRuntime, state, frame.event);
       if (canReceive && ownerId !== undefined) {
         const resolved = activeAuthRuntime.resolver.resolveSessionPrincipal(state);
-        canReceive = resolved.ok && resolved.principal.id === ownerId;
+        canReceive =
+          resolved.ok &&
+          resolved.principal.id === ownerId &&
+          (ownerGeneration === undefined ||
+            (resolved.principal.generation ?? 0) === ownerGeneration);
       }
     } catch (err) {
       // Live authorization must fail closed for this receiver without turning every
@@ -884,7 +889,11 @@ export function broadcastEvent(event: string, payload: unknown): void {
 }
 
 export function broadcastPrincipalEvent(ownerId: string, event: string, payload: unknown): void {
-  broadcast({ type: 'event', event, payload, seq: ++eventSeq }, ownerId);
+  broadcast(
+    { type: 'event', event, payload, seq: ++eventSeq },
+    ownerId,
+    principalOwnerGeneration(ownerId),
+  );
 }
 
 export function closeSessions(predicate: (state: ClientState) => boolean): void {
