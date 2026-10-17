@@ -2,11 +2,16 @@ import type { Principal } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 
-import { nativeOwnerAssignedMachines } from './native-node.js';
+import { loadCredentialStore } from './credential-store.js';
+import { isGenerationZeroPrincipal, nativeOwnerAssignedMachines } from './native-node.js';
 import { currentSessionOriginator } from './work-originator.js';
 
 export function ownsLocalNativeProfile(owner: string): boolean {
-  return Boolean(owner && process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID === owner);
+  return Boolean(
+    owner &&
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID === owner &&
+    isGenerationZeroPrincipal(loadCredentialStore().principals, owner),
+  );
 }
 
 /** Enrollment allows entering native RPCs; each requested execution target is checked separately. */

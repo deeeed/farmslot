@@ -70,10 +70,19 @@ export function assertNativeMachineAssignment(
 }
 
 /** Offline inventory comes from issued assignments; remembered hello data is not authority. */
+/** Native execution ownership is id-only, so a replacement at a reused id never holds it. */
+export function isGenerationZeroPrincipal(
+  principals: readonly Principal[],
+  principalId: string,
+): boolean {
+  return (principals.find((principal) => principal.id === principalId)?.generation ?? 0) === 0;
+}
+
 export function nativeOwnerAssignedMachines(
   principals: readonly Principal[],
   owner: string,
 ): Set<string> {
+  if (!isGenerationZeroPrincipal(principals, owner)) return new Set();
   return new Set(
     principals.flatMap((principal) =>
       principal.subject.type === 'node' && principal.subject.nativeOwnerPrincipalId === owner
