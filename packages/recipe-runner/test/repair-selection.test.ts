@@ -10,11 +10,14 @@ import {
   type RecipeClaimDeclaration,
   recipeRepairId,
   type RecipeRepairScope,
+  recipeRepairScopeDigest,
   recordedEvidenceClosureIdentity,
+  type RecordedEvidencePackageInput,
 } from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { createRecipeRunner } from '../src/core/runner.js';
+import { groupRecipeCaptureComparisons } from '../src/evidence/capture-comparisons.js';
 import {
   deriveReviewedRecipeClaims,
   recordedClaimSources,
@@ -315,5 +318,98 @@ test('a repair refuses partial runs, changed registration, absent or changed sou
   await assert.rejects(
     runner.run({ ...base, artifactsDir: attempt('changed'), repairScope: { scope, sourceRoots } }),
     /invalid|no longer matches/u,
+  );
+});
+
+test('retained captures keep their recorded head and prove only their retained claims', async (t) => {
+  const { recipeRunId, scope } = await originalFixture(t);
+  const head = 'e'.repeat(40);
+  const after = (runId: string, ac: string, sourceCommit: string) => ({
+    path: `stills/${runId}-${ac}.png`,
+    type: 'screenshot',
+    capture: {
+      recipeRunId: runId,
+      nodeId: 'shot',
+      traceIndex: 1,
+      ac,
+      role: 'after',
+      sourceCommit,
+      sourceDirty: false,
+    },
+  });
+  const ledger = (runId: string) => ({
+    schemaVersion: 2 as const,
+    recipeRunId: runId,
+    criteria: [],
+    recording: { status: 'not-required' as const, segments: [] },
+  });
+  const original: RecordedEvidencePackageInput = {
+    summary: { recipeRunId },
+    manifest: {
+      artifacts: [
+        after(recipeRunId, 'AC-1', scope.packageHeadSha),
+        after(recipeRunId, 'AC-2', scope.packageHeadSha),
+      ],
+    },
+    claims: ledger(recipeRunId),
+    artifactDigests: {},
+    timelines: {},
+  };
+  const repaired: RecordedEvidencePackageInput = {
+    summary: { recipeRunId: 'fresh' },
+    manifest: { artifacts: [after('fresh', 'AC-2', head)] },
+    claims: ledger('fresh'),
+    artifactDigests: {},
+    timelines: {},
+    comparisonDependencies: [
+      { artifactRoot: `comparison-dependencies/${recipeRunId}`, input: original },
+    ],
+    repair: {
+      scope,
+      selection: {
+        schemaVersion: 1,
+        repairId: scope.repairId,
+        scopeDigest: recipeRepairScopeDigest(scope),
+        recipeRunId: 'fresh',
+        claims: [
+          {
+            claimId: 'AC-1',
+            source: 'retained',
+            recipeRunId,
+            closureIdentity: scope.sources[0]!.closureIdentity,
+          },
+          { claimId: 'AC-2', source: 'fresh' },
+          {
+            claimId: 'AC-3',
+            source: 'retained',
+            recipeRunId,
+            closureIdentity: scope.sources[0]!.closureIdentity,
+          },
+        ],
+      },
+    },
+  };
+  const snapshot = { baseSha: scope.reviewBaseSha, headSha: head };
+  const grouped = groupRecipeCaptureComparisons(repaired, claims, snapshot);
+  const rows = (id: string) =>
+    grouped.rows
+      .find((row) => row.id === id)!
+      .after.map(({ path: file, eligible, reasonCode }) => [file, eligible, reasonCode]);
+  // AC-1 keeps the original's capture at the head it was recorded; the repair commit does not stale it.
+  assert.deepEqual(rows('AC-1'), [
+    [`comparison-dependencies/${recipeRunId}/stills/${recipeRunId}-AC-1.png`, true, undefined],
+  ]);
+  // The rejected AC-2 is proven only by the fresh capture at the current head.
+  assert.deepEqual(rows('AC-2'), [['stills/fresh-AC-2.png', true, undefined]]);
+  assert.deepEqual(
+    grouped.unassigned.map(({ path: file }) => file),
+    [`comparison-dependencies/${recipeRunId}/stills/${recipeRunId}-AC-2.png`],
+  );
+  // Without the repair binding, the same retained capture is stale against the current head.
+  const { repair: _repair, ...unbound } = repaired;
+  assert.equal(
+    groupRecipeCaptureComparisons(unbound, claims, snapshot).rows.find((row) => row.id === 'AC-1')!
+      .after[0]!.reasonCode,
+    'comparison-source-mismatch',
   );
 });
