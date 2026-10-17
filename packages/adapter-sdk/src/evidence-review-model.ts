@@ -47,6 +47,7 @@ import {
   planRecipeEvidence,
   proofDocument,
   recordedClaimSources,
+  recordedSourceAuthority,
   selectedRecipeClaims,
   validateRecordedEvidencePackage,
 } from '@farmslot/recipe-runner/evidence';
@@ -179,6 +180,13 @@ export interface EvidenceReviewOccurrence {
   /** Authored checked expectation from the retained input closure, not a fabricated result. */
   expectation?: Readonly<Record<string, unknown>>;
   artifacts: readonly EvidenceReviewArtifact[];
+}
+
+/** One recorded execution's clip inputs: the fresh package or a retained original. */
+interface ClipSource {
+  segments: readonly RecordingSegmentRef[];
+  timelines: ReadonlyMap<string, RecipeRecordingTimelineDocument>;
+  recipeRunId?: string;
 }
 
 /** A virtual view of original media. Creating it performs no media I/O. */
@@ -391,23 +399,12 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     packageClaims && pkg && errors.length === 0
       ? selectedRecipeClaims(pkg)
       : packageClaims?.criteria;
-  // Retained claims inherit an authority only when it vouches for this exact package.
   const sourceAuthority = <T extends { recipeRunId: string; closureIdentity: string }>(
     authority: T | undefined,
     claimId: string,
   ): T | undefined => {
     const retained = retainedSources.get(normalizeRecipeClaimId(claimId));
-    if (!retained) return authority;
-    return authority &&
-      pkg &&
-      authority.recipeRunId === packageClaims?.recipeRunId &&
-      authority.closureIdentity === recordedEvidenceClosureIdentity(pkg)
-      ? {
-          ...authority,
-          recipeRunId: retained.input.claims!.recipeRunId,
-          closureIdentity: recordedEvidenceClosureIdentity(retained.input),
-        }
-      : undefined;
+    return retained && pkg ? recordedSourceAuthority(pkg, retained.input, authority) : authority;
   };
   const ledger = packageClaims
     ? {
@@ -715,59 +712,64 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     endMs: Math.min(timeline.durationMs, last.endRangeMs[1] + EVIDENCE_PADDING_MS),
     caption,
   });
-  const clipsFor = (traceIndex: number): EvidenceReviewClip[] => {
-    if (errors.length) return [];
-    const coverage = occurrenceRecordingCoverage(traceIndex, segments, timelines);
+  // One clip derivation for the fresh execution and each retained original.
+  const clipsFrom = (
+    source: ClipSource,
+    traceIndex: number,
+    caption: (marker: RecipeRecordingMarker) => string,
+  ): EvidenceReviewClip[] => {
+    const coverage = occurrenceRecordingCoverage(traceIndex, source.segments, source.timelines);
     if (coverage.timing !== 'measured') return [];
     return coverage.segments.map((segment) => {
-      const timeline = timelines.get(segment.videoPath)!;
-      const marker = timeline.markers.find((marker) => marker.traceIndex === traceIndex)!;
+      const timeline = source.timelines.get(segment.videoPath)!;
+      const marker = timeline.markers.find((entry) => entry.traceIndex === traceIndex)!;
       return {
-        ...clipForSpan(
-          timeline,
-          marker,
-          marker,
-          byOccurrence.get(traceIndex)?.intent ?? marker.nodeId,
-          segment.videoDigest,
-        ),
-        ...(recipeRunId
-          ? { moment: { recipeRunId, videoDigest: segment.videoDigest, traceIndex } }
+        ...clipForSpan(timeline, marker, marker, caption(marker), segment.videoDigest),
+        ...(source.recipeRunId
+          ? {
+              moment: {
+                recipeRunId: source.recipeRunId,
+                videoDigest: segment.videoDigest,
+                traceIndex,
+              },
+            }
           : {}),
       };
     });
   };
-  const retainedClipsFor = (claimId: string, traceIndex: number): EvidenceReviewClip[] => {
-    const retained = retainedSources.get(claimId)!;
-    const sourceTimelines = new Map(
-      Object.values(retained.input.timelines).map((timeline) => [
-        `${retained.prefix}${timeline.videoPath}`,
-        { ...timeline, videoPath: `${retained.prefix}${timeline.videoPath}` },
-      ]),
-    );
-    const sourceSegments = (retained.input.claims?.recording.segments ?? []).map((segment) => ({
-      ...segment,
-      videoPath: `${retained.prefix}${segment.videoPath}`,
-    }));
-    const coverage = occurrenceRecordingCoverage(traceIndex, sourceSegments, sourceTimelines);
-    if (coverage.timing !== 'measured') return [];
-    return coverage.segments.map((segment) => {
-      const timeline = sourceTimelines.get(segment.videoPath)!;
-      const marker = timeline.markers.find((entry) => entry.traceIndex === traceIndex)!;
-      return {
-        ...clipForSpan(timeline, marker, marker, marker.nodeId, segment.videoDigest),
-        moment: {
-          recipeRunId: retained.input.claims!.recipeRunId,
-          videoDigest: segment.videoDigest,
+  const clipsFor = (traceIndex: number): EvidenceReviewClip[] =>
+    errors.length
+      ? []
+      : clipsFrom(
+          { segments, timelines, ...(recipeRunId ? { recipeRunId } : {}) },
           traceIndex,
-        },
-      };
-    });
-  };
+          (marker) => byOccurrence.get(traceIndex)?.intent ?? marker.nodeId,
+        );
+  const retainedClipSources = new Map(
+    [...retainedSources].map(([claimId, retained]): [string, ClipSource] => [
+      claimId,
+      {
+        timelines: new Map(
+          Object.values(retained.input.timelines).map((timeline) => [
+            `${retained.prefix}${timeline.videoPath}`,
+            { ...timeline, videoPath: `${retained.prefix}${timeline.videoPath}` },
+          ]),
+        ),
+        segments: (retained.input.claims?.recording.segments ?? []).map((segment) => ({
+          ...segment,
+          videoPath: `${retained.prefix}${segment.videoPath}`,
+        })),
+        recipeRunId: retained.input.claims!.recipeRunId,
+      },
+    ]),
+  );
   // Long recordings may list every original in the retained ledger. Present
   // only this claim's measured originals; the full file inventory stays browsable.
   for (const claim of claims) {
     const claimClips = (traceIndex: number) =>
-      retainedSources.has(claim.id) ? retainedClipsFor(claim.id, traceIndex) : clipsFor(traceIndex);
+      retainedClipSources.has(claim.id)
+        ? clipsFrom(retainedClipSources.get(claim.id)!, traceIndex, (marker) => marker.nodeId)
+        : clipsFor(traceIndex);
     claim.clips = [...new Set(claim.moments.map((moment) => moment.traceIndex))]
       .flatMap(claimClips)
       .filter((clip) =>

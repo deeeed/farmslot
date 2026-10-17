@@ -8,6 +8,7 @@ export type { RecordedClaimSource } from './package.js';
 export {
   deriveReviewedRecipeClaims,
   recordedClaimSources,
+  recordedSourceAuthority,
   selectedRecipeClaims,
   validateRecordedEvidencePackage,
 } from './package.js';
