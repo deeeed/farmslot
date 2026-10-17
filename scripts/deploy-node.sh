@@ -148,23 +148,15 @@ resolve_farmslot_deps() {
   resolver="$(mktemp "${TMPDIR:-/tmp}/deploy-node-resolve-XXXXXX.mjs")"
   trap 'rm -f "$resolver"' RETURN
   cat > "$resolver" <<'RESOLVER'
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const [, , repoRoot] = process.argv;
-const packagesDir = path.join(repoRoot, 'packages');
+const [, , repoRoot, builder] = process.argv;
 const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
-
-const dirByName = new Map();
-for (const entry of readdirSync(packagesDir, { withFileTypes: true })) {
-  if (!entry.isDirectory()) continue;
-  try {
-    const pkg = readJson(path.join(packagesDir, entry.name, 'package.json'));
-    dirByName.set(pkg.name, entry.name);
-  } catch {
-    // not a package directory
-  }
-}
+// The same name -> package map the dist builds use.
+const { workspacePackages } = await import(pathToFileURL(builder).href);
+const workspaces = workspacePackages(repoRoot);
 
 const nodePkg = readJson(path.join(repoRoot, 'services/node/package.json'));
 const queue = Object.keys(nodePkg.dependencies ?? {}).filter((name) =>
@@ -174,11 +166,10 @@ const seen = new Set();
 while (queue.length > 0) {
   const name = queue.shift();
   if (seen.has(name)) continue;
-  const dir = dirByName.get(name);
-  if (!dir) throw new Error(`deploy-node: unresolved workspace package ${name}`);
+  const workspace = workspaces.get(name);
+  if (!workspace) throw new Error(`deploy-node: unresolved workspace package ${name}`);
   seen.add(name);
-  const pkg = readJson(path.join(packagesDir, dir, 'package.json'));
-  for (const dep of Object.keys(pkg.dependencies ?? {})) {
+  for (const dep of Object.keys(workspace.pkg.dependencies ?? {})) {
     if (dep.startsWith('@farmslot/') && !seen.has(dep)) queue.push(dep);
   }
 }
@@ -190,8 +181,7 @@ while (queue.length > 0) {
 // though the workspace resolves fine locally via tsx path aliasing — both ship
 // broken, so every dist-shipping package builds on every deploy.
 for (const name of seen) {
-  const dir = dirByName.get(name);
-  const pkg = readJson(path.join(packagesDir, dir, 'package.json'));
+  const { dir, pkg } = workspaces.get(name);
   const hasBuildScript = Boolean(pkg.scripts?.build);
   const mainIsDist = typeof pkg.main === 'string' && pkg.main.startsWith('dist/');
   const exportsIsDist = pkg.exports ? JSON.stringify(pkg.exports).includes('"dist/') : false;
@@ -200,10 +190,10 @@ for (const name of seen) {
   // it produces exactly the node/gateway version mismatch this script exists
   // to prevent. Builds are incremental, so the always-build cost is seconds.
   const needsBuild = hasBuildScript && (mainIsDist || exportsIsDist);
-  process.stdout.write(`${name}\t${dir}\t${needsBuild ? '1' : '0'}\n`);
+  process.stdout.write(`${name}\t${path.basename(dir)}\t${needsBuild ? '1' : '0'}\n`);
 }
 RESOLVER
-  node "$resolver" "$REPO_ROOT"
+  node "$resolver" "$REPO_ROOT" "$SCRIPT_DIR/build-dist-atomic.mjs"
 }
 
 FARMSLOT_DEPS="$(resolve_farmslot_deps)"

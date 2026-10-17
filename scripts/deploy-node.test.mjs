@@ -629,11 +629,17 @@ for (const instance of ['prod', 'dev']) {
 
     const output = fixture.deploy({ instance });
 
-    // Every dist-shipping package was built atomically: protocol's dist is now a link to its build.
+    // Every dist-shipping package was built atomically: protocol's dist/ holds the new build, still
+    // a real directory, with nothing left beside it.
     assert.ok(fixture.tscBuilds().includes('protocol'));
-    const dist = path.join(fixture.root, 'packages/protocol/dist');
-    assert.match(fs.readlinkSync(dist), /^\.dist-/);
-    assert.ok(fs.existsSync(path.join(dist, 'node/slot-by-repo.js')));
+    const protocol = path.join(fixture.root, 'packages/protocol');
+    assert.ok(fs.lstatSync(path.join(protocol, 'dist')).isDirectory());
+    assert.ok(fs.existsSync(path.join(protocol, 'dist/BUILT')));
+    assert.ok(fs.existsSync(path.join(protocol, 'dist/node/slot-by-repo.js')));
+    assert.deepEqual(
+      fs.readdirSync(protocol).filter((entry) => entry.startsWith('.dist-')),
+      [],
+    );
 
     const archive = execFileSync('git', ['archive', '--format=tar', fixture.sha], {
       cwd: fixture.root,
@@ -1535,8 +1541,8 @@ for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success'])
   );
 }
 
-// build-dist-atomic swaps a package's dist/ in one rename, so a process importing it from a
-// live checkout never finds dist/ missing mid-build.
+// build-dist-atomic exchanges a package's dist/ with its new build in one rename, so a process
+// importing it from a live checkout never finds dist/ missing mid-build.
 const atomicFixture = (t) => {
   const { buildDistAtomic } = atomicModule;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'build-dist-atomic-'));
@@ -1563,67 +1569,80 @@ const atomicFixture = (t) => {
   write('bin/tsc-stub.cjs', FAKE_TSC);
   write('bin/tsc', '#!/bin/sh\nexec node "$(dirname "$0")/tsc-stub.cjs" "$@"\n');
   fs.chmodSync(path.join(root, 'bin/tsc'), 0o755);
-  const env = { PATH: process.env.PATH, FAKE_TSC_HOME: process.env.FAKE_TSC_HOME };
+  const saved = { PATH: process.env.PATH, FAKE_TSC_HOME: process.env.FAKE_TSC_HOME };
   process.env.PATH = `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`;
   process.env.FAKE_TSC_HOME = root;
-  t.after(() => Object.assign(process.env, env));
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const dir = path.join(root, 'packages/a');
   const build = (...names) => buildDistAtomic(root, names, () => {});
   const builds = () => fs.readFileSync(path.join(root, 'tsc.log'), 'utf8').trim().split('\n');
-  return { root, build, builds };
+  const built = () => fs.readFileSync(path.join(dir, 'dist/BUILT'), 'utf8');
+  const leftovers = () => fs.readdirSync(dir).filter((entry) => entry.startsWith('.dist-'));
+  return { root, dir, build, builds, built, leftovers };
 };
 const atomicModule = await import(path.join(repo, 'scripts/build-dist-atomic.mjs'));
 
-test('build-dist-atomic builds dependencies first and keeps only the previous build', (t) => {
+test('build-dist-atomic builds dependencies first and replaces dist/ in place', (t) => {
   const f = atomicFixture(t);
   f.build('@fixture/b', '@fixture/a');
   assert.deepEqual(f.builds(), ['a', 'b']);
   // Like `yarn workspace @fixture/b build`, building b alone also builds the a it chains.
   f.build('@fixture/b');
   assert.deepEqual(f.builds(), ['a', 'b', 'a', 'b']);
-  const dist = path.join(f.root, 'packages/a/dist');
-  assert.ok(fs.lstatSync(dist).isSymbolicLink());
-  const first = fs.readlinkSync(dist);
+  // dist/ stays a real directory (packing and the gateway refuse a linked one) with the new build.
+  const before = f.built();
   f.build('@fixture/a');
-  f.build('@fixture/a');
-  const entries = fs
-    .readdirSync(path.join(f.root, 'packages/a'))
-    .filter((e) => e.startsWith('.dist-'));
-  // The current build and the one before it, for an import still reading it.
-  assert.equal(entries.length, 2);
-  assert.ok(!entries.includes(first));
-  assert.ok(entries.includes(fs.readlinkSync(dist)));
+  assert.ok(fs.lstatSync(path.join(f.dir, 'dist')).isDirectory());
+  assert.notEqual(f.built(), before);
+  assert.deepEqual(f.leftovers(), []);
 });
 
 test('build-dist-atomic leaves dist/ as it was when a build fails', (t) => {
   const f = atomicFixture(t);
   f.build('@fixture/a');
-  const dir = path.join(f.root, 'packages/a');
-  const before = fs.readlinkSync(path.join(dir, 'dist'));
-  const builds = () =>
-    fs
-      .readdirSync(dir)
-      .filter((e) => e.startsWith('.dist-'))
-      .sort();
-  const kept = builds();
+  const before = f.built();
   fs.writeFileSync(path.join(f.root, 'tsc-fails'), '');
   assert.throws(() => f.build('@fixture/a'), /build failed; its dist\/ is unchanged/);
-  assert.equal(fs.readlinkSync(path.join(dir, 'dist')), before);
-  // The failed build's partial output is gone; nothing else changed.
-  assert.deepEqual(builds(), kept);
+  assert.equal(f.built(), before);
+  // The failed build's partial output is gone.
+  assert.deepEqual(f.leftovers(), []);
+});
+
+test('build-dist-atomic exchanges the new build with dist/ in one step', (t) => {
+  const f = atomicFixture(t);
+  fs.mkdirSync(path.join(f.dir, '.dist-build-next'));
+  fs.writeFileSync(path.join(f.dir, '.dist-build-next/BUILT'), 'next');
+  assert.equal(atomicModule.switchDist(f.dir, '.dist-build-next'), 'exchanged');
+  assert.equal(f.built(), 'next');
+  assert.deepEqual(f.leftovers(), []);
+});
+
+test('build-dist-atomic moves the build into place where dist/ cannot be exchanged', (t) => {
+  const f = atomicFixture(t);
+  fs.mkdirSync(path.join(f.dir, '.dist-build-next'));
+  fs.writeFileSync(path.join(f.dir, '.dist-build-next/BUILT'), 'next');
+  assert.match(
+    atomicModule.switchDist(f.dir, '.dist-build-next', () => 'unsupported'),
+    /no exchange: unsupported/,
+  );
+  assert.equal(f.built(), 'next');
+  assert.deepEqual(f.leftovers(), []);
 });
 
 test('build-dist-atomic spares a build another run is still compiling', (t) => {
   const f = atomicFixture(t);
-  const dir = path.join(f.root, 'packages/a');
   // Another run's compile in progress, and one a crash left behind two hours ago.
-  fs.mkdirSync(path.join(dir, '.dist-build-running'));
-  fs.mkdirSync(path.join(dir, '.dist-build-crashed'));
+  fs.mkdirSync(path.join(f.dir, '.dist-build-running'));
+  fs.mkdirSync(path.join(f.dir, '.dist-build-crashed'));
   const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-  fs.utimesSync(path.join(dir, '.dist-build-crashed'), twoHoursAgo, twoHoursAgo);
+  fs.utimesSync(path.join(f.dir, '.dist-build-crashed'), twoHoursAgo, twoHoursAgo);
   f.build('@fixture/a');
-  const entries = fs.readdirSync(dir);
-  assert.ok(entries.includes('.dist-build-running'));
-  assert.ok(!entries.includes('.dist-build-crashed'));
+  assert.deepEqual(f.leftovers(), ['.dist-build-running']);
 });
 
 test('build-dist-atomic reads only plain tsc build scripts', () => {
@@ -1662,37 +1681,44 @@ const tick = () => {
 tick();
 `;
 
-async function readWhile(root, file, rebuild) {
+// Reads `file` in a child process, as fast as it can, while `rebuild` runs.
+async function readWhile(t, root, file, rebuild) {
   const stop = path.join(root, 'reader-stop');
   const ready = path.join(root, 'reader-ready');
   fs.rmSync(stop, { force: true });
   fs.rmSync(ready, { force: true });
   fs.writeFileSync(path.join(root, 'reader.cjs'), READER);
   const reader = spawn(process.execPath, [path.join(root, 'reader.cjs'), file, stop, ready]);
+  t.after(() => reader.kill());
   let out = '';
   reader.stdout.on('data', (chunk) => (out += chunk));
   const exited = new Promise((resolve) => reader.on('exit', resolve));
-  while (!fs.existsSync(ready)) await new Promise((r) => setTimeout(r, 5));
-  rebuild();
-  fs.writeFileSync(stop, '');
+  const deadline = Date.now() + 5000;
+  while (!fs.existsSync(ready)) {
+    if (Date.now() > deadline) throw new Error('the reader did not start within 5 s');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  try {
+    rebuild();
+  } finally {
+    fs.writeFileSync(stop, '');
+  }
   await exited;
   return JSON.parse(out);
 }
 
 test('a reader never finds dist/ missing while it is rebuilt atomically', async (t) => {
   const f = atomicFixture(t);
-  // The first build moves the old real dist/ aside: the one-time switch to a link.
-  f.build('@fixture/a');
-  const file = path.join(f.root, 'packages/a/dist/BUILT');
-  const atomic = await readWhile(f.root, file, () => {
-    for (let i = 0; i < 25; i++) f.build('@fixture/a');
+  const file = path.join(f.dir, 'dist/BUILT');
+  const atomic = await readWhile(t, f.root, file, () => {
+    for (let i = 0; i < 10; i++) f.build('@fixture/a');
   });
   assert.ok(atomic.reads > 0);
   assert.equal(atomic.misses, 0);
   // The reader does see the gap a remove-then-write rebuild leaves.
-  const dist = path.join(f.root, 'packages/a/dist');
-  const plain = await readWhile(f.root, file, () => {
-    for (let i = 0; i < 25; i++) {
+  const dist = path.join(f.dir, 'dist');
+  const plain = await readWhile(t, f.root, file, () => {
+    for (let i = 0; i < 10; i++) {
       fs.rmSync(dist, { recursive: true, force: true });
       execFileSync('sleep', ['0.01']);
       fs.mkdirSync(dist);

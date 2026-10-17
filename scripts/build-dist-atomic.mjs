@@ -1,17 +1,20 @@
 #!/usr/bin/env node
 // build-dist-atomic: rebuild workspace packages' dist/ in a live checkout without a moment where
-// dist/ is missing. A package's own build script removes dist/ before tsc writes it again, so a
-// process importing the package mid-build fails with ERR_MODULE_NOT_FOUND. Here each package
-// compiles into a fresh sibling `.dist-<stamp>/`, and `dist` is switched to it by renaming a new
-// symlink over the old one: rename(2) replaces it in one step. Node resolves a module graph
-// through its real path, so an import in flight stays on the build it started with. A package
-// whose dist/ is still a real directory has it moved aside once, the only momentary gap.
+// dist/ is missing. A plain build removes dist/ (or writes into it) while tsc runs, so a process
+// importing the package mid-build fails with ERR_MODULE_NOT_FOUND. Here each package compiles into
+// a sibling `.dist-build-<stamp>/`, which is then exchanged with dist/ in one rename (renamex_np
+// RENAME_SWAP on macOS, renameat2 RENAME_EXCHANGE on Linux), and the previous build is removed.
+// dist/ stays a real directory, so whatever reads or packs it sees no difference. Where the
+// exchange is unavailable, dist/ is moved aside and the new build renamed in: a gap of two renames
+// instead of a whole build. A process loading the package exactly at the switch can still pair a
+// module of the old build with one of the new, as it could before.
 //
 // Usage: node scripts/build-dist-atomic.mjs <repoRoot> <@farmslot/package>...
 // Does what `yarn workspace <package> build` does for each named package, atomically: it also
 // builds the packages a build script chains (`yarn workspace <dep> build && ...`), each package
 // once and after the packages it depends on. A build script that is not only chained builds, an
-// optional dist/ removal and a final `tsc --project <file>` falls back to its own (non-atomic) build.
+// optional dist/ removal and a final `tsc --project <file>` falls back to its own (non-atomic)
+// build. The tsconfig must emit to dist/, as every package's does.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,14 +23,18 @@ import { fileURLToPath } from 'node:url';
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 let builds = 0;
 
-function workspacePackages(repoRoot) {
+/** Workspace packages by name, as { dir, pkg }. A directory without a readable package.json is not one. */
+export function workspacePackages(repoRoot) {
   const byName = new Map();
   const packagesDir = path.join(repoRoot, 'packages');
   for (const entry of fs.readdirSync(packagesDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const file = path.join(packagesDir, entry.name, 'package.json');
-    if (!fs.existsSync(file)) continue;
-    const pkg = readJson(file);
+    let pkg;
+    try {
+      pkg = readJson(path.join(packagesDir, entry.name, 'package.json'));
+    } catch {
+      continue;
+    }
     byName.set(pkg.name, { dir: path.join(packagesDir, entry.name), pkg });
   }
   return byName;
@@ -76,33 +83,54 @@ function tscBinary(repoRoot) {
   return fs.existsSync(local) ? local : 'tsc';
 }
 
-// Another build of the same package may be compiling (`.dist-build-*`) or switching (`.dist-link-*`)
-// right now; those are only removed once a crash has clearly left them behind.
-const IN_PROGRESS = ['.dist-build-', '.dist-link-'];
-const STALE_IN_PROGRESS_MS = 60 * 60 * 1000;
+// Node has no binding for an atomic exchange of two paths, so it goes through libc.
+const EXCHANGE = `import ctypes, os, sys
+libc = ctypes.CDLL(None, use_errno=True)
+a, b = (os.fsencode(p) for p in sys.argv[1:3])
+if sys.platform == 'darwin':
+    rc = libc.renamex_np(a, b, ctypes.c_uint(2))  # RENAME_SWAP
+else:
+    rc = libc.renameat2(-100, a, -100, b, ctypes.c_uint(2))  # AT_FDCWD, RENAME_EXCHANGE
+sys.exit(0 if rc == 0 else os.strerror(ctypes.get_errno()))
+`;
 
-/** Point `dist` at `buildName` in one rename, then drop builds older than the previous one. */
-export function switchDist(packageDir, buildName, stamp) {
+/** Exchange two existing paths in one step; returns null, or why it could not. */
+export function exchangePaths(a, b) {
+  const result = spawnSync('python3', ['-I', '-c', EXCHANGE, a, b], { encoding: 'utf8' });
+  if (result.status === 0) return null;
+  return (result.error?.message ?? result.stderr.trim()) || `exit ${result.status}`;
+}
+
+/** Put `buildName` in place as dist/; returns how. */
+export function switchDist(packageDir, buildName, exchange = exchangePaths) {
   const dist = path.join(packageDir, 'dist');
-  const current = fs.lstatSync(dist, { throwIfNoEntry: false });
-  const keep = new Set([buildName]);
-  if (current?.isSymbolicLink()) keep.add(fs.readlinkSync(dist));
-  if (current?.isDirectory()) {
-    const legacy = `.dist-legacy-${stamp}`;
-    fs.renameSync(dist, path.join(packageDir, legacy));
-    keep.add(legacy);
+  const build = path.join(packageDir, buildName);
+  if (!fs.lstatSync(dist, { throwIfNoEntry: false })) {
+    fs.renameSync(build, dist);
+    return 'renamed into place';
   }
-  const link = path.join(packageDir, `.dist-link-${stamp}`);
-  fs.symlinkSync(buildName, link);
-  fs.renameSync(link, dist);
+  const why = exchange(build, dist);
+  if (!why) {
+    fs.rmSync(build, { recursive: true, force: true });
+    return 'exchanged';
+  }
+  const old = path.join(packageDir, buildName.replace('.dist-build-', '.dist-old-'));
+  fs.renameSync(dist, old);
+  fs.renameSync(build, dist);
+  fs.rmSync(old, { recursive: true, force: true });
+  return `moved into place (no exchange: ${why})`;
+}
+
+// Another run may be compiling the same package right now, so only builds a crash left behind
+// an hour ago are removed.
+const STALE_MS = 60 * 60 * 1000;
+function pruneStale(packageDir) {
   for (const entry of fs.readdirSync(packageDir)) {
-    if (!entry.startsWith('.dist-') || keep.has(entry)) continue;
+    if (!entry.startsWith('.dist-')) continue;
     const file = path.join(packageDir, entry);
-    if (IN_PROGRESS.some((prefix) => entry.startsWith(prefix))) {
-      const stat = fs.lstatSync(file, { throwIfNoEntry: false });
-      if (!stat || Date.now() - stat.mtimeMs < STALE_IN_PROGRESS_MS) continue;
-    }
-    fs.rmSync(file, { recursive: true, force: true });
+    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    if (stat && Date.now() - stat.mtimeMs >= STALE_MS)
+      fs.rmSync(file, { recursive: true, force: true });
   }
 }
 
@@ -120,24 +148,22 @@ export function buildDistAtomic(repoRoot, names, log = console.log) {
       if (result.status !== 0) throw new Error(`build-dist-atomic: ${name} build failed`);
       continue;
     }
-    const stamp = `${Date.now()}-${process.pid}-${builds++}`;
-    const building = `.dist-build-${stamp}`;
-    const buildName = `.dist-${stamp}`;
+    pruneStale(dir);
+    const buildName = `.dist-build-${Date.now()}-${process.pid}-${builds++}`;
     log(`[build-dist-atomic] building ${name} into ${buildName}...`);
     const result = spawnSync(
       tscBinary(repoRoot),
-      ['--project', plan.tsconfig, '--outDir', building],
+      ['--project', plan.tsconfig, '--outDir', buildName],
       {
         cwd: dir,
         stdio: 'inherit',
       },
     );
     if (result.status !== 0) {
-      fs.rmSync(path.join(dir, building), { recursive: true, force: true });
+      fs.rmSync(path.join(dir, buildName), { recursive: true, force: true });
       throw new Error(`build-dist-atomic: ${name} build failed; its dist/ is unchanged`);
     }
-    fs.renameSync(path.join(dir, building), path.join(dir, buildName));
-    switchDist(dir, buildName, stamp);
+    log(`[build-dist-atomic] ${name}: dist/ ${switchDist(dir, buildName)}`);
   }
 }
 
