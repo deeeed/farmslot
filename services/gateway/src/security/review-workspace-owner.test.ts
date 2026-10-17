@@ -8,6 +8,8 @@ import { CredentialStoreRuntime, CredentialStoreWriter } from '@farmslot/credent
 
 import { buildRunRecord } from '../runs/store.js';
 
+import { createGatewayAuthRuntime } from './auth.js';
+import { authorizeStoredRunEffect } from './authorization.js';
 import { nativeOwnerAssignedMachines } from './native-node.js';
 import { ownsLocalNativeProfile } from './native-owner.js';
 import {
@@ -18,6 +20,8 @@ import {
 } from './native-worker-owner.js';
 import {
   currentSessionPrincipal,
+  replacedWorkOriginator,
+  resolveWorkOriginator,
   runWithSessionOriginator,
   runWithSystemOriginator,
 } from './work-originator.js';
@@ -246,4 +250,34 @@ test('an admin person without native ownership delegates static review to the na
   runWithSessionOriginator(arthur, () =>
     assert.throws(() => resolveStaticReviewOwner('live'), /arthur is a replacement identity/),
   );
+});
+
+test('a queued delegated request fires only while its requester is still that admin', (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'delegated-requester-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const auth = createGatewayAuthRuntime({
+    FARMSLOT_HOME: home,
+    FARMSLOT_GATEWAY_AUTH_MODE: 'none',
+  });
+  const admin = [{ role: 'admin' as const, scope: { kind: 'global' as const } }];
+  const keeper = auth.writer.createPrincipal({ type: 'service', displayName: 'Keeper' }, admin);
+  auth.writer.issueCredential(keeper.id, 'keeper');
+  const person = { type: 'person' as const, displayName: 'Arthur' };
+  auth.writer.createPrincipal(person, admin, 'arthur');
+  auth.writer.retirePrincipals(['arthur']);
+  auth.writer.createPrincipal(person, admin, 'arthur', { reuseRetiredId: true });
+  const requester = { kind: 'principal' as const, principalId: 'arthur', principalGeneration: 1 };
+  const fire = () =>
+    authorizeStoredRunEffect(
+      resolveWorkOriginator(auth, requester),
+      'delegated review',
+      undefined,
+      replacedWorkOriginator(auth, requester),
+    );
+  assert.equal(fire().id, 'arthur');
+  auth.writer.revokeRole('arthur', 'admin', { kind: 'global' });
+  assert.throws(fire, /no longer has admin\/global authority/);
+  auth.writer.retirePrincipals(['arthur']);
+  auth.writer.createPrincipal(person, admin, 'arthur', { reuseRetiredId: true });
+  assert.throws(fire, /arthur has been replaced by a newer identity/);
 });

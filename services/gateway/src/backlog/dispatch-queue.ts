@@ -1294,9 +1294,11 @@ async function selectQueuedReviewWorkspace(
   claim: QueueClaim,
   choices?: PRExecutionChoice[],
 ): Promise<boolean> {
-  const owner = queueRecordOriginator(item.id);
-  if (owner?.kind !== 'principal')
+  const originator = queueRecordOriginator(item.id);
+  if (originator?.kind !== 'principal')
     throw new GatewayMethodError('AUTH_FORBIDDEN', 'Workspace review has no retained principal');
+  // A delegated review is placed for its stored native owner, never its requester.
+  const ownerId = item.delegatedOwnerPrincipalId ?? originator.principalId;
   const candidates = choices
     ? choices.filter(isPRWorkspaceExecutionChoice)
     : item.reviewWorkspaceTarget
@@ -1348,12 +1350,12 @@ async function selectQueuedReviewWorkspace(
               transport: choice.transport,
               nativeProfile: choice.nativeProfile,
             },
-            owner.principalId,
+            ownerId,
           ),
       );
       await assertReviewNativeRunnerHealthy(
         { ...choice, model: execution.model },
-        owner.principalId,
+        ownerId,
         admission.executionNodeId,
       );
       eligible = true;
