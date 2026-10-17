@@ -22,7 +22,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CredentialStoreRuntime } from '@farmslot/credential-store';
-import { isRecord } from '@farmslot/protocol';
+import {
+  buildRunDecisionActionRequest,
+  isRecord,
+  SEND_BACK_TO_AGENT_ACTION,
+} from '@farmslot/protocol';
 import type {
   NativeSessionReadResult,
   ReadyGatePayload,
@@ -498,22 +502,22 @@ try {
   assert.equal(unchanged.engineState?.publishGate?.visualRepairs, undefined);
   checks.push('client-supplied repair content is refused before admission and charges nothing');
 
-  // 4. Send back reserves one fix round and delivers through the retained loop.
+  // 4. Send back, built by the clients' shared request builder, reserves one fix round.
   const loopBefore = unchanged.engineState!.publishGate!.reviews!.at(-1)!;
-  const sent = await call<{ run: Run }>('run.resolveDecision', {
-    runId,
-    decisionId: sendGate.id,
-    actionId: 'send-feedback',
+  const sendBack = buildRunDecisionActionRequest({
+    runId: runId!,
+    decision: sendGate,
+    actionId: SEND_BACK_TO_AGENT_ACTION,
   });
+  const sent = await call<{ run: Run }>(sendBack.method, sendBack.params);
   const reserved = sent.run.engineState!.publishGate!.visualRepairs!;
   assert.equal(reserved.length, 1);
   assert.equal(reserved[0]!.reservedRetryCount, (loopBefore.retryCount ?? 0) + 1);
   writeJson(path.join(out, '4-reserved.json'), sent.run);
-  await assert.rejects(
-    call('run.resolveDecision', { runId, decisionId: sendGate.id, actionId: 'send-feedback' }),
-    /already resolved/u,
+  await assert.rejects(call(sendBack.method, sendBack.params), /already resolved/u);
+  checks.push(
+    'the client-built Send back persists one reservation; a duplicate resolve is refused',
   );
-  checks.push('Send back persists one reservation; a duplicate resolve is refused');
 
   // 5. The retained worker repairs only AC-2; the gate returns with retained AC-1.
   const returned = await waitFor(
