@@ -234,7 +234,8 @@ jobs:
               - '.yarnrc.yml'
               - 'packages/protocol/**'
               - 'services/node/**'
-            # The driver imports gateway runner code, agent-runtime storage and scripts/lib.
+            # The driver loads gateway runner code from source through the gateway tsconfig,
+            # which reaches most workspace packages, and runs the observability installer.
             model_transport:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
@@ -242,10 +243,11 @@ jobs:
               - '.yarnrc.yml'
               - '.agents/skills/cross-model-orchestrator/**'
               - '.agents/skills/tmux-model-driver/**'
-              - 'packages/agent-runtime/**'
-              - 'packages/protocol/**'
+              - 'apps/command-center/tsconfig.base.json'
+              - 'packages/**'
+              - 'scripts/install-runner-observability.mjs'
               - 'scripts/lib/**'
-              - 'services/gateway/src/**'
+              - 'services/gateway/**'
 
   repo:
     name: Repository quality guards
@@ -292,7 +294,8 @@ jobs:
     name: Model transport and orchestration tests
     needs: changes
     if: needs.changes.outputs.model_transport == 'true'
-    # A fixed image keeps the pinned tmux package below installable.
+    # A fixed image keeps the pinned tmux package below installable. The pin is the release
+    # build, so apt may downgrade the image's updates build; `tmux -V` is the real gate.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -320,8 +323,8 @@ jobs:
       # tmux fails the job here; no test is skipped for want of it.
       - name: Install pinned tmux
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends --allow-downgrades "tmux=${TMUX_PACKAGE_VERSION}"
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends --allow-downgrades "tmux=${TMUX_PACKAGE_VERSION}"
           tmux -V
           test "$(tmux -V)" = "${TMUX_REPORTED_VERSION}"
 
