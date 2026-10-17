@@ -1279,6 +1279,156 @@ identify the new precedence contract by kind. Frozen readers retain person-first
 ordering for those receipts. Legacy-only frozen captures keep their shipped
 stored-order interpretation. Policy qualification remains bound to the capture.
 
+## Rejected-criterion repair
+
+Status: Accepted, 2026-10-16, ADR-062 Amendment 10. The producer stays inactive
+until compatible readers are released.
+
+### Admission and delivery
+
+`send-feedback` MUST derive the repair from the frozen decision/package and the
+latest qualified rejected receipts. The client MUST NOT supply replacement AC
+text, evidence, receipt authority or a worker target. The scope MUST retain the
+run/generation, package hash, full task registration, rejected receipt IDs,
+ACs/reasons/files/moments with each rejected AC's original `proofMode`, original
+evidence sources and retained worker owner.
+Stale selection, missing rationale, ownership conflict, another active fix or
+exhausted existing fix/review budget MUST refuse before dispatch.
+The scope MUST name the retained review loop whose existing worker-fix budget
+is used; an unavailable loop is a refusal, not permission to create a counter.
+Every required reviewer MUST support the repair result schema, and remaining
+review admissions MUST cover the required re-reviews, before fix reservation.
+Use a v2-capable session, cold when the retained session has fixed v1 schema.
+`run.resolveDecision` MUST perform admission before consuming the decision; an
+engine-side race/refusal MUST retain or recreate the held gate, not fail the run.
+A registration with nested criteria (`parentId`) or without a task registration
+MUST refuse; claim selection repairs flat task criteria only. Clients receive
+the action only while admission can succeed, and `selectionData` MUST be empty.
+
+The gateway MUST persist one repair identity, budget reservation and delivery
+state before calling the existing self-review `sendFeedbackToWorker` path. The
+identity MUST include the package and sorted rejection receipt IDs. Retry MUST
+reuse that identity, reservation and retained turn. Delivery uses the existing
+structured acceptance and uncertain-delivery recovery; artifact creation or
+terminal text MUST NOT establish acceptance. No second sender or retry counter
+is permitted. An unaccepted reservation MUST remain recoverable and MUST NOT
+make its capacity available to a concurrent request.
+The reservation is the persisted increment of the named review's `retryCount`;
+the existing retry loop MUST consume it without another increment. Undeliverable
+reservations stay charged and recoverable through the same repair or normal run
+cancellation. An accepted turn MUST NOT be refunded.
+The run-store record moves from `reserved` to `delivered` on structured
+acceptance and to `completed` when the retained loop returns; an undelivered
+record keeps its reason for the re-presented gate.
+
+### Scoped recording and retained claims
+
+The gateway-owned scope is `RecipeRepairScope` in `@farmslot/protocol`, retained
+as `artifacts/visual-repair-scope.json`. The normal hosted task recipe wrapper
+passes its checked contents through `RecipeRunRequest.repairScope` in
+`@farmslot/recipe-runner`. The authoritative digest and active repair identity
+MUST remain in the run store. File presence alone MUST NOT activate a scope;
+completed/refused scopes MUST be retired and ignored by normal recipe runs.
+The scope names its task-relative repair recipe (`recipes/<repairId>.json`); the
+wrapper activates repair only when its recipe argument resolves to that file.
+
+The worker MUST author a complete, self-contained repair recipe using the normal
+recipe/library composition model. It is a separate task-owned file passed through
+the hosted task recipe wrapper's existing recipe argument; the main task recipe
+MUST remain unchanged. A repair recipe file without the active run-store scope
+MUST NOT activate repair. It MUST explicitly establish its prerequisites
+and run from its own `workflow.entry` through normal teardown. It MUST NOT skip
+nodes from the original graph, use `stopAfterNode`, introduce per-AC setup fields
+or relax normal partial-run refusal. The full task registry remains in the fresh
+invocation; unexecuted sibling claims remain `missing` there. Only the checked
+source selection below may supply their retained proof.
+
+Every executed assertion MUST retain its normal effect, including setup and
+incidental sibling checks. The whole fresh attempt MUST pass the existing
+failure-to-status rules. A fresh `failed` or `weak` claim MUST select fresh proof
+and block; retained proof MUST NOT hide it. A non-rejected AC may select retained
+proof only if the fresh graph did not execute its proof nodes, or its fresh
+verdict is `proven`/`awaiting-review`. Rejected ACs always require fresh proof.
+The engine rule is narrower than this bound: any non-`missing` fresh verdict
+selects fresh proof, so only unexecuted non-rejected ACs keep retained proof.
+A rejected AC's fresh claim MUST keep the scope's frozen `proofMode`; `state`
+proof MUST NOT clear a `visual` or `mixed` Issue.
+
+The existing engine closure-retention/finalization utilities MUST retain each
+referenced original package and write `repair-selection.json` as engine-owned
+publication evidence. `RecipeRepairSelection`, owned by Protocol, binds the
+scope digest, fresh execution and exactly one source per registered AC. A fresh
+claim MUST come from the new attempt; a retained claim MUST name its immutable
+original execution and checked closure. Rejected ACs MUST select fresh proof.
+Missing/duplicate/foreign claims, changed text, invalid media, altered closures
+or an unmatched gateway scope MUST fail validation. The attempt manifest MUST
+include the selection and all dependency bytes consumed by its reader.
+
+Canonical package validation MUST validate each source with its own invocation,
+recorded source revision and receipt authority. Retained source heads MUST NOT
+be rewritten to the repair head; only the fresh attempt binds the current review
+head. A retained source MUST supply its own fresh claim, never one it retained. The shared reader MUST select claims according
+to the engine selection before the existing claim reducer and UI projection;
+there is no fabricated combined execution or client ledger writer.
+
+An independent native review of the actual old-head/new-head repair diff MUST
+explicitly classify each retained AC as unaffected. The typed applicability
+result MUST bind current head, scope digest, AC ID, original source closure and
+rationale to the admitted review command. Missing or affected claims require
+fresh proof and block return to a publishable gate. For each retained source,
+the diff starts at that source's recorded revision, even across several repairs.
+The new head MUST descend from the scope's frozen package head with the same
+review base; a different ancestry/base requires a new operator-approved scope.
+Old confirmed receipts
+remain valid only for their original qualifying source; this applicability
+result MUST NOT restamp, replace or override any person's Issue.
+
+### Gate return, learning and conformance
+
+The same run MUST remain non-publishable during delivery, repair, proof and
+review. Its normal complete/refresh path returns to the gate only with current
+CI and required current-head PASS results, a valid full selection and no Issue.
+Both clients MUST use the existing shared action/list model and show progress
+or recovery at the triggering action. No automatic approval is permitted.
+
+Every reason MUST remain bound to its source receipt and repair ID in retained
+feedback and the existing retrospective `feedbackCandidates` input, using a
+stable receipt/repair source key. Protocol adds a receipt/repair variant to the
+existing `FeedbackCandidate` type carrying run, receipt, repair and AC identity
+and the original reason; it MUST be produced even when no PR exists and MUST NOT
+be presented as GitHub feedback. Compatible readers ship before its writer.
+Learning adoption and recipe-library publication retain their existing authority.
+
+Conformance MUST cover one rejected AC with a retained confirmed sibling,
+current-head applicability refusal, changed/foreign source refusal, no omitted
+required check, fresh sibling failure that retained proof cannot hide, complete
+repair-graph execution, duplicate and uncertain delivery, exhausted budgets, restart
+recovery, learning retention and gate refresh. Live proof MUST use a disposable
+retained worker through the production delivery path, with no publication.
+
+### Public surface and release
+
+The existing `run.resolveDecision` and CLI `send-feedback` action are the only
+operator entry points. Protocol owns `RecipeRepairScope`,
+`RecipeRepairSelection` and a versioned native applicability-result schema;
+gateway recovery and recipe-runner are their consumers. The native adapter MUST
+advertise that result capability before the gateway admits its review. SDK and
+review-dispatch consume the canonical selected sources for both clients.
+`capturePipelineVisualInput` and pipeline receipt stamping MUST consume that
+per-source selection, replacing their single-source/package-head assumptions
+only for an authorised repair; ordinary v1 review binding is unchanged.
+`PipelineRepairVisualJudgments` uses `pipeline-visual-judgments-v2`: current
+`headSha`, `scopeDigest`, per-source existing visual-judgment results, and retained
+rows containing `claimId`, original `recipeRunId`/`closureIdentity`, `unaffected`
+and `reason`. Every required independent reviewer MUST agree on applicability.
+This is the structured result of the normal admitted review, not another review
+admission or a task-file assertion.
+Harnesses consume `RecipeRunRequest.repairScope` through their existing hosted
+recipe wrapper. No manual manifest/pointer writer or separate proof command is
+added. Publish and qualify compatible Protocol/runtime/runner/SDK/provider
+versions before activating this producer; existing v1 review results retain
+their current meaning and cannot supply repair applicability.
+
 ## Inherited acceptance for PR completion
 
 Status: Accepted, 2026-10-16, ADR-062 Amendment 12.

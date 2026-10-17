@@ -38,17 +38,20 @@ import type {
   WorkGraphUpdatedPayload,
 } from '@farmslot/protocol';
 import {
+  ACTIVE_RUN_LIST_LIMIT,
   buildRunFamilyReadinessSummaries,
   buildRunProjectAnalyticsSummaries,
   DEFAULT_BRANCH,
   Events,
   isTerminalRunStatus,
+  mergeRunsById,
   Methods,
 } from '@farmslot/protocol';
 
 import { notify as browserNotify } from './utils/notifications.js';
 import { safeLsGet, safeLsRemove } from './utils/storage.js';
 import { type ConnectionState, gateway } from './gateway-client.js';
+import { startSourceChangeFeed } from './source-change-feed.js';
 import {
   filtersHash,
   type GlobalFilters,
@@ -787,6 +790,8 @@ export function initState(): void {
     }
   });
 
+  startSourceChangeFeed();
+
   // Fleet events
   gateway.subscribe<FleetUpdatedPayload>(Events.FLEET_UPDATED, (p) => {
     if (p.fleet) deferEvent('fleet', () => updateFleet(p.fleet!));
@@ -1105,14 +1110,20 @@ async function runFetchInitialState(
       markFailed('decisions');
     })
     .finally(() => markReady('decisions'));
-  const runsJob = gateway
-    .request<RunListResult>(Methods.RUN_LIST, {
+  // The newest-runs window can miss a long-lived active run; the active list never does.
+  const runsJob = Promise.all([
+    gateway.request<RunListResult>(Methods.RUN_LIST, {
       limit: 1000,
       includeFamilySummaries: true,
       includeProjectAnalytics: true,
-    })
-    .then((r) => {
-      if (stillCurrent() && r.runs) updateRuns(r.runs, r);
+    }),
+    gateway.request<RunListResult>(Methods.RUN_LIST, {
+      active: true,
+      limit: ACTIVE_RUN_LIST_LIMIT,
+    }),
+  ])
+    .then(([r, active]) => {
+      if (stillCurrent() && r.runs) updateRuns(mergeRunsById(r.runs, active.runs ?? []), r);
     })
     .catch(() => markFailed('runs'))
     .finally(() => markReady('runs'));

@@ -18,6 +18,7 @@ import type {
 import {
   Events,
   flattenTmuxWorkers,
+  isActiveListRun,
   isTmuxWorkerWatched,
   Methods,
   reconcileTmuxWorkerWatchlist,
@@ -35,7 +36,6 @@ import { type AppState, getState, isHydrating, subscribe } from '../../state.js'
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { listPinnedSlots, listPinnedWorkspaces } from '../../utils/pinned-slots.js';
 import { hashParams } from '../../utils/url-state.js';
-import { isRunListActiveRun } from '../runs/run-list-model.js';
 
 import {
   filterSlotsByGlobalFilters,
@@ -629,7 +629,7 @@ export class TerminalSplitView extends LitElement {
       ]);
       const activeRuns = selectActiveRunSlotIds(
         fleetResult.fleet.slots,
-        (runResult.runs ?? []).filter(isRunListActiveRun),
+        (runResult.runs ?? []).filter(isActiveListRun),
         this._globalFilters,
       );
       this._runs = runResult.runs;

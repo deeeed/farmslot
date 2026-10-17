@@ -41,6 +41,11 @@ import { buildRunRecord, getRun, persistRunNow, updateRun } from '../runs/store.
 import { currentSessionOriginator, runWithPrincipalOwner } from '../security/work-originator.js';
 
 import { type PreparedSourcePins, SourceAuthority } from './authority.js';
+import {
+  announceSourceChanges,
+  noteAuthorityFacts,
+  noteSourceMaterialized,
+} from './change-signal.js';
 import { captureRunCreationRequest } from './creation-request.js';
 import { assertSourcePinTarget } from './pin-target.js';
 import {
@@ -82,6 +87,26 @@ export async function gatewaySourceStatus(): Promise<SourceNodeStatus | undefine
   return gateway?.status();
 }
 
+/** What `sources.status` reports from the authority, without per-poll timestamps. */
+function sourceFactsSignature(source: SourceAuthority): string {
+  return JSON.stringify([
+    source.configuration.revision,
+    source.pinRevision(),
+    source.pins(),
+    source.locks().map((lock) => [lock.context, lock.generation, lock.digest]),
+    source.resolutions().map((resolution) => ({ ...resolution, resolvedAt: undefined })),
+  ]);
+}
+
+/** Gateway receipts become readable through `sources.status` when materialization returns. */
+class ObservedSourceMaterializer extends SourceMaterializer {
+  override async materialize(lock: SourceLock): Promise<SourceMaterialization> {
+    const result = await super.materialize(lock);
+    noteSourceMaterialized(this.nodeId, lock.digest);
+    return result;
+  }
+}
+
 /** The private farm declaration file is outside every pack it bootstraps. */
 export async function initializeSources(): Promise<void> {
   const home = farmslotHome();
@@ -103,10 +128,14 @@ export async function initializeSources(): Promise<void> {
     throw new Error('Source declarations disappeared after cut-over');
   }
   authority = await SourceAuthority.open(configuration, path.join(home, 'sources'));
+  const opened = authority;
+  announceSourceChanges();
+  // The first notification, the immediate first poll, records the startup baseline.
+  opened.observe(() => noteAuthorityFacts(sourceFactsSignature(opened)));
   await authority.recoverRunCreations((runId) =>
     Boolean(getRun(runId)?.sourcePlan || getRun(runId)?.sourceProvenance),
   );
-  gateway = new SourceMaterializer('gateway', path.join(home, 'sources', 'gateway'));
+  gateway = new ObservedSourceMaterializer('gateway', path.join(home, 'sources', 'gateway'));
   // Configure fail-closed reads immediately; each closure becomes available as
   // its own sources finish, without waiting for an unrelated repository.
   configureProjectSources(projectContext, () => Object.keys(configuration.packs));
@@ -165,6 +194,7 @@ async function nodeMaterialization(
     { timeout: 120_000, requireSameConnection: true },
   )) as SourceMaterialization;
   assertSourceAttestation(lock, nodeId, result);
+  noteSourceMaterialized(nodeId, lock.digest);
   return result;
 }
 

@@ -37,7 +37,7 @@ export function sanitizeStartRef(input: string): string {
 }
 
 function isShaLike(ref: string): boolean {
-  return /^[0-9a-f]{7,40}$/i.test(ref) && ref.length >= MIN_SHORT_SHA_LENGTH;
+  return /^(?:[0-9a-f]{7,40}|[0-9a-f]{64})$/i.test(ref) && ref.length >= MIN_SHORT_SHA_LENGTH;
 }
 
 function startRefCandidateRefs(ref: string, remote = 'origin'): string[] {

@@ -45,6 +45,7 @@ import {
 } from '../parse-args.js';
 import { validateRunRecipeStatic } from '../recipe-validation.js';
 import { recordingUnsupported } from '../recording-target.js';
+import { resolveTaskRepairScope } from '../repair-scope.js';
 import {
   type ConsoleAllowlist,
   formatRunDiagnosticsForHuman,
@@ -567,6 +568,17 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       );
     }
   }
+  const repair = resolveTaskRepairScope(taskDir, validated.recipeFile);
+  if ('refusal' in repair)
+    return emitRunUsageError(
+      jsonOutput,
+      stream,
+      adapter,
+      validated.recipeFile,
+      'REPAIR_SCOPE_INVALID',
+      repair.refusal,
+      'run the repair recipe only while its gateway repair is active',
+    );
   recordCommandEvidence(artifactsDir);
   // Reuse the sources validateRunRecipeStatic already resolved (same --library
   // input) instead of a second resolution.
@@ -578,6 +590,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     cli: options,
     claims,
     comparisonDependencies,
+    ...(repair.repairScope ? { repairScope: repair.repairScope } : {}),
     params,
     ...(librarySources ? { librarySources } : {}),
     stdoutIsMachineContract: machine,

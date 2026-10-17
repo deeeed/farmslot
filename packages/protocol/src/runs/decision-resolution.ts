@@ -9,6 +9,7 @@ import {
   MARK_CLAIM_UNTESTABLE_ACTION,
   runClaimOverrideSnapshotIdentity,
 } from '../recipe/claim-overrides.js';
+import { SEND_BACK_TO_AGENT_ACTION } from '../recipe/repair.js';
 import type { ImprovementApplyParams, ImprovementApplyResult } from '../rpc/intelligence.js';
 import { Methods } from '../rpc/registry.js';
 import type { RunOverrideClaimParams, RunResolveDecisionParams } from '../rpc/run.js';
@@ -161,6 +162,8 @@ export function buildRunResolveDecisionParams(input: {
       ...selectionData,
       claimOverrideSnapshot: runClaimOverrideSnapshotIdentity(input.decision),
     };
+  // Send back derives its Issues from the frozen gate decision; the gateway refuses selection data.
+  if (input.actionId === SEND_BACK_TO_AGENT_ACTION) selectionData = undefined;
   return {
     runId: input.runId,
     decisionId: input.decision.id,

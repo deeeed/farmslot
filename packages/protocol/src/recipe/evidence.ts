@@ -145,6 +145,8 @@ export interface RecipeClaimEvidence {
   /** Honest timing limitations, independent of the semantic verdict. */
   timing?: 'measured' | 'untimed' | 'outside-recording';
   note?: string;
+  /** Repair selection only: the original execution whose proof this row keeps. */
+  retainedFrom?: string;
 }
 
 export interface RecipeClaimLedger {
@@ -217,6 +219,8 @@ export interface RecordedEvidencePackageInput extends RecipeArtifactPackageInput
   claims?: RecipeClaimLedger;
   /** Retained execution-input snapshot; task registration comes from this, never the verdict file. */
   invocation?: unknown;
+  /** Retained repair scope and engine claim-source selection, validated before any projection. */
+  repair?: { scope: unknown; selection: unknown };
 }
 
 export function normalizeRecipeClaimId(id: string): string {

@@ -43,6 +43,7 @@ function filter(overrides: Partial<Parameters<typeof filterRunList>[0]> = {}): r
     tagRuns: null,
     runs: [],
     globalFilters: { projects: [], machines: [] },
+    slotMachines: new Map(),
     tab: 'all',
     statusFilter: 'all',
     flowFilter: '',
@@ -126,27 +127,45 @@ test('filterRunList applies family, project, tab, status, flow, lane, and search
   );
 });
 
-test('filterRunList active and history tabs preserve legacy terminal-status semantics', () => {
+test('filterRunList active tab keeps failed runs that hold resources; history keeps terminal runs', () => {
   const active = run('active', { status: 'monitoring' });
+  const held = run('held', {
+    status: 'failed',
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  });
   const failed = run('failed', { status: 'failed' });
   const done = run('done', { status: 'done' });
 
   assert.deepEqual(
-    filter({ runs: [active, failed, done], tab: 'active', statusFilter: 'done' }).map(
+    filter({ runs: [active, held, failed, done], tab: 'active', statusFilter: 'done' }).map(
       (item) => item.id,
     ),
-    ['active', 'failed'],
+    ['active', 'held'],
   );
   assert.deepEqual(
-    filter({ runs: [active, failed, done], tab: 'history' }).map((item) => item.id),
-    ['failed', 'done'],
+    filter({ runs: [active, held, failed, done], tab: 'history' }).map((item) => item.id),
+    ['held', 'failed', 'done'],
   );
 });
 
-test('filterRunList preserves the original run list reference when no filters or sort apply', () => {
+test('filterRunList machine filter uses the fleet slot machine before the slot id prefix', () => {
+  const demo = run('demo', { slotId: 'demo-work-1' });
+  const macwork = run('macwork', { slotId: 'macwork-mm-4' });
+
+  assert.deepEqual(
+    filter({
+      runs: [demo, macwork],
+      globalFilters: { projects: [], machines: ['farmslot-demo'] },
+      slotMachines: new Map([['demo-work-1', 'farmslot-demo']]),
+    }).map((item) => item.id),
+    ['demo'],
+  );
+});
+
+test('filterRunList keeps every run in order when no filters or sort apply', () => {
   const runs = [run('one'), run('two')];
 
-  assert.equal(filter({ runs }), runs);
+  assert.deepEqual(filter({ runs }), runs);
 });
 
 test('filterRunList sorts by oldest, duration, and grade', () => {

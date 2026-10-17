@@ -842,3 +842,44 @@ test('admission seals serialize with pins and reject a lock after its selected r
   });
   assert.equal(admitted, true);
 });
+
+test('published writes and reconciliation polls notify source observers', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'source-observers-'));
+  const authority = await SourceAuthority.open(config, root, new FixtureSources(root));
+  let stop: (() => void) | undefined;
+  try {
+    let notified = 0;
+    const pinRevisions: number[] = [];
+    authority.observe(() => {
+      notified++;
+      pinRevisions.push(authority.pinRevision());
+    });
+    await authority.reconcile();
+    assert(notified > 0, 'a published resolution notifies');
+    const beforePin = notified;
+    await authority.mutatePin(
+      {
+        sourceId: 'demo',
+        ref: 'main',
+        scope: 'farm',
+        targetId: 'farm',
+        operationId: 'observed-pin',
+        expectedDeclarationRevision: 1,
+        expectedPinRevision: 0,
+      },
+      'owner',
+      'branch',
+      () => undefined,
+    );
+    assert(notified > beforePin);
+    assert(pinRevisions.includes(1), 'a notification follows the readable pin, not a later poll');
+    const before = notified;
+    stop = authority.startReconciliation(() => undefined);
+    assert(notified > before, 'each poll notifies, so time-derived staleness is observed');
+  } finally {
+    stop?.();
+    // Drain outstanding persistence before deleting its fixture.
+    await authority.reconcile();
+    await rm(root, { recursive: true, force: true });
+  }
+});

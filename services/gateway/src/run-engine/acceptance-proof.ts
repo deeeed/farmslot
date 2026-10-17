@@ -1,6 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
+import {
+  selectedRecipeClaims,
+  validateRecordedEvidencePackage,
+} from '@farmslot/adapter-sdk/evidence';
 import {
   isAuthorizedOverride,
   isRecord,
@@ -15,7 +18,12 @@ import {
   claimOverrideAuthority,
   projectGateAcceptance,
 } from './claim-overrides.js';
-import { appliedVisualJudgmentReceiptIds, reviewedRecipeClaims } from './claim-reviews.js';
+import {
+  appliedVisualJudgmentReceiptIds,
+  claimSourceInput,
+  reviewedRecipeClaims,
+  selectedSourceInputs,
+} from './claim-reviews.js';
 import type { GateAcceptanceRead } from './gate-prerequisites.js';
 
 interface RecordedAcceptanceContext {
@@ -97,12 +105,23 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
       typeof projectedRunId === 'string' &&
       projectedRunId.length > 0 &&
       inputs.some((input) => input.claims?.recipeRunId === projectedRunId));
-  const executionSatisfied = inputs.every(
-    (input) =>
-      isRecord(input.summary) &&
-      input.summary.status === 'pass' &&
-      input.summary.stopAfterNode === undefined,
+  // A repair's fresh attempt and every retained original must each be a complete passing execution.
+  const sources = (input: RecordedEvidencePackageInput) =>
+    valid ? selectedSourceInputs(input).map((source) => source.input) : [input];
+  const executionSatisfied = inputs.every((input) =>
+    sources(input).every(
+      (source) =>
+        isRecord(source.summary) &&
+        source.summary.status === 'pass' &&
+        source.summary.stopAfterNode === undefined,
+    ),
   );
+  const overrideAuthority = (input: RecordedEvidencePackageInput, claimId: string) =>
+    claimOverrideAuthority(run, claimSourceInput(input, claimId) ?? input);
+  const selectedRaw = (input: RecordedEvidencePackageInput, claimId: string) =>
+    (valid ? selectedRecipeClaims(input) : (input.claims?.criteria ?? [])).find(
+      ({ id }) => id === claimId,
+    );
   const reviewed = inputs.map((input) =>
     valid && input.claims
       ? reviewedRecipeClaims(run, input, visualPolicy, selection)
@@ -111,7 +130,10 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
   const claimsSatisfied = inputs.every(
     (input, index) =>
       input.claims &&
-      ['complete', 'not-required'].includes(input.claims.recording.status) &&
+      sources(input).every(
+        (source) =>
+          source.claims && ['complete', 'not-required'].includes(source.claims.recording.status),
+      ) &&
       reviewed[index]!.every(
         (claim) =>
           claim.verdict === 'proven' ||
@@ -130,8 +152,8 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
                   row.id === criterion.id &&
                   isAuthorizedOverride(
                     row,
-                    input.claims!.criteria.find(({ id }) => id === claim.id)!,
-                    claimOverrideAuthority(run, input),
+                    selectedRaw(input, claim.id)!,
+                    overrideAuthority(input, claim.id),
                   ),
               ) &&
               acceptance.issues.length === 0,
@@ -153,8 +175,8 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
                   row.id === criterion.id &&
                   isAuthorizedOverride(
                     row,
-                    input.claims!.criteria.find(({ id }) => id === claim.id)!,
-                    claimOverrideAuthority(run, input),
+                    selectedRaw(input, claim.id)!,
+                    overrideAuthority(input, claim.id),
                   ),
               )),
         ),

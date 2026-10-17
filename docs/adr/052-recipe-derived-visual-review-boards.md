@@ -65,22 +65,21 @@ and to relationships the shared renderer can validate.
 
 ### Capability ownership
 
-| Layer                               | Owns                                                                                                                                                          | Does not own                                                           |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Agent Device                        | Interactive snapshot/ref discovery, settled diffs, device mechanics, coordinate fallback, alerts, logs, network, and performance diagnostics                  | Recipe graph semantics, proof claims, or project screen vocabulary     |
-| Recipe Protocol / Harness           | Stable UI actions used in proof, action capability negotiation, assertions, full-surface capture, trace, artifacts, and visual-review relationship validation | Ephemeral refs, exploratory navigation policy, or product routes       |
-| Domain harness such as `mm-harness` | MetaMask runtime setup, semantic destinations, durable wallet/perps actions, platform capability profiles, and reusable domain recipes                        | Generic UI transports, screenshot stitching, or review-board rendering |
-| Farm project                        | Stable test ids, task-local capture recipes, catalog identity, and the observed navigation relationships relevant to that product                             | A new renderer or a fork of the protocol                               |
+| Layer                     | Owns                                                                                                                                                          | Does not own                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Agent Device              | Interactive snapshot/ref discovery, settled diffs, device mechanics, coordinate fallback, alerts, logs, network, and performance diagnostics                  | Recipe graph semantics, proof claims, or project screen vocabulary     |
+| Recipe Protocol / Harness | Stable UI actions used in proof, action capability negotiation, assertions, full-surface capture, trace, artifacts, and visual-review relationship validation | Ephemeral refs, exploratory navigation policy, or product routes       |
+| Domain harness            | Project runtime setup, semantic destinations, durable domain actions, platform capability profiles, and reusable domain recipes                               | Generic UI transports, screenshot stitching, or review-board rendering |
+| Farm project              | Stable test ids, task-local capture recipes, catalog identity, and the observed navigation relationships relevant to that product                             | A new renderer or a fork of the protocol                               |
 
 Agent Device may remain the provider beneath a native Recipe transport. Reuse occurs at that
 provider boundary; Recipe documents never store Agent Device refs because they are session- and
 snapshot-scoped. Discovery output may help an agent author stable recipe selectors, but it is not
 itself proof.
 
-For MetaMask, the portable `ui.capture_surface` implementation belongs in the shared harness.
-`mm-harness` should adopt the published capability through its Mobile and Extension manifests and
-keep only MetaMask-specific navigation/setup and reusable screen flows. No MetaMask page, route, or
-locator belongs in Recipe v1.
+The portable `ui.capture_surface` implementation belongs in the shared harness. A domain harness
+should adopt the published capability through its runtime manifests and keep only project-specific
+navigation/setup and reusable screen flows. No project page, route, or locator belongs in Recipe v1.
 
 ### Portable source and feedback documents
 

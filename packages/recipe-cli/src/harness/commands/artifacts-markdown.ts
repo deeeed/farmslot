@@ -1,12 +1,22 @@
+import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
+import { readRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
 import { isRecord } from '@farmslot/protocol';
+import { readRecordedEvidencePackage } from '@farmslot/recipe-runner';
+import { readRecipeCliJsonFileWithinRoot } from '@farmslot/recipe-runner/cli/support';
 
 import {
   readContainedJsonArtifact,
   readContainedTextArtifact,
   runnerRevision,
+  writeContainedArtifact,
 } from '../artifact-files.js';
+import {
+  type ArtifactValidationResult,
+  validateRecipeArtifactRead,
+} from '../artifact-validation.js';
+import { isPathWithin } from '../paths.js';
 import { countRecipeNodes } from '../run-engine.js';
 
 export interface TaskArtifactsMarkdownInput {
@@ -31,6 +41,27 @@ export interface TaskArtifactsMarkdownResult {
   recipe: MarkdownRecipeArtifact | null;
   run: MarkdownArtifact | null;
   workflow: MarkdownArtifact | null;
+}
+
+export interface RetainedArtifactsMarkdownInput {
+  /** Task or artifact package directory; without one, `candidates` are searched. */
+  directory?: string;
+  /** Evidence paths searched for a package when no directory is given. */
+  candidates?: readonly string[];
+  command?: string;
+  /** Refuses to overwrite authored inputs or retained evidence. */
+  out?: string;
+  validate?: boolean;
+  /** `text` selects and validates the package without rendering authored task Markdown. */
+  format?: 'markdown' | 'text';
+}
+
+export interface RetainedArtifactsMarkdownResult extends Partial<TaskArtifactsMarkdownResult> {
+  artifactDir?: string;
+  summary?: unknown;
+  manifest?: unknown;
+  validation?: ArtifactValidationResult;
+  out?: string;
 }
 
 const RECIPE_HEADING = '## **Validation Recipe**';
@@ -220,5 +251,158 @@ export async function renderTaskArtifactsMarkdown(
         ? null
         : { path: path.relative(input.taskDir, path.join(reportRoot, 'report.md')) },
     workflow: workflow === undefined ? null : { path: 'artifacts/workflow.mmd' },
+  };
+}
+
+function artifactManifestPaths(manifest: unknown): string[] {
+  const entries = isRecord(manifest) && Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+  return entries.flatMap((entry) =>
+    isRecord(entry) && typeof entry.path === 'string' ? [entry.path] : [],
+  );
+}
+
+function evidenceMarkdown(
+  artifactDir: string,
+  summary: unknown,
+  artifactPaths: readonly string[],
+): string {
+  const literal = (value: string) => `<code>${escapeHtml(value)}</code>`;
+  return [
+    `Recipe evidence: ${literal(artifactDir)}`,
+    '',
+    `Result: ${literal(isRecord(summary) ? String(summary.status) : 'unknown')}`,
+    '',
+    ...artifactPaths.map((file) => `- ${literal(file)}`),
+    '',
+  ].join('\n');
+}
+
+async function writeArtifactsMarkdown(
+  out: string,
+  body: string,
+  taskDir: string | undefined,
+  artifactDir: string | undefined,
+  artifactPaths: readonly string[],
+): Promise<void> {
+  let parent = path.dirname(out);
+  while (!existsSync(parent)) parent = path.dirname(parent);
+  const destination = existsSync(out) ? statSync(out, { bigint: true }) : undefined;
+  const protectedPaths = [
+    ...(artifactDir
+      ? [...artifactPaths, 'report.md'].map((file) => path.resolve(artifactDir, file))
+      : []),
+    ...(taskDir
+      ? [
+          'recipe-runs',
+          'recipe-run',
+          'recipe',
+          'recipe.json',
+          'workflow.mmd',
+          'pr-description.md',
+          'latest-valid-recipe-run.json',
+        ].map((file) => path.join(taskDir, 'artifacts', file))
+      : []),
+  ];
+  if (
+    protectedPaths.some((file) => {
+      const input = destination && existsSync(file) ? statSync(file, { bigint: true }) : undefined;
+      return (
+        out === path.resolve(file) ||
+        (input && destination && input.dev === destination.dev && input.ino === destination.ino) ||
+        isPathWithin(file, parent) ||
+        isPathWithin(file, out)
+      );
+    })
+  )
+    throw new Error('--out must not overwrite authored inputs or retained recipe evidence.');
+  await writeContainedArtifact(path.dirname(out), path.basename(out), body, 'Markdown output');
+}
+
+/**
+ * Select, validate and render a task's or artifact package's Markdown, writing it only to a
+ * safe `out`. `result` is the `recipe artifacts --json` document; `body` is the Markdown.
+ */
+export async function renderRetainedArtifactsMarkdown(
+  input: RetainedArtifactsMarkdownInput,
+): Promise<{ result: RetainedArtifactsMarkdownResult; body: string }> {
+  const taskDir = input.directory ? path.resolve(input.directory) : undefined;
+  const selection =
+    taskDir && !existsSync(path.join(taskDir, 'artifact-manifest.json'))
+      ? readRecipeAttemptSelection(taskDir)
+      : null;
+  const selectedDir =
+    taskDir && selection
+      ? path.join(taskDir, 'artifacts', selection.relativeArtifactRoot)
+      : undefined;
+  if (taskDir && selectedDir && !isPathWithin(path.join(taskDir, 'artifacts'), selectedDir))
+    throw new Error('Selected recipe attempt is missing or resolves outside its root.');
+  const candidates = taskDir ? [taskDir] : (input.candidates ?? []);
+  const packages = selectedDir
+    ? [selectedDir]
+    : candidates
+        .flatMap((candidate) => [
+          candidate,
+          path.join(candidate, 'artifacts'),
+          path.join(candidate, 'artifacts/recipe'),
+        ])
+        .filter((candidate) => existsSync(path.join(candidate, 'artifact-manifest.json')));
+  const distinct = [...new Set(packages)];
+  const authoredTask =
+    taskDir &&
+    input.format !== 'text' &&
+    !existsSync(path.join(taskDir, 'artifact-manifest.json')) &&
+    existsSync(path.join(taskDir, 'artifacts'));
+  if (distinct.length > 1 || (distinct.length === 0 && (!authoredTask || input.validate)))
+    throw new Error(
+      distinct.length
+        ? `More than one artifact package matches; select a directory: ${distinct.join(', ')}`
+        : 'No retained artifact package found; pass its directory explicitly.',
+    );
+  const artifactDir = distinct[0];
+  const summary = artifactDir
+    ? await readRecipeCliJsonFileWithinRoot(artifactDir, 'summary.json')
+    : undefined;
+  const manifest = artifactDir
+    ? await readRecipeCliJsonFileWithinRoot(artifactDir, 'artifact-manifest.json')
+    : undefined;
+  const artifactPaths = artifactManifestPaths(manifest);
+  const retained =
+    artifactDir && (input.validate || authoredTask || input.out)
+      ? await readRecordedEvidencePackage(artifactDir)
+      : undefined;
+  const checked =
+    artifactDir && retained && (input.validate || authoredTask)
+      ? await validateRecipeArtifactRead(artifactDir, { requireRunnerProvenance: true }, retained)
+      : undefined;
+  if (authoredTask && checked?.status === 'fail')
+    throw new Error('Artifact validation failed; Markdown was not rendered or written.');
+  const validation = input.validate ? checked : undefined;
+  const markdown = authoredTask
+    ? await renderTaskArtifactsMarkdown({ taskDir, artifactDir, command: input.command })
+    : undefined;
+  const body =
+    markdown?.body ?? (artifactDir ? evidenceMarkdown(artifactDir, summary, artifactPaths) : '');
+  const out = input.out ? path.resolve(input.out) : undefined;
+  if (out) {
+    if (validation?.status === 'fail' || retained?.checks.some((check) => check.status === 'fail'))
+      throw new Error('Artifact validation failed; Markdown was not written.');
+    await writeArtifactsMarkdown(
+      out,
+      body,
+      authoredTask ? taskDir : undefined,
+      artifactDir,
+      retained?.input.artifactPaths ?? [],
+    );
+  }
+  return {
+    result: {
+      artifactDir,
+      summary,
+      manifest,
+      ...(validation ? { validation } : {}),
+      ...(markdown ? { ...markdown, ...(out ? { body: undefined } : {}) } : {}),
+      ...(out ? { out } : {}),
+    },
+    body,
   };
 }

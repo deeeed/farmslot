@@ -59,6 +59,9 @@ test('start ref candidate refs ignore local branches and target fetched remote r
     false,
   );
   assert.equal(__startRefResolutionTest.shouldResolveFetchedRemoteTag('refs/tags/v1.0.0'), true);
+  // A SHA-256 object name is a commit, not a branch name to look up on origin.
+  assert.deepEqual(__startRefResolutionTest.startRefCandidateRefs('a'.repeat(64)), []);
+  assert.equal(__startRefResolutionTest.isShaLike('a'.repeat(41)), false);
 });
 
 test('resolveStartRefInRepo resolves fetched remote branch and rejects local-only branch', async (t) => {

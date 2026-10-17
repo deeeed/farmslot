@@ -1,3 +1,6 @@
+import type { PipelineVisualReviewerBinding } from '../recipe/claim-reviews.js';
+import type { PipelineRepairApplicability } from '../recipe/pipeline-visual-judgments.js';
+import type { RecipeRepairScope } from '../recipe/repair.js';
 import type { ArtifactRef, ReviewIssue } from '../recipes/step-io.js';
 import type {
   WorkerOperatorWait,
@@ -117,6 +120,32 @@ export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisio
       Boolean(outputs.promptDeliveryUncertain) || Boolean(outputs.nativeWorkerOperationUncertain)
     );
   });
+}
+
+/** A failed deterministic gate keeps its resources until an operator settles or replays it. */
+export function isCompletionPrerequisiteFailure(
+  run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>,
+): boolean {
+  return (
+    run.status === 'failed' &&
+    Boolean(
+      run.steps?.some(
+        (step) =>
+          (step.name === PipelineSteps.COMPLETE || step.name === PipelineSteps.FINALIZE) &&
+          step.status === 'failed' &&
+          step.outputs?.gatePrerequisiteRefusal !== undefined,
+      ),
+    )
+  );
+}
+
+/**
+ * A run every active run list shows: nonterminal, or failed while it still holds
+ * its resources. The gateway's `run.list` `active` filter, Command Center and
+ * Companion all use this rule.
+ */
+export function isActiveListRun(run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>): boolean {
+  return !isTerminalRunStatus(run.status) || isCompletionPrerequisiteFailure(run);
 }
 
 export type RunStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
@@ -538,6 +567,37 @@ export interface ReviewAttempt {
   timeline?: ReviewLoopTimelineSegment[];
   startedAt?: string;
   completedAt?: string;
+}
+
+/** Explicit current-head applicability of one retained criterion, from a qualified reviewer. */
+export interface VisualRepairApplicability extends PipelineRepairApplicability {
+  headSha: string;
+  reviewContextId: string;
+  binding: PipelineVisualReviewerBinding;
+  recordedAt: string;
+}
+
+/** Gateway-owned Send back to agent repair (ADR-062 Amendment 10). */
+export interface VisualRepairRecord {
+  repairId: string;
+  /** The frozen gateway scope; the run store keeps it authoritative over any task file. */
+  scope: RecipeRepairScope;
+  scopeDigest: string;
+  decisionId: string;
+  packageHash: string;
+  /** Retained review loop whose existing `retryCount` holds this repair's single charge. */
+  reviewId: string;
+  /** `reserved`: charged, delivery not yet confirmed; `delivered`: the fix turn was accepted. */
+  status: 'reserved' | 'delivered' | 'completed';
+  /** The named loop's `retryCount` after this repair's reservation. */
+  reservedRetryCount: number;
+  reservedAt: string;
+  deliveredAt?: string;
+  completedAt?: string;
+  /** Latest recoverable delivery problem, if any. */
+  reason?: string;
+  rejected: Array<{ claimId: string; receiptId: string; reason: string; reviewer?: string }>;
+  applicability?: VisualRepairApplicability[];
 }
 
 export interface ReviewStatus {
@@ -1096,51 +1156,75 @@ export interface FeedbackConsumption {
   commit?: string;
 }
 
+interface FeedbackCandidateBase {
+  /** sha256 of `sourceKey` — stable across revisions and scans. */
+  id: string;
+  sourceKey: string;
+  /** Provider signal revision when observed by the PR monitor, else the body hash. */
+  revision: string;
+  /** sha256 of the collapsed comment body when the body is known. */
+  bodyRevision?: string;
+  authorKind: FeedbackAuthorKind;
+  path?: string;
+  excerpt?: string;
+  resolution: {
+    state: 'open' | 'resolved' | 'fixed' | 'unknown';
+    triage?: string;
+    fixedInCommit?: string;
+  };
+  /** Runs whose triage, PR monitor or repair carried this feedback. */
+  runIds: string[];
+  familyId?: string;
+  /** Family runs that produced code changes (dev/fix-bug roots, follow-up pushes). */
+  familyChangeRunIds: string[];
+  attribution: { kind: FeedbackAttributionKind; note: string };
+  consumedBy?: FeedbackConsumption[];
+  /** Set when a consumption was recorded against an earlier revision of this candidate. */
+  revisedSinceConsumed?: boolean;
+}
+
 /**
  * One deduplicated unit of PR feedback captured for the learning loop.
  * Identity is the provider comment/review id, so repeated scans and repair
  * pushes reuse the same candidate; an edited comment changes `revision` only.
  */
-export interface FeedbackCandidate {
-  /** sha256 of `sourceKey` — stable across revisions and scans. */
-  id: string;
+export interface GitHubFeedbackCandidate extends FeedbackCandidateBase {
   /** `<host>/<owner>/<repo>#<number>:<kind>:<providerId>` */
   sourceKey: string;
   provider: 'github';
   repository: string;
   prNumber: number;
   kind: 'review-comment' | 'review';
-  /** Provider signal revision when observed by the PR monitor, else the body hash. */
-  revision: string;
-  /** sha256 of the collapsed comment body when the body is known. */
-  bodyRevision?: string;
   authorLogin?: string;
-  authorKind: FeedbackAuthorKind;
   sourceKind?: string;
   reviewState?: string;
-  path?: string;
-  excerpt?: string;
   url?: string;
   /** Commit the reviewer was looking at, when the provider reports it. */
   reviewedCommit?: string;
   /** PR head at the time the candidate was last observed. */
   observedHead?: string;
-  resolution: {
-    state: 'open' | 'resolved' | 'fixed' | 'unknown';
-    triage?: string;
-    fixedInCommit?: string;
-  };
-  /** Runs whose triage or PR monitor carried this feedback. */
-  runIds: string[];
-  familyId?: string;
-  /** Family runs that produced code changes (dev/fix-bug roots, follow-up pushes). */
-  familyChangeRunIds: string[];
-  attribution: { kind: FeedbackAttributionKind; note: string };
   sources: Array<'comments-triage' | 'pr-monitor'>;
-  consumedBy?: FeedbackConsumption[];
-  /** Set when a consumption was recorded against an earlier revision of this candidate. */
-  revisedSinceConsumed?: boolean;
 }
+
+/**
+ * A rejected visual criterion returned to the retained worker (ADR-062 Amendment 10).
+ * Bound to its gateway receipt and repair, so it exists before any PR.
+ */
+export interface RepairFeedbackCandidate extends FeedbackCandidateBase {
+  /** `farmslot/run/<runId>/repair/<repairId>:visual-repair:<receiptId>` */
+  sourceKey: string;
+  provider: 'farmslot';
+  kind: 'visual-repair';
+  runId: string;
+  repairId: string;
+  receiptId: string;
+  claimId: string;
+  /** Display name of the reviewer who raised the Issue. */
+  reviewer?: string;
+  sources: Array<'visual-repair'>;
+}
+
+export type FeedbackCandidate = GitHubFeedbackCandidate | RepairFeedbackCandidate;
 
 export interface FeedbackCandidateSummary {
   total: number;
@@ -2824,6 +2908,8 @@ export interface RunEngineState {
     reviewLaunchRejection?: PublicationReviewLaunchRejection;
     supersededPackageIds?: string[];
     feedbackArtifactPath?: string;
+    /** Send back to agent repairs, oldest first; the last non-completed one is active. */
+    visualRepairs?: VisualRepairRecord[];
     /** Bounded restart watcher state for an in-flight publication reviewer. */
     reviewRecovery?: {
       status: 'watching' | 'recovered' | 'operator-required';

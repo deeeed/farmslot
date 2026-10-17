@@ -2,7 +2,10 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
-import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
+import {
+  selectedRecipeClaims,
+  validateRecordedEvidencePackage,
+} from '@farmslot/adapter-sdk/evidence';
 
 import attemptSelection from './retained-recipe-attempt.cjs';
 
@@ -21,8 +24,10 @@ export async function pendingClaimReviewIssues(taskDir, ledger) {
   if (errors.length) return errors;
   if (!input.claims || input.claims.recipeRunId !== ledger.recipeRunId)
     return ['Task verdicts belong to another recipe execution.'];
+  // A repair transports the engine selection: retained rows keep their original execution.
+  const selected = selectedRecipeClaims(input);
   for (const row of ledger.criteria) {
-    const claim = input.claims.criteria.find(({ id }) => id === row.id);
+    const claim = selected.find(({ id }) => id === row.id);
     if (
       !claim ||
       [
@@ -35,6 +40,7 @@ export async function pendingClaimReviewIssues(taskDir, ledger) {
         'recipeNodes',
         'assertionIndices',
         'moments',
+        'retainedFrom',
       ].some((key) => !isDeepStrictEqual(row[key], claim[key]))
     )
       errors.push(`Task claim ${row.id} differs from its selected engine claim.`);

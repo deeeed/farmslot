@@ -1,6 +1,11 @@
 import type { SourcesStatusResult } from '../rpc/sources.js';
 
 import {
+  isNewerSourceRevision,
+  type SourceChangeFeed,
+  type SourceRevisionMark,
+} from './changes.js';
+import {
   type PreparedSourceCommand,
   type SourceCommandClient,
   sourceStatusParamsForTarget,
@@ -27,6 +32,12 @@ export interface SourceStatusSnapshot {
   interactive: boolean;
   canEdit: boolean;
   selectionRefusal?: string;
+  /** Render nothing: no facts or failure yet, an empty context, or a viewer that cannot read. */
+  hidden: boolean;
+  /** Render the rows' pin and sync controls. */
+  controls: boolean;
+  /** The gateway reports sources but did not announce live source status. */
+  unsupported: boolean;
 }
 
 function commandLabel(command: PreparedSourceCommand): string {
@@ -43,6 +54,12 @@ export class SourceStatusController {
   private listeners = new Set<() => void>();
   private snapshot: SourceStatusSnapshot;
   private pendingConnectionKey?: string;
+  private feed?: SourceChangeFeed;
+  private covered?: SourceRevisionMark;
+  /** The version of the read in flight; a context change abandons it. */
+  private readingVersion?: number;
+  private rereadAfterRead = false;
+  private deniedRead = false;
 
   constructor(
     private readonly client: SourceCommandClient,
@@ -55,6 +72,9 @@ export class SourceStatusController {
       selections: structuredClone([...(context.selections ?? [])]),
       interactive: true,
       canEdit: false,
+      hidden: true,
+      controls: false,
+      unsupported: false,
     };
     this.update({});
   }
@@ -78,6 +98,16 @@ export class SourceStatusController {
     this.snapshot.interactive =
       !this.snapshot.busy && !this.snapshot.loading && !this.snapshot.pending;
     this.snapshot.canEdit = this.snapshot.interactive && this.snapshot.view?.editable === true;
+    const view = this.snapshot.view;
+    this.snapshot.hidden =
+      view?.hidden === true ||
+      (this.snapshot.error !== undefined && this.deniedRead) ||
+      (!view && this.snapshot.error === undefined && !this.snapshot.pending);
+    this.snapshot.controls = Boolean(
+      view && (view.editable || view.draft || view.actions.length > 0),
+    );
+    this.snapshot.unsupported =
+      this.status?.configured === true && this.feed?.getState().announced === false;
     this.snapshot.selectionRefusal =
       this.snapshot.view?.selectionErrors[0] ??
       (!this.context.target &&
@@ -91,6 +121,38 @@ export class SourceStatusController {
               : undefined))
         : undefined);
     for (const listener of this.listeners) listener();
+  }
+
+  /**
+   * Live source status (ADR-069 Amendment 1): reread when the gateway's source
+   * revision passes what the last read covered. Reconnects stay with the host,
+   * which already rereads on every new connection.
+   */
+  attachFeed(feed: SourceChangeFeed): () => void {
+    this.feed = feed;
+    const unsubscribe = feed.subscribe(() => this.observeFeed());
+    this.observeFeed();
+    return () => {
+      unsubscribe();
+      if (this.feed === feed) this.feed = undefined;
+    };
+  }
+
+  private observeFeed(): void {
+    const latest = this.feed?.getState().latest;
+    if (latest && isNewerSourceRevision(latest, this.covered)) {
+      // A change during any read, the first included, is not covered by it.
+      if (this.readingVersion === this.version) {
+        this.rereadAfterRead = true;
+        return;
+      }
+      // Before the first read the host's initial load covers the current state.
+      if (this.status || this.snapshot.error) {
+        void this.refresh();
+        return;
+      }
+    }
+    this.update({});
   }
 
   setContext(context: SourceStatusViewContext): boolean {
@@ -132,16 +194,32 @@ export class SourceStatusController {
     const version = ++this.version;
     const params =
       this.context.params ?? sourceStatusParamsForTarget(undefined, this.context.target);
+    // Gateways publish only after a change is readable, so this read covers the mark.
+    this.covered = this.feed?.getState().latest;
+    this.readingVersion = version;
+    this.rereadAfterRead = false;
     this.update({ loading: true, error: undefined });
     try {
       const status = await this.client.status(params);
       if (version !== this.version) return;
       this.status = status;
+      this.deniedRead = false;
       this.update({ loading: false });
     } catch (error) {
       // Read failures remain visible; stale responses cannot replace another context's facts.
-      if (version === this.version)
+      if (version === this.version) {
+        this.deniedRead = (error as { code?: string }).code === 'AUTH_FORBIDDEN';
         this.update({ loading: false, error: (error as Error).message });
+      }
+    } finally {
+      if (version === this.version) {
+        this.readingVersion = undefined;
+        // A change seen during the read is not covered by it: read once more.
+        if (this.rereadAfterRead) {
+          this.rereadAfterRead = false;
+          void this.refresh();
+        }
+      }
     }
   }
 

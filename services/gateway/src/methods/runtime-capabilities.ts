@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import {
   Events,
+  isCompletionPrerequisiteFailure,
   isTerminalRunStatus,
   type ResourceSidecarMeta,
   type Run,
@@ -37,7 +38,6 @@ import {
   prepareRunPostureForValidation,
   type PrepareRunPostureOutcome,
 } from '../run-engine/resource-posture.js';
-import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
 import { getArchivedRuns, getCachedRunWithArchived, getRun } from '../runs/store.js';
 import {
   evaluateRuntimeCapabilityAdmission,

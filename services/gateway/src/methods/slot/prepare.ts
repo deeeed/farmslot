@@ -344,7 +344,8 @@ async function slotPrepareInner(
     PREPARE_PREFLIGHT_TIMEOUT_MS,
   );
   const branch = params.branch || '';
-  if (opts?.startRef && !branch) {
+  // A QA ref or range scope has no branch: its frozen head is checked out detached.
+  if (opts?.startRef && !branch && params.flowType !== 'qa') {
     throw new Error('startRef prepare requires a work branch');
   }
 
@@ -526,13 +527,13 @@ async function slotPrepareInner(
     );
   }
   prepareProfile = profileSelection.profile;
-  if (!phaseEnabled('git') && (branch || mergeMain)) {
-    // Branch targeting and mergeMain are run-level (flow-driven) parameters; a
-    // profile that omits git must not silently prepare the wrong ref.
+  if (!phaseEnabled('git') && (branch || mergeMain || opts?.startRef)) {
+    // Branch targeting, start refs and mergeMain are run-level (flow-driven)
+    // parameters; a profile that omits git must not silently prepare the wrong ref.
     prepareProfile.phases.add('git');
     step(
       'profile',
-      `git phase forced on: run supplies ${branch ? `branch ${branch}` : 'mergeMain'}`,
+      `git phase forced on: run supplies ${branch ? `branch ${branch}` : opts?.startRef ? `start ref ${opts.startRef.requestedRef}` : 'mergeMain'}`,
     );
   }
   step(
@@ -592,14 +593,22 @@ async function slotPrepareInner(
     await assertPrepareCommitsPublished(vars, branch || '');
 
   if (!phaseEnabled('git')) {
-    // Profiles without the git phase reuse the slot's current checkout. Branch
-    // and mergeMain runs can never reach here — selection forces git on for them.
+    // Profiles without the git phase reuse the slot's current checkout. Branch,
+    // start-ref and mergeMain runs never reach here — selection forces git on for them.
     step(
       'branch',
       `git sync skipped (profile ${profileName()}; HEAD stays on '${current || 'unknown'}')`,
     );
   } else {
-    if (!branch && current && current !== defaultBranch) {
+    // A prepare replay finds a QA slot still detached at the start ref it landed on.
+    const detachedAtStartRef =
+      !branch &&
+      current === 'HEAD' &&
+      !!opts?.startRef &&
+      (
+        await execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD`)
+      ).stdout.trim() === opts.startRef.requestedRef;
+    if (!branch && current && current !== defaultBranch && !detachedAtStartRef) {
       const linkedWorktree = await detectLinkedWorktree(vars);
       const trackingBranch = resolveSlotTrackingBranchFromProject(
         projectJson,
@@ -757,7 +766,10 @@ async function slotPrepareInner(
         `Working tree still dirty on ${vars.slotId} after reset to start ref ${resolvedStartRef.resolvedSha}. Refusing to prepare stale/dirty slot. Inspect with: cd ${shellQuote(vars.remoteRepo)} && git status\nDirty paths:\n${dirty}`,
       );
     }
-    step('branch', `${branch} reset to requested start ref ${resolvedStartRef.resolvedSha}`);
+    step(
+      'branch',
+      `${branch || 'HEAD'} reset to requested start ref ${resolvedStartRef.resolvedSha}`,
+    );
   };
   if (branch) await opts?.beforeBranchSetup?.();
   if (branch && opts?.preserveBranch) {
@@ -1147,6 +1159,27 @@ async function slotPrepareInner(
         }
       }
     }
+  } else if (opts?.startRef) {
+    // The slot is on its idle branch (checked above) or already detached here.
+    // Detaching first keeps that branch where it was; release checks it out again.
+    await resolveRequestedStartRef();
+    const flagSweep = await execOnSlot(
+      vars,
+      `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
+    );
+    if (flagSweep.exitCode !== 0)
+      throw new Error(
+        `failed to clear skip-worktree/assume-unchanged flags on ${vars.slotId} (${vars.remoteRepo}): ${flagSweep.stderr.slice(-200) || flagSweep.stdout.slice(-200)}`,
+      );
+    const detachR = await execOnSlot(
+      vars,
+      `cd ${shellQuote(vars.remoteRepo)} && git checkout --detach`,
+    );
+    if (detachR.exitCode !== 0)
+      throw new Error(
+        `git checkout --detach failed on ${vars.slotId} (${vars.remoteRepo}): ${detachR.stderr.slice(-200) || detachR.stdout.slice(-200)}`,
+      );
+    await resetBranchToStartRef();
   }
 
   if (branch) await ensureBranchAtStackBase();

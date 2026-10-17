@@ -176,3 +176,19 @@ Remove existing `default_profile` values from first-party packs. Other projects 
 A default is valid project policy, while array order is not selection intent. The sole-profile case needs no prompt. First-party multi-profile packs require a deliberate choice by omitting their defaults.
 
 Verify request-over-policy selection, workflow-policy-over-farm-default selection, configured default, sole profile, ambiguous multi-profile refusal and invalid ids through shared contract tests and public gateway/CLI controls. Verify UI preselection and disabled Dispatch through Command Center and Companion flows. Retained/restart controls must preserve the captured profile. Release and installed-node readback follow the accepted implementation.
+
+## Amendment 2: Frozen head for ref and range QA (2026-10-17)
+
+**Status:** Accepted (2026-10-17, lead-approved after delta review of #1244 at `e4b7cc4f`).
+
+### Decision
+
+When an admitted QA scope of kind `ref` or `range` names its commits exactly (`expectedHeadSha`/`expectedBaseSha`, or full SHAs in `ref`, `head` and `base`), the run records that frozen source identity, as PR QA already does from the reviewed PR. Prepare checks out the frozen head, detached when the run has no work branch, and refuses dispatch when the prepared HEAD differs. Completion validates retained evidence against the same identity. A branch or tag name and a time window keep resolving inside the skill.
+
+### Rationale
+
+This makes the existing "freeze resolved refs before execution" rule explicit for non-PR scopes. Without it, a ref QA run prepared on the default-branch tip, its worker had to ask whether to detach, and completion refused the run for a missing source identity.
+
+### Public surface
+
+No new field, command or export. The framework reads only the documented `ref` and `range` keys of the admitted scope; all other scope keys stay skill-owned.

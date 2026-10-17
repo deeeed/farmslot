@@ -7,6 +7,10 @@ function panels(root) {
 }
 return panels(document).map((panel) => ({
   text: panel.shadowRoot?.textContent?.replace(/\s+/g, ' ').trim(),
+  line: panel.shadowRoot?.querySelector('[data-testid="sources-line"]')?.textContent?.trim(),
+  statusErrors: [
+    ...(panel.shadowRoot?.querySelectorAll('[data-testid="sources-status-error"]') ?? []),
+  ].map((element) => element.textContent.trim()),
   operationErrors: [
     ...(panel.shadowRoot?.querySelectorAll('[data-testid="sources-operation-error"]') ?? []),
   ].map((element) => element.textContent.trim()),

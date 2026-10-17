@@ -175,6 +175,14 @@ export interface ReviewOptions {
   priorAttempts?: ReviewAttempt[];
   /** Continue an operator-approved fix loop from findings already produced by this run. */
   resumeFromResult?: ReviewResult;
+  /** Send back: the first resumed fix pass is already charged by a persisted reservation. */
+  reservedFixPass?: ReservedFixPass;
+}
+
+/** One pre-charged worker-fix pass; the loop consumes it without another increment. */
+export interface ReservedFixPass {
+  /** Called once the retained worker accepts the reserved fix turn. */
+  onDelivered?: () => void;
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
@@ -329,6 +337,14 @@ async function executeOwnedReview(
       artifactScope,
       mode,
       findingsArtifactScope: artifactScope,
+      ...(options.reservedFixPass
+        ? {
+            reservedFixPass: {
+              ...options.reservedFixPass,
+              retryCount: options.resumeFromResult?.retryCount ?? 1,
+            },
+          }
+        : {}),
     });
     if (recoveredFixResult) {
       hasReusableReviewResult =
@@ -403,6 +419,7 @@ async function executeOwnedReview(
         validationDepth,
         artifactScope,
         mode,
+        ...(options.reservedFixPass ? { reservedFixPass: options.reservedFixPass } : {}),
       });
       return {
         ...retryResult,
@@ -730,6 +747,7 @@ export async function runReviewRetryLoop({
   mode = resolveReviewMode(),
   feedbackAlreadySent = false,
   priorAttempts = [],
+  reservedFixPass,
   deps = PRODUCTION_DEPS,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -750,6 +768,7 @@ export async function runReviewRetryLoop({
   mode?: ReviewMode;
   feedbackAlreadySent?: boolean;
   priorAttempts?: ReviewAttempt[];
+  reservedFixPass?: ReservedFixPass;
   deps?: ReviewRetryDeps;
 }): Promise<ReviewResult> {
   const reviewGeneration = deps.getRun(runId)?.engineState?.generation ?? 0;
@@ -761,7 +780,12 @@ export async function runReviewRetryLoop({
       : [reviewAttemptFromResult(result, retryCount + 1)];
 
   let roundLimitReason: string | undefined;
-  while (result.verdict === 'issues' && result.issues.length > 0 && retryCount < maxRetries) {
+  let reserved = reservedFixPass;
+  while (
+    result.verdict === 'issues' &&
+    result.issues.length > 0 &&
+    (reserved !== undefined || retryCount < maxRetries)
+  ) {
     assertNativeReviewOperationCurrent();
     const budgetRun = getRun(runId);
     const budget = budgetRun ? await runReviewRoundBudget(budgetRun) : undefined;
@@ -938,7 +962,14 @@ export async function runReviewRetryLoop({
       }
     }
     const fixStartedAt = new Date().toISOString();
-    retryCount += 1;
+    // A reserved pass was charged before delivery; any later pass spends the budget here.
+    let acknowledgeReservedDelivery: (() => void) | undefined;
+    if (reserved) {
+      // Deferred acknowledgement is uncertain until this pass's own fix signal arrives.
+      if (fixDeliveryDeferred) acknowledgeReservedDelivery = reserved.onDelivered;
+      else reserved.onDelivered?.();
+      reserved = undefined;
+    } else retryCount += 1;
     feedbackSent = true;
     // A pane reaction or signal baseline cannot establish fix acceptance.
     // Only this delivery's exact structured turn may report fixing.
@@ -987,6 +1018,7 @@ export async function runReviewRetryLoop({
       );
       fixCompletedAt = new Date().toISOString();
       assertNativeReviewOperationCurrent();
+      if (fixSignal) acknowledgeReservedDelivery?.();
       if (!fixSignal) {
         console.warn(`[review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`);
         await deps.markAgentContextStatus(runId, 'review-fix', 'failed');
@@ -1593,6 +1625,7 @@ async function recoverReviewFixPass({
   artifactScope,
   mode = resolveReviewMode(),
   findingsArtifactScope,
+  reservedFixPass,
   setProgressDetail = setReviewProgressDetail,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -1610,9 +1643,13 @@ async function recoverReviewFixPass({
   artifactScope?: string | null;
   mode?: ReviewMode;
   findingsArtifactScope?: string | null;
+  /** A Send back pass whose persisted charge this recovered fix spends. */
+  reservedFixPass?: ReservedFixPass & { retryCount: number };
   setProgressDetail?: (runId: string, detail: string) => void;
 }): Promise<ReviewResult | null> {
   assertNativeReviewOperationCurrent();
+  // A recovered pass keeps the loop's persisted count; it never rolls a reservation back.
+  const recoveredRetryCount = Math.max(1, reservedFixPass?.retryCount ?? 1);
   const run = getRun(runId);
   const recoveryGeneration = run?.engineState?.generation ?? 0;
   const fixContext = run?.agentContexts?.find((ctx) =>
@@ -1822,7 +1859,7 @@ async function recoverReviewFixPass({
             reason: 'Recovered review fix worker exited without a terminal signal',
             issues,
             validationDepth,
-            retryCount: 1,
+            retryCount: recoveredRetryCount,
             maxRetries,
             feedbackSent: true,
             attempts: [
@@ -1892,7 +1929,7 @@ async function recoverReviewFixPass({
           verdict: 'issues',
           issues,
           validationDepth,
-          retryCount: 1,
+          retryCount: recoveredRetryCount,
           maxRetries,
           feedbackSent: true,
           attempts: [
@@ -1919,7 +1956,7 @@ async function recoverReviewFixPass({
         maxRetries,
         reviewTimeoutMs,
         reviewResult: { verdict: 'issues', issues, validationDepth },
-        retryCount: 1,
+        retryCount: recoveredRetryCount,
         validationDepth,
         artifactScope,
         mode,
@@ -1931,6 +1968,8 @@ async function recoverReviewFixPass({
     // signal's authoritative id instead of the entry-time context snapshot, or
     // the settlement CAS can discard a fix that actually completed.
     const terminalAttemptId = fixSignal.attemptId ?? fixContext.signalAttemptId;
+    // This pass's own terminal signal proves a reserved repair reached the worker.
+    reservedFixPass?.onDelivered?.();
 
     const workerBlockReason =
       fixSignal.status === 'blocked'
@@ -1968,7 +2007,7 @@ async function recoverReviewFixPass({
         reason: workerBlockReason,
         issues,
         validationDepth,
-        retryCount: 1,
+        retryCount: recoveredRetryCount,
         maxRetries,
         fixDelta: fixDelta.snapshot,
         attempts: [
@@ -2033,7 +2072,7 @@ async function recoverReviewFixPass({
         fixDelta: fixDelta.snapshot,
         attempts: [initialAttempt, secondAttempt],
         timeline: secondAttempt.timeline,
-        retryCount: 1,
+        retryCount: recoveredRetryCount,
         maxRetries,
         feedbackSent: !pending,
         recoveryContinuationPending: pending,
@@ -2053,7 +2092,7 @@ async function recoverReviewFixPass({
       maxRetries,
       reviewTimeoutMs,
       reviewResult: seededReviewResult,
-      retryCount: 1,
+      retryCount: recoveredRetryCount,
       validationDepth,
       artifactScope,
       mode,

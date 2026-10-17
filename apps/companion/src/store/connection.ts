@@ -15,10 +15,12 @@ import {
   type PRListUpdatedPayload,
   type PRUpdatedPayload,
   type Run,
+  type RunDeletedPayload,
   signOutAccount,
   type SlotStatus,
 } from '@farmslot/protocol';
 
+import { sourceChangeFeedFor } from '../features/sources/source-change-feed';
 import { currentFarmConnection } from '../lib/connection-authority';
 import {
   type ConnectionHealthState,
@@ -185,6 +187,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       const auth =
         !signedOut && activeProfile ? await authCredentialsForProfile(activeProfile) : {};
       const client = new GatewayClient(url, auth);
+      sourceChangeFeedFor(client);
       const session =
         !signedOut && activeProfile ? await readGatewayProfilePersonSession(activeProfile) : null;
 
@@ -220,6 +223,12 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       client.subscribe(Events.RUN_CREATED, (payload) => {
         const data = payload as { run: Run };
         if (data.run) useRunStore.getState().upsertRun(data.run);
+      });
+
+      // Archive also arrives as RUN_DELETED.
+      client.subscribe(Events.RUN_DELETED, (payload) => {
+        const data = payload as RunDeletedPayload;
+        if (data.runId) useRunStore.getState().removeRun(data.runId);
       });
 
       client.subscribe(Events.PR_UPDATED, (payload) => {

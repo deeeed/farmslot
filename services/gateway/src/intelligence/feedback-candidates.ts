@@ -15,12 +15,14 @@ import {
   type FeedbackCandidate,
   type FeedbackCandidateSummary,
   type FeedbackConsumption,
+  type GitHubFeedbackCandidate,
   monitoredPRKey,
   parseGitHubRef,
   PR_BOUND_FLOW_TYPES,
   type PRMonitor,
   type PRMonitorIncident,
   type PRMonitorSignal,
+  type RepairFeedbackCandidate,
   type RetrospectivePayload,
   type Run,
 } from '@farmslot/protocol';
@@ -70,7 +72,7 @@ function collapse(text: string): string {
 /** Provider-owned identity: comment/review database id parsed from the GitHub URL. */
 export function feedbackIdentityFromUrl(
   url: string,
-): { kind: FeedbackCandidate['kind']; providerId: string } | null {
+): { kind: GitHubFeedbackCandidate['kind']; providerId: string } | null {
   const discussion = url.match(/#discussion_r(\d+)$/);
   if (discussion) return { kind: 'review-comment', providerId: discussion[1]! };
   const review = url.match(/#pullrequestreview-(\d+)$/);
@@ -82,7 +84,7 @@ export function feedbackIdentityFromUrl(
 
 export function feedbackSourceKey(
   target: FeedbackPRTarget,
-  kind: FeedbackCandidate['kind'],
+  kind: GitHubFeedbackCandidate['kind'],
   providerId: string,
 ): string {
   return `${target.host.toLowerCase()}/${target.repository.toLowerCase()}#${target.prNumber}:${kind}:${providerId}`;
@@ -172,7 +174,7 @@ const RESOLUTION_RANK = { fixed: 3, resolved: 2, open: 1, unknown: 0 } as const;
 
 interface Draft {
   sourceKey: string;
-  kind: FeedbackCandidate['kind'];
+  kind: GitHubFeedbackCandidate['kind'];
   authorLogin?: string;
   authorKind: FeedbackAuthorKind;
   sourceKind?: string;
@@ -189,10 +191,10 @@ interface Draft {
   /** Time of the provider observation that supplied `providerRevision`. */
   providerObservedAt?: string;
   /** Thread state as the provider last reported it. */
-  providerState?: FeedbackCandidate['resolution']['state'];
-  resolution: FeedbackCandidate['resolution'];
+  providerState?: GitHubFeedbackCandidate['resolution']['state'];
+  resolution: GitHubFeedbackCandidate['resolution'];
   runIds: Set<string>;
-  sources: Set<FeedbackCandidate['sources'][number]>;
+  sources: Set<GitHubFeedbackCandidate['sources'][number]>;
 }
 
 /**
@@ -211,7 +213,7 @@ function bodyIsCurrent(draft: Draft): boolean {
 }
 
 function triageIdentity(entry: CommentsTriageEntry): {
-  kind: FeedbackCandidate['kind'];
+  kind: GitHubFeedbackCandidate['kind'];
   providerId: string;
 } | null {
   const commentId = entry.comment_id;
@@ -226,7 +228,7 @@ function triageIdentity(entry: CommentsTriageEntry): {
 }
 
 interface ObservedIncident {
-  identity: { kind: FeedbackCandidate['kind']; providerId: string };
+  identity: { kind: GitHubFeedbackCandidate['kind']; providerId: string };
   incident: PRMonitorIncident;
   monitor: FeedbackCandidateInput['monitors'][number];
 }
@@ -329,10 +331,10 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
   const familyId = input.familyRuns[0]?.familyId ?? input.familyRuns[0]?.id;
 
   const upsert = (
-    identity: { kind: FeedbackCandidate['kind']; providerId: string },
+    identity: { kind: GitHubFeedbackCandidate['kind']; providerId: string },
     init: Omit<Draft, 'sourceKey' | 'kind' | 'runIds' | 'sources'> & {
       runIds: Iterable<string>;
-      source: FeedbackCandidate['sources'][number];
+      source: GitHubFeedbackCandidate['sources'][number];
     },
   ): void => {
     const sourceKey = feedbackSourceKey(target, identity.kind, identity.providerId);
@@ -472,7 +474,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
     }
   }
 
-  const candidates: FeedbackCandidate[] = [];
+  const candidates: GitHubFeedbackCandidate[] = [];
   for (const draft of drafts.values()) {
     // Only a full body is a fingerprint; the provider summary is truncated.
     const bodyRevision = bodyIsCurrent(draft) ? sha256(collapse(draft.body!)) : undefined;
@@ -517,7 +519,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
       ...(familyId ? { familyId } : {}),
       familyChangeRunIds: attribution.familyChangeRunIds,
       attribution: { kind: attribution.kind, note: attribution.note },
-      sources: [...draft.sources].sort() as FeedbackCandidate['sources'],
+      sources: [...draft.sources].sort() as GitHubFeedbackCandidate['sources'],
     });
   }
 
@@ -645,8 +647,14 @@ export async function collectFeedbackCandidates(
   const family = familyRuns.some((candidate) => candidate.id === run.id)
     ? familyRuns
     : [run, ...familyRuns];
+  const ledger = await readFeedbackLedger();
+  // Send back reasons exist before any PR; they are re-derived from durable run state.
+  const repairs = annotateFeedbackConsumption(family.flatMap(repairFeedbackCandidates), ledger);
   const target = feedbackTargetForRun(run, family, projectRepository);
-  if (!target) return null;
+  if (!target)
+    return repairs.length
+      ? { candidates: repairs, summary: summarizeFeedbackCandidates(repairs) }
+      : null;
   const triage: FeedbackCandidateInput['triage'] = [];
   for (const member of family) {
     if (!member.taskFile) continue;
@@ -658,7 +666,40 @@ export async function collectFeedbackCandidates(
     familyRuns: family,
     triage,
     monitors: monitorSource(),
-    ledger: await readFeedbackLedger(),
+    ledger,
   });
-  return { candidates, summary: summarizeFeedbackCandidates(candidates) };
+  const all = [...candidates, ...repairs];
+  return { candidates: all, summary: summarizeFeedbackCandidates(all) };
+}
+
+/** Rejected visual criteria a Send back returned to the retained worker (ADR-062 Amendment 10). */
+export function repairFeedbackCandidates(run: Run): RepairFeedbackCandidate[] {
+  return (run.engineState?.publishGate?.visualRepairs ?? []).flatMap((repair) =>
+    repair.rejected.map((row): RepairFeedbackCandidate => {
+      const sourceKey = `farmslot/run/${run.id}/repair/${repair.repairId}:visual-repair:${row.receiptId}`;
+      const bodyRevision = sha256(collapse(row.reason));
+      const receipt = run.visualJudgmentReceipts?.find(({ id }) => id === row.receiptId);
+      return {
+        id: sha256(sourceKey),
+        sourceKey,
+        provider: 'farmslot',
+        kind: 'visual-repair',
+        runId: run.id,
+        repairId: repair.repairId,
+        receiptId: row.receiptId,
+        claimId: row.claimId,
+        ...(row.reviewer ? { reviewer: row.reviewer } : {}),
+        revision: bodyRevision,
+        bodyRevision,
+        // Receipts without a kind are the shipped credential-backed person receipts.
+        authorKind: !receipt?.kind || receipt.kind === 'person-reviewed' ? 'human' : 'bot',
+        excerpt: collapse(`${row.claimId}: ${row.reason}`).slice(0, EXCERPT_MAX),
+        resolution: { state: repair.status === 'completed' ? 'fixed' : 'open' },
+        runIds: [run.id],
+        familyChangeRunIds: [run.id],
+        attribution: { kind: 'family-change', note: 'Returned to the agent by Send back.' },
+        sources: ['visual-repair'],
+      };
+    }),
+  );
 }

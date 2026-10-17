@@ -383,6 +383,34 @@ test('a missing project parity reference retains its diagnostic and rules', asyn
   assert.match(report.checklist, /Record missing parity in the verdict/);
 });
 
+test('a project binding ignores host review hooks', async (t) => {
+  const f = fixture(t);
+  const output = captureStdout(t);
+  const host = () => assert.fail('a project binding owns review resolution and wording');
+  const hooks = {
+    libraries: host,
+    resolveLibrary: host,
+    runtime: host,
+    header: host,
+    defaultDomain: { read: host, label: 'HOST_DOMAIN' },
+    domainCommand: 'host review domain',
+    usage: 'Use host review.',
+    verdictRule: 'Host verdict.',
+  };
+  await withProjectRecipeHost(f.options, async () =>
+    handleReview(['checklist', '--base', 'main', '--json'], hooks),
+  );
+  const report = JSON.parse(output());
+  assert.equal(report.adapter, 'headless');
+  assert.equal(report.domain, null);
+  assert.match(report.checklist, /Run `farmslot review domain`/u);
+  assert.match(report.checklist, /Post APPROVE or REQUEST CHANGES/u);
+  await assert.rejects(
+    withProjectRecipeHost(f.options, async () => handleReview(['help'], hooks)),
+    /Use farmslot review checklist\|domain\./u,
+  );
+});
+
 test('advice receives the resolved runtime and preserves an explicit opt-out', async (t) => {
   const f = fixture(t);
   let calls = 0;

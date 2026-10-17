@@ -44,6 +44,12 @@ export {
   writeContainedArtifact,
 } from './artifact-files.js';
 export {
+  type ArtifactValidationCheck,
+  type ArtifactValidationResult,
+  type RecipeArtifactsValidateOptions,
+  validateRecipeArtifactDirectory,
+} from './artifact-validation.js';
+export {
   type ActionCapabilitySource,
   createRuntimeRecipeCatalog,
   type DescribedAction,
@@ -102,7 +108,10 @@ export {
   withCommandJournal,
 } from './command-journal.js';
 export {
+  renderRetainedArtifactsMarkdown,
   renderTaskArtifactsMarkdown,
+  type RetainedArtifactsMarkdownInput,
+  type RetainedArtifactsMarkdownResult,
   type TaskArtifactsMarkdownInput,
   type TaskArtifactsMarkdownResult,
 } from './commands/artifacts-markdown.js';
@@ -144,7 +153,7 @@ export {
   type RecipeQualityCommandOptions,
 } from './commands/recipe-quality.js';
 export { handleReload } from './commands/reload.js';
-export { handleReview, type ReviewCommandOptions } from './commands/review.js';
+export { handleReview, type ReviewCommandOptions, type ReviewLibrary } from './commands/review.js';
 export {
   type DeviceTargeting,
   handleRun,

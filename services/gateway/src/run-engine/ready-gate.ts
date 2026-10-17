@@ -18,6 +18,7 @@ import {
   type ReadyGateInputSnapshot,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
+  RECIPE_REPAIR_SCOPE_TASK_PATH,
   reviewFixRetriesExhausted,
   type ReviewPolicy,
   reviewPolicySatisfied,
@@ -28,6 +29,7 @@ import {
   type ReviewStatus,
   type Run,
   type RunDecision,
+  SEND_BACK_TO_AGENT_ACTION,
   stampReviewRetryCap,
 } from '@farmslot/protocol';
 import {
@@ -43,6 +45,7 @@ import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
+import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
 import { formatReviewMarkdown } from '../quality/review-artifacts.js';
 import {
@@ -57,6 +60,8 @@ import {
 import { assertReviewRoundAvailable } from '../review/review-round-budget.js';
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { reviewPRIdentity } from '../review/session-mode.js';
+import { removeSlotFiles } from '../review/snapshots.js';
+import { resolveWorkerTaskDir } from '../review/templates.js';
 import { isTerminalReviewArtifactError } from '../review/terminal-result.js';
 import { assertEvidenceAttestationReceipt } from '../run-completion/evidence-attestation.js';
 import {
@@ -70,7 +75,7 @@ import {
   readyGateCurrentDescription,
 } from '../run-completion/ready-gate-package.js';
 import { runnerDefaultModel } from '../runners/registry.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
@@ -140,6 +145,12 @@ import {
   readTaskInputText,
   readWorkerReport,
 } from './task-artifacts.js';
+import {
+  activeVisualRepair,
+  updateVisualRepair,
+  visualRepairIssues,
+  visualRepairOffered,
+} from './visual-repair.js';
 
 const S = PipelineSteps;
 
@@ -282,6 +293,125 @@ async function resumeInterruptedPublicationReviewOnce(
     },
   });
   return { reviewId: interrupted.id, verdict: result.verdict };
+}
+
+/**
+ * Send back to agent: deliver the reserved repair through the named review loop's
+ * existing fix path, then retain its result. A refusal or uncertain delivery leaves
+ * the same charged repair recoverable; the caller always re-presents the gate.
+ */
+export async function resumeVisualRepair(
+  runId: string,
+  slotId: string,
+  dependencies: { executeReview?: typeof executeReviewDefault } = {},
+): Promise<{ repairId: string; verdict: ReviewResult['verdict'] } | null> {
+  const active = activePublicationReviewContinuations.get(runId);
+  if (active) return null;
+  const continuation = resumeVisualRepairOnce(runId, slotId, dependencies);
+  activePublicationReviewContinuations.set(runId, continuation);
+  try {
+    const result = await continuation;
+    return result && 'repairId' in result ? result : null;
+  } finally {
+    if (activePublicationReviewContinuations.get(runId) === continuation) {
+      activePublicationReviewContinuations.delete(runId);
+    }
+  }
+}
+
+async function resumeVisualRepairOnce(
+  runId: string,
+  slotId: string,
+  dependencies: { executeReview?: typeof executeReviewDefault },
+): Promise<{ reviewId: string; repairId: string; verdict: ReviewResult['verdict'] } | null> {
+  const run = getRun(runId);
+  const repair = run ? activeVisualRepair(run) : undefined;
+  const review = run?.engineState?.publishGate?.reviews?.find(({ id }) => id === repair?.reviewId);
+  if (!run || !repair || !review) return null;
+  const vars = await loadSlotVars(slotId);
+  const taskDir = await resolveWorkerTaskDir(vars, run.project, run.taskFile);
+  if (!taskDir) {
+    updateVisualRepair(runId, repair.repairId, {
+      reason: 'The retained task directory is unavailable.',
+    });
+    return null;
+  }
+  const scopeFile = `${taskDir}/${RECIPE_REPAIR_SCOPE_TASK_PATH}`;
+  // The worker reads the frozen scope; the run store digest remains the authority.
+  await writeTextFileOnSlot(vars, scopeFile, `${JSON.stringify(repair.scope, null, 2)}\n`);
+  await persistRunNow(getRun(runId)!, 'visual repair reserved');
+  const executeReview = dependencies.executeReview ?? executeReviewDefault;
+  let result: ReviewResult;
+  try {
+    result = await executeReview(runId, slotId, {
+      reviewRunner: review.runner ?? null,
+      model: review.model ?? null,
+      effort: review.effort ?? null,
+      validationDepth: review.validationDepth ?? 'full-live',
+      artifactScope: review.id,
+      reviewId: review.id,
+      mode: review.mode ?? 'cold',
+      publicationReview: true,
+      resumeFromResult: {
+        ...reviewResultFromInterruptedReview(review),
+        verdict: 'issues',
+        issues: visualRepairIssues(repair.scope, taskDir),
+        // A retry never rolls the loop's persisted budget back.
+        retryCount: Math.max(repair.reservedRetryCount, review.retryCount ?? 0),
+        feedbackSent: false,
+        recoveryContinuationPending: false,
+      },
+      reservedFixPass: {
+        onDelivered: () =>
+          updateVisualRepair(runId, repair.repairId, {
+            status: 'delivered',
+            deliveredAt: new Date().toISOString(),
+            reason: undefined,
+          }),
+      },
+    });
+  } catch (error) {
+    if (isTerminalReviewArtifactError(error)) throw error;
+    updateVisualRepair(runId, repair.repairId, {
+      reason: `Delivery is recoverable: ${(error as Error).message}`,
+    });
+    return null;
+  }
+  const latest = getRun(runId)!;
+  const latestReviews = latest.engineState?.publishGate?.reviews ?? [];
+  const reviewStatus = buildPublishGateReviewStatus({
+    source: review.source === 'dispatch' ? 'dispatch' : 'human-gate',
+    priorReviewCount: Math.max(0, latestReviews.length - 1),
+    reviewResult: result,
+    requestedRunner: review.runner ?? null,
+    model: review.model ?? latest.metrics.actualModel ?? latest.metrics.model ?? null,
+    effort: result.effort ?? review.effort ?? null,
+    reviewId: review.id,
+    reviewedPackage: await readPreparedPackage(latest),
+  });
+  const [persisted] = await persistReviewArtifactsForRun(latest, [reviewStatus]);
+  updateRun(runId, {
+    engineState: {
+      ...latest.engineState,
+      publishGate: {
+        ...latest.engineState?.publishGate,
+        reviews: latestReviews.map((entry) => (entry.id === review.id ? persisted : entry)),
+      },
+    },
+  });
+  if (activeVisualRepair(getRun(runId)!)?.status === 'delivered') {
+    updateVisualRepair(runId, repair.repairId, {
+      status: 'completed',
+      completedAt: new Date().toISOString(),
+    });
+    // A completed scope is retired so normal recipe runs ignore it.
+    await removeSlotFiles(vars, [`${vars.remoteRepo}/${scopeFile}`]);
+  } else {
+    updateVisualRepair(runId, repair.repairId, {
+      reason: 'The agent has not accepted the repair yet. Send back again to retry.',
+    });
+  }
+  return { reviewId: review.id, repairId: repair.repairId, verdict: result.verdict };
 }
 
 export interface PublishGateReviewPlanResult {
@@ -639,14 +769,6 @@ async function persistGateFeedback(
       publishGate: {
         ...current.engineState?.publishGate,
         feedbackArtifactPath: rel,
-        ...(actionId === 'send-feedback' && current.engineState?.publishGate?.packageId
-          ? {
-              supersededPackageIds: [
-                ...(current.engineState.publishGate.supersededPackageIds ?? []),
-                current.engineState.publishGate.packageId,
-              ],
-            }
-          : {}),
       },
     },
   });
@@ -791,6 +913,7 @@ export async function executeReadyGate(
         const fixActions = publicationGateDecisionActions({
           reviewSatisfied: false,
           pendingReviewContinuation: interruptedPublicationReview(getRun(runId)!),
+          visualRepairReviewId: activeVisualRepair(getRun(runId)!)?.reviewId,
         }).filter((action) => action.id === CONTINUE_REVIEW_FIX_ACTION);
         recoveredAction = await decide(
           runId,
@@ -1023,6 +1146,8 @@ export async function executeReadyGate(
           evidenceRefreshAction,
           unavailableSnapshotAction,
           pendingReviewContinuation,
+          sendBackToAgent: await visualRepairOffered(getRun(runId)!, preparedPackage),
+          visualRepairReviewId: activeVisualRepair(getRun(runId)!)?.reviewId,
           reviews,
           preparedPackage,
         })
@@ -1363,7 +1488,8 @@ export async function executeReadyGate(
         },
       },
     });
-    if (!isPublishApprovalAction(actionId)) {
+    // Send back is delivered by the retained review loop; a feedback note is not delivery.
+    if (!isPublishApprovalAction(actionId) && actionId !== SEND_BACK_TO_AGENT_ACTION) {
       await persistGateFeedback(afterDecisionRun, actionId, selectionData);
     }
   }
