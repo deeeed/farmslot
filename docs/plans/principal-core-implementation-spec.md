@@ -1148,7 +1148,9 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   Source-pin actors remain display-only.
 - A delegator resolves at `visual_claim_review.delegatorPrincipalGeneration`
   when the policy sets it (A5 clarification, 2026-10-17). The parser accepts
-  only a positive safe integer next to `delegatorPrincipalId`.
+  only a positive safe integer next to `delegatorPrincipalId`. A pin above the
+  current generation names no replaced identity: its denial names both
+  generations and says to re-pin, or to remove the pin for generation zero.
 - Native execution ownership remains id-only and matches only a generation-zero
   principal. `requireNativeProfileOwner`, `resolveNativeWorkerOwner`,
   `resolveReviewWorkspaceOwner`, `ownsLocalNativeProfile`, node bindings and
