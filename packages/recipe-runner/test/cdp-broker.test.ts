@@ -601,6 +601,35 @@ describe('CDP broker network capture', () => {
     );
   });
 
+  it('redacts credential-like path segments and keeps readable ones', async () => {
+    const { broker, client } = await setup();
+
+    await client.control('capture-start', { id: 'path-tokens' });
+    for (const url of [
+      'https://cdn-settings.segment.com/v1/projects/AbCdEf0123456789GhIjKlMnOpQrStUv/settings',
+      'https://mainnet.infura.io/v3/0123456789abcdef0123456789abcdef',
+      'https://example.com/api/v1/perps-market-overview/btc-usd',
+      'https://example.com/static/js/main.a1b2c3d4e5f6a7b8c9d0.js',
+    ]) {
+      broker.onCdpEvent('device-1', 'Network.requestWillBeSent', {
+        request: { url, method: 'GET' },
+      });
+    }
+
+    const summary = (await client.control('capture-end', { id: 'path-tokens' })) as {
+      requests: Array<{ path: string }>;
+    };
+    assert.deepEqual(
+      summary.requests.map((request) => request.path),
+      [
+        '/v1/projects/<redacted>/settings',
+        '/v3/<redacted>',
+        '/api/v1/perps-market-overview/btc-usd',
+        '/static/js/main.a1b2c3d4e5f6a7b8c9d0.js',
+      ],
+    );
+  });
+
   it('marks matching requests partial when an allowlisted body cannot be inspected', async () => {
     const { broker, client } = await setup();
 
