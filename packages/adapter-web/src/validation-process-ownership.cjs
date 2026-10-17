@@ -15,9 +15,12 @@ function commandHasExactProfile(command, profile) {
 }
 
 function profileProcessPids(profile) {
+  // The whole process table, full command lines: past Node's 1 MB default on a
+  // host with many booted simulators, so allow what browser-cdp allows lsof.
   const output = execFileSync('ps', ['-ww', '-axo', 'pid=,command='], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
+    maxBuffer: 16 * 1024 * 1024,
   });
   const pids = [];
   for (const line of output.split('\n')) {

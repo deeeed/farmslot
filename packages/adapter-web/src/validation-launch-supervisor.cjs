@@ -60,9 +60,12 @@ function launchTreeExists() {
 }
 
 function launchTreePids() {
+  // The whole process table: allow more than Node's 1 MB default, as for the
+  // profile scan in validation-process-ownership.cjs.
   const output = execFileSync('ps', ['-axo', 'pid=,pgid='], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
+    maxBuffer: 16 * 1024 * 1024,
   });
   const pids = [];
   for (const line of output.split('\n')) {
