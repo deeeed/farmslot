@@ -4,12 +4,15 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The family workspace counts active runs with the shared `isActiveListRun` rule: a family whose failed run still holds its slot reports that run as active and the family as active, matching every run list.
 - Advance the source revision as soon as run admission or a new source attempt is saved, and when a restored or newly created run stops accepting pins.
 - `run.list` `active` returns every active run unless the caller sets a limit.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Bind stored PR, push, assessment and run owners to the identity generation that wrote them (ADR-051 Amendment 5), so a person re-created at a reused id can use PR notifications, watches, rules and rule-driven QA without inheriting the retired identity's records. Native execution ownership stays with generation zero. An admin person without native ownership can still request a static review directly; it runs and publishes as the configured native owner and records the person as requester. Denials for a reused identity name it as replaced rather than revoked.
+
+- A visual-review delegator pinned above its current identity generation is refused with a message naming both generations, instead of reading as a replaced identity.
 
 ## 0.23.0 - 2026-10-17
 
@@ -48,6 +51,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
 - Render `{{node_support_dir}}` in fixtures and `NODE_SUPPORT_DIR` in worker templates from the slot's selected node-support bundle, so pack scripts no longer resolve through the node install root or the old in-checkout support pointer. Fixture checks read the slot's selection without publishing.
 - Freeze the source identity of a QA run whose ref or range scope names exact commits (`expectedHeadSha`/`expectedBaseSha`, or full-SHA `ref`, `head` and `base`), as PR QA does. Prepare checks out that head, detached when the run has no branch, instead of the default-branch tip; dispatch refuses a prepared HEAD that differs and names the frozen head; completion validates against the same identity, also for runs prepared before this change. Start refs also accept 64-hex commit names.
+
+- Refuse `slot.release` and `slot.recycle` of a slot whose run failed a COMPLETE or FINALIZE prerequisite, so a worker or operator can no longer discard the checkout a completion replay needs. Replay the completion, or discard the workspace with a `slot.release` that passes `forceReset:true` and names the run in `expectedRunId`. A replay of such a run must start at the refused step or earlier, since a later-step retry would mark the refusal done; a failed replay restores the retained slot claim instead of releasing it. The recovery proposal no longer offers to release it as orphaned.
 
 ## 0.22.1 - 2026-10-16
 

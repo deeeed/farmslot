@@ -520,3 +520,91 @@ test('only a named force release detaches an active find-slot owner', async (t) 
   assert.equal(getRun(owner.id)?.slotId, null, 'the released owner lost the slot');
   assert.equal(await readSlotField(slotId, 'current_run_id'), null);
 });
+
+test('a retained completion failure keeps its slot until replay or a named discard', async (t) => {
+  const { readSlotField } = await import('../../core/index.js');
+  const slotId = await fixtureSlot(t, 'retained-completion', 'main');
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-retained-completion`,
+    slotId,
+  });
+  t.after(() => cleanupRun(run.id));
+  // A refused COMPLETE prerequisite: terminal `failed`, checkout kept for replay.
+  updateRun(run.id, {
+    status: 'failed',
+    completedAt: new Date().toISOString(),
+    steps: [
+      {
+        name: PipelineSteps.COMPLETE,
+        status: 'failed',
+        outputs: { gatePrerequisiteRefusal: {} },
+      },
+    ],
+  });
+  await seedSlotRow(t, slotId, {
+    lifecycle: 'held',
+    phase: 'occupied',
+    agent: 'idle',
+    current_run_id: run.id,
+    slot_epoch: 4,
+  });
+
+  // The call a QA worker made on its own run before its completion was certified.
+  await assert.rejects(
+    slotRelease({ slotId, expectedRunId: run.id }, noopEmit),
+    new RegExp(`retained by run ${run.id}, whose completion prerequisite failed`),
+  );
+  await assert.rejects(slotRelease({ slotId, keepWork: true }, noopEmit), /retained by run/);
+  assert.equal(await readSlotField(slotId, 'current_run_id'), run.id);
+  assert.equal(await readSlotField(slotId, 'phase'), 'occupied', 'the slot was never fenced');
+  assert.equal(getRun(run.id)?.slotId, slotId);
+
+  const result = await slotRelease(
+    { slotId, keepWork: true, forceReset: true, expectedRunId: run.id },
+    noopEmit,
+  );
+  assert.deepEqual(result, { released: true });
+  assert.equal(await readSlotField(slotId, 'current_run_id'), null);
+  assert.equal(getRun(run.id)?.slotId, null);
+});
+
+test("a replay's epoch-pinned rollback still frees its own claim on a retained run", async (t) => {
+  const { readSlotField } = await import('../../core/index.js');
+  const slotId = await fixtureSlot(t, 'retained-rollback', 'main');
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-retained-rollback`,
+    slotId,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'failed',
+    completedAt: new Date().toISOString(),
+    steps: [
+      {
+        name: PipelineSteps.COMPLETE,
+        status: 'failed',
+        outputs: { gatePrerequisiteRefusal: {} },
+      },
+    ],
+  });
+  // The replay claimed a free slot at epoch 9, then failed before its engine ran.
+  await seedSlotRow(t, slotId, {
+    lifecycle: 'busy',
+    phase: 'preparing',
+    agent: 'orchestrator',
+    current_run_id: run.id,
+    slot_epoch: 9,
+  });
+
+  const result = await slotRelease({ slotId, keepWork: true, expectedRunId: run.id }, noopEmit, {
+    expectedSlotEpoch: 9,
+  });
+  assert.deepEqual(result, { released: true });
+  assert.equal(await readSlotField(slotId, 'current_run_id'), null);
+});

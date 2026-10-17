@@ -121,15 +121,11 @@ import {
   shouldTrustProxyHeaders,
   startCredentialFreshnessPolling,
 } from './security/auth.js';
-import { authorizeStoredRunEffect } from './security/authorization.js';
+import { authorizeQueuedOriginator } from './security/authorization.js';
 import { registerGatewayPresence } from './security/gateway-presence.js';
 import { requireNativeProfileOwner } from './security/native-worker-owner.js';
 import { applyGatewayCors } from './security/origin.js';
-import {
-  replacedWorkOriginator,
-  resolveWorkOriginator,
-  runWithSessionOriginator,
-} from './security/work-originator.js';
+import { runWithSessionOriginator } from './security/work-originator.js';
 import { initializeSources, stopSourceReconciliation } from './sources/runtime.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
@@ -492,11 +488,11 @@ async function main(): Promise<void> {
     );
     const itemLabel = item.label || `${item.project}/${item.ticketOrPr} (${item.id.slice(0, 8)})`;
     const authorizeOriginator = () =>
-      authorizeStoredRunEffect(
-        resolveWorkOriginator(gatewayAuthRuntime, item.originator),
+      authorizeQueuedOriginator(
+        gatewayAuthRuntime,
+        item.originator,
         itemLabel,
         effectiveSafetyTier,
-        replacedWorkOriginator(gatewayAuthRuntime, item.originator),
       );
     const creatingPrincipal = authorizeOriginator();
     if (item.transport === 'native') {

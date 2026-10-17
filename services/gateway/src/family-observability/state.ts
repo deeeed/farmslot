@@ -1,4 +1,4 @@
-import { isSuccessfulRun, type Run } from '@farmslot/protocol';
+import { isActiveListRun, isSuccessfulRun, type Run } from '@farmslot/protocol';
 
 export interface FamilyStateSummary {
   familyId: string;
@@ -13,10 +13,6 @@ export interface FamilyStateSummary {
 
 function familyKey(run: Pick<Run, 'id' | 'familyId'>): string {
   return run.familyId || run.id;
-}
-
-export function isActiveFamilyRun(run: Pick<Run, 'status'>): boolean {
-  return !['done', 'failed', 'cancelled'].includes(run.status);
 }
 
 export function sortRunsByFreshness(runs: Run[]): Run[] {
@@ -51,13 +47,13 @@ export function buildFamilyStateSummary(familyRuns: Run[]): FamilyStateSummary |
     familyId: familyKey(latestRun),
     familyRootTicketOrPr: latestRun.familyRootTicketOrPr ?? latestRun.ticketOrPr,
     familyRunCount: orderedRuns.length,
-    activeRunCount: orderedRuns.filter(isActiveFamilyRun).length,
+    activeRunCount: orderedRuns.filter(isActiveListRun).length,
     latestRunId: latestRun.id,
     latestPrNumber: latestRun.prNumber ?? null,
     // Any success wins. Closing partial execution is not success.
     // A later failed retry does not invalidate earlier
     // success — the merged PR / delivered fix is the outcome that matters.
-    workflowState: orderedRuns.some(isActiveFamilyRun)
+    workflowState: orderedRuns.some(isActiveListRun)
       ? 'active'
       : orderedRuns.some(isSuccessfulRun)
         ? 'complete'

@@ -1883,6 +1883,10 @@ under the native owner.
   - `requestedByPrincipalId` and `requestedByPrincipalGeneration` on `Run`, and
     `delegatedOwnerPrincipalId` on `QueueItem`, present only on a delegated static
     review.
+- `@farmslot/protocol` also adds `delegatorPrincipalGeneration` to
+  `ProjectVisualClaimReviewPolicy`. It is an optional, admin-authored pin in
+  project configuration, not a server-derived field (clarification of
+  2026-10-17).
 - Consumers are the gateway PR, assessment and run stores and dispatchers, the
   notification audience and the push sources. Clients read these fields only
   through existing list and get RPCs.

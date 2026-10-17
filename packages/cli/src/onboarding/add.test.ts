@@ -4,6 +4,7 @@ import {
   chmodSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -141,7 +142,7 @@ test('operatorAddedFiles preserves only pack-ignored operator files', (t) => {
   const src = join(root, 'src');
   const dest = join(root, 'dest');
   // Pack source is a git repo whose .gitignore covers the operator secrets.
-  gitPack(src, '.js.env\nwallet-fixture.json\n');
+  gitPack(src, '.js.env\nwallet-fixture.json\ntasks/\n');
   mkdirSync(join(src, 'fixtures'), { recursive: true });
   mkdirSync(join(dest, 'fixtures'), { recursive: true });
   // Pack ships the .sample template + project.json (tracked, not ignored).
@@ -158,10 +159,20 @@ test('operatorAddedFiles preserves only pack-ignored operator files', (t) => {
   writeFileSync(join(dest, 'fixtures', 'legacy-hook.sh'), 'echo old');
   // A dir-symlink must be skipped, not treated as a file (would EISDIR on read).
   symlinkSync(join(dest, 'fixtures', 'runtime'), join(dest, 'linked-runtime'));
+  // Gateway run tasks stay in place during the replace, so they are never copied.
+  mkdirSync(join(dest, 'tasks', 'feat', 't-1'), { recursive: true });
+  writeFileSync(join(dest, 'tasks', 'feat', 't-1', 'TASK.md'), '# task');
 
   assert.deepEqual(operatorAddedFiles(dest, src).sort(), [
     join('fixtures', '.js.env'),
     join('fixtures', 'runtime', 'wallet-fixture.json'),
+  ]);
+  // A linked project dir is replaced as a whole, so its ignored task files are carried over.
+  symlinkSync(dest, join(root, 'dest-link'));
+  assert.deepEqual(operatorAddedFiles(join(root, 'dest-link'), src).sort(), [
+    join('fixtures', '.js.env'),
+    join('fixtures', 'runtime', 'wallet-fixture.json'),
+    join('tasks', 'feat', 't-1', 'TASK.md'),
   ]);
   // Fresh dest (first add) has nothing to preserve.
   assert.deepEqual(operatorAddedFiles(join(root, 'missing'), src), []);
@@ -216,6 +227,59 @@ test('registerProject re-add preserves operator secrets, refreshes pack files', 
   assert.equal(readFileSync(join(destFix, '.js.env.sample'), 'utf-8'), 'KEY=\nNEW=\n');
   // Pack-deleted file is NOT resurrected (it was tracked, not gitignored).
   assert.equal(existsSync(join(destFix, 'legacy-hook.sh')), false);
+});
+
+test('a pack re-sync keeps the gateway run task root', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-tasks-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const ws: Workspace = workspaceAt(join(root, 'ws'));
+  const packDir = join(root, 'pack');
+  const proj: PackProject = { dir: 'projects/app-farm', platform: 'cli', slots: 1 };
+  const noop = { step: () => {}, info: () => {} };
+  const projSrc = join(packDir, 'projects', 'app-farm');
+  // Like the terminal-backend pack, the pack's git does not ignore tasks/.
+  gitPack(packDir, 'node_modules/\n');
+  mkdirSync(projSrc, { recursive: true });
+  writeFileSync(
+    join(projSrc, 'project.json'),
+    JSON.stringify({ name: 'app-farm', repo_url: 'https://example.invalid/app.git' }),
+  );
+  writeFileSync(join(projSrc, 'old-hook.sh'), 'echo old\n');
+  const state = stateWith({ p: { source: packDir, hash: '', projects: ['app-farm'], slots: [] } });
+  const dest = join(ws.farmslotDir, 'projects', 'app-farm');
+
+  registerProject(proj, packDir, ws, state, 'p', noop);
+  const inputs = join(dest, 'tasks', 'feat', 'tat-1', 'inputs');
+  mkdirSync(inputs, { recursive: true });
+  writeFileSync(join(inputs, 'handoff.json'), '{"frozen":true}\n', { mode: 0o600 });
+  rmSync(join(projSrc, 'old-hook.sh'));
+  // A pack copied from a live project can carry an old snapshot of the same task.
+  const packInputs = join(projSrc, 'tasks', 'feat', 'tat-1', 'inputs');
+  mkdirSync(packInputs, { recursive: true });
+  writeFileSync(join(packInputs, 'handoff.json'), '{"stale":true}\n');
+
+  registerProject(proj, packDir, ws, state, 'p', noop);
+  assert.equal(readFileSync(join(inputs, 'handoff.json'), 'utf-8'), '{"frozen":true}\n');
+  assert.equal(statSync(join(inputs, 'handoff.json')).mode & 0o777, 0o600);
+  // Pack content is still fully replaced.
+  assert.equal(existsSync(join(dest, 'old-hook.sh')), false);
+
+  // A pack entry named tasks that is a file is skipped as well.
+  rmSync(join(projSrc, 'tasks'), { recursive: true });
+  writeFileSync(join(projSrc, 'tasks'), 'not a folder\n');
+  registerProject(proj, packDir, ws, state, 'p', noop);
+  assert.equal(existsSync(join(dest, 'project.json')), true);
+  assert.equal(readFileSync(join(inputs, 'handoff.json'), 'utf-8'), '{"frozen":true}\n');
+
+  // A linked project dir is replaced as a whole; nothing inside its target is deleted.
+  const outside = join(root, 'outside');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'keep.txt'), 'keep');
+  rmSync(dest, { recursive: true, force: true });
+  symlinkSync(outside, dest);
+  registerProject(proj, packDir, ws, state, 'p', noop);
+  assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf-8'), 'keep');
+  assert.equal(statSync(dest).isDirectory() && !lstatSync(dest).isSymbolicLink(), true);
 });
 
 test('projectAdd --no-setup --project registers selected slots without setup/preflight', (t) => {

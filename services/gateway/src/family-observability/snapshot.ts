@@ -14,6 +14,7 @@ import {
   type FamilyRecipeProvenance,
   FLOW_WORKER_REPORT_ARTIFACTS,
   GATE_SUMMARY_KINDS,
+  isActiveListRun,
   parseGitHubRef,
   prNumberFromRunInput,
   type RecipeQualitySignal,
@@ -919,9 +920,7 @@ export async function buildFamilyObservabilitySnapshotFromRuns(
     latestPrNumber: summary?.latestPrNumber ?? latestRun.prNumber ?? null,
     workflowState: summary?.workflowState ?? 'complete',
     familyRunCount: summary?.familyRunCount ?? familyRuns.length,
-    activeRunCount:
-      summary?.activeRunCount ??
-      familyRuns.filter((run) => !['done', 'failed', 'cancelled'].includes(run.status)).length,
+    activeRunCount: summary?.activeRunCount ?? familyRuns.filter(isActiveListRun).length,
     summary: familySummary,
     diffStat: { ...diffRun.diffStat, runId: diffRun.runId },
     familyChangeLedger,

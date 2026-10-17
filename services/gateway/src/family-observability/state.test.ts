@@ -8,7 +8,6 @@ import {
   buildLatestRunByPrNumber,
   findFamilyStateSummaryForPR,
   findFollowUpParentRun,
-  isActiveFamilyRun,
   sortRunsByFreshness,
 } from './state.js';
 
@@ -54,10 +53,18 @@ function makeRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
-test('isActiveFamilyRun excludes terminal statuses', () => {
-  assert.equal(isActiveFamilyRun(makeRun({ status: 'done' })), false);
-  assert.equal(isActiveFamilyRun(makeRun({ status: 'failed' })), false);
-  assert.equal(isActiveFamilyRun(makeRun({ status: 'monitoring' })), true);
+test('a family counts active runs with the run-list active rule', () => {
+  const held = makeRun({
+    id: 'held',
+    status: 'failed',
+    updatedAt: '2026-04-15T02:00:00.000Z',
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  });
+  const failed = makeRun({ id: 'failed', status: 'failed', updatedAt: '2026-04-15T01:00:00.000Z' });
+  const summary = buildFamilyStateSummary([held, failed]);
+  assert.equal(summary?.activeRunCount, 1);
+  assert.equal(summary?.workflowState, 'active');
+  assert.equal(buildFamilyStateSummary([failed])?.activeRunCount, 0);
 });
 
 test('closing partial or failed execution does not complete a family', () => {

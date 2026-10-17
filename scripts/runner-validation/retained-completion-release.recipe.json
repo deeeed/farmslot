@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Refused completion keeps its slot through the gateway",
+  "description": "Use a disposable gateway, run ledger, project and slot to verify that a run refused at COMPLETE keeps its slot: bound release, recycle and a later-step replay are refused, a failed replay from the refused step restores the claim, and only the named force discard releases it before archive. No operator runs or slots are used.",
+  "workflow": {
+    "entry": "retained-completion",
+    "nodes": {
+      "retained-completion": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/retained-completion-release.mjs",
+        "timeout_ms": 120000,
+        "intent": "A refused completion's checkout survives worker release, recycle and retries until the named discard.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

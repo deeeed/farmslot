@@ -1,7 +1,7 @@
 import {
   hasLiveRecipeEvidence,
+  isActiveListRun,
   isSuccessfulRun,
-  isTerminalRunStatus,
   type Run,
   RUN_SELF_LEARNING_MISSING_SIGNALS,
   type RunDecisionPayload,
@@ -12,10 +12,6 @@ import {
   type RunSelfLearningEligibility,
 } from '../contracts/index.js';
 import type { RunListResult } from '../rpc/index.js';
-
-function isTerminalRun(run: Run): boolean {
-  return isTerminalRunStatus(run.status);
-}
 
 function hasPendingDecision(run: Run): boolean {
   return (run.decisions ?? []).some((decision) => !decision.resolvedAt);
@@ -88,7 +84,7 @@ function hasPayloadDiff(payload: RunDecisionPayload | undefined): boolean {
 
 function eligibilityForFamily(runs: Run[]): RunSelfLearningEligibility {
   const reasons: RunSelfLearningBlockReason[] = [];
-  if (runs.some((run) => !isTerminalRun(run))) reasons.push('active-runs');
+  if (runs.some(isActiveListRun)) reasons.push('active-runs');
   if (runs.some(hasPendingDecision)) reasons.push('pending-decisions');
   if (!runs.some(isSuccessfulRun)) reasons.push('no-successful-run');
 
@@ -158,10 +154,11 @@ export function buildRunFamilyReadinessSummaries(runs: Run[]): RunFamilyReadines
   return [...grouped.entries()]
     .map(([familyId, familyRuns]) => {
       const latest = latestRun(familyRuns);
-      const terminalRunCount = familyRuns.filter(isTerminalRun).length;
-      const activeRunCount = familyRuns.length - terminalRunCount;
+      // A failed run that still holds its resources is active, as in every run list.
+      const activeRunCount = familyRuns.filter(isActiveListRun).length;
+      const terminalRunCount = familyRuns.length - activeRunCount;
       const failedRunCount = familyRuns.filter(
-        (run) => run.status === 'failed' || run.status === 'cancelled',
+        (run) => (run.status === 'failed' || run.status === 'cancelled') && !isActiveListRun(run),
       ).length;
       const root =
         familyRuns.find((run) => run.id === familyId || run.parentRunId == null) ?? familyRuns[0];

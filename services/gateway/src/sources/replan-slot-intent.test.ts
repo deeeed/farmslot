@@ -250,6 +250,7 @@ test('a delegated static review replans as its native owner and keeps its reques
     { kind: 'principal', principalId: 'arthur', principalGeneration: 1 },
   ];
   for (const actor of actors) {
+    plannedAs.length = 0;
     const run = makeRun({
       id: 'run-1',
       project: 'demo',
@@ -269,7 +270,7 @@ test('a delegated static review replans as its native owner and keeps its reques
     const next = await runWithWorkOriginator(actor, () =>
       withProjectSources(sources, () => replanSourceRun(run, { nodeId: 'node-1' })),
     );
-    assert.deepEqual(plannedAs.at(-1), { kind: 'principal', principalId: 'farm-automation' });
+    assert.deepEqual(plannedAs, [{ kind: 'principal', principalId: 'farm-automation' }]);
     assert.equal(next.createdByPrincipalId, 'farm-automation');
     assert.equal(next.createdByPrincipalGeneration, undefined);
     assert.equal(next.requestedByPrincipalId, 'arthur');

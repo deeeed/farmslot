@@ -1142,13 +1142,15 @@ invalidation hook, and **the subscribed session makes no request at any point**.
 - A contribution whose owner fails with `generation_mismatch` is withdrawn before
   shared-review admission. Any other loss of authority refuses admission and keeps
   the contribution held. Restoring that authority admits it without re-authoring.
-- Webhook principals, delegated visual-review delegators and
-  `delegatedReviewerPrincipalIds` resolve at generation zero. A replacement is
-  never credited or empowered, and the denial names the mismatch. Source-pin
-  actors remain display-only.
+- Webhook principals, `delegatedReviewerPrincipalIds` and visual-review
+  delegators without a pin resolve at generation zero. A replacement is never
+  credited or empowered through them, and the denial names the mismatch.
+  Source-pin actors remain display-only.
 - A delegator resolves at `visual_claim_review.delegatorPrincipalGeneration`
   when the policy sets it (A5 clarification, 2026-10-17). The parser accepts
-  only a positive safe integer next to `delegatorPrincipalId`.
+  only a positive safe integer next to `delegatorPrincipalId`. A pin above the
+  current generation names no replaced identity: its denial names both
+  generations and says to re-pin, or to remove the pin for generation zero.
 - Native execution ownership remains id-only and matches only a generation-zero
   principal. `requireNativeProfileOwner`, `resolveNativeWorkerOwner`,
   `resolveReviewWorkspaceOwner`, `ownsLocalNativeProfile`, node bindings and
@@ -1204,7 +1206,7 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   - For a replacement, these are refused with their named reasons: native
     ownership, direct static review by a non-admin, static review admitted from a
     rule or submission, review publication as its own owner, webhook principals,
-    delegators and delegated reviewers.
+    unpinned delegators and delegated reviewers.
   - Delegated authorship:
     - An admin replacement's direct static review is created under the native
       owner with its requester recorded, runs, and publishes as that owner.

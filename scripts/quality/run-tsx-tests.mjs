@@ -41,7 +41,7 @@ export const TEST_STATUS_ENV = 'FARMSLOT_TEST_STATUS_FILE';
 // on the REAL repo: bogus `init` commits land on the checked-out branch and
 // `git init --bare` flips `core.bare`. Strip the location vars so fixture git
 // commands stay confined to their own working directory. No-op outside hooks.
-const GIT_LOCATION_ENV = [
+export const GIT_LOCATION_ENV = [
   'GIT_DIR',
   'GIT_WORK_TREE',
   'GIT_INDEX_FILE',
