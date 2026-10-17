@@ -106,7 +106,9 @@ branch. Merge required installation fixes before installing the release.
    ```
 
    Repeat for `--instance prod` when configured. Add `--refresh-cli` for the local
-   machine; remote deploys refresh the CLI automatically. Verify the immutable
+   machine; remote deploys refresh the CLI automatically. On a machine whose node
+   runs elsewhere, such as the gateway machine's dev stack, use `--cli-only`: it
+   refreshes that machine's CLI without syncing or restarting a node service. Verify the immutable
    CLI snapshot's `DEPLOYED-REVISION.json` names the merged release SHA. Dev and
    prod share one CLI per machine, so deploy both from that revision. Preserve
    credential-file inputs; service and preflight checks must use matching
