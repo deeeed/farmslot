@@ -242,6 +242,9 @@ export interface ActiveVideoRecording {
   stop(): Promise<VideoRecordingResult>;
   /** Capture a PNG from this recording's stream, if the provider supports it. */
   snapshot?(outputPath: string): Promise<Record<string, unknown>>;
+  /** Resolves once the current segment's frame zero is bounded, waiting through a capture
+   * restart. The engine waits for it before every proof node. */
+  ready?(): Promise<void>;
 }
 
 export interface VideoRecordingSegment {

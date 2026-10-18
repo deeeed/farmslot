@@ -56,3 +56,32 @@ test('native rotation retains original segments and exposes a restart gap', asyn
   );
   assert.equal(await active.stop(), result);
 });
+
+test('a segmented recording forwards ready only when the recorder has it', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'native-ready-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let readyCalls = 0;
+  const recorder = (withReady: boolean): VideoRecorder => ({
+    name: 'ready-fixture',
+    async start(request) {
+      await writeFile(request.outputPath, 'source');
+      return {
+        ...(withReady ? { ready: async () => void readyCalls++ } : {}),
+        stop: async () => ({ segments: [{ path: path.basename(request.outputPath) }] }),
+      };
+    },
+  });
+  const request = (name: string) => ({
+    outputPath: path.join(root, name),
+    target: { kind: 'pid' as const, pid: 1 },
+    nodeId: 'run',
+    record: 'full_run' as const,
+  });
+  const ready = await startSegmentedRecording(recorder(true), request('ready.mp4'));
+  const plain = await startSegmentedRecording(recorder(false), request('plain.mp4'));
+  await ready.ready!();
+  assert.equal(readyCalls, 1);
+  assert.equal(plain.ready, undefined);
+  await ready.stop();
+  await plain.stop();
+});
