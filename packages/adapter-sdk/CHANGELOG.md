@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.18.5 - 2026-10-18
+
+- Align with `@farmslot/recipe-runner` 0.39.5, whose capture-helper recorder waits for the host's capture slot instead of failing on `capture_busy`.
+
 ## 0.18.4 - 2026-10-18
 
 - Align with `@farmslot/recipe-runner` 0.39.4, whose runner waits for a restarted recording segment before each proof node.
