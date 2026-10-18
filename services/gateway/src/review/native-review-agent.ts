@@ -47,6 +47,7 @@ import {
   withNativeReviewMutation,
   withNativeReviewOperation,
 } from './native-review-operation.js';
+import { refuseReviewerApprovals } from './native-reviewer-approvals.js';
 import {
   capturePipelineVisualInput,
   collectPipelineVisualResult,
@@ -445,6 +446,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       // current binding so its valid terminal signal is not compared with the old one.
       context = latest;
       const snapshot = await readNativeWorkerSnapshot(runId, 'review', contextId);
+      await refuseReviewerApprovals(context.nativeSession!, snapshot);
       const command = snapshot.commands.find(
         (command) => command.commandId === context!.nativeSession!.commandId,
       );
