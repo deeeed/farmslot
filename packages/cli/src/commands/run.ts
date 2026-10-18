@@ -185,6 +185,9 @@ export function formatResultDecision(payload: ResultDecisionPayload): string[] {
       `  ${finding.file}${finding.line ? `:${finding.line}` : ''}  ${finding.description}`,
     );
   for (const reason of payload.refusal?.reasons ?? []) lines.push(`  ${reason.message}`);
+  // A refused publish package lists no prerequisites, only why.
+  if (payload.refusal && !payload.refusal.reasons.length)
+    lines.push(`  ${payload.refusal.message}`);
   lines.push(
     'headSha' in payload.delivered
       ? `  Delivered ${[payload.delivered.branch, payload.delivered.headSha.slice(0, 12)].filter(Boolean).join(' @ ')}`

@@ -51,6 +51,7 @@ import {
   reconcileReviewWorkspaceCleanup,
   teardownReviewWorkspace,
 } from '../review-workspaces/pipeline.js';
+import { PublishPackageRefusedError } from '../run-completion/publish-package-refused.js';
 import {
   holdRunForResultDecision,
   ResultDecisionHoldError,
@@ -1027,6 +1028,35 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         });
         broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
         return;
+      }
+
+      // COMPLETE or FINALIZE could not build the publish package from the
+      // run's evidence. A delivered result waits for a person (ADR-065
+      // Amendment 7); without one the run fails below as before.
+      if (
+        err instanceof PublishPackageRefusedError &&
+        (stepName === S.COMPLETE || stepName === S.FINALIZE) &&
+        !runSupersededSince(getRun(runId), myGen) &&
+        runDeliveredResult(getRun(runId)!)
+      ) {
+        stepPartialIO.delete(runId);
+        updateRunStep(runId, stepName, { status: 'failed', detail: err.message });
+        for (let j = i + 1; j < steps.length; j++) {
+          updateRunStep(runId, steps[j], { status: 'skipped' });
+        }
+        try {
+          await holdRunForResultDecision(
+            runId,
+            stepName === S.COMPLETE ? 'complete' : 'finalize',
+            err.message,
+            { patch: { metrics: { ...getRun(runId)!.metrics, outcome: 'partial' } } },
+          );
+          return;
+        } catch (holdError) {
+          console.error(
+            `[run-engine] run ${runId.slice(0, 8)} could not be held for a decision; failing it: ${(holdError as Error).message}`,
+          );
+        }
       }
 
       if (err instanceof GatewayMethodError && err.code === 'RUN_GATE_NOT_READY') {

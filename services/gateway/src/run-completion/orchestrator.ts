@@ -185,6 +185,7 @@ export {
   inferRetrospectiveOutcome,
   readCommentsTriageSummary,
 } from './retrospective.js';
+import { PublishPackageRefusedError } from './publish-package-refused.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -1103,7 +1104,7 @@ export async function runCompletionPipeline(
       flags.artifactsCopied = true;
     } catch (err) {
       if (options?.requireArtifactMirror) {
-        throw new Error(
+        throw new PublishPackageRefusedError(
           `Artifact mirror refresh failed; cannot build an authoritative publish package: ${(err as Error).message}`,
         );
       }
