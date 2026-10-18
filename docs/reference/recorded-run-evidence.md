@@ -529,8 +529,9 @@ through the existing authentication setup before using this operation.
 
 The gateway derives `claimReviewGate` in the existing worker terminal contract
 from the same human-gate/output-review policy used by execution. The completion
-checker uses the public SDK reader and validator to bind the selected package
-before deferring verdict checks. The monitor calls that same checker. Flows with
+checker uses the public SDK reader and validator to bind the selected package,
+and for a [QA case ledger](#qa-case-ledger) each row's case package, before
+deferring verdict checks. The monitor calls that same checker. Flows with
 no applicable human gate keep their completion refusal; projects expose no
 verdict-waiver flag.
 
@@ -844,6 +845,7 @@ references without changing captured artifact/report identity. Historical snapsh
 retain their captured references. Recording a judgment grants no gate approval.
 
 QA task binding MUST require schema-2 engine claims with the selected execution ID,
+or for a multi-case QA task each row's case execution ([QA case ledger](#qa-case-ledger)),
 matching registered IDs/text and engine-derived verdicts or authorized untestable
 exceptions. Remove schema-1 file-reference binding without a compatibility writer.
 An output-review gate preserves eligible visual claims as awaiting review until a
@@ -1475,3 +1477,30 @@ The version-1 reference carries `schemaVersion`, `source`, `childRunId`,
 `{ id, text }` references. It contains no replacement engine verdicts. Protocol
 owns the shared types and path; gateway preparation stages it, retention freezes
 it, and agent-runtime's existing artifact checker consumes it.
+
+## QA case ledger
+
+Status: Proposed, 2026-10-18, ADR-062 Amendment 13.
+
+A task whose handoff flow is `qa` MUST merge each passing execution into
+`artifacts/acceptance-status.json` by claim id. A new row replaces the stored row
+when the execution addresses the claim, meaning `recipeNodes` is non-empty;
+otherwise the stored row stays. Every row MUST carry `recipeRunId`, its case
+execution; the top-level `recipeRunId` is the execution projected last. A stored
+row whose evidence no longer exists, whose case package (the directory of its
+transported `trace.json`) no longer holds its execution, whose text no longer
+matches its registration, or that sits in an invalid or schema-1 ledger MUST NOT be
+kept. Row moments MUST reference `retainedFrom` when present, else the row's
+execution. The merge MUST NOT combine verdicts: when two cases
+address one claim, the later execution's row stands. Other flows MUST keep the
+single selected execution.
+
+A QA output gate MUST find every row's execution, and the top-level execution,
+among the run's selected case packages, or report `evidence-execution-mismatch`.
+It binds each registered criterion to the package its row names. Claim-verdict
+policy judges, in each package, the claims that package addresses, the rows bound
+to it and claims with no ledger row. An unaddressed row bound to another package
+MUST NOT block; an addressed weak, missing or failed claim MUST block even when
+another case proves the criterion. Untestable overrides bind to the row's case
+execution. The completion checker MUST compare each row with the selected claim of
+its own case package, read through the same SDK reader and validator.

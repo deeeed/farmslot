@@ -171,6 +171,103 @@ test('read-command argument errors never write a ledger', (t) => {
   assert.equal(existsSync(ledgerFile(dir)), false);
 });
 
+/**
+ * One QA case execution and its retained package: rows it addresses carry a proof
+ * node, the rest are missing, and every row cites the package trace.
+ */
+function caseClaims(dir, recipeRunId, addressed, caseDir = recipeRunId) {
+  const root = `artifacts/recipe-runs/${caseDir}`;
+  mkdirSync(path.join(dir, root), { recursive: true });
+  writeFileSync(path.join(dir, root, 'trace.json'), '{}');
+  const claims = engineClaims(CRITERIA);
+  const ledger = {
+    ...claims,
+    recipeRunId,
+    criteria: claims.criteria.map((row) => ({
+      ...row,
+      ...(row.id in addressed
+        ? { verdict: addressed[row.id] }
+        : { verdict: 'missing', recipeNodes: [], assertionIndices: [] }),
+      evidence: [`${root}/trace.json`],
+    })),
+  };
+  writeFileSync(path.join(dir, root, 'acceptance-status.json'), JSON.stringify(ledger));
+  return ledger;
+}
+const rows = (dir) =>
+  JSON.parse(readFileSync(ledgerFile(dir), 'utf8')).criteria.map((row) => [
+    row.id,
+    row.verdict,
+    row.recipeRunId,
+  ]);
+const qaTask = (t) => taskFixture(t, { flow: 'qa', task: { acceptanceCriteria: CRITERIA } });
+
+test('a QA task merges its case executions into one ledger keyed by criterion', (t) => {
+  const dir = qaTask(t);
+  const first = caseClaims(dir, 'qa-03', { 'AC-1': 'proven', 'AC-2': 'weak' });
+  // Moments stay bound to the case execution that recorded them.
+  first.criteria[0].moments = [
+    { recipeRunId: 'qa-03', videoDigest: `sha256:${'a'.repeat(64)}`, traceIndex: 0 },
+  ];
+  setDerivedClaims(dir, first);
+  setDerivedClaims(dir, caseClaims(dir, 'qa-08', { 'AC-3': 'proven' }));
+  assert.equal(JSON.parse(readFileSync(ledgerFile(dir), 'utf8')).recipeRunId, 'qa-08');
+  assert.deepEqual(rows(dir), [
+    ['AC-1', 'proven', 'qa-03'],
+    ['AC-2', 'weak', 'qa-03'],
+    ['AC-3', 'proven', 'qa-08'],
+  ]);
+  // A case that addresses none of them keeps every row; a rerun replaces only what it addresses.
+  setDerivedClaims(dir, caseClaims(dir, 'qa-11', {}));
+  setDerivedClaims(dir, caseClaims(dir, 'qa-03-rerun', { 'AC-2': 'proven' }));
+  assert.deepEqual(rows(dir), [
+    ['AC-1', 'proven', 'qa-03'],
+    ['AC-2', 'proven', 'qa-03-rerun'],
+    ['AC-3', 'proven', 'qa-08'],
+  ]);
+  assert.deepEqual(acceptanceContractIssues(dir), []);
+  // A later missing verdict replaces earlier proof of the criterion it addresses.
+  setDerivedClaims(dir, caseClaims(dir, 'qa-08-rerun', { 'AC-3': 'missing' }));
+  assert.deepEqual(rows(dir)[2], ['AC-3', 'missing', 'qa-08-rerun']);
+  assert.match(acceptanceContractIssues(dir).join('\n'), /AC-3 is missing/);
+});
+
+test('a QA merge keeps no row whose package is gone or holds another execution', (t) => {
+  const dir = qaTask(t);
+  setDerivedClaims(dir, caseClaims(dir, 'qa-03', { 'AC-1': 'proven' }));
+  rmSync(path.join(dir, 'artifacts/recipe-runs/qa-03/trace.json'));
+  setDerivedClaims(dir, caseClaims(dir, 'qa-08', { 'AC-2': 'proven' }));
+  assert.deepEqual(rows(dir).slice(0, 2), [
+    ['AC-1', 'missing', 'qa-08'],
+    ['AC-2', 'proven', 'qa-08'],
+  ]);
+  // A rerun into the same case directory replaces the execution its old rows named.
+  setDerivedClaims(dir, caseClaims(dir, 'qa-11', { 'AC-3': 'proven' }, 'QA-11'));
+  setDerivedClaims(dir, caseClaims(dir, 'qa-11-rerun', {}, 'QA-11'));
+  assert.deepEqual(rows(dir)[2], ['AC-3', 'missing', 'qa-11-rerun']);
+  writeFileSync(ledgerFile(dir), '{');
+  setDerivedClaims(dir, caseClaims(dir, 'qa-12', { 'AC-3': 'proven' }));
+  assert.deepEqual(rows(dir), [
+    ['AC-1', 'missing', 'qa-12'],
+    ['AC-2', 'missing', 'qa-12'],
+    ['AC-3', 'proven', 'qa-12'],
+  ]);
+});
+
+test('other flows keep only the selected execution', (t) => {
+  const dir = taskFixture(t, { flow: 'fix-bug', task: { acceptanceCriteria: CRITERIA } });
+  setDerivedClaims(dir, caseClaims(dir, 'first', { 'AC-1': 'proven' }));
+  setDerivedClaims(dir, caseClaims(dir, 'second', { 'AC-2': 'proven' }));
+  assert.deepEqual(rows(dir), [
+    ['AC-1', 'missing', undefined],
+    ['AC-2', 'proven', undefined],
+    ['AC-3', 'missing', undefined],
+  ]);
+  const ledger = JSON.parse(readFileSync(ledgerFile(dir), 'utf8'));
+  ledger.criteria[0].recipeRunId = '';
+  assert.match(validateAcceptanceStatusLedger(ledger).join('\n'), /recipeRunId: expected/);
+});
+
 test('engine transfer refuses unregistered ids, changed text and invalid evidence paths', (t) => {
   const dir = taskFixture(t);
   const claims = engineClaims(CRITERIA);
