@@ -373,3 +373,178 @@ exit. It reuses the existing discard form for a slot held by a missing run.
   recovery card no longer proposes releasing such a slot.
 - Archive and delete of such a run still require the slot released first; that
   release is now the named force discard.
+
+## Amendment 7: a delivered result that is not accepted needs a decision, 2026-10-18
+
+**Status:** Accepted (owner and lead, 2026-10-18), approved at `2ddaab1f37e1ed1a628da480c96c907eb5df7ec2` after paired review.
+**Trigger:** runs whose worker delivered a result still end `failed`. Examples: 8cff6e80 (review findings left when no further fix could run) and 3e2f400a (refused QA completion).
+**Specification:** on acceptance, [Truthful run state](../reference/fail-closed-run-lifecycle.md#truthful-run-state), [Recovery invariants](../reference/fail-closed-run-lifecycle.md#recovery-invariants-and-six-ci-scenarios) (restart of a held run) and [Pipeline settlement](../reference/fail-closed-run-lifecycle.md#pipeline-settlement) (including the output-review close-only and changed-bytes rules) are updated to match.
+**Changes:** Amendment 6 labels every refused completion `failed`. Under this amendment, a refused completion that delivered a result ends `needs-decision`; one that did not stays `failed` under Amendment 6, unchanged.
+
+### Decision
+
+**Delivered result.** One predicate decides `needs-decision` versus `failed`, both
+when a refusal happens and when a run is re-projected on restart. A run has a
+delivered result when all of these recorded facts hold:
+
+- `steps.monitor.outputs.workerSignal.status` is `complete` or `done`;
+- when `completionVerificationMode(run)` is `push` or `commit`,
+  `steps.monitor.outputs.pushVerification.verified` is true (for `none`, such as
+  QA, the signal and the capture decide);
+- `run.output` was captured, with a `manifestDigest` and no `captureError`.
+
+The delivered head is `steps.review.outputs.reviewSnapshot.headSha` when a review
+ran. Otherwise the decision shows the captured report, `output.reportPath`; a QA
+run has no branch head.
+
+**When it applies, and precedence.** Each case is decided at the step where the
+run stops:
+
+| Where the run stops                                                                                                                | Delivered result | Status                                                                                                                            |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| REVIEW: the reviewer returned no result                                                                                            | either           | `review-failed` (unchanged)                                                                                                       |
+| REVIEW: the review returned issues and no further fix can run (fix attempts used, review budget spent, or the fix relaunch failed) | yes              | `needs-decision`                                                                                                                  |
+| REVIEW: the same                                                                                                                   | no               | `failed` (unchanged)                                                                                                              |
+| Publish gate, including a budget spent at the gate                                                                                 | either           | existing gate decision (`human-gating` or held `blocked`), unchanged. `needs-decision` never applies once a gate decision exists. |
+| COMPLETE or FINALIZE prerequisite refused                                                                                          | yes              | `needs-decision`                                                                                                                  |
+| COMPLETE or FINALIZE prerequisite refused                                                                                          | no               | `failed` under Amendment 6 (unchanged)                                                                                            |
+| Worker failed, exited or blocked before delivering                                                                                 | no               | unchanged                                                                                                                         |
+
+`needs-decision` is nonterminal. It holds one result decision showing the
+reason, the findings or the refused prerequisite, and the delivered head or
+report. Its actions:
+
+- **Send back for another fix.**
+  - After REVIEW, it resumes the review-fix loop and needs an available review
+    round. It never grants one. When the budget is spent, the action is shown
+    unavailable and names `run.extendReviewBudget` (ADR-063 Amendment 1, admin
+    only). Once a grant exists it becomes available.
+  - After a refused completion, it is the existing completion replay from the
+    refused step (Amendment 6), once the prerequisite is fixed.
+- **Accept.** Offered only after REVIEW, and only on an artifact-only run, such
+  as a comparison lane or eval. It settles `done` through a new named ADR-053
+  transition, `accept-result`. A refused completion prerequisite cannot be
+  accepted away.
+  - On a publishing run, Accept is shown unavailable with the reason. The
+    publish gate does not offer publication while review findings remain at
+    the delivered head (`review-fix-required` has no override), so an accepted
+    result could not be published. Its exits are Send back and Close; this
+    amendment does not change the gate.
+- **Close.** Settles `done` through a new named ADR-053 transition,
+  `close-result`, without accepting the result. This is not output-close, whose
+  eligibility rules differ. For a retained refused completion, Close is the
+  Amendment 6 named discard and releases the slot the same way.
+
+**Output review.** An artifact-only run that captured a report keeps its
+output-review decision (`engine_output_review`) as the carrier of that snapshot.
+Claim overrides and visual judgments still bind to it, and the completion replay
+reads it as today; no gate reader changes.
+
+- While the run is held, the output review's Close run and Mark reviewed actions
+  are hidden, so the result decision is the run's only actionable decision.
+- The result decision shows the current output review's snapshot. A recapture
+  follows the existing rule. The same bytes keep the output review and the result
+  decision. Changed bytes replace the output review, the result decision is
+  re-presented on the new snapshot, and an action taken on the old snapshot is
+  refused as stale.
+- `close-result` resolves the output review as `close-run`.
+- `accept-result` resolves it as reviewed by the accepting principal. No
+  close-only action is kept, because the run is already settled.
+- Send back leaves it pending; its actions show again once the run leaves
+  `needs-decision`.
+
+Every action records a result-decision receipt on the run: action, principal,
+written reason, time, delivered head or report, and a digest of the findings.
+`metrics.outcome` keeps the worker's recorded verdict. Actions resolve under
+the serialized decision path; a stale or repeated action is refused.
+
+**What each settlement means downstream.**
+
+- An **accepted artifact-only result** counts as success: `isSuccessfulRun`
+  reads the acceptance receipt, the backlog item closes, the work-graph family
+  outcome is `success`, family readiness counts it as succeeded, and analytics
+  record "accepted with findings", not a failure.
+- A **closed result** is terminal but not a success: the backlog item returns
+  to needs-attention, the family outcome is `partial`, and analytics record
+  "closed, not accepted", not a failure.
+- **While `needs-decision`**, the run counts as active in run lists, family views
+  and work-graph edges, as a retained refused completion does today, and
+  analytics do not count it as a failure.
+
+**Exits and guards.**
+
+- `run.cancel` refuses a `needs-decision` run and names the three actions. The
+  slot-release refusal for its slot names the pending decision rather than
+  cancel.
+- The Amendment 6 named discard performs Close.
+- Archive and delete wait until the decision settles.
+- One protocol helper, `isHeldForResultDecision(run)`, is true for every
+  `needs-decision` run, whatever step it stopped at. Restart, automatic
+  recovery, dispatch occupancy and orphan cleanup key on it.
+- On restart, startup recovery skips engine startup and runtime reconciliation
+  for every such run and re-presents its result decision. It never resumes the
+  engine at REVIEW or the refused step; only Send back does that.
+- Every guard that Amendment 6 keys on a refused step accepts `needs-decision`
+  as well as `failed`: replay from the refused step or earlier, the restart
+  release refusal, the restart engine skip, dispatch occupancy, orphan cleanup
+  and automatic recovery. These guards check status alongside the refused step.
+- After REVIEW, the run keeps its worker branch, checkout and slot under the
+  ADR-054 operator-wait boundary until it is decided.
+
+### Rationale and consequences
+
+Operators see `failed` on runs whose worker did the work, but whose review or
+gate was not satisfied. `failed` hides that a usable result exists and that a
+person has a choice. It also counts these runs as failures in failure rates and
+retrospectives.
+
+Three alternatives were rejected:
+
+- **Reuse `blocked`.** It means idle work that cannot continue, with different
+  exits.
+- **Reuse `human-gating`.** It means the prerequisites are complete.
+- **Keep `failed` with a decision attached.** The status is what people read.
+
+The publish gate keeps its own decision, and a held run's output review has no
+actions of its own, so a run never has two actionable decisions. A refused completion without a delivered result keeps Amendment 6's
+`failed` retention exactly. So `isCompletionPrerequisiteFailure` and
+`isSettledCompletionFailure` stay; they gain the `needs-decision` case.
+
+The cost:
+
+- a new status every client must show;
+- slots held while a decision is pending, including several comparison lanes
+  until someone decides;
+- one coordinated protocol, gateway and client release.
+
+Runs already recorded `failed` keep their status, except that restart
+re-projects a retained refused completion with the same delivered-result
+predicate.
+
+### Public surface
+
+- `@farmslot/protocol`:
+  - `RunStatus` gains `needs-decision`, nonterminal and not counted as working;
+  - `RunDecisionPayload` gains kind `result-decision`, with reason, findings,
+    delivered head or report, and the three actions with their availability and
+    reasons;
+  - a result-decision receipt field;
+  - `hasDeliveredResult(run)` and `isHeldForResultDecision(run)` helpers; the
+    output-review decision's actions are unavailable while a run is held;
+  - `RunAnalyticsRecord` gains the result decision (`accepted` or `closed`),
+    with an `ANALYTICS_RECORD_SCHEMA_VERSION` bump; neither counts in
+    `failureByStep` or `failureByReason`;
+  - `isSuccessfulRun`, `isActiveListRun`, the terminal and settled helpers, and
+    the refused-completion helpers are updated in the same change;
+  - `deriveRunLifecycleView` labels the status "Needs decision".
+- The gateway adds the named ADR-053 transitions `accept-result` and
+  `close-result`, and routes the REVIEW and COMPLETE/FINALIZE refusals through
+  them. Actions resolve through the existing `run.resolveDecision`. No new RPC is
+  added; extensions stay with `run.extendReviewBudget`.
+- `farmslot run get` and `farmslot run gate --action`, Command Center and
+  Companion show the findings and actions through the shared view.
+- Compatibility: client builds older than this release show a blank status
+  badge in the working tone for `needs-decision`, because `deriveRunLifecycleView`
+  has no label for it there. So the gateway, CLI, Command Center and Companion
+  ship together, and Companion users must update. There is no persisted data
+  migration beyond the restart re-projection.
