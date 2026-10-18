@@ -584,6 +584,58 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
   assert.equal(delivered, true);
 });
 
+test('restart recovery adopts a fix delivery the busy worker already acknowledged', async () => {
+  // TAT-4145 grok run 6c5d56fb: the worker took this delivery at 09:14Z and was on step 3 when
+  // the 09:36Z restart came. Re-probing it timed out and a new fix pass reset its checklist.
+  const deliveryStartedAt = '2026-10-18T09:14:15.302Z';
+  const turnToken = '01a14d96-c35d-7cb3-8849-e5bc94b1638d:1792314858624';
+  const sessionPath =
+    '/Users/deeeed/.grok/sessions/%2FUsers%2Fdeeeed%2Fdev%2Fmetamask%2Fva-mmcx-terminal-3/01a14d96-c35d-7cb3-8849-e5bc94b1638d';
+  const result = await resumeReviewFixPromptDelivery(
+    { remoteRepo: '/Users/deeeed/dev/metamask/va-mmcx-terminal-3' } as never,
+    '6c5d56fb',
+    {
+      id: 'review-fix',
+      runner: 'grok',
+      model: 'grok-4.7',
+      taskFile: 'temp/tasks/feat/tat-4145-grok-1018-135546/REVIEW-FIX.md',
+      signalFile: 'temp/tasks/feat/tat-4145-grok-1018-135546/REVIEW-FIX-SIGNAL.json',
+      target: { session: 'mmt-3', window: 'dev', pane: null, target: 'mmt-3:dev' },
+      startedAt: '2026-10-18T09:14:15.289Z',
+      attemptStartedAt: '2026-10-18T09:16:20.708Z',
+      promptDeliveryStartedAt: deliveryStartedAt,
+      promptAcceptance: {
+        runner: 'grok',
+        deliveryStartedAt,
+        turnToken,
+        observedAt: 1792315024933,
+        sessionId: '01a14d96-c35d-7cb3-8849-e5bc94b1638d',
+        sessionPath,
+      },
+    },
+    {
+      getRun: (() => ({
+        id: '6c5d56fb',
+        project: 'va-mmcx-terminal-farm',
+        flowType: 'dev',
+        metrics: { runner: 'grok', model: 'grok-4.7' },
+        agentContexts: [],
+      })) as never,
+      resolvePrompt: async () => 'read REVIEW-FIX.md',
+      resolveRuntimeDir: async () => '.agent',
+      readLaunchAck: async () => null,
+      syncChecklistTarget: async () => {},
+      ensureTarget: async () => 'mmt-3:dev',
+      persistTarget: async () => {},
+      targetHostsRunner: async () => true,
+      deliver: async () => {
+        throw new Error('An acknowledged fix delivery must not be probed or sent again');
+      },
+    },
+  );
+  assert.deepEqual(result, { status: 'delivered', turnToken });
+});
+
 test('a recovered fix prompt is the sent text and its receipt never matches another round', async () => {
   const run = {
     id: 'run-1',
