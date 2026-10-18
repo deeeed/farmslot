@@ -11,7 +11,6 @@ import {
   isHeldForResultDecision,
   pendingResultDecision,
   PipelineSteps,
-  refusedCompletionStep,
   RESULT_DECISION_ACTION_LABELS,
   type ResultDecisionActionId,
   type ResultDecisionActionState,
@@ -91,9 +90,10 @@ function reviewFindings(run: Run): ReviewIssue[] {
   return Array.isArray(issues) ? (issues as ReviewIssue[]) : [];
 }
 
-function refusal(run: Run): ResultDecisionPayload['refusal'] {
-  // The run is still `completing` while COMPLETE or FINALIZE records the refusal.
-  const step = refusedCompletionStep({ ...run, status: 'needs-decision' });
+function refusal(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionPayload['refusal'] {
+  // The failed COMPLETE or FINALIZE step: a gate refusal lists its reasons, a
+  // refused publish package only says why.
+  const step = run.steps.find((entry) => entry.name === stoppedAt && entry.status === 'failed');
   if (!step) return undefined;
   const readiness = (
     step.outputs?.gatePrerequisiteRefusal as
@@ -168,7 +168,7 @@ export async function buildResultDecision(
   stoppedAt: ResultDecisionStop,
 ): Promise<RunDecision> {
   const findings = stoppedAt === 'review' ? reviewFindings(run) : undefined;
-  const refused = stoppedAt === 'review' ? undefined : refusal(run);
+  const refused = stoppedAt === 'review' ? undefined : refusal(run, stoppedAt);
   const reason = decisionReason(run, stoppedAt, findings, refused);
   const outputReview = pendingOutputReview(run);
   const payload: ResultDecisionPayload = {

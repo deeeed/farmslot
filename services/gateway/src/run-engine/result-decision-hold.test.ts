@@ -53,6 +53,8 @@ const refusalReasons = [
   },
 ];
 let failHoldPersist = false;
+/** What COMPLETE throws; the gate refusal of 3e2f400a unless a test sets another. */
+let completeError: (() => Promise<Error>) | null = null;
 
 mock.module('./post-dispatch-steps.js', {
   namedExports: {
@@ -73,6 +75,7 @@ mock.module('./post-dispatch-steps.js', {
       );
     },
     executeCompleteStep: async () => {
+      if (completeError) throw await completeError();
       // COMPLETE of 3e2f400a: the deterministic check has no passing receipt.
       const { RunGateNotReadyError } = await import('./gate-prerequisites.js');
       throw new RunGateNotReadyError(
@@ -279,5 +282,77 @@ test('a hold that cannot be recorded fails the run instead of leaving it complet
     run.decisions.some((entry) => entry.payload?.kind === 'result-decision'),
     false,
     'no decision is left pending on a failed run',
+  );
+});
+
+// TAT-4146 v2 (70bf7864): a publishing comparison run pushed its branch and passed
+// review, then COMPLETE could not build its publish package from its evidence.
+const v2Refusal =
+  'Artifact mirror refresh failed; cannot build an authoritative publish package: Publication declaration artifacts/recipe-baseline-run/setup-reload-with-position/capture.png belongs to another recipe attempt. Before evidence must be captured by this run on its unchanged baseline.';
+
+function tat4146v2(output: Run['output']): Run {
+  return {
+    ...delivered('dev', 'completing', S.COMPLETE),
+    id: '70bf7864-0000-4000-8000-000000004146',
+    lane: 'comparison',
+    completionPolicy: undefined,
+    branch: 'feat/tat-4146-v2',
+    output,
+  };
+}
+
+const v2Output: NonNullable<Run['output']> = {
+  capturedAt: '2026-10-18T19:10:00.000Z',
+  workerFinished: false,
+  artifactManifest: [],
+  manifestDigest: '886ffd132c20b25443b4565e15c0dd0ae7a93e290599aa89501a8adac2cb2152',
+  reportPath: 'artifacts/pr-description.md',
+};
+
+test('TAT-4146 v2: a refused publish package on a delivered result needs a decision', async () => {
+  run = tat4146v2(v2Output);
+  completeError = async () => {
+    const { PublishPackageRefusedError } =
+      await import('../run-completion/publish-package-refused.js');
+    return new PublishPackageRefusedError(v2Refusal);
+  };
+  try {
+    await startRun(run.id);
+  } finally {
+    completeError = null;
+  }
+
+  assert.equal(run.status, 'needs-decision');
+  assert.equal(run.steps.find((step) => step.name === S.COMPLETE)?.status, 'failed');
+  const payload = heldPayload();
+  assert.equal(payload.stoppedAt, 'complete');
+  assert.equal(payload.reason, 'COMPLETE was refused.');
+  assert.deepEqual(payload.refusal, { message: v2Refusal, reasons: [] });
+  assert.deepEqual(payload.delivered, {
+    reportPath: 'artifacts/pr-description.md',
+    manifestDigest: v2Output.manifestDigest,
+  });
+  assert.equal(action(payload, 'send-back').available, true, 'the completion replay');
+  assert.equal(action(payload, 'accept-result').available, false);
+  assert.equal(action(payload, 'close-result').available, true);
+});
+
+test('a refused publish package without a delivered result still fails', async () => {
+  run = tat4146v2({ ...v2Output, captureError: 'Artifact mirror unavailable' });
+  completeError = async () => {
+    const { PublishPackageRefusedError } =
+      await import('../run-completion/publish-package-refused.js');
+    return new PublishPackageRefusedError(v2Refusal);
+  };
+  try {
+    await startRun(run.id);
+  } finally {
+    completeError = null;
+  }
+
+  assert.equal(run.status, 'failed');
+  assert.equal(
+    run.decisions.some((entry) => entry.payload?.kind === 'result-decision'),
+    false,
   );
 });
