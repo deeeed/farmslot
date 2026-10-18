@@ -10,6 +10,7 @@ import {
   isHeldForResultDecision,
   isSettledBlockedRun,
   isSettledCompletionFailure,
+  pendingResultDecision,
   PipelineSteps,
   refusedCompletionStep,
   type ReviewGatePayload,
@@ -312,19 +313,24 @@ export async function representResultDecisions(runs: Run[]): Promise<void> {
     await import('../run-completion/result-decision.js');
   for (const run of runs) {
     try {
+      const refused = refusedCompletionStep(run);
+      const stoppedAt = refused?.name === PipelineSteps.FINALIZE ? 'finalize' : 'complete';
+      const reason = refused?.detail ?? run.error ?? 'A completion prerequisite was refused.';
       if (isHeldForResultDecision(run)) {
-        await representResultDecision(run.id);
+        // A completion send-back cut short by the restart left no decision: hold it again.
+        if (!pendingResultDecision(run) && refused)
+          await holdRunForResultDecision(run.id, stoppedAt, reason);
+        else await representResultDecision(run.id);
         continue;
       }
-      const refused = refusedCompletionStep(run);
       if (!refused || isSettledCompletionFailure(run) || !runDeliveredResult(run)) continue;
-      const held = await holdRunForResultDecision(
-        run.id,
-        refused.name === PipelineSteps.COMPLETE ? 'complete' : 'finalize',
-        refused.detail ?? run.error ?? 'A completion prerequisite was refused.',
-        { settlingStatus: 'failed' },
-      );
-      if (held) {
+      const emitted = Boolean(run.analyticsEmittedAt);
+      const held = await holdRunForResultDecision(run.id, stoppedAt, reason, {
+        settlingStatus: 'failed',
+        // The run's next terminal record is emitted again.
+        patch: { analyticsEmittedAt: undefined },
+      });
+      if (held && emitted) {
         const { recordHeldResultAnalytics } = await import('../runs/analytics.js');
         await recordHeldResultAnalytics(held);
       }

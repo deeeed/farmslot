@@ -115,6 +115,18 @@ export function pendingResultDecision(
   return undefined;
 }
 
+/** Retire every pending result decision, so a run held again or replayed has at most one. */
+export function supersedePendingResultDecisions(
+  decisions: readonly RunDecision[],
+  at: string,
+): RunDecision[] {
+  return decisions.map((decision) =>
+    isPendingResultDecision(decision)
+      ? { ...decision, resolvedAt: at, resolvedAction: 'superseded' }
+      : decision,
+  );
+}
+
 /** One label per result-decision action, for the gateway, the CLI and both clients. */
 export const RESULT_DECISION_ACTION_LABELS: Record<ResultDecisionActionId, string> = {
   'send-back': 'Send back for another fix',
