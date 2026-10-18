@@ -7,6 +7,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -23,6 +24,7 @@ import {
   assertProjectOwnership,
   findMissingState,
   operatorAddedFiles,
+  PACK_SYNC_BACKUPS,
   projectAdd,
   registerProject,
   repairRegisteredProjectLinks,
@@ -280,6 +282,87 @@ test('a pack re-sync keeps the gateway run task root', (t) => {
   registerProject(proj, packDir, ws, state, 'p', noop);
   assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf-8'), 'keep');
   assert.equal(statSync(dest).isDirectory() && !lstatSync(dest).isSymbolicLink(), true);
+});
+
+/** A git pack (tasks/ and learnings/ not ignored, like the terminal-backend pack) with one project. */
+function resyncFixture(t: { after: (fn: () => void) => void }, prefix: string) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const ws: Workspace = workspaceAt(join(root, 'ws'));
+  const packDir = join(root, 'pack');
+  const src = join(packDir, 'projects', 'app-farm');
+  gitPack(packDir, 'node_modules/\n');
+  mkdirSync(join(src, 'templates'), { recursive: true });
+  writeFileSync(join(src, 'project.json'), JSON.stringify({ name: 'app-farm' }));
+  writeFileSync(join(src, 'templates', 'worker.md'), 'v1\n');
+  const infos: string[] = [];
+  const proj: PackProject = {
+    dir: 'projects/app-farm',
+    platform: 'cli',
+    slots: 1,
+    repo_url: 'https://example.invalid/app.git',
+  };
+  const state = stateWith({ p: { source: packDir, hash: '', projects: ['app-farm'], slots: [] } });
+  const sync = () =>
+    registerProject(proj, packDir, ws, state, 'p', { step: () => {}, info: (m) => infos.push(m) });
+  return { ws, src, dest: join(ws.farmslotDir, 'projects', 'app-farm'), infos, sync };
+}
+
+test('a pack re-sync keeps curated learnings', (t) => {
+  const f = resyncFixture(t, 'fs-learnings-');
+  f.sync();
+  const learnings = join(f.dest, 'learnings', 'LEARNINGS.md');
+  mkdirSync(join(f.dest, 'learnings'));
+  writeFileSync(learnings, '- curated by hand\n');
+  // The pack changes, and now ships learnings of its own.
+  writeFileSync(join(f.src, 'templates', 'worker.md'), 'v2\n');
+  mkdirSync(join(f.src, 'learnings'));
+  writeFileSync(join(f.src, 'learnings', 'LEARNINGS.md'), '- from the pack\n');
+
+  f.sync();
+  assert.equal(readFileSync(learnings, 'utf-8'), '- curated by hand\n');
+  assert.equal(readFileSync(join(f.dest, 'templates', 'worker.md'), 'utf-8'), 'v2\n');
+  // A project without learnings of its own gets the pack's.
+  rmSync(join(f.dest, 'learnings'), { recursive: true });
+  f.sync();
+  assert.equal(readFileSync(learnings, 'utf-8'), '- from the pack\n');
+});
+
+test('a pack re-sync backs up every file it replaces or removes', (t) => {
+  const f = resyncFixture(t, 'fs-backup-');
+  f.sync();
+  // Unchanged files (project.json as installed, repo_url filled in) need no backup.
+  f.sync();
+  assert.equal(existsSync(join(f.ws.farmslotDir, PACK_SYNC_BACKUPS)), false);
+
+  // An accepted improvement, a hand edit of project.json and a note the pack does not ship.
+  writeFileSync(join(f.dest, 'templates', 'worker.md'), 'v1 plus an accepted improvement\n');
+  const edited = { ...JSON.parse(readFileSync(join(f.dest, 'project.json'), 'utf-8')), x: 1 };
+  writeFileSync(join(f.dest, 'project.json'), JSON.stringify(edited));
+  writeFileSync(join(f.dest, 'notes.md'), 'mine\n');
+  writeFileSync(join(f.src, 'templates', 'worker.md'), 'v2\n');
+
+  f.sync();
+  // The pack wins...
+  assert.equal(readFileSync(join(f.dest, 'templates', 'worker.md'), 'utf-8'), 'v2\n');
+  assert.equal(existsSync(join(f.dest, 'notes.md')), false);
+  assert.equal(JSON.parse(readFileSync(join(f.dest, 'project.json'), 'utf-8')).x, undefined);
+  // ...and every local version is kept aside, with the count printed.
+  const [stamp, ...more] = readdirSync(join(f.ws.farmslotDir, PACK_SYNC_BACKUPS, 'app-farm'));
+  assert.deepEqual(more, []);
+  const backup = join(f.ws.farmslotDir, PACK_SYNC_BACKUPS, 'app-farm', stamp);
+  assert.equal(
+    readFileSync(join(backup, 'templates', 'worker.md'), 'utf-8'),
+    'v1 plus an accepted improvement\n',
+  );
+  assert.equal(JSON.parse(readFileSync(join(backup, 'project.json'), 'utf-8')).x, 1);
+  assert.equal(readFileSync(join(backup, 'notes.md'), 'utf-8'), 'mine\n');
+  assert.ok(
+    f.infos.includes(
+      `backed up 3 file(s) the pack sync replaced or removed in projects/app-farm to ${PACK_SYNC_BACKUPS}/app-farm/${stamp}`,
+    ),
+    f.infos.join('\n'),
+  );
 });
 
 test('projectAdd --no-setup --project registers selected slots without setup/preflight', (t) => {

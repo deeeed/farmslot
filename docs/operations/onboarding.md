@@ -162,6 +162,13 @@ farmslot update
   machine pool file — new defaults are added, user edits preserved, applied
   steps recorded in `state.json`
 - re-runs the `sync` hook of any registered pack whose content hash changed
+- re-copies the project dirs of any registered pack whose content hash changed.
+  `tasks/` and `learnings/` stay in place, and so do untracked files the pack's
+  git ignores, such as filled fixture secrets. Any other file the copy would replace or remove
+  is first saved under `farmslot/.pack-sync-backups/<project>/<stamp>/`, and the
+  count is printed. Backlog and auto-recovery edits made through the gateway live
+  in `$FARMSLOT_HOME/sources/runtime-settings/<project>.json`, so a re-copy keeps
+  them.
 - ends with doctor
 
 Note: the update engine itself runs from the pre-update code — when an update

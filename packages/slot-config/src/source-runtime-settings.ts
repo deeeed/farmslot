@@ -5,6 +5,9 @@ import path from 'node:path';
 import { isRecord, parseProjectVisualClaimReviewPolicy } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import { farmslotRoot } from './repo-root.js';
+import { projectSourceContext } from './source-binding.js';
+
 export type SourceRuntimeSettings = Partial<
   Record<'backlog' | 'auto_recovery' | 'visual_claim_review', unknown>
 >;
@@ -83,4 +86,47 @@ export function writeSourceRuntimeSettings(
     ),
   );
   return work;
+}
+
+export const WORKSPACE_STATE_FILE = 'state.json';
+
+/** An install workspace keeps its state.json beside the farmslot clone it created. */
+export function workspaceStatePath(farmslotDir: string): string {
+  return path.join(path.dirname(farmslotDir), WORKSPACE_STATE_FILE);
+}
+
+let workspaceStateOverride: string | undefined;
+
+/** Tests read pack projects from a fixture state.json, not the checkout's parent directory. */
+export function __setWorkspaceStatePathForTest(file?: string): void {
+  workspaceStateOverride = file;
+}
+
+/**
+ * Whether `farmslot add` copied this project in from a pack, as the install workspace's
+ * state.json records. `farmslot update` replaces such a project dir on every pack sync.
+ */
+export async function isPackCopiedProject(project: string): Promise<boolean> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(
+      await readFile(workspaceStateOverride ?? workspaceStatePath(farmslotRoot), 'utf8'),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+  const packs = isRecord(raw) && isRecord(raw.packs) ? Object.values(raw.packs) : [];
+  return packs.some(
+    (pack) => isRecord(pack) && Array.isArray(pack.projects) && pack.projects.includes(project),
+  );
+}
+
+/**
+ * Whether a project's mutable operator policy lives in runtime settings rather than its
+ * project.json: a source-bound project's tree is read-only, and a pack-copied project's dir is
+ * replaced by the next pack sync.
+ */
+export async function usesRuntimeSettings(project: string): Promise<boolean> {
+  return Boolean(await projectSourceContext(project)) || (await isPackCopiedProject(project));
 }

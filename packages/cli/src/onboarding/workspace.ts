@@ -10,10 +10,11 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { WORKSPACE_STATE_FILE, workspaceStatePath } from '@farmslot/slot-config';
+
 /** Absolute path to the farmslot repo root that this CLI runs from. */
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
-export const STATE_FILE = 'state.json';
 export const STATE_SCHEMA_VERSION = 1;
 
 export interface PackState {
@@ -51,7 +52,7 @@ export function workspaceAt(root: string): Workspace {
     farmslotDir: join(root, 'farmslot'),
     reposDir: join(root, 'repos'),
     runsDir: join(root, 'runs'),
-    statePath: join(root, STATE_FILE),
+    statePath: join(root, WORKSPACE_STATE_FILE),
   };
 }
 
@@ -68,7 +69,7 @@ export function resolveWorkspace(env: NodeJS.ProcessEnv = process.env): Workspac
   const fromEnv = env.FARMSLOT_WORKSPACE;
   if (fromEnv) return workspaceAt(resolve(expandTilde(fromEnv)));
   const parent = dirname(repoRoot);
-  if (existsSync(join(parent, STATE_FILE))) return workspaceAt(parent);
+  if (existsSync(workspaceStatePath(repoRoot))) return workspaceAt(parent);
   return null;
 }
 

@@ -106,3 +106,34 @@ test('an unreadable project is skipped without dropping the readable ones', asyn
     'one bad project.json must not take the fleet down',
   );
 });
+
+test('a pack-copied project takes delegation and policy edits from runtime settings only', async (t) => {
+  // `farmslot update` replaces a pack-copied project.json, and the pack ships it: its delegation
+  // is not an operator grant, exactly as for a source-bound project.
+  writeProject(ROOT, 'pack-copied', {
+    visual_claim_review: { delegatedReviewerPrincipalIds: ['pack-reviewer'] },
+    backlog: { auto_dispatch: { enabled: false } },
+  });
+  const home = mkdtempSync(path.join(tmpdir(), 'farmslot-pack-home-'));
+  const state = path.join(home, 'state.json');
+  writeFileSync(state, JSON.stringify({ packs: { pack: { projects: ['pack-copied'] } } }));
+  const previousHome = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = home;
+  const { __setWorkspaceStatePathForTest, writeSourceRuntimeSettings } =
+    await import('../core/config.js');
+  __setWorkspaceStatePathForTest(state);
+  t.after(() => {
+    __setWorkspaceStatePathForTest();
+    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(path.join(ROOT, 'projects', 'pack-copied'), { recursive: true, force: true });
+  });
+  await writeSourceRuntimeSettings('pack-copied', {
+    backlog: { auto_dispatch: { enabled: true } },
+  });
+
+  const copied = (await loadProjectConfigs()).find((project) => project.name === 'pack-copied');
+  assert.equal(copied?.backlog?.autoDispatch?.enabled, true);
+  assert.equal(copied?.visualClaimReview, undefined);
+});
