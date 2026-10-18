@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.18.4 - 2026-10-18
+
+- Align with `@farmslot/recipe-runner` 0.39.4, whose runner waits for a restarted recording segment before each proof node.
+
 ## 0.18.3 - 2026-10-18
 
 - Align with `@farmslot/recipe-runner` 0.39.3, whose full-run recording starts before the first proof node.
