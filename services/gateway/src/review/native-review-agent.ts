@@ -111,6 +111,10 @@ type NativeReviewInput = {
   effort?: string | null;
 };
 
+// The completion loop refuses every approval the reviewer asks for (refuseReviewerApprovals).
+const REFUSED_APPROVALS =
+  '\nRunner actions that need approval are refused, never asked: do not retry them; continue the review from the code.';
+
 export async function runNativeReviewAgent(input: NativeReviewInput): Promise<ReviewAgentResult> {
   const run = getRun(input.runId);
   if (!run) throw new Error('Native review run not found');
@@ -375,7 +379,8 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
                 feedbackRelPath,
                 resultRelPath,
               ) +
-              '\nContinue this reviewer attempt and preserve completed work. Read its reviewer-specific execution contract. Do NOT run /review.',
+              '\nContinue this reviewer attempt and preserve completed work. Read its reviewer-specific execution contract. Do NOT run /review.' +
+              REFUSED_APPROVALS,
           });
         }
       }
@@ -404,7 +409,8 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
         domain: resolveEffectiveDomain(run.domain, vars.domain),
         initialPrompt:
           reviewChecklistMarkPrompt(taskDir, taskMdPath, target, feedbackRelPath, resultRelPath) +
-          '\nRead the reviewer-specific execution contract. Do NOT run /review.',
+          '\nRead the reviewer-specific execution contract. Do NOT run /review.' +
+          REFUSED_APPROVALS,
         beforeInput: async () => {
           const current = admit();
           const { enforceDispatchPressureGate } = await import('../methods/dispatch/execute.js');
@@ -446,7 +452,9 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       // current binding so its valid terminal signal is not compared with the old one.
       context = latest;
       const snapshot = await readNativeWorkerSnapshot(runId, 'review', contextId);
-      await refuseReviewerApprovals(context.nativeSession!, snapshot);
+      const refused = await refuseReviewerApprovals(context.nativeSession!, snapshot);
+      if (refused)
+        console.warn(`[review] ${runId.slice(0, 8)}: refused ${refused} runner approval(s)`);
       const command = snapshot.commands.find(
         (command) => command.commandId === context!.nativeSession!.commandId,
       );
