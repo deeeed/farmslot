@@ -12,7 +12,7 @@ import type { FlowType, RunLane, RunStatus } from './runs.js';
 // hardcoded table; it is deferred to a later cost lane.
 
 /** Bumped when the on-disk record shape changes in a non-additive way. */
-export const ANALYTICS_RECORD_SCHEMA_VERSION = 1;
+export const ANALYTICS_RECORD_SCHEMA_VERSION = 2;
 
 /**
  * Normalized cause for a non-`done` terminal run. `operator-cancelled` describes a cancelled
@@ -88,6 +88,8 @@ export interface RunAnalyticsRecord {
   /** Step the run died at (failed step, else the last non-terminal step), or null for clean runs. */
   failedStep: string | null;
   failureReason: FailureReason | null;
+  /** How a person settled a delivered result (ADR-065 Amendment 7); neither is a failure. */
+  resultDecision?: 'accepted' | 'closed' | null;
   steps: AnalyticsStepRecord[];
   /** completedAt − createdAt. */
   wallMs: number | null;
