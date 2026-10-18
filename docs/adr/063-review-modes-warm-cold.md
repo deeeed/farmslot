@@ -224,7 +224,7 @@ reviews still consume their admissions. Existing approval policy is unchanged.
 
 ## Amendment 2: reviewer failures do not spend the review budget, 2026-10-18
 
-**Status:** Proposed, 2026-10-18. Pending paired review and lead acceptance.
+**Status:** Accepted (lead, 2026-10-18).
 **Trigger:** run 8cff6e80 stopped after one of its two fix attempts with all five rounds spent. Only two of those rounds returned a review: one reviewer timed out after 30 minutes and another emitted invalid JSON. A separate restart double-count (fixed by its own bug PR) spent a third.
 **Specification:** on acceptance, these [Round budget](../reference/review-modes-warm-cold.md#round-budget) rules change to match:
 
