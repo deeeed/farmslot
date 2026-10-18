@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.23.4 - 2026-10-18
+
+- Align with `@farmslot/recipe-runner` 0.39.3: full-run recording starts before the first proof node, so a claim proved before the first tap is recorded. Also moves to `@farmslot/adapter-sdk` 0.18.3 and `@farmslot/agent-runtime` 0.29.3.
+
 ## 0.23.3 - 2026-10-18
 
 - Align with `@farmslot/agent-runtime` 0.29.2: a QA task's acceptance ledger now keeps every case package's verdicts, merged by criterion, instead of only the last case's. Also moves to `@farmslot/protocol` 0.55.0, `@farmslot/adapter-sdk` 0.18.2 and `@farmslot/recipe-runner` 0.39.2.

@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.29.3 - 2026-10-18
+
+- Align with `@farmslot/adapter-sdk` 0.18.3.
+
 ## 0.29.2 - 2026-10-18
 
 - A QA task's acceptance ledger merges its case executions by criterion instead of keeping only the last case: a passing execution replaces the rows it proves and leaves the others, and each row names its case execution. The evidence review completion check binds each row to its own case package. Needs gateway 0.24.0 or later; deploy it first.

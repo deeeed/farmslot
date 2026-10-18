@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.26 - 2026-10-18
+
+- Align with `@farmslot/recipe-runner` 0.39.3, whose full-run recording starts before the first proof node, and `@farmslot/agent-runtime` 0.29.3.
+
 ## 0.22.25 - 2026-10-18
 
 - Align with `@farmslot/agent-runtime` 0.29.2, whose QA task acceptance ledger merges case executions by criterion, `@farmslot/protocol` 0.55.0 and `@farmslot/recipe-runner` 0.39.2.

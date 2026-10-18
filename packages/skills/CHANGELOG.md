@@ -6,6 +6,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.25 - 2026-10-18
+
+- Align with `@farmslot/agent-runtime` 0.29.3.
+
 ## 0.6.24 - 2026-10-18
 
 - Align with `@farmslot/agent-runtime` 0.29.2, which merges a QA task's case packages into one acceptance ledger.
