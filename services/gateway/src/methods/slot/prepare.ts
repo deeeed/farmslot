@@ -169,18 +169,10 @@ export async function verifyPrepareHealth(
 }
 
 /**
- * Move a slot off a detached HEAD the remote contains, back to its idle branch.
- * A HEAD the remote does not show may hold local-only commits: prepare refuses,
- * naming why, and leaves it. A start-ref prepare resets the checkout right after,
- * so it clears index flags and forces the checkout through local changes.
+ * Refuse a detached HEAD the remote does not show: it may hold local-only
+ * commits, so prepare names why and leaves it. Returns the commit.
  */
-async function returnDetachedSlotToIdle(
-  vars: SlotVars,
-  projectJson: RawProjectJson,
-  projectVars: ProjectVars | undefined,
-  resetsToStartRef: boolean,
-  step: (name: string, detail: string) => void,
-): Promise<string> {
+async function assertDetachedHeadOnRemote(vars: SlotVars): Promise<string> {
   const repo = shellQuote(vars.remoteRepo);
   const head = (await execOnSlot(vars, `git -C ${repo} rev-parse HEAD`)).stdout.trim();
   try {
@@ -194,26 +186,26 @@ async function returnDetachedSlotToIdle(
       `Slot is detached at ${head.slice(0, 12) || 'an unreadable HEAD'}, which origin does not show (${(error as Error).message}). Push or preserve it, or run 'farmslot slot release'.`,
     );
   }
+  return head;
+}
+
+/** Move a slot off a detached HEAD the remote contains, back to its idle branch. */
+async function returnDetachedSlotToIdle(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  projectVars: ProjectVars | undefined,
+  step: (name: string, detail: string) => void,
+): Promise<string> {
+  const head = await assertDetachedHeadOnRemote(vars);
   const idle = resolveSlotTrackingBranchFromProject(
     projectJson,
     vars,
     projectVars,
     await detectLinkedWorktree(vars),
   );
-  if (resetsToStartRef) {
-    // The sweep ends its shell with `exit`, so it runs on its own.
-    const flagSweep = await execOnSlot(
-      vars,
-      `cd ${repo} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
-    );
-    if (flagSweep.exitCode !== 0)
-      throw new Error(
-        `failed to clear skip-worktree/assume-unchanged flags on ${vars.slotId} (${vars.remoteRepo}): ${flagSweep.stderr.slice(-200) || flagSweep.stdout.slice(-200)}`,
-      );
-  }
   const checkout = await execOnSlot(
     vars,
-    `git -C ${repo} checkout -q ${resetsToStartRef ? '-f ' : ''}${shellQuote(idle)} --`,
+    `git -C ${shellQuote(vars.remoteRepo)} checkout -q ${shellQuote(idle)} --`,
   );
   if (checkout.exitCode !== 0) {
     throw new Error(
@@ -647,21 +639,28 @@ async function slotPrepareInner(
 
   // A QA run, or this run's earlier attempt, leaves the slot detached at its
   // frozen head. Once the remote contains that commit nothing is lost by moving
-  // off it, so the slot goes back to its idle branch before the checks below;
-  // a start-ref prepare detaches at its own head again afterwards.
+  // off it. A start-ref prepare keeps HEAD, and any changes on it, until its
+  // reset to its own head, after every refusal below; other prepares go back
+  // to the idle branch first.
+  let detachedHeadOnRemote = false;
   if (phaseEnabled('git') && !branch && current === 'HEAD') {
-    current = await returnDetachedSlotToIdle(
-      vars,
-      projectJson,
-      projectVars,
-      !!opts?.startRef,
-      step,
-    );
+    if (opts?.startRef) {
+      const head = await assertDetachedHeadOnRemote(vars);
+      detachedHeadOnRemote = true;
+      step(
+        'branch',
+        `Detached ${head.slice(0, 12)}, which origin contains, stays until the start-ref reset`,
+      );
+    } else {
+      current = await returnDetachedSlotToIdle(vars, projectJson, projectVars, step);
+    }
   }
 
   // The existing preserveBranch path never resets or deletes the branch.
   if (phaseEnabled('git') && !opts?.preserveBranch)
-    await assertPrepareCommitsPublished(vars, branch || '');
+    await assertPrepareCommitsPublished(vars, branch || '', execOnSlot, {
+      headOnRemote: detachedHeadOnRemote,
+    });
 
   if (!phaseEnabled('git')) {
     // Profiles without the git phase reuse the slot's current checkout. Branch,
@@ -671,7 +670,7 @@ async function slotPrepareInner(
       `git sync skipped (profile ${profileName()}; HEAD stays on '${current || 'unknown'}')`,
     );
   } else {
-    if (!branch && current && current !== defaultBranch) {
+    if (!branch && current && current !== defaultBranch && !detachedHeadOnRemote) {
       const linkedWorktree = await detectLinkedWorktree(vars);
       const trackingBranch = resolveSlotTrackingBranchFromProject(
         projectJson,
@@ -1223,8 +1222,9 @@ async function slotPrepareInner(
       }
     }
   } else if (opts?.startRef) {
-    // The slot is on its idle branch (checked above). Detaching first keeps that
-    // branch where it was; release checks it out again.
+    // The slot is on its idle branch or detached at a commit origin contains
+    // (checked above). Detaching first keeps that branch where it was; release
+    // checks it out again.
     await resolveRequestedStartRef();
     const flagSweep = await execOnSlot(
       vars,

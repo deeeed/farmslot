@@ -25,6 +25,8 @@ export async function assertPrepareCommitsPublished(
   vars: SlotVars,
   branch: string,
   exec: typeof execOnSlot = execOnSlot,
+  // A detached HEAD prepare already resolved against the remote holds nothing to lose.
+  options: { headOnRemote?: boolean } = {},
 ): Promise<void> {
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   // Keep last-published tips reachable after upstream deletion/squash merge.
@@ -39,7 +41,7 @@ export async function assertPrepareCommitsPublished(
     throw new Error(
       `Cannot inspect HEAD on ${vars.slotId}; prepare left branches untouched. ${head.stderr || head.stdout}`,
     );
-  const refs = ['HEAD'];
+  const refs = options.headOnRemote ? [] : ['HEAD'];
   if (branch) {
     const exists = await exec(
       vars,
