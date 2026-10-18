@@ -22,6 +22,7 @@ import {
   admitReviewRound,
   assertReviewRoundAvailable,
   attachReviewRoundBudget,
+  reviewLaunchStartedAt,
   reviewRoundAdmissionId,
   runReviewRoundBudget,
 } from './review-round-budget.js';
@@ -87,6 +88,30 @@ test('a recovered admission survives replay without spending another round', asy
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
   await admitReviewRound(run.id, 'fresh-attempt');
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 2);
+});
+
+test('a review context relaunched after a restart reuses the round it reserved', async (t) => {
+  // Run 8cff6e80: the invalid-JSON relaunch reserved a round and created its
+  // context, the gateway restarted before the reviewer started, and recovery
+  // reserved a second round for the same loop. Five rounds ran out after two verdicts.
+  const run = fixture(t);
+  const lineage = `pipeline-review-${run.id}`;
+  const admit = (startedAt: string) =>
+    admitReviewRound(run.id, reviewRoundAdmissionId(lineage, 1, startedAt));
+  await admit('2026-10-18T08:08:24.066Z');
+  await admit('2026-10-18T10:09:14.551Z');
+  const reserved = reviewLaunchStartedAt(undefined, '2026-10-18T10:19:15.799Z');
+  await admit(reserved);
+  const interrupted = { startedAt: reserved, attemptStartedAt: reserved };
+
+  await admit(reviewLaunchStartedAt(interrupted, '2026-10-18T10:20:13.664Z'));
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 3);
+
+  // Its reviewer's mark start later rewrites attemptStartedAt; a mid-review
+  // restart still recovers the same round.
+  const launched = { ...interrupted, attemptStartedAt: '2026-10-18T10:20:55.000Z' };
+  await admit(reviewLaunchStartedAt(launched, '2026-10-18T10:30:00.000Z'));
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 3);
 });
 
 test('concurrent runs for the same PR cannot both spend the last round', async (t) => {

@@ -68,7 +68,11 @@ import {
   reviewerResultRelPath,
   scopeReviewFeedbackPath,
 } from './review-agent.js';
-import { admitReviewRound, reviewRoundAdmissionId } from './review-round-budget.js';
+import {
+  admitReviewRound,
+  reviewLaunchStartedAt,
+  reviewRoundAdmissionId,
+} from './review-round-budget.js';
 import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
 import {
   claimWarmReviewerSession,
@@ -228,9 +232,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
   const resultRelPath = reviewerResultRelPath(contextId);
   const taskMdPath = taskDirRelPath(taskDir, target.checklist);
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
-  const startedAt = recovering
-    ? (context!.attemptStartedAt ?? context!.startedAt ?? new Date().toISOString())
-    : new Date().toISOString();
+  const startedAt = reviewLaunchStartedAt(context);
   let resultSchema = context?.nativeSession?.resultSchema;
   let progress: { stop(): void | Promise<void> } | undefined;
   let activeTaskSet = false;
@@ -289,6 +291,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           reviewId: lineage,
           label: allocated.label,
           status: 'launching',
+          startedAt,
           attemptStartedAt: startedAt,
           taskFile: taskMdPath,
           signalFile: taskDirRelPath(taskDir, target.signal),

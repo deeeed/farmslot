@@ -1,4 +1,5 @@
 import {
+  type AgentContext,
   type Principal,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReviewAttempt,
@@ -29,6 +30,20 @@ export function reviewRoundAdmissionId(
   startedAt: string,
 ): string {
   return JSON.stringify([reviewId, loopNumber, startedAt]);
+}
+
+/**
+ * The launch time a review attempt's round is admitted under. A review context
+ * is created with this time as its `startedAt`, which nothing rewrites (the
+ * reviewer's own mark start rewrites `attemptStartedAt`). Relaunching or
+ * recovering that same context, for example after a gateway restart before its
+ * reviewer started, keys on it again and reuses the round it already reserved.
+ */
+export function reviewLaunchStartedAt(
+  context: Pick<AgentContext, 'startedAt'> | undefined,
+  now = new Date().toISOString(),
+): string {
+  return context?.startedAt ?? now;
 }
 
 function historicalAdmissions(run: Run): string[] {
