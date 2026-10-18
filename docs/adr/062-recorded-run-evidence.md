@@ -813,7 +813,7 @@ packages. There is no new command, endpoint or verdict writer.
 
 ## Amendment 14 (2026-10-18): Capture binds before the first proof node
 
-**Status:** Proposed. The lead approves once both paired reviews pass.
+**Status:** Accepted (lead, 2026-10-18). Ships in #1296.
 
 ### Decision
 
