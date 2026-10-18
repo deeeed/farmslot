@@ -21,6 +21,7 @@ import {
   type Run,
   type RunDecision,
   type RunGatePrerequisiteReason,
+  supersedePendingResultDecisions,
 } from '@farmslot/protocol';
 
 import type { ReviewResult } from '../review/orchestrator.js';
@@ -219,11 +220,7 @@ export async function holdRunForResultDecision(
           completedAt: undefined,
           // A run held again (after a replay or a failed send-back) has one pending decision.
           decisions: [
-            ...(getRun(runId)?.decisions ?? run.decisions).map((entry) =>
-              !entry.resolvedAt && entry.payload?.kind === 'result-decision'
-                ? { ...entry, resolvedAt: now, resolvedAction: 'superseded' }
-                : entry,
-            ),
+            ...supersedePendingResultDecisions(getRun(runId)?.decisions ?? run.decisions, now),
             decision,
           ],
         },
@@ -423,6 +420,8 @@ export async function resolveResultDecision(
           decisions: resolveDecisions(null),
           resultDecisionReceipt: receipt,
           error: undefined,
+          // Whatever the run ends as next gets its own analytics record.
+          analyticsEmittedAt: undefined,
           ...(payload.stoppedAt === 'review' ? { status: 'reviewing' as const } : {}),
         });
         await persistRunNow(updated, 'result sent back');
@@ -487,8 +486,15 @@ async function sendBack(run: Run, stoppedAt: ResultDecisionStop, reason: string)
     try {
       await runReplayStep({ runId: run.id, stepName: stoppedAt }, broadcastEvent);
     } catch (error) {
-      if (isHeldForResultDecision(getRun(run.id) ?? run))
-        await holdRunForResultDecision(run.id, stoppedAt, reason);
+      if (isHeldForResultDecision(getRun(run.id) ?? run)) {
+        try {
+          await holdRunForResultDecision(run.id, stoppedAt, reason);
+        } catch (holdError) {
+          console.error(
+            `[result-decision] ${run.id.slice(0, 8)} could not be held again: ${(holdError as Error).message}`,
+          );
+        }
+      }
       throw error;
     }
     return;

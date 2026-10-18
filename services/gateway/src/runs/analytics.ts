@@ -507,10 +507,10 @@ export function aggregateAnalytics(
 /**
  * A restart re-projects a failed run to `needs-decision` (ADR-065 Amendment 7).
  * Queries keep each run's latest record, so a newer one stops the old failure
- * from counting; the settled record replaces it once the decision is made.
+ * from counting; the run's next terminal record replaces it.
  */
 export async function recordHeldResultAnalytics(run: Run): Promise<void> {
-  if (!run.analyticsEmittedAt || !isHeldForResultDecision(run)) return;
+  if (!isHeldForResultDecision(run)) return;
   await appendAnalyticsRecord(buildAnalyticsRecord(run));
 }
 

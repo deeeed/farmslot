@@ -1,7 +1,10 @@
 // ADR-065 Amendment 7: one person settles a held result through Send back,
 // Accept or Close; cancel, restart and the named discard respect the hold.
 import assert from 'node:assert/strict';
-import { beforeEach, mock, test } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { after, beforeEach, mock, test } from 'node:test';
 
 import {
   FLOW_STEPS,
@@ -24,6 +27,10 @@ let replays: RunReplayStepParams[] = [];
 let releases: SlotReleaseParams[] = [];
 let starts: string[] = [];
 let replayError: Error | null = null;
+let onReplay: (() => void) | null = null;
+const analyticsDir = mkdtempSync(path.join(tmpdir(), 'result-decision-analytics-'));
+process.env.FARMSLOT_ANALYTICS_DIR = analyticsDir;
+after(() => rmSync(analyticsDir, { recursive: true, force: true }));
 
 const store = await import('../runs/store.js');
 mock.module('../runs/store.js', {
@@ -53,6 +60,7 @@ mock.module('../methods/run/replay-step.js', {
     runReplayStep: async (params: RunReplayStepParams) => {
       replays.push(params);
       if (replayError) throw replayError;
+      onReplay?.();
       return { run };
     },
   },
@@ -84,12 +92,19 @@ const {
   resolveResultDecision,
   takeSendBackReview,
 } = await import('./result-decision.js');
-const { aggregateAnalytics, buildAnalyticsRecord } = await import('../runs/analytics.js');
+const {
+  aggregateAnalytics,
+  appendAnalyticsRecord,
+  buildAnalyticsRecord,
+  emitAnalyticsForTerminalRun,
+  readAllAnalyticsRecords,
+} = await import('../runs/analytics.js');
 const { restartDisposition, representResultDecisions } = await import('../run-engine/recovery.js');
 const { runCancelTransitionLocked } = await import('../methods/run/lifecycle-control.js');
 
 beforeEach(() => {
   replayError = null;
+  onReplay = null;
   replays = [];
   releases = [];
   starts = [];
@@ -397,4 +412,36 @@ test('a held run is not a failure in analytics, even after a failed record', asy
   const result = aggregateAnalytics([failed, held], {}, '2026-10-19T00:00:00.000Z');
   assert.deepEqual(result.failureByStep, {});
   assert.deepEqual(result.failureByReason, {});
+});
+
+test('restart re-projection replaces the failure record, and the next result is recorded', async () => {
+  await heldQa();
+  // 3e2f400a as main left it: failed, its failure record already written.
+  Object.assign(run, {
+    status: 'failed',
+    decisions: [run.decisions[0]],
+    analyticsEmittedAt: '2026-10-17T01:21:00.000Z',
+  });
+  await appendAnalyticsRecord(buildAnalyticsRecord(run));
+  const at = '2026-10-19T00:00:00.000Z';
+
+  await representResultDecisions([run]);
+
+  assert.equal(run.status, 'needs-decision');
+  assert.equal(run.analyticsEmittedAt, undefined);
+  let { records } = await readAllAnalyticsRecords();
+  assert.deepEqual(aggregateAnalytics(records, {}, at).failureByStep, {});
+
+  // Send back replays COMPLETE, which now passes.
+  onReplay = () =>
+    Object.assign(run, { status: 'done', metrics: { ...run.metrics, outcome: 'success' } });
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  const emitted = emitAnalyticsForTerminalRun(run);
+  assert.ok(emitted, 'the terminal record is emitted again');
+  await emitted;
+
+  ({ records } = await readAllAnalyticsRecords());
+  const result = aggregateAnalytics(records, {}, at);
+  assert.deepEqual(result.byStatus, { done: 1 });
+  assert.equal(isSuccessfulRun(run), true);
 });
