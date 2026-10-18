@@ -13,6 +13,7 @@ import {
   type EvidenceMomentRef,
   isRecipeRepairScope,
   isRecord,
+  isTerminalRunStatus,
   normalizeRecipeClaimId,
   type OutputReviewPayload,
   projectClaimUntestableOverride,
@@ -31,6 +32,7 @@ import {
   type ReviewRequirementDisplay,
   reviewRequirementDisplay,
   type ReviewStatus,
+  type Run,
   type RunDecision,
   type RunGatePrerequisiteReason,
   type RunOutput,
@@ -102,6 +104,12 @@ export interface EvidenceReviewGateSnapshot {
   nextAction: string;
 }
 
+/** What a client offers on a criterion row: a proof player and the untestable override. */
+export interface EvidenceReviewClaimOffers {
+  playable?: boolean;
+  overridable?: boolean;
+}
+
 export interface EvidenceReviewInput {
   visualReviewContext?: { snapshotIdentity: string; decisionId?: string };
   gateDecision?: RunDecision;
@@ -114,6 +122,8 @@ export interface EvidenceReviewInput {
   visualReviewAuthority?: RecipeVisualReviewAuthority;
   context?: EvidenceReviewContext;
   readErrors?: readonly string[];
+  /** From `runEvidencePending`: nothing is retained yet, so a missing package is not an error. */
+  evidencePending?: boolean;
   /** Transport namespace; contract references stay relative to their recipe package. */
   artifactPrefix?: string;
   /** Display path relative to the run's artifacts; never used to resolve media. */
@@ -279,6 +289,12 @@ export interface EvidenceReviewModel {
   claimOverrideCandidate(
     id: string,
   ): Pick<import('@farmslot/protocol').RunOverrideClaimParams, 'claimId' | 'recipeRunId'> | null;
+  /** Whether a criterion row has anything behind its "More" toggle; both clients ask this
+   * instead of each listing the parts. */
+  claimHasDetails(id: string, offers?: EvidenceReviewClaimOffers): boolean;
+  /** The file a criterion's Review evidence opens: its selected proof, else its first evidence
+   * file. None while the evidence is pending: a working run has retained nothing to open. */
+  claimFocusPath(id: string): string | undefined;
   readonly context: EvidenceReviewContext;
   readonly summary: AcceptanceStatusSummary;
   readonly claims: readonly EvidenceReviewClaim[];
@@ -329,6 +345,14 @@ export interface EvidenceReviewModel {
     timeMs: number,
     mediaDurationMs?: number,
   ): readonly [number, number] | null;
+}
+
+/** The worker is still working and the run has retained nothing, so there is no evidence
+ * package to judge yet. Its verdicts show as reported; package checks wait for completion. */
+export function runEvidencePending(
+  run: Pick<Run, 'status' | 'artifactBundle' | 'output'>,
+): boolean {
+  return !isTerminalRunStatus(run.status) && !run.artifactBundle && !run.output?.artifactBundle;
 }
 
 /** Experimental ADR-062 projection shared by web and native review contexts. */
@@ -425,12 +449,12 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     warnings.push(
       'Legacy schema-1 task verdicts are retained display only; they establish no recorded recipe proof.',
     );
-    if (input.contractVersion === 1)
+    if (input.contractVersion === 1 && !input.evidencePending)
       errors.push(
         'Current run evidence requires schema-2 engine claims and their selected execution package.',
       );
   }
-  if (input.ledger?.schemaVersion === 2 && !pkg)
+  if (input.ledger?.schemaVersion === 2 && !pkg && !input.evidencePending)
     errors.push('Recorded claim evidence requires its retained execution package.');
   if (
     packageClaims &&
@@ -1017,9 +1041,39 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       clip,
     };
   };
+  const claimOverrideCandidate = (id: string) => {
+    const claim = packageClaims?.criteria.find(
+      (claim) => claim.id === id && claim.kind === 'acceptance',
+    );
+    return claim && packageClaims && overrideAuthority
+      ? { claimId: claim.id, recipeRunId: packageClaims.recipeRunId }
+      : null;
+  };
   return {
     artifactInventory: input.artifacts ?? [],
     claimDisplay,
+    claimHasDetails(id, { playable = false, overridable = false } = {}) {
+      const claim = byClaim.get(id);
+      const display = claimDisplay(id);
+      const status = claim?.status;
+      return Boolean(
+        (playable && display.clip && !errors.length) ||
+        display.selected.length ||
+        display.raw.length ||
+        status?.recipeNodes.length ||
+        claim?.occurrences.length ||
+        status?.note ||
+        status?.engineVerdict ||
+        (claim?.timing && claim.timing !== 'measured') ||
+        (overridable && claimOverrideCandidate(id)),
+      );
+    },
+    claimFocusPath(id) {
+      if (input.evidencePending) return undefined;
+      return (
+        claimDisplay(id).selected[0]?.artifactPath ?? byClaim.get(id)?.evidence[0]?.artifactPath
+      );
+    },
     judgmentRows(principal) {
       return claims.map((claim) => {
         const delegated = judgments
@@ -1197,14 +1251,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         : null;
     },
     context: input.context ?? 'artifact',
-    claimOverrideCandidate(id) {
-      const claim = packageClaims?.criteria.find(
-        (claim) => claim.id === id && claim.kind === 'acceptance',
-      );
-      return claim && packageClaims && overrideAuthority
-        ? { claimId: claim.id, recipeRunId: packageClaims.recipeRunId }
-        : null;
-    },
+    claimOverrideCandidate,
     summary: summarizeAcceptanceStatus(
       {
         schemaVersion: 1,

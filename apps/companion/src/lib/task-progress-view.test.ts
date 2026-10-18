@@ -128,7 +128,7 @@ test('the acceptance panel view separates assessment from proof and colours bloc
   assert.equal(view.counts, '2/2 assessed · 1 proven');
   assert.equal(view.countsLabel, 'proven 1 · weak 1 · missing 0 · untestable 0 · not assessed 0');
   // A weak criterion is open work, so the compact panel starts expanded.
-  assert.equal(view.hasOpenCriteria, true);
+  assert.equal(view.defaultOpen, true);
   assert.equal(view.rows[0].color, colors.statusOk);
   assert.equal(view.rows[1].color, colors.statusFail);
   // Every criterion judged: the tally is neutral even though one verdict is weak.
@@ -145,7 +145,7 @@ test('an all-settled ledger starts collapsed, untestable included', () => {
   const settled = ledger();
   settled.criteria[1] = { ...settled.criteria[1], verdict: 'untestable' };
   const view = acceptanceLedgerView(settled);
-  assert.equal(view.hasOpenCriteria, false);
+  assert.equal(view.defaultOpen, false);
   assert.equal(view.rows[1].color, colors.statusWarn);
 });
 

@@ -57,7 +57,7 @@ test('the header separates assessment progress from proven criteria', () => {
   assert.equal(view.counts, '3/3 assessed · 1 proven');
   assert.equal(view.countsTooltip, 'proven 1 · weak 1 · missing 0 · untestable 1 · not assessed 0');
   // A weak criterion is still open work, so the panel starts expanded.
-  assert.equal(view.hasOpenCriteria, true);
+  assert.equal(view.defaultOpen, true);
 });
 
 test('a run whose criteria are all settled starts collapsed', () => {
@@ -69,13 +69,14 @@ test('a run whose criteria are all settled starts collapsed', () => {
     ]),
   );
   assert.equal(view.counts, '2/2 assessed · 1 proven');
-  assert.equal(view.hasOpenCriteria, false);
+  assert.equal(view.defaultOpen, false);
 });
 
-test('nothing assessed yet shows no proven count', () => {
+test('nothing assessed yet shows no proven count and starts collapsed', () => {
   const view = acceptancePanelPresentation(ledger([]), [{ id: 'AC-1', text: 'Not judged yet' }]);
   assert.equal(view.counts, '0/1 assessed');
-  assert.equal(view.hasOpenCriteria, true);
+  // Rows that all say "Not assessed" add nothing to the counts line; they open on demand.
+  assert.equal(view.defaultOpen, false);
 });
 
 test('artifact-only replay output gets replay copy and the complete-step status', () => {

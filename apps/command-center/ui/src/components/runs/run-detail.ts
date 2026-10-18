@@ -5,6 +5,7 @@ import {
   createEvidenceReviewModel,
   type EvidenceReviewModel,
   readEvidenceReviewReport,
+  runEvidencePending,
 } from '@farmslot/adapter-sdk/evidence';
 import type {
   CiCheckUpdatedPayload,
@@ -98,6 +99,7 @@ import {
   runArtifactsWithOperationLogs,
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
+  runEvidenceSettled,
   runFamilyPrStatus,
   runHasTrimmedDetail,
   runOutputEvidenceSelection,
@@ -199,6 +201,7 @@ export class RunDetail extends RunDetailState {
         visualReviewAuthority: this._recordedEvidence?.visualReviewAuthority,
         visualReviewContext: this._recordedEvidence?.visualReviewContext,
         readErrors: this._recordedEvidence?.errors,
+        evidencePending: this.run ? runEvidencePending(this.run) : false,
         artifactPrefix: this._recordedEvidence?.artifactPrefix,
         packagePath: this._recordedEvidence?.packagePath,
         ledger: this.acceptanceStatus,
@@ -483,6 +486,8 @@ export class RunDetail extends RunDetailState {
       void this._refreshRecipeRunsForRun(this.run);
       this._applySelectedStepFromHash();
     }
+    if (this.run && runEvidenceSettled(prev, this.run))
+      void this._refreshRecipeRunsForRun(this.run, { force: true });
     this._maybeRefreshLiveTimeoutPrStatus();
     this._maybeRefreshPostureStatus();
     this._maybeResetPostureGate();

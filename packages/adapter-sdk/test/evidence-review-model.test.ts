@@ -23,6 +23,7 @@ import {
   createEvidenceReviewModel,
   type EvidenceReviewRecordingInput,
   readEvidenceReviewReport,
+  runEvidencePending,
 } from '../src/evidence.js';
 
 const zero = Date.parse('2026-01-01T00:00:00Z');
@@ -131,6 +132,14 @@ test('the display uses recorded publication selections and retains every remaini
     [],
   );
   assert.deepEqual(createEvidenceReviewModel({ ledger }).claimDisplay('AC-1').selected, []);
+  // Review evidence opens the selected proof, else the first evidence file.
+  const selectedStill = createEvidenceReviewModel({
+    ledger,
+    artifacts: inventory,
+    gateDecision: recordedGate(['artifacts/still.png']),
+  });
+  assert.equal(selectedStill.claimFocusPath('AC-1'), 'artifacts/still.png');
+  assert.equal(createEvidenceReviewModel({ ledger }).claimFocusPath('AC-1'), 'artifacts/proof.png');
 });
 
 test('a measured proof stays primary while its supporting stills remain raw and filterable', () => {
@@ -539,6 +548,81 @@ test('ordinary unassessed criteria and manifest links cannot invent verdicts', (
     model.selection?.stills.map((file) => file.path),
     ['still.png'],
   );
+});
+
+test('a working run with nothing retained reports its verdicts without judging a package', () => {
+  assert.equal(runEvidencePending({ status: 'monitoring' }), true);
+  assert.equal(runEvidencePending({ status: 'done' }), false);
+  assert.equal(
+    runEvidencePending({
+      status: 'human-gating',
+      artifactBundle: {
+        storeId: 'store',
+        bundleDigest: 'sha256:retained',
+        taskKey: 'task',
+        manifestDigest: 'sha256:manifest',
+      },
+    }),
+    false,
+  );
+  const verdict = {
+    id: 'AC-1',
+    text: 'Proven by the worker.',
+    verdict: 'proven' as const,
+    evidence: [],
+    recipeNodes: [],
+    updatedAt: at(0),
+  };
+  for (const schemaVersion of [1, 2] as const) {
+    const ledger = { schemaVersion, recipeRunId: 'live', criteria: [verdict] };
+    assert.notDeepEqual(createEvidenceReviewModel({ ledger, contractVersion: 1 }).errors, []);
+    const pending = createEvidenceReviewModel({
+      ledger,
+      contractVersion: 1,
+      evidencePending: true,
+    });
+    assert.deepEqual(pending.errors, []);
+    assert.equal(pending.packageStatus, null);
+  }
+});
+
+test('a criterion row has details only when something would open behind More', () => {
+  const linked = createEvidenceReviewModel({
+    criteria: [
+      { id: 'AC-1', text: 'Not started.' },
+      { id: 'AC-2', text: 'Linked.' },
+    ],
+    evidenceLinks: [{ id: 'AC-2', evidence: ['still.png'] }],
+  });
+  assert.equal(linked.claimHasDetails('AC-1'), false);
+  assert.equal(linked.claimHasDetails('AC-1', { playable: true, overridable: true }), false);
+  assert.equal(linked.claimHasDetails('AC-2'), true);
+  // Review evidence opens the same file in both clients, and nothing while it is pending.
+  assert.equal(linked.claimFocusPath('AC-1'), undefined);
+  assert.match(linked.claimFocusPath('AC-2') ?? '', /still\.png$/);
+  const pending = createEvidenceReviewModel({
+    criteria: [{ id: 'AC-2', text: 'Linked.' }],
+    evidenceLinks: [{ id: 'AC-2', evidence: ['still.png'] }],
+    evidencePending: true,
+  });
+  assert.equal(pending.claimFocusPath('AC-2'), undefined);
+  const noted = createEvidenceReviewModel({
+    ledger: {
+      schemaVersion: 1,
+      criteria: [
+        {
+          id: 'AC-1',
+          text: 'Weak.',
+          verdict: 'weak',
+          note: 'Unit test only.',
+          evidence: [],
+          recipeNodes: [],
+          updatedAt: at(0),
+        },
+      ],
+    },
+  });
+  assert.equal(noted.claimHasDetails('AC-1'), true);
 });
 
 test('continuous source segments play in order while restart gaps remain outside recording', () => {

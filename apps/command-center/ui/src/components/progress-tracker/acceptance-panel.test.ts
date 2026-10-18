@@ -101,7 +101,7 @@ test('a registered criterion with no verdict still gets a row, and counts agains
   // The ledger holds one entry; the run has three criteria.
   assert.equal(view.counts, '1/3 assessed · 1 proven');
   assert.match(view.countsTooltip, /not assessed 2$/);
-  assert.equal(view.hasOpenCriteria, true);
+  assert.equal(view.defaultOpen, true);
 
   const text = litText(
     renderAcceptancePanel(ledger([criterion({ id: 'AC-1', text: 'Proven already' })]), {
@@ -212,6 +212,25 @@ function click(overrides: Partial<MouseEvent> = {}) {
   } as MouseEvent;
   return { event, prevented: () => prevented };
 }
+
+test('a criterion with nothing to open shows neither More nor Review evidence', () => {
+  const text = litText(
+    renderAcceptancePanel(ledger([]), {
+      criteria: [
+        { id: 'AC-1', text: 'Not started' },
+        { id: 'AC-2', text: 'Linked' },
+      ],
+      evidenceLinks: [{ id: 'AC-2', evidence: ['artifacts/proof.png'] }],
+      openEvidence: () => undefined,
+    }),
+  );
+  const [first, second] = text.split('<li').slice(1);
+  assert.match(first, /data-ac-id=AC-1/);
+  assert.doesNotMatch(first, /Review\s+evidence|>More</);
+  assert.match(second, /data-ac-id=AC-2/);
+  assert.match(second, /Review\s+evidence/);
+  assert.match(second, />More</);
+});
 
 test('clicking an evidence file opens the files of its criterion, in order, in the host viewer', () => {
   const windowOpen = Object.getOwnPropertyDescriptor(globalThis, 'open');

@@ -1,4 +1,4 @@
-import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import { type EvidenceReviewModel, runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
   CiCheckUpdatedPayload,
@@ -27,6 +27,18 @@ import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { desiredRecipeRunId } from '../shared/recipe-run-selection-model.js';
 
 import { collectRunEvidenceArtifacts } from './run-utils.js';
+
+type RunEvidenceState = Pick<Run, 'id' | 'status' | 'artifactBundle' | 'output'>;
+
+/** The run just retained its evidence: what the page read while it was pending is stale. */
+export function runEvidenceSettled(
+  previous: RunEvidenceState | null | undefined,
+  next: RunEvidenceState,
+): boolean {
+  return Boolean(
+    previous?.id === next.id && runEvidencePending(previous) && !runEvidencePending(next),
+  );
+}
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
