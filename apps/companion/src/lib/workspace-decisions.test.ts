@@ -10,6 +10,7 @@ import {
   selectRetrospectiveWorkspaceDecision,
   selectReviewGateWorkspaceDecision,
   selectReviewWorkspaceDecision,
+  supersedingResultDecisionId,
   workspaceDecisionKind,
 } from './workspace-decisions';
 
@@ -164,4 +165,33 @@ test('a pending result decision is the primary workspace decision', () => {
     })?.id,
     'output-1',
   );
+});
+
+test('a re-presented result decision replaces the superseded one on screen', () => {
+  const result = decision({
+    id: 'result-1',
+    type: 'engine_result_decision',
+    payload: {
+      kind: 'result-decision',
+      stoppedAt: 'complete',
+      reason: 'Completion refused.',
+      delivered: { reportPath: 'artifacts/r.md', manifestDigest: 'sha256:m' },
+      findingsDigest: 'sha256:f',
+      actions: [{ id: 'close-result', available: true, requiresReason: false }],
+    },
+  });
+  const superseded = { ...result, resolvedAt: '2026-05-21T03:00:00.000Z' };
+  const next = { ...result, id: 'result-2' };
+  assert.equal(
+    supersedingResultDecisionId(superseded, { decisions: [superseded, next] }),
+    'result-2',
+  );
+  assert.equal(supersedingResultDecisionId(next, { decisions: [superseded, next] }), undefined);
+  assert.equal(supersedingResultDecisionId(superseded, { decisions: [superseded] }), undefined);
+  assert.equal(supersedingResultDecisionId(superseded, null), undefined);
+  const output = decision({
+    id: 'output-1',
+    payload: { kind: 'output-review', manifestDigest: 'sha256:m', reportPath: 'artifacts/r.md' },
+  });
+  assert.equal(supersedingResultDecisionId(output, { decisions: [output, next] }), undefined);
 });

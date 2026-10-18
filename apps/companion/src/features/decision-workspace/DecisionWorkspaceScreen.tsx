@@ -118,6 +118,7 @@ import {
   selectReadyWorkspaceDecision,
   selectRetrospectiveWorkspaceDecision,
   selectReviewGateWorkspaceDecision,
+  supersedingResultDecisionId,
 } from '../../lib/workspace-decisions';
 import {
   artifactFilterParamForArtifactPath,
@@ -343,6 +344,10 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   // The gate review's publish guard applies here too: this tab sends the same actions.
   const humanGate = useHumanGateGuard(client, sourceRun, decision);
   // A held run's output review carries the evidence and overrides shown under its result decision.
+  const supersedingResultId = supersedingResultDecisionId(decision, sourceRun);
+  useEffect(() => {
+    if (supersedingResultId) router.setParams({ decisionId: supersedingResultId });
+  }, [router, supersedingResultId]);
   const outputReviewDecision =
     decision?.payload?.kind === 'result-decision'
       ? sourceRun?.decisions.find(

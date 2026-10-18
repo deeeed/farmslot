@@ -13,6 +13,7 @@ import type {
   SlotStatus,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
+import { isHeldForResultDecision } from '@farmslot/protocol';
 import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import '../queue/dispatch-queue-panel.js';
@@ -103,7 +104,7 @@ interface DispatchWizardViewContext {
   nudgeIntentVersion: number;
   sameTaskSlot: SlotStatus | null;
   dispatching: boolean;
-  activeRunConflict: { id: string; status: string } | null;
+  activeRunConflict: Pick<Run, 'id' | 'status'> | null;
   error: string;
   candidateRefreshFailed: boolean;
   queueItems: readonly QueueItem[];
@@ -431,7 +432,11 @@ function renderActionMessage(ctx: DispatchWizardViewContext) {
           >Active run for ${ctx.ticketId}: ${ctx.activeRunConflict.id.slice(0, 8)}
           (${ctx.activeRunConflict.status}).
           <a class="error-action" href="#run/${ctx.activeRunConflict.id}">Go to run</a>
-          <a class="error-action" @click=${() => ctx.cancelConflictingRun()}>Cancel it</a>
+          ${isHeldForResultDecision(ctx.activeRunConflict)
+            ? nothing
+            : html`<a class="error-action" @click=${() => ctx.cancelConflictingRun()}
+                >Cancel it</a
+              >`}
         </span>`
       : ctx.error
         ? html`<span class="error-msg">${ctx.error}</span>`
