@@ -4,6 +4,10 @@
 
 - `acceptancePanelPresentation` returns `defaultOpen` in place of `hasOpenCriteria`. While no criterion is assessed, the panel shows only its counts line and the criteria list opens on demand.
 
+## 0.2.5 - 2026-10-18
+
+- Align with `@farmslot/adapter-sdk` 0.18.5.
+
 ## 0.2.4 - 2026-10-18
 
 - Align with `@farmslot/adapter-sdk` 0.18.4.

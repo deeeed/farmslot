@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 ## Unreleased
 
 - Run page: a run that is still working no longer shows its evidence as Invalid before the worker finishes, and the page reads the run's evidence again once the run retains it. A criterion row shows More and Review evidence only when they have something to open, and while nothing is assessed the acceptance panel shows only its counts line, a 44 px row, with the list on demand. More shows a criterion's untimed or outside-recording timing, as Companion does. A failed worker command while the run is still working reads as one state, `Failed · worker continuing`. The Variant tag warns of an engine mismatch only when it names a runner or model other than the dispatched one, so `opus` on claude/opus, `grok` on grok/grok-4.7 and `luna-6` on codex/gpt-6-luna no longer warn.
+- Agentic recipe runs (`scripts/agentic/run-recipe.mjs`) keep their capture-helper recorder from waiting for the host capture slot (`captureSlotWaitMs: 0`), as before: a host where another slot is recording falls back to the CDP recorder at once.
 
 ## 0.14.0 - 2026-10-16
 

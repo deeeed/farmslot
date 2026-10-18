@@ -229,6 +229,11 @@ export interface RecordingTargetContext {
 
 export type RecordingTarget = RecipeRecordingTarget;
 
+export interface VideoRecorderDoctorOptions {
+  /** Cancels a doctor still waiting, e.g. for the host's capture slot. */
+  signal?: AbortSignal;
+}
+
 export interface VideoRecorderStartRequest {
   outputPath: string;
   target: RecordingTarget;
@@ -236,6 +241,8 @@ export interface VideoRecorderStartRequest {
   maxSize?: number;
   nodeId: string;
   record: 'full_run';
+  /** Cancels a start still waiting, e.g. for the host's capture slot. */
+  signal?: AbortSignal;
 }
 
 export interface ActiveVideoRecording {
@@ -270,7 +277,7 @@ export interface VideoRecorder {
   continuousSegments?: boolean;
   version?: string;
   platform?: string;
-  doctor?(): Promise<VideoRecorderDoctorResult>;
+  doctor?(options?: VideoRecorderDoctorOptions): Promise<VideoRecorderDoctorResult>;
   start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording>;
 }
 

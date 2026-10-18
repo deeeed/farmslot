@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.5 - 2026-10-18
+
+- The capture-helper recorder waits for the host's capture slot when another slot on the same host is recording. Since capture-helper 0.3.3, one of its commands at a time may use ScreenCaptureKit per host user, and the second slot's run-start doctor or `record.video` start failed with `capture_busy`, failing the proof. Doctor and start now retry for up to 10 minutes (`captureSlotWaitMs`, polled every `captureSlotPollMs`), then fail with the reason. The doctor reports `capture_busy`, not a permissions fix. The run's cancel ends the wait and is recorded as `RECIPE_ABORTED`; teardown waits on its own signal. `VideoRecorderStartRequest.signal` and `doctor(VideoRecorderDoctorOptions)` are new and optional. Recordings through the Android mirror keep main's behaviour (`captureSlotWaitMs: 0`): a busy host falls back to screenrecord at once, and a mirror start never waits.
+
 ## 0.39.4 - 2026-10-18
 
 - A recorder's active recording can expose `ready()`, resolving once its current segment's frame zero is bounded; the runner waits for it before every proof node, so a node no longer starts while capture restarts. Segmented and limit-bound recordings pass it through (ADR-062 Amendment 15).

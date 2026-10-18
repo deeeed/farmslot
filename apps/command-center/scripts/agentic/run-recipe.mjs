@@ -526,7 +526,11 @@ export async function pidListeningOnPort(port, listenerPids = cdpListenerPids) {
 }
 
 async function resolveWebVideoRecorder(cdpPort, captureHelperPath) {
-  const captureRecorder = createCaptureHelperVideoRecorder({ captureHelperPath });
+  // A busy host capture slot falls back to CDP at once instead of waiting for it.
+  const captureRecorder = createCaptureHelperVideoRecorder({
+    captureHelperPath,
+    captureSlotWaitMs: 0,
+  });
   const captureDoctor = await captureRecorder.doctor?.();
   if (captureDoctor?.ok) return captureRecorder;
   const cdpRecorder = createCdpVideoRecorder({ cdpPort, urlIncludes: '#fleet' });
