@@ -212,8 +212,10 @@ test('ready restarts a segment past 150 seconds, so the roll falls between proof
   await recording.ready!();
   assert.equal(starts(), 1, 'a young segment keeps recording');
   offset = 151_000;
+  const rollRequestedAt = realNow();
   await recording.ready!();
   assert.equal(starts(), 2, 'an old segment restarts before its limit');
+  assert.ok(realNow() - rollRequestedAt >= 990, 'one evidence padding is recorded first');
   const restarted = fs
     .readdirSync(path.join(d.dir, 'device'))
     .find((name) => name.endsWith('-1.mp4'));

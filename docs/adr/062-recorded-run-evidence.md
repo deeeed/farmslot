@@ -882,7 +882,9 @@ Android `adb screenrecord` starts each segment only once its file holds bytes.
 The muxer writes its header only after the encoder's first output, so frame zero
 precedes them. The segment's clock is `[spawn, first bytes]` instead of the
 process lifetime, which also spans any static screen before the stop. Its
-`ready()` restarts a segment older than 150 s, 30 s before the 180 s limit.
+`ready()` restarts a segment older than 150 s, 30 s before the 180 s limit,
+after recording one `EVIDENCE_PADDING_MS` past the previous node, so that node's
+end and playback padding stay on camera.
 
 ### Rationale and consequences
 

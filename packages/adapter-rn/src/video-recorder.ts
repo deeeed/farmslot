@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { EVIDENCE_PADDING_MS } from '@farmslot/protocol';
 import {
   type ActiveVideoRecording,
   optionalVideoTiming,
@@ -229,7 +230,8 @@ async function startAndroidRecording(
   let stopped = false;
   return {
     // The restarted segment is ready once it bounds its zero. A segment near screenrecord's
-    // limit is restarted here, between proof nodes; its exit handler starts the next one first.
+    // limit is restarted here, between proof nodes, after one evidence padding of footage
+    // past the previous node; its exit handler starts the next segment first.
     async ready() {
       const current = segments.at(-1)!;
       if (
@@ -237,6 +239,7 @@ async function startAndroidRecording(
         current.stoppedAtUnixMs === undefined &&
         Date.now() - current.startedAtUnixMs >= SEGMENT_ROLL_AFTER_MS
       ) {
+        await sleep(EVIDENCE_PADDING_MS);
         for (const pid of screenrecordPids(adb, current.remotePath))
           adb(['shell', 'kill', '-2', pid]);
         await current.exited;
