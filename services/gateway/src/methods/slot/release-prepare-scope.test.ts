@@ -26,6 +26,17 @@ let claimDuringPaneProbe = false;
 let claimAfterTaskClean = false;
 let hasMirrorArtifacts = false;
 let claimAfterReap = false;
+let cdpPort: string | undefined;
+/** The browser session a cancelled run left on the slot's CDP port: pid -> survives SIGKILL. */
+let browserSession: Map<number, boolean>;
+
+const STARTED = 'Sun Oct 18 08:48:13 2026';
+const BROWSER_ARGS: Record<number, string> = {
+  11425:
+    'node /pins/console-tail.mjs --cdp-port 9542 --extension-log /slot/temp/runtime/console.log',
+  20419:
+    'Google Chrome for Testing --remote-debugging-port=9542 --user-data-dir=/slot/temp/profile',
+};
 
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
 const applies = (
@@ -38,6 +49,22 @@ const applies = (
 };
 
 const execForTest = async (_vars: unknown, cmd: string) => {
+  if (cmd.startsWith(': farmslot-browser-session-census')) {
+    const pids = [...browserSession.keys()];
+    return ok(
+      [
+        ...pids.map((pid) => `${pid} 1 ${pid} ${STARTED} ${BROWSER_ARGS[pid]}`),
+        '--repo-- /slot',
+        `--cdp-- ${pids.join(',')}`,
+        '',
+      ].join('\n'),
+    );
+  }
+  if (cmd.startsWith(': farmslot-browser-session-reap')) {
+    events.push('browser-session-reap');
+    for (const [pid, survives] of browserSession) if (!survives) browserSession.delete(pid);
+    return ok([...browserSession.keys()].map((pid) => `survivor ${pid}\n`).join(''));
+  }
   if (cmd.includes('FARMSLOT_RUNNER_PATTERN=')) {
     if (claimDuringPaneProbe) {
       slotRow = {
@@ -113,7 +140,7 @@ mock.module('../../core/index.js', {
       host: 'macpro',
       machine: 'macpro',
       projectName: 'mm',
-      resourceVars: {},
+      resourceVars: cdpPort ? { cdp_port: cdpPort } : {},
     }),
     loadProjectVars: async () => ({ runtimeDir: '.agent', projectJson: {} }),
     readSlotField: async (_slotId: string, field: string) => slotRow[field] ?? null,
@@ -180,6 +207,9 @@ mock.module('../runtime-capabilities.js', {
   namedExports: {
     ...realCapabilities,
     releaseRuntimeCapabilitiesForSlot: async () => ({ ok: true, released: [], failures: [] }),
+    getRuntimeCapabilityRegistry: () => ({
+      settledStatus: async () => ({ catalog: [], leases: [] }),
+    }),
   },
 });
 const realAttachments = await import('../terminal-attachment.js');
@@ -211,6 +241,8 @@ beforeEach(async () => {
   claimAfterTaskClean = false;
   hasMirrorArtifacts = false;
   claimAfterReap = false;
+  cdpPort = undefined;
+  browserSession = new Map();
 
   for (const [id, status] of [
     ['incoming', 'monitoring'],
@@ -526,4 +558,35 @@ test('a claim during prepare reaping stops attachment cleanup and session archiv
     0,
   );
   assert.equal(slotRow.current_run_id, 'incoming');
+});
+
+test("a release stops the browser session a run left on the slot's CDP port", async () => {
+  cdpPort = '9542';
+  browserSession = new Map([
+    [11425, false],
+    [20419, false],
+  ]);
+
+  assert.deepEqual(await slotRelease({ slotId: SLOT_ID, keepWork: true }, emit), {
+    released: true,
+  });
+
+  assert.equal(browserSession.size, 0);
+  assert.ok(events.indexOf('browser-session-reap') < events.indexOf('reset'));
+});
+
+test('a browser session process that survives keeps the slot held and names it', async () => {
+  cdpPort = '9542';
+  browserSession = new Map([
+    [11425, false],
+    [20419, true],
+  ]);
+
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, emit),
+    /Slot macpro-mm-1 stays held: Browser session process 20419 \(Google Chrome for Testing .*\) on CDP port 9542 did not stop/,
+  );
+  assert.equal(slotRow.lifecycle, 'held');
+  assert.match(String(slotRow.held_reason), /Browser session process 20419/);
+  assert.ok(!events.includes('reset'), 'readiness is never published');
 });

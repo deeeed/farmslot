@@ -41,6 +41,8 @@ import { contextPaneId } from '../runners/session-record.js';
 import { getRun, getRunWithArchived, listRuns, updateRun } from '../runs/store.js';
 import { unwatchSlot } from '../tasks/watcher.js';
 
+import { reapSlotBrowserSession } from './browser-session-reap.js';
+
 export interface RunSlotCleanupFence {
   before: Readonly<Record<string, unknown>> | null;
   token?: string;
@@ -371,21 +373,26 @@ export async function stopRunOwnedTmuxAndWatches(run: Run): Promise<string | nul
   // belong to another active run sharing the slot, so only reap when none
   // does, and only while this run still owns the slot at the same epoch.
   let prepareBlocker: string | null = null;
+  let browserBlocker: string | null = null;
   if ((!slot?.handoff_run_id || slot.handoff_run_id === run.id) && !findOtherActiveRunOnSlot(run)) {
+    const stillOwned = async () => {
+      const row = await readSlotRow(slotId);
+      return ownsRunSlotCleanup(row, run.id) && row?.slot_epoch === slot?.slot_epoch;
+    };
     try {
-      await reapSlotPrepareScope(vars, {
-        stillOwned: async () => {
-          const row = await readSlotRow(slotId);
-          return ownsRunSlotCleanup(row, run.id) && row?.slot_epoch === slot?.slot_epoch;
-        },
-      });
+      await reapSlotPrepareScope(vars, { stillOwned });
     } catch (error) {
       // Surfaced as a teardown blocker, so the slot is held with this reason.
       prepareBlocker = error instanceof Error ? error.message : String(error);
     }
+    try {
+      browserBlocker = await reapSlotBrowserSession(vars, { stillOwned });
+    } catch (error) {
+      browserBlocker = error instanceof Error ? error.message : String(error);
+    }
   }
   await archiveRunnerSessionsForSlotRelease({ vars, runId: run.id });
-  return [blocker, prepareBlocker].filter(Boolean).join('; ') || null;
+  return [blocker, prepareBlocker, browserBlocker].filter(Boolean).join('; ') || null;
 }
 
 /** Foreign occupancy prevents destructive cleanup, but does not retain a terminal run's pointer. */

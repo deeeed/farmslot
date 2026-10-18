@@ -62,6 +62,7 @@ import {
   endTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
 import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
+import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
 import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
@@ -653,6 +654,16 @@ async function slotReleaseImpl(
           identityPath: prepareIdentityPath(vars.remoteRepo, projectVars?.runtimeDir ?? ''),
         });
         step('prepare', stopped ? 'Prepare scope stopped' : 'No live prepare scope');
+      } catch (error) {
+        holdReason = error instanceof Error ? error.message : String(error);
+      }
+    }
+    // A run's browser session (browser, wallet host, console collector) is
+    // detached from the agent just killed, so it is stopped here or named.
+    if (!holdReason) {
+      await assertReleaseClaim();
+      try {
+        holdReason = await reapSlotBrowserSession(vars);
       } catch (error) {
         holdReason = error instanceof Error ? error.message : String(error);
       }
