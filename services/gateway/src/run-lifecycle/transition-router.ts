@@ -26,7 +26,10 @@ export type RunTransitionKind =
   | 'block'
   | 'supersede'
   | 'force-complete'
-  | 'output-close';
+  | 'output-close'
+  | 'hold-result'
+  | 'accept-result'
+  | 'close-result';
 
 /** Who asked for the transition. Consumers use this instead of re-deriving intent. */
 export type RunTransitionActor = 'operator' | 'engine' | 'recovery';

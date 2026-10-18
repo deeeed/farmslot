@@ -832,7 +832,14 @@ function terminalFamilyOutcome(
   // Match family observability: a completed successful attempt supersedes
   // earlier failed, cancelled or partially validated attempts in this family.
   if (familyRuns.some(isSuccessfulRun)) return 'success';
-  if (familyRuns.some((run) => run.status === 'failed' || run.metrics.outcome === 'failure'))
+  // A closed result settles partial, not failed (ADR-065 Amendment 7).
+  if (
+    familyRuns.some(
+      (run) =>
+        run.resultDecisionReceipt?.action !== 'close-result' &&
+        (run.status === 'failed' || run.metrics.outcome === 'failure'),
+    )
+  )
     return 'failure';
   if (familyRuns.some((run) => run.status === 'cancelled' || run.metrics.outcome === 'cancelled'))
     return 'cancelled';

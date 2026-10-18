@@ -1,6 +1,7 @@
 import {
   Events,
   isGateParkInFlightOrFreed,
+  isHeldForResultDecision,
   type Principal,
   type Run,
   type RunExtendReviewBudgetParams,
@@ -73,7 +74,7 @@ export async function runExtendReviewBudget(
     headSha: params.headSha.toLowerCase(),
     scopeBrief: params.scopeBrief.trim(),
   };
-  return withRunTransition(params.runId, async () => {
+  const extended = await withRunTransition(params.runId, async () => {
     const run = getRun(params.runId);
     if (!run) throw new Error(`Run not found: ${params.runId}`);
     const expected = identity(run);
@@ -107,4 +108,9 @@ export async function runExtendReviewBudget(
     emit(Events.RUN_UPDATED, { run: updated });
     return { run: updated, ...result };
   });
+  // A held result decision offers Send back once the granted round exists.
+  if (!isHeldForResultDecision(extended.run)) return extended;
+  const { representResultDecision } = await import('../../run-completion/result-decision.js');
+  const represented = await representResultDecision(extended.run.id);
+  return represented ? { ...extended, run: represented } : extended;
 }

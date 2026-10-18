@@ -823,6 +823,9 @@ function applyRunObservation(item: BacklogItem, run: Run): boolean {
     } else {
       item.status = 'done';
     }
+  } else if (run.resultDecisionReceipt?.action === 'close-result') {
+    // A closed result is not a failure: the item needs a person (ADR-065 Amendment 7).
+    item.status = 'needs-attention';
   } else if (
     run.status === 'failed' ||
     (run.status === 'done' && run.metrics.outcome === 'failure')

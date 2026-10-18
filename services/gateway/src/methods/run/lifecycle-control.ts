@@ -1,6 +1,7 @@
 import {
   closeStepWait,
   Events,
+  isHeldForResultDecision,
   isSlotFreedByPark,
   isTerminalRunStatus,
   MachineParkEligibilityCodes,
@@ -69,6 +70,10 @@ export async function runCancel(params: RunCancelParams): Promise<RunCancelResul
 
 export async function runCancelTransitionLocked(params: RunCancelParams): Promise<RunCancelResult> {
   const current = getRun(params.runId);
+  if (current && isHeldForResultDecision(current))
+    throw new Error(
+      `Run ${current.id.slice(0, 8)} waits for a result decision. Send it back, accept or close it instead of cancelling.`,
+    );
   if (current?.reviewWorkspace && isTerminalRunStatus(current.status)) {
     // Retrying cleanup must preserve the terminal result and never restart the reviewer.
     const { teardownReviewWorkspace } = await import('../../review-workspaces/pipeline.js');

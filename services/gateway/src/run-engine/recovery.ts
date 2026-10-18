@@ -7,8 +7,11 @@ import {
   type FlowType,
   isCompletionPrerequisiteFailure,
   isGateParkInFlightOrFreed,
+  isHeldForResultDecision,
   isSettledBlockedRun,
+  isSettledCompletionFailure,
   PipelineSteps,
+  refusedCompletionStep,
   type ReviewGatePayload,
   type Run,
   type RunCreateParams,
@@ -287,15 +290,58 @@ export function prepareSubstepsShowCompletion(prepareStep: RunStep | undefined):
   return last.name === 'health' && (last.detail?.startsWith('Health check') ?? false);
 }
 
+/**
+ * What startup recovery does with an active run. A held result decision waits
+ * for a person: restart never resumes its engine or reconciles its runtime,
+ * only re-presents it (ADR-065 Amendment 7). A retained refused completion is
+ * never re-entered either; a failed one is re-projected when it delivered.
+ */
+export function restartDisposition(run: Run): 'recover' | 'present-decision' | 'retain' {
+  if (isHeldForResultDecision(run)) return 'present-decision';
+  if (isCompletionPrerequisiteFailure(run))
+    return run.status === 'failed' ? 'present-decision' : 'retain';
+  return 'recover';
+}
+
+/**
+ * Re-present each held run's result decision, and re-project a retained refused
+ * completion that delivered a result with the same predicate (ADR-065 Amendment 7).
+ */
+export async function representResultDecisions(runs: Run[]): Promise<void> {
+  const { holdRunForResultDecision, representResultDecision, runDeliveredResult } =
+    await import('../run-completion/result-decision.js');
+  for (const run of runs) {
+    try {
+      if (isHeldForResultDecision(run)) {
+        await representResultDecision(run.id);
+        continue;
+      }
+      const refused = refusedCompletionStep(run);
+      if (!refused || isSettledCompletionFailure(run) || !runDeliveredResult(run)) continue;
+      await holdRunForResultDecision(
+        run.id,
+        refused.name === PipelineSteps.COMPLETE ? 'complete' : 'finalize',
+        refused.detail ?? run.error ?? 'A completion prerequisite was refused.',
+        { settlingStatus: 'failed' },
+      );
+    } catch (error) {
+      console.warn(
+        `[run-engine] result decision for ${run.id.slice(0, 8)} not re-presented: ${(error as Error).message}`,
+      );
+    }
+  }
+}
+
 export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise<void> {
   const { runs: active } = deps.listRuns({ active: true });
   if (active.length === 0) return;
 
   const recoverable: Run[] = [];
+  const awaitingDecision: Run[] = [];
   for (const run of active) {
-    // Admission still owns this execution, but restart must not re-enter its
-    // stopped pipeline or reconcile away its retained worker and slot.
-    if (isCompletionPrerequisiteFailure(run)) continue;
+    const restart = restartDisposition(run);
+    if (restart === 'present-decision') awaitingDecision.push(run);
+    if (restart !== 'recover') continue;
     if (isLeakedGatewayTestRun(run)) {
       console.warn(
         `[run-engine] skipping recovery for leaked gateway test run ${run.id.slice(0, 8)}`,
@@ -305,6 +351,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       recoverable.push(run);
     }
   }
+  if (awaitingDecision.length) await representResultDecisions(awaitingDecision);
   if (recoverable.length === 0) return;
 
   const fleet = await deps.loadFleetStatus();
@@ -1249,7 +1296,7 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
     // Releasing fences above still use their existing bounded recovery path.
     const ownerId = await deps.readSlotField(slot.slot, 'current_run_id');
     const owner = typeof ownerId === 'string' ? deps.getRun(ownerId) : undefined;
-    if (owner && isCompletionPrerequisiteFailure(owner)) {
+    if (owner && (isCompletionPrerequisiteFailure(owner) || isHeldForResultDecision(owner))) {
       console.log(`[run-engine] reconcile: ${slot.slot} awaits completion gate recovery`);
       continue;
     }

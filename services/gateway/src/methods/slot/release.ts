@@ -9,6 +9,7 @@ import {
   DEFAULT_BRANCH,
   type FlowType,
   isCompletionPrerequisiteFailure,
+  isHeldForResultDecision,
   isReviewerWindowName,
   isTerminalRunStatus,
   primaryRoleForFlow,
@@ -326,6 +327,8 @@ function releaseOwnerRefusal(
   // for a completion replay. An epoch-pinned release frees only a replay's own
   // fresh claim, never the retained one, so only that rollback may pass. A
   // restart is no exception: its run may have failed that way mid-replay.
+  if (live && isHeldForResultDecision(live) && options?.expectedSlotEpoch === undefined)
+    return `Slot ${params.slotId} is retained by run ${owner}, which waits for a result decision; send it back, accept or close it, or discard this workspace through slot.release RPC with forceReset:true and expectedRunId:${owner}`;
   if (live && isCompletionPrerequisiteFailure(live) && options?.expectedSlotEpoch === undefined)
     return `Slot ${params.slotId} is retained by run ${owner}, whose completion prerequisite failed; replay its completion, or explicitly discard this workspace through slot.release RPC with forceReset:true and expectedRunId:${owner}`;
   if (options?.restartRunId === owner) return null;
@@ -974,6 +977,9 @@ async function slotReleaseImpl(
   }
   if (params.forceReset && params.expectedRunId && params.expectedRunId === releasedOwner) {
     await markCompletionFailureDiscarded(params.expectedRunId);
+    // The named discard of a held run performs Close (ADR-065 Amendment 7).
+    const { closeDiscardedResult } = await import('../../run-completion/result-decision.js');
+    await closeDiscardedResult(params.expectedRunId);
   }
 
   emit('slot.release.done', { requestId, slotId: params.slotId, keepWarm });

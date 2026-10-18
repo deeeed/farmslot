@@ -12,6 +12,7 @@ import { WebSocketServer } from 'ws';
 
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  type ResultDecisionPayload,
   type Run,
   type RunDecision,
 } from '@farmslot/protocol';
@@ -21,6 +22,7 @@ import {
   buildReviewChainResult,
   buildRunCreateParams,
   buildRunGateParams,
+  formatResultDecision,
   formatReviewChainLine,
   formatRunSessionLines,
   formatRunStepTimingLines,
@@ -1058,4 +1060,64 @@ test('direct publication flags preserve unset, explicit true and explicit false 
   );
   assert.equal(buildRunCreateParams({ ...base, publishReview: false }).publishReview, false);
   assert.equal(buildRunCreateParams({ ...base, reviewTeam: 'team' }).reviewTeamId, 'team');
+});
+
+test('gate CLI shows a held result decision and sends its written reason', () => {
+  const payload: ResultDecisionPayload = {
+    kind: 'result-decision',
+    stoppedAt: 'review',
+    reason: 'Review found 2 issue(s) after 1/2 fix attempts',
+    findings: [
+      {
+        file: 'src/features/perpetuals/queries/invalidate-live-trading-queries.ts',
+        line: 31,
+        description: 'No test covers the marginModeLock invalidation.',
+      },
+    ],
+    delivered: {
+      headSha: '3522954d1f0b7c1f2a6c0f9d6b1e0c5a7e2d9f10',
+      branch: 'feat/tat-4145-opus',
+    },
+    findingsDigest: 'sha256:x',
+    actions: [
+      {
+        id: 'send-back',
+        available: false,
+        unavailableReason: 'All 5 review rounds for this work are spent.',
+        requiresReason: false,
+      },
+      { id: 'accept-result', available: true, requiresReason: true },
+      { id: 'close-result', available: true, requiresReason: false },
+    ],
+  };
+  assert.deepEqual(formatResultDecision(payload), [
+    '  Review found 2 issue(s) after 1/2 fix attempts',
+    '  src/features/perpetuals/queries/invalidate-live-trading-queries.ts:31  No test covers the marginModeLock invalidation.',
+    '  Delivered feat/tat-4145-opus @ 3522954d1f0b',
+    '  - send-back  (unavailable: All 5 review rounds for this work are spent.)',
+    '  - accept-result  --reason required',
+    '  - close-result',
+  ]);
+  const decision: RunDecision = {
+    id: 'result',
+    type: 'engine_result_decision',
+    title: 'TAT-4145 — result needs a decision',
+    description: payload.reason,
+    actions: payload.actions.map((action) => ({
+      id: action.id,
+      label: action.id,
+      style: 'secondary',
+    })),
+    createdAt: '2026-10-18T11:00:00.000Z',
+    payload,
+  };
+  assert.throws(
+    () => assertRunGateActionAvailable(decision, 'send-back'),
+    /unavailable: All 5 review rounds/,
+  );
+  const params = buildRunGateParams({ id: 'run' } as Run, decision, 'accept-result', {
+    reason: ' Coverage only. ',
+  });
+  assert.equal(params.reason, 'Coverage only.');
+  assert.equal(params.evidenceAttestationReason, undefined);
 });
