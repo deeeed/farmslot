@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.23.5 - 2026-10-18
+
+- Align with `@farmslot/recipe-runner` 0.39.4, whose runner waits for a restarted recording segment before each proof node. Also moves to `@farmslot/adapter-sdk` 0.18.4 and `@farmslot/agent-runtime` 0.29.4.
+
 ## 0.23.4 - 2026-10-18
 
 - Align with `@farmslot/recipe-runner` 0.39.3: full-run recording starts before the first proof node, so a claim proved before the first tap is recorded. Also moves to `@farmslot/adapter-sdk` 0.18.3 and `@farmslot/agent-runtime` 0.29.3.
