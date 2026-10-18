@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Run acceptance: a run that is still working no longer shows its evidence as Invalid before the worker finishes. A criterion row shows More and Review evidence only when they have something to open, and while nothing is assessed the panel shows only its counts line, with the list on demand.
+
 - Terminal and replay checks use the shared terminal status helper.
 
 - Reload a run's recorded evidence each time the gateway reconnects, as run detail already does for the run itself. Run detail, the artifact viewer and the decision workspace opened before the connection was ready, or during a gateway restart, now show the run's report and recipe evidence without being reopened, and a reconnect keeps an open viewer and its position. A failed re-read no longer empties the decision workspace's recipe evidence, and the artifact viewer's recipe error clears after the next successful read.

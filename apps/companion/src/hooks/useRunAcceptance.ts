@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createEvidenceReviewModel,
   type EvidenceReviewModel,
+  runEvidencePending,
 } from '@farmslot/adapter-sdk/evidence';
 import {
   type AcceptanceCriterionRef,
@@ -60,7 +61,17 @@ export interface RunAcceptance {
 }
 
 export type RunAcceptanceSource = Pick<Run, 'id' | 'slotId' | 'reviewWorkspace' | 'updatedAt'> &
-  Partial<Pick<Run, 'output' | 'decisions' | 'recordedEvidenceContractVersion' | 'links'>>;
+  Partial<
+    Pick<
+      Run,
+      | 'output'
+      | 'decisions'
+      | 'recordedEvidenceContractVersion'
+      | 'links'
+      | 'status'
+      | 'artifactBundle'
+    >
+  >;
 
 type AcceptanceData = Pick<
   TaskProgressResult,
@@ -193,6 +204,13 @@ export function useRunAcceptance(
     });
   }, [client, runId, slotId, workspaceId]);
 
+  const evidencePending = run?.status
+    ? runEvidencePending({
+        status: run.status,
+        artifactBundle: run.artifactBundle,
+        output: run.output,
+      })
+    : false;
   return useMemo(() => {
     const acceptanceStatus = data?.acceptanceStatus ?? null;
     const acceptanceCriteria = data?.acceptanceCriteria ?? null;
@@ -227,6 +245,7 @@ export function useRunAcceptance(
           readErrors:
             evidence?.recordedEvidence?.errors ??
             (evidenceRequestError ? [evidenceRequestError] : undefined),
+          evidencePending,
           artifactPrefix: evidence?.recordedEvidence?.artifactPrefix,
           packagePath: evidence?.recordedEvidence?.packagePath,
           report: evidence?.recordedEvidence?.report,
@@ -270,6 +289,7 @@ export function useRunAcceptance(
     evidenceRequestError,
     run?.output,
     run?.links,
+    evidencePending,
     gate,
     options.reportSnapshot,
   ]);

@@ -5,6 +5,7 @@ import {
   createEvidenceReviewModel,
   type EvidenceReviewModel,
   readEvidenceReviewReport,
+  runEvidencePending,
 } from '@farmslot/adapter-sdk/evidence';
 import type {
   CiCheckUpdatedPayload,
@@ -199,6 +200,7 @@ export class RunDetail extends RunDetailState {
         visualReviewAuthority: this._recordedEvidence?.visualReviewAuthority,
         visualReviewContext: this._recordedEvidence?.visualReviewContext,
         readErrors: this._recordedEvidence?.errors,
+        evidencePending: this.run ? runEvidencePending(this.run) : false,
         artifactPrefix: this._recordedEvidence?.artifactPrefix,
         packagePath: this._recordedEvidence?.packagePath,
         ledger: this.acceptanceStatus,

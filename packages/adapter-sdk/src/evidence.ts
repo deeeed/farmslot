@@ -23,7 +23,7 @@ export type {
   EvidenceReviewSelection,
   EvidenceReviewTiming,
 } from './evidence-review-model.js';
-export { createEvidenceReviewModel } from './evidence-review-model.js';
+export { createEvidenceReviewModel, runEvidencePending } from './evidence-review-model.js';
 export type {
   EvidenceReviewReport,
   RecordingEvidenceReadRequest,

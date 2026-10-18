@@ -16,6 +16,8 @@ export interface AcceptanceClaimListActions {
   changeReviewReason?: (id: string, reason: string) => void;
   recordReview?: (id: string, verdict: 'confirmed' | 'rejected') => void;
   focusClaim?: (id: string) => void | Promise<void>;
+  /** False hides a row's Review evidence: there is nothing for it to open. */
+  canFocus?: (id: string) => boolean;
   details?: (id: string) => TemplateResult | typeof nothing;
 }
 
@@ -53,17 +55,19 @@ export function renderAcceptanceClaimList(
           role="status"
           >${claim.state}</span
         >`}
-        <button
-          class="gate-secondary"
-          type="button"
-          ?disabled=${!actions.focusClaim}
-          @click=${() => void actions.focusClaim?.(claim.id)}
-        >
-          Review
-          evidence${claim.judgment?.media.clip
-            ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
-            : ''}<span class="gate-sr-only"> for ${claim.id}</span>
-        </button>
+        ${actions.canFocus?.(claim.id) === false
+          ? nothing
+          : html`<button
+              class="gate-secondary"
+              type="button"
+              ?disabled=${!actions.focusClaim}
+              @click=${() => void actions.focusClaim?.(claim.id)}
+            >
+              Review
+              evidence${claim.judgment?.media.clip
+                ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
+                : ''}<span class="gate-sr-only"> for ${claim.id}</span>
+            </button>`}
         ${claim.judgment && visual
           ? renderVisualClaimJudgment({
               row: claim.judgment,

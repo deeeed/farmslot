@@ -1,3 +1,4 @@
+import { runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
   attachRunListSummaries,
   type LiveRecipeContext,
@@ -173,6 +174,21 @@ export async function runRecipeRunsForRun(
   // the slot-scoped helper, a missing run is caller state drift and should surface.
   if (!run) throw new Error(`Run not found: ${params.runId}`);
   if (!run.taskFile) return { recipeRuns: [], selectedRecipeRunId: null };
+  // A working run retains its bundle at completion; until then there is no evidence to judge.
+  if (!params.decisionId && runEvidencePending(run))
+    return {
+      recipeRuns: [],
+      selectedRecipeRunId: null,
+      ...(params.includeRecordedEvidence
+        ? {
+            recordedEvidence: {
+              artifactPrefix: 'artifacts/',
+              contractVersion: run.recordedEvidenceContractVersion ?? 0,
+              errors: [],
+            },
+          }
+        : {}),
+    };
   const ref = retainedRunBundleRef(run, params.decisionId);
   const enrichedRun = run;
   const recipeRuns = await retainedRecipeRunGroups(run, ref);

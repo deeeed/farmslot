@@ -96,15 +96,16 @@ test('a failed command is softened only while the run itself is still working', 
   const active = litText(
     renderOperationPanel(progress(failed, 'running'), 'run-id', { now, runActive: true }),
   );
-  assert.match(active, /Command failed/);
-  assert.match(active, /run still in progress/);
+  // One state: the command failed and the worker carries on, in one amber badge.
+  assert.match(active, /Failed · worker continuing/);
+  assert.doesNotMatch(active, /Command failed|run still in progress/);
   assert.match(active, /operation-status fail in-progress/, 'amber, not red');
   // A cancelled or failed run keeps its open checklist step: still a plain failure.
   const terminal = litText(
     renderOperationPanel(progress(failed, 'running'), 'run-id', { now, runActive: false }),
   );
   assert.match(terminal, /Command failed/);
-  assert.doesNotMatch(terminal, /in-progress|run still in progress/);
+  assert.doesNotMatch(terminal, /in-progress|worker continuing/);
   assert.doesNotMatch(
     litText(renderOperationPanel(progress(failed, 'done'), 'run-id', { now, runActive: true })),
     /in-progress/,

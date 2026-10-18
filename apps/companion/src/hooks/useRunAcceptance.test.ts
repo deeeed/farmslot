@@ -25,7 +25,10 @@ function mount(request: (method: string) => Promise<unknown>) {
     'useRunAcceptance',
     {
       '@farmslot/protocol': { Methods, Events },
-      '@farmslot/adapter-sdk/evidence': { createEvidenceReviewModel: () => null },
+      '@farmslot/adapter-sdk/evidence': {
+        createEvidenceReviewModel: () => null,
+        runEvidencePending: () => false,
+      },
       '../lib/recoverable-errors': { isGatewayBackgroundPauseError: () => false },
       '../lib/visual-claim-review': { recordVisualClaimReview },
       '../lib/task-progress': {

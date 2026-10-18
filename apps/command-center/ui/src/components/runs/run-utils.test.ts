@@ -38,6 +38,7 @@ import {
   sortProjectAnalyticsForDisplay,
   stepNodeDurationLabel,
   summarizeEligibilityReasons,
+  variantNamesOtherEngine,
 } from './run-utils.js';
 
 test('retained output exposes nested files independently of a skipped completion step', () => {
@@ -811,4 +812,17 @@ test('family ledger badge names unavailable capture rather than claiming no code
     ),
     /not captured: missing-branch/,
   );
+});
+
+test('a lane tag warns only when it names a runner or model other than the dispatched one', () => {
+  // TAT-4145's lanes, each dispatched exactly the engine it names.
+  assert.equal(variantNamesOtherEngine('opus', { runner: 'claude', model: 'opus' }), false);
+  assert.equal(variantNamesOtherEngine('grok', { runner: 'grok', model: 'grok-4.7' }), false);
+  assert.equal(variantNamesOtherEngine('luna-6', { runner: 'codex', model: 'gpt-6-luna' }), false);
+  // A real mismatch: the opus lane ran on codex.
+  assert.equal(variantNamesOtherEngine('opus', { runner: 'codex', model: 'gpt-6-luna' }), true);
+  // The runner matches but the tag names another model.
+  assert.equal(variantNamesOtherEngine('claude-sonnet', { runner: 'claude', model: 'opus' }), true);
+  // A tag that names no engine never warns.
+  assert.equal(variantNamesOtherEngine('baseline', { runner: 'claude', model: 'opus' }), false);
 });

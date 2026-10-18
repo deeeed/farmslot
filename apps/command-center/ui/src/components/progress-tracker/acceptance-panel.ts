@@ -400,6 +400,9 @@ function renderRowDetails(
             )}
           </details>`
         : nothing}
+      ${view.timing && view.timing !== 'measured'
+        ? html`<div class="ac-note">${view.timing}</div>`
+        : nothing}
       ${criterion?.note ? html`<div class="ac-note">${criterion.note}</div>` : nothing}
       ${criterion?.engineVerdict
         ? html`<div class="ac-note">Engine verdict: ${criterion.engineVerdict}</div>`
@@ -497,7 +500,7 @@ export function renderAcceptancePanel(
       class="ac-panel"
       data-testid="acceptance-panel"
       ?data-proof-steps=${Boolean(options.showOccurrences)}
-      ?open=${view.hasOpenCriteria ||
+      ?open=${view.defaultOpen ||
       Boolean(options.error) ||
       Boolean(model?.errors.length) ||
       Boolean(model?.claims.some((claim) => claim.kind === 'qa-case'))}
@@ -536,6 +539,9 @@ export function renderAcceptancePanel(
           }),
           {
             ...options.judgments,
+            canFocus: options.judgments?.focusClaim
+              ? undefined
+              : (id) => Boolean(rows.find(({ view }) => view.id === id)?.evidence.length),
             focusClaim:
               options.judgments?.focusClaim ??
               (options.openEvidence
@@ -554,7 +560,11 @@ export function renderAcceptancePanel(
                 : undefined),
             details: (id) => {
               const row = rows.find(({ view }) => view.id === id);
-              return row
+              const offers = {
+                playable: Boolean(options.openEvidence),
+                overridable: Boolean(options.markUntestable),
+              };
+              return row && model.claimHasDetails(id, offers)
                 ? renderRowDetails(
                     row,
                     model,

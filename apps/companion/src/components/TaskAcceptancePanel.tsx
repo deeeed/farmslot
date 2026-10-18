@@ -84,6 +84,10 @@ function TaskAcceptanceContent({
     acceptanceEvidenceLinks ?? [],
     evidenceModel ?? undefined,
   );
+  const focusPath = (id: string) => {
+    const row = view.rows.find(({ criterion }) => criterion.id === id);
+    return row?.display.selected[0]?.artifactPath ?? row?.evidence[0]?.path;
+  };
   const [showDetails, setShowDetails] = React.useState(false);
   const [showWarnings, setShowWarnings] = React.useState(false);
   const [overrideClaim, setOverrideClaim] = React.useState<string | null>(null);
@@ -119,7 +123,7 @@ function TaskAcceptanceContent({
     setShowWarnings(false);
   }, [evidenceModel]);
   const packageStatus = evidenceModel?.packageStatus;
-  const [expanded, setExpanded] = React.useState(view.hasOpenCriteria || Boolean(error));
+  const [expanded, setExpanded] = React.useState(view.defaultOpen || Boolean(error));
   React.useEffect(() => {
     if (
       error ||
@@ -230,12 +234,17 @@ function TaskAcceptanceContent({
           onFocus={
             onOpenEvidence
               ? (id) => {
-                  const row = view.rows.find(({ criterion }) => criterion.id === id);
-                  if (!row) return;
-                  const path = row.display.selected[0]?.artifactPath ?? row.evidence[0]?.path;
+                  const path = focusPath(id);
                   if (path) onOpenEvidence(id, path);
                 }
               : undefined
+          }
+          canFocus={(id) => Boolean(focusPath(id))}
+          hasDetails={(id) =>
+            view.model.claimHasDetails(id, {
+              playable: Boolean(onOpenEvidence),
+              overridable: Boolean(onMarkUntestable),
+            })
           }
           renderDetails={(id) => {
             const row = view.rows.find(({ criterion }) => criterion.id === id);

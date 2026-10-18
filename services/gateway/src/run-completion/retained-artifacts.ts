@@ -38,6 +38,7 @@ import {
 import { sha256File } from '../core/file-hash.js';
 import { inferArtifactPurpose } from '../core/index.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import {
   ORCHESTRATOR_LOCALITY,
   type SlotCopyAdmission,
@@ -169,7 +170,9 @@ export function retainedRunBundleRef(
     selected = requested;
   }
   if (!selected)
-    throw new Error(`Run artifacts are not retained. Run farmslot runs bundle retain ${run.id}.`);
+    throw new GatewayMethodError('RUN_ARTIFACTS_NOT_RETAINED', 'Run artifacts are not retained.', {
+      userAction: `farmslot runs bundle retain ${run.id}`,
+    });
   return localBundleRef(run, selected);
 }
 

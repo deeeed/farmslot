@@ -65,8 +65,7 @@ export const operationPanelStyles = css`
     color: ${unsafeCSS(colors.statusFail)};
   }
   /* A failed command inside a run that is still working is not a run failure. */
-  .operation-status.fail.in-progress,
-  .operation-in-progress {
+  .operation-status.fail.in-progress {
     color: ${unsafeCSS(colors.statusWarn)};
   }
   .operation-stage,
@@ -171,7 +170,7 @@ export interface OperationPanelOptions {
   now?: number;
   /**
    * Whether the run is still working. Only then does a failed command inside
-   * an open checklist step read as "run still in progress"; a cancelled or
+   * an open checklist step read as "Failed · worker continuing"; a cancelled or
    * failed run keeps its open steps, and must not be softened.
    */
   runActive?: boolean;
@@ -203,11 +202,8 @@ export function renderOperationPanel(
         <div class="operation-heading">
           <strong class="operation-command">${commandLabel(operation.command)}</strong>
           <span class="operation-status ${operation.status}${softened ? ' in-progress' : ''}"
-            >${STATUS_LABEL[operation.status]}</span
+            >${softened ? 'Failed · worker continuing' : STATUS_LABEL[operation.status]}</span
           >
-          ${softened
-            ? html`<span class="operation-in-progress">· run still in progress</span>`
-            : nothing}
           <span>
             ·
             ${age(

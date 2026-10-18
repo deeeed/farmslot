@@ -22,6 +22,7 @@ import {
   isTerminalRunStatus as protocolIsTerminalRunStatus,
   modeForFlow,
   parseGitHubRef,
+  RUNNER_PICKER_MODELS,
   runStepExecutionMs,
   runStepQueuedMs,
   unavailableContributionLabel,
@@ -291,6 +292,38 @@ export function runTemplateFileName(run: Pick<Run, 'steps'>): string | null {
   const outputs = run.steps.find((step) => step.name === 'write-task')?.outputs;
   const name = recordString(outputs, 'templateName')?.trim();
   return name || null;
+}
+
+/** Lowercase words of a runner, model id or lane tag: 'gpt-6-luna' is gpt, 6 and luna. */
+function engineWords(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9.]+/u)
+    .filter(Boolean);
+}
+
+// Effort and speed suffixes in model ids ('grok-4.7-high') name no engine.
+const MODEL_QUALIFIERS = new Set(['low', 'medium', 'high', 'xhigh', 'max', 'fast']);
+
+/** Words that name a runner or a model family, from the shared picker catalog. */
+const ENGINE_NAME_WORDS: ReadonlySet<string> = new Set(
+  Object.entries(RUNNER_PICKER_MODELS)
+    .flatMap(([runner, models]) => [runner, ...models.flatMap(engineWords)])
+    .filter((word) => /^[a-z]/u.test(word) && !MODEL_QUALIFIERS.has(word)),
+);
+
+/**
+ * Whether a lane tag names a runner or model other than the dispatched engine. A tag may
+ * name the runner ('claude-opus') or only the model ('opus', 'grok', 'luna-6'); a tag that
+ * names neither ('baseline') never warns. Version numbers are not compared.
+ */
+export function variantNamesOtherEngine(
+  variant: string,
+  engine: { runner: string | null; model: string | null },
+): boolean {
+  if (!engine.runner) return false;
+  const dispatched = new Set([...engineWords(engine.runner), ...engineWords(engine.model ?? '')]);
+  return engineWords(variant).some((word) => ENGINE_NAME_WORDS.has(word) && !dispatched.has(word));
 }
 
 /** Resolved runner/model for display — metrics first, then find-slot step outputs. */
