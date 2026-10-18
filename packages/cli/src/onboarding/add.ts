@@ -347,6 +347,16 @@ function installedProjectJson(proj: PackProject, src: string, ws: Workspace): Bu
  * content (or link target) differs from what registration installs. Farm-owned dirs stay in
  * place, `.git`/`node_modules` are not compared, and `restored` files come back after the copy.
  */
+/** lstat that also reads a path under a non-directory (the pack turned a dir into a file) as absent. */
+function lstatIfPresent(file: string): ReturnType<typeof lstatSync> | undefined {
+  try {
+    return lstatSync(file, { throwIfNoEntry: false });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOTDIR') return undefined;
+    throw error;
+  }
+}
+
 function filesPackReplaces(
   dest: string,
   src: string,
@@ -365,7 +375,7 @@ function filesPackReplaces(
         continue;
       }
       if (restored.has(childRel)) continue;
-      const shipped = lstatSync(join(src, childRel), { throwIfNoEntry: false });
+      const shipped = lstatIfPresent(join(src, childRel));
       const same = stat.isSymbolicLink()
         ? shipped?.isSymbolicLink() &&
           readlinkSync(join(src, childRel)) === readlinkSync(join(dest, childRel))
@@ -470,8 +480,12 @@ export function registerProject(
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const backup = join(ws.farmslotDir, PACK_SYNC_BACKUPS, name, stamp);
       for (const rel of lost) {
-        mkdirSync(dirname(join(backup, rel)), { recursive: true, mode: 0o700 });
-        cpSync(join(dest, rel), join(backup, rel), { verbatimSymlinks: true });
+        const from = join(dest, rel);
+        const to = join(backup, rel);
+        mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
+        // A link is kept as a link: copying would follow it (a dir, or nothing when it dangles).
+        if (lstatSync(from).isSymbolicLink()) symlinkSync(readlinkSync(from), to);
+        else cpSync(from, to);
       }
       progress.info(
         `backed up ${lost.length} file(s) the pack sync replaced or removed in projects/${name} to ${PACK_SYNC_BACKUPS}/${name}/${stamp}`,

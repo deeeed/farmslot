@@ -6,7 +6,6 @@ import { test } from 'node:test';
 
 import { farmslotRoot, invalidateProjectVarsCache, loadProjectVars } from './config.js';
 import {
-  __setWorkspaceStatePathForTest,
   isPackCopiedProject,
   readSourceRuntimeSettings,
   writeSourceRuntimeSettings,
@@ -60,16 +59,19 @@ test('mutable project policy retains backups in a farm root without writing sour
 
 test('a pack-copied project reads its policy from runtime settings, a hand-managed one does not', async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'pack-policy-test-'));
-  const previous = process.env.FARMSLOT_HOME;
+  const previous = {
+    FARMSLOT_HOME: process.env.FARMSLOT_HOME,
+    FARMSLOT_WORKSPACE: process.env.FARMSLOT_WORKSPACE,
+  };
   process.env.FARMSLOT_HOME = home;
+  process.env.FARMSLOT_WORKSPACE = home;
   const project = `pack-policy-${process.pid}`;
   const directory = path.join(farmslotRoot, 'projects', project);
-  const state = path.join(home, 'state.json');
-  __setWorkspaceStatePathForTest(state);
   t.after(async () => {
-    __setWorkspaceStatePathForTest();
-    if (previous === undefined) delete process.env.FARMSLOT_HOME;
-    else process.env.FARMSLOT_HOME = previous;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     await rm(directory, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
   });
@@ -81,13 +83,16 @@ test('a pack-copied project reads its policy from runtime settings, a hand-manag
   );
   await writeSourceRuntimeSettings(project, { backlog: { auto_dispatch: { enabled: true } } });
 
-  // No workspace state.json (a dev checkout): project.json stands.
-  assert.equal(await isPackCopiedProject(project), false);
+  // A workspace without state.json records no packs: project.json stands.
+  assert.equal(isPackCopiedProject(project), false);
   assert.deepEqual((await loadProjectVars(project)).projectJson.backlog, shipped);
   // `farmslot add` recorded it as copied from a pack: the farm's runtime settings win.
-  await writeFile(state, JSON.stringify({ packs: { pack: { projects: [project] } } }));
+  await writeFile(
+    path.join(home, 'state.json'),
+    JSON.stringify({ schema_version: 1, packs: { pack: { projects: [project] } } }),
+  );
   invalidateProjectVarsCache(project);
-  assert.equal(await isPackCopiedProject(project), true);
+  assert.equal(isPackCopiedProject(project), true);
   assert.deepEqual((await loadProjectVars(project)).projectJson.backlog, {
     auto_dispatch: { enabled: true },
   });

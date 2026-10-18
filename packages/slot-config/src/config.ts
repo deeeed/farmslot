@@ -55,7 +55,7 @@ import {
   projectSourceContext,
   resolveSourceBinding,
 } from './source-binding.js';
-import { isPackCopiedProject, readSourceRuntimeSettings } from './source-runtime-settings.js';
+import { readSourceRuntimeSettings, usesRuntimeSettings } from './source-runtime-settings.js';
 
 // FARMSLOT_POOL_DIR / FARMSLOT_PROJECTS_DIR are the historical script-level
 // overrides (session-usage.sh tests, fixture harnesses); default to the
@@ -825,7 +825,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   try {
     const content = await readFile(projectConfig, 'utf-8');
     projectJson = JSON.parse(content);
-    if (sourceContext || (await isPackCopiedProject(projectName)))
+    if (await usesRuntimeSettings(projectName))
       Object.assign(projectJson, await readSourceRuntimeSettings(projectName));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {

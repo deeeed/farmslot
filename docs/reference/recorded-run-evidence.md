@@ -901,9 +901,11 @@ The project JSON key is `visual_claim_review`; the gateway projects it to
 `ProjectConfig.visualClaimReview`. Managed packs use the existing operator
 `SourceRuntimeSettings` value through `readSourceRuntimeSettings` and
 `writeSourceRuntimeSettings` in `@farmslot/slot-config`. Pack bytes stay unchanged;
-a pack-embedded delegation grants no authority. Unmanaged projects use their
-operator-owned project JSON. The allowlist names the permitted service reviewer;
-the existing RPC also requires admin authority. This policy does not grant that
+a pack-embedded delegation grants no authority. A project `farmslot add` copied
+from a pack is treated the same way: its delegation comes only from those
+runtime settings. Other unmanaged projects use their operator-owned project JSON.
+The allowlist names the permitted service reviewer; the existing RPC also
+requires admin authority. This policy does not grant that
 role or change independent publication review. The visual-review operation adds
 no dispatcher/producer separation rule; keep delegate credentials out of worker
 inputs.

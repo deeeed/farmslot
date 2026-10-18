@@ -115,25 +115,38 @@ test('a pack-copied project takes delegation and policy edits from runtime setti
     backlog: { auto_dispatch: { enabled: false } },
   });
   const home = mkdtempSync(path.join(tmpdir(), 'farmslot-pack-home-'));
-  const state = path.join(home, 'state.json');
-  writeFileSync(state, JSON.stringify({ packs: { pack: { projects: ['pack-copied'] } } }));
-  const previousHome = process.env.FARMSLOT_HOME;
+  writeFileSync(
+    path.join(home, 'state.json'),
+    JSON.stringify({ schema_version: 1, packs: { pack: { projects: ['pack-copied'] } } }),
+  );
+  const previous = {
+    FARMSLOT_HOME: process.env.FARMSLOT_HOME,
+    FARMSLOT_WORKSPACE: process.env.FARMSLOT_WORKSPACE,
+  };
   process.env.FARMSLOT_HOME = home;
-  const { __setWorkspaceStatePathForTest, writeSourceRuntimeSettings } =
-    await import('../core/config.js');
-  __setWorkspaceStatePathForTest(state);
+  process.env.FARMSLOT_WORKSPACE = home;
   t.after(() => {
-    __setWorkspaceStatePathForTest();
-    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
-    else process.env.FARMSLOT_HOME = previousHome;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     rmSync(home, { recursive: true, force: true });
     rmSync(path.join(ROOT, 'projects', 'pack-copied'), { recursive: true, force: true });
   });
+  const { writeSourceRuntimeSettings } = await import('../core/config.js');
   await writeSourceRuntimeSettings('pack-copied', {
     backlog: { auto_dispatch: { enabled: true } },
   });
 
-  const copied = (await loadProjectConfigs()).find((project) => project.name === 'pack-copied');
+  let copied = (await loadProjectConfigs()).find((project) => project.name === 'pack-copied');
   assert.equal(copied?.backlog?.autoDispatch?.enabled, true);
   assert.equal(copied?.visualClaimReview, undefined);
+  // An operator delegation set in runtime settings is the one that applies.
+  const delegation = {
+    delegatedReviewerPrincipalIds: ['operator-reviewer'],
+    delegatorPrincipalId: 'person',
+  };
+  await writeSourceRuntimeSettings('pack-copied', { visual_claim_review: delegation });
+  copied = (await loadProjectConfigs()).find((project) => project.name === 'pack-copied');
+  assert.deepEqual(copied?.visualClaimReview, delegation);
 });

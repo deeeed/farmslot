@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { __setWorkspaceStatePathForTest, farmslotRoot } from '../core/config.js';
+import { farmslotRoot } from '../core/config.js';
 
 import {
   configProject,
@@ -178,14 +178,21 @@ test('a pack-copied project keeps its config edits when a pack sync replaces pro
   // `farmslot add` recorded the project as pack-copied in the install workspace's state.json.
   const home = await mkdtemp(path.join(os.tmpdir(), 'config-pack-home-'));
   const state = path.join(home, 'state.json');
-  await writeFile(state, JSON.stringify({ packs: { pack: { projects: [project] } } }));
-  const previousHome = process.env.FARMSLOT_HOME;
+  await writeFile(
+    state,
+    JSON.stringify({ schema_version: 1, packs: { pack: { projects: [project] } } }),
+  );
+  const previous = {
+    FARMSLOT_HOME: process.env.FARMSLOT_HOME,
+    FARMSLOT_WORKSPACE: process.env.FARMSLOT_WORKSPACE,
+  };
   process.env.FARMSLOT_HOME = home;
-  __setWorkspaceStatePathForTest(state);
+  process.env.FARMSLOT_WORKSPACE = home;
   t.after(async () => {
-    __setWorkspaceStatePathForTest();
-    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
-    else process.env.FARMSLOT_HOME = previousHome;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     await rm(home, { recursive: true, force: true });
   });
   const projectJson = path.join(projectDir, 'project.json');

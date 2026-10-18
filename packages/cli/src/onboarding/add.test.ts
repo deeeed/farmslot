@@ -305,7 +305,7 @@ function resyncFixture(t: { after: (fn: () => void) => void }, prefix: string) {
   const state = stateWith({ p: { source: packDir, hash: '', projects: ['app-farm'], slots: [] } });
   const sync = () =>
     registerProject(proj, packDir, ws, state, 'p', { step: () => {}, info: (m) => infos.push(m) });
-  return { ws, src, dest: join(ws.farmslotDir, 'projects', 'app-farm'), infos, sync };
+  return { root, ws, src, dest: join(ws.farmslotDir, 'projects', 'app-farm'), infos, sync };
 }
 
 test('a pack re-sync keeps curated learnings', (t) => {
@@ -340,6 +340,15 @@ test('a pack re-sync backs up every file it replaces or removes', (t) => {
   const edited = { ...JSON.parse(readFileSync(join(f.dest, 'project.json'), 'utf-8')), x: 1 };
   writeFileSync(join(f.dest, 'project.json'), JSON.stringify(edited));
   writeFileSync(join(f.dest, 'notes.md'), 'mine\n');
+  // Links (to a dir outside, and dangling), and a dir where the pack now ships a file.
+  const outside = join(f.root, 'outside');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'keep.txt'), 'keep\n');
+  symlinkSync(outside, join(f.dest, 'linked-dir'));
+  symlinkSync('missing-target', join(f.dest, 'dangling'));
+  mkdirSync(join(f.dest, 'extra'));
+  writeFileSync(join(f.dest, 'extra', 'inner.txt'), 'inner\n');
+  writeFileSync(join(f.src, 'extra'), 'now a file\n');
   writeFileSync(join(f.src, 'templates', 'worker.md'), 'v2\n');
 
   f.sync();
@@ -357,9 +366,14 @@ test('a pack re-sync backs up every file it replaces or removes', (t) => {
   );
   assert.equal(JSON.parse(readFileSync(join(backup, 'project.json'), 'utf-8')).x, 1);
   assert.equal(readFileSync(join(backup, 'notes.md'), 'utf-8'), 'mine\n');
+  assert.equal(readlinkSync(join(backup, 'linked-dir')), outside);
+  assert.equal(readlinkSync(join(backup, 'dangling')), 'missing-target');
+  assert.equal(readFileSync(join(backup, 'extra', 'inner.txt'), 'utf-8'), 'inner\n');
+  assert.equal(readFileSync(join(f.dest, 'extra'), 'utf-8'), 'now a file\n');
+  assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf-8'), 'keep\n');
   assert.ok(
     f.infos.includes(
-      `backed up 3 file(s) the pack sync replaced or removed in projects/app-farm to ${PACK_SYNC_BACKUPS}/app-farm/${stamp}`,
+      `backed up 6 file(s) the pack sync replaced or removed in projects/app-farm to ${PACK_SYNC_BACKUPS}/app-farm/${stamp}`,
     ),
     f.infos.join('\n'),
   );
