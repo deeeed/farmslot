@@ -153,3 +153,26 @@ No CLI flag or RPC is added. `@farmslot/agent-runtime` owns supervision, consume
 the gateway and execution-node `NativeSessionClient`; harnesses inherit it through
 those consumers. This ships as a runtime patch and requires the consuming node's
 runtime update.
+
+## Amendment 2: recover a host stopped with a live session, 2026-10-18
+
+**Status:** Accepted 2026-10-18 by the lead after paired review of 064fa7f7.
+
+### Decision
+
+Amendment 1 recovery also accepts a session journal whose recorded runner belongs
+to the failed host when that journal is still active or its process stop is
+unconfirmed. Its runner, runner group and recorded descendants must pass the same
+fresh census and independent absence checks. Journals of every other host must
+still be terminal and confirmed stopped. Recovery leaves the journal unchanged; the
+new host marks the session failed when it loads it, as for any session its
+predecessor left open.
+
+### Rationale and consequences
+
+On macwork on 2026-10-18 a census timeout stopped the host while a native reviewer
+session was open. Cleanup killed the runner group but failed on `ps` before it could
+record the stop, so that journal stayed idle and unconfirmed. Amendment 1 then
+refused every later host start, even once `ps` was fast. Cleanup that a census
+timeout leaves unconfirmed is now confirmed by the next start; a survivor or a
+failed census still refuses, and the next start tries again.

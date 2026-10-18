@@ -259,9 +259,48 @@ test('a census without the inspector cannot prove absence', (t) => {
   assert.equal(existsSync(join(f.root, 'cleanup-recoveries')), false);
 });
 
+// macwork 10-18: the census timed out under load, so the supervisor killed the host while a
+// native reviewer session was still open and its cleanup could not record that runner's stop.
+for (const survivor of [undefined, 'runner', 'descendant'] as const) {
+  test(`a session the failed host still ran ${survivor ? `refuses a surviving ${survivor}` : 'is verified stopped instead of refusing recovery'}`, (t) => {
+    const f = fixture(t);
+    const descendant = runner + 10;
+    const journal =
+      JSON.stringify({
+        info: { ...f.info, state: 'idle', processStopped: false },
+        context: { cwd: 'retained-workspace' },
+      }) +
+      '\n' +
+      JSON.stringify({
+        processes: [
+          { pid: runner, parent: host, group: runner, identity: 'runner birth' },
+          { pid: descendant, parent: runner, group: runner, identity: 'descendant birth' },
+        ],
+      }) +
+      '\n';
+    writeFileSync(join(f.root, 'sessions/session.journal'), journal, { mode: 0o600 });
+    if (survivor) {
+      const [pid, identity] =
+        survivor === 'runner' ? [runner, 'runner birth'] : [descendant, 'descendant birth'];
+      f.setCensus(`${process.pid} 1 ${process.pid} inspector\n${pid} 1 ${runner} ${identity}\n`);
+      assert.throws(() => recoverStoppedNativeHost(f.root, supervisor, host), /surviving/);
+      assert.equal(readFileSync(join(f.root, 'cleanup.json'), 'utf8'), JSON.stringify(marker));
+      assert.equal(existsSync(join(f.root, 'cleanup-recoveries')), false);
+    } else {
+      recoverStoppedNativeHost(f.root, supervisor, host);
+      const cleanup = JSON.parse(readFileSync(join(f.root, 'cleanup.json'), 'utf8'));
+      assert.equal(cleanup.state, 'complete');
+      const receipt = JSON.parse(readFileSync(join(f.root, cleanup.recoveryReceipt), 'utf8'));
+      assert.deepEqual(receipt.verifiedStoppedGroups, [supervisor, runner]);
+      assert.ok(receipt.verifiedStoppedPids.includes(descendant));
+    }
+    assert.equal(readFileSync(join(f.root, 'sessions/session.journal'), 'utf8'), journal);
+  });
+}
+
 for (const bad of [
-  'active',
-  'unconfirmed',
+  'older-host active',
+  'older-host unconfirmed',
   'torn',
   'host-mismatch',
   'missing-observation',
@@ -270,14 +309,15 @@ for (const bad of [
 ] as const) {
   test(`refuses ${bad} evidence while preserving the retained journal`, (t) => {
     const f = fixture(t);
-    if (bad === 'active' || bad === 'unconfirmed') {
+    if (bad === 'older-host active' || bad === 'older-host unconfirmed') {
       writeFileSync(
         join(f.root, 'sessions/session.journal'),
         JSON.stringify({
           info: {
             ...f.info,
-            state: bad === 'active' ? 'running' : 'closed',
-            processStopped: bad !== 'unconfirmed',
+            hostPid: host - 1,
+            state: bad === 'older-host active' ? 'running' : 'closed',
+            processStopped: bad !== 'older-host unconfirmed',
           },
         }) + '\n',
         { mode: 0o600 },

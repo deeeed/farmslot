@@ -111,9 +111,18 @@ export function recoverStoppedNativeHost(
       }
       entries.push(projected);
     }
-    if (!info || !['closed', 'failed'].includes(String(info.state)) || info.processStopped !== true)
+    if (!info)
       throw new Error('Native cleanup recovery requires terminal, confirmed-stopped sessions');
-    if (info.hostPid === hostPid && info.processPid !== undefined) {
+    // A session the failed host still ran stays live in its journal when that host's cleanup
+    // failed. The fresh checks below must prove its runner and descendants stopped; the next
+    // host marks it failed on load.
+    const failedHostRunner = info.hostPid === hostPid && info.processPid !== undefined;
+    if (
+      !failedHostRunner &&
+      (!['closed', 'failed'].includes(String(info.state)) || info.processStopped !== true)
+    )
+      throw new Error('Native cleanup recovery requires terminal, confirmed-stopped sessions');
+    if (failedHostRunner) {
       if (!pid(info.processPid))
         throw new Error('Native cleanup recovery has malformed runner identity');
       pids.add(info.processPid);

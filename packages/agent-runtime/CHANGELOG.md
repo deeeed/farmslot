@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Native host startup recovers a host that was stopped while one of its sessions was still running and whose cleanup could not confirm the stop, for example after a `ps` census timeout. Recovery checks that the session's runner and recorded descendants are gone, and the new host marks the session failed. Before, that session's journal blocked every later host start.
 
 ## 0.29.5 - 2026-10-18
 

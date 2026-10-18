@@ -249,8 +249,9 @@ export interface ActiveVideoRecording {
   stop(): Promise<VideoRecordingResult>;
   /** Capture a PNG from this recording's stream, if the provider supports it. */
   snapshot?(outputPath: string): Promise<Record<string, unknown>>;
-  /** Resolves once the current segment's frame zero is bounded, waiting through a capture
-   * restart. The engine waits for it before every proof node. */
+  /** Resolves once the current segment's frame zero is bounded and the segment has recorded
+   * one EVIDENCE_PADDING_MS past it, waiting through a capture restart. The engine waits for
+   * it before every proof node (ADR-062 Amendments 15 and 16). */
   ready?(): Promise<void>;
 }
 

@@ -131,8 +131,10 @@ start and has padded footage before it. Capture stops after the final HUD outcom
 Setup before the first proof node that proves nothing, such as an app restart or
 state seeding, stays unrecorded (ADR-062 Amendment 14). A recorder that restarts
 capture may expose `ready()`, which resolves once the current segment's frame zero
-is bounded; the engine awaits it before every proof node, so no proof node starts
-in a restart that recorder reports (ADR-062 Amendment 15). Android
+is bounded and the segment has recorded one `EVIDENCE_PADDING_MS` past it; the
+engine awaits it before every proof node, so no proof node starts in a restart that
+recorder reports, and one that follows a restart gets the same lead-in as the first
+(ADR-062 Amendments 15 and 16). Android
 `adb screenrecord` starts each segment only once its file has bytes, which the
 muxer writes only after the encoder's first output, and bounds zero by them
 instead of its process lifetime. Its `ready()` restarts a segment older than

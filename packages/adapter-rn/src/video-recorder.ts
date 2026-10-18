@@ -229,9 +229,10 @@ async function startAndroidRecording(
 
   let stopped = false;
   return {
-    // The restarted segment is ready once it bounds its zero. A segment near screenrecord's
-    // limit is restarted here, between proof nodes, after one evidence padding of footage
-    // past the previous node; its exit handler starts the next segment first.
+    // The restarted segment is ready once it bounds its zero and has recorded one evidence
+    // padding past it, the lead-in a first bind gets (ADR-062 Amendment 16). A segment near
+    // screenrecord's limit is restarted here, between proof nodes, after one evidence padding
+    // of footage past the previous node; its exit handler starts the next segment first.
     async ready() {
       const current = segments.at(-1)!;
       if (
@@ -245,6 +246,9 @@ async function startAndroidRecording(
         await current.exited;
       }
       await chain;
+      const zero = segments.at(-1)!.zeroBoundAtUnixMs ?? Date.now();
+      const leadIn = zero + EVIDENCE_PADDING_MS - Date.now();
+      if (leadIn > 0) await sleep(leadIn);
     },
     async stop() {
       if (stopped) throw new Error(`Android screen recording on ${serial} was already stopped.`);
