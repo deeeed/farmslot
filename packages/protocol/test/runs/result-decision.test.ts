@@ -80,6 +80,8 @@ test('a run held for a result decision is active, not working, and labelled for 
   assert.equal(view.label, 'Needs decision');
   assert.equal(view.tone, 'warn');
   assert.equal(view.canAdvance, false);
+  // Run lists and the CLI say what it waits on, not the step that stopped it.
+  assert.equal(view.activityLabel, 'Needs decision');
 });
 
 test('an accepted result succeeds and a closed one does not, whatever the worker outcome', () => {

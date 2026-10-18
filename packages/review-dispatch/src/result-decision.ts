@@ -114,15 +114,17 @@ export function resultDecisionView(
           description: finding.description,
         })),
       }
-    : payload.refusal
+    : payload.refusal?.reasons.length
       ? {
-          title: payload.refusal.message,
+          title: `Refused prerequisites (${payload.refusal.reasons.length})`,
           items: payload.refusal.reasons.map((reason) => ({
             ...(reason.reference ? { location: reason.reference } : {}),
             description: reason.message,
           })),
         }
-      : null;
+      : payload.refusal && payload.refusal.message !== payload.reason
+        ? { title: 'Refused prerequisite', items: [{ description: payload.refusal.message }] }
+        : null;
   const delivered =
     'headSha' in payload.delivered
       ? {

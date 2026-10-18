@@ -241,9 +241,13 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const sourceRunRequestRef = useRef(0);
   const requestedArtifactPath = routeParamString(routeArtifactPath).trim();
 
+  const decisionIdRef = useRef(resolvedDecisionId);
+  decisionIdRef.current = resolvedDecisionId;
   const refreshDecision = useCallback(() => {
     if (!client || !resolvedDecisionId) return;
-    const isCurrent = currentFarmConnection(client);
+    const isCurrentFarm = currentFarmConnection(client);
+    // A re-presented result decision moves the screen to its new id; a read of the old one must not land.
+    const isCurrent = () => isCurrentFarm() && decisionIdRef.current === resolvedDecisionId;
     if (!isCurrent()) return;
     const fallbackRunId = routeParamString(routeRunId).trim();
     setError(null);
@@ -343,11 +347,11 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const runPosture = runPostureStatus.state?.posture;
   // The gate review's publish guard applies here too: this tab sends the same actions.
   const humanGate = useHumanGateGuard(client, sourceRun, decision);
-  // A held run's output review carries the evidence and overrides shown under its result decision.
   const supersedingResultId = supersedingResultDecisionId(decision, sourceRun);
   useEffect(() => {
     if (supersedingResultId) router.setParams({ decisionId: supersedingResultId });
   }, [router, supersedingResultId]);
+  // A held run's output review carries the evidence and overrides shown under its result decision.
   const outputReviewDecision =
     decision?.payload?.kind === 'result-decision'
       ? sourceRun?.decisions.find(
