@@ -143,114 +143,159 @@ const composed = {
     },
   },
 };
+// The teardown's first node is a UI action, so capture binds there after an early cancel.
+const withTeardown = {
+  ...guard,
+  workflow: {
+    entry: 'restart',
+    teardown: 'restore',
+    nodes: {
+      ...guardNodes(),
+      restore: {
+        action: 'ui.press',
+        intent: 'Restore the market',
+        selector: '#restore',
+        next: 'closed',
+      },
+      closed: { action: 'end', status: 'pass' },
+    },
+  },
+};
 
-for (const { target, nested } of [
-  { target: { kind: 'android-device', serial: 'emulator-5554' }, nested: false },
-  { target: { kind: 'pid', pid: 456 }, nested: false },
-  { target: { kind: 'android-device', serial: 'emulator-5554' }, nested: true },
-] satisfies { target: RecordingTarget; nested: boolean }[]) {
-  test(`a ${target.kind} recording binds before the first ${nested ? 'called ' : ''}assertion, after setup`, async (t) => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'record-proof-node-'));
-    t.after(() => rm(root, { recursive: true, force: true }));
-    const libraryRoot = path.join(root, 'library');
-    await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
-    await writeFile(path.join(libraryRoot, 'recipes', 'guard.recipe.json'), JSON.stringify(guard));
-    const events: string[] = [];
-    let captureStartedAt = 0;
-    const runner = createRecipeRunner({
-      actionManifest: manifest,
-      hud: false,
-      defaultSource: { kind: 'project', trust: 'trusted', name: 'fixture' },
-      adapters: [
-        ...createStandardCoreAdapters({ actions: ['end', 'assert_output'] }),
-        {
-          action: 'app.lifecycle',
-          source: { kind: 'bundled', trust: 'trusted', name: 'Fixture app restart' },
-          async execute() {
-            events.push('restart');
-            return {};
-          },
-        },
-        {
-          action: 'state.read',
-          source: { kind: 'bundled', trust: 'trusted', name: 'Fixture state read' },
-          async execute() {
-            events.push('read');
-            return { output: { provider: 'hyperliquid' } };
-          },
-        },
-        ...createStandardUiAdapters({
-          actions: ['ui.press', 'ui.wait_for'],
-          transport: {
-            async execute() {
-              events.push('ui');
-              return { found: true, text: 'BTC' };
-            },
-          },
-        }),
-      ],
-      recording: {
-        targetProvider: {
-          async resolveRecordingTarget() {
-            events.push('target');
-            return target;
-          },
-        },
-        admission: {
-          async acquire(request) {
-            assert.deepEqual(request.target, target);
-            events.push('acquire');
-            return { key: 'fixture-target', async release() {} };
-          },
-        },
-        videoRecorder: {
-          name: 'fixture',
-          async doctor() {
-            events.push('doctor');
-            return { ok: true, code: 'ok', message: 'Fixture ready' };
-          },
-          async start(request: VideoRecorderStartRequest) {
-            events.push('start');
-            await writeFile(request.outputPath, 'video fixture');
-            captureStartedAt = Date.now();
-            return {
-              async stop() {
-                events.push('stop');
-                const durationMs = Date.now() - captureStartedAt + 1000;
-                return {
-                  segments: [
-                    {
-                      path: path.basename(request.outputPath),
-                      timing: {
-                        framesMs: [0, durationMs - 1],
-                        durationMs,
-                        clock: {
-                          source: 'fixture',
-                          earliestZeroUnixMs: captureStartedAt,
-                          latestZeroUnixMs: captureStartedAt,
-                        },
-                      },
-                    },
-                  ],
-                };
-              },
-            };
-          },
+const android: RecordingTarget = { kind: 'android-device', serial: 'emulator-5554' };
+
+async function runFixture(
+  t: test.TestContext,
+  options: {
+    target?: RecordingTarget;
+    recipe: object;
+    signal?: AbortSignal;
+    onRestart?: () => void;
+    onCaptureStart?: () => void;
+  },
+) {
+  const target = options.target ?? android;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'record-proof-node-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const libraryRoot = path.join(root, 'library');
+  await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
+  await writeFile(path.join(libraryRoot, 'recipes', 'guard.recipe.json'), JSON.stringify(guard));
+  const events: string[] = [];
+  let captureStartedAt = 0;
+  const runner = createRecipeRunner({
+    actionManifest: manifest,
+    hud: false,
+    defaultSource: { kind: 'project', trust: 'trusted', name: 'fixture' },
+    adapters: [
+      ...createStandardCoreAdapters({ actions: ['end', 'assert_output'] }),
+      {
+        action: 'app.lifecycle',
+        source: { kind: 'bundled', trust: 'trusted', name: 'Fixture app restart' },
+        async execute() {
+          events.push('restart');
+          options.onRestart?.();
+          return {};
         },
       },
-    });
-    const result = await runner.run({
-      recipeDocument: nested ? composed : flat,
-      librarySources: [
-        {
-          name: 'fixture',
-          root: libraryRoot,
-          provenance: { kind: 'library', trust: 'trusted', name: 'fixture' },
+      {
+        action: 'state.read',
+        source: { kind: 'bundled', trust: 'trusted', name: 'Fixture state read' },
+        async execute() {
+          events.push('read');
+          return { output: { provider: 'hyperliquid' } };
         },
-      ],
-      projectRoot: root,
-      artifactsDir: path.join(root, 'artifacts'),
-      recordVideo: { mode: 'full-run' },
+      },
+      ...createStandardUiAdapters({
+        actions: ['ui.press', 'ui.wait_for'],
+        transport: {
+          async execute() {
+            events.push('ui');
+            return { found: true, text: 'BTC' };
+          },
+        },
+      }),
+    ],
+    recording: {
+      targetProvider: {
+        async resolveRecordingTarget() {
+          events.push('target');
+          return target;
+        },
+      },
+      admission: {
+        async acquire(request) {
+          assert.deepEqual(request.target, target);
+          events.push('acquire');
+          return { key: 'fixture-target', async release() {} };
+        },
+      },
+      videoRecorder: {
+        name: 'fixture',
+        async doctor() {
+          events.push('doctor');
+          return { ok: true, code: 'ok', message: 'Fixture ready' };
+        },
+        async start(request: VideoRecorderStartRequest) {
+          events.push('start');
+          await writeFile(request.outputPath, 'video fixture');
+          captureStartedAt = Date.now();
+          options.onCaptureStart?.();
+          return {
+            async stop() {
+              events.push('stop');
+              const durationMs = Date.now() - captureStartedAt + 1000;
+              return {
+                segments: [
+                  {
+                    path: path.basename(request.outputPath),
+                    timing: {
+                      framesMs: [0, durationMs - 1],
+                      durationMs,
+                      clock: {
+                        source: 'fixture',
+                        earliestZeroUnixMs: captureStartedAt,
+                        latestZeroUnixMs: captureStartedAt,
+                      },
+                    },
+                  },
+                ],
+              };
+            },
+          };
+        },
+      },
+    },
+  });
+  const result = await runner.run({
+    recipeDocument: options.recipe,
+    librarySources: [
+      {
+        name: 'fixture',
+        root: libraryRoot,
+        provenance: { kind: 'library', trust: 'trusted', name: 'fixture' },
+      },
+    ],
+    projectRoot: root,
+    artifactsDir: path.join(root, 'artifacts'),
+    recordVideo: { mode: 'full-run' },
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  const trace = JSON.parse(await readFile(result.tracePath, 'utf8'));
+  const entries: { nodeId: string; ok: boolean; error_code?: string }[] = Array.isArray(trace)
+    ? trace
+    : trace.entries;
+  return { root, result, events, entries };
+}
+
+for (const { target, nested } of [
+  { target: android, nested: false },
+  { target: { kind: 'pid', pid: 456 }, nested: false },
+  { target: android, nested: true },
+] satisfies { target: RecordingTarget; nested: boolean }[]) {
+  test(`a ${target.kind} recording binds before the first ${nested ? 'called ' : ''}assertion, after setup`, async (t) => {
+    const { root, result, events } = await runFixture(t, {
+      target,
+      recipe: nested ? composed : flat,
     });
     assert.equal(result.status, 'pass');
     // Setup that proves nothing runs before capture. The assertion itself pushes no event,
@@ -288,3 +333,37 @@ for (const { target, nested } of [
     assert.equal(claim?.verdict, 'awaiting-review');
   });
 }
+
+test('a cancel during setup still lets teardown bind capture and run its first proof node', async (t) => {
+  const controller = new AbortController();
+  const { result, events, entries } = await runFixture(t, {
+    recipe: withTeardown,
+    signal: controller.signal,
+    onRestart: () => controller.abort('SIGTERM'),
+  });
+  assert.equal(result.status, 'fail');
+  assert.ok(entries.some((entry) => entry.error_code === 'RECIPE_ABORTED'));
+  // Teardown runs on a signal the cancel does not reach, lead-in included.
+  assert.deepEqual(events, ['doctor', 'restart', 'target', 'acquire', 'start', 'ui', 'stop']);
+  assert.equal(entries.find((entry) => entry.nodeId === 'restore')?.ok, true);
+  assert.equal(entries.at(-1)?.nodeId, 'closed');
+});
+
+test('a cancel during the lead-in stops the run before the first proof node', async (t) => {
+  const controller = new AbortController();
+  let abortedAt = 0;
+  const { result, events, entries } = await runFixture(t, {
+    recipe: flat,
+    signal: controller.signal,
+    onCaptureStart: () =>
+      setTimeout(() => {
+        abortedAt = Date.now();
+        controller.abort('SIGTERM');
+      }, 50),
+  });
+  const settledAfterMs = Date.now() - abortedAt;
+  assert.equal(result.status, 'fail');
+  assert.equal(entries.find((entry) => entry.error_code === 'RECIPE_ABORTED')?.nodeId, 'gate');
+  assert.ok(!events.includes('ui'), 'No proof node runs after the cancel');
+  assert.ok(settledAfterMs < EVIDENCE_PADDING_MS, 'The cancel does not wait out the lead-in');
+});

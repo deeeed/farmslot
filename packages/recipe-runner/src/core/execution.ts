@@ -76,8 +76,11 @@ export interface ExecuteRecipeOptions {
   >;
   logger: RecipeLogger;
   defaultObserverRefs: DefaultObserverRefs;
-  /** Prepare engine-owned capture before the node's context and trace interval begin. */
-  prepareNode?(nodeId: string, node: Record<string, unknown>): Promise<void>;
+  /**
+   * Prepare engine-owned capture before the node's context and trace interval begin. `signal` is
+   * the executing graph's: teardown's never aborts, so a cancel does not cut cleanup short.
+   */
+  prepareNode?(nodeId: string, node: Record<string, unknown>, signal?: AbortSignal): Promise<void>;
   createContext(
     nodeId: string,
     recipe: unknown,
@@ -265,7 +268,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
       let context: ActionExecutionContext | undefined;
       try {
         if (options.prepareNode) {
-          await options.prepareNode(namespacedNodeId, node);
+          await options.prepareNode(namespacedNodeId, node, signal);
           startedAt = new Date();
         }
         context = {

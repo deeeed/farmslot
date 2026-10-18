@@ -552,7 +552,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           claimProjections: evidencePlan.nodes,
           logger: this.#logger,
           defaultObserverRefs: this.#defaultObserverRefs,
-          prepareNode: async (nodeId, node) => {
+          prepareNode: async (nodeId, node, signal) => {
             const captureAnnotations = isRecipeVisualCaptureAction(node.action);
             if (
               captureAnnotations &&
@@ -597,7 +597,7 @@ class DefaultRecipeRunner implements RecipeRunner {
               }
               // A recorder's first frame trails its start, so the first proof node waits one
               // evidence padding: it lands inside the capture with footage before it.
-              await delay(EVIDENCE_PADDING_MS, undefined, { signal: request.signal });
+              await delay(EVIDENCE_PADDING_MS, undefined, { signal });
             }
           },
           createContext: (nodeId, activeRecipe, activeOutputs, getOutput) =>
