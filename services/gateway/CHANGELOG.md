@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A native reviewer no longer waits on an approval nobody can see. The gateway refuses each runner action the reviewer asks permission for at once, and the reviewer carries on from the code. Before, a Claude reviewer that asked to run a mutating command sat until its review deadline (TAT-4145 run 8cff6e80).
 - A run's engine runs one loop per generation. Startup recovery that resumes a monitor an auto-recovery or `run.resume` replay already re-attached no longer starts a second loop, whose replaced monitor advanced the run to review when the worker's blocked signal arrived. A replay drives the run under its stored ownership instead of the requesting principal, so a service principal's resume no longer makes review refuse the run's workspace owner.
 - A run blocked before it recorded a proof plan, and holding no capability leases, can resume monitoring (`run.replayStep` monitor, `run.resume`, auto-recovery) on a slot whose capability catalog is not empty. Before, every re-attach was refused with "No proof plan is recorded" and the only exit was a relaunch. A run with a plan or leases still needs fresh healthy leases.
 - Runner auth blockers match only login-banner shapes at the start of a line. A lane whose own answer quotes an auth error in prose, such as `claude reports "OAuth session expired and could not be refreshed"`, is no longer refused as `auth-required`.
