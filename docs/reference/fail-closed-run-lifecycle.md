@@ -116,10 +116,11 @@ recovery without exposing credentials.
 
 ## Truthful run state
 
-Keep the existing run state machine. Add `fixing`, `review-failed` and
-`reconciling` where the existing status vocabulary cannot state the fact.
-Extend shared active/terminal/settled-blocked helpers in the same change.
-`review-failed` is nonterminal and retains recoverable review context.
+Keep the existing run state machine. Add `fixing`, `review-failed`,
+`reconciling` and `needs-decision` where the existing status vocabulary cannot
+state the fact. Extend shared active/terminal/settled-blocked helpers in the same
+change. `review-failed` is nonterminal and retains recoverable review context.
+`needs-decision` is nonterminal, active and not working (ADR-065 Amendment 7).
 
 | Observed facts                                                                                                  | Required state                                                  |
 | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
@@ -130,6 +131,7 @@ Extend shared active/terminal/settled-blocked helpers in the same change.
 | Complete prerequisites, worker idle and operator decision pending                                               | `human-gating`, readiness `ready`                               |
 | Structured state confirms all operations idle/stopped and a prerequisite/resource failure prevents continuation | `blocked`, with reason                                          |
 | Prompt delivery, owned operation or runner activity is uncertain                                                | `reconciling`, advancing actions disabled, worker/slot retained |
+| A delivered result: review findings remain and no fix can run, or COMPLETE/FINALIZE was refused                 | `needs-decision`, one result decision, worker/slot retained     |
 
 The gateway MUST derive these transitions from structured runner receipts,
 operation identities, step events and validated result artifacts. A process
@@ -225,6 +227,9 @@ MUST use the production mark command and monitor with an owned native worker
 waiting for an operator, then resume that same execution without a replacement.
 
 ## Recovery invariants and six CI scenarios
+
+Restart MUST NOT resume the engine or reconcile the runtime of a `needs-decision`
+run; it re-presents the run's result decision (ADR-065 Amendment 7).
 
 Slot re-selection MUST retain the device capabilities of the requested or previously
 selected slot. Before `run.replayStep` clears that binding, the gateway records
@@ -404,8 +409,9 @@ post-publication target MUST be the adopted PR without reuse of the older packag
 ## Pipeline settlement
 
 Pipeline entry and restart recovery MUST use the same step-to-status projection.
-A refused COMPLETE or FINALIZE prerequisite ends the pipeline as `failed`; it MUST
-NOT leave the run labelled `completing` after the step stops. This failure alone
+A refused COMPLETE or FINALIZE prerequisite ends the pipeline as `needs-decision`
+when the run delivered a result, otherwise as `failed`; it MUST NOT leave the run
+labelled `completing` after the step stops. This failure alone
 MUST NOT release a worker, slot or runtime whose shutdown is unconfirmed.
 Dispatch occupancy, orphan cleanup and automatic recovery MUST retain this failed
 gate for explicit operator recovery.
@@ -414,7 +420,8 @@ released slot unavailable. Ticket and PR admission retain the unfinished executi
 until operator settlement. A linked backlog item and work-graph node observe the
 pipeline failure through the existing ordered transition effects.
 Restart MUST skip engine startup and runtime reconciliation for this retained
-failure. Slot release and recycle MUST refuse its slot; only a release that names the
+failure, and MUST re-project a `failed` one that delivered a result to
+`needs-decision`. Slot release and recycle MUST refuse its slot; only a release that names the
 run with `expectedRunId` and passes `forceReset:true` discards it (Amendment 6). A
 replay rolling back the claim it took at its own epoch is the only other exception;
 a failed replay MUST restore the retained claim it took over rather than release it.
@@ -444,6 +451,17 @@ step history and evidence, including partial or failed results.
 Acknowledging an output snapshot MUST retain a pending close-only action for that
 snapshot. Recapture of the same bytes keeps it; changed bytes require a new review.
 Acknowledgement does not approve proof, publish work or resume execution.
+
+A `needs-decision` run holds one result decision: send back (needs a review round,
+never grants one; after a refused completion, its completion replay), accept
+(artifact-only runs after REVIEW; the named `accept-result` transition; a written
+reason) and close (the named `close-result` transition). Each records a
+result-decision receipt; `metrics.outcome` is unchanged. While the run is held, its
+output review keeps its snapshot but its actions MUST be refused; changed bytes
+re-present the result decision on the new snapshot and an action on the old one is
+refused. `accept-result` resolves the output review as reviewed and `close-result`
+as `close-run`, keeping no close-only action. Cancel MUST refuse a held run; the
+named discard performs Close.
 
 ## Public surface
 

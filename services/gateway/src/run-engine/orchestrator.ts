@@ -52,6 +52,11 @@ import {
   teardownReviewWorkspace,
 } from '../review-workspaces/pipeline.js';
 import {
+  holdRunForResultDecision,
+  ResultDecisionHoldError,
+  runDeliveredResult,
+} from '../run-completion/result-decision.js';
+import {
   reserveRunArtifactMetadata,
   retainedRunArtifactManifest,
 } from '../run-completion/retained-artifacts.js';
@@ -460,6 +465,17 @@ async function retainCompletionPrerequisiteFailure(
   const steps = FLOW_STEPS[current!.flowType];
   for (const next of steps.slice(steps.indexOf(stepName) + 1)) {
     updateRunStep(runId, next, { status: 'skipped' });
+  }
+  // A delivered result waits for a person instead of failing (ADR-065
+  // Amendment 7); without one the refusal stays Amendment 6's `failed`.
+  if (runDeliveredResult(getRun(runId)!)) {
+    await holdRunForResultDecision(
+      runId,
+      stepName === S.COMPLETE ? 'complete' : 'finalize',
+      error.message,
+      { patch: { metrics: { ...current!.metrics, outcome: 'partial' } } },
+    );
+    return;
   }
   const collaborators = terminalCollaborators(Events.RUN_UPDATED, null);
   await routeAndRecordTerminalTransition({
@@ -1086,6 +1102,21 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
             ),
           ),
         });
+        return;
+      }
+
+      if (err instanceof ResultDecisionHoldError) {
+        // The step stopped with findings it can no longer fix; the delivered
+        // result waits for a person (ADR-065 Amendment 7). Later steps stay
+        // pending so Send back can resume.
+        stepPartialIO.delete(runId);
+        updateRunStep(runId, stepName, {
+          status: 'failed',
+          detail: err.message,
+          inputs: err.stepInputs,
+          outputs: err.stepOutputs,
+        });
+        await holdRunForResultDecision(runId, 'review', err.message);
         return;
       }
 

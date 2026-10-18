@@ -26,6 +26,7 @@ import {
   isAllowedRunDecisionAction,
   isEvidencePolicyReason,
   isGateParkInFlightOrFreed,
+  isHeldForResultDecision,
   isInteractiveDevRun,
   isPrerequisiteGatePayload,
   isSlotFreedByPark,
@@ -1965,6 +1966,26 @@ export async function resolveRunDecision(
     }
     attestationApprover = dependencies.authorizeEvidenceAttestation();
   }
+  if (decision.payload?.kind === 'result-decision') {
+    const { resolveResultDecision } = await import('../run-completion/result-decision.js');
+    const run = await resolveResultDecision({
+      runId: params.runId,
+      decisionId: params.decisionId,
+      actionId: params.actionId,
+      ...(params.reason !== undefined ? { reason: params.reason } : {}),
+    });
+    emit(Events.RUN_UPDATED, { run });
+    emit(Events.RUN_DECISION_RESOLVED, {
+      runId: run.id,
+      decisionId: decision.id,
+      actionId: params.actionId,
+    });
+    return { run };
+  }
+  if (decision.payload?.kind === 'output-review' && isHeldForResultDecision(existing))
+    throw new Error(
+      'This run waits for a result decision. Send it back, accept or close it there; the output review is its evidence.',
+    );
   if (decision.payload?.kind === 'output-review') {
     const overrideSnapshot = runClaimOverrideSnapshotIdentity(decision);
     if (
