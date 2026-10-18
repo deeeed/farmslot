@@ -222,7 +222,11 @@ test('ready restarts a segment past 150 seconds, so the roll falls between proof
   const rollRequestedAt = realNow();
   await recording.ready!();
   assert.equal(starts(), 2, 'an old segment restarts before its limit');
-  assert.ok(realNow() - rollRequestedAt >= 990, 'one evidence padding is recorded first');
+  // One padding of the old segment's tail before the restart, then the new segment's lead-in.
+  assert.ok(
+    realNow() - rollRequestedAt >= 2 * EVIDENCE_PADDING_MS - 20,
+    'a padding before the restart and a lead-in after it',
+  );
   const restarted = fs
     .readdirSync(path.join(d.dir, 'device'))
     .find((name) => name.endsWith('-1.mp4'));
