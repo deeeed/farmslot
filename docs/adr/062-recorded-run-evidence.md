@@ -863,3 +863,60 @@ recording starts; `RecordingTargetProvider`, `VideoRecorder`, the recording
 artifacts and the recording-required policy are unchanged. Harnesses inherit it
 with their next recipe-runner version. The normative timing rule is in
 [the recorded-evidence specification](../reference/recorded-run-evidence.md).
+
+## Amendment 15 (2026-10-18): Recorders bound frame zero at start and through restarts
+
+**Status:** Accepted (lead, 2026-10-18). Ships in #1304.
+
+### Decision
+
+A recorder may bound its first segment's frame zero at runtime before its start
+returns. An active recording that restarts capture may expose `ready()`, which
+resolves once the current segment's zero is bounded, waiting through a restart.
+The engine awaits it before every proof node. A recorder with a segment limit
+may restart capture inside `ready()` when the current segment nears that limit,
+so the restart falls between proof nodes rather than inside one. Amendment 14's
+bind point and 1 s lead-in are unchanged; the engine has no roll API.
+
+Android `adb screenrecord` starts each segment only once its file holds bytes.
+The muxer writes its header only after the encoder's first output, so frame zero
+precedes them. The segment's clock is `[spawn, first bytes]` instead of the
+process lifetime, which also spans any static screen before the stop. Its
+`ready()` restarts a segment older than 150 s, 30 s before the 180 s limit,
+after recording one `EVIDENCE_PADDING_MS` past the previous node, so that node's
+end and playback padding stay on camera. The iOS `simctl` recorder is unchanged
+and still bounds zero by its process lifetime.
+
+### Rationale and consequences
+
+After Amendment 14, a 0.92.27 replay of QA-03 on a Pixel 6a still left AC-1..3
+weak: 4 of 18 AC-1 assertion indices fell outside recording. Three venue
+assertions started inside segment 0's 1737 ms lifetime-bound zero window, longer
+than the lead-in, and `limit-price` started inside segment 1's 1127 ms window,
+right after the 180 s roll the runner could not see. On an owned emulator with a
+static screen, the file's first bytes came 572 ms after spawn, while the lifetime
+bound put zero up to 5126 ms after spawn because of the static tail.
+
+With the bounded start alone, a replay on the same device measured 17 of 18
+AC-1 indices: the venue assertions moved inside segment 0 ([+1003, +1683] ms on
+a 680 ms window). AC-1..3 stayed weak only because a 3 s `ui.wait_for` spanned
+the 180 s limit. QA-03 spends 99% of its 349 s proof span inside proof nodes, so
+a limit-driven restart almost always lands inside one; restarting at a node
+boundary from `ready()` avoids that.
+
+Recording starts take a little longer, until the header is written, and a long
+recording gains a restart gap about every 150 s, between nodes. A proof node
+that arrives during a restart waits for the new segment. A single proof node
+longer than 30 s can still span the 180 s limit and stay outside recording.
+Harness recorder wrappers must forward `ready()`, as they forward `snapshot()`.
+
+### Public surface
+
+`ActiveVideoRecording.ready?()` in `@farmslot/recipe-runner`: optional, consumed
+by the engine before every proof node, produced by `@farmslot/adapter-rn`'s
+Android recorder, and passed through by `startSegmentedRecording` and the
+recording-limit wrapper. The Android recorder's timing evidence adds each
+segment's `zeroBoundAtUnixMs`, and its clock source is
+`adb-screenrecord-first-write`. The MetaMask harness forwards `ready()` from its
+`withRecordingOutcomes` wrapper with its dependency bump. Normative timing rule:
+[the recorded-evidence specification](../reference/recorded-run-evidence.md).

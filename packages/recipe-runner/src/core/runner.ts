@@ -599,6 +599,10 @@ class DefaultRecipeRunner implements RecipeRunner {
               // evidence padding: it lands inside the capture with footage before it.
               await delay(EVIDENCE_PADDING_MS, undefined, { signal });
             }
+            // No proof node starts while a recorder restarts capture and its zero is unbounded.
+            const recording = runRecording?.recording;
+            if (recording?.ready && proofNodeIds.has(nodeId))
+              await untilAborted(recording.ready(), signal);
           },
           createContext: (nodeId, activeRecipe, activeOutputs, getOutput) =>
             this.#createExecutionContext({
@@ -1515,6 +1519,26 @@ class DefaultRecipeRunner implements RecipeRunner {
     if (isRecord(recipe) && typeof recipe.title === 'string') return recipe.title;
     return 'Recipe run';
   }
+}
+
+/** `promise`, unless `signal` aborts first. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) return abort();
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', abort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', abort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function recordedVideoPath(index: number): string {

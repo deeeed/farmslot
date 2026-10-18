@@ -35,6 +35,10 @@ case "$1" in
         [ -f "$dir/running/$pid" ] || exit 1
         printf '%s\0' screenrecord --time-limit 180 "$(cat "$dir/running/$pid")" ;;
       kill) : > "$dir/stop-$3" ;;
+      stat)
+        file="$dir/device/$(basename "$4")"
+        [ -f "$file" ] || exit 1
+        wc -c < "$file" | tr -d ' ' ;;
       rm) shift 2; for file in "$@"; do rm -f "$dir/device/$(basename "$file")"; done ;;
       screenrecord)
         [ "$2" = --help ] && exit 0
@@ -42,8 +46,11 @@ case "$1" in
         [ ! -f "$dir/slow-start" ] || sleep 0.3
         file="$dir/device/$(basename "$4")"
         : > "$file"; printf '%s' "$4" > "$dir/running/$$"
+        # The muxer writes its header once the encoder has a first frame.
+        [ ! -f "$dir/slow-header" ] || sleep 0.3
+        printf 'header' > "$file"
         finish() {
-          [ -f "$dir/empty" ] || printf 'original %s' "$file" > "$file"
+          if [ -f "$dir/empty" ]; then : > "$file"; else printf 'original %s' "$file" > "$file"; fi
           rm -f "$dir/running/$$"
           exit "$1"
         }
@@ -124,6 +131,7 @@ function device(t: TestContext) {
     async start(request: VideoRecorderStartRequest) {
       const recording = await base.start(request);
       active = {
+        ...(recording.ready ? { ready: () => recording.ready!() } : {}),
         stop() {
           stopped = true;
           return recording.stop();
@@ -155,6 +163,66 @@ test('short capture retains its filename, measured timing and removes device fil
   assert.deepEqual(fs.readdirSync(path.join(d.dir, 'device')), []);
   assert.equal(process.listenerCount('SIGTERM'), guards);
   await assert.rejects(recording.stop(), /already stopped/);
+});
+
+test('a segment starts once its file has a first frame and bounds its zero by it', async (t) => {
+  const d = device(t);
+  d.set('slow-header');
+  const requestedAt = Date.now();
+  const recording = await d.recorder.start(d.request);
+  const startedAfterMs = Date.now() - requestedAt;
+  const [remote] = fs.readdirSync(path.join(d.dir, 'device'));
+  assert.ok(fs.statSync(path.join(d.dir, 'device', remote!)).size > 0, 'start waits for bytes');
+  assert.ok(startedAfterMs >= 250, `start returned after ${startedAfterMs} ms`);
+  const clock = (await recording.stop()).segments[0]?.timing?.clock;
+  assert.equal(clock?.source, 'adb-screenrecord-first-write');
+  assert.ok(clock!.latestZeroUnixMs - clock!.earliestZeroUnixMs >= 250);
+  assert.ok(clock!.latestZeroUnixMs <= requestedAt + startedAfterMs);
+});
+
+test('ready waits through a 180-second roll until the restarted segment has a frame', async (t) => {
+  const d = device(t);
+  const recording = await d.recorder.start(d.request);
+  await recording.ready!();
+  d.set('slow-header');
+  d.set(`end-${d.running()[0]}`);
+  const starts = () =>
+    d.calls().filter((call) => call.startsWith('shell screenrecord --time')).length;
+  await waitFor(() => assert.equal(starts(), 2));
+  await recording.ready!();
+  const restarted = fs
+    .readdirSync(path.join(d.dir, 'device'))
+    .find((name) => name.endsWith('-1.mp4'));
+  assert.ok(restarted, 'the roll started a second segment');
+  assert.ok(
+    fs.statSync(path.join(d.dir, 'device', restarted)).size > 0,
+    'ready waited for its frame',
+  );
+  assert.equal((await recording.stop()).segments.length, 2);
+});
+
+test('ready restarts a segment past 150 seconds, so the roll falls between proof nodes', async (t) => {
+  const d = device(t);
+  const realNow = Date.now.bind(Date);
+  let offset = 0;
+  t.mock.method(Date, 'now', () => realNow() + offset);
+  const starts = () =>
+    d.calls().filter((call) => call.startsWith('shell screenrecord --time')).length;
+  const recording = await d.recorder.start(d.request);
+  await recording.ready!();
+  assert.equal(starts(), 1, 'a young segment keeps recording');
+  offset = 151_000;
+  const rollRequestedAt = realNow();
+  await recording.ready!();
+  assert.equal(starts(), 2, 'an old segment restarts before its limit');
+  assert.ok(realNow() - rollRequestedAt >= 990, 'one evidence padding is recorded first');
+  const restarted = fs
+    .readdirSync(path.join(d.dir, 'device'))
+    .find((name) => name.endsWith('-1.mp4'));
+  assert.ok(restarted && fs.statSync(path.join(d.dir, 'device', restarted)).size > 0);
+  const result = await recording.stop();
+  assert.equal(result.segments.length, 2);
+  assert.equal(result.interruption, undefined);
 });
 
 test('180-second completion rotates into ordered original segments with explicit restart gaps', async (t) => {

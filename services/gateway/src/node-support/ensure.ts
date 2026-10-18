@@ -9,6 +9,7 @@
 // slot prepared earlier on a bundle that could not launch the runner. Every
 // launch path now calls ensureNodeSupportBundle first, which is a no-op when the
 // slot already points at the current bundle.
+import { existsSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -96,7 +97,25 @@ export async function loadProjectVarsIfAny(projectName: string): Promise<Project
   }
 }
 
-/** Farm-relative paths a project's bundle carries: its config refs plus the runner installer. */
+/**
+ * A node's hosted task init selects the gateway's template from the bundle's
+ * pack, so the bundle carries the pack's templates and every template source
+ * rooted inside the pack. A path the pack does not have is left out.
+ */
+function hostedTaskTemplatePaths(projectName: string, projectJson: RawProjectJson): string[] {
+  const roots = ['templates'];
+  for (const source of projectJson.execution_templates?.sources ?? [])
+    if (typeof source.root.projectPath === 'string') roots.push(source.root.projectPath);
+  return roots
+    .map((root) => path.posix.join('projects', projectName, root))
+    .filter(
+      (relative) =>
+        relative.startsWith(`projects/${projectName}/`) &&
+        existsSync(path.join(farmslotRoot, relative)),
+    );
+}
+
+/** Farm-relative paths a project's bundle carries: its config refs, its templates and the runner installer. */
 export function nodeSupportBundlePaths(projectName: string, projectJson: RawProjectJson): string[] {
   const { paths: hookSupportPaths } = resolveNodeSupportPaths(
     projectName,
@@ -104,7 +123,10 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
     farmslotRoot,
   );
   const supportPaths = [...hookSupportPaths];
-  for (const requiredPath of RUNNER_OBSERVABILITY_SUPPORT_PATHS) {
+  for (const requiredPath of [
+    ...hostedTaskTemplatePaths(projectName, projectJson),
+    ...RUNNER_OBSERVABILITY_SUPPORT_PATHS,
+  ]) {
     if (
       !supportPaths.some(
         (supportPath) => supportPath === requiredPath || requiredPath.startsWith(`${supportPath}/`),

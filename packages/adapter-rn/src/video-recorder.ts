@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { EVIDENCE_PADDING_MS } from '@farmslot/protocol';
 import {
   type ActiveVideoRecording,
   optionalVideoTiming,
@@ -15,6 +16,8 @@ import {
 const RECORDING_START_TIMEOUT_MS = 5_000;
 const RECORDING_STOP_TIMEOUT_MS = 10_000;
 const RECORDING_TIME_LIMIT_SECONDS = 180;
+// ready() restarts a segment this old, so the roll falls between proof nodes rather than in one.
+const SEGMENT_ROLL_AFTER_MS = 150_000;
 const START_GRACE_MS = 1_000;
 const HOST_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
@@ -70,6 +73,9 @@ interface Segment {
   killed?: boolean;
   output: string;
   startedAtUnixMs: number;
+  /** When the file first held bytes: the muxer writes its header only after the encoder's
+   * first output, so the segment's frame zero precedes this. */
+  zeroBoundAtUnixMs?: number;
   stoppedAtUnixMs?: number;
   exitCode?: number | null;
   exited: Promise<number | null>;
@@ -139,16 +145,17 @@ async function startAndroidRecording(
           `Android screenrecord exited before capture started on ${serial}: ${segment.output.trim() || 'no recorder output'}`,
         );
       }
-      const pid = screenrecordPids(adb, remotePath)[0];
-      if (pid) {
-        segment.pid = pid;
+      segment.pid ??= screenrecordPids(adb, remotePath)[0];
+      // A started process has not necessarily captured a frame; its first file bytes have.
+      if (segment.pid && remoteFileSize(adb, remotePath) > 0) {
+        segment.zeroBoundAtUnixMs = Date.now();
         return;
       }
       await sleep(pollMs);
     }
     child.kill('SIGTERM');
     throw new Error(
-      `Android screenrecord did not start on ${serial} within ${RECORDING_START_TIMEOUT_MS}ms.`,
+      `Android screenrecord did not capture a frame on ${serial} within ${RECORDING_START_TIMEOUT_MS}ms.`,
     );
   };
 
@@ -222,6 +229,23 @@ async function startAndroidRecording(
 
   let stopped = false;
   return {
+    // The restarted segment is ready once it bounds its zero. A segment near screenrecord's
+    // limit is restarted here, between proof nodes, after one evidence padding of footage
+    // past the previous node; its exit handler starts the next segment first.
+    async ready() {
+      const current = segments.at(-1)!;
+      if (
+        !stopping &&
+        current.stoppedAtUnixMs === undefined &&
+        Date.now() - current.startedAtUnixMs >= SEGMENT_ROLL_AFTER_MS
+      ) {
+        await sleep(EVIDENCE_PADDING_MS);
+        for (const pid of screenrecordPids(adb, current.remotePath))
+          adb(['shell', 'kill', '-2', pid]);
+        await current.exited;
+      }
+      await chain;
+    },
     async stop() {
       if (stopped) throw new Error(`Android screen recording on ${serial} was already stopped.`);
       stopped = true;
@@ -294,12 +318,15 @@ async function startAndroidRecording(
           `${JSON.stringify({
             recorder: 'adb-screenrecord',
             serial,
-            segments: placed.map(({ offsetMs, startedAtUnixMs, stoppedAtUnixMs, bytes }) => ({
-              offsetMs,
-              startedAtUnixMs,
-              stoppedAtUnixMs,
-              bytes,
-            })),
+            segments: placed.map(
+              ({ offsetMs, startedAtUnixMs, zeroBoundAtUnixMs, stoppedAtUnixMs, bytes }) => ({
+                offsetMs,
+                startedAtUnixMs,
+                zeroBoundAtUnixMs,
+                stoppedAtUnixMs,
+                bytes,
+              }),
+            ),
           })}\n`,
         );
         const recorder = {
@@ -311,9 +338,14 @@ async function startAndroidRecording(
           recorded.map(async (segment, index) => ({
             path: path.basename(segment.localPath),
             ...(index > 0 ? { gapBefore: true } : {}),
+            // Frame zero lies between the spawn and the first file bytes. The process
+            // lifetime bound would also span any static tail before the stop.
             ...(await optionalVideoTiming(segment.localPath, {
-              startedAtUnixMs: segment.startedAtUnixMs,
-              stoppedAtUnixMs: segment.stoppedAtUnixMs!,
+              clock: {
+                source: 'adb-screenrecord-first-write',
+                earliestZeroUnixMs: segment.startedAtUnixMs,
+                latestZeroUnixMs: segment.zeroBoundAtUnixMs!,
+              },
             })),
             timingEvidencePath,
             recorder,
@@ -364,6 +396,15 @@ function screenrecordPids(
     }
     return command.stdout.split('\0').includes(remotePath);
   });
+}
+
+function remoteFileSize(
+  adb: (args: string[]) => ReturnType<typeof runAdb>,
+  remotePath: string,
+): number {
+  const result = adb(['shell', 'stat', '-c', '%s', remotePath]);
+  const size = Number(result.stdout.trim());
+  return result.status === 0 && Number.isFinite(size) ? size : 0;
 }
 
 function settles(promise: Promise<unknown>, ms: number): Promise<boolean> {

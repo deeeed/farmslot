@@ -70,6 +70,14 @@ export async function startSegmentedRecording(
           },
         }
       : {}),
+    ...(active.ready
+      ? {
+          ready: async () => {
+            if (boundary) await boundary;
+            await active.ready?.();
+          },
+        }
+      : {}),
     stop() {
       if (stopped) return stopped;
       clearInterval(poll);
