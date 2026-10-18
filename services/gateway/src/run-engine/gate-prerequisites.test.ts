@@ -8,8 +8,12 @@ import test from 'node:test';
 import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
 import {
+  type AcceptanceStatusLedger,
   digestRecipeDocument,
+  type RecipeClaimDeclaration,
+  type RecipeClaimEvidence,
   type RecipeClaimLedger,
+  type RecordedEvidencePackageInput,
   type ReviewStatus,
   type RunDecision,
 } from '@farmslot/protocol';
@@ -800,6 +804,131 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     }),
   });
   assert.ok(wrongExecution.reasons.some((reason) => reason.code === 'evidence-execution-mismatch'));
+  // One package per QA case: each case proves its own criterion, and the task
+  // ledger binds every row to the case execution it came from.
+  const secondDeclaration: RecipeClaimDeclaration = {
+    id: 'AC-2',
+    claim: 'The second case reads the counter.',
+    proofMode: 'state',
+  };
+  const caseCriteria = [qaCriterion, { id: secondDeclaration.id, text: secondDeclaration.claim }];
+  const writeCase = async (name: string, proves: RecipeClaimDeclaration[]) => {
+    const registered = [declaration, secondDeclaration].map(
+      (target) => proves.find(({ id }) => id === target.id) ?? target,
+    );
+    const caseRecipe = {
+      ...recipe,
+      proofTargets: proves,
+      workflow: {
+        ...recipe.workflow,
+        nodes: {
+          ...recipe.workflow.nodes,
+          assert: { ...recipe.workflow.nodes.assert, proves: proves.map(({ id }) => id) },
+        },
+      },
+    };
+    const caseInvocation = {
+      ...invocation,
+      recipeRunId: name,
+      recipeDigest: digestRecipeDocument(caseRecipe),
+      claims: registered,
+    };
+    const caseClaims: RecipeClaimLedger = {
+      ...claims,
+      recipeRunId: name,
+      criteria: registered.map((target): RecipeClaimEvidence => {
+        const proof = proves.find(({ id }) => id === target.id);
+        const proofMode = target.proofMode ?? 'state';
+        return {
+          id: target.id,
+          text: target.claim,
+          kind: 'acceptance',
+          proofMode,
+          verdict: !proof ? 'missing' : proofMode === 'state' ? 'proven' : 'weak',
+          recipeNodes: proof ? ['assert'] : [],
+          assertionIndices: proof ? [1] : [],
+          moments: [],
+          evidence: [],
+          ...(proof && proofMode !== 'state' ? { timing: 'outside-recording' } : {}),
+        };
+      }),
+    };
+    const caseDirectory = path.join(root, 'artifacts/recipe-runs', name);
+    await mkdir(caseDirectory, { recursive: true });
+    for (const [file, value] of Object.entries({
+      ...documents,
+      'recipe.json': caseRecipe,
+      'recipe-invocation.json': caseInvocation,
+      'summary.json': {
+        ...documents['summary.json'],
+        recipeRunId: name,
+        invocationDigest: digestRecipeDocument(caseInvocation),
+      },
+      'recipe-resolution.json': {
+        ...documents['recipe-resolution.json'],
+        root: { ref: '$root', digest: digestRecipeDocument(caseRecipe) },
+      },
+      'acceptance-status.json': caseClaims,
+    }))
+      await writeFile(path.join(caseDirectory, file), JSON.stringify(value));
+    const read = await readRecordedEvidencePackage(caseDirectory);
+    const validation = validateRecordedEvidencePackage(read.input);
+    assert.equal(validation.status, 'valid', JSON.stringify(validation.findings));
+    return { input: read.input, claims: caseClaims };
+  };
+  const caseA = await writeCase('case-a', [declaration]);
+  const caseB = await writeCase('case-b', [secondDeclaration]);
+  const caseGate = (
+    ledger: AcceptanceStatusLedger,
+    inputs: RecordedEvidencePackageInput[] = [caseA.input, caseB.input],
+  ) =>
+    collectRunGateReadiness(getRun(qaRun.id)!, null, {
+      ...qaSources,
+      acceptance: async () => ({ criteria: caseCriteria, ledger, issues: [] }),
+      recordedEvidence: async () => inputs,
+    });
+  const mergedLedger: AcceptanceStatusLedger = {
+    ...caseB.claims,
+    criteria: [
+      { ...caseA.claims.criteria[0]!, recipeRunId: 'case-a' },
+      { ...caseB.claims.criteria[1]!, recipeRunId: 'case-b' },
+    ],
+  };
+  await captureRunOutput(qaRun.id, false, true);
+  const merged = await caseGate(mergedLedger);
+  assert.equal(merged.state, 'ready', JSON.stringify(merged.reasons));
+  // The overwrite this replaces: the last case's copy leaves AC-1 missing.
+  const overwritten = await caseGate(caseB.claims);
+  assert.deepEqual(
+    overwritten.reasons.map(({ code, evidencePolicy }) => ({ code, evidencePolicy })),
+    [{ code: 'evidence-policy-unsatisfied', evidencePolicy: 'claim-verdict' }],
+  );
+  // A row whose case execution is no longer selected cannot bind.
+  const superseded = await caseGate({
+    ...mergedLedger,
+    criteria: [{ ...mergedLedger.criteria[0]!, recipeRunId: 'case-a-superseded' }],
+  });
+  assert.ok(superseded.reasons.some(({ code }) => code === 'evidence-execution-mismatch'));
+  // Another case's proof never hides a case that addresses the criterion weakly.
+  const weakCase = await writeCase('case-a-visual', [
+    declaration,
+    { ...secondDeclaration, proofMode: 'visual' },
+  ]);
+  assert.equal(weakCase.claims.criteria[1]!.verdict, 'weak');
+  const hidden = await caseGate(
+    {
+      ...mergedLedger,
+      criteria: [
+        { ...weakCase.claims.criteria[0]!, recipeRunId: 'case-a-visual' },
+        mergedLedger.criteria[1]!,
+      ],
+    },
+    [weakCase.input, caseB.input],
+  );
+  assert.deepEqual(
+    hidden.reasons.map(({ evidencePolicy }) => evidencePolicy),
+    ['claim-verdict'],
+  );
   const untestableLedger = {
     ...qaLedger,
     criteria: [

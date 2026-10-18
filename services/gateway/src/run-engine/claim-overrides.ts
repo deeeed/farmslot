@@ -1,8 +1,10 @@
 import { selectedRecipeClaims } from '@farmslot/adapter-sdk/evidence';
 import {
+  acceptanceRowExecution,
   type ClaimOverrideAuthority,
   projectClaimUntestableOverride,
   type ProjectVisualClaimReviewPolicy,
+  type RecipeClaimEvidence,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   type Run,
@@ -52,7 +54,10 @@ export function appliedClaimOverrideReceiptIds(
   ].sort();
 }
 
-/** Task rows transport the selected attempt. Only stored gateway receipts may change their review verdict. */
+/**
+ * Task rows transport the selected attempt, or for QA each row's case execution.
+ * Only stored gateway receipts may change their review verdict.
+ */
 export function projectGateAcceptance(
   acceptance: GateAcceptanceRead,
   run: Run,
@@ -60,18 +65,33 @@ export function projectGateAcceptance(
   policy?: ProjectVisualClaimReviewPolicy,
   selection?: VisualReviewReadSelection,
 ): GateAcceptanceRead {
-  if (acceptance.ledger?.schemaVersion !== 2) return acceptance;
-  const input = inputs.find(
-    (input) => input.claims?.recipeRunId === acceptance.ledger?.recipeRunId,
-  );
-  if (!input?.claims) return acceptance;
-  const reviewed = reviewedRecipeClaims(run, input, policy, selection);
-  const selected = selectedRecipeClaims(input);
+  const ledger = acceptance.ledger;
+  if (ledger?.schemaVersion !== 2) return acceptance;
+  const projections = new Map<
+    RecordedEvidencePackageInput,
+    { reviewed: ReturnType<typeof reviewedRecipeClaims>; selected: RecipeClaimEvidence[] }
+  >();
+  const projection = (input: RecordedEvidencePackageInput) => {
+    let derived = projections.get(input);
+    if (!derived) {
+      derived = {
+        reviewed: reviewedRecipeClaims(run, input, policy, selection),
+        selected: selectedRecipeClaims(input),
+      };
+      projections.set(input, derived);
+    }
+    return derived;
+  };
   return {
     ...acceptance,
     ledger: {
-      ...acceptance.ledger,
-      criteria: acceptance.ledger.criteria.map((row) => {
+      ...ledger,
+      criteria: ledger.criteria.map((row) => {
+        const input = inputs.find(
+          (candidate) => candidate.claims?.recipeRunId === acceptanceRowExecution(ledger, row),
+        );
+        if (!input?.claims) return row;
+        const { reviewed, selected } = projection(input);
         const claim = selected.find(({ id }) => id === row.id);
         if (
           !claim ||

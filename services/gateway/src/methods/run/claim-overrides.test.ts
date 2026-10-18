@@ -286,6 +286,33 @@ test('unverified authority, wrong execution, stale snapshot and reader failure l
   assert.equal(getRun(f.run.id)?.claimOverrideReceipts, undefined);
 });
 
+test('a QA case row binds the override to the case execution it came from', async (t) => {
+  const f = await fixture(t);
+  const { ledger, ...read } = await f.dependencies.acceptance();
+  // A merged QA ledger: a later case was projected last, this row is the fixture's case.
+  const caseRow = (recipeRunId: string) => async () => ({
+    ...read,
+    ledger: {
+      ...ledger,
+      recipeRunId: 'later-case',
+      criteria: ledger.criteria.map((row) => ({ ...row, recipeRunId })),
+    },
+  });
+  await assert.rejects(
+    runOverrideClaim(f.params, () => {}, {
+      ...f.dependencies,
+      acceptance: caseRow('other-case'),
+    }),
+    /does not match the registered task execution/,
+  );
+  assert.equal(getRun(f.run.id)?.claimOverrideReceipts, undefined);
+  const result = await runOverrideClaim(f.params, () => {}, {
+    ...f.dependencies,
+    acceptance: caseRow(f.params.recipeRunId),
+  });
+  assert.equal(result.receipt.recipeRunId, f.params.recipeRunId);
+});
+
 test('failed durable receipt storage exposes no effective override', async (t) => {
   const f = await fixture(t);
   const write = fsPromises.writeFile;

@@ -22,6 +22,11 @@ function registeredAcceptanceCriteria(criteria) {
     .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }));
 }
 
+/** The execution whose retained package a task-ledger row binds to: a QA case row names its own. */
+function acceptanceRowExecution(ledger, row) {
+  return row?.recipeRunId ?? ledger?.recipeRunId;
+}
+
 function acceptanceCriteriaMatch(expected, actual) {
   return (
     Array.isArray(expected) &&
@@ -140,13 +145,16 @@ function validateAcceptanceStatusLedger(value) {
         issues.push(`${prefix}.assertionIndices: invalid trace references`);
       if (entry.retainedFrom !== undefined && !isNonEmptyString(entry.retainedFrom))
         issues.push(`${prefix}.retainedFrom: expected the retained execution id`);
-      // A repair keeps older proof only with its own original execution's moments.
+      if (entry.recipeRunId !== undefined && !isNonEmptyString(entry.recipeRunId))
+        issues.push(`${prefix}.recipeRunId: expected the source execution id`);
+      // A repair keeps older proof only with its own original execution's moments;
+      // a QA case row only with the moments of the case execution it came from.
       if (
         !Array.isArray(entry.moments) ||
         entry.moments.some(
           (moment) =>
             !isRecord(moment) ||
-            moment.recipeRunId !== (entry.retainedFrom ?? value.recipeRunId) ||
+            moment.recipeRunId !== (entry.retainedFrom ?? acceptanceRowExecution(value, entry)) ||
             !/^sha256:[a-f0-9]{64}$/.test(moment.videoDigest) ||
             !Number.isInteger(moment.traceIndex) ||
             moment.traceIndex < 0,
@@ -255,6 +263,7 @@ export {
   acceptanceCriteriaMatch,
   acceptanceCriteriaView,
   acceptanceCriterionId,
+  acceptanceRowExecution,
   INHERITED_ACCEPTANCE_INPUT,
   registeredAcceptanceCriteria,
   renderAcceptanceCoverage,
