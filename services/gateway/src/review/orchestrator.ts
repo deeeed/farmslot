@@ -655,7 +655,13 @@ export async function reviewFixTurnIsActive(
   const target = fixContext?.target?.target;
   if (!target) return false;
   const runner = fixContext.runner ?? workerRunner;
-  return runnerTurnLeaseIsActive(vars, target, runner, expectedTurnToken);
+  // The worker's own later turns count only while this is still the current delivery: a newer
+  // delivery moves the boundary and replaces this acceptance.
+  const accepted = fixContext.promptAcceptance;
+  const followContinuations =
+    accepted?.turnToken === expectedTurnToken &&
+    accepted.deliveryStartedAt === fixContext.promptDeliveryStartedAt;
+  return runnerTurnLeaseIsActive(vars, target, runner, expectedTurnToken, followContinuations);
 }
 
 // Module-level constant — wiring is fixed at module load. Tests pass their own deps struct
@@ -1325,6 +1331,7 @@ type FixPromptRecoveryContext = Pick<
   | 'target'
   | 'attemptStartedAt'
   | 'promptDeliveryStartedAt'
+  | 'promptAcceptance'
   | 'startedAt'
 >;
 
@@ -1494,6 +1501,17 @@ export async function resumeReviewFixPromptDelivery(
     : new Date().toISOString();
   if (!priorPromptSendAttempted && deliveryStartedAt)
     await deps.recordDeliveryBoundary?.(runId, context, deliveryStartedAt, deliveryGeneration);
+  // The worker acknowledged this exact delivery before the restart: adopt it. A busy worker
+  // never answers a re-probe, and a recovery that waits without its turn token times out and
+  // sends a new fix pass, which resets the worker's checklist and signal mid-task.
+  const accepted = context.promptAcceptance;
+  if (
+    priorPromptSendAttempted &&
+    accepted?.turnToken &&
+    accepted.runner === runner &&
+    accepted.deliveryStartedAt === deliveryStartedAt
+  )
+    return { status: 'delivered', turnToken: accepted.turnToken };
   // The worker's own mark-start rewrites attemptStartedAt; the delivery boundary is the sent text.
   const prompt = reviewFixPrompt(
     basePrompt,

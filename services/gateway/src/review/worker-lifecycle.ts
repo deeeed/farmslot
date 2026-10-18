@@ -10,6 +10,7 @@ import {
   nativeWorkerLiveStatus,
   readNativeWorkerSnapshot,
 } from '../runners/native/worker-control.js';
+import { turnTokenSessionId } from '../runners/observability-files.js';
 import {
   readRunnerTurnState,
   resolvePrimaryWorkerTarget,
@@ -24,14 +25,22 @@ export async function runnerTurnLeaseIsActive(
   target: string,
   runner: string,
   expectedTurnToken: string,
+  /** Also hold the lease through later turns the worker starts itself in the same session. */
+  followContinuations = false,
 ): Promise<boolean> {
   const state = await readRunnerTurnState(vars, target, runner, expectedTurnToken);
-  if (
-    state?.confidence !== 'high' ||
-    state.value !== 'active' ||
-    state.turnToken !== expectedTurnToken
-  ) {
-    return false;
+  if (state?.confidence !== 'high' || state.value !== 'active' || !state.turnToken) return false;
+  if (state.turnToken !== expectedTurnToken) {
+    // A session runs one turn at a time, so another active turn in it started after the leased
+    // one: a continuation, such as Grok resuming after a background command finished.
+    const session = turnTokenSessionId(expectedTurnToken);
+    if (
+      !followContinuations ||
+      !session ||
+      turnTokenSessionId(state.turnToken) !== session ||
+      (state.sessionId !== undefined && state.sessionId !== session)
+    )
+      return false;
   }
   return paneHostsRunnerProcess(vars, target, runner);
 }
