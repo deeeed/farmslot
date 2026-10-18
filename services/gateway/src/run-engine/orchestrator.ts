@@ -721,11 +721,25 @@ export interface StartRunOptions {
   onStepStarted?: (proof: RunEngineStepStartAcknowledgement) => void;
 }
 
+/** The generation each run's live loop drives; one loop per generation. */
+const drivenGenerations = new Map<string, number>();
+
 export async function startRun(runId: string, options: StartRunOptions = {}): Promise<void> {
   const generation = options.expectedGeneration ?? getRunGeneration(runId);
+  // A second loop on the same generation passes every stale-loop check: both
+  // monitors see the worker's signal, and the one whose monitor was replaced
+  // advances the run past it. Takeovers bump the generation first.
+  if (drivenGenerations.get(runId) === generation) {
+    console.log(
+      `[run-engine] run ${runId.slice(0, 8)} — generation ${generation} is already driven, not starting another loop`,
+    );
+    return;
+  }
+  drivenGenerations.set(runId, generation);
   try {
     await driveRun(runId, { ...options, expectedGeneration: generation });
   } finally {
+    if (drivenGenerations.get(runId) === generation) drivenGenerations.delete(runId);
     // Every exit, not just the completion tail: a run that deferred a release
     // and then cancelled, paused, bailed on a generation bump, or ended through
     // a failure route used to leave its entry behind until the next `startRun`

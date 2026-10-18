@@ -77,6 +77,7 @@ import {
 import { clearedRunnerSessionContextPatch } from '../../runners/session-record.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import { runWithSystemOriginator } from '../../security/work-originator.js';
 import { withRunSources } from '../../sources/runtime.js';
 import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
@@ -632,12 +633,9 @@ export async function rebindReleasedSlot(run: Run): Promise<string | null> {
 
 export function blockedMonitorProofReady(run: Run, status: RuntimeCapabilityStatusResult): boolean {
   const plan = status.proofPlans[run.id];
-  if (
-    !plan &&
-    status.catalog?.length === 0 &&
-    !status.leases.some((lease) => lease.owner.runId === run.id)
-  )
-    return true;
+  // Blocked before planning, it holds no proof resources that could be stale,
+  // whatever the slot's catalog offers.
+  if (!plan && !status.leases.some((lease) => lease.owner.runId === run.id)) return true;
   const blockedAt = parseStrictIsoMs(
     run.steps.find((step) => step.name === PS.MONITOR)?.completedAt,
   );
@@ -2079,7 +2077,11 @@ async function replayRunStep(
       process.env.NODE_TEST_CONTEXT !== '1' ||
       process.env.FARMSLOT_DISABLE_RUN_ENGINE_START !== '1'
     ) {
-      const driver = (hooks.startEngine ?? startRun)(params.runId).catch((err) => {
+      // The engine continues the run under its stored ownership, not as the
+      // caller whose request or event started this replay.
+      const driver = runWithSystemOriginator(() =>
+        (hooks.startEngine ?? startRun)(params.runId),
+      ).catch((err) => {
         console.error(`[run] replay failed: ${(err as Error).message}`);
       });
       if (reviewFlight) reviewFlight.driver = driver;
