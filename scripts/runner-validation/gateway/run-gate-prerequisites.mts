@@ -1,4 +1,6 @@
 // Manual production-RPC proof. Persisted recovery inputs are seeded before startup.
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';

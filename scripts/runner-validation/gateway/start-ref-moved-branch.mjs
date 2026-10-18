@@ -21,6 +21,8 @@ import path from 'node:path';
 
 import { FLOW_STEPS } from '@farmslot/protocol';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 import {
   closeTmuxSandbox,

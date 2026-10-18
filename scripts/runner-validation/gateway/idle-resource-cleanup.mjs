@@ -20,6 +20,8 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 import {
   closeTmuxSandbox,

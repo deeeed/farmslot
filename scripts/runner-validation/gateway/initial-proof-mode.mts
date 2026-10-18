@@ -1,4 +1,6 @@
 // Manual proof: real private registry leases and provider hooks, without workers or active slots.
+import '../lib/no-inherited-git-location.mjs';
+
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';

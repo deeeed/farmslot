@@ -1,3 +1,5 @@
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual production-RPC/native reviewer proof. All recovery inputs precede startup.
 import assert from 'node:assert/strict';

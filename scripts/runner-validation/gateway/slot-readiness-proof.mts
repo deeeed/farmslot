@@ -1,5 +1,7 @@
 // Manual public-RPC proof. No physical slot, native app, or real tmux server.
 // Run: node --import tsx --experimental-test-module-mocks <this-file> [baseline <base-ref>]
+import '../lib/no-inherited-git-location.mjs';
+
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {

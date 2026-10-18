@@ -22,6 +22,8 @@ import { fileURLToPath } from 'node:url';
 
 import { FLOW_STEPS, Methods } from '@farmslot/protocol';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { alive, matchesProcess } from '../../../packages/agent-runtime/src/native/storage.ts';
 import { taskInit } from '../../../packages/agent-runtime/src/task-init/index.ts';
 import {

@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 
 import { FLOW_STEPS } from '@farmslot/protocol';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 
 const sourceRoot = fileURLToPath(new URL('../../../', import.meta.url));

@@ -1,4 +1,6 @@
 // Manual native-worker and Command Center proof. Owns every run and process it creates.
+import '../lib/no-inherited-git-location.mjs';
+
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';

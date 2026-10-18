@@ -2,6 +2,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { writeEvidence } from '../lib/evidence.mjs';
 
 export const SCENARIO_ID = 'review-recovery-terminal-contract';

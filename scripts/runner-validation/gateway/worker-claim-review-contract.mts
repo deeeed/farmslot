@@ -1,4 +1,6 @@
 // Manual public-RPC proof over copied retained task bytes. Originals stay read-only.
+import '../lib/no-inherited-git-location.mjs';
+
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';

@@ -8,6 +8,8 @@
 // the runner. Nothing reads pane text.
 //
 // Run: yarn tsx scripts/runner-validation/gateway/linked-runner-pane.mts [evidence-dir]
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';

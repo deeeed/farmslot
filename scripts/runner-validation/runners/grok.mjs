@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
 
 export const RUNNER_ID = 'grok';

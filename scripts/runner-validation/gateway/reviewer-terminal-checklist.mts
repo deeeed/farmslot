@@ -1,3 +1,5 @@
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual proof against an existing tmux server. Never starts or kills the server.
 import assert from 'node:assert/strict';

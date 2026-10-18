@@ -1,3 +1,5 @@
+import './no-inherited-git-location.mjs';
+
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';

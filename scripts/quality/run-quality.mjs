@@ -63,6 +63,10 @@ export const STEPS = [
   ],
   ['no real tmux in tests', ['node', '--test', 'scripts/quality/no-real-tmux-in-tests.test.mjs']],
   [
+    'no inherited git location in proofs',
+    ['node', '--test', 'scripts/quality/no-inherited-git-location-in-proofs.test.mjs'],
+  ],
+  [
     'quality gate instrumentation tests',
     ['node', '--test', 'scripts/quality/run-quality.test.mjs'],
   ],

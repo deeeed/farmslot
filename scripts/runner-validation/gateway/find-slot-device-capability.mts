@@ -1,4 +1,6 @@
 // Manual public replay proof in disposable pools. No device or worker is started.
+import '../lib/no-inherited-git-location.mjs';
+
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';

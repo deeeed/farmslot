@@ -1,3 +1,5 @@
+import '../lib/no-inherited-git-location.mjs';
+
 import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
 // Manual RPC proof. Use node --import tsx --experimental-test-module-mocks.
 // Cases: new, user, copy-failure; baseline additionally needs FARMSLOT_PROOF_BASE_REF.

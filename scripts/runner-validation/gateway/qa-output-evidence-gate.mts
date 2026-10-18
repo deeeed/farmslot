@@ -1,3 +1,5 @@
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual public-RPC regression proof from a retained QA receipt. Originals are read-only.
 import assert from 'node:assert/strict';

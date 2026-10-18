@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { ROOT, shSingleQuote } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 

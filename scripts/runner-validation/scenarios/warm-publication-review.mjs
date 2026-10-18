@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
 import { ROOT, shSingleQuote, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';

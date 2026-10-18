@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import { primaryRoleForFlow } from '@farmslot/protocol';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { writeEvidence } from '../lib/evidence.mjs';
 
 export const SCENARIO_ID = 'machine-pause-restore-smoke';

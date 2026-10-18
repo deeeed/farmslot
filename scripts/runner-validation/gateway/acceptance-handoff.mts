@@ -1,3 +1,5 @@
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual production gateway intake proof. Uses an existing tmux server only.
 import assert from 'node:assert/strict';

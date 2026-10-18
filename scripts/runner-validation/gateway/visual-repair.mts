@@ -1,5 +1,7 @@
 // Manual Send back proof: private gateway, disposable checkout and a real retained native worker.
 // No shared gateway, slot, farm run, publication or credential is touched.
+import '../lib/no-inherited-git-location.mjs';
+
 import assert from 'node:assert/strict';
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';

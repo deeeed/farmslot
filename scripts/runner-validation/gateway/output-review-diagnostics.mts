@@ -1,5 +1,7 @@
 // Manual public-RPC proof. All mutations stay in disposable state; retained
 // production receipts and their output files are inspected read-only.
+import '../lib/no-inherited-git-location.mjs';
+
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';

@@ -5,6 +5,8 @@ import { once } from 'node:events';
 import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity, testGatewayProfile } from '../../lib/test-gateway-identity.mjs';
 
 assert.equal(process.env.FARMSLOT_ASSESSMENT_VALIDATION, '1');

@@ -1,4 +1,6 @@
 // Manual production-RPC proof. No shared gateway, worker, slot or publication is changed.
+import '../lib/no-inherited-git-location.mjs';
+
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';

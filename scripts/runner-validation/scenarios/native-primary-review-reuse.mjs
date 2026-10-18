@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { writeNativeFixtureTask } from '../lib/native-task.mjs';

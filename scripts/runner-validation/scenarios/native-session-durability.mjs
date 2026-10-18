@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { ROOT, shSingleQuote } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 

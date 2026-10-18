@@ -6,6 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import '../lib/no-inherited-git-location.mjs';
 const root = process.cwd();
 const id = `prepare-replay-proof-${process.pid}`;
 const inventory = JSON.parse(

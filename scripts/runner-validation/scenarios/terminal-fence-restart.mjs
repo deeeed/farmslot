@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
+import '../lib/no-inherited-git-location.mjs';
+
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 

@@ -1,3 +1,5 @@
+import '../lib/no-inherited-git-location.mjs';
+
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual gateway proof. Setup fixtures are isolated; derived task bytes are not injected.
 import assert from 'node:assert/strict';

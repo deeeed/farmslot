@@ -1,5 +1,7 @@
 // Manual public-RPC proof. Scoped lookups use the real kernel listener; the
 // controlled host-wide refusal reproduces a census that cannot meet its budget.
+import '../lib/no-inherited-git-location.mjs';
+
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
