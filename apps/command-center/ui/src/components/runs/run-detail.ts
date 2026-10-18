@@ -1865,8 +1865,8 @@ export class RunDetail extends RunDetailState {
       comparison: this._comparisonContext(),
       visualReviewMessage: this._visualReviewMessage,
       openEvidence: this._openAcceptanceEvidence,
-      confirmResolve: (runId, decision, actionId) =>
-        this._confirmResolve(runId, decision, actionId),
+      confirmResolve: (runId, decision, actionId, reason) =>
+        this._confirmResolve(runId, decision, actionId, reason),
       posture: this._postureGateStateForRender(),
       postureBlockedReason: postureResolveBlockReason(this._postureGateStateForRender()),
       selectPostureChoice: (choice) => void this._selectPostureGateChoice(run.id, choice),
@@ -1908,7 +1908,7 @@ export class RunDetail extends RunDetailState {
     confirmForceComplete(run, this._confirmTimerContext());
   }
 
-  private _confirmResolve(runId: string, decision: RunDecision, actionId: string) {
+  private _confirmResolve(runId: string, decision: RunDecision, actionId: string, reason?: string) {
     // A choice the Gateway already refused in preview must not be sent: the
     // decision would be consumed and the refusal repeated with nothing to undo.
     const outputReview = decision.payload?.kind === 'output-review';
@@ -1924,6 +1924,7 @@ export class RunDetail extends RunDetailState {
     const observation = this._postureTransitionObservation(forwardedChoice);
     confirmRunDecision(runId, decision, actionId, {
       ...this._confirmTimerContext(),
+      ...(reason ? { reason } : {}),
       jumpToSuccessorWhenAvailable: (originRunId) =>
         this._jumpToSuccessorWhenAvailable(originRunId),
       // Only ever forwarded where the Gateway would honour it; a hidden panel

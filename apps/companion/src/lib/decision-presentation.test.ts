@@ -562,3 +562,26 @@ for (const status of ['fixing', 'review-failed', 'reconciling']) {
     ['hold'],
   );
 }
+
+// A result decision reads as Needs decision with a warning tone.
+const resultPresentation = presentDecision({
+  id: 'result-1',
+  type: 'engine_result_decision',
+  slotId: null,
+  title: 'Needs decision',
+  description: '',
+  context: {},
+  createdAt: '2026-10-18T00:00:00.000Z',
+  actions: [],
+  payload: {
+    kind: 'result-decision',
+    stoppedAt: 'review',
+    reason: 'The review left findings and no further fix can run.',
+    delivered: { headSha: 'abc123' },
+    findingsDigest: 'sha256:f',
+    outputReviewDecisionId: 'output-1',
+    actions: [{ id: 'close-result', available: true, requiresReason: false }],
+  },
+});
+assert.equal(resultPresentation.kindLabel, 'Needs decision');
+assert.equal(resultPresentation.tone, 'warn');

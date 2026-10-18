@@ -477,3 +477,31 @@ class MemoryFilterStorage {
     this.setCalls.push({ key, value });
   }
 }
+
+test('the Review queue skips an output review held under a pending result decision', () => {
+  const result: PendingDecision = {
+    ...makeDecision({ id: 'result-1', slotId: null }),
+    type: 'engine_result_decision',
+    payload: {
+      kind: 'result-decision',
+      stoppedAt: 'review',
+      reason: 'The review left findings and no further fix can run.',
+      delivered: { headSha: 'abc123' },
+      findingsDigest: 'sha256:f',
+      outputReviewDecisionId: 'output-1',
+      actions: [{ id: 'close-result', available: true, requiresReason: false }],
+    },
+  };
+  const output: PendingDecision = {
+    ...makeDecision({ id: 'output-1', slotId: null }),
+    type: 'engine_output_review',
+    payload: { kind: 'output-review', manifestDigest: 'sha256:m', reportPath: 'artifacts/r.md' },
+  };
+  const other = makeDecision({ id: 'other', slotId: null });
+  assert.deepEqual(
+    filterDecisions([output, result, other], { projects: [], machines: [] }, new Map()).map(
+      (decision) => decision.id,
+    ),
+    ['result-1', 'other'],
+  );
+});

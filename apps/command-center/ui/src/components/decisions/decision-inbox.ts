@@ -18,6 +18,7 @@ import {
   improvementApplyOutcome,
   Methods,
 } from '@farmslot/protocol';
+import { evidenceOnlyDecisionIds, isResultDecision } from '@farmslot/review-dispatch';
 
 import '../diff-viewer/diff-review.js';
 import '../shared/hydrating-placeholder.js';
@@ -230,7 +231,9 @@ export class DecisionInbox extends LitElement {
   }
 
   private get _filtered(): PendingDecision[] {
-    let result = this._decisions;
+    // A held run's output review is the evidence under its result decision, not an item.
+    const evidenceOnly = evidenceOnlyDecisionIds(this._decisions);
+    let result = this._decisions.filter((d) => !evidenceOnly.has(d.id));
     if (this._filterProjects.length > 0) {
       result = result.filter((d) => {
         if (!d.slotId) return true;
@@ -288,7 +291,7 @@ export class DecisionInbox extends LitElement {
   }
 
   private _handleDecisionKeydown(event: KeyboardEvent, decision: PendingDecision) {
-    if (!/^[1-9]$/.test(event.key)) return;
+    if (!/^[1-9]$/.test(event.key) || isResultDecision(decision)) return;
     const action = decision.actions[Number(event.key) - 1];
     if (!action) return;
     event.preventDefault();
@@ -649,6 +652,9 @@ export class DecisionInbox extends LitElement {
     if (context?.kind === 'roadmap-promotion' && context.route) {
       return { href: context.route, label: 'Open roadmap item' };
     }
+    if (isResultDecision(d) && d.runMeta?.runId) {
+      return { href: `#run/${d.runMeta.runId}`, label: 'Open decision' };
+    }
     if ((kind === 'review' || kind === 'ready') && d.runMeta?.runId) {
       return {
         href: `#run/${d.runMeta.runId}`,
@@ -804,7 +810,7 @@ export class DecisionInbox extends LitElement {
                           >
                         `
                       : nothing}
-                    ${d.actions.map(
+                    ${(isResultDecision(d) ? [] : d.actions).map(
                       (action, index) => html`
                         <div class="decision-action">
                           <button

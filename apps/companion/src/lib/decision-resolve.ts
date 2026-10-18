@@ -26,6 +26,8 @@ export function decisionResolveRequest(
   resourcePosture?: ResourcePostureGateChoice | null,
   selectionData?: Record<string, unknown>,
   evidenceAttestationReason?: string,
+  /** Written reason for a result decision; `accept-result` requires one. */
+  reason?: string,
 ): DecisionResolveRequest {
   if (!decision.runMeta) {
     if (actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION)
@@ -39,6 +41,7 @@ export function decisionResolveRequest(
     decision,
     actionId,
     ...(evidenceAttestationReason !== undefined ? { evidenceAttestationReason } : {}),
+    ...(reason !== undefined ? { reason } : {}),
     ...(selectionData ? { selectionData } : {}),
     ...(resourcePosture ? { resourcePosture } : {}),
   });

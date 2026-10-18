@@ -144,3 +144,23 @@ test("an improvement's Apply writes and validates through improvement.apply", ()
     },
   );
 });
+
+test('a result decision sends its written reason with run.resolveDecision', () => {
+  const request = decisionResolveRequest(
+    {
+      id: 'result-1',
+      payload: undefined,
+      runMeta: { runId: 'run-1', flowType: 'dev', ticketOrPr: 'TAT-4145' },
+    },
+    'accept-result',
+    null,
+    undefined,
+    undefined,
+    ' Known findings on a comparison lane. ',
+  );
+  assert.equal(request.method, Methods.RUN_RESOLVE_DECISION);
+  assert.equal(
+    (request.params as { reason?: string }).reason,
+    'Known findings on a comparison lane.',
+  );
+});
