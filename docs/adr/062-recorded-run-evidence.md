@@ -866,7 +866,7 @@ with their next recipe-runner version. The normative timing rule is in
 
 ## Amendment 15 (2026-10-18): Recorders bound frame zero at start and through restarts
 
-**Status:** Proposed. The lead approves once both paired reviews pass.
+**Status:** Accepted (lead, 2026-10-18). Ships in #1304.
 
 ### Decision
 
