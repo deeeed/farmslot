@@ -20,6 +20,7 @@ import {
 } from '../../backlog/dispatch-queue.js';
 import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
+import { makeRun } from '../../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 import { markCompletionFailureDiscarded } from '../slot/release-run-ownership.js';
 
@@ -306,6 +307,81 @@ test('blocked monitor replay needs the recorded proof plan and fresh healthy lea
   status.leases[0].health.checkedAt = '2026-09-23T01:01:00Z';
   status.leases[0].health.state = 'unhealthy';
   assert.equal(blockedMonitorProofReady(run, status), false);
+});
+
+test('a run blocked before it planned proof re-attaches on a slot with a capability catalog', () => {
+  // Run 22e62daa on macpro-mmt-2: catalog [terminal-browser], plans and released
+  // leases only for other runs, none for the blocked run.
+  const run = makeRun({
+    id: 'blocked-before-plan',
+    slotId: 'macpro-mmt-2',
+    steps: [{ name: 'monitor', status: 'done', completedAt: '2026-10-18T06:20:00Z' }],
+  });
+  const provenance = {
+    project: 'va-mmcx-terminal-farm',
+    providerId: 'terminal-browser',
+    version: '1',
+    digest: 'digest',
+  };
+  const status: RuntimeCapabilityStatusResult = {
+    slotId: 'macpro-mmt-2',
+    project: 'va-mmcx-terminal-farm',
+    catalog: [
+      {
+        id: 'terminal-browser',
+        project: 'va-mmcx-terminal-farm',
+        label: 'Assigned running Terminal browser',
+        version: '1',
+        dependencies: [],
+        sharePolicy: 'exclusive',
+        cost: {
+          class: 'low',
+          resources: [{ id: 'browser', access: 'exclusive', kind: 'process', scope: 'slot' }],
+        },
+        actions: {
+          acquire: { kind: 'resource', resourceId: 'browser', action: 'health' },
+          health: { kind: 'resource', resourceId: 'browser', action: 'health' },
+          release: { kind: 'slot-action', actionId: 'terminal-browser-retain' },
+        },
+        releaseEffects: ['Release the browser reservation; preserve the running browser'],
+        keepWarmMs: 0,
+        provenance,
+        availability: { state: 'available' },
+      },
+    ],
+    proofPlans: {
+      'other-run': {
+        version: 1,
+        slotId: 'macpro-mmt-2',
+        ownerRunId: 'other-run',
+        createdAt: '2026-10-18T05:00:00Z',
+        requirements: [{ capabilityId: 'terminal-browser', reason: 'recipe', mode: 'visual' }],
+      },
+    },
+    leases: [
+      {
+        id: 'cap-other',
+        slotId: 'macpro-mmt-2',
+        project: 'va-mmcx-terminal-farm',
+        capabilityId: 'terminal-browser',
+        owner: { runId: 'other-run' },
+        state: 'released',
+        referenceCount: 0,
+        parameters: {},
+        provenance,
+        health: { state: 'unknown' },
+        dependencyLeaseIds: [],
+        updatedAt: '2026-10-18T05:30:00Z',
+        releasedAt: '2026-10-18T05:30:00Z',
+      },
+    ],
+    events: [],
+  };
+  assert.equal(blockedMonitorProofReady(run, status), true);
+
+  // A lease of its own means it planned resources: #721's fresh-lease rule applies.
+  const ownLease = { ...status.leases[0], owner: { runId: run.id } };
+  assert.equal(blockedMonitorProofReady(run, { ...status, leases: [ownLease] }), false);
 });
 
 test('uncertain dispatch requires the structured marker, never the failure prose', () => {
