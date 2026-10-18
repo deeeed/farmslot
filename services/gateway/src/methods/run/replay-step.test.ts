@@ -21,6 +21,7 @@ import {
 import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
+import { markCompletionFailureDiscarded } from '../slot/release-run-ownership.js';
 
 import { runForceComplete } from './lifecycle-control.js';
 import {
@@ -3162,4 +3163,56 @@ test('a find-slot replay whose old slot is on a disconnected machine is refused 
   assert.equal(getRun(run.id)?.slotId, slotId);
   const row = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
   assert.deepEqual([row.current_run_id, row.phase], [run.id, 'occupied']);
+});
+
+test('a replay refused for PR ownership leaves the discarded run untouched', async (t) => {
+  const prWork = {
+    kind: 'review' as const,
+    id: 'review:replay-ownership',
+    sourceId: 'replay-ownership',
+    pr: { host: 'github.com', repo: 'owner/repo', number: 99126 },
+    headSha: 'head-a',
+  };
+  const created = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  t.after(() => evictTestRun(created.id, 'failed'));
+  const completeIdx = created.steps.findIndex((step) => step.name === 'complete');
+  updateRun(created.id, {
+    prWork,
+    status: 'failed',
+    steps: created.steps.map((step, i) =>
+      i < completeIdx
+        ? { ...step, status: 'done' }
+        : i === completeIdx
+          ? { ...step, status: 'failed', outputs: { gatePrerequisiteRefusal: { reason: 'r' } } }
+          : { ...step, status: 'skipped' },
+    ),
+  });
+  await markCompletionFailureDiscarded(created.id, () => {});
+  const successor = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now() + 1}`,
+  });
+  t.after(() => evictTestRun(successor.id, 'cancelled'));
+  updateRun(successor.id, { prWork });
+  const before = structuredClone(getRun(created.id)!);
+
+  await assert.rejects(
+    () =>
+      runReplayStep(
+        { runId: created.id, stepName: 'complete', triggeredBy: 'operator' },
+        () => {},
+        {
+          startEngine: async () => {},
+        },
+      ),
+    new RegExp(`PR execution is owned by run ${successor.id}`),
+  );
+  const after = getRun(created.id)!;
+  assert.equal(after.status, 'failed');
+  assert.deepEqual(after.steps, before.steps, 'the refusal and the discard stamp stay');
 });

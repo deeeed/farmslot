@@ -36,6 +36,7 @@ import {
   removeQueueItemInternal,
   renewQueueClaim,
 } from '../../backlog/dispatch-queue.js';
+import { assertPRRunActivation } from '../../backlog/pr-admission.js';
 import { execOnSlot, isLocal } from '../../core/exec.js';
 import { claimSlotStatusIf, readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
@@ -1202,6 +1203,13 @@ async function replayRunStep(
   if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
     assertCancelledReplayNodeAvailable(existing, params.runId);
   }
+  // The final status write re-checks PR ownership, but only after the steps are
+  // reset; a refusal there would already have erased the run's history.
+  if (isTerminalRunStatus(existing.status))
+    assertPRRunActivation(
+      { ...existing, status: activeStatusForReplayStep(replayStepName) },
+      getAllRuns(),
+    );
 
   // A replay from find-slot or earlier clears the run's slot binding, so the
   // claim its slot row still holds must be settled before re-selection.
