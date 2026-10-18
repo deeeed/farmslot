@@ -101,6 +101,8 @@ async function waitOnTimeline(t: TestContext, minutes: number) {
     for (let flush = 0; flush < 6; flush += 1)
       await new Promise((resolve) => setImmediate(resolve));
   }
+  // Frozen mocked timers would leave an unsettled wait pending forever.
+  assert.ok(settled, `wait still pending after ${minutes} min`);
   await pending;
   return { value, at: Date.now() };
 }
@@ -123,10 +125,19 @@ test('a fix wait follows the worker into its next turn in the same session', asy
 });
 
 test('a turn in another session, or after a newer delivery, does not hold the fix lease', async (t) => {
+  // A newer delivery moves the boundary and clears the acceptance, then records its own turn.
+  const newer = '2026-10-18T10:16:05.972Z';
   for (const { context, continuation } of [
     { context: fixContext(), continuation: 'another-session:1792317219448' },
     {
-      context: { ...fixContext(), promptDeliveryStartedAt: '2026-10-18T10:16:05.972Z' },
+      context: { ...fixContext(), promptDeliveryStartedAt: newer, promptAcceptance: undefined },
+      continuation: `${session}:1792317219448`,
+    },
+    {
+      context: {
+        ...fixContext({ deliveryStartedAt: newer, turnToken: `${session}:1792318565972` }),
+        promptDeliveryStartedAt: newer,
+      },
       continuation: `${session}:1792317219448`,
     },
   ]) {

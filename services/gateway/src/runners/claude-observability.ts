@@ -21,6 +21,7 @@ import {
   readRunnerObservabilityFiles,
   readRunnerPaneObservabilityState,
   readRunnerSessionObservabilityState,
+  turnTokenSessionId,
 } from './observability-files.js';
 import type {
   HookRecord,
@@ -300,8 +301,7 @@ PY`,
 
   async getTurnState(vars, target, expectedTurnToken) {
     if (expectedTurnToken) {
-      const separator = expectedTurnToken.lastIndexOf(':');
-      const expectedSessionId = separator > 0 ? expectedTurnToken.slice(0, separator).trim() : '';
+      const expectedSessionId = turnTokenSessionId(expectedTurnToken);
       if (!expectedSessionId) return null;
       const paneId = await resolveTmuxPaneId(vars, target);
       if (!paneId) return null;

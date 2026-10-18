@@ -10,6 +10,7 @@ import {
   nativeWorkerLiveStatus,
   readNativeWorkerSnapshot,
 } from '../runners/native/worker-control.js';
+import { turnTokenSessionId } from '../runners/observability-files.js';
 import {
   readRunnerTurnState,
   resolvePrimaryWorkerTarget,
@@ -18,12 +19,6 @@ import {
 } from '../runners/registry.js';
 import { isRunnerAliveUnderPane, probeRunnerDescendantPid } from '../runners/session-process.js';
 import { getRun } from '../runs/store.js';
-
-/** The session part of a runner turn token (`<session>:<turn>`). */
-function turnSession(turnToken: string): string {
-  const separator = turnToken.lastIndexOf(':');
-  return separator > 0 ? turnToken.slice(0, separator) : '';
-}
 
 export async function runnerTurnLeaseIsActive(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -38,11 +33,11 @@ export async function runnerTurnLeaseIsActive(
   if (state.turnToken !== expectedTurnToken) {
     // A session runs one turn at a time, so another active turn in it started after the leased
     // one: a continuation, such as Grok resuming after a background command finished.
-    const session = turnSession(expectedTurnToken);
+    const session = turnTokenSessionId(expectedTurnToken);
     if (
       !followContinuations ||
       !session ||
-      turnSession(state.turnToken) !== session ||
+      turnTokenSessionId(state.turnToken) !== session ||
       (state.sessionId !== undefined && state.sessionId !== session)
     )
       return false;

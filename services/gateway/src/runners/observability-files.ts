@@ -181,6 +181,12 @@ export function deriveRunnerActivity(
   return null;
 }
 
+/** The session part of a runner turn token (`<session>:<turn>`), or '' when it has none. */
+export function turnTokenSessionId(turnToken: string): string {
+  const separator = turnToken.lastIndexOf(':');
+  return separator > 0 ? turnToken.slice(0, separator).trim() : '';
+}
+
 /**
  * Resolve whether a persisted runner session can be safely reactivated.
  *

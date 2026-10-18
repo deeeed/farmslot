@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { sleepMs } from '../lib/common.mjs';
+import { shSingleQuote, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
-import { capturePane, ensureShellSession, killSession } from '../lib/tmux.mjs';
+import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
 
 export const SCENARIO_ID = 'review-fix-turn-lease';
 
@@ -71,7 +71,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
     runner,
     baselineContract: 'an unaccepted fix prompt receives no structured-turn lease',
     currentContract:
-      'an accepted fix prompt receives a liveness-guarded structured runner turn lease',
+      'an accepted fix prompt receives a liveness-guarded structured runner turn lease, held by later turns in its session until a newer delivery',
     result: null,
     liveSnapshotProbe: null,
     staleSnapshotProbe: null,
@@ -95,13 +95,13 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       'panes',
       `${encodeURIComponent(paneId)}.json`,
     );
-    runLaunchInTmux(
-      paneId,
-      repo,
-      runner,
-      runnerAdapter,
-      'Reply with exactly READY, then wait for another instruction.',
-    );
+    const readyPrompt = 'Reply with exactly READY, then wait for another instruction.';
+    // Later deliveries need this runner still up; print and exec modes exit after one turn.
+    sendShellScript(paneId, repo, [
+      runner === 'claude'
+        ? runnerAdapter.buildInteractiveLaunchCommand(repo, '.agent', readyPrompt)
+        : `${runnerAdapter.buildInteractiveLaunchCommand(repo, '.agent')} ${shSingleQuote(readyPrompt)}`,
+    ]);
     waitForIdleTurn(statePath, 60_000);
 
     const executor = path.join(root, 'scripts/runner-validation/gateway/review-fix-turn-lease.mts');
@@ -244,7 +244,8 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
           report.result.lifecycleLeaseProbe?.postCompact === true)) &&
       report.result.leasedSignalStatus === 'complete' &&
       report.result.activeTurnObserved === true &&
-      report.result.supersedingTurnProbe.originalLeaseActive === false &&
+      report.result.supersedingTurnProbe.originalLeaseActive === true &&
+      report.result.supersedingTurnProbe.originalLeaseAfterNewerDelivery === false &&
       report.result.supersedingTurnProbe.supersedingLeaseActive === true &&
       report.result.supersedingTurnProbe.tokensDiffer === true &&
       report.liveSnapshotProbe.leaseAllowed === true &&

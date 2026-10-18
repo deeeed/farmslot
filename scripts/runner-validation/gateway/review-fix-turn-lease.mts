@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+import type { RunnerPromptAcceptance } from '@farmslot/protocol';
 import type { SlotVars } from '@farmslot/slot-config';
 
 const repo = process.env.FARMSLOT_VALIDATION_REPO;
@@ -25,6 +26,7 @@ const [
   { readRunnerTurnState },
   { paneHostsRunnerProcess },
   { createRun, updateRunAgentContexts },
+  { turnTokenSessionId },
 ] = await Promise.all([
   import('../../../services/gateway/src/review/orchestrator.js'),
   import('../../../services/gateway/src/runners/session-reactivation.js'),
@@ -32,6 +34,7 @@ const [
   import('../../../services/gateway/src/runners/registry.js'),
   import('../../../services/gateway/src/review/worker-lifecycle.js'),
   import('../../../services/gateway/src/runs/store.js'),
+  import('../../../services/gateway/src/runners/observability-files.js'),
 ]);
 
 const vars: SlotVars = {
@@ -195,6 +198,7 @@ const signal = JSON.stringify({
 });
 const fixSignalPath = path.join(repo, 'task', 'REVIEW-FIX-SIGNAL.json');
 const fixSignalBaseline = await readLaunchAckSignalSnapshot(vars, fixSignalPath);
+const fixDeliveryStartedAt = new Date().toISOString();
 const command = `sleep 14; printf '%s\\n' '${signal}' > task/REVIEW-FIX-SIGNAL.json`;
 const prompt = `Use the shell tool exactly once to run this command, and do nothing else: ${command}`;
 const acceptedDelivery = await deliverPromptWithRetainedFallback({
@@ -216,6 +220,24 @@ assert.notEqual(
   busyTurnToken,
   'fix prompt must bind to a new turn after unrelated work finishes',
 );
+// Production records this acceptance for a delivered fix (rememberReviewFixTurn) and clears it
+// when a newer delivery moves the boundary. The lease reads only the token and the boundary.
+const setFixDelivery = (deliveryStartedAt: string, promptAcceptance?: RunnerPromptAcceptance) =>
+  updateRunAgentContexts(validationRun.id, (_run, contexts) =>
+    contexts.map((context) =>
+      context.role === 'review-fix'
+        ? { ...context, promptDeliveryStartedAt: deliveryStartedAt, promptAcceptance }
+        : context,
+    ),
+  );
+setFixDelivery(fixDeliveryStartedAt, {
+  runner,
+  deliveryStartedAt: fixDeliveryStartedAt,
+  sessionId: turnTokenSessionId(acceptedTurnToken),
+  sessionPath: '',
+  observedAt: Date.now(),
+  turnToken: acceptedTurnToken,
+});
 
 let lifecycleLeaseProbe: {
   preCompact: boolean;
@@ -273,18 +295,29 @@ const supersedingTurnToken = supersedingDelivery.delivered
   ? supersedingDelivery.turnToken
   : undefined;
 assert.ok(supersedingTurnToken, 'superseding turn must expose its identity');
+// The superseding prompt is a nudge, not a fix delivery: its turn in the accepted session keeps
+// the fix lease until a newer delivery replaces the acceptance.
+const originalLeaseActive = await reviewFixTurnIsActive(
+  vars,
+  validationRun.id,
+  runner,
+  acceptedTurnToken,
+);
+const supersedingLeaseActive = await reviewFixTurnIsActive(
+  vars,
+  validationRun.id,
+  runner,
+  supersedingTurnToken,
+);
+setFixDelivery(new Date().toISOString());
 const supersedingTurnProbe = {
-  originalLeaseActive: await reviewFixTurnIsActive(
+  originalLeaseActive,
+  supersedingLeaseActive,
+  originalLeaseAfterNewerDelivery: await reviewFixTurnIsActive(
     vars,
     validationRun.id,
     runner,
     acceptedTurnToken,
-  ),
-  supersedingLeaseActive: await reviewFixTurnIsActive(
-    vars,
-    validationRun.id,
-    runner,
-    supersedingTurnToken,
   ),
   tokensDiffer: supersedingTurnToken !== acceptedTurnToken,
 };
