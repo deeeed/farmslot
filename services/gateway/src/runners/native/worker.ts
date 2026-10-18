@@ -874,7 +874,7 @@ export async function dispatchNativeWorker(input: {
     { ...binding, acceptedAt: binding.acceptedAt ?? new Date().toISOString() },
     { status: 'working' },
   );
-  clearSupersededWorkerError(run.id, contextId);
+  clearSupersededWorkerError(run.id);
   if (input.role === primaryRoleForFlow(run.flowType)) {
     const latest = checkRun();
     updateRun(run.id, {

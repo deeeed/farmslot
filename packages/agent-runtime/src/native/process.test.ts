@@ -159,9 +159,11 @@ test('an oversized image read keeps the runner and records the image size, not i
   const { child, messages, exited } = runLines(t, ['read', '{"type":"after"}']);
   const runner: { stopped?: Error } = {};
   void exited.then((error) => (runner.stopped = error ?? new Error('runner closed')));
-  while (messages.length < 2 && !runner.stopped)
+  const deadline = Date.now() + 10_000;
+  while (messages.length < 2 && !runner.stopped && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(runner.stopped, undefined, `runner stopped: ${runner.stopped?.message}`);
+  assert.equal(messages.length, 2, 'both runner events arrive');
   const read = JSON.stringify(messages[0]);
   // Both copies keep their place and size; no PNG bytes (base64 `iVBORw0KGgo`) remain.
   assert.equal(read.split('"[base64 data omitted: 409378 bytes]"').length - 1, 2);

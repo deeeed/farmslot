@@ -27,8 +27,8 @@ const NATIVE_EVENT_LIMIT = 1024 * 1024;
 
 /**
  * Runners echo each image or document they read into their event stream as base64; Claude sends
- * it twice per Read. The runner keeps the file, so a recorded copy that is too large keeps only
- * the payload's size.
+ * it twice per Read. The runner keeps the file, so the host's copy of a line that is too large
+ * keeps only each payload's size, both for recording and for handling the message.
  */
 function withoutBase64Payloads(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutBase64Payloads);
