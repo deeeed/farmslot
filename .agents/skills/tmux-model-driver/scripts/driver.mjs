@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
+import { alive, durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import {
   paneOpenQuestion,
@@ -236,13 +236,74 @@ function paths(meta, selection = {}) {
   };
 }
 
+// The holder records its pid, so a send killed while holding the lock (a caller's timeout,
+// SIGKILL) does not leave the pane busy until its model restarts. Same idiom as
+// scripts/lib/node-cli-refresh.sh.
 function acquireLock(files) {
-  try {
-    fs.mkdirSync(files.lock, { mode: 0o700 });
+  // Taking the lock, clearing a dead reaper's mutex and reaping a dead holder each retry once.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      fs.mkdirSync(files.lock, { mode: 0o700 });
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      if (reapStaleLock(files.lock)) continue;
+      return false;
+    }
+    try {
+      fs.writeFileSync(path.join(files.lock, 'pid'), `${process.pid}\n`, { mode: 0o600 });
+    } catch (error) {
+      fs.rmSync(files.lock, { recursive: true, force: true });
+      throw error;
+    }
     return true;
+  }
+  return false;
+}
+
+function releaseLock(files) {
+  fs.rmSync(path.join(files.lock, 'pid'), { force: true });
+  fs.rmdirSync(files.lock);
+}
+
+const olderThanAMinute = (dir) => {
+  try {
+    return Date.now() - fs.statSync(dir).mtimeMs > 60_000;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+};
+
+// A holder that is gone, or one that never wrote its pid a minute on, is stale.
+function lockHolderGone(lock, holder) {
+  const pid = /^\d{1,10}$/.test(holder) ? Number(holder) : 0;
+  if (pid <= 0 || pid > 0x7fffffff) return olderThanAMinute(lock);
+  return !alive(pid);
+}
+
+// Reap under a second mutex, and only if the lock still belongs to the holder seen first:
+// two waiters that saw the same dead holder must not both remove it, or the second removes
+// the lock the first just took. True when the caller should try the lock again.
+function reapStaleLock(lock) {
+  const holder = readOptional(path.join(lock, 'pid'))?.trim() ?? '';
+  if (!lockHolderGone(lock, holder)) return false;
+  const reap = `${lock}.reap`;
+  try {
+    fs.mkdirSync(reap, { mode: 0o700 });
   } catch (error) {
     if (error.code !== 'EEXIST') throw error;
-    return false;
+    // A reaper killed mid-reap leaves its mutex behind; it is stale a minute on.
+    if (!olderThanAMinute(reap)) return false;
+    fs.rmSync(reap, { recursive: true, force: true });
+    return true;
+  }
+  try {
+    const current = readOptional(path.join(lock, 'pid'))?.trim() ?? '';
+    if (current !== holder || !lockHolderGone(lock, holder)) return false;
+    fs.rmSync(lock, { recursive: true, force: true });
+    return true;
+  } finally {
+    fs.rmdirSync(reap);
   }
 }
 
@@ -278,7 +339,7 @@ function updateReceipt(files, receipt, change, held = false) {
       if (next) durableWrite(files.receipt, next);
     }
   } finally {
-    if (owned) fs.rmdirSync(files.lock);
+    if (owned) releaseLock(files);
   }
 }
 
@@ -465,7 +526,7 @@ export function acknowledgeAcceptance(pane, runner, receiptId) {
       }
     }
   } finally {
-    if (locked) fs.rmdirSync(files.lock);
+    if (locked) releaseLock(files);
   }
   return {
     pane_id: pane,
@@ -534,7 +595,7 @@ export async function answerQuestion(pane, runner, fingerprint, actions, tracePa
       verification = 'response_sent';
     }
   } finally {
-    if (locked) fs.rmdirSync(files.lock);
+    if (locked) releaseLock(files);
   }
   // Response delivery is explicit input, not positive proof of a runner turn.
   const result = {
@@ -596,7 +657,7 @@ export function resolveLaunchBlocker(pane, runner, inspect = paneState) {
     // This acknowledges a startup choice, never model readiness or prompt acceptance.
     return { action_sent: true, action: fresh.auto_action, verification: 'startup_action_sent' };
   } finally {
-    fs.rmdirSync(files.lock);
+    releaseLock(files);
   }
 }
 
@@ -844,7 +905,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     }
   } finally {
     if (scratch) fs.rmSync(scratch, { recursive: true });
-    if (locked) fs.rmdirSync(files.lock);
+    if (locked) releaseLock(files);
   }
   const result = {
     pane_id: pane,
