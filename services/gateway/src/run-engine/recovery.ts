@@ -318,12 +318,16 @@ export async function representResultDecisions(runs: Run[]): Promise<void> {
       }
       const refused = refusedCompletionStep(run);
       if (!refused || isSettledCompletionFailure(run) || !runDeliveredResult(run)) continue;
-      await holdRunForResultDecision(
+      const held = await holdRunForResultDecision(
         run.id,
         refused.name === PipelineSteps.COMPLETE ? 'complete' : 'finalize',
         refused.detail ?? run.error ?? 'A completion prerequisite was refused.',
         { settlingStatus: 'failed' },
       );
+      if (held) {
+        const { recordHeldResultAnalytics } = await import('../runs/analytics.js');
+        await recordHeldResultAnalytics(held);
+      }
     } catch (error) {
       console.warn(
         `[run-engine] result decision for ${run.id.slice(0, 8)} not re-presented: ${(error as Error).message}`,

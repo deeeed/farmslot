@@ -9,8 +9,10 @@ import {
   Events,
   hasDeliveredResult,
   isHeldForResultDecision,
+  pendingResultDecision,
   PipelineSteps,
   refusedCompletionStep,
+  RESULT_DECISION_ACTION_LABELS,
   type ResultDecisionActionId,
   type ResultDecisionActionState,
   type ResultDecisionDelivered,
@@ -28,7 +30,10 @@ import {
   terminalTransitionDeps,
 } from '../run-lifecycle/terminal-transition.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
-import { routeRunTransition } from '../run-lifecycle/transition-router.js';
+import {
+  routeRunTransition,
+  RunTransitionRefusedError,
+} from '../run-lifecycle/transition-router.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { currentSessionPrincipal } from '../security/work-originator.js';
 
@@ -55,11 +60,22 @@ function isResultDecisionActionId(value: string): value is ResultDecisionActionI
   return value === 'send-back' || value === 'accept-result' || value === 'close-result';
 }
 
-const ACTIONS: Record<ResultDecisionActionId, DecisionAction> = {
-  'send-back': { id: 'send-back', label: 'Send back for another fix', style: 'primary' },
-  'accept-result': { id: 'accept-result', label: 'Accept result', style: 'secondary' },
-  'close-result': { id: 'close-result', label: 'Close', style: 'danger' },
+const STYLES: Record<ResultDecisionActionId, DecisionAction['style']> = {
+  'send-back': 'primary',
+  'accept-result': 'secondary',
+  'close-result': 'danger',
 };
+
+function decisionAction(id: ResultDecisionActionId): DecisionAction {
+  return { id, label: RESULT_DECISION_ACTION_LABELS[id], style: STYLES[id] };
+}
+
+/** The output review a held run keeps as its snapshot's evidence. */
+function pendingOutputReview(run: Run): RunDecision | undefined {
+  return [...run.decisions]
+    .reverse()
+    .find((decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review');
+}
 
 function delivered(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionDelivered {
   const review = run.steps.find((step) => step.name === PipelineSteps.REVIEW)?.outputs;
@@ -130,9 +146,7 @@ export async function buildResultDecision(
 ): Promise<RunDecision> {
   const findings = stoppedAt === 'review' ? reviewFindings(run) : undefined;
   const refused = stoppedAt === 'review' ? undefined : refusal(run);
-  const outputReview = [...run.decisions]
-    .reverse()
-    .find((decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review');
+  const outputReview = pendingOutputReview(run);
   const payload: ResultDecisionPayload = {
     kind: 'result-decision',
     stoppedAt,
@@ -155,7 +169,7 @@ export async function buildResultDecision(
     type: 'engine_result_decision',
     title: `${run.ticketOrPr || `Run ${run.id.slice(0, 8)}`} — result needs a decision`,
     description: reason,
-    actions: payload.actions.map((action) => ACTIONS[action.id]),
+    actions: payload.actions.map((action) => decisionAction(action.id)),
     createdAt: new Date().toISOString(),
     payload,
   };
@@ -188,7 +202,9 @@ export async function holdRunForResultDecision(
   const run = getRun(runId);
   if (!run) return null;
   const decision = await buildResultDecision({ ...run, ...options.patch }, stoppedAt, reason);
-  let held: Run | null = null;
+  const before = { status: run.status, error: run.error, decisions: run.decisions };
+  const now = new Date().toISOString();
+  let held: Run;
   try {
     const result = await routeRunTransition(
       { kind: 'hold-result', runId, actor: 'engine' },
@@ -201,7 +217,15 @@ export async function holdRunForResultDecision(
           status: 'needs-decision',
           error: reason,
           completedAt: undefined,
-          decisions: [...(getRun(runId)?.decisions ?? run.decisions), decision],
+          // A run held again (after a replay or a failed send-back) has one pending decision.
+          decisions: [
+            ...(getRun(runId)?.decisions ?? run.decisions).map((entry) =>
+              !entry.resolvedAt && entry.payload?.kind === 'result-decision'
+                ? { ...entry, resolvedAt: now, resolvedAction: 'superseded' }
+                : entry,
+            ),
+            decision,
+          ],
         },
         ...(options.settlingStatus ? { settlingStatus: options.settlingStatus } : {}),
         persist: (next) => persistRunNow(next, 'held for a result decision'),
@@ -210,9 +234,15 @@ export async function holdRunForResultDecision(
     );
     held = result.run;
   } catch (error) {
-    console.warn(
-      `[result-decision] hold for ${runId.slice(0, 8)} refused: ${(error as Error).message}`,
-    );
+    // A cancel or another settlement that won the race refuses the hold; any
+    // other failure is the caller's to handle. The router mutates before it
+    // persists, so an unrecorded hold is put back first.
+    if (!(error instanceof RunTransitionRefusedError)) {
+      if (getRun(runId)?.decisions.some((entry) => entry.id === decision.id))
+        updateRun(runId, before);
+      throw error;
+    }
+    console.warn(`[result-decision] hold for ${runId.slice(0, 8)} refused: ${error.message}`);
     return null;
   }
   try {
@@ -224,13 +254,6 @@ export async function holdRunForResultDecision(
     );
   }
   return held;
-}
-
-/** The held run's pending result decision. */
-export function pendingResultDecision(run: Run): RunDecision | undefined {
-  return [...run.decisions]
-    .reverse()
-    .find((decision) => !decision.resolvedAt && decision.payload?.kind === 'result-decision');
 }
 
 /**
@@ -332,6 +355,7 @@ export async function resolveResultDecision(
     throw new Error(`Invalid result decision action: ${params.actionId}`);
   const reason = params.reason?.trim() || undefined;
   let stoppedAt: ResultDecisionStop = 'review';
+  let reasonOfHold = '';
   let resume: ReviewResult | undefined;
   let settled: Run;
   try {
@@ -349,6 +373,7 @@ export async function resolveResultDecision(
         throw new Error('This result decision is no longer pending. Refresh the run.');
       const payload = decision.payload;
       stoppedAt = payload.stoppedAt;
+      reasonOfHold = payload.reason;
       if (
         payload.outputReviewDecisionId &&
         run.decisions.find((entry) => entry.id === payload.outputReviewDecisionId)?.resolvedAt
@@ -391,10 +416,14 @@ export async function resolveResultDecision(
               : entry,
         );
       if (actionId === 'send-back') {
+        // One write: after REVIEW the run is reviewing again; a completion replay
+        // moves it itself, and a refused replay holds it again.
+        if (resume) sendBackReviews.set(params.runId, resume);
         const updated = updateRun(params.runId, {
           decisions: resolveDecisions(null),
           resultDecisionReceipt: receipt,
           error: undefined,
+          ...(payload.stoppedAt === 'review' ? { status: 'reviewing' as const } : {}),
         });
         await persistRunNow(updated, 'result sent back');
         return updated;
@@ -402,6 +431,10 @@ export async function resolveResultDecision(
       const patch: Partial<Run> = {
         status: 'done',
         completedAt: now,
+        // Steps after a REVIEW hold never run once the result is settled.
+        steps: run.steps.map((step) =>
+          step.status === 'pending' ? { ...step, status: 'skipped' as const } : step,
+        ),
         decisions: resolveDecisions(actionId === 'accept-result' ? 'mark-reviewed' : 'close-run'),
         resultDecisionReceipt: receipt,
         // A later recapture on a settled run raises no new output review.
@@ -430,7 +463,7 @@ export async function resolveResultDecision(
     if (error instanceof StaleResultDecisionError) await representResultDecision(params.runId);
     throw error;
   }
-  if (actionId === 'send-back') await sendBack(settled, stoppedAt, resume);
+  if (actionId === 'send-back') await sendBack(settled, stoppedAt, reasonOfHold);
   // Released outside the run lock, like other operator terminal actions.
   else if (settled.slotId && options.releaseSlot !== false)
     await releaseSettledSlot(settled, stoppedAt !== 'review');
@@ -445,21 +478,21 @@ export class StaleResultDecisionError extends Error {
   }
 }
 
-async function sendBack(
-  run: Run,
-  stoppedAt: ResultDecisionStop,
-  resume: ReviewResult | undefined,
-): Promise<void> {
+async function sendBack(run: Run, stoppedAt: ResultDecisionStop, reason: string): Promise<void> {
   if (stoppedAt !== 'review') {
-    // The existing completion replay from the refused step (Amendment 6).
+    // The existing completion replay from the refused step (Amendment 6). A
+    // replay that is refused leaves the run held with a fresh decision.
     const { runReplayStep } = await import('../methods/run/replay-step.js');
     const { broadcastEvent } = await import('../server.js');
-    await runReplayStep({ runId: run.id, stepName: stoppedAt }, broadcastEvent);
+    try {
+      await runReplayStep({ runId: run.id, stepName: stoppedAt }, broadcastEvent);
+    } catch (error) {
+      if (isHeldForResultDecision(getRun(run.id) ?? run))
+        await holdRunForResultDecision(run.id, stoppedAt, reason);
+      throw error;
+    }
     return;
   }
-  if (resume) sendBackReviews.set(run.id, resume);
-  const updated = updateRun(run.id, { status: 'reviewing' });
-  await persistRunNow(updated, 'result sent back for another fix');
   const { startRun } = await import('../run-engine/orchestrator.js');
   void startRun(run.id).catch((error: unknown) =>
     console.error(
@@ -511,9 +544,7 @@ export async function refreshResultDecisionAfterCapture(runId: string): Promise<
   const run = getRun(runId);
   const decision = run && isHeldForResultDecision(run) ? pendingResultDecision(run) : undefined;
   if (!run || !decision || decision.payload?.kind !== 'result-decision') return;
-  const outputReview = [...run.decisions]
-    .reverse()
-    .find((entry) => !entry.resolvedAt && entry.payload?.kind === 'output-review');
+  const outputReview = pendingOutputReview(run);
   const accept = decision.payload.actions.find((action) => action.id === 'accept-result');
   if (
     outputReview?.id === decision.payload.outputReviewDecisionId &&

@@ -469,13 +469,20 @@ async function retainCompletionPrerequisiteFailure(
   // A delivered result waits for a person instead of failing (ADR-065
   // Amendment 7); without one the refusal stays Amendment 6's `failed`.
   if (runDeliveredResult(getRun(runId)!)) {
-    await holdRunForResultDecision(
-      runId,
-      stepName === S.COMPLETE ? 'complete' : 'finalize',
-      error.message,
-      { patch: { metrics: { ...current!.metrics, outcome: 'partial' } } },
-    );
-    return;
+    try {
+      await holdRunForResultDecision(
+        runId,
+        stepName === S.COMPLETE ? 'complete' : 'finalize',
+        error.message,
+        { patch: { metrics: { ...current!.metrics, outcome: 'partial' } } },
+      );
+      return;
+    } catch (holdError) {
+      // Never left `completing`: an unrecorded hold falls back to Amendment 6.
+      console.error(
+        `[run-engine] run ${runId.slice(0, 8)} could not be held for a decision; failing it: ${(holdError as Error).message}`,
+      );
+    }
   }
   const collaborators = terminalCollaborators(Events.RUN_UPDATED, null);
   await routeAndRecordTerminalTransition({
@@ -1108,16 +1115,23 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       if (err instanceof ResultDecisionHoldError) {
         // The step stopped with findings it can no longer fix; the delivered
         // result waits for a person (ADR-065 Amendment 7). Later steps stay
-        // pending so Send back can resume.
-        stepPartialIO.delete(runId);
+        // pending so Send back can resume. A hold that cannot be recorded
+        // fails the run below instead of leaving it reviewing.
         updateRunStep(runId, stepName, {
           status: 'failed',
           detail: err.message,
           inputs: err.stepInputs,
           outputs: err.stepOutputs,
         });
-        await holdRunForResultDecision(runId, 'review', err.message);
-        return;
+        try {
+          await holdRunForResultDecision(runId, 'review', err.message);
+          stepPartialIO.delete(runId);
+          return;
+        } catch (holdError) {
+          console.error(
+            `[run-engine] run ${runId.slice(0, 8)} could not be held for a decision; failing it: ${(holdError as Error).message}`,
+          );
+        }
       }
 
       if (err instanceof MonitorTerminalError) {

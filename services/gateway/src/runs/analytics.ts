@@ -10,6 +10,7 @@ import {
   FAILURE_REASONS,
   type FailureReason,
   type HostLoadSnapshot,
+  isHeldForResultDecision,
   isSuccessfulRun,
   isTerminalRunStatus,
   type LoopStats,
@@ -225,9 +226,10 @@ export function buildAnalyticsRecord(
       : run.resultDecisionReceipt?.action === 'close-result'
         ? 'closed'
         : null;
-  const failedStep = isSuccessfulRun(run) || resultDecision ? null : failingStep(run);
-  const failureReason =
-    isSuccessfulRun(run) || resultDecision ? null : classifyFailureReason(run, failedStep);
+  // A run held for its decision is not a failure either.
+  const notFailed = isSuccessfulRun(run) || resultDecision || isHeldForResultDecision(run);
+  const failedStep = notFailed ? null : failingStep(run);
+  const failureReason = notFailed ? null : classifyFailureReason(run, failedStep);
   const ci = ciOutputs(run);
   const tokens = workerTokens(run);
 
@@ -502,6 +504,16 @@ export function aggregateAnalytics(
  * skip eviction on rejection so a run is never pruned before its record lands. A second emit within
  * the append window can write a duplicate line — harmless, since the query layer dedups by runId.
  */
+/**
+ * A restart re-projects a failed run to `needs-decision` (ADR-065 Amendment 7).
+ * Queries keep each run's latest record, so a newer one stops the old failure
+ * from counting; the settled record replaces it once the decision is made.
+ */
+export async function recordHeldResultAnalytics(run: Run): Promise<void> {
+  if (!run.analyticsEmittedAt || !isHeldForResultDecision(run)) return;
+  await appendAnalyticsRecord(buildAnalyticsRecord(run));
+}
+
 export function emitAnalyticsForTerminalRun(
   run: Run,
   opts?: { backfilled?: boolean },

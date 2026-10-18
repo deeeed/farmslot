@@ -5,16 +5,16 @@
  * renders this; neither recomputes a label, an order or an availability.
  */
 
-import type {
-  ResultDecisionActionId,
-  ResultDecisionActionState,
-  ResultDecisionPayload,
-  Run,
-  RunDecision,
-  RunDecisionPayload,
+import {
+  RESULT_DECISION_ACTION_LABELS,
+  type ResultDecisionActionId,
+  type ResultDecisionActionState,
+  type ResultDecisionPayload,
+  type RunDecision,
+  type RunDecisionPayload,
 } from '@farmslot/protocol';
 
-export type ResultDecision = RunDecision & { payload: ResultDecisionPayload };
+export { pendingResultDecision, type ResultDecision } from '@farmslot/protocol';
 
 /**
  * A result decision is answered where its reason field and unavailable actions show:
@@ -23,15 +23,6 @@ export type ResultDecision = RunDecision & { payload: ResultDecisionPayload };
  */
 export function isResultDecision(decision: { payload?: RunDecisionPayload }): boolean {
   return decision.payload?.kind === 'result-decision';
-}
-
-/** The run's open result decision, which clients present before any other pending decision. */
-export function pendingResultDecision(
-  run: Pick<Run, 'decisions'> | null | undefined,
-): ResultDecision | undefined {
-  return run?.decisions.find(
-    (decision): decision is ResultDecision => !decision.resolvedAt && isResultDecision(decision),
-  );
 }
 
 /**
@@ -85,13 +76,13 @@ const ACTIONS: Record<
   ResultDecisionActionId,
   Pick<ResultDecisionActionView, 'label' | 'style' | 'note'>
 > = {
-  'send-back': { label: 'Send back for another fix', style: 'primary' },
+  'send-back': { label: RESULT_DECISION_ACTION_LABELS['send-back'], style: 'primary' },
   'accept-result': {
-    label: 'Accept',
+    label: RESULT_DECISION_ACTION_LABELS['accept-result'],
     style: 'secondary',
     note: 'Settles the run as done. Publishes nothing.',
   },
-  'close-result': { label: 'Close', style: 'danger' },
+  'close-result': { label: RESULT_DECISION_ACTION_LABELS['close-result'], style: 'danger' },
 };
 const ORDER = Object.keys(ACTIONS) as ResultDecisionActionId[];
 

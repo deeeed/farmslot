@@ -23,6 +23,7 @@ import {
   MARK_CLAIM_UNTESTABLE_ACTION,
   Methods,
   observedReviewSessionContinuity,
+  pendingResultDecision,
   REJECT_VISUAL_CLAIM_ACTION,
   type ResultDecisionPayload,
   type ReviewChainEntry,
@@ -160,10 +161,13 @@ export function buildRunGateParams(
   }
   // A result decision takes a written reason of its own (ADR-065 Amendment 7).
   if (decision.payload?.kind === 'result-decision')
-    return {
-      ...buildRunResolveDecisionParams({ runId: run.id, decision, actionId, selectionData }),
-      ...(options.reason?.trim() ? { reason: options.reason.trim() } : {}),
-    };
+    return buildRunResolveDecisionParams({
+      runId: run.id,
+      decision,
+      actionId,
+      selectionData,
+      ...(options.reason !== undefined ? { reason: options.reason } : {}),
+    });
   return buildRunResolveDecisionParams({
     runId: run.id,
     decision,
@@ -965,7 +969,7 @@ export function registerRunCommand(program: Command): void {
           (pending.length === 1
             ? pending[0].id
             : isHeldForResultDecision(current)
-              ? pending.find((d) => d.payload?.kind === 'result-decision')?.id
+              ? pendingResultDecision(current)?.id
               : undefined);
         if (!decisionId) {
           throw Object.assign(new Error(`Run has ${pending.length} pending decisions.`), {
