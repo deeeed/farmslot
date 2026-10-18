@@ -8,7 +8,7 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## 0.6.24 - 2026-10-18
 
-- Align with `@farmslot/agent-runtime` 0.29.2.
+- Align with `@farmslot/agent-runtime` 0.29.2, which merges a QA task's case packages into one acceptance ledger.
 
 ## 0.6.23 - 2026-10-17
 

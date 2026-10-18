@@ -2,9 +2,8 @@
   "version": "0.23.0",
   "date": "2026-10-18",
   "items": [
-    "The idle resource cleanup preview states that a disabled slot's running resources are included; manual, active, held, working and current-run slots stay excluded",
-    "The sidebar Runs badge counts exactly the Runs Active tab, including its global project and machine filters. The compare picker's family active count, the dispatch wizard's duplicate-run warning and slot summary, and the pinned slot's fallback run use the same active rule, and family grading waits until a run is no longer active",
-    "Count a family's active runs with the shared active rule, and load every active run for the terminal's Active Runs and pinned views instead of the newest 1000 runs",
-    "Read the run results card, acceptance tally, report link resolution, web-link check and artifact HTML policy from the shared review-dispatch view model, which Companion now renders too. The output for real reports is unchanged; a malformed web link (no host, or credentials hidden behind a backslash) now loses its link instead of opening"
+    "The idle cleanup preview says that disabled slots' running resources are included; manual, active, held, working and current-run slots stay excluded",
+    "Run counts in the sidebar badge, family views, dispatch warnings and pinned views use the same active rule as the Runs Active tab, and active views load every active run instead of the newest 1000",
+    "Run results, the acceptance tally and report links render from the same view model as Companion; a malformed web link in a report no longer opens"
   ]
 }

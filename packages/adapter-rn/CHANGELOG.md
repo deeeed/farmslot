@@ -8,7 +8,7 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## 0.22.25 - 2026-10-18
 
-- Align with `@farmslot/agent-runtime` 0.29.2, whose QA task acceptance ledger merges case executions by criterion, and `@farmslot/protocol` 0.55.0.
+- Align with `@farmslot/agent-runtime` 0.29.2, whose QA task acceptance ledger merges case executions by criterion, `@farmslot/protocol` 0.55.0 and `@farmslot/recipe-runner` 0.39.2.
 
 ## 0.22.24 - 2026-10-17
 
