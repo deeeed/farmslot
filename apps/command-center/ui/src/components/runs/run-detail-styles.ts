@@ -248,6 +248,23 @@ export const runDetailStyles = css`
     flex-wrap: wrap;
     margin-bottom: ${unsafeCSS(spacing.sm)};
   }
+  .result-links {
+    margin-top: ${unsafeCSS(spacing.md)};
+  }
+  .result-links .evidence-link {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding-block: 0;
+  }
+  .result-evidence > summary {
+    min-height: 44px;
+    box-sizing: border-box;
+    padding-block: 12px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+  }
   .evidence-link {
     background: transparent;
     font-family: inherit;

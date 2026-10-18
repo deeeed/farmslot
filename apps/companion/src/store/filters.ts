@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
 import type { PendingDecision, Run, SlotStatus } from '@farmslot/protocol';
+import { evidenceOnlyDecisionIds } from '@farmslot/review-dispatch';
 
 export const GLOBAL_FILTERS_STORAGE_KEY = '@farmslot:globalFilters';
 
@@ -178,7 +179,10 @@ export function filterDecisions(
   slotById: Map<string, SlotFilterContext>,
 ): PendingDecision[] {
   const normalized = normalizeFilters(filters);
+  // A held run's output review is the evidence under its result decision, not an item.
+  const evidenceOnly = evidenceOnlyDecisionIds(decisions);
   return decisions.filter((decision) => {
+    if (evidenceOnly.has(decision.id)) return false;
     const context = decision.slotId ? slotById.get(decision.slotId) : undefined;
     const project = context?.project ?? getDecisionContextString(decision.context, 'project');
     const machine =

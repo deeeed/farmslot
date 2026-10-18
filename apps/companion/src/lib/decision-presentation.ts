@@ -133,6 +133,7 @@ function labelForKind(kind: string): string {
     slot_picker: 'Slot picker',
     branch_affinity_nudge: 'Branch nudge',
     improvement: 'Improvement',
+    'result-decision': 'Needs decision',
   };
   return labels[kind] ?? kind.replace(/[_-]/g, ' ');
 }
@@ -184,7 +185,7 @@ function toneForPayload(
   }
   if (kind === 'no-change')
     return stringField(payload, 'disposition') === 'not_reproducible' ? 'warn' : 'ok';
-  if (kind === 'collision' || kind === 'slot_picker') return 'warn';
+  if (kind === 'collision' || kind === 'slot_picker' || kind === 'result-decision') return 'warn';
   return isFailingType(type) ? 'fail' : 'info';
 }
 

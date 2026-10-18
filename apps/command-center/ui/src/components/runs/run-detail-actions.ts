@@ -212,6 +212,8 @@ export interface ConfirmDecisionContext extends ConfirmTimerContext {
    */
   resourcePosture?: () => ResourcePostureGateChoice | null;
   triageAssessmentId?: () => string | undefined;
+  /** Written reason for a result decision; `accept-result` requires one (ADR-065 Amendment 7). */
+  reason?: string;
   /** Called with the resolved run so the caller can surface the apply outcome. */
   onDecisionResolved?: (run: Run) => void;
   onDecisionAttempt?: () => void;
@@ -293,6 +295,7 @@ export function confirmRunDecision(
   const isDanger =
     actionId === 'abort' ||
     actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION ||
+    actionId === 'close-result' ||
     (actionId === 'rework' && decision.type !== 'retrospective');
   if (!isDanger || context.pendingConfirm() === actionId) {
     clearTimeout(context.confirmTimer());
@@ -309,6 +312,7 @@ export function confirmRunDecision(
           actionId,
           ...(resourcePosture ? { resourcePosture } : {}),
           ...(triageAssessmentId ? { triageAssessmentId } : {}),
+          ...(context.reason ? { reason: context.reason } : {}),
         }),
       )
       .then((result) => {

@@ -37,6 +37,7 @@ import {
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
+  resultDecisionView,
   ReviewDispatchViewModel,
   reviewLineagesForRun,
   reviewRequestContextForRun,
@@ -45,6 +46,7 @@ import {
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer, type MediaViewerItem } from '../../components/MediaViewer';
+import { ResultDecisionPanel } from '../../components/ResultDecisionPanel';
 import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
 import {
   acceptancePanelViewportHeight,
@@ -340,11 +342,22 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const runPosture = runPostureStatus.state?.posture;
   // The gate review's publish guard applies here too: this tab sends the same actions.
   const humanGate = useHumanGateGuard(client, sourceRun, decision);
+  // A held run's output review carries the evidence and overrides shown under its result decision.
+  const outputReviewDecision =
+    decision?.payload?.kind === 'result-decision'
+      ? sourceRun?.decisions.find(
+          (item) =>
+            decision.payload?.kind === 'result-decision' &&
+            item.id === decision.payload.outputReviewDecisionId,
+        )
+      : decision;
   const outputReviewPayload =
-    decision?.payload?.kind === 'output-review' ? decision.payload : undefined;
+    outputReviewDecision?.payload?.kind === 'output-review'
+      ? outputReviewDecision.payload
+      : undefined;
   const outputAcceptance = useRunAcceptance(client, outputReviewPayload ? sourceRun : null, {
     reportSnapshot: outputReviewPayload,
-    decisionId: outputReviewPayload ? decision?.id : undefined,
+    decisionId: outputReviewPayload ? outputReviewDecision?.id : undefined,
   });
   const reviewBudget =
     decision?.payload?.kind === 'ready' ? decision.payload.reviewRoundBudget : null;
@@ -611,7 +624,9 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     return () => clearInterval(timer);
   }, [fetchTaskProgress, sourceRun]);
   const markOutputClaimUntestable = async (claimId: string, reason: string) => {
-    const gate = sourceRun?.decisions.find(({ id }) => id === resolvedDecisionId);
+    const gate = sourceRun?.decisions.find(
+      ({ id }) => id === (outputReviewDecision?.id ?? resolvedDecisionId),
+    );
     const model = outputAcceptance.evidenceModel;
     if (!client || !sourceRun || !gate || !model) return;
     try {
@@ -630,7 +645,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     }
   };
   const resolveAction = useCallback(
-    (actionId: string, selectionData?: Record<string, unknown>) => {
+    (actionId: string, selectionData?: Record<string, unknown>, reason?: string) => {
       if (!client || !decision) return;
       if (
         actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
@@ -680,6 +695,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             ? { slotId: slotPicker.selectedSlotId }
             : selectionData,
         actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION ? attestationReason : undefined,
+        reason,
       );
 
       // Transition ids already on screen. `run.resolveDecision` returns before
@@ -1694,7 +1710,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                       criterionId,
                       path,
                       outputAcceptance.recipeRunId,
-                      decision?.id,
+                      outputReviewDecision?.id,
                     ),
                   )
                 }
@@ -1875,6 +1891,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                     setEvidenceReason({ decisionId: decision.id, text })
                   }
                   onResolve={(action, selection) => resolveAction(action.id, selection)}
+                />
+              ) : decision.payload?.kind === 'result-decision' ? (
+                <ResultDecisionPanel
+                  view={resultDecisionView({ id: decision.id, payload: decision.payload })}
+                  disabled={!client}
+                  onAction={(actionId, reason) => resolveAction(actionId, undefined, reason)}
                 />
               ) : (
                 presentation.actions.map((action) => {
