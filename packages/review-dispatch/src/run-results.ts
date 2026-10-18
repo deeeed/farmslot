@@ -34,8 +34,9 @@ export interface AcceptancePanelPresentation {
   counts: string;
   /** Long-form tally for the header tooltip or accessibility label, including the zero buckets. */
   countsTooltip: string;
-  /** True while any criterion is unproven — the panel opens in that case. */
-  hasOpenCriteria: boolean;
+  /** The panel opens by default once a criterion is assessed and not all are proven.
+   * While nothing is assessed, the counts line is the whole view and the list opens on demand. */
+  defaultOpen: boolean;
 }
 
 export function acceptancePanelPresentation(
@@ -50,7 +51,7 @@ export function acceptancePanelPresentation(
     countsTooltip:
       `proven ${summary.proven} · weak ${summary.weak} · missing ${summary.missing} · ` +
       `untestable ${summary.untestable} · not assessed ${summary.unrecorded}`,
-    hasOpenCriteria: summary.proven + summary.untestable < summary.total,
+    defaultOpen: assessed > 0 && summary.proven + summary.untestable < summary.total,
   };
 }
 

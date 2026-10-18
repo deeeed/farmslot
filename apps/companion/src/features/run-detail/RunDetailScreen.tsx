@@ -4,7 +4,7 @@ import { Alert, Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import { createEvidenceReviewModel, runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
   type AcceptanceCriterionRef,
   type AcceptanceStatusLedger,
@@ -203,6 +203,7 @@ export default function RunDetailScreen() {
     requestedRecipeRunIdRef.current = requestedRecipeRunId;
   }, [requestedRecipeRunId]);
 
+  const evidencePending = run ? runEvidencePending(run) : false;
   const evidenceModel = useMemo(
     () =>
       createEvidenceReviewModel({
@@ -216,13 +217,21 @@ export default function RunDetailScreen() {
         visualReviewAuthority: recordedEvidence?.visualReviewAuthority,
         visualReviewContext: recordedEvidence?.visualReviewContext,
         readErrors: recordedEvidence?.errors,
+        evidencePending,
         artifactPrefix: recordedEvidence?.artifactPrefix,
         packagePath: recordedEvidence?.packagePath,
         ledger: acceptanceStatus,
         criteria: acceptanceCriteria ?? undefined,
         report: recordedEvidence?.report,
       }),
-    [acceptanceCriteria, acceptanceStatus, outputReview, recordedEvidence, run?.output],
+    [
+      acceptanceCriteria,
+      acceptanceStatus,
+      outputReview,
+      recordedEvidence,
+      run?.output,
+      evidencePending,
+    ],
   );
   const runResults = useMemo(
     () => (run ? runResultsSummary(run, extractRunArtifactManifest(run).length) : null),

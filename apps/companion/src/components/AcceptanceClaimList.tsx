@@ -55,7 +55,9 @@ export function AcceptanceClaimList({
   disabled,
   onRecord,
   onFocus,
+  canFocus,
   renderDetails,
+  hasDetails,
   onBusyChange,
   testIDPrefix = 'companion-ac-row',
 }: {
@@ -64,7 +66,11 @@ export function AcceptanceClaimList({
   onBusyChange?: (busy: boolean) => void;
   onRecord?: (id: string, verdict: 'confirmed' | 'rejected', reason?: string) => Promise<void>;
   onFocus?: (id: string) => void;
+  /** False hides a row's Review evidence: there is nothing for it to open. */
+  canFocus?: (id: string) => boolean;
   renderDetails?: (id: string) => ReactNode;
+  /** Whether a row has anything behind "More"; without it, More shows whenever there are details. */
+  hasDetails?: (id: string) => boolean;
   testIDPrefix?: string;
 }) {
   const appearance = useColorScheme();
@@ -131,20 +137,22 @@ export function AcceptanceClaimList({
             </Text>
           </Pressable>
           <ClaimState claim={claim} palette={palette} />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Review evidence for ${claim.id}`}
-            onPress={() => onFocus?.(claim.id)}
-            disabled={!onFocus}
-            style={button}
-          >
-            <Text style={{ color: palette.text }}>
-              Review evidence
-              {claim.judgment?.media.clip
-                ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
-                : ''}
-            </Text>
-          </Pressable>
+          {canFocus?.(claim.id) === false ? null : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Review evidence for ${claim.id}`}
+              onPress={() => onFocus?.(claim.id)}
+              disabled={!onFocus}
+              style={button}
+            >
+              <Text style={{ color: palette.text }}>
+                Review evidence
+                {claim.judgment?.media.clip
+                  ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
+                  : ''}
+              </Text>
+            </Pressable>
+          )}
           {claim.judgment && claim.judgment.claim.status?.proofMode !== 'state' ? (
             <VisualClaimJudgment
               row={claim.judgment}
@@ -156,7 +164,7 @@ export function AcceptanceClaimList({
               }}
             />
           ) : null}
-          {renderDetails ? (
+          {renderDetails && (hasDetails?.(claim.id) ?? true) ? (
             <>
               <Pressable
                 accessibilityRole="button"
@@ -181,7 +189,7 @@ export function AcceptanceClaimList({
               {claim.detail ? (
                 <Text style={{ color: palette.secondary }}>{claim.detail}</Text>
               ) : null}
-              {renderDetails?.(claim.id)}
+              {hasDetails?.(claim.id) === false ? null : renderDetails?.(claim.id)}
             </View>
           ) : null}
         </View>

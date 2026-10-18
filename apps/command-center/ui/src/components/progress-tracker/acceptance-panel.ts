@@ -18,6 +18,7 @@ import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import {
   createEvidenceReviewModel,
   type EvidenceReviewClaim,
+  type EvidenceReviewClaimOffers,
   type EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
 import type {
@@ -62,6 +63,7 @@ export const acceptancePanelStyles = css`
     display: flex;
     align-items: center;
     gap: ${unsafeCSS(spacing.sm)};
+    min-height: 44px;
     padding: 4px ${unsafeCSS(spacing.md)};
     cursor: pointer;
     list-style: none;
@@ -400,6 +402,9 @@ function renderRowDetails(
             )}
           </details>`
         : nothing}
+      ${view.timing && view.timing !== 'measured'
+        ? html`<div class="ac-note">${view.timing}</div>`
+        : nothing}
       ${criterion?.note ? html`<div class="ac-note">${criterion.note}</div>` : nothing}
       ${criterion?.engineVerdict
         ? html`<div class="ac-note">Engine verdict: ${criterion.engineVerdict}</div>`
@@ -497,7 +502,7 @@ export function renderAcceptancePanel(
       class="ac-panel"
       data-testid="acceptance-panel"
       ?data-proof-steps=${Boolean(options.showOccurrences)}
-      ?open=${view.hasOpenCriteria ||
+      ?open=${view.defaultOpen ||
       Boolean(options.error) ||
       Boolean(model?.errors.length) ||
       Boolean(model?.claims.some((claim) => claim.kind === 'qa-case'))}
@@ -536,12 +541,15 @@ export function renderAcceptancePanel(
           }),
           {
             ...options.judgments,
+            canFocus: options.judgments?.focusClaim
+              ? undefined
+              : (id) => Boolean(model.claimFocusPath(id)),
             focusClaim:
               options.judgments?.focusClaim ??
               (options.openEvidence
                 ? (id) => {
                     const row = rows.find(({ view }) => view.id === id);
-                    if (!row || !row.evidence.length) return;
+                    if (!row || !model.claimFocusPath(id)) return;
                     model.selectClaim(id);
                     const selected = model.claimDisplay(id).selected[0]?.artifactPath;
                     options.openEvidence?.({
@@ -554,7 +562,11 @@ export function renderAcceptancePanel(
                 : undefined),
             details: (id) => {
               const row = rows.find(({ view }) => view.id === id);
-              return row
+              const offers: EvidenceReviewClaimOffers = {
+                playable: Boolean(options.openEvidence),
+                overridable: Boolean(options.markUntestable),
+              };
+              return row && model.claimHasDetails(id, offers)
                 ? renderRowDetails(
                     row,
                     model,

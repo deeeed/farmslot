@@ -111,9 +111,11 @@ export interface AcceptanceLedgerView {
   countsColor: string;
   /** Registered criteria with no verdict recorded yet. */
   unassessed: number;
-  /** True while any criterion is neither proven nor recorded untestable. */
-  hasOpenCriteria: boolean;
+  /** Open by default once a criterion is assessed and not all are proven (shared rule). */
+  defaultOpen: boolean;
   rows: AcceptanceLedgerRow[];
+  /** The shared model the rows come from, for questions such as whether a row has details. */
+  model: EvidenceReviewModel;
 }
 
 /**
@@ -136,7 +138,8 @@ export function acceptanceLedgerView(
     // An unjudged criterion blocks a publish decision, so the tally must not read as neutral.
     countsColor: summary.unrecorded > 0 ? colors.statusFail : colors.textSecondary,
     unassessed: summary.unrecorded,
-    hasOpenCriteria: presentation.hasOpenCriteria,
+    defaultOpen: presentation.defaultOpen,
+    model,
     rows: model.claims.map((criterion) => ({
       display: model.claimDisplay(criterion.id),
       criterion,

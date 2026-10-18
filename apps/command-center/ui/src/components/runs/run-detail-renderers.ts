@@ -76,6 +76,7 @@ import {
   runModeLabel,
   runStatusColor,
   runTemplateFileName,
+  variantNamesOtherEngine,
 } from './run-utils.js';
 
 export interface RunDetailViewContext {
@@ -500,9 +501,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   // run is sitting in it.
   const slotFreedByPark = isSlotFreedByPark(r);
   const executionTemplate = r.executionTemplate ?? r.templateProvenance?.executionTemplate;
-  const variantDrift = Boolean(
-    r.variant && engine.runner && !r.variant.startsWith(`${engine.runner}-`),
-  );
+  const variantDrift = Boolean(r.variant && variantNamesOtherEngine(r.variant, engine));
 
   return html`
     ${backToRuns}

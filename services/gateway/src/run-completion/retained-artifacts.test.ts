@@ -124,11 +124,21 @@ test('a generation change during acquisition cannot replace the committed snapsh
 test('unretained artifact discovery refuses without any live slot fallback', async () => {
   const f = await fixture();
   updateRun(f.runId, { slotId: 'unavailable-proof-slot', status: 'done' });
-  await assert.rejects(
-    runRecipeRunsForRun({ runId: f.runId }),
-    /Run artifacts are not retained.*bundle retain/,
-  );
+  await assert.rejects(runRecipeRunsForRun({ runId: f.runId }), {
+    code: 'RUN_ARTIFACTS_NOT_RETAINED',
+    message: 'Run artifacts are not retained.',
+    userAction: `farmslot runs bundle retain ${f.runId}`,
+  });
   assert.equal(await readFile(path.join(f.taskDir, 'artifacts/report.html'), 'utf8'), f.body);
+});
+
+test('a run still working has no evidence to judge yet, not an evidence error', async () => {
+  const f = await fixture();
+  updateRun(f.runId, { slotId: 'unavailable-proof-slot', status: 'monitoring' });
+  const result = await runRecipeRunsForRun({ runId: f.runId, includeRecordedEvidence: true });
+  assert.deepEqual(result.recipeRuns, []);
+  assert.deepEqual(result.recordedEvidence?.errors, []);
+  assert.equal(result.recordedEvidence?.failureCode, undefined);
 });
 
 test(

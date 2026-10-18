@@ -119,7 +119,7 @@ function TaskAcceptanceContent({
     setShowWarnings(false);
   }, [evidenceModel]);
   const packageStatus = evidenceModel?.packageStatus;
-  const [expanded, setExpanded] = React.useState(view.hasOpenCriteria || Boolean(error));
+  const [expanded, setExpanded] = React.useState(view.defaultOpen || Boolean(error));
   React.useEffect(() => {
     if (
       error ||
@@ -128,6 +128,10 @@ function TaskAcceptanceContent({
     )
       setExpanded(true);
   }, [error, evidenceModel]);
+  // Opens once when the first criterion is assessed; a later refresh keeps the user's choice.
+  React.useEffect(() => {
+    if (view.defaultOpen) setExpanded(true);
+  }, [view.defaultOpen]);
   if (view.rows.length === 0 && !error && !packageStatus && !evidenceModel?.occurrences.length)
     return null;
   return (
@@ -230,12 +234,17 @@ function TaskAcceptanceContent({
           onFocus={
             onOpenEvidence
               ? (id) => {
-                  const row = view.rows.find(({ criterion }) => criterion.id === id);
-                  if (!row) return;
-                  const path = row.display.selected[0]?.artifactPath ?? row.evidence[0]?.path;
+                  const path = view.model.claimFocusPath(id);
                   if (path) onOpenEvidence(id, path);
                 }
               : undefined
+          }
+          canFocus={(id) => Boolean(view.model.claimFocusPath(id))}
+          hasDetails={(id) =>
+            view.model.claimHasDetails(id, {
+              playable: Boolean(onOpenEvidence),
+              overridable: Boolean(onMarkUntestable),
+            })
           }
           renderDetails={(id) => {
             const row = view.rows.find(({ criterion }) => criterion.id === id);
@@ -301,7 +310,9 @@ function TaskAcceptanceContent({
                   </Pressable>
                 ) : null}
                 {renderFiles(criterion.id, display.selected)}
-                {display.raw.length || review?.occurrences.length ? (
+                {display.raw.length ||
+                review?.occurrences.length ||
+                criterion.status?.recipeNodes.length ? (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityState={{ expanded: rawClaims.has(criterion.id) }}
@@ -326,6 +337,11 @@ function TaskAcceptanceContent({
                 ) : null}
                 {rawClaims.has(criterion.id) ? (
                   <View>
+                    {criterion.status?.recipeNodes.map((node) => (
+                      <Text key={node} style={baseStyles.textMuted}>
+                        {node}
+                      </Text>
+                    ))}
                     {review?.occurrences.map((occurrence) => (
                       <View key={occurrence.traceIndex}>
                         <Text style={styles.text}>{occurrence.intent}</Text>
