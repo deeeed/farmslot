@@ -920,3 +920,40 @@ segment's `zeroBoundAtUnixMs`, and its clock source is
 `adb-screenrecord-first-write`. The MetaMask harness forwards `ready()` from its
 `withRecordingOutcomes` wrapper with its dependency bump. Normative timing rule:
 [the recorded-evidence specification](../reference/recorded-run-evidence.md).
+
+## Amendment 16 (2026-10-18): A restarted segment gets the first bind's lead-in
+
+**Status:** Accepted (lead, 2026-10-18). Ships in #1315.
+
+### Decision
+
+`ready()` resolves only once the current segment has recorded one
+`EVIDENCE_PADDING_MS` past its latest possible frame zero. A proof node that
+follows a capture restart therefore gets the same lead-in as the first proof node
+after the bind (Amendment 14). Android `adb screenrecord` implements it in its
+`ready()`; a segment older than that resolves at once, so only a node within one
+padding of a segment's zero waits: one right after a restart, or the first proof
+node of an explicit recording that started at run entry, which had no lead-in.
+
+### Rationale and consequences
+
+A replay of QA-03 (mobile release QA run e29f5a2b) on the Pixel 6a with
+recipe-runner 0.39.4 and adapter-rn 0.22.27 measured 17 of 18 AC-1 moments, and
+AC-1..3 stayed weak. The 13.4 s `ui.wait_for` `ac1-guard/guard-gone` started at the
+third segment's latest frame zero, right after the 150 s roll. In the previous
+segment its start bound began at 151845 ms, inside that segment's 152070 ms, so the
+node overlapped both segments across the restart gap and counted as outside
+recording. Amendment 15 waited for the new segment's zero but gave the node no
+lead-in. With it, the node starts at least 1300 ms after the previous segment's
+stop, clearing that segment's latest possible media end (its stop plus 525 ms: a
+308 ms zero window and 217 ms of media past its lifetime) by 775 ms. One padding
+suffices while a segment's media runs past its stop by less than one padding plus
+the next segment's zero window. A node right after a restart now waits up to 1 s
+more, about once every 150 s of recording.
+
+### Public surface
+
+No new API. `ActiveVideoRecording.ready()` resolves up to one
+`EVIDENCE_PADDING_MS` later after a restart. Harness wrappers already forward
+`ready()`. Normative timing rule:
+[the recorded-evidence specification](../reference/recorded-run-evidence.md).

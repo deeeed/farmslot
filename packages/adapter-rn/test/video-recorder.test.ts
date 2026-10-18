@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
+import { EVIDENCE_PADDING_MS } from '@farmslot/protocol';
 import type { ActiveVideoRecording, VideoRecorderStartRequest } from '@farmslot/recipe-runner';
 
 import { createAndroidVideoRecorder } from '../src/video-recorder.js';
@@ -190,6 +191,7 @@ test('ready waits through a 180-second roll until the restarted segment has a fr
     d.calls().filter((call) => call.startsWith('shell screenrecord --time')).length;
   await waitFor(() => assert.equal(starts(), 2));
   await recording.ready!();
+  const readyAt = Date.now();
   const restarted = fs
     .readdirSync(path.join(d.dir, 'device'))
     .find((name) => name.endsWith('-1.mp4'));
@@ -198,7 +200,12 @@ test('ready waits through a 180-second roll until the restarted segment has a fr
     fs.statSync(path.join(d.dir, 'device', restarted)).size > 0,
     'ready waited for its frame',
   );
-  assert.equal((await recording.stop()).segments.length, 2);
+  const { segments } = await recording.stop();
+  assert.equal(segments.length, 2);
+  // The next proof node gets the first bind's lead-in after the restarted segment's zero.
+  const zero = segments[1]?.timing?.clock?.latestZeroUnixMs;
+  assert.ok(zero !== undefined, 'the restarted segment has a measured clock');
+  assert.ok(readyAt - zero >= EVIDENCE_PADDING_MS - 10, `ready ${readyAt - zero} ms after zero`);
 });
 
 test('ready restarts a segment past 150 seconds, so the roll falls between proof nodes', async (t) => {
@@ -215,7 +222,11 @@ test('ready restarts a segment past 150 seconds, so the roll falls between proof
   const rollRequestedAt = realNow();
   await recording.ready!();
   assert.equal(starts(), 2, 'an old segment restarts before its limit');
-  assert.ok(realNow() - rollRequestedAt >= 990, 'one evidence padding is recorded first');
+  // One padding of the old segment's tail before the restart, then the new segment's lead-in.
+  assert.ok(
+    realNow() - rollRequestedAt >= 2 * EVIDENCE_PADDING_MS - 20,
+    'a padding before the restart and a lead-in after it',
+  );
   const restarted = fs
     .readdirSync(path.join(d.dir, 'device'))
     .find((name) => name.endsWith('-1.mp4'));
