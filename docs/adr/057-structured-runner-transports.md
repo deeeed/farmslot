@@ -156,7 +156,7 @@ runtime update.
 
 ## Amendment 2: recover a host stopped with a live session, 2026-10-18
 
-**Status:** Proposed; lead-authorized scope, acceptance follows paired review.
+**Status:** Accepted 2026-10-18 by the lead after paired review of 064fa7f7.
 
 ### Decision
 
