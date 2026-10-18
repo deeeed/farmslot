@@ -397,7 +397,7 @@ test('a bound release that loses its preflight owner returns not released', asyn
   claimBeforeMark = true;
   assert.deepEqual(
     await slotRelease({ slotId: SLOT_ID, keepWork: true, expectedRunId: 'finished' }, emit),
-    { released: false },
+    { released: false, reason: `Slot ${SLOT_ID} is held by run incoming, not run finished` },
   );
   assert.equal(slotRow.current_run_id, 'incoming');
   assert.equal(markerWrites, 0);
@@ -465,7 +465,7 @@ test('a bound owner change during teardown returns not released and preserves th
   };
   assert.deepEqual(
     await slotRelease({ slotId: SLOT_ID, keepWork: true, expectedRunId: 'finished' }, lateClaim),
-    { released: false },
+    { released: false, reason: `Slot ${SLOT_ID} moved to another owner` },
   );
   assert.equal(slotRow.current_run_id, 'incoming');
   assert.equal(slotRow.phase, 'working');
@@ -480,7 +480,7 @@ test('an older replay cannot release a newer claim by the same run', async () =>
       restartRunId: 'incoming',
       expectedSlotEpoch: 1,
     }),
-    { released: false },
+    { released: false, reason: `Slot ${SLOT_ID} moved past epoch 1` },
   );
   assert.equal(markerWrites, 0);
   assert.equal(slotRow.slot_epoch, 2);
