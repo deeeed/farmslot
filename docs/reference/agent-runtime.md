@@ -31,7 +31,12 @@ owns recovery of a stopped host whose cleanup marker remains unresolved.
 - Every retained session journal MUST be complete and readable. Its latest state
   MUST be closed or failed, its process stop confirmed, and its runner group absent.
   Recorded detached descendants and their groups MUST also be absent.
-  Malformed, torn, active or unconfirmed records MUST refuse recovery.
+  Malformed or torn records MUST refuse recovery, and so MUST active or unconfirmed
+  records except as below.
+- A session whose recorded runner belongs to the failed host MAY still be active or
+  unconfirmed, because that host stopped before its cleanup could record the stop.
+  Its runner, runner group and recorded descendants MUST then pass the same fresh
+  absence checks. Recovery leaves the journal unchanged; the new host marks it failed.
 - Journal process observations MUST come from the failed host's latest session
   generations, using the normal journal process projection. Older confirmed stops
   MUST NOT block because an unrelated process reused a historical PID. A different
