@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Backlog and auto-recovery edits for a pack-copied project are written to the farm's runtime settings instead of its `project.json`, so `farmslot update` no longer reverts them. The fleet loader reads them back. As for a source-bound project, it takes such a project's visual-claim delegation only from runtime settings, never from the pack's `project.json`.
 
 ## 0.24.0 - 2026-10-18
 
@@ -12,7 +12,6 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - `run.replayStep` checks PR ownership before it changes the run. A finished run whose PR another run now owns is refused with its steps untouched, so a discarded run keeps its refusal and discard stamp; before, the steps were reset and only the final status write refused.
 - PR execution ownership uses the shared `isActiveListRun` rule: a refused completion whose workspace was discarded no longer owns its PR, so a new run can be admitted on that PR. Reviving the discarded run while another run owns the PR is still refused.
 - Idle resource cleanup (`resource.cleanup` and the pressure snapshot's cleanup candidates) now covers disabled slots, so a simulator or dev server a disabled slot left running can be found and stopped; manual slots stay excluded. Disabled slots have no resource watches, so cleanup probes an eligible one at most once a minute, keeping its status at most a minute stale (a remote slot whose node is not connected is skipped, not waited on). A live cleanup verifies each stopped simulator with a fresh probe instead of the cached status, which reported every stopped simulator on an idle slot as still running.
-- Backlog and auto-recovery edits for a pack-copied project are written to the farm's runtime settings instead of its `project.json`, so `farmslot update` no longer reverts them. The fleet loader reads them back. As for a source-bound project, it takes such a project's visual-claim delegation only from runtime settings, never from the pack's `project.json`.
 - The named forced slot release (`slot.release` with `forceReset` and `expectedRunId`) of a refused completion stamps `gatePrerequisiteDiscardedAt` on the refused step and publishes the run to every client. The run leaves active lists, its work-graph `family-done` edge resolves without waiting for another event, and the family view allows grading; the refusal stays as history.
 - Work-graph `family-done` edges wait while a family run is active by `isActiveListRun`, so a failed run that still holds its slot is not yet a terminal outcome, and family snapshots mark each run `active`. The PR dashboard's worker-active flag reads `ACTIVE_RUN_STATUSES`: runs that are fixing or reconciling now show as working, created runs no longer do. Hand-written done/failed/cancelled lists call `isTerminalRunStatus`.
 - A run admission or new source attempt advances the source revision once; the engine's next `run.updated` no longer advances it again.
