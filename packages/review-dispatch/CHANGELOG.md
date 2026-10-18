@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The needs-decision view model that Command Center and Companion share (ADR-065 Amendment 7): `resultDecisionView`, `pendingResultDecision`, `isResultDecision`, `evidenceOnlyDecisionIds` and `resultDecisionActionReady`.
 - `acceptancePanelPresentation` returns `defaultOpen` in place of `hasOpenCriteria`. While no criterion is assessed, the panel shows only its counts line and the criteria list opens on demand.
 
 ## 0.2.5 - 2026-10-18

@@ -1,4 +1,5 @@
 import type { RunDecision } from '@farmslot/protocol';
+import { pendingResultDecision } from '@farmslot/review-dispatch';
 
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
 
@@ -58,6 +59,7 @@ export function selectPrimaryWorkspaceDecision(
   source: WorkspaceDecisionSource | null | undefined,
 ): RunDecision | null {
   return (
+    pendingResultDecision({ decisions: source?.decisions ?? [] }) ??
     selectReviewWorkspaceDecision(source) ??
     selectRetrospectiveWorkspaceDecision(source) ??
     latestDecisionMatching(source?.decisions, () => true)

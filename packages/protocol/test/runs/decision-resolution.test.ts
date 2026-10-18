@@ -220,3 +220,27 @@ test('improvement outcome keeps refused or validation-failed cards pending', () 
   assert.equal(refused.passed, false);
   assert.match(refused.message, /stale-anchor/);
 });
+
+test('a result decision carries its written reason, trimmed, and only when given', () => {
+  const decision = { id: 'result-1', payload: undefined };
+  const accept = buildRunDecisionActionRequest({
+    runId: 'run-1',
+    decision,
+    actionId: 'accept-result',
+    reason: '  Comparison lane: the findings are known and tracked.  ',
+  });
+  assert.equal(accept.method, 'run.resolveDecision');
+  assert.equal(
+    (accept.params as { reason?: string }).reason,
+    'Comparison lane: the findings are known and tracked.',
+  );
+  for (const reason of [undefined, '', '   ']) {
+    const params = buildRunResolveDecisionParams({
+      runId: 'run-1',
+      decision,
+      actionId: 'close-result',
+      ...(reason !== undefined ? { reason } : {}),
+    });
+    assert.equal('reason' in params, false);
+  }
+});

@@ -20,6 +20,13 @@ import {
   slotPickerViewModel,
   TERMINAL_RUN_STATUSES,
 } from '@farmslot/protocol';
+import {
+  pendingResultDecision,
+  type ResultDecision,
+  resultDecisionView,
+} from '@farmslot/review-dispatch';
+
+import './result-decision-panel.js';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
 import {
@@ -36,6 +43,7 @@ import {
 } from '../workspace/workspace-evidence-preview.js';
 
 import { supportsDecisionAdvice } from './decision-advice-model.js';
+import type { ResultDecisionActionDetail } from './result-decision-panel.js';
 import {
   renderCollisionDescription,
   renderCollisionPriorRuns,
@@ -134,7 +142,13 @@ export interface RunDecisionRenderContext {
   setSelectedSlot: (slotId: string | null, resetBranch?: boolean) => void;
   setResetBranch: (resetBranch: boolean) => void;
   setBranchNudgeShowPicker: (show: boolean) => void;
-  confirmResolve: (runId: string, decision: RunDecision, actionId: string) => void;
+  confirmResolve: (
+    runId: string,
+    decision: RunDecision,
+    actionId: string,
+    /** Written reason for a result decision (ADR-065 Amendment 7). */
+    reason?: string,
+  ) => void;
   /** ADR-054 gate choice plus the Gateway's preview of its effect. */
   posture: RunPostureGateState;
   /** Why resolving is blocked by the posture choice, or null when it is not. */
@@ -178,7 +192,91 @@ export function retainedEvidenceGate(
     .find((decision) => decision.resolvedAt && decision.payload?.kind === 'ready');
 }
 
+/** The output review's evidence: per-AC comparison or the acceptance panel. */
+function renderOutputEvidence(run: Run, context: RunDecisionRenderContext) {
+  return html`${context.visualReviewMessage
+    ? html`<p role="status">${context.visualReviewMessage}</p>`
+    : nothing}
+  ${context.comparison
+    ? renderWorkspaceEvidencePreview({
+        title: 'Compare by AC',
+        items: [],
+        comparison: context.comparison,
+      })
+    : context.evidenceModel
+      ? renderAcceptancePanel(
+          { schemaVersion: 1, criteria: [] },
+          {
+            evidenceModel: context.evidenceModel,
+            openEvidence: context.openEvidence,
+            evidenceHref: (path) => `#run/${run.id}?artifact=${encodeURIComponent(path)}`,
+          },
+        )
+      : nothing}`;
+}
+
+function renderReadReportLink(run: Run, reportPath: string, context: RunDecisionRenderContext) {
+  return html`<a
+    class="evidence-link"
+    href=${`#run/${run.id}?artifactRun=${encodeURIComponent(run.id)}&artifact=${encodeURIComponent(reportPath)}`}
+    @click=${(event: MouseEvent) => {
+      if (context.openOutputReport) {
+        event.preventDefault();
+        context.openOutputReport();
+      }
+    }}
+    >Read report</a
+  >`;
+}
+
+/**
+ * A run held `needs-decision` (ADR-065 Amendment 7). Its result decision comes first;
+ * the held output review is only the evidence and override panel under it.
+ */
+function renderResultDecisionSection(
+  run: Run,
+  decision: ResultDecision,
+  context: RunDecisionRenderContext,
+) {
+  const outputReview = run.decisions.find(
+    (item) => item.id === decision.payload.outputReviewDecisionId,
+  );
+  return html`<section class="gate-section" data-testid="result-decision-gate">
+    <div class="gate-header"><div class="gate-title">Needs decision</div></div>
+    <div class="gate-body">
+      ${renderRunPostureGateChoices({
+        state: context.posture,
+        disabled: context.actionsBlocked,
+        onSelect: (choice) => context.selectPostureChoice(choice),
+        run,
+      })}
+      <result-decision-panel
+        .view=${resultDecisionView(decision)}
+        ?blocked=${context.actionsBlocked}
+        .blockedReason=${context.postureBlockedReason}
+        .confirming=${context.pendingConfirm}
+        @result-decision-action=${(event: CustomEvent<ResultDecisionActionDetail>) =>
+          context.confirmResolve(run.id, decision, event.detail.actionId, event.detail.reason)}
+      ></result-decision-panel>
+      ${outputReview?.payload?.kind === 'output-review'
+        ? html`<div class="evidence-actions result-links">
+              ${renderReadReportLink(run, outputReview.payload.reportPath, context)}
+            </div>
+            <details class="result-evidence" data-testid="result-decision-evidence">
+              <summary>Run evidence</summary>
+              ${renderOutputEvidence(run, context)}
+            </details>`
+        : nothing}
+      ${context.decisionResolveError
+        ? html`<p role="alert">${context.decisionResolveError}</p>`
+        : nothing}
+    </div>
+  </section>`;
+}
+
 export function renderRunGateSection(run: Run, context: RunDecisionRenderContext) {
+  const result = pendingResultDecision(run);
+  if (result) return renderResultDecisionSection(run, result, context);
   // Show gate section for ANY unresolved decision (not just ones with payload)
   const rawPending = run.decisions.find((d) => !d.resolvedAt);
   if (!rawPending) {
@@ -218,37 +316,9 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
         ${run.metrics.outcome ?? 'unknown'} result and any gaps remain unchanged.
       </p>
       <p>Report snapshot ${pending.payload.manifestDigest}</p>
-      ${context.visualReviewMessage
-        ? html`<p role="status">${context.visualReviewMessage}</p>`
-        : nothing}
-      ${context.comparison
-        ? renderWorkspaceEvidencePreview({
-            title: 'Compare by AC',
-            items: [],
-            comparison: context.comparison,
-          })
-        : context.evidenceModel
-          ? renderAcceptancePanel(
-              { schemaVersion: 1, criteria: [] },
-              {
-                evidenceModel: context.evidenceModel,
-                openEvidence: context.openEvidence,
-                evidenceHref: (path) => `#run/${run.id}?artifact=${encodeURIComponent(path)}`,
-              },
-            )
-          : nothing}
+      ${renderOutputEvidence(run, context)}
       <div class="evidence-actions">
-        <a
-          class="evidence-link"
-          href=${`#run/${run.id}?artifactRun=${encodeURIComponent(run.id)}&artifact=${encodeURIComponent(pending.payload.reportPath)}`}
-          @click=${(event: MouseEvent) => {
-            if (context.openOutputReport) {
-              event.preventDefault();
-              context.openOutputReport();
-            }
-          }}
-          >Read report</a
-        >
+        ${renderReadReportLink(run, pending.payload.reportPath, context)}
         <button
           class="gate-action-btn evidence-link"
           data-testid="close-run-output"

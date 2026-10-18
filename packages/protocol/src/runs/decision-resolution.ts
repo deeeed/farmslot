@@ -37,6 +37,8 @@ export interface RunDecisionActionInput {
   recipeRunId?: string;
   claimOverrideReason?: string;
   evidenceAttestationReason?: string;
+  /** Written reason for a result decision; `accept-result` requires one (ADR-065 Amendment 7). */
+  reason?: string;
   selectionData?: Record<string, unknown>;
   resourcePosture?: ResourcePostureGateChoice;
 }
@@ -126,6 +128,8 @@ export function buildRunResolveDecisionParams(input: {
   decision: Pick<RunDecision, 'id' | 'payload'>;
   actionId: string;
   evidenceAttestationReason?: string;
+  /** Written reason for a result decision; `accept-result` requires one (ADR-065 Amendment 7). */
+  reason?: string;
   triageAssessmentId?: string;
   publicationTarget?: PublicationTarget;
   selectedEvidenceKeys?: string[];
@@ -164,11 +168,13 @@ export function buildRunResolveDecisionParams(input: {
     };
   // Send back derives its Issues from the frozen gate decision; the gateway refuses selection data.
   if (input.actionId === SEND_BACK_TO_AGENT_ACTION) selectionData = undefined;
+  const reason = input.reason?.trim();
   return {
     runId: input.runId,
     decisionId: input.decision.id,
     actionId: input.actionId,
     ...(attestationReason !== undefined ? { evidenceAttestationReason: attestationReason } : {}),
+    ...(reason ? { reason } : {}),
     ...(input.triageAssessmentId !== undefined
       ? { triageAssessmentId: input.triageAssessmentId }
       : {}),
