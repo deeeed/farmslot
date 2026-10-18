@@ -18,6 +18,10 @@ export function acceptanceCriteriaMatch(
   expected: readonly unknown[],
   actual: readonly unknown[],
 ): boolean;
+export function acceptanceRowExecution(
+  ledger: { recipeRunId?: string },
+  row: { recipeRunId?: string },
+): string | undefined;
 export function validateAcceptanceStatusLedger(value: unknown): string[];
 export function acceptanceCriteriaView(criteria: readonly unknown[], ledger: unknown): unknown[];
 export function summarizeAcceptanceStatus(ledger: unknown, criteria?: readonly unknown[]): unknown;

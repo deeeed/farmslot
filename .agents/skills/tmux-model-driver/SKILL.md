@@ -128,6 +128,12 @@ task-level reply does not consume a transport receipt. Never ACK another caller'
 unblock a new handoff. Receipt and lock identity uses the server socket, not the caller session. Old caller-specific receipts remain discoverable without migration.
 Repeated acknowledgements are harmless; inspection
 never consumes a late receipt. Receipt updates share the send lock and use atomic private writes.
+The lock holder records its pid. A send killed while holding the lock (for example by a
+caller's timeout) leaves the lock behind. Five calls clear it: the next send, acknowledgement,
+question answer, launch-blocker action, or an inspection that saves a proof. Each removes the
+lock once its holder is gone, or once the lock has had no pid for a minute, and then proceeds.
+Until then those calls return `driver_busy`; an inspection just skips its write. If the dead
+holder's pid has been reused by a live process, the lock stays until that process exits.
 
 ```bash
 cat original-prompt.txt | scripts/flush-queued.sh <pane> <runner> [trace.jsonl]

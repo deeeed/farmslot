@@ -64,13 +64,22 @@ export interface AcceptanceCriterionStatus {
   moments?: EvidenceMomentRef[];
   /** Repair selection only: the original execution whose proof this row keeps. */
   retainedFrom?: string;
+  /**
+   * QA task ledgers only: the case execution whose package holds this row. Absent
+   * rows belong to the ledger's `recipeRunId`.
+   */
+  recipeRunId?: string;
 }
 
 export interface AcceptanceStatusLedger {
   schemaVersion: 1 | 2;
+  /** The execution projected last; a QA row may name its own case execution. */
   recipeRunId?: string;
   criteria: AcceptanceCriterionStatus[];
 }
+
+/** The execution whose retained package a task-ledger row binds to. */
+export const acceptanceRowExecution = contract.acceptanceRowExecution;
 
 /**
  * One criterion as task init registered it: the id and the text, with no verdict.

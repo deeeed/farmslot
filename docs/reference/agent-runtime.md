@@ -130,7 +130,9 @@ Ownership rules, all enforced by `mark`:
 [ADR-062](../adr/062-recorded-run-evidence.md) owns the sole normal verdict
 writer: the recipe engine. A successful selected attempt transfers its schema-2
 ledger into `artifacts/acceptance-status.json`; this task-namespace projection is
-transport, never an independent reducer or a recorded package.
+transport, never an independent reducer or a recorded package. A QA task records
+one package per case, so its projection merges case executions by claim id and
+each row names its case execution ([QA case ledger](recorded-run-evidence.md#qa-case-ledger)).
 
 `farmslot-agent ac list` reads the registered criteria and verdicts; `ac render`
 prints structured coverage. When a recipe exists, the terminal contract still
@@ -160,7 +162,8 @@ outcome contracts. `acceptance.require` cannot disable successful-completion
 enforcement. Schema-2 verdicts are engine-owned. Local commands refuse every
 change, including an actor-labelled untestable override. A gateway-generated
 `claimReviewGate` contract lets ordinary completion reach human review after the
-canonical SDK reader validates and binds the selected package. Unresolved verdicts
+canonical SDK reader validates and binds the selected package (for a QA case
+ledger, each row's case package). Unresolved verdicts
 still block approval. A credential-backed person uses `farmslot run gate <runId>
 --action mark-untestable --claim <id> --recipe-run <id> --reason <text>`; the gateway
 stores the receipt without changing engine or task bytes. Flows without a human
