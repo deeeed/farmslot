@@ -376,7 +376,7 @@ exit. It reuses the existing discard form for a slot held by a missing run.
 
 ## Amendment 7: a delivered result that is not accepted needs a decision, 2026-10-18
 
-**Status:** Proposed, 2026-10-18. It adds a run status every client must show, so it needs the owner's approval as well as paired review and lead acceptance. No code lands before then.
+**Status:** Accepted (owner and lead, 2026-10-18), approved at `2ddaab1f37e1ed1a628da480c96c907eb5df7ec2` after paired review.
 **Trigger:** runs whose worker delivered a result still end `failed`. Examples: 8cff6e80 (review findings left when no further fix could run) and 3e2f400a (refused QA completion).
 **Specification:** on acceptance, [Truthful run state](../reference/fail-closed-run-lifecycle.md#truthful-run-state), [Recovery invariants](../reference/fail-closed-run-lifecycle.md#recovery-invariants-and-six-ci-scenarios) (restart of a held run) and [Pipeline settlement](../reference/fail-closed-run-lifecycle.md#pipeline-settlement) (including the output-review close-only and changed-bytes rules) are updated to match.
 **Changes:** Amendment 6 labels every refused completion `failed`. Under this amendment, a refused completion that delivered a result ends `needs-decision`; one that did not stays `failed` under Amendment 6, unchanged.
