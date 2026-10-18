@@ -43,6 +43,49 @@ let cwdProcessCensus: string | null = null;
 let tmuxInventory = '';
 let runnerProbe: RunnerDescendantPidProbe = { state: 'absent' };
 
+/** A process on the slot machine, for the browser session a run leaves behind. */
+interface SlotProcess {
+  pid: number;
+  ppid: number;
+  pgid: number;
+  args: string;
+  cwd: string;
+  onCdpPort?: boolean;
+  /** Ignores SIGKILL, so the reap must name it. */
+  survives?: boolean;
+  alive: boolean;
+}
+const STARTED = 'Sun Oct 18 08:48:13 2026';
+let slotProcesses: SlotProcess[] = [];
+let leases: Array<Record<string, unknown>> = [];
+/** The gateway's watched resource processes on the slot (resourceId -> pid). */
+let activeResources = new Map<string, { pid: number }>();
+
+function browserSessionCensus() {
+  const live = slotProcesses.filter((proc) => proc.alive);
+  const onPort = live.filter((proc) => proc.onCdpPort).map((proc) => proc.pid);
+  return [
+    ...live.map((proc) => `${proc.pid} ${proc.ppid} ${proc.pgid} ${STARTED} ${proc.args}`),
+    '--repo-- /slot',
+    `--cdp-- ${onPort.join(',')}`,
+    ...live.filter((proc) => onPort.includes(proc.pid)).flatMap((p) => [`p${p.pid}`, `n${p.cwd}`]),
+    '',
+  ].join('\n');
+}
+
+function reapBrowserSession(cmd: string) {
+  const targets = /targets='([^']*)'/.exec(cmd)?.[1] ?? '';
+  const survivors: number[] = [];
+  for (const line of targets.split('\n')) {
+    const [pid, , identity] = line.split('|');
+    const proc = slotProcesses.find((candidate) => candidate.pid === Number(pid));
+    if (!proc?.alive || identity !== STARTED) continue;
+    if (proc.survives) survivors.push(proc.pid);
+    else proc.alive = false;
+  }
+  return survivors.map((pid) => `survivor ${pid}\n`).join('');
+}
+
 function reapIdentity(cmd: string) {
   const expected = /if \[ "\$scope" != '([0-9a-f]+)' \]/.exec(cmd)?.[1];
   if (recordedScope && expected && expected !== recordedScope)
@@ -68,6 +111,7 @@ mock.module('../core/index.js', {
       host: 'localhost',
       projectName: 'mm',
       session: 'mmt-1',
+      resourceVars: { cdp_port: '9542' },
     }),
     loadProjectVars: async () => ({ runtimeDir: '.agent' }),
     readSlotRow: async () => slotRow,
@@ -106,10 +150,21 @@ mock.module('../core/index.js', {
     },
     execOnSlot: async (_vars: unknown, cmd: string) => {
       commands.push(cmd);
+      if (cmd.startsWith(': farmslot-browser-session-census'))
+        return { stdout: browserSessionCensus(), stderr: '', exitCode: 0 };
+      if (cmd.startsWith(': farmslot-browser-session-reap'))
+        return { stdout: reapBrowserSession(cmd), stderr: '', exitCode: 0 };
       if (cmd.includes('list-panes -a')) return { stdout: tmuxInventory, stderr: '', exitCode: 0 };
       if (cmd.startsWith('lsof -a -d cwd'))
         return {
-          stdout: cwdProcessCensus ?? (workspaceHelperAlive ? 'p999\nn/slot\n' : ''),
+          stdout:
+            cwdProcessCensus ??
+            (workspaceHelperAlive
+              ? 'p999\nn/slot\n'
+              : slotProcesses
+                  .filter((proc) => proc.alive)
+                  .map((proc) => `p${proc.pid}\nn${proc.cwd}\n`)
+                  .join('')),
           stderr: '',
           exitCode: 0,
         };
@@ -117,7 +172,12 @@ mock.module('../core/index.js', {
         return {
           stdout:
             rawProcessCensus ??
-            (workspaceHelperAlive ? '999 1 999 Fri Oct 9 01:00:00 2026 node\n' : ''),
+            (workspaceHelperAlive
+              ? '999 1 999 Fri Oct 9 01:00:00 2026 node\n'
+              : slotProcesses
+                  .filter((proc) => proc.alive)
+                  .map((proc) => `${proc.pid} ${proc.ppid} ${proc.pgid} ${STARTED} node\n`)
+                  .join('')),
           stderr: '',
           exitCode: 0,
         };
@@ -187,7 +247,10 @@ mock.module('../methods/runtime-capabilities.js', {
   namedExports: {
     ...realRuntimeCapabilities,
     getRuntimeCapabilityRegistry: () => ({
-      settledStatus: async () => ({ catalog: [], leases: [] }),
+      settledStatus: async () => ({
+        catalog: [],
+        leases,
+      }),
       releaseRunTerminal: async () => {
         providerCleanups += 1;
         workspaceHelperAlive = false;
@@ -195,6 +258,11 @@ mock.module('../methods/runtime-capabilities.js', {
       },
     }),
   },
+});
+
+const realResourceManager = await import('../fleet/resource-manager.js');
+mock.module('../fleet/resource-manager.js', {
+  namedExports: { ...realResourceManager, getActiveResources: () => activeResources },
 });
 
 const { slotTeardownBlocker, stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } =
@@ -229,6 +297,9 @@ beforeEach(() => {
   cwdProcessCensus = null;
   tmuxInventory = '';
   runnerProbe = { state: 'absent' };
+  slotProcesses = [];
+  leases = [];
+  activeResources = new Map();
 });
 
 test('cancel during or after prepare stops the run prepare-scope holder', async () => {
@@ -467,4 +538,176 @@ test('a non-runner child in an unrecorded slot pane still blocks cleanup', async
     '111 1 111 Fri Oct 9 01:00:00 2026 /bin/zsh\n222 111 111 Fri Oct 9 01:00:00 2026 node\n';
   cwdProcessCensus = 'p111\nn/slot\np222\nn/slot\n';
   assert.match((await slotTeardownBlocker(run)) ?? '', /pane process 111 is still occupied/);
+});
+
+/** Run 22e62daa's macpro-mmt-2 after cancel: the browser session its worker's recipe calls started. */
+function leftBrowserSession(): SlotProcess[] {
+  const harness = '/home/.farmslot-dev/task-pins/855904b4/inputs/1/metamask-harness';
+  const runtime = '/slot/temp/recipe/runtime/terminal';
+  return [
+    {
+      pid: 11425,
+      ppid: 1,
+      pgid: 11425,
+      cwd: '/slot',
+      onCdpPort: true,
+      args: `node ${harness}/adapters/extension/console-tail.mjs --cdp-port 9542 --extension-log ${runtime}/extension-console.log`,
+      alive: true,
+    },
+    {
+      pid: 22867,
+      ppid: 1,
+      pgid: 22867,
+      cwd: '/',
+      onCdpPort: true,
+      args: `node ${harness}/node_modules/@farmslot/adapter-web/src/web-dapp/wallet-host.mjs --cdp-port 9542 --runtime-dir ${runtime} --target /slot`,
+      alive: true,
+    },
+    {
+      pid: 20419,
+      ppid: 1,
+      pgid: 20419,
+      cwd: '/',
+      onCdpPort: true,
+      args: `/home/chrome/Google Chrome for Testing --remote-debugging-port=9542 --user-data-dir=${runtime}/browser-profile`,
+      alive: true,
+    },
+    {
+      pid: 20430,
+      ppid: 20419,
+      pgid: 20419,
+      cwd: '/',
+      args: '/home/chrome/Google Chrome for Testing Helper (Renderer) --type=renderer',
+      alive: true,
+    },
+    // Not this run's: a person's Chrome attached to the port, a tool for another
+    // checkout, and the slot's dev server, which is not on the CDP port.
+    {
+      pid: 30001,
+      ppid: 1,
+      pgid: 30001,
+      cwd: '/',
+      onCdpPort: true,
+      args: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      alive: true,
+    },
+    {
+      pid: 30002,
+      ppid: 1,
+      pgid: 30002,
+      cwd: '/',
+      onCdpPort: true,
+      args: 'node /slot-2/tool.mjs --cdp-port 9542 --target /slot-2',
+      alive: true,
+    },
+    // The slot's dev server, which dispatch needs, runs in the checkout.
+    {
+      pid: 40000,
+      ppid: 1,
+      pgid: 40000,
+      cwd: '/slot',
+      args: 'node /slot/node_modules/.bin/next dev -p 9342',
+      alive: true,
+    },
+    {
+      pid: 40001,
+      ppid: 40000,
+      pgid: 40000,
+      cwd: '/slot',
+      args: 'next-server (v15)',
+      alive: true,
+    },
+    // Still attached to a live parent (a worker pane), and a tmux server.
+    {
+      pid: 50001,
+      ppid: 5000,
+      pgid: 5000,
+      cwd: '/slot',
+      onCdpPort: true,
+      args: 'node /slot/scripts/probe.mjs --cdp-port 9542',
+      alive: true,
+    },
+    {
+      pid: 60001,
+      ppid: 1,
+      pgid: 60001,
+      cwd: '/slot',
+      args: 'tmux new-session -d -c /slot node probe.mjs --cdp-port 9542',
+      alive: true,
+    },
+  ];
+}
+const untouched = [30001, 30002, 40000, 40001, 50001, 60001];
+const alivePids = () => slotProcesses.filter((proc) => proc.alive).map((proc) => proc.pid);
+
+test("cancel stops the browser session its run left on the slot's CDP port", async () => {
+  slotProcesses = leftBrowserSession();
+  activeResources = new Map([['dev-server', { pid: 40000 }]]);
+
+  assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+
+  assert.deepEqual(alivePids(), untouched, 'only the run session was stopped');
+  slotProcesses = slotProcesses.filter((proc) => proc.pid !== 50001 && proc.pid !== 60001);
+  assert.equal(
+    await slotTeardownBlocker(run),
+    null,
+    'the dev server is a resident, not an occupant',
+  );
+});
+
+test('a dev server the gateway does not watch still holds the slot', async () => {
+  slotProcesses = leftBrowserSession().filter((proc) => proc.pid !== 50001 && proc.pid !== 60001);
+
+  assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+
+  assert.equal(
+    await slotTeardownBlocker(run),
+    'Process 40000 still uses the slot repository; slot teardown was skipped',
+  );
+});
+
+test('a browser session process that survives SIGKILL is named and keeps the slot held', async () => {
+  slotProcesses = leftBrowserSession();
+  slotProcesses.find((proc) => proc.pid === 20419)!.survives = true;
+
+  const blocker = await stopRunOwnedTmuxAndWatches(run);
+
+  assert.match(
+    blocker ?? '',
+    /^Browser session process 20419 \(\/home\/chrome\/Google Chrome for Testing --remote-debugging-port=9542 .*\) on CDP port 9542 did not stop$/,
+  );
+  assert.deepEqual(alivePids(), [20419, ...untouched]);
+});
+
+test('while a capability lease holds the slot, its release effect decides', async () => {
+  slotProcesses = leftBrowserSession();
+  leases = [{ owner: { runId: RUN_ID }, state: 'acquired' }];
+
+  assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+
+  assert.equal(alivePids().length, slotProcesses.length);
+});
+
+test('a process a released lease recorded is never reaped', async () => {
+  slotProcesses = leftBrowserSession();
+  leases = [
+    {
+      owner: { runId: RUN_ID },
+      state: 'released',
+      providerProcesses: [{ pid: 20419, group: 20419, identity: STARTED }],
+    },
+  ];
+
+  assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+
+  assert.deepEqual(alivePids(), [20419, 20430, ...untouched]);
+});
+
+test('the browser session of a slot another active run uses is left alone', async () => {
+  slotProcesses = leftBrowserSession();
+  otherRuns = [{ ...run, id: 'run-active', status: 'monitoring' } as Run];
+
+  await stopRunOwnedTmuxAndWatches(run);
+
+  assert.equal(alivePids().length, slotProcesses.length);
 });
