@@ -655,7 +655,13 @@ export async function reviewFixTurnIsActive(
   const target = fixContext?.target?.target;
   if (!target) return false;
   const runner = fixContext.runner ?? workerRunner;
-  return runnerTurnLeaseIsActive(vars, target, runner, expectedTurnToken);
+  // The worker's own later turns count only while this is still the current delivery: a newer
+  // delivery moves the boundary and replaces this acceptance.
+  const accepted = fixContext.promptAcceptance;
+  const followContinuations =
+    accepted?.turnToken === expectedTurnToken &&
+    accepted.deliveryStartedAt === fixContext.promptDeliveryStartedAt;
+  return runnerTurnLeaseIsActive(vars, target, runner, expectedTurnToken, followContinuations);
 }
 
 // Module-level constant — wiring is fixed at module load. Tests pass their own deps struct

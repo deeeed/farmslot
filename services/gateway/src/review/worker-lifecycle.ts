@@ -19,19 +19,33 @@ import {
 import { isRunnerAliveUnderPane, probeRunnerDescendantPid } from '../runners/session-process.js';
 import { getRun } from '../runs/store.js';
 
+/** The session part of a runner turn token (`<session>:<turn>`). */
+function turnSession(turnToken: string): string {
+  const separator = turnToken.lastIndexOf(':');
+  return separator > 0 ? turnToken.slice(0, separator) : '';
+}
+
 export async function runnerTurnLeaseIsActive(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
   expectedTurnToken: string,
+  /** Also hold the lease through later turns the worker starts itself in the same session. */
+  followContinuations = false,
 ): Promise<boolean> {
   const state = await readRunnerTurnState(vars, target, runner, expectedTurnToken);
-  if (
-    state?.confidence !== 'high' ||
-    state.value !== 'active' ||
-    state.turnToken !== expectedTurnToken
-  ) {
-    return false;
+  if (state?.confidence !== 'high' || state.value !== 'active' || !state.turnToken) return false;
+  if (state.turnToken !== expectedTurnToken) {
+    // A session runs one turn at a time, so another active turn in it started after the leased
+    // one: a continuation, such as Grok resuming after a background command finished.
+    const session = turnSession(expectedTurnToken);
+    if (
+      !followContinuations ||
+      !session ||
+      turnSession(state.turnToken) !== session ||
+      (state.sessionId !== undefined && state.sessionId !== session)
+    )
+      return false;
   }
   return paneHostsRunnerProcess(vars, target, runner);
 }
