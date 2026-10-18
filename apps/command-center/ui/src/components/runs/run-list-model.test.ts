@@ -590,3 +590,25 @@ test('family and tag views show the live copy of each run', () => {
   const tagged = filter({ tagFilter: 'perf', tagRuns: [snapshot], runs: [live, other] });
   assert.deepEqual(tagged, [live]);
 });
+
+test('run progress: a held run waits on its decision, not on the output review it holds', () => {
+  const now = Date.parse('2026-10-18T12:00:00.000Z');
+  const summary = summarize(
+    run('held', {
+      status: 'needs-decision',
+      decisions: [
+        {
+          id: 'output-1',
+          type: 'engine_output_review',
+          title: 'Review run output',
+          description: '',
+          createdAt: '2026-10-18T11:00:00.000Z',
+          actions: [{ id: 'close-run', label: 'Close run', style: 'primary' }],
+        },
+      ],
+    }),
+    now,
+  );
+  assert.equal(summary.kind, 'gate');
+  assert.equal(summary.text, 'Needs decision');
+});

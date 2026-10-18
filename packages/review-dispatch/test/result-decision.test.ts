@@ -131,7 +131,7 @@ test('a refused completion shows the refused prerequisite and the delivered repo
     }),
   );
   assert.deepEqual(view.detail, {
-    title: 'Deterministic checks did not pass.',
+    title: 'Refused prerequisites (2)',
     items: [
       { location: 'checks/lint', description: 'yarn lint exited 1.' },
       { description: 'No report.' },
@@ -142,6 +142,24 @@ test('a refused completion shows the refused prerequisite and the delivered repo
     view.actions.map((action) => action.id),
     ['close-result'],
   );
+});
+
+test('a refusal with no listed reasons shows its message only when the reason does not already say it', () => {
+  const refused = (message: string) =>
+    resultDecisionView(
+      decision({
+        stoppedAt: 'complete',
+        reason: 'Completion refused.',
+        findings: undefined,
+        refusal: { message, reasons: [] },
+        delivered: { reportPath: 'artifacts/report.md', manifestDigest: 'sha256:m' },
+      }),
+    ).detail;
+  assert.equal(refused('Completion refused.'), null);
+  assert.deepEqual(refused('The deterministic check has no receipt.'), {
+    title: 'Refused prerequisite',
+    items: [{ description: 'The deterministic check has no receipt.' }],
+  });
 });
 
 test('an action is ready only when available and given the reason it requires', () => {
