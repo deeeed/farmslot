@@ -40,8 +40,8 @@ import {
   poolDir,
   projectPackRoot,
   projectsDir,
-  projectSourceContext,
   readSourceRuntimeSettings,
+  usesRuntimeSettings,
 } from '../core/config.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
 
@@ -782,7 +782,7 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         );
         const content = await readFile(configPath, 'utf-8');
         const raw = JSON.parse(content);
-        if (await projectSourceContext(dir)) {
+        if (await usesRuntimeSettings(dir)) {
           const settings = await readSourceRuntimeSettings(dir);
           Object.assign(raw, settings);
           // Delegation is operator policy, not an authorization grant shipped by a pack.

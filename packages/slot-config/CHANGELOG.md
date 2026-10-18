@@ -7,6 +7,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 - Expose provider CLI checks through a standalone entry that does not require a checkout.
 
 - Detect pinned provider CLI drift across shell paths, distinguish timed-out probes from version mismatches, and verify exact-version global rollout.
+- Add `isPackCopiedProject` and `usesRuntimeSettings`. A project `farmslot add` copied from a pack (recorded in the install workspace's `state.json`) keeps its backlog, auto-recovery and visual-claim-review policy in the farm's runtime settings, as a source-bound project does, because every pack sync replaces its `project.json`. `loadProjectVars` merges those settings for it. `resolveWorkspaceRoot` and `readWorkspaceState` move here from the gateway and CLI, so all three find and read `state.json` the same way.
 - `projectTaskRoots()` uses the protocol enumerator, so it skips files in the projects dir.
 
 - `projectsDir` and `getOrchestratorTaskRoot` come from the protocol farm layout, so run task folders follow `FARMSLOT_PROJECTS_DIR` like project configs do. Add `projectTaskRoots()` for scans of every project's task folders.

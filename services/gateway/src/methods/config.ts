@@ -32,8 +32,8 @@ import type {
 } from '@farmslot/protocol';
 import {
   projectPackRoot,
-  projectSourceContext,
   readSourceRuntimeSettings,
+  usesRuntimeSettings,
   writeSourceRuntimeSettings,
 } from '@farmslot/slot-config';
 
@@ -142,7 +142,7 @@ function normalizeBacklogUpdate(
 export async function configProjectBacklogUpdate(
   params: ConfigProjectBacklogUpdateParams,
 ): Promise<ConfigProjectBacklogUpdateResult> {
-  const sources = await projectSourceContext(params.project);
+  const runtimeSettings = await usesRuntimeSettings(params.project);
   const projectFilePath = path.join(
     await projectPackRoot(params.project, path.join(projectsDir, params.project)),
     'project.json',
@@ -152,7 +152,7 @@ export async function configProjectBacklogUpdate(
   let raw: Record<string, unknown>;
   try {
     raw = JSON.parse(await readFile(projectFilePath, 'utf-8'));
-    if (sources) Object.assign(raw, await readSourceRuntimeSettings(params.project));
+    if (runtimeSettings) Object.assign(raw, await readSourceRuntimeSettings(params.project));
   } catch {
     throw new Error(`Invalid project JSON: ${params.project}`);
   }
@@ -188,7 +188,7 @@ export async function configProjectBacklogUpdate(
   validateBacklogConfig(raw, projectFilePath);
 
   let backupPath: string;
-  if (sources)
+  if (runtimeSettings)
     backupPath = await writeSourceRuntimeSettings(params.project, { backlog: raw.backlog });
   else {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
@@ -510,7 +510,7 @@ function normalizeAutoRecoveryUpdate(
 export async function configProjectAutoRecoveryUpdate(
   params: ConfigProjectAutoRecoveryUpdateParams,
 ): Promise<ConfigProjectAutoRecoveryUpdateResult> {
-  const sources = await projectSourceContext(params.project);
+  const runtimeSettings = await usesRuntimeSettings(params.project);
   const projectFilePath = path.join(
     await projectPackRoot(params.project, path.join(projectsDir, params.project)),
     'project.json',
@@ -520,7 +520,7 @@ export async function configProjectAutoRecoveryUpdate(
   let raw: Record<string, unknown>;
   try {
     raw = JSON.parse(await readFile(projectFilePath, 'utf-8'));
-    if (sources) Object.assign(raw, await readSourceRuntimeSettings(params.project));
+    if (runtimeSettings) Object.assign(raw, await readSourceRuntimeSettings(params.project));
   } catch {
     throw new Error(`Invalid project JSON: ${params.project}`);
   }
@@ -556,7 +556,7 @@ export async function configProjectAutoRecoveryUpdate(
   validateAutoRecoveryConfig(raw, projectFilePath);
 
   let backupPath: string;
-  if (sources)
+  if (runtimeSettings)
     backupPath = await writeSourceRuntimeSettings(params.project, {
       auto_recovery: raw.auto_recovery,
     });

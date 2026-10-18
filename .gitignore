@@ -147,6 +147,9 @@ presentation/
 # Local release-cut proposals (reviewed before --execute)
 .release-cut/
 
+# Files a pack sync replaced or removed (farmslot update)
+.pack-sync-backups/
+
 # Package build output
 packages/*/dist/
 # a build in progress, or one a crash left behind (scripts/build-dist-atomic.mjs)

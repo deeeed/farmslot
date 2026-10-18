@@ -290,16 +290,16 @@ function packIgnoredFiles(src: string, paths: string[]): Set<string> {
  * readFileSync would EISDIR on restore), and empty operator dirs are not
  * preserved. A non-git pack source yields no signal → nothing preserved
  * (matches the prior full-replace; real packs are git clones/submodules).
- * A real project dir keeps the gateway's run task root in place, so it is not scanned.
+ * A real project dir keeps its farm-owned dirs in place, so they are not scanned.
  */
 export function operatorAddedFiles(dest: string, src: string): string[] {
   if (!existsSync(dest)) return [];
-  const skipTaskRoot = keepsTaskRoot(dest);
+  const skipFarmDirs = keepsFarmDirs(dest);
   const candidates: string[] = [];
   const walk = (rel: string): void => {
     for (const entry of readdirSync(join(dest, rel))) {
       if (entry === '.git' || entry === 'node_modules') continue;
-      if (!rel && skipTaskRoot && entry === ORCHESTRATOR_TASK_DIR) continue;
+      if (!rel && skipFarmDirs && FARM_DIRS.includes(entry)) continue;
       const childRel = rel ? join(rel, entry) : entry;
       const stat = lstatSync(join(dest, childRel));
       if (stat.isSymbolicLink()) continue;
@@ -315,12 +315,76 @@ export function operatorAddedFiles(dest: string, src: string): string[] {
   return candidates.filter((rel) => ignored.has(rel));
 }
 
+/** Where a pack sync copies the files it replaced or removed, under the farmslot clone. */
+export const PACK_SYNC_BACKUPS = '.pack-sync-backups';
+/** Hand-curated project learnings: the farm's notes, not pack content. */
+const LEARNINGS_DIR = 'learnings';
 /**
- * A real project dir keeps the gateway's run task root across a pack replace; a
+ * Dirs the farm writes inside a project: the gateway's run task root (every run's retained task
+ * inputs and evidence) and the learnings.
+ */
+const FARM_DIRS = [ORCHESTRATOR_TASK_DIR, LEARNINGS_DIR];
+
+/**
+ * A real project dir keeps its farm-owned dirs across a pack replace; a
  * linked or missing one is replaced as a whole, so nothing inside a link target is deleted.
  */
-function keepsTaskRoot(dest: string): boolean {
+function keepsFarmDirs(dest: string): boolean {
   return lstatSync(dest, { throwIfNoEntry: false })?.isDirectory() ?? false;
+}
+
+/** project.json as registration installs it: the pack's, with pack.json's repo_url filled in. */
+function installedProjectJson(proj: PackProject, src: string, ws: Workspace): Buffer {
+  const content = readFileSync(join(src, 'project.json'));
+  if (!proj.repo_url) return content;
+  const projectJson = JSON.parse(content.toString('utf-8')) as { repo_url?: string };
+  projectJson.repo_url = expandPackVars(proj.repo_url, { workspace: ws.root });
+  return Buffer.from(JSON.stringify(projectJson, null, 2) + '\n');
+}
+
+/**
+ * Files a pack replace of a real project dir would lose: ones the pack does not ship, or whose
+ * content (or link target) differs from what registration installs. Farm-owned dirs stay in
+ * place, `.git`/`node_modules` are not compared, and `restored` files come back after the copy.
+ */
+/** lstat that also reads a path under a non-directory (the pack turned a dir into a file) as absent. */
+function lstatIfPresent(file: string): ReturnType<typeof lstatSync> | undefined {
+  try {
+    return lstatSync(file, { throwIfNoEntry: false });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOTDIR') return undefined;
+    throw error;
+  }
+}
+
+function filesPackReplaces(
+  dest: string,
+  src: string,
+  installed: (rel: string) => Buffer,
+  restored: Set<string>,
+): string[] {
+  const lost: string[] = [];
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(dest, rel))) {
+      if (entry === '.git' || entry === 'node_modules') continue;
+      if (!rel && FARM_DIRS.includes(entry)) continue;
+      const childRel = rel ? join(rel, entry) : entry;
+      const stat = lstatSync(join(dest, childRel));
+      if (stat.isDirectory()) {
+        walk(childRel);
+        continue;
+      }
+      if (restored.has(childRel)) continue;
+      const shipped = lstatIfPresent(join(src, childRel));
+      const same = stat.isSymbolicLink()
+        ? shipped?.isSymbolicLink() &&
+          readlinkSync(join(src, childRel)) === readlinkSync(join(dest, childRel))
+        : shipped?.isFile() && installed(childRel).equals(readFileSync(join(dest, childRel)));
+      if (!same) lost.push(childRel);
+    }
+  };
+  walk('');
+  return lost;
 }
 
 function projectPaths(proj: PackProject, packDir: string, ws: Workspace) {
@@ -394,13 +458,41 @@ export function registerProject(
     mode: statSync(join(dest, rel)).mode,
   }));
   // Full replace: packs own their project dirs — files deleted from the pack
-  // must disappear here too, not survive as stale hooks/fixtures. The gateway's
-  // run task root is not pack content: it holds every run's retained task
-  // inputs and evidence, so it stays in place and a pack copy of it is skipped.
-  if (keepsTaskRoot(dest)) {
+  // must disappear here too, not survive as stale hooks/fixtures. Farm-owned
+  // dirs are not pack content: the run task root holds every run's retained
+  // task inputs and evidence, and learnings are curated by hand. They stay in
+  // place; a pack copy of the task root is always skipped, and one of the
+  // learnings whenever the project already has its own.
+  const keepFarmDirs = keepsFarmDirs(dest);
+  const keptLearnings =
+    keepFarmDirs && lstatSync(join(dest, LEARNINGS_DIR), { throwIfNoEntry: false }) !== undefined;
+  if (keepFarmDirs) {
+    // Anything else the replace would overwrite or delete (a local edit, or a file the pack does
+    // not ship) is copied aside first, so a pack sync never loses it outright.
+    const lost = filesPackReplaces(
+      dest,
+      src,
+      (rel) =>
+        rel === 'project.json' ? installedProjectJson(proj, src, ws) : readFileSync(join(src, rel)),
+      new Set(preserved.map((file) => file.rel)),
+    );
+    if (lost.length > 0) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backup = join(ws.farmslotDir, PACK_SYNC_BACKUPS, name, stamp);
+      for (const rel of lost) {
+        const from = join(dest, rel);
+        const to = join(backup, rel);
+        mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
+        // A link is kept as a link: copying would follow it (a dir, or nothing when it dangles).
+        if (lstatSync(from).isSymbolicLink()) symlinkSync(readlinkSync(from), to);
+        else cpSync(from, to);
+      }
+      progress.info(
+        `backed up ${lost.length} file(s) the pack sync replaced or removed in projects/${name} to ${PACK_SYNC_BACKUPS}/${name}/${stamp}`,
+      );
+    }
     for (const entry of readdirSync(dest)) {
-      if (entry !== ORCHESTRATOR_TASK_DIR)
-        rmSync(join(dest, entry), { recursive: true, force: true });
+      if (!FARM_DIRS.includes(entry)) rmSync(join(dest, entry), { recursive: true, force: true });
     }
   } else {
     rmSync(dest, { recursive: true, force: true });
@@ -411,10 +503,18 @@ export function registerProject(
       `skipped projects/${name}/${ORCHESTRATOR_TASK_DIR} in the pack: it is the gateway's run task folder`,
     );
   }
+  const packLearnings = join(src, LEARNINGS_DIR);
+  const skipPackLearnings =
+    keptLearnings && lstatSync(packLearnings, { throwIfNoEntry: false }) !== undefined;
+  if (skipPackLearnings) {
+    progress.info(
+      `kept projects/${name}/${LEARNINGS_DIR}: the pack's copy does not replace curated learnings`,
+    );
+  }
   cpSync(src, dest, {
     recursive: true,
     verbatimSymlinks: true,
-    filter: (source) => source !== packTaskRoot,
+    filter: (source) => source !== packTaskRoot && !(skipPackLearnings && source === packLearnings),
   });
   // Restore preserved operator files on top of the fresh pack copy.
   for (const file of preserved) {
@@ -428,16 +528,13 @@ export function registerProject(
   }
 
   const projectJsonPath = join(dest, 'project.json');
+  if (proj.repo_url) writeFileSync(projectJsonPath, installedProjectJson(proj, src, ws));
   const projectJson = JSON.parse(readFileSync(projectJsonPath, 'utf-8')) as {
     repo_url?: string;
     default_branch?: string;
     paths?: { runtime_dir?: string };
     hooks?: { preflight?: string };
   };
-  if (proj.repo_url) {
-    projectJson.repo_url = expandPackVars(proj.repo_url, { workspace: ws.root });
-    writeFileSync(projectJsonPath, JSON.stringify(projectJson, null, 2) + '\n');
-  }
   if (!projectJson.repo_url) {
     throw new AddError(
       `project '${name}' has no repo_url (set it in project.json or as repo_url in pack.json)`,

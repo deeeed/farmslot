@@ -5,6 +5,9 @@ import path from 'node:path';
 import { isRecord, parseProjectVisualClaimReviewPolicy } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import { readWorkspaceState, resolveWorkspaceRoot } from './repo-root.js';
+import { projectSourceContext } from './source-binding.js';
+
 export type SourceRuntimeSettings = Partial<
   Record<'backlog' | 'auto_recovery' | 'visual_claim_review', unknown>
 >;
@@ -83,4 +86,28 @@ export function writeSourceRuntimeSettings(
     ),
   );
   return work;
+}
+
+/**
+ * Whether `farmslot add` copied this project in from a pack, as the install workspace's
+ * state.json records. `farmslot update` replaces such a project dir on every pack sync.
+ */
+export function isPackCopiedProject(project: string): boolean {
+  const workspace = resolveWorkspaceRoot();
+  const state = workspace
+    ? readWorkspaceState<{ schema_version: number; packs?: unknown }>(workspace)
+    : null;
+  const packs = state && isRecord(state.packs) ? Object.values(state.packs) : [];
+  return packs.some(
+    (pack) => isRecord(pack) && Array.isArray(pack.projects) && pack.projects.includes(project),
+  );
+}
+
+/**
+ * Whether a project's mutable operator policy lives in runtime settings rather than its
+ * project.json: a source-bound project's tree is read-only, and a pack-copied project's dir is
+ * replaced by the next pack sync.
+ */
+export async function usesRuntimeSettings(project: string): Promise<boolean> {
+  return Boolean(await projectSourceContext(project)) || isPackCopiedProject(project);
 }

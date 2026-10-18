@@ -1,6 +1,7 @@
 // @farmslot:serial — creates and removes real directories under the shared repo `projects/`.
 import assert from 'node:assert/strict';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -169,6 +170,49 @@ test('configProjectBacklogUpdate writes typed backlog policy with backup', async
   assert.match(result.backup, /project\.json\.bak\./);
   const raw = JSON.parse(await readFile(path.join(projectDir, 'project.json'), 'utf8'));
   assert.equal(raw.backlog.auto_dispatch.enabled, true);
+});
+
+test('a pack-copied project keeps its config edits when a pack sync replaces project.json', async (t) => {
+  const project = `config-pack-${process.pid}-${Math.random().toString(36).slice(2, 6)}`;
+  const projectDir = await makeProject(t, project);
+  // `farmslot add` recorded the project as pack-copied in the install workspace's state.json.
+  const home = await mkdtemp(path.join(os.tmpdir(), 'config-pack-home-'));
+  const state = path.join(home, 'state.json');
+  await writeFile(
+    state,
+    JSON.stringify({ schema_version: 1, packs: { pack: { projects: [project] } } }),
+  );
+  const previous = {
+    FARMSLOT_HOME: process.env.FARMSLOT_HOME,
+    FARMSLOT_WORKSPACE: process.env.FARMSLOT_WORKSPACE,
+  };
+  process.env.FARMSLOT_HOME = home;
+  process.env.FARMSLOT_WORKSPACE = home;
+  t.after(async () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(home, { recursive: true, force: true });
+  });
+  const projectJson = path.join(projectDir, 'project.json');
+  const shipped = await readFile(projectJson, 'utf8');
+
+  const backlog = await configProjectBacklogUpdate({
+    project,
+    backlog: { autoDispatch: { enabled: true } },
+  });
+  await configProjectAutoRecoveryUpdate({ project, autoRecovery: { enabled: true } });
+  // The edits live in the farm's runtime settings, outside the project dir a sync replaces.
+  assert.match(backlog.backup, /runtime-settings/);
+  assert.equal(await readFile(projectJson, 'utf8'), shipped);
+
+  // `farmslot update` re-copies the pack's project.json.
+  await writeFile(projectJson, JSON.stringify({ name: project, default_branch: 'next' }) + '\n');
+  const { project: loaded } = await configProject({ project });
+  assert.equal(loaded.defaultBranch, 'next');
+  assert.equal(loaded.backlog?.autoDispatch?.enabled, true);
+  assert.equal(loaded.autoRecovery?.enabled, true);
 });
 
 test('configProject returns project learnings document when present', async (t) => {

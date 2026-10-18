@@ -2,7 +2,13 @@ export * from './config.js';
 export * from './error.js';
 export * from './fixtures.js';
 export * from './hooks.js';
-export { farmslotRoot, resolveFarmslotRoot } from './repo-root.js';
+export {
+  farmslotRoot,
+  readWorkspaceState,
+  resolveFarmslotRoot,
+  resolveWorkspaceRoot,
+  WORKSPACE_STATE_FILE,
+} from './repo-root.js';
 export type {
   IncrementalSessionUsageResult,
   IncrementalSessionUsageState,

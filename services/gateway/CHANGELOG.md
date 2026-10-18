@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Backlog and auto-recovery edits for a pack-copied project are written to the farm's runtime settings instead of its `project.json`, so `farmslot update` no longer reverts them. The fleet loader reads them back. As for a source-bound project, it takes such a project's visual-claim delegation only from runtime settings, never from the pack's `project.json`.
 
 ## 0.24.0 - 2026-10-18
 

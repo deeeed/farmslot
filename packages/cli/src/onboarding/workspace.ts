@@ -5,15 +5,19 @@
 //   <workspace>/repos/      — product repo clones (one per slot)
 //   <workspace>/runs/       — run archives
 //   <workspace>/state.json  — onboarding state (source, packs, migrations)
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import {
+  readWorkspaceState,
+  resolveWorkspaceRoot,
+  WORKSPACE_STATE_FILE,
+} from '@farmslot/slot-config';
 
 /** Absolute path to the farmslot repo root that this CLI runs from. */
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
-export const STATE_FILE = 'state.json';
 export const STATE_SCHEMA_VERSION = 1;
 
 export interface PackState {
@@ -51,12 +55,8 @@ export function workspaceAt(root: string): Workspace {
     farmslotDir: join(root, 'farmslot'),
     reposDir: join(root, 'repos'),
     runsDir: join(root, 'runs'),
-    statePath: join(root, STATE_FILE),
+    statePath: join(root, WORKSPACE_STATE_FILE),
   };
-}
-
-function expandTilde(p: string): string {
-  return p === '~' || p.startsWith('~/') ? join(homedir(), p.slice(1)) : p;
 }
 
 /**
@@ -65,20 +65,12 @@ function expandTilde(p: string): string {
  * Returns null when this CLI runs from a plain dev checkout with no workspace.
  */
 export function resolveWorkspace(env: NodeJS.ProcessEnv = process.env): Workspace | null {
-  const fromEnv = env.FARMSLOT_WORKSPACE;
-  if (fromEnv) return workspaceAt(resolve(expandTilde(fromEnv)));
-  const parent = dirname(repoRoot);
-  if (existsSync(join(parent, STATE_FILE))) return workspaceAt(parent);
-  return null;
+  const root = resolveWorkspaceRoot(env, repoRoot);
+  return root ? workspaceAt(root) : null;
 }
 
 export function readState(ws: Workspace): WorkspaceState | null {
-  if (!existsSync(ws.statePath)) return null;
-  const state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
-  if (typeof state.schema_version !== 'number') {
-    throw new Error(`Invalid workspace state (missing schema_version): ${ws.statePath}`);
-  }
-  return state;
+  return readWorkspaceState<WorkspaceState>(ws.root);
 }
 
 export function writeState(ws: Workspace, state: WorkspaceState): void {

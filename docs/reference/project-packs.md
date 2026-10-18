@@ -157,10 +157,15 @@ prepare still owns the branch lifecycle.
 
 Ownership rules:
 
-- **Packs own their project dirs.** An add/repair re-copies `projects/<name>/`
-  from the pack, overwriting local edits there. Persist customizations in the
-  pack source, not the registered copy. (Pool files are the opposite: user
-  edits are always preserved.)
+- **Packs own their project dirs.** An add/repair/update re-copies
+  `projects/<name>/` from the pack, overwriting local edits there. Persist
+  customizations in the pack source, not the registered copy. The farm-owned
+  `tasks/` and `learnings/` stay in place. Every other local file the copy
+  replaces or removes is first saved under
+  `farmslot/.pack-sync-backups/<name>/<stamp>/`. Backlog, auto-recovery and
+  visual-claim-review policy for a pack-copied project lives in
+  `$FARMSLOT_HOME/sources/runtime-settings/<name>.json`, not its `project.json`.
+  (Pool files are the opposite: user edits are always preserved.)
 - **Nothing is deleted on removal.** Slots/projects removed from a pack stay in
   the pool and `projects/` until removed manually — repair only adds or
   verifies. State ownership (`state.json`) always reflects the pack's current
