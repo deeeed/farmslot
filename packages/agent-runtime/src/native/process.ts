@@ -23,6 +23,27 @@ child.on('exit', (code, signal) => {
 });
 `;
 
+const NATIVE_EVENT_LIMIT = 1024 * 1024;
+
+/**
+ * Runners echo each image or document they read into their event stream as base64; Claude sends
+ * it twice per Read. The runner keeps the file, so the host's copy of a line that is too large
+ * keeps only each payload's size, both for recording and for handling the message.
+ */
+function withoutBase64Payloads(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutBase64Payloads);
+  if (!value || typeof value !== 'object') return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.entries(record).map(([key, item]) => [
+      key,
+      typeof item === 'string' && (key === 'base64' || (key === 'data' && record.type === 'base64'))
+        ? `[base64 data omitted: ${Buffer.byteLength(item, 'base64')} bytes]`
+        : withoutBase64Payloads(item),
+    ]),
+  );
+}
+
 /** JSON framing only. Human-readable stderr never supplies session state. */
 export class JsonLineProcess {
   readonly child: ChildProcessWithoutNullStreams;
@@ -95,7 +116,6 @@ export class JsonLineProcess {
       if (this.closed) return;
       let message: Record<string, unknown>;
       try {
-        if (Buffer.byteLength(line) > 1024 * 1024) throw new Error('Native event exceeds 1 MiB');
         const decoded: unknown = JSON.parse(line);
         if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
           throw new Error('Native protocol messages must be objects');
@@ -105,6 +125,14 @@ export class JsonLineProcess {
         this.fail(new Error('Native runner emitted invalid JSON', { cause: error }));
         this.beginStop();
         return;
+      }
+      if (Buffer.byteLength(line) > NATIVE_EVENT_LIMIT) {
+        message = withoutBase64Payloads(message) as Record<string, unknown>;
+        if (Buffer.byteLength(JSON.stringify(message)) > NATIVE_EVENT_LIMIT) {
+          this.fail(new Error('Native runner event exceeds 1 MiB'));
+          this.beginStop();
+          return;
+        }
       }
       if (typeof message.id === 'number' && !message.method && this.pending.has(message.id)) {
         const request = this.pending.get(message.id)!;

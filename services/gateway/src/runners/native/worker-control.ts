@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { NATIVE_WORKER_CONFIRM_STOPPED, NATIVE_WORKER_SEND } from '@farmslot/agent-runtime/native';
 import {
+  type AgentContext,
   type AgentRole,
   isTerminalRunStatus,
   Methods,
@@ -9,6 +10,7 @@ import {
   type NativeSessionReadResult,
   type NativeSessionSendResult,
   type NativeWorkerSessionBinding,
+  type Run,
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../../agents/contexts.js';
@@ -100,26 +102,61 @@ export async function readNativeWorkerSnapshot(
   ) {
     const current = getRun(runId)!;
     const message = snapshot.session.error.slice(0, 1000);
+    const observed = (item: AgentContext) =>
+      item.nativeSession?.sessionId === latest.sessionId &&
+      item.nativeSession.generation === latest.generation;
+    const own = current.agentContexts?.find(observed);
+    // A failure a relaunch has taken over stays on its own context, not on the run.
+    const runError = own && workerContextSuperseded(current, own) ? current.error : message;
     if (
-      current.error !== message ||
-      current.agentContexts?.some(
-        (item) =>
-          item.nativeSession?.sessionId === latest.sessionId &&
-          item.nativeSession.generation === latest.generation &&
-          item.error !== message,
-      )
+      current.error !== runError ||
+      current.agentContexts?.some((item) => observed(item) && item.error !== message)
     )
       updateRun(runId, {
-        error: message,
+        error: runError,
         agentContexts: current.agentContexts?.map((item) =>
-          item.nativeSession?.sessionId === latest.sessionId &&
-          item.nativeSession.generation === latest.generation
-            ? { ...item, error: message }
-            : item,
+          observed(item) ? { ...item, error: message } : item,
         ),
       });
   }
   return snapshot;
+}
+
+/** A later native worker of the same role, runner and review accepted its task, taking over. */
+function workerContextSuperseded(run: Run, context: AgentContext): boolean {
+  const contexts = run.agentContexts ?? [];
+  const index = contexts.indexOf(context);
+  return (
+    index >= 0 &&
+    contexts
+      .slice(index + 1)
+      .some(
+        (item) =>
+          item.nativeSession?.acceptedAt &&
+          item.role === context.role &&
+          item.runner === context.runner &&
+          item.reviewId === context.reviewId,
+      )
+  );
+}
+
+/**
+ * Once a relaunched native worker is running, the failure its predecessor wrote to run.error no
+ * longer describes the run. Any other run.error stays.
+ */
+export function clearSupersededWorkerError(runId: string): void {
+  const run = getRun(runId);
+  if (
+    run?.error &&
+    run.agentContexts?.some(
+      (item) =>
+        item.status === 'failed' &&
+        item.nativeSession &&
+        item.error === run.error &&
+        workerContextSuperseded(run, item),
+    )
+  )
+    updateRun(runId, { error: undefined });
 }
 
 export async function confirmNativeWorkerStopped(runId: string, contextId?: string): Promise<void> {
