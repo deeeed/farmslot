@@ -4,22 +4,20 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.55.0 - 2026-10-18
+
 - Acceptance ledger rows carry an optional `recipeRunId`, the QA case execution a row came from, and `acceptanceRowExecution` resolves a row's execution. The ledger validator checks a row's moments against that execution.
 - `isSettledCompletionFailure`: a refused completion counts as settled once its workspace is discarded (`gatePrerequisiteDiscardedAt` on the refused step) or the run is archived (`archivedAt`), and `isActiveListRun` stops counting it. `refusedCompletionStep` returns that refused step.
-
 - `FamilyObservabilityRunSummary.active`: whether the run counts as active by `isActiveListRun`, set by the gateway because summaries carry no step outputs.
-
 - A run draft's source line reads "(run selection)", and an empty branch input no longer counts as a selection in the line or the summary.
 - Family readiness counts active runs with `isActiveListRun`: a failed run that still holds its resources counts as active (not failed or settled) and blocks self-learning eligibility as an active run.
 - `listProjectTaskRoots` skips only links that do not resolve (ENOENT, ELOOP, EACCES, EPERM, ENOTDIR); any other stat failure, such as EIO or EMFILE, is rethrown instead of dropping the project.
 - Add `listProjectTaskRoots` and `ProjectTaskRoot` to `node/farm-layout`: one enumeration of project task roots (real and linked project dirs, no files).
-
 - Add `@farmslot/protocol/node/farm-layout`: `ORCHESTRATOR_TASK_DIR`, `resolveProjectsDir` (honours `FARMSLOT_PROJECTS_DIR`) and `orchestratorTaskRoot`, the one definition of where the gateway keeps run task folders.
 - Source status keeps a failed read visible over a context that was empty, and a run draft's line names the selected branch or main.
 - Move run family grouping here from Command Center and Companion: `groupRunsByFamily`, `sortRunsForFamilyView`, `selectRecentRunFamilyGroups` and `RunFamilyGroup`. A family's `activeCount` uses `isActiveListRun`. Remove `ACTIVE_RUN_LIST_LIMIT`: `run.list` `active` is never truncated.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
-
 - Add gateway-derived identity generation fields (ADR-051 Amendment 5): `ownerGeneration` on PR monitors, monitor policies, teams, trigger rules, rule actions, review submissions, contributions, PR work review owners and `AssessmentRecord`; `PRTeamProfile.notificationPrincipalGenerations`; `Run.createdByPrincipalGeneration`, `Run.requestedByPrincipalId` and `Run.requestedByPrincipalGeneration`; `QueueItem.delegatedOwnerPrincipalId`; and an optional `delegatorPrincipalGeneration` in the project visual claim review policy. Requests that supply these fields are refused.
 
 ## 0.54.0 - 2026-10-17
