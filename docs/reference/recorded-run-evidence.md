@@ -123,11 +123,16 @@ measured timelines. Restart gaps or held-frame padding are not captured proof;
 an affected visual moment is outside recording. A continuous segment boundary
 may yield ordered moment references. Export reads only those source segments.
 
-**Timing rule:** Capture starts after non-UI session setup, before the first UI
-proof node, including a node inside a called recipe, and stops after the final
-HUD outcome. Recorder readiness is checked before setup; target resolution and
-admission bind the process that setup leaves running. Explicit recording for a
-recipe without UI nodes starts at run entry. Play
+**Timing rule:** Capture starts before the first proof node: a UI node or an
+assertion node (`assert_output`, `assert_json`, `assert_file`, `ui.wait_for`),
+including a node inside a called recipe. After binding, the engine waits
+`EVIDENCE_PADDING_MS` before running that node, so the node clears the recorder's
+start and has padded footage before it. Capture stops after the final HUD outcome.
+Setup before the first proof node that proves nothing, such as an app restart or
+state seeding, stays unrecorded (ADR-062 Amendment 14). Recorder readiness is
+checked before setup; target resolution and admission bind the process running
+at the first proof node. Explicit recording for a recipe without UI nodes starts
+at run entry. Play
 `[startRangeMs[0] - 1000, endRangeMs[1] + 1000]`, using one
 shared `EVIDENCE_PADDING_MS = 1000` constant and limiting padding to available
 media. Do not trim an out-of-span proof into valid evidence: a proof node outside
@@ -340,7 +345,7 @@ Specific adopter files and release coordination stay outside this public spec.
 Named checks below are required before release; they specify proof, not existing
 successful test results:
 
-- **P1 timing/lifecycle:** Verify measured-range playback with the shared 1 s padding, capture before first UI proof, final HUD before stop, untimed/no-seek and outside-recording states on adjacent nodes and interruption. No invented timestamps or precision qualification.
+- **P1 timing/lifecycle:** Verify measured-range playback with the shared 1 s padding, capture before the first proof node, final HUD before stop, untimed/no-seek and outside-recording states on adjacent nodes and interruption. No invented timestamps or precision qualification.
 - **P2 assertion eligibility:** Navigation-only and screenshot-only `proves` fail closed. Executed observation-bound assertions follow the verdict table; visual proof remains awaiting review until a recorded judgment. Untestable override cannot manufacture proven evidence.
 - **P3 bounded cost:** Short and long QA satisfy all CPU/disk/time/transfer budgets, total/segment limits, progressive encoding, zero inactive media loading and requested-only encoded clip export.
 - **P4 public composition:** A harness using only public runtime/engine bindings inherits the same evidence and owned-resource cleanup as SDK and hosted CLI; no recording implementation exists in the harness.

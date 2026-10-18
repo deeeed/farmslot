@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Full-run recording starts before the first proof node, a UI action or an assertion, instead of the first UI action, and that node runs 1 s after capture starts, so assertions that prove a claim before the first tap are recorded instead of left outside the recording. Setup that proves nothing still runs before capture, and a run that binds at a proof node takes 1 s longer (ADR-062 Amendment 14).
 
 ## 0.39.2 - 2026-10-18
 
