@@ -6,6 +6,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.1.15 - 2026-10-18
+
+- Align with `@farmslot/protocol` 0.55.0.
+
 ## 0.1.14 - 2026-10-17
 
 - Align the worker dependency set with Send back repairs and Protocol 0.54.0.

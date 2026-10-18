@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.23.3 - 2026-10-18
+
+- Align with `@farmslot/agent-runtime` 0.29.2: a QA task's acceptance ledger now keeps every case package's verdicts, merged by criterion, instead of only the last case's. Also moves to `@farmslot/protocol` 0.55.0, `@farmslot/adapter-sdk` 0.18.2 and `@farmslot/recipe-runner` 0.39.2.
+
 ## 0.23.2 - 2026-10-17
 
 - Align with `@farmslot/recipe-runner` 0.39.1, whose network capture summaries redact credential-like path segments.

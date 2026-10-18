@@ -1,11 +1,11 @@
 {
-  "version": "0.23.0",
-  "date": "2026-10-17",
+  "version": "0.24.0",
+  "date": "2026-10-18",
   "items": [
-    "Send back to agent: a person's Issue goes to the retained worker, which re-proves only the rejected criteria in one existing fix round; the reason is kept as a learning, and an interrupted repair resumes without a second charge",
-    "A worker waiting on its own question or approval hands the run to the operator with the captured question instead of being nudged",
-    "A QA dispatch replay keeps the task's original evidence window",
-    "A spent review budget offers an extension only when the run can receive one, and says why otherwise",
-    "A prompt left unsent in a busy Codex composer is never counted as delivered"
+    "A QA run that records one package per case keeps every case's verdicts: each acceptance criterion binds to the case that proved it",
+    "Releasing or recycling a slot whose run failed completion is refused, so the checkout a completion replay needs is kept; replay the completion or discard the workspace with the named force release",
+    "QA can prepare at a frozen release-range head after the release branch has moved, including on a detached slot",
+    "Idle resource cleanup finds and stops simulators and dev servers that disabled slots left running, and confirms each stop with a fresh probe",
+    "A run whose refused completion was discarded no longer counts as active or owns its PR, so a new run can start on that PR"
   ]
 }
