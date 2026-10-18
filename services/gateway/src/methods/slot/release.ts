@@ -30,6 +30,7 @@ import {
   loadSlotVars,
   markSlotBusy,
   markSlotStatusIf,
+  ownsRunSlotCleanup,
   type ProjectVars,
   type RawProjectJson,
   readSlotField,
@@ -106,10 +107,13 @@ import { findUnmergedSlotWork } from './unmerged-work.js';
 // In-flight teardown coalescing: two concurrent releases for the same slot
 // must be ONE teardown — the slower duplicate previously re-killed and reset
 // whatever claimed the slot after the first release finished.
-const inflightReleases = new Map<
-  string,
-  { key: string; promise: Promise<{ released: boolean }> }
->();
+const inflightReleases = new Map<string, { key: string; promise: Promise<SlotReleaseResult> }>();
+
+/** A release that did not run says why, so a caller never sees a bare refusal. */
+export interface SlotReleaseResult {
+  released: boolean;
+  reason?: string;
+}
 
 /** How long a release waits for an aborted in-flight prepare to settle. A
  * git command stalled on a dropped network never observes the abort; past
@@ -150,7 +154,7 @@ export async function slotRelease(
   // A blocked-run restart keeps the same run ID. It must release the slot
   // without fencing that run as terminal before the new attempt can acquire proof.
   options?: SlotReleaseOptions,
-): Promise<{ released: boolean }> {
+): Promise<SlotReleaseResult> {
   if (options?.restartRunId !== undefined && options.restartRunId !== params.expectedRunId) {
     throw new Error('Restart release must be bound to its run owner');
   }
@@ -178,7 +182,8 @@ export async function slotRelease(
     .catch((error: unknown) => {
       // A bound teardown losing its claim is an expected no-op for archive and
       // replay rollback. The new owner's workspace has already been left alone.
-      if (error instanceof BoundReleaseClaimLostError) return { released: false };
+      if (error instanceof BoundReleaseClaimLostError)
+        return { released: false, reason: error.message };
       throw error;
     })
     .finally(() => {
@@ -217,21 +222,31 @@ export async function slotReleasePreflight(
   params: SlotReleaseParams,
   options?: SlotReleaseOptions,
 ): Promise<SlotReleasePreflight | null> {
+  const preflight = await releasePreflight(params, options);
+  return 'skipped' in preflight ? null : preflight;
+}
+
+async function releasePreflight(
+  params: SlotReleaseParams,
+  options?: SlotReleaseOptions,
+): Promise<SlotReleasePreflight | { skipped: string }> {
   // Cheap early checks (authoritative validation happens atomically at the
   // releasing-marker CAS in slotReleaseImpl, after this preflight). A slot
   // already mid-release belongs to that teardown — a bound release joining at
   // the same epoch would run a second destructive pass.
-  if ((await readSlotField(params.slotId, 'phase')) === SLOT_PHASE_RELEASING) {
-    console.log(`[release] slot ${params.slotId} is already mid-release; leaving it untouched`);
-    return null;
+  const row = await readSlotRow(params.slotId);
+  if (row?.phase === SLOT_PHASE_RELEASING) {
+    const skipped = `Slot ${params.slotId} is already being released`;
+    console.log(`[release] ${skipped}; leaving it untouched`);
+    return { skipped };
   }
-  const boundOwner =
-    ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? null;
-  if (params.expectedRunId && boundOwner !== params.expectedRunId) {
-    console.log(
-      `[release] slot ${params.slotId} is held by ${boundOwner ?? 'nobody'}, not expected run ${params.expectedRunId}; leaving it untouched`,
-    );
-    return null;
+  const boundOwner = (row?.current_run_id as string | null | undefined) ?? null;
+  // A run whose cancel deferred cleanup no longer holds the slot pointer, but
+  // the slot is held for its cleanup and that run may still release it.
+  if (params.expectedRunId && !ownsRunSlotCleanup(row, params.expectedRunId)) {
+    const skipped = `Slot ${params.slotId} is held by ${boundOwner ? `run ${boundOwner}` : 'no run'}, not run ${params.expectedRunId}`;
+    console.log(`[release] ${skipped}; leaving it untouched`);
+    return { skipped };
   }
   const vars = await loadSlotVars(params.slotId);
   assertReleaseRunGuards(params, boundOwner);
@@ -361,9 +376,9 @@ async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
   options?: SlotReleaseOptions,
-): Promise<{ released: boolean }> {
-  const preflight = await slotReleasePreflight(params, options);
-  if (!preflight) return { released: false };
+): Promise<SlotReleaseResult> {
+  const preflight = await releasePreflight(params, options);
+  if ('skipped' in preflight) return { released: false, reason: preflight.skipped };
   // Refused before the kill below, so a refusal leaves the worker running. Step 2
   // checks again after the kill for work the worker wrote in between.
   if (preflight.unmergedWork) throw unmergedWorkError(preflight.unmergedWork);
@@ -404,25 +419,37 @@ async function slotReleaseImpl(
   // whoever holds the slot then, which may be a claim made after the preflight.
   let releasedOwner: string | null = null;
   let releaseRefusal: string | null = null;
+  let claimSkip = `Slot ${params.slotId} could not be claimed for release`;
   let priorFence: Record<string, unknown> = {};
   const mark = await markSlotStatusIf(
     params.slotId,
     (slot: Readonly<Record<string, unknown>>) => {
       // A pending handoff reservation means an incoming run's delivery is in
       // flight on this worker — no teardown (bound or not) may start under it.
-      if (typeof slot.handoff_run_id === 'string' && slot.handoff_run_id) return false;
+      if (typeof slot.handoff_run_id === 'string' && slot.handoff_run_id) {
+        claimSkip = `Slot ${params.slotId} has a pending handoff to run ${slot.handoff_run_id}`;
+        return false;
+      }
       // A slot already mid-release belongs to that teardown — a bound release
       // joining at the same epoch would run a second destructive pass and keep
       // going after the first publishes `ready`, clobbering whatever claims
       // the slot next. Applies to bound AND unbound entries.
-      if (slot.phase === SLOT_PHASE_RELEASING) return false;
+      if (slot.phase === SLOT_PHASE_RELEASING) {
+        claimSkip = `Slot ${params.slotId} is already being released`;
+        return false;
+      }
       if (
         options?.expectedSlotEpoch !== undefined &&
         (Number(slot.slot_epoch) || 0) !== options.expectedSlotEpoch
-      )
+      ) {
+        claimSkip = `Slot ${params.slotId} moved past epoch ${options.expectedSlotEpoch}`;
         return false;
+      }
       const owner = ((slot.current_run_id as string | null | undefined) ?? null) as string | null;
-      if (params.expectedRunId && owner !== params.expectedRunId) return false;
+      if (params.expectedRunId && !ownsRunSlotCleanup(slot, params.expectedRunId)) {
+        claimSkip = `Slot ${params.slotId} is held by ${owner ? `run ${owner}` : 'no run'}, not run ${params.expectedRunId}`;
+        return false;
+      }
       releaseRefusal = releaseOwnerRefusal(
         owner,
         owner === boundOwner && ownerTerminal,
@@ -443,12 +470,9 @@ async function slotReleaseImpl(
   );
   if (!mark.applied) {
     if (releaseRefusal) throw new Error(releaseRefusal);
-    step(
-      'claim',
-      `Slot ${params.slotId} was claimed by another run (or is already releasing); leaving it alone`,
-    );
+    step('claim', `${claimSkip}; leaving it alone`);
     complete(0);
-    return { released: false };
+    return { released: false, reason: claimSkip };
   }
   const entryEpoch = mark.epoch ?? 0;
   const assertReleaseClaim = async (): Promise<void> => {
@@ -482,7 +506,7 @@ async function slotReleaseImpl(
         `Slot ${params.slotId} moved to another owner; remaining release actions stopped`,
       );
       complete(0);
-      throw new BoundReleaseClaimLostError();
+      throw new BoundReleaseClaimLostError(`Slot ${params.slotId} moved to another owner`);
     }
     complete(1);
     throw new Error(
@@ -545,6 +569,11 @@ async function slotReleaseImpl(
       `[release] unwatch failed for ${params.slotId}; continuing teardown: ${(err as Error).message}`,
     );
   }
+  const reclaimed = `Slot ${params.slotId} was re-claimed mid-teardown (epoch moved past ${entryEpoch})`;
+  const reclaimedResult = (): SlotReleaseResult => {
+    complete(0);
+    return { released: false, reason: reclaimed };
+  };
   const guardedTeardownWrite = async (fields: Record<string, unknown>): Promise<boolean> => {
     const ok = await updateSlotStatusIf(
       params.slotId,
@@ -552,10 +581,7 @@ async function slotReleaseImpl(
       fields,
     );
     if (!ok) {
-      step(
-        'claim',
-        `Slot ${params.slotId} was re-claimed mid-teardown (epoch moved past ${entryEpoch}); aborting remaining teardown`,
-      );
+      step('claim', `${reclaimed}; aborting remaining teardown`);
     }
     return ok;
   };
@@ -640,10 +666,7 @@ async function slotReleaseImpl(
         held_reason: reason,
         [SLOT_RELEASING_SINCE]: null,
       });
-      if (!held) {
-        complete(0);
-        return { released: false };
-      }
+      if (!held) return reclaimedResult();
       complete(1);
       // Thrown, not `released: false`: callers that print or log success on
       // a settled release must report a slot left held.
@@ -794,10 +817,7 @@ async function slotReleaseImpl(
           held_reason: reason,
           [SLOT_RELEASING_SINCE]: null,
         });
-        if (!held) {
-          complete(0);
-          return { released: false };
-        }
+        if (!held) return reclaimedResult();
         complete(1);
         throw new Error(reason);
       }
@@ -899,15 +919,10 @@ async function slotReleaseImpl(
         current_variant: null,
         readiness: null,
       }))
-    ) {
-      complete(0);
-      return { released: false };
-    }
+    )
+      return reclaimedResult();
   } else if (!keepWarm) {
-    if (!(await guardedTeardownWrite({ app: null }))) {
-      complete(0);
-      return { released: false };
-    }
+    if (!(await guardedTeardownWrite({ app: null }))) return reclaimedResult();
   }
   if (
     !(await guardedTeardownWrite({
@@ -915,22 +930,18 @@ async function slotReleaseImpl(
       agent: 'idle',
       ...(idleBranchAfterRelease ? { branch: idleBranchAfterRelease } : {}),
     }))
-  ) {
-    complete(0);
-    return { released: false };
-  }
+  )
+    return reclaimedResult();
 
   // 7. Re-prepare if keep-warm, otherwise mark ready (cold). resetSlot writes
   // unconditionally, so re-verify the epoch immediately before it.
   const epochStillOurs = (slot: Readonly<Record<string, unknown>>): boolean =>
     (Number(slot.slot_epoch) || 0) === entryEpoch;
-  const abortReset = (): { released: boolean } => {
-    step(
-      'claim',
-      `Slot ${params.slotId} was re-claimed before final reset (epoch moved past ${entryEpoch}); aborting reset`,
-    );
+  const abortReset = (): SlotReleaseResult => {
+    const reason = `Slot ${params.slotId} was re-claimed before final reset (epoch moved past ${entryEpoch})`;
+    step('claim', `${reason}; aborting reset`);
     complete(0);
-    return { released: false };
+    return { released: false, reason };
   };
   if (keepWarm) {
     step('reprepare', 'Re-preparing slot...');

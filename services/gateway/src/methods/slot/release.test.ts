@@ -163,7 +163,10 @@ test('slotRelease with expectedRunId leaves a slot held by a different run untou
 
   const result = await slotRelease({ slotId, expectedRunId: 'some-other-run' }, noopEmit);
 
-  assert.deepEqual(result, { released: false });
+  assert.deepEqual(result, {
+    released: false,
+    reason: `Slot ${slotId} is held by run ${rival.id}, not run some-other-run`,
+  });
   assert.equal(await readSlotField(slotId, 'current_run_id'), rival.id, 'claim untouched');
 });
 
@@ -206,7 +209,7 @@ test('slotRelease bound to the owner still refuses a slot already mid-release', 
 
   const result = await slotRelease({ slotId, expectedRunId: owner.id }, noopEmit);
 
-  assert.deepEqual(result, { released: false });
+  assert.deepEqual(result, { released: false, reason: `Slot ${slotId} is already being released` });
   assert.equal(await readSlotField(slotId, 'phase'), 'releasing', 'fence untouched');
 });
 
@@ -614,4 +617,47 @@ test("a replay's epoch-pinned rollback still frees its own claim on a retained r
   });
   assert.deepEqual(result, { released: true });
   assert.equal(await readSlotField(slotId, 'current_run_id'), null);
+});
+
+test('a cancelled run whose slot cleanup was deferred can release that slot by name', async (t) => {
+  const { readSlotField } = await import('../../core/index.js');
+  const slotId = await fixtureSlot(t, 'cancel-deferred', 'main');
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-cancel-deferred`,
+    slotId,
+  });
+  t.after(() => cleanupRun(run.id));
+  // Run 6c5d56fb: run.cancel could not identify the worker pane, so it gave up
+  // the slot pointer and held the slot for that run's cleanup.
+  const deferred = `Worker dev has no exact pane identity; cleanup deferred. Verify its window, then use farmslot slot release --keep-work ${slotId}`;
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    slotTeardownSkipped: deferred,
+  });
+  await seedSlotRow(t, slotId, {
+    lifecycle: 'held',
+    phase: 'occupied',
+    agent: 'idle',
+    current_run_id: null,
+    cleanup_run_id: run.id,
+    held_reason: deferred,
+    slot_epoch: 3,
+  });
+
+  const refused = await slotRelease(
+    { slotId, keepWork: true, expectedRunId: 'some-other-run' },
+    noopEmit,
+  );
+  assert.equal(refused.released, false);
+  assert.match(refused.reason ?? '', /not run some-other-run/);
+  assert.equal(await readSlotField(slotId, 'lifecycle'), 'held', 'refused release left it held');
+
+  const result = await slotRelease({ slotId, keepWork: true, expectedRunId: run.id }, noopEmit);
+  assert.deepEqual(result, { released: true });
+  assert.equal(await readSlotField(slotId, 'cleanup_run_id'), null);
+  assert.equal(await readSlotField(slotId, 'held_reason'), null);
 });
