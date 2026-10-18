@@ -27,6 +27,7 @@ import {
   FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
   FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES,
   type FileTransferPhase,
+  type NodeFsReadChunkParams,
   type NodeFsReadChunkResult,
 } from '@farmslot/protocol';
 
@@ -139,7 +140,7 @@ function requestFor(ctx: SlotLocality): NonNullable<SlotLocality['nodeRequest']>
 async function readChunkAcrossReconnect(
   ctx: SlotLocality,
   request: NonNullable<SlotLocality['nodeRequest']>,
-  params: { root: string; relPath: string; offset: number; length: number },
+  params: NodeFsReadChunkParams,
 ): Promise<NodeFsReadChunkResult> {
   const read = async () =>
     (await request('fs.readChunk', params, {

@@ -20,6 +20,7 @@ import { WebSocket } from 'ws';
 
 import { getNode, registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import {
+  failRequestsBoundTo,
   handleNodeResponse,
   NodeRpcTimeoutError,
   NodeTransportUnavailableError,
@@ -662,6 +663,62 @@ test('a chunked copy resumes on the reconnected node when the node restarts mid-
     reads.every((read) => read.bound),
     'chunk reads are bound to their connection',
   );
+});
+
+test('a registered node that restarts mid-copy is waited for and the range is read on its new connection', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'slot-copy-registered-restart-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const machine = 'registered-restart-machine';
+  const content = Buffer.alloc(3_745_393, 9);
+  const restartAt = 3 * 512 * 1024;
+  const chunk = (params: { offset?: number; length?: number }) => {
+    const offset = params.offset ?? 0;
+    const slice = content.subarray(offset, offset + (params.length ?? 0));
+    return {
+      content: slice.toString('base64'),
+      size: content.length,
+      offset,
+      bytesRead: slice.length,
+      eof: offset + slice.length >= content.length,
+    };
+  };
+  const stat = () => ({ size: content.length, isFile: true, isDirectory: false, mtimeMs: 1 });
+  const next = new FakeNodeWebSocket({ onStat: stat, onReadChunk: chunk });
+  const first = new FakeNodeWebSocket({
+    onStat: stat,
+    onReadChunk: (params) => {
+      if (params.offset === restartAt) {
+        // The node restarts: the server's close handler runs, then the new process connects.
+        failRequestsBoundTo(first.source!);
+        unregisterByWs(first.source!);
+        setTimeout(() => {
+          registerNode(machine, 2, next as any);
+          next.source = getNode(machine)!.ws;
+        }, 50);
+      }
+      return chunk(params);
+    },
+  });
+  registerNode(machine, 1, first as any);
+  first.source = getNode(machine)!.ws;
+  t.after(() => {
+    unregisterByWs(first as any);
+    unregisterByWs(next as any);
+  });
+  const destination = path.join(root, 'still.png');
+
+  await slotCopyFile(
+    { host: '203.0.113.21', machine, sshTarget: 't@203.0.113.21' },
+    '/task/artifacts/still.png',
+    destination,
+    { forceChunked: true, verifyRemoteHash: false },
+  );
+
+  assert.deepEqual(await readFile(destination), content);
+  const reads = (socket: FakeNodeWebSocket) =>
+    socket.calls.filter((call) => call.method === 'fs.readChunk').map((call) => call.params.offset);
+  assert.deepEqual(reads(first), [0, 512 * 1024, 1024 * 1024, restartAt]);
+  assert.equal(reads(next)[0], restartAt, 'the new connection resumes at the interrupted offset');
 });
 
 test('slotCopyDir local path forwards per-file failures to onEntryFailure and keeps copying', async (t) => {
