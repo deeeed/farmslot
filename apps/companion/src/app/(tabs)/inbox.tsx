@@ -37,11 +37,13 @@ function DecisionCard({ decision }: { decision: PendingDecision }) {
         ? 'ready'
         : 'review';
   const workspaceOpenLabel =
-    workspaceTarget === 'retro'
-      ? 'Open retrospective workspace'
-      : workspaceTarget === 'ready'
-        ? 'Open ready workspace'
-        : 'Open review workspace';
+    presentation.kind === 'result-decision'
+      ? 'Open decision'
+      : workspaceTarget === 'retro'
+        ? 'Open retrospective workspace'
+        : workspaceTarget === 'ready'
+          ? 'Open ready workspace'
+          : 'Open review workspace';
   const diffArtifactPath = diffArtifactCandidate(presentation.artifactManifest)?.path ?? null;
   const visualPairs = groupVisualArtifactPairs(
     presentation.artifactManifest,

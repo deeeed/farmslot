@@ -16,13 +16,16 @@ import {
   failedRunCancelEffects,
   type HumanGrade,
   isAllowedRunDecisionAction,
+  isHeldForResultDecision,
   isPrerequisiteGatePayload,
   isRecord,
   isReviewMode,
   MARK_CLAIM_UNTESTABLE_ACTION,
   Methods,
   observedReviewSessionContinuity,
+  pendingResultDecision,
   REJECT_VISUAL_CLAIM_ACTION,
+  type ResultDecisionPayload,
   type ReviewChainEntry,
   reviewChainForRun,
   type ReviewMode,
@@ -77,6 +80,15 @@ export function assertRunGateActionAvailable(
   decision: NonNullable<Run['decisions']>[number],
   actionId: string,
 ): void {
+  const resultAction =
+    decision.payload?.kind === 'result-decision'
+      ? decision.payload.actions.find((action) => action.id === actionId)
+      : undefined;
+  if (resultAction && !resultAction.available)
+    throw Object.assign(
+      new Error(`Action ${actionId} is unavailable: ${resultAction.unavailableReason ?? ''}`),
+      { code: 'GATE_ACTION_UNAVAILABLE' },
+    );
   if (isAllowedRunDecisionAction(decision, actionId)) return;
   const available = visibleInteractiveHandoffActions(decision).map((action) => action.id);
   throw Object.assign(
@@ -147,6 +159,15 @@ export function buildRunGateParams(
   ) {
     throw new Error('Review selection options require --action request-review');
   }
+  // A result decision takes a written reason of its own (ADR-065 Amendment 7).
+  if (decision.payload?.kind === 'result-decision')
+    return buildRunResolveDecisionParams({
+      runId: run.id,
+      decision,
+      actionId,
+      selectionData,
+      ...(options.reason !== undefined ? { reason: options.reason } : {}),
+    });
   return buildRunResolveDecisionParams({
     runId: run.id,
     decision,
@@ -154,6 +175,26 @@ export function buildRunGateParams(
     selectionData,
     ...(options.reason !== undefined ? { evidenceAttestationReason: options.reason } : {}),
   });
+}
+
+/** The lines `farmslot run gate` prints for a held run's result decision. */
+export function formatResultDecision(payload: ResultDecisionPayload): string[] {
+  const lines = [`  ${payload.reason}`];
+  for (const finding of payload.findings ?? [])
+    lines.push(
+      `  ${finding.file}${finding.line ? `:${finding.line}` : ''}  ${finding.description}`,
+    );
+  for (const reason of payload.refusal?.reasons ?? []) lines.push(`  ${reason.message}`);
+  lines.push(
+    'headSha' in payload.delivered
+      ? `  Delivered ${[payload.delivered.branch, payload.delivered.headSha.slice(0, 12)].filter(Boolean).join(' @ ')}`
+      : `  Delivered ${payload.delivered.reportPath}`,
+  );
+  for (const action of payload.actions)
+    lines.push(
+      `  - ${action.id}${action.available ? '' : `  (unavailable: ${action.unavailableReason ?? 'not offered'})`}${action.requiresReason ? '  --reason required' : ''}`,
+    );
+  return lines;
 }
 
 export function buildReviewChainResult(run: Run): { chain: ReviewChainEntry[] } {
@@ -794,7 +835,10 @@ export function registerRunCommand(program: Command): void {
       'Gate action (approve-publish|hold|confirm-visual|reject-visual|mark-untestable|…)',
     )
     .option('--decision <id>', 'Decision id when several are pending')
-    .option('--reason <text>', 'Written reason for evidence attestation or human claim review')
+    .option(
+      '--reason <text>',
+      'Written reason for evidence attestation, human claim review or a result decision',
+    )
     .option('--claim <id>', 'Registered claim for human evidence review')
     .option('--recipe-run <id>', 'Selected recorded execution for human evidence review')
     .option('--judgment-kind <kind>', 'Visual review kind: person-reviewed or lead-agent-reviewed')
@@ -825,8 +869,26 @@ export function registerRunCommand(program: Command): void {
           } else if (listed.length === 0) {
             output.write('No pending decisions.\n');
           } else {
-            for (const d of listed) {
+            // A held run presents its result decision first; its output review
+            // is that decision's evidence, with no actions of its own.
+            const held = isHeldForResultDecision(current);
+            const ordered = held
+              ? [...listed].sort(
+                  (a, b) =>
+                    Number(b.payload?.kind === 'result-decision') -
+                    Number(a.payload?.kind === 'result-decision'),
+                )
+              : listed;
+            for (const d of ordered) {
               output.write(`${d.id}  ${d.title ?? ''}\n`);
+              if (d.payload?.kind === 'result-decision') {
+                for (const line of formatResultDecision(d.payload)) output.write(`${line}\n`);
+                continue;
+              }
+              if (held && d.payload?.kind === 'output-review') {
+                output.write('  Evidence for the result decision\n');
+                continue;
+              }
               const readiness = isPrerequisiteGatePayload(d.payload)
                 ? d.payload.gateReadiness
                 : undefined;
@@ -902,7 +964,13 @@ export function registerRunCommand(program: Command): void {
           );
           return;
         }
-        const decisionId = opts.decision ?? (pending.length === 1 ? pending[0].id : undefined);
+        const decisionId =
+          opts.decision ??
+          (pending.length === 1
+            ? pending[0].id
+            : isHeldForResultDecision(current)
+              ? pendingResultDecision(current)?.id
+              : undefined);
         if (!decisionId) {
           throw Object.assign(new Error(`Run has ${pending.length} pending decisions.`), {
             code: 'GATE_DECISION_AMBIGUOUS',

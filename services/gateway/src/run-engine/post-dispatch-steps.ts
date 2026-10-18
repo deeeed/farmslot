@@ -52,6 +52,11 @@ import {
   computeReadyGateReviewSubjectHash,
   readReadyGatePreparedPackage,
 } from '../run-completion/ready-gate-package.js';
+import {
+  ResultDecisionHoldError,
+  runDeliveredResult,
+  takeSendBackReview,
+} from '../run-completion/result-decision.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
@@ -724,11 +729,21 @@ export async function executeReviewStep(
       : mode === 'cold'
         ? PIPELINE_REVIEW_SOURCE.artifactRefs(1, runId).id
         : undefined;
-  const result = await executeReviewForRun(runId, current.slotId, {
-    validationDepth,
-    mode,
-    reviewId,
-  });
+  // A result decision's Send back continues from its recorded findings: the
+  // worker gets them first, as Continue Fixing does, instead of a fresh review.
+  const sendBack = takeSendBackReview(runId);
+  const result = await executeReviewForRun(
+    runId,
+    current.slotId,
+    sendBack
+      ? {
+          validationDepth: sendBack.validationDepth ?? validationDepth,
+          mode: sendBack.mode ?? mode,
+          reviewId: sendBack.reviewId ?? reviewId,
+          resumeFromResult: sendBack,
+        }
+      : { validationDepth, mode, reviewId },
+  );
   const cliCommand = `farmslot rpc review.run '{"runId":"${runId}"}'`;
 
   // Interactive mode: present review results as a decision before proceeding
@@ -808,9 +823,15 @@ export async function executeReviewStep(
         result.maxRetries !== undefined
           ? ` after ${result.retryCount}/${result.maxRetries} fix attempts`
           : '';
-      throw new Error(
-        `Review found ${issueCount || 'one or more'} issue(s)${retriesLabel} in ${location}: ${message}`,
-      );
+      const reason = `Review found ${issueCount || 'one or more'} issue(s)${retriesLabel} in ${location}: ${message}`;
+      // A delivered result waits for a person instead of failing (ADR-065 Amendment 7).
+      if (runDeliveredResult(getRun(runId) ?? current))
+        throw new ResultDecisionHoldError(reason, inputs, {
+          ...result,
+          cliCommand,
+          maxRetriesExhausted: true,
+        });
+      throw new Error(reason);
     }
   }
 

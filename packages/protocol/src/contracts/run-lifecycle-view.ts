@@ -28,6 +28,7 @@ const labels: Record<RunStatus, string> = {
   reconciling: 'Reconciling',
   completing: 'Completing',
   'human-gating': 'Awaiting decision',
+  'needs-decision': 'Needs decision',
   'ci-watching': 'Watching CI',
   paused: 'Paused',
   done: 'Done',
@@ -49,7 +50,14 @@ export function deriveRunLifecycleView(input: {
       ? 'ok'
       : input.status === 'failed'
         ? 'fail'
-        : ['blocked', 'paused', 'review-failed', 'reconciling', 'cancelled'].includes(input.status)
+        : [
+              'blocked',
+              'paused',
+              'review-failed',
+              'reconciling',
+              'needs-decision',
+              'cancelled',
+            ].includes(input.status)
           ? 'warn'
           : input.status === 'created'
             ? 'muted'
@@ -59,7 +67,7 @@ export function deriveRunLifecycleView(input: {
     label: labels[input.status],
     ...(input.waitingForOperator && ['monitoring', 'reviewing', 'fixing'].includes(input.status)
       ? { activityLabel: `Waiting on operator: ${input.waitingForOperator.who}` }
-      : ['fixing', 'review-failed', 'reconciling'].includes(input.status)
+      : ['fixing', 'review-failed', 'reconciling', 'needs-decision'].includes(input.status)
         ? { activityLabel: labels[input.status] }
         : {}),
     tone,

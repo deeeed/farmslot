@@ -28,7 +28,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand.
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- A run that needs a decision shows it in the decision workspace with the same reason, findings or refused prerequisite, delivered head or report, and three actions as Command Center; an action that can't be taken shows why, and Accept needs a written reason. The Review queue labels it Needs decision, opens it with Open decision, and skips the held output review. When the gateway re-presents the decision (new output, a granted review round, a restart), the open workspace follows the new one and stays on it. Its run card says Needs decision instead of Failed.
 
 ## 0.8.2 - 2026-10-16
 

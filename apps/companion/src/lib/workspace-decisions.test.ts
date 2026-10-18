@@ -10,6 +10,7 @@ import {
   selectRetrospectiveWorkspaceDecision,
   selectReviewGateWorkspaceDecision,
   selectReviewWorkspaceDecision,
+  supersedingResultDecisionId,
   workspaceDecisionKind,
 } from './workspace-decisions';
 
@@ -134,4 +135,63 @@ test('workspace decision selectors prefer pending before newer resolved matches'
 
 test('workspaceDecisionKind falls back to decision type', () => {
   assert.equal(workspaceDecisionKind(decision({ type: 'retrospective' })), 'retrospective');
+});
+
+test('a pending result decision is the primary workspace decision', () => {
+  const output = decision({
+    id: 'output-1',
+    type: 'engine_output_review',
+    createdAt: '2026-05-21T02:00:00.000Z',
+    payload: { kind: 'output-review', manifestDigest: 'sha256:m', reportPath: 'artifacts/r.md' },
+  });
+  const result = decision({
+    id: 'result-1',
+    type: 'engine_result_decision',
+    createdAt: '2026-05-21T01:00:00.000Z',
+    payload: {
+      kind: 'result-decision',
+      stoppedAt: 'review',
+      reason: 'The review left findings and no further fix can run.',
+      delivered: { headSha: 'abc123' },
+      findingsDigest: 'sha256:f',
+      outputReviewDecisionId: 'output-1',
+      actions: [{ id: 'close-result', available: true, requiresReason: false }],
+    },
+  });
+  assert.equal(selectPrimaryWorkspaceDecision({ decisions: [output, result] })?.id, 'result-1');
+  assert.equal(
+    selectPrimaryWorkspaceDecision({
+      decisions: [output, { ...result, resolvedAt: '2026-05-21T03:00:00.000Z' }],
+    })?.id,
+    'output-1',
+  );
+});
+
+test('a re-presented result decision replaces the superseded one on screen', () => {
+  const result = decision({
+    id: 'result-1',
+    type: 'engine_result_decision',
+    payload: {
+      kind: 'result-decision',
+      stoppedAt: 'complete',
+      reason: 'Completion refused.',
+      delivered: { reportPath: 'artifacts/r.md', manifestDigest: 'sha256:m' },
+      findingsDigest: 'sha256:f',
+      actions: [{ id: 'close-result', available: true, requiresReason: false }],
+    },
+  });
+  const superseded = { ...result, resolvedAt: '2026-05-21T03:00:00.000Z' };
+  const next = { ...result, id: 'result-2' };
+  assert.equal(
+    supersedingResultDecisionId(superseded, { decisions: [superseded, next] }),
+    'result-2',
+  );
+  assert.equal(supersedingResultDecisionId(next, { decisions: [superseded, next] }), undefined);
+  assert.equal(supersedingResultDecisionId(superseded, { decisions: [superseded] }), undefined);
+  assert.equal(supersedingResultDecisionId(superseded, null), undefined);
+  const output = decision({
+    id: 'output-1',
+    payload: { kind: 'output-review', manifestDigest: 'sha256:m', reportPath: 'artifacts/r.md' },
+  });
+  assert.equal(supersedingResultDecisionId(output, { decisions: [output, next] }), undefined);
 });

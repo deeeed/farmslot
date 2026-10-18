@@ -34,7 +34,11 @@ import {
   Methods,
   personSessionCaption,
 } from '@farmslot/protocol';
-import { accountSignOutConfirmation, confirmAccountSignOut } from '@farmslot/review-dispatch';
+import {
+  accountSignOutConfirmation,
+  confirmAccountSignOut,
+  evidenceOnlyDecisionIds,
+} from '@farmslot/review-dispatch';
 
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
@@ -893,7 +897,8 @@ export class FarmApp extends LitElement {
     this.connection = s.connection;
     this.hydrated = isFullyHydrated(s.hydrated);
     this.githubQuota = s.githubQuota;
-    this.decisionCount = s.decisions.length;
+    const evidenceOnly = evidenceOnlyDecisionIds(s.decisions);
+    this.decisionCount = s.decisions.filter((decision) => !evidenceOnly.has(decision.id)).length;
     this.violationCount = s.violations.length;
     this.runs = s.runs;
     this.globalFilters = s.globalFilters;

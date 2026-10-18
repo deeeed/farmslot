@@ -24,7 +24,11 @@ import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js'
 import type { ResourcePostureWaitPolicy, RunResourcePostureState } from './resource-posture.js';
 import type { ResourceType } from './resources.js';
 import type { RunArtifactBundleRef, RunImportProvenance } from './run-bundles.js';
-import type { EvidencePolicyAttestation, RunGateReadiness } from './run-gate-readiness.js';
+import type {
+  EvidencePolicyAttestation,
+  RunGatePrerequisiteReason,
+  RunGateReadiness,
+} from './run-gate-readiness.js';
 import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.js';
 import type { SlotHealth } from './slots.js';
 import type { SubtaskSource } from './task.js';
@@ -47,6 +51,7 @@ export type RunStatus =
   | 'reconciling'
   | 'completing'
   | 'human-gating'
+  | 'needs-decision'
   | 'ci-watching'
   | 'paused'
   | 'done'
@@ -75,9 +80,78 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
 }
 
 /** A closed execution can retain partial or failed validation. Legacy done runs
- * without an outcome keep their previous successful interpretation. */
-export function isSuccessfulRun(run: Pick<Run, 'status' | 'metrics'>): boolean {
-  return run.status === 'done' && (!run.metrics.outcome || run.metrics.outcome === 'success');
+ * without an outcome keep their previous successful interpretation. A result
+ * decision settles it: an accepted result succeeds, a closed one does not. */
+export function isSuccessfulRun(
+  run: Pick<Run, 'status' | 'metrics'> & Partial<Pick<Run, 'resultDecisionReceipt'>>,
+): boolean {
+  if (run.status !== 'done') return false;
+  // Only Accept and Close decide; after a send-back the later outcome does.
+  if (run.resultDecisionReceipt?.action === 'accept-result') return true;
+  if (run.resultDecisionReceipt?.action === 'close-result') return false;
+  return !run.metrics.outcome || run.metrics.outcome === 'success';
+}
+
+/** A run held for a person's decision on a result it delivered (ADR-065 Amendment 7). */
+export function isHeldForResultDecision(run: Pick<Run, 'status'>): boolean {
+  return run.status === 'needs-decision';
+}
+
+export type ResultDecision = RunDecision & { payload: ResultDecisionPayload };
+
+function isPendingResultDecision(decision: RunDecision): decision is ResultDecision {
+  return !decision.resolvedAt && decision.payload?.kind === 'result-decision';
+}
+
+/** The run's pending result decision: the newest unresolved one. */
+export function pendingResultDecision(
+  run: Pick<Run, 'decisions'> | null | undefined,
+): ResultDecision | undefined {
+  const decisions = run?.decisions ?? [];
+  for (let index = decisions.length - 1; index >= 0; index--) {
+    const decision = decisions[index];
+    if (isPendingResultDecision(decision)) return decision;
+  }
+  return undefined;
+}
+
+/** Retire every pending result decision, so a run held again or replayed has at most one. */
+export function supersedePendingResultDecisions(
+  decisions: readonly RunDecision[],
+  at: string,
+): RunDecision[] {
+  return decisions.map((decision) =>
+    isPendingResultDecision(decision)
+      ? { ...decision, resolvedAt: at, resolvedAction: 'superseded' }
+      : decision,
+  );
+}
+
+/** One label per result-decision action, for the gateway, the CLI and both clients. */
+export const RESULT_DECISION_ACTION_LABELS: Record<ResultDecisionActionId, string> = {
+  'send-back': 'Send back for another fix',
+  'accept-result': 'Accept',
+  'close-result': 'Close',
+};
+
+/**
+ * The worker delivered a result (ADR-065 Amendment 7): it signalled complete or
+ * done, the gateway verified its push or commit where the flow requires one, and
+ * the output capture recorded its artifacts.
+ */
+export function hasDeliveredResult(
+  run: Pick<Run, 'steps' | 'output'>,
+  verificationMode: 'push' | 'commit' | 'none',
+): boolean {
+  const monitor = run.steps.find((step) => step.name === PipelineSteps.MONITOR)?.outputs;
+  const signal = (monitor?.workerSignal as { status?: unknown } | undefined)?.status;
+  if (signal !== 'complete' && signal !== 'done') return false;
+  if (
+    verificationMode !== 'none' &&
+    (monitor?.pushVerification as { verified?: unknown } | undefined)?.verified !== true
+  )
+    return false;
+  return Boolean(run.output?.manifestDigest) && !run.output?.captureError;
 }
 
 /**
@@ -126,7 +200,7 @@ export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisio
 export function refusedCompletionStep(
   run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps'>>,
 ): RunStep | undefined {
-  if (run.status !== 'failed') return undefined;
+  if (run.status !== 'failed' && run.status !== 'needs-decision') return undefined;
   return run.steps?.find(
     (step) =>
       (step.name === PipelineSteps.COMPLETE || step.name === PipelineSteps.FINALIZE) &&
@@ -1371,7 +1445,54 @@ export type RunDecisionPayload =
   | LearningsDraftPayload
   | RetrospectivePayload
   | CollisionPayload
-  | ReviewContinuationPayload;
+  | ReviewContinuationPayload
+  | ResultDecisionPayload;
+
+export type ResultDecisionActionId = 'send-back' | 'accept-result' | 'close-result';
+
+/** One action of a result decision, offered or shown unavailable with its reason. */
+export interface ResultDecisionActionState {
+  id: ResultDecisionActionId;
+  available: boolean;
+  unavailableReason?: string;
+  /** Accept records a written reason; the others take one optionally. */
+  requiresReason: boolean;
+}
+
+/** The delivered head, or for a run without a reviewed head its captured report. */
+export type ResultDecisionDelivered =
+  | { headSha: string; branch?: string }
+  | { reportPath: string; manifestDigest: string };
+
+/**
+ * A delivered result the review or a completion prerequisite did not accept
+ * (ADR-065 Amendment 7). The run is `needs-decision` until one action settles it.
+ */
+export interface ResultDecisionPayload {
+  kind: 'result-decision';
+  stoppedAt: 'review' | 'complete' | 'finalize';
+  /** One sentence: why the run stopped. */
+  reason: string;
+  /** After REVIEW: the unresolved findings at the delivered head. */
+  findings?: ReviewIssue[];
+  /** After COMPLETE or FINALIZE: the refused prerequisite. */
+  refusal?: { message: string; reasons: RunGatePrerequisiteReason[] };
+  delivered: ResultDecisionDelivered;
+  findingsDigest: string;
+  /** The held run's output review, which carries its snapshot's evidence and overrides. */
+  outputReviewDecisionId?: string;
+  actions: ResultDecisionActionState[];
+}
+
+/** Who settled a result decision, how, and on which result. */
+export interface ResultDecisionReceipt {
+  action: ResultDecisionActionId;
+  principalId: string;
+  reason?: string;
+  decidedAt: string;
+  delivered: ResultDecisionDelivered;
+  findingsDigest: string;
+}
 
 /** Review retained output independently of worker outcome or publication. */
 export interface OutputReviewPayload {
@@ -2594,6 +2715,8 @@ export interface Run {
   reviewBudgetExtensions?: ReviewBudgetExtension[];
   /** Run cleanup preserved resources whose ownership could not be proven. */
   slotTeardownSkipped?: string;
+  /** The latest result decision a person made on this run (ADR-065 Amendment 7). */
+  resultDecisionReceipt?: ResultDecisionReceipt;
   /** Gateway-owned automatic QA opt-in and durable follow-up status. */
   qaAfterReview?: import('./qa.js').QaAfterReview;
   /** Effective direct-dispatch policy retained from admission or its queued request. */

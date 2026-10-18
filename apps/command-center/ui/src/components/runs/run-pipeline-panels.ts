@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit';
 
 import type { Run } from '@farmslot/protocol';
-import { isTerminalRunStatus } from '@farmslot/protocol';
+import { isHeldForResultDecision, isTerminalRunStatus } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -34,6 +34,8 @@ export function renderPipelineControls(
   const isPaused = status === 'paused';
   const awaitingOperator = isInteractiveCompletionAwaitingOperator(run);
   const isTerminal = isTerminalRunStatus(status);
+  // The gateway refuses run.cancel on a held run; Close on its result decision ends it.
+  const canCancel = !isTerminal && !isHeldForResultDecision(run);
 
   return html`
     <div class="controls">
@@ -45,7 +47,7 @@ export function renderPipelineControls(
           : !opts.cancelPending && isRunning
             ? html` <button class="ctrl-btn ctrl-pause" @click=${handlers.pause}>Pause</button> `
             : nothing}
-      ${!isTerminal
+      ${canCancel
         ? html`
             <button
               class="ctrl-btn ctrl-cancel"

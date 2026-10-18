@@ -22,6 +22,7 @@ import {
   type RunStatus,
   type RuntimeCapabilityStatusResult,
   staticReviewReplayBlock,
+  supersedePendingResultDecisions,
   taskDirRelPath,
   WORKER_TERMINAL_CONTRACT_INPUT,
   type WorkerSignal,
@@ -2013,7 +2014,9 @@ async function replayRunStep(
       ...(replaysTaskGeneration
         ? { executionTemplate: undefined, templateProvenance: undefined }
         : {}),
-      decisions: clearedDecisions,
+      // A replay ends a held run's result decision (ADR-065 Amendment 7): it
+      // either settles the run or holds it again with a fresh one.
+      decisions: supersedePendingResultDecisions(clearedDecisions, new Date().toISOString()),
       ...(existing.reviewWorkspace && replayStepName === PS.HUMAN_GATE
         ? {
             reviewAutoFinish: false,

@@ -10,6 +10,7 @@ import {
   FAILURE_REASONS,
   type FailureReason,
   type HostLoadSnapshot,
+  isHeldForResultDecision,
   isSuccessfulRun,
   isTerminalRunStatus,
   type LoopStats,
@@ -218,8 +219,17 @@ export function buildAnalyticsRecord(
   );
   const idleMs = wallMs != null ? Math.max(0, wallMs - stepSum) : null;
 
-  const failedStep = isSuccessfulRun(run) ? null : failingStep(run);
-  const failureReason = isSuccessfulRun(run) ? null : classifyFailureReason(run, failedStep);
+  // Neither an accepted nor a closed result is a failure (ADR-065 Amendment 7).
+  const resultDecision =
+    run.resultDecisionReceipt?.action === 'accept-result'
+      ? 'accepted'
+      : run.resultDecisionReceipt?.action === 'close-result'
+        ? 'closed'
+        : null;
+  // A run held for its decision is not a failure either.
+  const notFailed = isSuccessfulRun(run) || resultDecision || isHeldForResultDecision(run);
+  const failedStep = notFailed ? null : failingStep(run);
+  const failureReason = notFailed ? null : classifyFailureReason(run, failedStep);
   const ci = ciOutputs(run);
   const tokens = workerTokens(run);
 
@@ -242,6 +252,7 @@ export function buildAnalyticsRecord(
     outcome: run.metrics?.outcome ?? null,
     failedStep,
     failureReason,
+    resultDecision,
     steps,
     wallMs,
     idleMs,
@@ -480,6 +491,16 @@ export function aggregateAnalytics(
       models: distinct((r) => r.model),
     },
   };
+}
+
+/**
+ * A restart re-projects a failed run to `needs-decision` (ADR-065 Amendment 7).
+ * Queries keep each run's latest record, so a newer one stops the old failure
+ * from counting; the run's next terminal record replaces it.
+ */
+export async function recordHeldResultAnalytics(run: Run): Promise<void> {
+  if (!isHeldForResultDecision(run)) return;
+  await appendAnalyticsRecord(buildAnalyticsRecord(run));
 }
 
 /**

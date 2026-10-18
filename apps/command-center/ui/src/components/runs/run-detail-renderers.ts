@@ -17,6 +17,7 @@ import type {
 import {
   canActivateRunOnSlot,
   deriveRunLifecycleView,
+  isHeldForResultDecision,
   isSettledBlockedRun,
   isSlotFreedByPark,
   isTerminalRunStatus,
@@ -267,7 +268,9 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
         </div>
         <span class="evidence-badge">${evidence.badge}</span>
       </div>
-      ${run.error ? html`<p role="status">${run.error}</p>` : nothing}
+      ${run.error && !isHeldForResultDecision(run)
+        ? html`<p role="status">${run.error}</p>`
+        : nothing}
       <div class="evidence-actions">
         ${run.output?.reportPath
           ? html`<button

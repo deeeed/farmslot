@@ -1,4 +1,5 @@
 import type { RunDecision } from '@farmslot/protocol';
+import { isResultDecision, pendingResultDecision } from '@farmslot/review-dispatch';
 
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
 
@@ -58,10 +59,26 @@ export function selectPrimaryWorkspaceDecision(
   source: WorkspaceDecisionSource | null | undefined,
 ): RunDecision | null {
   return (
+    pendingResultDecision({ decisions: source?.decisions ?? [] }) ??
     selectReviewWorkspaceDecision(source) ??
     selectRetrospectiveWorkspaceDecision(source) ??
     latestDecisionMatching(source?.decisions, () => true)
   );
+}
+
+/**
+ * The run's current result decision when it is not the one on screen. The gateway
+ * re-presents a result decision under a new id when the output changes, the capture
+ * fails, a review round is granted or the gateway restarts, and resolves the old one
+ * 'superseded', so the screen follows the run instead of keeping the id it opened.
+ */
+export function supersedingResultDecisionId(
+  decision: Pick<RunDecision, 'id' | 'payload'> | null | undefined,
+  source: WorkspaceDecisionSource | null | undefined,
+): string | undefined {
+  if (!decision || !isResultDecision(decision)) return undefined;
+  const current = pendingResultDecision({ decisions: source?.decisions ?? [] });
+  return current && current.id !== decision.id ? current.id : undefined;
 }
 
 export function workspaceDecisionKind(decision: RunDecision | null | undefined): string {

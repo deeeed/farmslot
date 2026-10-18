@@ -90,3 +90,15 @@ test('the lightbox names its scope: the run output, or the criterion whose evide
     'AC-1 evidence',
   );
 });
+
+test("a held run's results card leaves its stop reason to the decision", () => {
+  const stopped = {
+    ...run,
+    completionPolicy: 'artifact-only' as const,
+    error: 'Review found 2 issue(s) after 1/2 fix attempts.',
+  };
+  const card = (status: Run['status']) =>
+    litText(renderRunEvidence({ ...stopped, status }, { ...ctx, evidenceLightboxOpen: false }));
+  assert.doesNotMatch(card('needs-decision'), /Review found 2 issue/);
+  assert.match(card('failed'), /Review found 2 issue/);
+});

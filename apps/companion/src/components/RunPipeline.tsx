@@ -112,7 +112,8 @@ export function RunPipelineMini({
           style={[
             miniStyles.label,
             allDone && { color: colors.statusOk },
-            hasFailed && { color: colors.statusFail },
+            // A held run's failed step is what it waits on a person for, not a failure.
+            hasFailed && runStatus !== 'needs-decision' && { color: colors.statusFail },
             isCancelled && { color: colors.statusFail },
           ]}
           numberOfLines={1}

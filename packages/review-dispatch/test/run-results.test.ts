@@ -153,3 +153,40 @@ test('only an open output review is the one run detail checks the report against
   assert.equal(pendingOutputReview(closed), undefined);
   assert.equal(pendingOutputReview(null), undefined);
 });
+
+test('a held run waits for its decision; an accepted one says it was accepted, not that it failed', () => {
+  const output = {
+    workerFinished: false,
+    capturedAt: '2026-10-18T10:43:20.844Z',
+    artifactManifest: [],
+    manifestDigest: 'digest',
+    reportPath: 'artifacts/pr-description.md',
+  };
+  const held = makeRun({ status: 'needs-decision', completionPolicy: 'artifact-only', output });
+  assert.equal(
+    runResultsSummary(held, 1).copy,
+    'The worker delivered this result. It waits for a decision.',
+  );
+  const accepted = makeRun({
+    status: 'done',
+    completionPolicy: 'artifact-only',
+    output: { ...output, closedAt: '2026-10-18T17:21:35.452Z' },
+    resultDecisionReceipt: {
+      action: 'accept-result',
+      principalId: 'arthur',
+      reason: 'Comparison lane, both findings tracked in TAT-4150.',
+      decidedAt: '2026-10-18T17:21:35.452Z',
+      delivered: { headSha: '3522954', branch: 'feat/tat-4145-opus' },
+      findingsDigest: 'sha256:f',
+    },
+  });
+  assert.equal(
+    runResultsSummary(accepted, 1).copy,
+    'Accepted without publishing: Comparison lane, both findings tracked in TAT-4150.',
+  );
+  const closed = {
+    ...accepted,
+    resultDecisionReceipt: { ...accepted.resultDecisionReceipt!, action: 'close-result' as const },
+  };
+  assert.match(runResultsSummary(closed, 1).copy, /^Execution closed\./);
+});
