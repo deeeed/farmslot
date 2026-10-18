@@ -6,15 +6,22 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/index.js';
+import {
+  farmslotRoot,
+  type ProjectVars,
+  type RawProjectJson,
+  type SlotVars,
+} from '../core/index.js';
 import {
   nodeSupportHashPath,
   RUNNER_OBSERVABILITY_SUPPORT_PATHS,
 } from '../runners/runner-observability.js';
 
 import {
+  collectNodeSupportBundle,
   ensureNodeSupportBundle,
   fixtureCheckVars,
+  nodeSupportBundlePaths,
   type NodeSupportIo,
   selectedNodeSupportDir,
 } from './ensure.js';
@@ -111,6 +118,38 @@ const kind = (cmd: string) =>
             : cmd.startsWith('[ -f ') && cmd.includes('install-runner-observability.mjs')
               ? 'presence'
               : 'other';
+
+test("a bundle carries the pack's templates and pack-rooted template sources for hosted task init", async (t) => {
+  const name = 'ensure-templates-test';
+  const pack = path.join(farmslotRoot, 'projects', name);
+  t.after(() => rmSync(pack, { recursive: true, force: true }));
+  mkdirSync(path.join(pack, 'templates/worker'), { recursive: true });
+  mkdirSync(path.join(pack, 'checklists'), { recursive: true });
+  writeFileSync(path.join(pack, 'templates/worker/dev.md'), '# Dev\n');
+  writeFileSync(path.join(pack, 'checklists/review.md'), '# Review\n');
+  const projectJson: RawProjectJson = {
+    qa: {
+      default_profile: 'smoke',
+      profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+    },
+    execution_templates: {
+      sources: [
+        { id: 'project:checklists', kind: 'workspace', root: { projectPath: 'checklists' } },
+        { id: 'project:absent', kind: 'workspace', root: { projectPath: 'absent' } },
+        { id: 'package:outside', kind: 'package', root: { env: 'OUTSIDE_TEMPLATES' } },
+      ],
+    },
+  };
+  writeFileSync(path.join(pack, 'project.json'), JSON.stringify(projectJson));
+  const paths = nodeSupportBundlePaths(name, projectJson);
+  assert.ok(paths.includes(`projects/${name}/templates`));
+  assert.ok(paths.includes(`projects/${name}/checklists`));
+  assert.ok(!paths.some((entry) => entry.endsWith('/absent')));
+  const { manifest } = await collectNodeSupportBundle(name, paths);
+  const shipped = manifest.files.map((file) => file.path);
+  assert.ok(shipped.includes(`projects/${name}/templates/worker/dev.md`));
+  assert.ok(shipped.includes(`projects/${name}/checklists/review.md`));
+});
 
 test('a local slot uses the checkout directly and touches no node', async () => {
   const { io, rec } = fakeIo({ remoteManifestHash: null });
