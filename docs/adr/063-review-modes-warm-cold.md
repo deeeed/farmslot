@@ -225,59 +225,95 @@ reviews still consume their admissions. Existing approval policy is unchanged.
 ## Amendment 2: reviewer failures do not spend the review budget, 2026-10-18
 
 **Status:** Proposed, 2026-10-18. Pending paired review and lead acceptance.
-**Trigger:** run 8cff6e80 stopped after one of its two fix attempts with all five rounds spent. Only two of those rounds returned a review: one reviewer timed out after 30 minutes and another emitted invalid JSON.
-**Specification:** on acceptance, [Round budget](../reference/review-modes-warm-cold.md#round-budget) is updated to match. This replaces its rule that failed and interrupted attempts spend the budget, and the matching consequence in Amendment 1.
+**Trigger:** run 8cff6e80 stopped after one of its two fix attempts with all five rounds spent. Only two of those rounds returned a review: one reviewer timed out after 30 minutes and another emitted invalid JSON. A separate restart double-count (fixed by its own bug PR) spent a third.
+**Specification:** on acceptance, these [Round budget](../reference/review-modes-warm-cold.md#round-budget) rules change to match:
+
+- "including failed and interrupted attempts" (only counted attempts spend a round);
+- "Replay, restart and a different gate or run MUST NOT refund rounds", and the scoped-extension rule "Restart, replay and a copied result MUST NOT refund attempts" (these still never refund by themselves; only the admission owner's settlement below does);
+- "failed-attempt accounting" (now no-verdict accounting);
+- Amendment 1's consequence "Failed and interrupted reviews still consume their admissions".
 
 ### Decision
 
-A reviewer attempt spends one of the work's review rounds only when it returns
-its required result for the reviewed head, with a verdict of pass or issues.
+**Every admitted reviewer attempt settles exactly once**, when it ends, through
+the existing admission owner:
 
-An attempt that ends without a verdict because the reviewer or the farm failed
-is a **no-verdict attempt**. That covers a reviewer that timed out, exited, or
-left a missing or unusable result such as invalid JSON, and a launch that never
-started a reviewer. A no-verdict attempt gives its round back: its admission
-receipt is kept with the reason and marked no-verdict, and it is not counted in
-`N/5`.
+- **Counted:** the attempt returned its required result for the reviewed head,
+  with a verdict of pass or issues. It spends one round of `N/5`.
+- **No-verdict:** the attempt ended any other way, and it spends no round. This
+  covers a reviewer that timed out, exited or left a missing or unusable result
+  (such as invalid JSON); a launch that never started a reviewer; an attempt
+  cancelled or superseded by a cancel, replay or gate replay; and an attempt a
+  restart could not reattach to. Its reason is recorded.
 
-Admission is unchanged. A round is still reserved and persisted before any
-runner starts, under the same serialized budget path. A restart that reattaches
-to an admitted attempt still reuses its receipt.
+A receipt with no settlement counts. That covers attempts still in flight,
+receipts recorded before this amendment, and a rollback, so the rule fails
+closed.
 
-No-verdict attempts have their own cap, scoped like the budget (the repository
-PR, or the canonical run before a PR exists). The default cap is 3; the lead
-sets the final value. The attempt that reaches the cap is still recorded. The
-run then moves to `review-failed` (ADR-065) with a reason naming the count and
-the last failures, and no reviewer is relaunched automatically. An
-operator-requested retry stays available and is recorded against the same cap.
-The cap stops automatic loops; it does not override the operator.
+Admission is unchanged: a round is reserved and persisted before any runner
+starts, under the same serialized budget path. Restart, replay and copied
+history never refund by themselves:
 
-Receipts recorded before this amendment keep their counted state, and history
-is not rewritten.
+- a restart that reattaches reuses the receipt;
+- a restart that cannot reattach ends the attempt, and the owner settles it
+  no-verdict with reason "lost on restart";
+- copied histories neither settle nor duplicate receipts.
+
+**Below the cap, run behaviour is unchanged.** A reviewer that fails still moves
+the run to `review-failed` (ADR-065) with its retry action. No new automatic
+retry is added. The only difference is that the no-verdict attempt is not
+counted in `N/5`.
+
+**The cap.** No-verdict settlements are counted in the same scope as the budget:
+the repository PR, or the canonical run before a PR exists. The default cap is
+3, and the lead sets the final value. When the count reaches the cap:
+
+- the existing automatic launch paths stop starting reviewers for that work
+  (restart recovery replay, review-sequence continuation, and the re-review
+  after a fix);
+- the run stays `review-failed`, with a reason naming the count and the last
+  failures.
+
+An operator-requested retry stays available. It is recorded, and a no-verdict
+end counts toward the cap again. The cap stops automatic loops; it does not
+override the operator.
+
+**Storage.**
+
+- `Run.reviewRoundAdmissions` stays the opaque string receipt list.
+- A new optional `Run.reviewRoundSettlements` maps a receipt ID to its no-verdict
+  settlement: reason and time. Counted receipts need no entry.
+- Settlements are copied across the PR scope with the admissions, using the
+  same merge, so every run for one PR shows the same counts.
+- Rounds used = admissions in scope minus no-verdict settlements in scope.
+- No-verdict count = no-verdict settlements in scope.
+
+Extensions (Amendment 1) still raise only the review-round limit.
 
 ### Rationale and consequences
 
 The budget exists to stop review and fix loops that do not converge and to point
-at scope or design problems. A reviewer timeout, a crash or unusable output says
-nothing about the change, but under the current rule each one spends a round
-the work needed for a real review. Run 8cff6e80 lost its second fix attempt to
-two such failures.
+at scope or design problems. A reviewer timeout, a crash, unusable output or a
+cancelled or lost attempt says nothing about the change, but under the current
+rule each one spends a round the work needed for a real review. Run 8cff6e80
+lost its second fix attempt that way.
 
-A separate cap keeps a reviewer that fails every time from looping or hiding
-farm trouble. It ends in the existing `review-failed` state instead of spending
-the work's budget.
+Run behaviour stays as ADR-065 defines it. The cap keeps a reviewer that fails
+every time from being relaunched automatically without limit, and it says why.
 
 The gate shows both counts: `N/5` reviews, plus no-verdict attempts against
-their cap. An approved extension (Amendment 1) still raises only the review-round
-limit.
+their cap. The gateway computes `used` without no-verdict receipts, so older
+clients that show only `N/5` also show the corrected count.
 
 ### Public surface
 
-- `@farmslot/protocol` `ReviewRoundBudget` gains the no-verdict count and its
-  limit. A receipt records whether it counted and, if not, its reason. These are
-  additive fields; older clients keep showing `N/5`.
-- The gateway's existing review admission owner settles a receipt as counted or
-  no-verdict when the attempt ends. No new RPC or CLI command is added.
-  `run get`, the gate views, Command Center and Companion show both counts
-  through the existing projection.
-- Coordinated protocol, gateway and client release.
+- `@farmslot/protocol`:
+  - `Run` gains the optional, gateway-owned `reviewRoundSettlements`;
+  - `ReviewRoundBudget` gains the no-verdict count and its limit, alongside the
+    corrected `used`.
+- The gateway's admission owner records settlements when attempts end, merges
+  them across the PR scope, and applies the cap to the existing automatic launch
+  paths. No new RPC or CLI command is added. `run get`, the gate views, Command
+  Center and Companion show both counts through the existing projection.
+- Coordinated protocol, gateway and client release. Existing receipts need no
+  conversion: an unsettled receipt counts.
