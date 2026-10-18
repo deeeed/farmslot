@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
 import { JsonLineProcess } from './process.js';
 import { NativeProcessTree } from './process-tree.js';
@@ -120,4 +120,61 @@ test('a stop error cannot become successful cleanup while process absence remain
   await started;
   await assert.rejects(child.close(), /Owned process cleanup unconfirmed/);
   assert.equal(stopped, false);
+});
+
+// A Claude Read of a 409,378-byte PNG streams one 1,092,250-byte line: the image is in both the
+// tool result and `tool_use_result` (Claude Code 2.1.292). Reviewers died on it (TAT-4146 70bf7864).
+const runnerScript = (lines: string[]) => `
+const { randomBytes } = require('node:crypto');
+const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), randomBytes(409378 - 8)]);
+const image = png.toString('base64');
+const read = {
+  type: 'user',
+  message: { role: 'user', content: [{ tool_use_id: 'toolu_read', type: 'tool_result',
+    content: [{ type: 'image', source: { type: 'base64', data: image, media_type: 'image/png' } }] }] },
+  tool_use_result: { type: 'image', file: { base64: image, type: 'image/png', originalSize: 409378 } },
+};
+const named = { read: JSON.stringify(read), text: JSON.stringify({ type: 'user', text: 'x'.repeat(1100000) }) };
+process.stdout.write(${JSON.stringify(lines)}.map((line) => named[line] ?? line).join('\\n') + '\\n');
+setInterval(() => {}, 1000);`;
+
+function runLines(t: TestContext, lines: string[]) {
+  const messages: Array<Record<string, unknown>> = [];
+  let exit!: (error: Error | undefined) => void;
+  const exited = new Promise<Error | undefined>((resolve) => {
+    exit = resolve;
+  });
+  const child = new JsonLineProcess(
+    process.execPath,
+    ['-e', runnerScript(lines)],
+    { cwd: process.cwd() },
+    (message) => messages.push(message),
+    (error) => exit(error),
+  );
+  t.after(() => child.close());
+  return { child, messages, exited };
+}
+
+test('an oversized image read keeps the runner and records the image size, not its bytes', async (t) => {
+  const { child, messages, exited } = runLines(t, ['read', '{"type":"after"}']);
+  const runner: { stopped?: Error } = {};
+  void exited.then((error) => (runner.stopped = error ?? new Error('runner closed')));
+  while (messages.length < 2 && !runner.stopped)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(runner.stopped, undefined, `runner stopped: ${runner.stopped?.message}`);
+  const read = JSON.stringify(messages[0]);
+  // Both copies keep their place and size; no PNG bytes (base64 `iVBORw0KGgo`) remain.
+  assert.equal(read.split('"[base64 data omitted: 409378 bytes]"').length - 1, 2);
+  assert.ok(!read.includes('iVBORw0KGgo'));
+  assert.match(read, /"media_type":"image\/png"/);
+  assert.match(read, /"originalSize":409378/);
+  assert.deepEqual(messages[1], { type: 'after' });
+  await child.close();
+  assert.equal(await exited, undefined);
+});
+
+test('a runner event still over 1 MiB without its base64 payloads stops the runner', async (t) => {
+  const { messages, exited } = runLines(t, ['text', '{"type":"after"}']);
+  assert.equal((await exited)?.message, 'Native runner event exceeds 1 MiB');
+  assert.deepEqual(messages, []);
 });

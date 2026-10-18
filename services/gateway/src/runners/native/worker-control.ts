@@ -122,6 +122,27 @@ export async function readNativeWorkerSnapshot(
   return snapshot;
 }
 
+/**
+ * A relaunched native worker is running in the role its failed predecessor held, so the failure
+ * that predecessor wrote to run.error no longer describes the run. Any other run.error stays.
+ */
+export function clearSupersededWorkerError(runId: string, contextId: string): void {
+  const run = getRun(runId);
+  const relaunch = run?.agentContexts?.find((item) => item.id === contextId);
+  if (!run?.error || relaunch?.status !== 'working') return;
+  const superseded = run.agentContexts?.some(
+    (item) =>
+      item.id !== contextId &&
+      item.status === 'failed' &&
+      item.nativeSession &&
+      item.error === run.error &&
+      item.role === relaunch.role &&
+      item.runner === relaunch.runner &&
+      item.reviewId === relaunch.reviewId,
+  );
+  if (superseded) updateRun(runId, { error: undefined });
+}
+
 export async function confirmNativeWorkerStopped(runId: string, contextId?: string): Promise<void> {
   const { binding } = workerBinding(runId, undefined, contextId);
   const snapshot = await readNativeWorkerSnapshot(runId, undefined, contextId);
