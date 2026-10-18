@@ -221,3 +221,63 @@ reviews still consume their admissions. Existing approval policy is unchanged.
 - This is an additive protocol capability. Runtime clients must use a matching
   protocol version. Harnesses inherit the gateway policy without another review
   command, reviewer dimension, package writer or permission bypass.
+
+## Amendment 2: reviewer failures do not spend the review budget, 2026-10-18
+
+**Status:** Proposed, 2026-10-18. Pending paired review and lead acceptance.
+**Trigger:** run 8cff6e80 stopped after one of its two fix attempts with all five rounds spent. Only two of those rounds returned a review: one reviewer timed out after 30 minutes and another emitted invalid JSON.
+**Specification:** on acceptance, [Round budget](../reference/review-modes-warm-cold.md#round-budget) is updated to match. This replaces its rule that failed and interrupted attempts spend the budget, and the matching consequence in Amendment 1.
+
+### Decision
+
+A reviewer attempt spends one of the work's review rounds only when it returns
+its required result for the reviewed head, with a verdict of pass or issues.
+
+An attempt that ends without a verdict because the reviewer or the farm failed
+is a **no-verdict attempt**. That covers a reviewer that timed out, exited, or
+left a missing or unusable result such as invalid JSON, and a launch that never
+started a reviewer. A no-verdict attempt gives its round back: its admission
+receipt is kept with the reason and marked no-verdict, and it is not counted in
+`N/5`.
+
+Admission is unchanged. A round is still reserved and persisted before any
+runner starts, under the same serialized budget path. A restart that reattaches
+to an admitted attempt still reuses its receipt.
+
+No-verdict attempts have their own cap, scoped like the budget (the repository
+PR, or the canonical run before a PR exists). The default cap is 3; the lead
+sets the final value. The attempt that reaches the cap is still recorded. The
+run then moves to `review-failed` (ADR-065) with a reason naming the count and
+the last failures, and no reviewer is relaunched automatically. An
+operator-requested retry stays available and is recorded against the same cap.
+The cap stops automatic loops; it does not override the operator.
+
+Receipts recorded before this amendment keep their counted state, and history
+is not rewritten.
+
+### Rationale and consequences
+
+The budget exists to stop review and fix loops that do not converge and to point
+at scope or design problems. A reviewer timeout, a crash or unusable output says
+nothing about the change, but under the current rule each one spends a round
+the work needed for a real review. Run 8cff6e80 lost its second fix attempt to
+two such failures.
+
+A separate cap keeps a reviewer that fails every time from looping or hiding
+farm trouble. It ends in the existing `review-failed` state instead of spending
+the work's budget.
+
+The gate shows both counts: `N/5` reviews, plus no-verdict attempts against
+their cap. An approved extension (Amendment 1) still raises only the review-round
+limit.
+
+### Public surface
+
+- `@farmslot/protocol` `ReviewRoundBudget` gains the no-verdict count and its
+  limit. A receipt records whether it counted and, if not, its reason. These are
+  additive fields; older clients keep showing `N/5`.
+- The gateway's existing review admission owner settles a receipt as counted or
+  no-verdict when the attempt ends. No new RPC or CLI command is added.
+  `run get`, the gate views, Command Center and Companion show both counts
+  through the existing projection.
+- Coordinated protocol, gateway and client release.
