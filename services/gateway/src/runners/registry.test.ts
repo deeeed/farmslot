@@ -740,6 +740,17 @@ describe('cursor runner', () => {
     assert.equal(detectRunnerLaunchBlocker(pane, 'claude'), null);
   });
 
+  it('does not classify a lane quoting an auth error in prose as a runner auth blocker', () => {
+    // cx-tcompare's answer as lane-send saw it on 10-18; the send was refused as auth-required.
+    const pane = [
+      '  - macpro, over SSH only: cursor-agent reports "login keychain is locked", and claude reports "OAuth session expired and could not be refreshed". An SSH session can\'t read the login keychain, and',
+      '❯ ',
+    ].join('\n');
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'claude'), null);
+    assert.equal(readPaneStateFromCapture(pane, 'claude').launchBlocker, null);
+  });
+
   it('does not classify shell launch command text with auth.json paths as runner auth blockers', () => {
     const pane = [
       'export DISABLE_OMC=1 DISABLE_OMX=1; ASDF_SHIMS="${ASDF_DATA_DIR:-$HOME/.asdf}/shims"; if [ -d "$ASDF_SHIMS" ]; then export PATH="$ASDF_SHIMS:$PATH"; fi &&',

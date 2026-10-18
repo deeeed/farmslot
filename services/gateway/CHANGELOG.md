@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Runner auth blockers match only login-banner shapes at the start of a line. A lane whose own answer quotes an auth error in prose, such as `claude reports "OAuth session expired and could not be refreshed"`, is no longer refused as `auth-required`.
+
 - Backlog and auto-recovery edits for a pack-copied project are written to the farm's runtime settings instead of its `project.json`, so `farmslot update` no longer reverts them. The fleet loader reads them back. As for a source-bound project, it takes such a project's visual-claim delegation only from runtime settings, never from the pack's `project.json`.
 
 ## 0.24.0 - 2026-10-18
