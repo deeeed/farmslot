@@ -29,7 +29,7 @@ import { GatewayInternalError, GatewayMethodError } from './core/method-error.js
 import { setSlotUpdateHook } from './core/state.js';
 import { unregisterByWs } from './fleet/machine-registry.js';
 import { getMachineHealth, markMachineOffline, updateMachineMetrics } from './fleet/node-health.js';
-import { handleNodeExecOutput, handleNodeResponse } from './fleet/node-rpc.js';
+import { failRequestsBoundTo, handleNodeExecOutput, handleNodeResponse } from './fleet/node-rpc.js';
 import { pairingExchange } from './fleet/pairing.js';
 import {
   clearMachineResourceStatus,
@@ -341,6 +341,7 @@ export function createWebSocketServer(
     });
 
     ws.on('close', () => {
+      failRequestsBoundTo(ws);
       // Cleanup node registration
       const disconnectedMachine = unregisterByWs(ws);
       if (disconnectedMachine) {

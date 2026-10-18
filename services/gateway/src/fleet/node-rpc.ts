@@ -21,6 +21,8 @@ interface PendingNodeRequest {
   reject: (e: Error) => void;
   timer?: ReturnType<typeof setTimeout>;
   responseSocket?: WebSocket;
+  /** The error a plain bound request fails with when its connection closes. */
+  connectionClosed?(): Error;
   cleanup?(): void;
 }
 const pending = new Map<string, PendingNodeRequest>();
@@ -61,6 +63,18 @@ export function handleNodeResponse(
     const error = new Error(errorMsg || 'Node error') as NodeJS.ErrnoException;
     if (errorCode) error.code = errorCode;
     entry.reject(error);
+  }
+}
+
+/**
+ * A node connection closed. A plain request bound to it accepts its reply only
+ * from that connection, so it can never be answered: fail it now instead of at
+ * its timeout. Streaming exec requests settle through their own close handling.
+ */
+export function failRequestsBoundTo(ws: WebSocket): void {
+  for (const [id, entry] of pending) {
+    if (entry.responseSocket === ws && entry.connectionClosed)
+      takePendingRequest(id)?.reject(entry.connectionClosed());
   }
 }
 
@@ -171,7 +185,17 @@ export function sendNodeRequest(
       resolve,
       reject,
       timer,
-      responseSocket: opts?.requireSameConnection ? node.ws : undefined,
+      ...(opts?.requireSameConnection
+        ? {
+            responseSocket: node.ws,
+            connectionClosed: () =>
+              new NodeTransportUnavailableError(
+                node.machine,
+                'disconnected',
+                `Node ${node.machine} connection closed before it replied`,
+              ),
+          }
+        : {}),
     });
     opts?.onRequestId?.(id);
     node.ws.send(JSON.stringify({ type: 'req', id, method, params }));

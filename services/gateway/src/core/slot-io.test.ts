@@ -18,7 +18,7 @@ import test from 'node:test';
 
 import { WebSocket } from 'ws';
 
-import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
+import { getNode, registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import {
   handleNodeResponse,
   NodeRpcTimeoutError,
@@ -184,6 +184,8 @@ test('incremental remote directory progress reports no transferred bytes for mat
 
 class FakeNodeWebSocket {
   readyState = WebSocket.OPEN;
+  /** The connection the gateway registered: bound requests accept replies only from it. */
+  source?: WebSocket;
   calls: Array<{ method: string; params: Record<string, unknown> }> = [];
 
   constructor(
@@ -222,6 +224,10 @@ class FakeNodeWebSocket {
     },
   ) {}
 
+  private reply(id: string, ok: boolean, payload: unknown, error?: string) {
+    handleNodeResponse(id, ok, payload, error, undefined, this.source);
+  }
+
   send(raw: string) {
     const frame = JSON.parse(raw) as {
       id: string;
@@ -242,15 +248,11 @@ class FakeNodeWebSocket {
     };
     queueMicrotask(() => {
       if (frame.method === 'fs.exists') {
-        handleNodeResponse(
-          frame.id,
-          true,
-          this.handlers.onExists?.(handlerParams) ?? { exists: false },
-        );
+        this.reply(frame.id, true, this.handlers.onExists?.(handlerParams) ?? { exists: false });
         return;
       }
       if (frame.method === 'fs.realpath') {
-        handleNodeResponse(
+        this.reply(
           frame.id,
           true,
           this.handlers.onRealpath?.(handlerParams) ?? { path: handlerParams.path },
@@ -258,15 +260,11 @@ class FakeNodeWebSocket {
         return;
       }
       if (frame.method === 'fs.list') {
-        handleNodeResponse(
-          frame.id,
-          true,
-          this.handlers.onList?.(handlerParams) ?? { entries: [] },
-        );
+        this.reply(frame.id, true, this.handlers.onList?.(handlerParams) ?? { entries: [] });
         return;
       }
       if (frame.method === 'fs.stat') {
-        handleNodeResponse(
+        this.reply(
           frame.id,
           true,
           this.handlers.onStat?.(handlerParams) ?? {
@@ -280,24 +278,19 @@ class FakeNodeWebSocket {
       }
       if (frame.method === 'fs.readBase64') {
         try {
-          handleNodeResponse(
+          this.reply(
             frame.id,
             true,
             this.handlers.onReadBase64?.(handlerParams) ?? { content: '' },
           );
         } catch (err) {
-          handleNodeResponse(
-            frame.id,
-            false,
-            null,
-            err instanceof Error ? err.message : String(err),
-          );
+          this.reply(frame.id, false, null, err instanceof Error ? err.message : String(err));
         }
         return;
       }
       if (frame.method === 'fs.readChunk') {
         try {
-          handleNodeResponse(
+          this.reply(
             frame.id,
             true,
             this.handlers.onReadChunk?.(handlerParams) ?? {
@@ -309,20 +302,15 @@ class FakeNodeWebSocket {
             },
           );
         } catch (err) {
-          handleNodeResponse(
-            frame.id,
-            false,
-            null,
-            err instanceof Error ? err.message : String(err),
-          );
+          this.reply(frame.id, false, null, err instanceof Error ? err.message : String(err));
         }
         return;
       }
       if (frame.method === 'fs.hash') {
-        handleNodeResponse(frame.id, true, { sha256: 'deadbeef', size: 0 });
+        this.reply(frame.id, true, { sha256: 'deadbeef', size: 0 });
         return;
       }
-      handleNodeResponse(frame.id, false, null, `unexpected method ${frame.method}`);
+      this.reply(frame.id, false, null, `unexpected method ${frame.method}`);
     });
   }
 }
@@ -616,6 +604,66 @@ for (const chunked of [false, true])
     );
   });
 
+test('a chunked copy resumes on the reconnected node when the node restarts mid-transfer', async (t) => {
+  // Run 8cff6e80: the macpro node restarted after 3 of 8 chunks of a 3745393-byte still.
+  const root = await mkdtemp(path.join(tmpdir(), 'slot-copy-node-restart-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const content = Buffer.alloc(3_745_393, 7);
+  const restartAt = 3 * 512 * 1024;
+  let restarted = false;
+  const reads: Array<{ offset: number; bound: boolean }> = [];
+  const io = {
+    host: 'remote.invalid',
+    machine: 'restarting-node',
+    sshTarget: '',
+    nodeRequest: async (
+      method: string,
+      params: unknown,
+      options?: { timeout?: number; requireSameConnection?: boolean },
+    ) => {
+      if (method === 'fs.stat') return { size: content.length, isFile: true };
+      if (method === 'fs.hash')
+        return { sha256: createHash('sha256').update(content).digest('hex') };
+      if (method !== 'fs.readChunk') throw new Error(`Unexpected copy RPC ${method}`);
+      assert(params && typeof params === 'object' && 'offset' in params && 'length' in params);
+      const { offset, length } = params;
+      if (typeof offset !== 'number' || typeof length !== 'number')
+        throw new Error('Invalid chunk fixture');
+      reads.push({ offset, bound: options?.requireSameConnection === true });
+      if (offset === restartAt && !restarted) {
+        restarted = true;
+        throw new NodeTransportUnavailableError(
+          'restarting-node',
+          'disconnected',
+          'Node restarting-node connection closed before it replied',
+        );
+      }
+      const chunk = content.subarray(offset, offset + length);
+      return {
+        content: chunk.toString('base64'),
+        size: content.length,
+        offset,
+        bytesRead: chunk.length,
+        eof: offset + chunk.length >= content.length,
+      };
+    },
+  };
+  const destination = path.join(root, 'still.png');
+
+  await slotCopyFile(io, '/task/artifacts/still.png', destination, { forceChunked: true });
+
+  assert.deepEqual(await readFile(destination), content);
+  assert.deepEqual(
+    reads.filter((read) => read.offset === restartAt).length,
+    2,
+    'the interrupted range is read again, from the same offset',
+  );
+  assert.ok(
+    reads.every((read) => read.bound),
+    'chunk reads are bound to their connection',
+  );
+});
+
 test('slotCopyDir local path forwards per-file failures to onEntryFailure and keeps copying', async (t) => {
   // chmod-based EACCES is a no-op for uid 0; skip when running as root so the
   // assertion does not falsely pass via the bypass branch.
@@ -872,6 +920,7 @@ test('remote slotCopyFile uses chunked fs.readChunk above the small-file thresho
     },
   });
   registerNode('copy-large-machine', 1, fakeWs as any);
+  fakeWs.source = getNode('copy-large-machine')!.ws;
   t.after(() => unregisterByWs(fakeWs as any));
 
   const events: unknown[] = [];
@@ -979,6 +1028,7 @@ test('slotReadFileBuffer chunked path reports readChunkCount and bounded root', 
     },
   });
   registerNode('read-buffer-chunk-machine', 1, fakeWs as any);
+  fakeWs.source = getNode('read-buffer-chunk-machine')!.ws;
   t.after(() => unregisterByWs(fakeWs as any));
 
   let transport: { mode: string; readChunkCount: number; root?: string } | undefined;

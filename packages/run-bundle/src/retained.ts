@@ -698,8 +698,25 @@ export async function readRetainedRunBundle(
         `Artifact was not retained: ${relativePath}. Run farmslot runs bundle retain ${runId}.`,
       );
     const file = resolvePathInsideRoot(directory, key);
-    if ((await realpath(file)) !== file)
-      throw new Error('Retained bundle contains a redirected path.');
+    let real: string;
+    try {
+      real = await realpath(file);
+    } catch (error) {
+      if (!hasCode(error, 'ENOENT')) throw error;
+      // The capture declared why it kept no payload; name it instead of a bare ENOENT.
+      const declared = retainedManifest.missingData?.find(
+        (reason) => reason.slice(reason.indexOf(':') + 1) === relativePath,
+      );
+      throw Object.assign(
+        new Error(
+          declared
+            ? `Artifact not retained (${declared.slice(0, declared.indexOf(':'))}): ${relativePath}`
+            : `Retained artifact is missing, pruned or changed: ${relativePath}`,
+        ),
+        { code: 'ENOENT' },
+      );
+    }
+    if (real !== file) throw new Error('Retained bundle contains a redirected path.');
     const info = await lstat(file);
     if (!info.isFile() || info.size !== meta.bytes)
       throw new Error(`Retained artifact is missing, pruned or changed: ${relativePath}`);

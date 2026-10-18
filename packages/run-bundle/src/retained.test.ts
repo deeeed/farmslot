@@ -177,6 +177,33 @@ test('shared Run store resolves its owner root; isolated auth home cannot establ
   );
 });
 
+test('a reader names media the capture declared it could not retain', async (t) => {
+  // Run 8cff6e80: every proof still was refused for capacity, and review then
+  // failed on a bare ENOENT realpath of the first one.
+  const f = await fixture(t);
+  await writeFile(path.join(f.taskDir, 'artifacts/capture.mp4'), Buffer.alloc(60_000));
+  f.artifacts[1]!.sha256 = createHash('sha256').update(Buffer.alloc(60_000)).digest('hex');
+  const result = await materializeRunBundle({
+    ...f.request,
+    policy: {
+      maxBundleBytes: 200_000,
+      maxStoreBytes: 200_000,
+      metadataReserveBytes: 150_000,
+      mediaRetentionDays: 30,
+    },
+  });
+  assert.deepEqual(result.missingData, ['media-capacity:artifacts/capture.mp4']);
+  await assert.rejects(
+    resolveRunBundleEntry({
+      store: f.store,
+      ref: result.ref,
+      runId: f.run.id,
+      path: 'artifacts/capture.mp4',
+    }),
+    { code: 'ENOENT', message: 'Artifact not retained (media-capacity): artifacts/capture.mp4' },
+  );
+});
+
 test('media cannot consume the report reserve; metadata remains readable and missing media is explicit', async (t) => {
   const f = await fixture(t);
   await writeFile(path.join(f.taskDir, 'artifacts/capture.mp4'), Buffer.alloc(60_000));

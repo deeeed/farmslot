@@ -55,7 +55,7 @@ export interface SlotLocality {
   nodeRequest?: (
     method: string,
     params: unknown,
-    options?: { timeout?: number },
+    options?: { timeout?: number; requireSameConnection?: boolean },
   ) => Promise<unknown>;
 }
 
@@ -129,6 +129,34 @@ function requestFor(ctx: SlotLocality): NonNullable<SlotLocality['nodeRequest']>
     assertNodeReconnectCurrent();
     return sendNodeRequest(node, method, params, options);
   };
+}
+
+/**
+ * A chunk read is idempotent and bound to its connection. When the node's
+ * connection closes under it (a node restart), read the same range again on the
+ * reconnected node instead of waiting out the transfer's idle budget.
+ */
+async function readChunkAcrossReconnect(
+  ctx: SlotLocality,
+  request: NonNullable<SlotLocality['nodeRequest']>,
+  params: { root: string; relPath: string; offset: number; length: number },
+): Promise<NodeFsReadChunkResult> {
+  const read = async () =>
+    (await request('fs.readChunk', params, {
+      timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
+      requireSameConnection: true,
+    })) as NodeFsReadChunkResult;
+  try {
+    return await read();
+  } catch (error) {
+    if (
+      !isNodeTransportUnavailableError(error) ||
+      (error.reason !== 'disconnected' && error.reason !== 'not-connected')
+    )
+      throw error;
+    if (!ctx.nodeRequest) await waitForNode(ctx.machine);
+    return read();
+  }
 }
 
 function nodePathParams(fullPath: string): { root: string; relPath: string } {
@@ -462,11 +490,7 @@ export async function slotCopyFile(
         }
       : undefined,
     readChunk: async (offset, length) => {
-      const chunk = (await request(
-        'fs.readChunk',
-        { ...pathParams, offset, length },
-        { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
-      )) as NodeFsReadChunkResult;
+      const chunk = await readChunkAcrossReconnect(ctx, request, { ...pathParams, offset, length });
       if (
         options.maxBytes !== undefined &&
         offset + Buffer.from(chunk.content, 'base64').length > options.maxBytes
@@ -579,11 +603,7 @@ export async function slotReadFileBuffer(
     onProgress: options.onProgress,
     readChunk: async (offset, length) => {
       readChunkCount += 1;
-      return (await request(
-        'fs.readChunk',
-        { ...pathParams, offset, length },
-        { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
-      )) as NodeFsReadChunkResult;
+      return readChunkAcrossReconnect(ctx, request, { ...pathParams, offset, length });
     },
   });
   options.onTransport?.({

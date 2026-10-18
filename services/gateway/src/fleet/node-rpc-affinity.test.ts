@@ -6,10 +6,12 @@ import { WebSocket } from 'ws';
 
 import { registerNode, unregisterByWs } from './machine-registry.js';
 import {
+  failRequestsBoundTo,
   handleNodeExecOutput,
   handleNodeResponse,
   nodeExec,
   NodeExecUnconfirmedError,
+  NodeTransportUnavailableError,
   sendNodeRequest,
 } from './node-rpc.js';
 
@@ -37,6 +39,32 @@ test('a connection-bound native request ignores another node reply with the same
   assert.equal(settled, false);
   handleNodeResponse(id, true, 'expected-node', undefined, undefined, expected);
   assert.equal(await reply, 'expected-node');
+});
+
+test('a closed connection fails its bound requests at once and leaves unbound ones answerable', async () => {
+  // Run 8cff6e80: a node restart left a bound chunk read waiting out its timeout.
+  const socket = new ExecSocket();
+  const node = {
+    machine: 'node-a',
+    pid: 1,
+    connectedAt: new Date().toISOString(),
+    ws: socket.asSocket(),
+  };
+  const bound = sendNodeRequest(node, 'fs.readChunk', {}, { requireSameConnection: true });
+  const unbound = sendNodeRequest(node, 'fs.stat', {}, { timeout: 1000 });
+  const unboundId = socket.sent[1]!.id;
+
+  // The gateway's connection close handler.
+  failRequestsBoundTo(socket.asSocket());
+
+  await assert.rejects(
+    bound,
+    (error: unknown) =>
+      error instanceof NodeTransportUnavailableError && error.reason === 'disconnected',
+  );
+  // The node may still answer an unbound request on its new connection.
+  handleNodeResponse(unboundId, true, 'answered', undefined, undefined, {} as WebSocket);
+  assert.equal(await unbound, 'answered');
 });
 
 interface SentRequest {
