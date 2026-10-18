@@ -162,7 +162,7 @@ export function dispatchScoringKey(input: DispatchScoringKeyInput): string {
 export function findActiveRunConflict(
   runs: readonly Run[],
   input: { ticket: string; normalizedTicket: string; project: string },
-): { id: string; status: string } | null {
+): Pick<Run, 'id' | 'status'> | null {
   const ticket = input.ticket.trim();
   if (!ticket || !input.project) return null;
   const run = runs.find(

@@ -147,7 +147,7 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _loadingCandidates = false;
   @state() _loadingProjectConfigs = false;
   @state() _allProjectSlots: SlotStatus[] = [];
-  @state() _activeRunConflict: { id: string; status: string } | null = null;
+  @state() _activeRunConflict: Pick<Run, 'id' | 'status'> | null = null;
   @state() _hydrating = false;
   @state() _bootstrapFailed = false;
   @state() _connectionStale = false;
