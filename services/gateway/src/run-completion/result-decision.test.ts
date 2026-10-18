@@ -23,6 +23,7 @@ let run: Run;
 let replays: RunReplayStepParams[] = [];
 let releases: SlotReleaseParams[] = [];
 let starts: string[] = [];
+let replayError: Error | null = null;
 
 const store = await import('../runs/store.js');
 mock.module('../runs/store.js', {
@@ -51,6 +52,7 @@ mock.module('../methods/run/replay-step.js', {
     ...replay,
     runReplayStep: async (params: RunReplayStepParams) => {
       replays.push(params);
+      if (replayError) throw replayError;
       return { run };
     },
   },
@@ -75,12 +77,19 @@ mock.module('../run-engine/orchestrator.js', {
   },
 });
 
-const { buildResultDecision, closeDiscardedResult, resolveResultDecision, takeSendBackReview } =
-  await import('./result-decision.js');
+const {
+  buildResultDecision,
+  closeDiscardedResult,
+  holdRunForResultDecision,
+  resolveResultDecision,
+  takeSendBackReview,
+} = await import('./result-decision.js');
+const { aggregateAnalytics, buildAnalyticsRecord } = await import('../runs/analytics.js');
 const { restartDisposition, representResultDecisions } = await import('../run-engine/recovery.js');
 const { runCancelTransitionLocked } = await import('../methods/run/lifecycle-control.js');
 
 beforeEach(() => {
+  replayError = null;
   replays = [];
   releases = [];
   starts = [];
@@ -333,4 +342,59 @@ test('restart re-presents a held decision and re-projects a delivered refused co
   assert.equal(run.status, 'needs-decision');
   assert.equal((pending().payload as ResultDecisionPayload).stoppedAt, 'complete');
   assert.equal(restartDisposition({ ...run, status: 'monitoring' }), 'recover');
+});
+
+test('a run held again keeps exactly one pending decision', async () => {
+  await heldQa();
+  const first = pending().id;
+  await holdRunForResultDecision(run.id, 'complete', 'COMPLETE was refused again');
+
+  const open = run.decisions.filter(
+    (entry) => entry.payload?.kind === 'result-decision' && !entry.resolvedAt,
+  );
+  assert.equal(open.length, 1);
+  assert.notEqual(open[0].id, first);
+  assert.equal(run.decisions.find((entry) => entry.id === first)?.resolvedAction, 'superseded');
+});
+
+test('a refused completion replay leaves the run held with a fresh decision', async () => {
+  await heldQa();
+  const first = pending().id;
+  replayError = new Error('Slot is no longer reclaimable');
+
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: first, actionId: 'send-back' }),
+    /no longer reclaimable/,
+  );
+  assert.equal(run.status, 'needs-decision');
+  assert.ok(pending(), 'Close and the named discard still have a decision to act on');
+  assert.notEqual(pending().id, first);
+});
+
+test('settling a REVIEW hold skips the steps that never ran', async () => {
+  await heldOpus();
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: pending().id,
+    actionId: 'close-result',
+  });
+
+  assert.equal(run.steps.find((step) => step.name === S.COMPLETE)?.status, 'skipped');
+  assert.equal(
+    run.steps.some((step) => step.status === 'pending'),
+    false,
+  );
+});
+
+test('a held run is not a failure in analytics, even after a failed record', async () => {
+  await heldQa();
+  const failed = buildAnalyticsRecord({ ...run, status: 'failed' });
+  assert.equal(failed.failedStep, S.COMPLETE, 'the restart re-projects this earlier record');
+  const held = buildAnalyticsRecord(run);
+  assert.equal(held.failedStep, null);
+  assert.equal(held.failureReason, null);
+
+  const result = aggregateAnalytics([failed, held], {}, '2026-10-19T00:00:00.000Z');
+  assert.deepEqual(result.failureByStep, {});
+  assert.deepEqual(result.failureByReason, {});
 });

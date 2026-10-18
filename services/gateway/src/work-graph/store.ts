@@ -1540,7 +1540,10 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
         node.waitingOn = [
           {
             kind: 'policy',
-            detail: `Execution closed with ${latestRun.metrics.outcome}; validation remains unresolved.`,
+            detail:
+              latestRun.resultDecisionReceipt?.action === 'close-result'
+                ? 'The result was closed without being accepted; validation remains unresolved.'
+                : `Execution closed with ${latestRun.metrics.outcome}; validation remains unresolved.`,
           },
         ];
     } else if (latestRun.status === 'failed') node.status = 'failed';

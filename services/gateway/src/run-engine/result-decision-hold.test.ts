@@ -25,9 +25,10 @@ const opusFindings = [
     description: 'No test covers the marginModeLock invalidation AC2 rests on.',
   },
   {
-    file: 'src/features/perpetuals/queries/invalidate-live-trading-queries.ts',
-    line: 40,
-    description: 'The invalidation runs before the order write settles.',
+    file: 'temp/tasks/feat/tat-4145-opus-1018-135546/artifacts/pr-description.md',
+    line: 3,
+    description:
+      'DIFF_CHANGE_NOT_DESCRIBED: useOrderMarginMode.ts:48-50 never offers Cross in the desktop app.',
   },
 ];
 const refusalReasons = [
@@ -37,7 +38,21 @@ const refusalReasons = [
     message: 'A declared deterministic check has no current passing receipt.',
     actionId: 'hold' as const,
   },
+  {
+    code: 'evidence-policy-unsatisfied' as const,
+    prerequisite: 'evidence' as const,
+    evidencePolicy: 'claim-verdict' as const,
+    message: 'Recorded claim verdicts do not satisfy publication policy.',
+    actionId: 'hold' as const,
+  },
+  {
+    code: 'run-progress-unconfirmed' as const,
+    prerequisite: 'lifecycle' as const,
+    message: 'The current runner operation cannot be confirmed idle.',
+    actionId: 'hold' as const,
+  },
 ];
+let failHoldPersist = false;
 
 mock.module('./post-dispatch-steps.js', {
   namedExports: {
@@ -53,7 +68,7 @@ mock.module('./post-dispatch-steps.js', {
           retryCount: 1,
           maxRetries: 2,
           maxRetriesExhausted: true,
-          reviewSnapshot: { headSha: '3522954d1f0b7c1f2a6c0f9d6b1e0c5a7e2d9f10' },
+          reviewSnapshot: { headSha: '3522954595facf528417ec6dfa65fd83d2aba02e' },
         },
       );
     },
@@ -92,7 +107,9 @@ mock.module('../runs/store.js', {
     updateRun: (_id: string, patch: Partial<Run>) => Object.assign(run, patch),
     updateRunStep: (_id: string, name: string, patch: Partial<RunStep>) =>
       Object.assign(run.steps.find((step) => step.name === name)!, patch),
-    persistRunNow: async () => undefined,
+    persistRunNow: async (_run: Run, reason: string) => {
+      if (failHoldPersist && reason === 'held for a result decision') throw new Error('disk full');
+    },
   },
 });
 mock.module('../server.js', { namedExports: { broadcastEvent: () => {} } });
@@ -167,7 +184,7 @@ test('8cff6e80: review findings on a pushed comparison result need a decision, n
   assert.equal(payload.stoppedAt, 'review');
   assert.deepEqual(payload.findings, opusFindings);
   assert.deepEqual(payload.delivered, {
-    headSha: '3522954d1f0b7c1f2a6c0f9d6b1e0c5a7e2d9f10',
+    headSha: '3522954595facf528417ec6dfa65fd83d2aba02e',
     branch: 'feat/tat-4145-opus',
   });
   assert.equal(action(payload, 'send-back').available, false, 'all review rounds are spent');
@@ -243,5 +260,22 @@ test('a refused completion without a delivered result stays failed (Amendment 6)
   assert.equal(
     run.decisions.some((entry) => entry.payload?.kind === 'result-decision'),
     false,
+  );
+});
+
+test('a hold that cannot be recorded fails the run instead of leaving it completing', async () => {
+  run = qaRun(qaOutput);
+  failHoldPersist = true;
+  try {
+    await startRun(run.id);
+  } finally {
+    failHoldPersist = false;
+  }
+
+  assert.equal(run.status, 'failed', 'Amendment 6 settles it');
+  assert.equal(
+    run.decisions.some((entry) => entry.payload?.kind === 'result-decision'),
+    false,
+    'no decision is left pending on a failed run',
   );
 });

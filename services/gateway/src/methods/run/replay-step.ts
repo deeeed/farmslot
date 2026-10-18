@@ -2013,7 +2013,13 @@ async function replayRunStep(
       ...(replaysTaskGeneration
         ? { executionTemplate: undefined, templateProvenance: undefined }
         : {}),
-      decisions: clearedDecisions,
+      // A replay ends a held run's result decision (ADR-065 Amendment 7): it
+      // either settles the run or holds it again with a fresh one.
+      decisions: clearedDecisions.map((decision) =>
+        !decision.resolvedAt && decision.payload?.kind === 'result-decision'
+          ? { ...decision, resolvedAt: new Date().toISOString(), resolvedAction: 'superseded' }
+          : decision,
+      ),
       ...(existing.reviewWorkspace && replayStepName === PS.HUMAN_GATE
         ? {
             reviewAutoFinish: false,

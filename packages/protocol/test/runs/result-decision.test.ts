@@ -7,9 +7,11 @@ import {
   isActiveListRun,
   isHeldForResultDecision,
   isSuccessfulRun,
+  pendingResultDecision,
   refusedCompletionStep,
   type ResultDecisionReceipt,
   type Run,
+  type RunDecision,
   type RunMetrics,
   type RunStep,
 } from '../../src/index.js';
@@ -120,4 +122,52 @@ test('an accepted result succeeds and a closed one does not, whatever the worker
     false,
   );
   assert.equal(isSuccessfulRun({ ...done, metrics: metrics('success') }), true);
+});
+
+test('a send-back receipt leaves success to the outcome the run later reaches', () => {
+  const sentBack: ResultDecisionReceipt = {
+    action: 'send-back',
+    principalId: 'arthur',
+    decidedAt: '2026-10-18T12:00:00.000Z',
+    delivered: { reportPath: 'artifacts/report.html', manifestDigest: '22a45970' },
+    findingsDigest: 'sha256:refusal',
+  };
+  const metrics: RunMetrics = { nudgeCount: 0, model: null, runner: null, outcome: 'success' };
+  assert.equal(isSuccessfulRun({ status: 'done', metrics, resultDecisionReceipt: sentBack }), true);
+  assert.equal(
+    isSuccessfulRun({
+      status: 'done',
+      metrics: { ...metrics, outcome: 'partial' },
+      resultDecisionReceipt: sentBack,
+    }),
+    false,
+  );
+});
+
+test('the pending result decision is the newest unresolved one', () => {
+  const decision = (id: string, resolvedAt?: string): RunDecision => ({
+    id,
+    type: 'engine_result_decision',
+    title: id,
+    description: id,
+    actions: [],
+    createdAt: '2026-10-18T12:00:00.000Z',
+    ...(resolvedAt ? { resolvedAt } : {}),
+    payload: {
+      kind: 'result-decision',
+      stoppedAt: 'complete',
+      reason: id,
+      delivered: { reportPath: 'r', manifestDigest: 'm' },
+      findingsDigest: 'd',
+      actions: [],
+    },
+  });
+  assert.equal(pendingResultDecision({ decisions: [decision('old'), decision('new')] })?.id, 'new');
+  assert.equal(
+    pendingResultDecision({
+      decisions: [decision('old'), decision('new', '2026-10-18T13:00:00.000Z')],
+    })?.id,
+    'old',
+  );
+  assert.equal(pendingResultDecision(undefined), undefined);
 });

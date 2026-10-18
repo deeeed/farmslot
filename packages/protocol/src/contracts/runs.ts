@@ -86,7 +86,9 @@ export function isSuccessfulRun(
   run: Pick<Run, 'status' | 'metrics'> & Partial<Pick<Run, 'resultDecisionReceipt'>>,
 ): boolean {
   if (run.status !== 'done') return false;
-  if (run.resultDecisionReceipt) return run.resultDecisionReceipt.action === 'accept-result';
+  // Only Accept and Close decide; after a send-back the later outcome does.
+  if (run.resultDecisionReceipt?.action === 'accept-result') return true;
+  if (run.resultDecisionReceipt?.action === 'close-result') return false;
   return !run.metrics.outcome || run.metrics.outcome === 'success';
 }
 
@@ -94,6 +96,31 @@ export function isSuccessfulRun(
 export function isHeldForResultDecision(run: Pick<Run, 'status'>): boolean {
   return run.status === 'needs-decision';
 }
+
+export type ResultDecision = RunDecision & { payload: ResultDecisionPayload };
+
+function isPendingResultDecision(decision: RunDecision): decision is ResultDecision {
+  return !decision.resolvedAt && decision.payload?.kind === 'result-decision';
+}
+
+/** The run's pending result decision: the newest unresolved one. */
+export function pendingResultDecision(
+  run: Pick<Run, 'decisions'> | null | undefined,
+): ResultDecision | undefined {
+  const decisions = run?.decisions ?? [];
+  for (let index = decisions.length - 1; index >= 0; index--) {
+    const decision = decisions[index];
+    if (isPendingResultDecision(decision)) return decision;
+  }
+  return undefined;
+}
+
+/** One label per result-decision action, for the gateway, the CLI and both clients. */
+export const RESULT_DECISION_ACTION_LABELS: Record<ResultDecisionActionId, string> = {
+  'send-back': 'Send back for another fix',
+  'accept-result': 'Accept',
+  'close-result': 'Close',
+};
 
 /**
  * The worker delivered a result (ADR-065 Amendment 7): it signalled complete or
