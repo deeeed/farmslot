@@ -123,12 +123,15 @@ function TaskAcceptanceContent({
   React.useEffect(() => {
     if (
       error ||
-      view.defaultOpen ||
       evidenceModel?.errors.length ||
       evidenceModel?.claims.some((claim) => claim.kind === 'qa-case')
     )
       setExpanded(true);
-  }, [error, evidenceModel, view.defaultOpen]);
+  }, [error, evidenceModel]);
+  // Opens once when the first criterion is assessed; a later refresh keeps the user's choice.
+  React.useEffect(() => {
+    if (view.defaultOpen) setExpanded(true);
+  }, [view.defaultOpen]);
   if (view.rows.length === 0 && !error && !packageStatus && !evidenceModel?.occurrences.length)
     return null;
   return (

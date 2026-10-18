@@ -78,7 +78,7 @@ test('a bare harness subcommand never reads as the run verdict', () => {
   assert.match(text, /harness run/);
   assert.match(text, /Command failed/);
   assert.doesNotMatch(text, />\s*Failed\s*</, 'no bare Failed badge');
-  assert.doesNotMatch(text, /run still in progress/, 'no open step, so no softening');
+  assert.doesNotMatch(text, /worker continuing/, 'no open step, so no softening');
   const full = litText(
     renderOperationPanel(progress({ ...operation, command: 'mm-harness run' }), 'run-id', { now }),
   );

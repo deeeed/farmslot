@@ -132,6 +132,14 @@ test('the display uses recorded publication selections and retains every remaini
     [],
   );
   assert.deepEqual(createEvidenceReviewModel({ ledger }).claimDisplay('AC-1').selected, []);
+  // Review evidence opens the selected proof, else the first evidence file.
+  const selectedStill = createEvidenceReviewModel({
+    ledger,
+    artifacts: inventory,
+    gateDecision: recordedGate(['artifacts/still.png']),
+  });
+  assert.equal(selectedStill.claimFocusPath('AC-1'), 'artifacts/still.png');
+  assert.equal(createEvidenceReviewModel({ ledger }).claimFocusPath('AC-1'), 'artifacts/proof.png');
 });
 
 test('a measured proof stays primary while its supporting stills remain raw and filterable', () => {
