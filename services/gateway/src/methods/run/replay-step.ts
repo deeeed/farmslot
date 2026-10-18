@@ -632,12 +632,9 @@ export async function rebindReleasedSlot(run: Run): Promise<string | null> {
 
 export function blockedMonitorProofReady(run: Run, status: RuntimeCapabilityStatusResult): boolean {
   const plan = status.proofPlans[run.id];
-  if (
-    !plan &&
-    status.catalog?.length === 0 &&
-    !status.leases.some((lease) => lease.owner.runId === run.id)
-  )
-    return true;
+  // Blocked before planning, it holds no proof resources that could be stale,
+  // whatever the slot's catalog offers.
+  if (!plan && !status.leases.some((lease) => lease.owner.runId === run.id)) return true;
   const blockedAt = parseStrictIsoMs(
     run.steps.find((step) => step.name === PS.MONITOR)?.completedAt,
   );
