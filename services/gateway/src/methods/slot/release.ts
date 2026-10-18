@@ -893,10 +893,10 @@ async function slotReleaseImpl(
   // 5. Teardown — DELIBERATELY DOES NOTHING for resources. (The preflight
   // group was already reaped in step 1, so a dev server the preflight hook
   // backgrounded with `&` inside that group is gone; one started in its own
-  // process group is not.) Release flips
-  // the slot back to ready but leaves the simulator / dev-server / browser
-  // alive so the next run reuses warm infra and so a human-driven manual
-  // build in the worktree isn't yanked out from under them.
+  // process group is not, and step 1 stopped the run's browser session on the
+  // CDP port.) Release flips the slot back to ready but leaves the simulator
+  // and dev server alive so the next run reuses warm infra and so a
+  // human-driven manual build in the worktree isn't yanked out from under them.
   // Resource shutdown is a separate explicit user action via the
   // slot.cleanup RPC (cleanup button). The historical "fallback" that
   // ran `xcrun simctl shutdown` here was the source of the live-sim kill

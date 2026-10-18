@@ -42,6 +42,12 @@ import { getRun, getRunWithArchived, listRuns, updateRun } from '../runs/store.j
 import { unwatchSlot } from '../tasks/watcher.js';
 
 import { reapSlotBrowserSession } from './browser-session-reap.js';
+import {
+  isTmuxProcess,
+  isWithinPath,
+  parseLsofNames,
+  parseProcessCensus,
+} from './process-census.js';
 
 export interface RunSlotCleanupFence {
   before: Readonly<Record<string, unknown>> | null;
@@ -173,7 +179,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       if (worker.state !== 'absent')
         return `Worker ownership in pane ${paneId} is not quiescent; slot teardown was skipped`;
       ownedShells.add(panePid);
-    } else if (cwd && (cwd === repo || cwd.startsWith(`${repo}/`))) {
+    } else if (cwd && isWithinPath(repo, cwd)) {
       slotSession ??= await resolveTmuxSession(run.slotId, vars, { strict: true });
       if (
         !isTerminalRunStatus(run.status) ||
@@ -209,20 +215,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   });
   if (processes.exitCode !== 0)
     return 'Workspace process identity census is unavailable; slot teardown was skipped';
-  const censusRows = processes.stdout.split('\n').flatMap((line) => {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\S+\s+\d+)\s+(.+)$/.exec(line);
-    return match
-      ? [
-          {
-            pid: match[1],
-            parent: match[2],
-            group: Number(match[3]),
-            identity: match[4].replace(/\s+/g, ' '),
-            command: match[5],
-          },
-        ]
-      : [];
-  });
+  const censusRows = parseProcessCensus(processes.stdout);
   for (const panePid of ownedShells) {
     const root = censusRows.find((row) => row.pid === panePid);
     if (!root) continue; // A preserved dead pane has no process left to classify.
@@ -230,9 +223,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       return `Recorded worker pane process ${panePid} is still occupied; cleanup deferred`;
   }
   const passive = new Set(
-    censusRows
-      .filter((row) => /^tmux(?:: (?:server|client))?$/.test(row.command.split('/').at(-1) ?? ''))
-      .map((row) => row.pid),
+    censusRows.filter((row) => isTmuxProcess(row.command)).map((row) => row.pid),
   );
   const ownedProviders = new Set<string>();
   const ownedGroups = new Set<number>();
@@ -254,6 +245,15 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       ownedProviders.add(String(frame.pid));
       if (frame.group === frame.pid) ownedGroups.add(frame.group);
     }
+  }
+  // A declared slot resource (the dev server dispatch needs) lives in the
+  // checkout across runs: its watched process and group are residents.
+  const { getActiveResources } = await import('../fleet/resource-manager.js');
+  for (const resource of getActiveResources(run.slotId)?.values() ?? []) {
+    const row = censusRows.find((candidate) => Number(candidate.pid) === resource.pid);
+    if (!row) continue;
+    ownedProviders.add(row.pid);
+    if (row.group === resource.pid) ownedGroups.add(row.group);
   }
   let added = true;
   while (added) {
@@ -277,20 +277,15 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   );
   if (census.stdout.trim() && livePids.size === 0)
     return 'Workspace process identity census is unreadable; slot teardown was skipped';
-  let pid = '';
-  for (const line of census.stdout.split('\n')) {
-    if (line.startsWith('p')) pid = line.slice(1);
-    if (line.startsWith('n')) {
-      const cwd = line.slice(1);
-      if (
-        (cwd === repo || cwd.startsWith(`${repo}/`)) &&
-        livePids.has(pid) &&
-        !ownedShells.has(pid) &&
-        !passive.has(pid) &&
-        !ownedProviders.has(pid)
-      )
-        return `Process ${pid} still uses the slot repository; slot teardown was skipped`;
-    }
+  for (const [pid, cwd] of parseLsofNames(census.stdout)) {
+    if (
+      isWithinPath(repo, cwd) &&
+      livePids.has(pid) &&
+      !ownedShells.has(pid) &&
+      !passive.has(pid) &&
+      !ownedProviders.has(pid)
+    )
+      return `Process ${pid} still uses the slot repository; slot teardown was skipped`;
   }
   // Automatic run cleanup never destroys the configured session itself.
   return null;

@@ -57,7 +57,9 @@ interface SlotProcess {
 }
 const STARTED = 'Sun Oct 18 08:48:13 2026';
 let slotProcesses: SlotProcess[] = [];
-let leaseProviders: Array<{ pid: number; group: number; identity: string }> = [];
+let leases: Array<Record<string, unknown>> = [];
+/** The gateway's watched resource processes on the slot (resourceId -> pid). */
+let activeResources = new Map<string, { pid: number }>();
 
 function browserSessionCensus() {
   const live = slotProcesses.filter((proc) => proc.alive);
@@ -247,7 +249,7 @@ mock.module('../methods/runtime-capabilities.js', {
     getRuntimeCapabilityRegistry: () => ({
       settledStatus: async () => ({
         catalog: [],
-        leases: leaseProviders.length ? [{ providerProcesses: leaseProviders }] : [],
+        leases,
       }),
       releaseRunTerminal: async () => {
         providerCleanups += 1;
@@ -256,6 +258,11 @@ mock.module('../methods/runtime-capabilities.js', {
       },
     }),
   },
+});
+
+const realResourceManager = await import('../fleet/resource-manager.js');
+mock.module('../fleet/resource-manager.js', {
+  namedExports: { ...realResourceManager, getActiveResources: () => activeResources },
 });
 
 const { slotTeardownBlocker, stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } =
@@ -291,7 +298,8 @@ beforeEach(() => {
   tmuxInventory = '';
   runnerProbe = { state: 'absent' };
   slotProcesses = [];
-  leaseProviders = [];
+  leases = [];
+  activeResources = new Map();
 });
 
 test('cancel during or after prepare stops the run prepare-scope holder', async () => {
@@ -592,25 +600,70 @@ function leftBrowserSession(): SlotProcess[] {
       args: 'node /slot-2/tool.mjs --cdp-port 9542 --target /slot-2',
       alive: true,
     },
+    // The slot's dev server, which dispatch needs, runs in the checkout.
     {
       pid: 40000,
       ppid: 1,
       pgid: 40000,
-      cwd: '/',
+      cwd: '/slot',
       args: 'node /slot/node_modules/.bin/next dev -p 9342',
+      alive: true,
+    },
+    {
+      pid: 40001,
+      ppid: 40000,
+      pgid: 40000,
+      cwd: '/slot',
+      args: 'next-server (v15)',
+      alive: true,
+    },
+    // Still attached to a live parent (a worker pane), and a tmux server.
+    {
+      pid: 50001,
+      ppid: 5000,
+      pgid: 5000,
+      cwd: '/slot',
+      onCdpPort: true,
+      args: 'node /slot/scripts/probe.mjs --cdp-port 9542',
+      alive: true,
+    },
+    {
+      pid: 60001,
+      ppid: 1,
+      pgid: 60001,
+      cwd: '/slot',
+      args: 'tmux new-session -d -c /slot node probe.mjs --cdp-port 9542',
       alive: true,
     },
   ];
 }
+const untouched = [30001, 30002, 40000, 40001, 50001, 60001];
 const alivePids = () => slotProcesses.filter((proc) => proc.alive).map((proc) => proc.pid);
 
 test("cancel stops the browser session its run left on the slot's CDP port", async () => {
   slotProcesses = leftBrowserSession();
+  activeResources = new Map([['dev-server', { pid: 40000 }]]);
 
   assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
 
-  assert.deepEqual(alivePids(), [30001, 30002, 40000], 'only the run session was stopped');
-  assert.equal(await slotTeardownBlocker(run), null, 'nothing holds the slot repository now');
+  assert.deepEqual(alivePids(), untouched, 'only the run session was stopped');
+  slotProcesses = slotProcesses.filter((proc) => proc.pid !== 50001 && proc.pid !== 60001);
+  assert.equal(
+    await slotTeardownBlocker(run),
+    null,
+    'the dev server is a resident, not an occupant',
+  );
+});
+
+test('a dev server the gateway does not watch still holds the slot', async () => {
+  slotProcesses = leftBrowserSession().filter((proc) => proc.pid !== 50001 && proc.pid !== 60001);
+
+  assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+
+  assert.equal(
+    await slotTeardownBlocker(run),
+    'Process 40000 still uses the slot repository; slot teardown was skipped',
+  );
 });
 
 test('a browser session process that survives SIGKILL is named and keeps the slot held', async () => {
@@ -623,16 +676,31 @@ test('a browser session process that survives SIGKILL is named and keeps the slo
     blocker ?? '',
     /^Browser session process 20419 \(\/home\/chrome\/Google Chrome for Testing --remote-debugging-port=9542 .*\) on CDP port 9542 did not stop$/,
   );
-  assert.deepEqual(alivePids(), [20419, 30001, 30002, 40000]);
+  assert.deepEqual(alivePids(), [20419, ...untouched]);
 });
 
-test('a browser a capability lease recorded keeps its release effect', async () => {
+test('while a capability lease holds the slot, its release effect decides', async () => {
   slotProcesses = leftBrowserSession();
-  leaseProviders = [{ pid: 20419, group: 20419, identity: STARTED }];
+  leases = [{ owner: { runId: RUN_ID }, state: 'acquired' }];
 
   assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
 
-  assert.deepEqual(alivePids(), [20419, 20430, 30001, 30002, 40000]);
+  assert.equal(alivePids().length, slotProcesses.length);
+});
+
+test('a process a released lease recorded is never reaped', async () => {
+  slotProcesses = leftBrowserSession();
+  leases = [
+    {
+      owner: { runId: RUN_ID },
+      state: 'released',
+      providerProcesses: [{ pid: 20419, group: 20419, identity: STARTED }],
+    },
+  ];
+
+  assert.equal(await stopRunOwnedTmuxAndWatches(run), null);
+
+  assert.deepEqual(alivePids(), [20419, 20430, ...untouched]);
 });
 
 test('the browser session of a slot another active run uses is left alone', async () => {
