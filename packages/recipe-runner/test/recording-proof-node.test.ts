@@ -173,6 +173,8 @@ async function runFixture(
     onRestart?: () => void;
     onCaptureStart?: () => void;
     ready?: () => Promise<void>;
+    /** Runs inside the recorder's doctor, e.g. a wait for the host capture slot. */
+    doctorWait?: (signal: AbortSignal | undefined) => Promise<void>;
   },
 ) {
   const target = options.target ?? android;
@@ -182,6 +184,7 @@ async function runFixture(
   await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
   await writeFile(path.join(libraryRoot, 'recipes', 'guard.recipe.json'), JSON.stringify(guard));
   const events: string[] = [];
+  const signals: { doctor?: AbortSignal; start?: AbortSignal } = {};
   let captureStartedAt = 0;
   const runner = createRecipeRunner({
     actionManifest: manifest,
@@ -232,12 +235,15 @@ async function runFixture(
       },
       videoRecorder: {
         name: 'fixture',
-        async doctor() {
+        async doctor(doctorOptions) {
           events.push('doctor');
+          signals.doctor = doctorOptions?.signal;
+          await options.doctorWait?.(doctorOptions?.signal);
           return { ok: true, code: 'ok', message: 'Fixture ready' };
         },
         async start(request: VideoRecorderStartRequest) {
           events.push('start');
+          signals.start = request.signal;
           await writeFile(request.outputPath, 'video fixture');
           captureStartedAt = Date.now();
           options.onCaptureStart?.();
@@ -286,7 +292,7 @@ async function runFixture(
   const entries: { nodeId: string; ok: boolean; error_code?: string }[] = Array.isArray(trace)
     ? trace
     : trace.entries;
-  return { root, result, events, entries };
+  return { root, result, events, entries, signals };
 }
 
 for (const { target, nested } of [
@@ -338,17 +344,46 @@ for (const { target, nested } of [
 
 test('a cancel during setup still lets teardown bind capture and run its first proof node', async (t) => {
   const controller = new AbortController();
-  const { result, events, entries } = await runFixture(t, {
+  const { result, events, entries, signals } = await runFixture(t, {
     recipe: withTeardown,
     signal: controller.signal,
     onRestart: () => controller.abort('SIGTERM'),
   });
   assert.equal(result.status, 'fail');
+  assert.equal(signals.start?.aborted, false, 'Teardown binds capture with its own signal');
   assert.ok(entries.some((entry) => entry.error_code === 'RECIPE_ABORTED'));
   // Teardown runs on a signal the cancel does not reach, lead-in included.
   assert.deepEqual(events, ['doctor', 'restart', 'target', 'acquire', 'start', 'ui', 'stop']);
   assert.equal(entries.find((entry) => entry.nodeId === 'restore')?.ok, true);
   assert.equal(entries.at(-1)?.nodeId, 'closed');
+});
+
+test('the recorder gets the run signal, so a wait for the host capture slot can be cancelled', async (t) => {
+  const controller = new AbortController();
+  const { result, signals } = await runFixture(t, { recipe: flat, signal: controller.signal });
+  assert.equal(result.status, 'pass');
+  assert.equal(signals.doctor, controller.signal);
+  assert.equal(signals.start, controller.signal);
+});
+
+test('a cancel while the run-start doctor waits for the capture slot ends the run as cancelled', async (t) => {
+  const controller = new AbortController();
+  const { result, events, entries } = await runFixture(t, {
+    recipe: flat,
+    signal: controller.signal,
+    doctorWait: (signal) => {
+      setTimeout(() => controller.abort('SIGTERM'), 50);
+      return new Promise((_resolve, reject) =>
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true }),
+      );
+    },
+  });
+  assert.equal(result.status, 'fail');
+  assert.equal(
+    entries.find((entry) => entry.nodeId === 'recipe-run:video')?.error_code,
+    'RECIPE_ABORTED',
+  );
+  assert.ok(!events.includes('ui'), 'No proof node runs after the cancel');
 });
 
 test('a cancel during the lead-in stops the run before the first proof node', async (t) => {

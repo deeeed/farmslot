@@ -9,6 +9,7 @@ import { RecipeExecutionError } from '../core/failure.js';
 import type {
   ActiveVideoRecording,
   VideoRecorder,
+  VideoRecorderDoctorOptions,
   VideoRecorderDoctorResult,
   VideoRecorderStartRequest,
 } from '../core/types.js';
@@ -28,10 +29,16 @@ export function createAndroidMirrorVideoRecorder(options: {
 }): VideoRecorder {
   const helperPath = options.captureHelperPath ?? captureHelperPath();
   const scrcpy = options.scrcpyPath ?? 'scrcpy';
-  const primary = createCaptureHelperVideoRecorder({ captureHelperPath: helperPath });
+  // A busy host capture slot falls back at once instead of waiting for it.
+  const primary = createCaptureHelperVideoRecorder({
+    captureHelperPath: helperPath,
+    captureSlotWaitMs: 0,
+  });
   let selected: 'primary' | 'fallback' | undefined;
   let fallbackReason: string | undefined;
-  async function doctor(): Promise<VideoRecorderDoctorResult> {
+  async function doctor(
+    doctorOptions?: VideoRecorderDoctorOptions,
+  ): Promise<VideoRecorderDoctorResult> {
     selected = undefined;
     const native = await primary.doctor!();
     if (native.ok) {
@@ -48,7 +55,7 @@ export function createAndroidMirrorVideoRecorder(options: {
         fallbackReason = `Android mirror unavailable: ${error instanceof Error ? error.message : String(error)}`;
       }
     } else fallbackReason = native.message;
-    const result = (await options.fallback.doctor?.()) ?? {
+    const result = (await options.fallback.doctor?.(doctorOptions)) ?? {
       ok: true,
       code: 'ok',
       message: 'Fallback provider selected.',

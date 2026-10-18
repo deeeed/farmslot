@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   Events,
   isCompletionPrerequisiteFailure,
+  type Principal,
   type Run,
   type RunDecision,
   type RuntimeCapabilityStatusResult,
@@ -22,6 +23,11 @@ import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { makeRun } from '../../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
+import {
+  currentSessionOriginator,
+  runWithSessionOriginator,
+  type WorkOriginator,
+} from '../../security/work-originator.js';
 import { markCompletionFailureDiscarded } from '../slot/release-run-ownership.js';
 
 import { runForceComplete } from './lifecycle-control.js';
@@ -688,6 +694,70 @@ test('runReplayStep abandons a retained handoff and re-enters normal dispatch', 
   assert.equal(replayed.run.engineState?.flags?.warmHandoffSucceeded, undefined);
   assert.equal(replayed.run.engineState?.flags?.skipPrepare, undefined);
   assert.equal(replayed.run.steps.find((step) => step.name === 'dispatch')?.status, 'pending');
+});
+
+test('a replay a service principal requests drives the run under its stored ownership', async (t) => {
+  // Run 22e62daa: farm-automation's resume re-attached the monitor, and the
+  // engine it started resolved the review owner as farm-automation.
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const taskFile = '/tmp/farmslot-replay-originator/TASK.md';
+  await writeFile(
+    statusFile,
+    `${JSON.stringify({
+      slots: [{ slot: 'macwork-ff-replay-originator', lifecycle: 'busy', current_run_id: run.id }],
+    })}\n`,
+  );
+  updateRun(run.id, {
+    status: 'failed',
+    slotId: 'macwork-ff-replay-originator',
+    taskFile,
+    // A fresh dispatch replay needs no slot probe, only a retained handoff.
+    engineState: {
+      generation: 1,
+      flags: { skipPrepare: true, warmSessionReuse: true, warmHandoffSucceeded: false },
+    },
+    steps: run.steps.map((step) =>
+      step.name === 'find-slot' || step.name === 'write-task' || step.name === 'prepare'
+        ? {
+            ...step,
+            status: 'done',
+            outputs: step.name === 'write-task' ? { taskFile } : step.outputs,
+          }
+        : step.name === 'dispatch'
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+  t.after(async () => {
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  const automation: Principal = {
+    id: 'farm-automation',
+    subject: { type: 'service', displayName: 'farm-automation' },
+    roles: [{ role: 'operator', scope: { kind: 'global' } }],
+  };
+  let engineOriginator: WorkOriginator | undefined;
+
+  await runWithSessionOriginator(automation, () =>
+    runReplayStep(
+      { runId: run.id, stepName: 'dispatch', freshDispatch: true, triggeredBy: 'operator' },
+      () => {},
+      {
+        startEngine: async () => {
+          engineOriginator = currentSessionOriginator();
+        },
+      },
+    ),
+  );
+
+  assert.deepEqual(engineOriginator, { kind: 'system' });
 });
 
 test('blocked monitor only reclaims the same live worker at claim time', () => {
