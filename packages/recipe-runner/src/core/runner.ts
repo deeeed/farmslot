@@ -69,6 +69,7 @@ import {
 } from './compose.js';
 import { executeRecipe } from './execution.js';
 import {
+  recipeAbortError,
   RecipeExecutionError,
   recipeFailureCause,
   recipeFailureTraceFields,
@@ -492,7 +493,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const segments: RecordingSegmentRef[] = [];
     const timelines = new Map<string, RecipeRecordingTimelineDocument>();
     const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
-    const startRunRecording = (recorder: VideoRecorder) =>
+    const startRunRecording = (recorder: VideoRecorder, signal: AbortSignal | undefined) =>
       this.#startRunVideoRecording({
         recorder,
         videoOptions,
@@ -500,7 +501,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         projectRoot,
         artifactsDir,
         env,
-        signal: request.signal,
+        signal,
       });
     let runRecording: RunVideoRecording | undefined;
     let captureInterruption: RecipeRunCaptureInterruption | undefined;
@@ -518,8 +519,11 @@ class DefaultRecipeRunner implements RecipeRunner {
         }
         // Session setup can launch or replace a browser. Bind only after setup, before the
         // first proof node; explicit non-UI recording keeps its run-start boundary.
-        if (!recordingRequired) runRecording = await startRunRecording(videoRecorder);
-      } catch (error) {
+        if (!recordingRequired)
+          runRecording = await startRunRecording(videoRecorder, request.signal);
+      } catch (caught) {
+        // A cancel while doctor or start waits for the host's capture slot is the run's cancel.
+        const error = request.signal?.aborted ? recipeAbortError(request.signal) : caught;
         const message = errorMessage(error);
         const causeClass = recipeFailureCause(error, 'harness');
         traceWriter.record({
@@ -531,6 +535,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           ok: false,
           cause_class: causeClass,
           error: message,
+          ...recipeFailureTraceFields(error),
         });
         this.#logger.error(`record.video start failed: ${message}`);
         status = 'fail';
@@ -588,7 +593,7 @@ class DefaultRecipeRunner implements RecipeRunner {
             });
             if (videoRecorder && !runRecording && proofNodeIds.has(nodeId)) {
               try {
-                runRecording = await startRunRecording(videoRecorder);
+                runRecording = await startRunRecording(videoRecorder, signal);
               } catch (error) {
                 throw new RecipeExecutionError(
                   'environment',

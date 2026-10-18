@@ -6,6 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import type { VideoRecorder } from '../src/core/types.js';
+import { createAndroidMirrorVideoRecorder } from '../src/recording/android-mirror.js';
 import { createCaptureHelperVideoRecorder } from '../src/recording/capture-helper.js';
 
 const busyMessage =
@@ -27,8 +29,8 @@ async function helperFixture(t: test.TestContext, { refuseAfterMs = 0 } = {}) {
 const fs=require('node:fs');
 const command=process.argv[2];
 if(command==='version'){console.log(JSON.stringify({capabilities:['record_session_timing_v1']}));process.exit(0)}
-fs.appendFileSync(${JSON.stringify(attempts)},command+'\\n');
 const busy=fs.existsSync(${JSON.stringify(busy)});
+fs.appendFileSync(${JSON.stringify(attempts)},command+'\\n');
 if(command==='doctor'){
  const check={id:'window_enumeration',required:true,ok:!busy,code:busy?'capture_busy':'ok',message:busy?${JSON.stringify(busyMessage)}:'ok'};
  console.log(JSON.stringify({ok:!busy,build:{version:'0.3.4'},summary:{requiredFailureCodes:busy?['capture_busy']:[]},checks:[{id:'macos',required:true,ok:true,code:'macos_supported'},check]}));
@@ -54,11 +56,23 @@ setInterval(()=>{},1000);
     free: () => rm(busy, { force: true }),
     /** The other slot finishes once `command` has been refused at least once. */
     async freeAfterRefusal(command: string) {
-      while ((await count(command)) === 0) await delay(20);
+      const deadline = Date.now() + 5_000;
+      while ((await count(command)) === 0) {
+        if (Date.now() > deadline) throw new Error(`capture-helper ${command} never ran`);
+        await delay(20);
+      }
       await rm(busy, { force: true });
     },
   };
 }
+
+const recorderFor = (helper: string, captureSlotWaitMs: number) =>
+  createCaptureHelperVideoRecorder({
+    captureHelperPath: helper,
+    captureSlotWaitMs,
+    captureSlotPollMs: 50,
+    platform: 'darwin',
+  });
 
 const request = (dir: string, signal?: AbortSignal) => ({
   target: { kind: 'window-id' as const, windowId: '1' },
@@ -71,15 +85,10 @@ const request = (dir: string, signal?: AbortSignal) => ({
 test('a recording waits for another slot to release the host capture slot', async (t) => {
   if (process.platform === 'win32') return t.skip('shebang helper');
   const fixture = await helperFixture(t);
-  const recorder = createCaptureHelperVideoRecorder({
-    captureHelperPath: fixture.helper,
-    captureSlotWaitMs: 10_000,
-    captureSlotPollMs: 50,
-  });
   const freed = fixture.freeAfterRefusal('record');
-  const active = await recorder.start(request(fixture.dir));
-  await freed;
+  const active = await recorderFor(fixture.helper, 10_000).start(request(fixture.dir));
   const result = await active.stop();
+  await freed;
   assert.ok((await fixture.attempts('record')) > 1, 'the busy refusal was retried');
   assert.equal(result.segments[0]?.path, 'out.mp4');
 });
@@ -87,28 +96,18 @@ test('a recording waits for another slot to release the host capture slot', asyn
 test('a refusal after the early-exit window still waits instead of failing the first frame', async (t) => {
   if (process.platform === 'win32') return t.skip('shebang helper');
   const fixture = await helperFixture(t, { refuseAfterMs: 600 });
-  const recorder = createCaptureHelperVideoRecorder({
-    captureHelperPath: fixture.helper,
-    captureSlotWaitMs: 10_000,
-    captureSlotPollMs: 50,
-  });
   const freed = fixture.freeAfterRefusal('record');
-  const active = await recorder.start(request(fixture.dir));
-  await freed;
+  const active = await recorderFor(fixture.helper, 10_000).start(request(fixture.dir));
   await active.stop();
+  await freed;
   assert.ok((await fixture.attempts('record')) > 1);
 });
 
 test('run-start doctor waits for the slot instead of failing on capture_busy', async (t) => {
-  if (process.platform !== 'darwin') return t.skip('doctor is macOS-only');
+  if (process.platform === 'win32') return t.skip('shebang helper');
   const fixture = await helperFixture(t);
-  const recorder = createCaptureHelperVideoRecorder({
-    captureHelperPath: fixture.helper,
-    captureSlotWaitMs: 10_000,
-    captureSlotPollMs: 50,
-  });
   const freed = fixture.freeAfterRefusal('doctor');
-  const doctor = await recorder.doctor!();
+  const doctor = await recorderFor(fixture.helper, 10_000).doctor!();
   await freed;
   assert.equal(doctor.ok, true, doctor.message);
   assert.ok((await fixture.attempts('doctor')) > 1);
@@ -117,16 +116,11 @@ test('run-start doctor waits for the slot instead of failing on capture_busy', a
 test('a slot held past the bound fails with the capture-slot reason', async (t) => {
   if (process.platform === 'win32') return t.skip('shebang helper');
   const fixture = await helperFixture(t);
-  const recorder = createCaptureHelperVideoRecorder({
-    captureHelperPath: fixture.helper,
-    captureSlotWaitMs: 1_000,
-    captureSlotPollMs: 50,
-  });
+  const recorder = recorderFor(fixture.helper, 1_000);
   await assert.rejects(
     recorder.start(request(fixture.dir)),
-    /Waited 1 s for this host's capture slot; another capture-helper command, likely a recording in another slot, still holds it \(capture_busy\)/,
+    /Waited 1 s for this host's capture slot; another capture-helper command, likely a recording in another slot, holds it \(capture_busy; lock \/tmp\/capture-helper-<uid>\.lock\)/,
   );
-  if (process.platform !== 'darwin') return;
   const doctor = await recorder.doctor!();
   assert.equal(doctor.ok, false);
   assert.equal(doctor.code, 'capture_busy');
@@ -137,15 +131,11 @@ test('a slot held past the bound fails with the capture-slot reason', async (t) 
 test('a cancelled run stops waiting for the slot and starts nothing later', async (t) => {
   if (process.platform === 'win32') return t.skip('shebang helper');
   const fixture = await helperFixture(t);
-  const recorder = createCaptureHelperVideoRecorder({
-    captureHelperPath: fixture.helper,
-    captureSlotWaitMs: 60_000,
-    captureSlotPollMs: 50,
-  });
   const controller = new AbortController();
   setTimeout(() => controller.abort(), 200);
   const startedAt = Date.now();
-  await assert.rejects(recorder.start(request(fixture.dir, controller.signal)), {
+  const start = recorderFor(fixture.helper, 60_000).start(request(fixture.dir, controller.signal));
+  await assert.rejects(start, {
     name: 'AbortError',
   });
   assert.ok(Date.now() - startedAt < 5_000);
@@ -154,3 +144,28 @@ test('a cancelled run stops waiting for the slot and starts nothing later', asyn
   await delay(300);
   assert.equal(await fixture.attempts('record'), attempts, 'no attempt after the cancel');
 });
+
+test(
+  'an Android mirror on a busy host falls back at once instead of waiting for the slot',
+  { timeout: 5_000 },
+  async (t) => {
+    if (process.platform !== 'darwin') return t.skip('the mirror doctor is macOS-only');
+    const fixture = await helperFixture(t);
+    const fallback: VideoRecorder = {
+      name: 'screenrecord',
+      async doctor() {
+        return { ok: true, code: 'ok', message: 'screenrecord ready.' };
+      },
+      start: () => Promise.reject(new Error('not started in this test')),
+    };
+    const mirror = createAndroidMirrorVideoRecorder({
+      serial: 'pixel',
+      fallback,
+      captureHelperPath: fixture.helper,
+    });
+    const doctor = await mirror.doctor!();
+    assert.equal(doctor.ok, true);
+    assert.match(doctor.message, /screenrecord ready\..*capture_busy/);
+    assert.equal(await fixture.attempts('doctor'), 1, 'one probe, no wait');
+  },
+);

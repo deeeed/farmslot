@@ -173,6 +173,8 @@ async function runFixture(
     onRestart?: () => void;
     onCaptureStart?: () => void;
     ready?: () => Promise<void>;
+    /** Runs inside the recorder's doctor, e.g. a wait for the host capture slot. */
+    doctorWait?: (signal: AbortSignal | undefined) => Promise<void>;
   },
 ) {
   const target = options.target ?? android;
@@ -236,6 +238,7 @@ async function runFixture(
         async doctor(doctorOptions) {
           events.push('doctor');
           signals.doctor = doctorOptions?.signal;
+          await options.doctorWait?.(doctorOptions?.signal);
           return { ok: true, code: 'ok', message: 'Fixture ready' };
         },
         async start(request: VideoRecorderStartRequest) {
@@ -341,12 +344,13 @@ for (const { target, nested } of [
 
 test('a cancel during setup still lets teardown bind capture and run its first proof node', async (t) => {
   const controller = new AbortController();
-  const { result, events, entries } = await runFixture(t, {
+  const { result, events, entries, signals } = await runFixture(t, {
     recipe: withTeardown,
     signal: controller.signal,
     onRestart: () => controller.abort('SIGTERM'),
   });
   assert.equal(result.status, 'fail');
+  assert.equal(signals.start?.aborted, false, 'Teardown binds capture with its own signal');
   assert.ok(entries.some((entry) => entry.error_code === 'RECIPE_ABORTED'));
   // Teardown runs on a signal the cancel does not reach, lead-in included.
   assert.deepEqual(events, ['doctor', 'restart', 'target', 'acquire', 'start', 'ui', 'stop']);
@@ -360,6 +364,26 @@ test('the recorder gets the run signal, so a wait for the host capture slot can 
   assert.equal(result.status, 'pass');
   assert.equal(signals.doctor, controller.signal);
   assert.equal(signals.start, controller.signal);
+});
+
+test('a cancel while the run-start doctor waits for the capture slot ends the run as cancelled', async (t) => {
+  const controller = new AbortController();
+  const { result, events, entries } = await runFixture(t, {
+    recipe: flat,
+    signal: controller.signal,
+    doctorWait: (signal) => {
+      setTimeout(() => controller.abort('SIGTERM'), 50);
+      return new Promise((_resolve, reject) =>
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true }),
+      );
+    },
+  });
+  assert.equal(result.status, 'fail');
+  assert.equal(
+    entries.find((entry) => entry.nodeId === 'recipe-run:video')?.error_code,
+    'RECIPE_ABORTED',
+  );
+  assert.ok(!events.includes('ui'), 'No proof node runs after the cancel');
 });
 
 test('a cancel during the lead-in stops the run before the first proof node', async (t) => {
