@@ -378,7 +378,7 @@ exit. It reuses the existing discard form for a slot held by a missing run.
 
 **Status:** Proposed, 2026-10-18. It adds a run status every client must show, so it needs the owner's approval as well as paired review and lead acceptance. No code lands before then.
 **Trigger:** runs whose worker delivered a result still end `failed`. Examples: 8cff6e80 (review findings left when no further fix could run) and 3e2f400a (refused QA completion).
-**Specification:** on acceptance, [Truthful run state](../reference/fail-closed-run-lifecycle.md#truthful-run-state), [Recovery invariants](../reference/fail-closed-run-lifecycle.md#recovery-invariants-and-six-ci-scenarios) (restart of a held run) and [Pipeline settlement](../reference/fail-closed-run-lifecycle.md#pipeline-settlement) (including the close-only output-review rule) are updated to match.
+**Specification:** on acceptance, [Truthful run state](../reference/fail-closed-run-lifecycle.md#truthful-run-state), [Recovery invariants](../reference/fail-closed-run-lifecycle.md#recovery-invariants-and-six-ci-scenarios) (restart of a held run) and [Pipeline settlement](../reference/fail-closed-run-lifecycle.md#pipeline-settlement) (including the output-review close-only and changed-bytes rules) are updated to match.
 **Changes:** Amendment 6 labels every refused completion `failed`. Under this amendment, a refused completion that delivered a result ends `needs-decision`; one that did not stays `failed` under Amendment 6, unchanged.
 
 ### Decision
@@ -435,12 +435,23 @@ report. Its actions:
   eligibility rules differ. For a retained refused completion, Close is the
   Amendment 6 named discard and releases the slot the same way.
 
-**Output review.** An artifact-only run that captured a report may already hold
-a pending output-review decision (`engine_output_review`, with Close run and Mark
-reviewed). Entering `needs-decision` supersedes it, so the run holds one pending
-decision. The result decision shows that output snapshot, and its receipt records
-the snapshot as acknowledged. While the run is held, `close-result` is the only
-close; output-close keeps its own eligibility for other runs.
+**Output review.** An artifact-only run that captured a report keeps its
+output-review decision (`engine_output_review`) as the carrier of that snapshot.
+Claim overrides and visual judgments still bind to it, and the completion replay
+reads it as today; no gate reader changes.
+
+- While the run is held, the output review's Close run and Mark reviewed actions
+  are hidden, so the result decision is the run's only actionable decision.
+- The result decision shows the current output review's snapshot. A recapture
+  follows the existing rule. The same bytes keep the output review and the result
+  decision. Changed bytes replace the output review, the result decision is
+  re-presented on the new snapshot, and an action taken on the old snapshot is
+  refused as stale.
+- `close-result` resolves the output review as `close-run`.
+- `accept-result` resolves it as reviewed by the accepting principal. No
+  close-only action is kept, because the run is already settled.
+- Send back leaves it pending; its actions show again once the run leaves
+  `needs-decision`.
 
 Every action records a result-decision receipt on the run: action, principal,
 written reason, time, delivered head or report, and a digest of the findings.
@@ -494,9 +505,8 @@ Three alternatives were rejected:
 - **Reuse `human-gating`.** It means the prerequisites are complete.
 - **Keep `failed` with a decision attached.** The status is what people read.
 
-The publish gate keeps its own decision, and entering `needs-decision`
-supersedes a pending output review, so a run never holds two pending
-decisions. A refused completion without a delivered result keeps Amendment 6's
+The publish gate keeps its own decision, and a held run's output review has no
+actions of its own, so a run never has two actionable decisions. A refused completion without a delivered result keeps Amendment 6's
 `failed` retention exactly. So `isCompletionPrerequisiteFailure` and
 `isSettledCompletionFailure` stay; they gain the `needs-decision` case.
 
@@ -519,7 +529,8 @@ predicate.
     delivered head or report, and the three actions with their availability and
     reasons;
   - a result-decision receipt field;
-  - `hasDeliveredResult(run)` and `isHeldForResultDecision(run)` helpers;
+  - `hasDeliveredResult(run)` and `isHeldForResultDecision(run)` helpers; the
+    output-review decision's actions are unavailable while a run is held;
   - `RunAnalyticsRecord` gains the result decision (`accepted` or `closed`),
     with an `ANALYTICS_RECORD_SCHEMA_VERSION` bump; neither counts in
     `failureByStep` or `failureByReason`;
