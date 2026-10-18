@@ -1,11 +1,9 @@
 {
-  "version": "0.22.0",
-  "date": "2026-10-17",
+  "version": "0.23.0",
+  "date": "2026-10-18",
   "items": [
-    "View Send back to agent as the gate's primary action and label Send back reasons apart from PR feedback",
-    "Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review",
-    "View the shared no-code-review warning at publication gates",
-    "Keep async gate and panel layouts stable with component-specific skeletons and visible retries after loading errors",
-    "Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand"
+    "The idle cleanup preview says that disabled slots' running resources are included; manual, active, held, working and current-run slots stay excluded",
+    "Run counts in the sidebar badge, family views, dispatch warnings and pinned views use the same active rule as the Runs Active tab, and active views load every active run instead of the newest 1000",
+    "Run results, the acceptance tally and report links render from the same view model as Companion; a malformed web link in a report no longer opens"
   ]
 }
