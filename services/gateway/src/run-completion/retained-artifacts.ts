@@ -29,6 +29,7 @@ import {
   materializeRunBundle,
   type MaterializeRunBundleRequest,
   openRunBundleStore,
+  parseRunBundleMissingData,
   readRetainedRunBundle,
   readRunBundleAvailability,
   reserveRunBundleMetadata,
@@ -422,7 +423,7 @@ export async function retainCapturedRunArtifacts(input: {
         strictTaskRelativePathFromFarmslotRoot(farmslotRoot, input.run.taskFile)
       ) {
         const unavailable = new Set(
-          missingData.map((reason) => reason.slice(reason.indexOf(':') + 1)),
+          missingData.map((entry) => parseRunBundleMissingData(entry).path),
         );
         for (const artifact of input.artifacts) {
           // Quota-deferred, changed or unidentified media may be the last source copy.

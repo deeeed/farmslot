@@ -4,6 +4,7 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- Reading a retained artifact the capture declared it could not keep names the reason, e.g. `Artifact not retained (media-capacity): <path>`, instead of a bare `ENOENT` from `realpath`. The error keeps `code: 'ENOENT'`.
 - Bundle garbage collection releases the reservations and pins of a refused completion once it is discarded or archived.
 
 - Bundle garbage collection keeps the reservations and pins of a failed run that still holds its resources (`isActiveListRun`).

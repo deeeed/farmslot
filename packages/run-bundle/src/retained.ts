@@ -251,6 +251,14 @@ function repairLockName(digest: string): string {
   return `bundle-repair-${digest}.lock`;
 }
 
+/** A `missingData` entry is `<reason>:<task-relative path>`, e.g. `media-capacity:artifacts/a.mp4`. */
+export function parseRunBundleMissingData(entry: string): { reason: string; path: string } {
+  const split = entry.indexOf(':');
+  return split < 0
+    ? { reason: '', path: entry }
+    : { reason: entry.slice(0, split), path: entry.slice(split + 1) };
+}
+
 export function isRunBundleMedia(file: string): boolean {
   return /\.(?:png|jpe?g|gif|webp|mp4|mov|webm|m4v|mp3|m4a|wav)$/iu.test(file);
 }
@@ -493,13 +501,12 @@ async function completeRetainedPayloads(
   });
   const reservation = path.join(repairStage, '.reservation');
   const prefix = `tasks/${ref.taskKey}/`;
-  const missing = (manifest.missingData ?? []).filter((reason) => {
-    const relative = reason.startsWith('missing:')
-      ? reason.slice(8)
-      : reason.startsWith('media-capacity:')
-        ? reason.slice(15)
-        : null;
-    return relative === null || !manifest.entries[`${prefix}${relative}`];
+  const missing = (manifest.missingData ?? []).filter((entry) => {
+    const { reason, path: relative } = parseRunBundleMissingData(entry);
+    return (
+      (reason !== 'missing' && reason !== 'media-capacity') ||
+      !manifest.entries[`${prefix}${relative}`]
+    );
   });
   const restored = new Set<string>();
   try {
@@ -698,8 +705,25 @@ export async function readRetainedRunBundle(
         `Artifact was not retained: ${relativePath}. Run farmslot runs bundle retain ${runId}.`,
       );
     const file = resolvePathInsideRoot(directory, key);
-    if ((await realpath(file)) !== file)
-      throw new Error('Retained bundle contains a redirected path.');
+    let real: string;
+    try {
+      real = await realpath(file);
+    } catch (error) {
+      if (!hasCode(error, 'ENOENT')) throw error;
+      // The capture declared why it kept no payload; name it instead of a bare ENOENT.
+      const declared = (retainedManifest.missingData ?? [])
+        .map(parseRunBundleMissingData)
+        .find((entry) => entry.path === relativePath);
+      throw Object.assign(
+        new Error(
+          declared
+            ? `Artifact not retained (${declared.reason}): ${relativePath}`
+            : `Retained artifact is missing, pruned or changed: ${relativePath}`,
+        ),
+        { code: 'ENOENT' },
+      );
+    }
+    if (real !== file) throw new Error('Retained bundle contains a redirected path.');
     const info = await lstat(file);
     if (!info.isFile() || info.size !== meta.bytes)
       throw new Error(`Retained artifact is missing, pruned or changed: ${relativePath}`);
