@@ -28,6 +28,7 @@ const labels: Record<RunStatus, string> = {
   reconciling: 'Reconciling',
   completing: 'Completing',
   'human-gating': 'Awaiting decision',
+  'needs-decision': 'Needs decision',
   'ci-watching': 'Watching CI',
   paused: 'Paused',
   done: 'Done',
@@ -49,7 +50,14 @@ export function deriveRunLifecycleView(input: {
       ? 'ok'
       : input.status === 'failed'
         ? 'fail'
-        : ['blocked', 'paused', 'review-failed', 'reconciling', 'cancelled'].includes(input.status)
+        : [
+              'blocked',
+              'paused',
+              'review-failed',
+              'reconciling',
+              'needs-decision',
+              'cancelled',
+            ].includes(input.status)
           ? 'warn'
           : input.status === 'created'
             ? 'muted'
