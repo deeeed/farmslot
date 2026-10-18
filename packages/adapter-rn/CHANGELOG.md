@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.25 - 2026-10-18
+
+- Align with `@farmslot/agent-runtime` 0.29.2, whose QA task acceptance ledger merges case executions by criterion, and `@farmslot/protocol` 0.55.0.
+
 ## 0.22.24 - 2026-10-17
 
 - Align with `@farmslot/recipe-runner` 0.39.1, whose network capture summaries redact credential-like path segments.

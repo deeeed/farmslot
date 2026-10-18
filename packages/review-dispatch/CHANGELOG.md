@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.2.2 - 2026-10-18
+
+- Align with `@farmslot/protocol` 0.55.0 and `@farmslot/adapter-sdk` 0.18.2.
+
 ## 0.2.1 - 2026-10-17
 
 - Share the run results card summary, the acceptance tally, report link resolution, the web-link check and the artifact HTML policy, so Command Center and Companion show the same results for a run's retained output and open the same artifact from a report link. A review-workspace run shows no results card.
