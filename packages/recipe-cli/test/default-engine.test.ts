@@ -460,6 +460,107 @@ test('runtime parent manifests and shared bundled declarations merge under the d
   assert.equal(actionSources.get('example.parent')?.manifestPath, parent);
 });
 
+function writeLibraryManifest(root: string, document: Record<string, unknown>) {
+  fs.mkdirSync(path.join(root, 'manifests'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'manifests', 'api.action-manifest.json'),
+    JSON.stringify({ $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL, ...document }),
+  );
+}
+
+test('an external library may not declare an official action or observers', async (t) => {
+  const { root, catalog } = setup(t, { 'example.read': declaration() });
+  const official = path.join(root, 'official');
+  writeLibraryManifest(official, { actions: { command: core.actions.command } });
+  await assert.rejects(
+    catalog.resolveActionManifest('api', undefined, [{ name: 'team', root: official }]),
+    (error: { code?: string; message: string }) =>
+      error.code === 'ACTION_MANIFEST_INVALID' &&
+      /Library action command from .* conflicts with an official action/u.test(error.message),
+  );
+  const observing = path.join(root, 'observing');
+  writeLibraryManifest(observing, {
+    actions: { 'example.write': declaration('example.write') },
+    observers: [{ ref: 'example.watch', default_for: ['example.write'] }],
+  });
+  await assert.rejects(
+    catalog.resolveActionManifest('api', undefined, [{ name: 'team', root: observing }]),
+    (error: { code?: string; message: string }) =>
+      error.code === 'ACTION_MANIFEST_INVALID' &&
+      /external library observers are not executable/u.test(error.message),
+  );
+});
+
+test('the runtime declares official actions from its own manifest inside a selected library', async (t) => {
+  const { root, catalog } = setup(t, {
+    command: core.actions.command,
+    'example.read': declaration(),
+  });
+  const team = path.join(root, 'team');
+  writeLibraryManifest(team, { actions: { 'example.write': declaration('example.write') } });
+  // The runtime's manifest is in the bundled root, selected here under another name.
+  const { manifest, actionSources } = await catalog.resolveActionManifest('api', undefined, [
+    { name: 'plugin', root },
+    { name: 'team', root: team },
+  ]);
+  assert.ok(manifest.actions.command);
+  assert.equal(actionSources.get('example.write')?.name, 'team');
+  assert.equal(actionSources.get('example.write')?.shadows, undefined);
+});
+
+test('a runtime parent manifest outside the bundled library may not declare an official action', async (t) => {
+  const { manifestPath, runtime, catalog } = setup(t, { 'example.read': declaration() });
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-parent-'));
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  writeLibraryManifest(parent, { actions: { command: core.actions.command } });
+  runtime.actions.manifestPaths = () => [
+    manifestPath,
+    path.join(parent, 'manifests', 'api.action-manifest.json'),
+  ];
+  await assert.rejects(
+    catalog.resolveActionManifest('api'),
+    /Library action command from .* conflicts with an official action/u,
+  );
+});
+
+test('a task manifest keeps its actions in <root>/actions unless a task action root is given', async (t) => {
+  const { root, catalog } = setup(t, { 'example.read': declaration() });
+  const task = path.join(root, 'task');
+  writeLibraryManifest(task, { actions: { 'example.task': declaration('example.task') } });
+  const inManifests = await catalog.resolveActionManifest(
+    'api',
+    path.join(task, 'manifests', 'api.action-manifest.json'),
+  );
+  assert.equal(inManifests.actionSources.get('example.task')?.tier, 'task');
+  assert.equal(
+    inManifests.actionSources.get('example.task')?.implementationRoot,
+    path.join(task, 'actions'),
+  );
+  const loose = path.join(root, 'loose');
+  fs.mkdirSync(loose, { recursive: true });
+  fs.writeFileSync(
+    path.join(loose, 'proof.action-manifest.json'),
+    JSON.stringify({
+      $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+      actions: { 'example.task': declaration('example.task') },
+    }),
+  );
+  const looseManifest = path.join(loose, 'proof.action-manifest.json');
+  assert.equal(
+    (await catalog.resolveActionManifest('api', looseManifest)).actionSources.get('example.task')
+      ?.implementationRoot,
+    path.join(loose, 'actions'),
+  );
+  const explicit = path.join(root, 'live-adapters');
+  fs.mkdirSync(explicit, { recursive: true });
+  assert.equal(
+    (await catalog.resolveActionManifest('api', looseManifest, [], explicit)).actionSources.get(
+      'example.task',
+    )?.implementationRoot,
+    explicit,
+  );
+});
+
 test('live script execution uses the approved prepared bytes and retains its output artifact', async (t) => {
   const { root, catalog, engine } = setup(t, { 'example.read': declaration() });
   const script = path.join(root, 'actions', 'api', 'example', 'read.mjs');

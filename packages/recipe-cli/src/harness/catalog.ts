@@ -158,12 +158,21 @@ export function createRuntimeRecipeCatalog({
       const runtimePaths = overridePath
         ? [path.resolve(overridePath)]
         : [...(runtime.actions.manifestPaths?.() ?? [runtime.actions.manifestPath()])].reverse();
+      // Official actions and observers come only from manifests the runtime owns:
+      // its own manifest, even inside a selected library, and the bundled library's.
+      const ownManifest = path.resolve(runtime.actions.manifestPath());
+      const bundledManifests = path.join(path.resolve(bundledLibrary.root), 'manifests');
+      const owned = (file: string) =>
+        file === ownManifest || path.dirname(file) === bundledManifests;
+      // A task manifest keeps its actions where a library does: in <root>/actions,
+      // where <root> holds the manifest or its manifests/ directory. An explicit
+      // task action root wins.
+      const taskRoot = overridePath ? taskLibraryRoot(path.resolve(overridePath)) : undefined;
+      const taskImplementationRoot = taskRoot && (taskActionRoot ?? path.join(taskRoot, 'actions'));
       // Parent declarations come first in the SDK; the derived runtime wins.
       for (const manifestPath of runtimePaths) {
         const absolute = path.resolve(manifestPath);
-        const root = overridePath
-          ? (taskActionRoot ?? path.dirname(absolute))
-          : bundledLibrary.root;
+        const root = taskRoot ? (taskActionRoot ?? taskRoot) : bundledLibrary.root;
         const digest = await digestRecipeLibrary(root);
         libraries.push({
           source: {
@@ -192,7 +201,17 @@ export function createRuntimeRecipeCatalog({
         });
       }
       libraries.push(...bundledLibraries);
-      const { manifest, actions, declarations } = await indexActions(libraries, adapter, new Set());
+      const { manifest, actions, declarations } = await indexActions(
+        libraries,
+        adapter,
+        new Set(),
+        {
+          restricted: (library, file) =>
+            !overridePath &&
+            !bundledLibraries.includes(library) &&
+            !owned(path.resolve(library.info.root, file)),
+        },
+      );
       const actionSources = new Map<string, ActionCapabilitySource>();
       for (const [name, action] of actions) {
         if (!action.source || !action.manifest) continue;
@@ -211,11 +230,9 @@ export function createRuntimeRecipeCatalog({
                 ? 'personal'
                 : 'team',
           manifestPath: path.resolve(library.info.root, file),
-          implementationRoot: overridePath
-            ? library.source.root
-            : path.join(library.source.root, 'actions'),
+          implementationRoot: taskImplementationRoot ?? path.join(library.source.root, 'actions'),
           trust: library.source.provenance?.trust ?? 'unknown',
-          shadows: action.shadows,
+          ...(action.shadows.length ? { shadows: action.shadows } : {}),
           digest: library.info.digest,
           resolveDigest: () => digestRecipeLibrary(library.source.root, library.manifest),
         });
@@ -223,6 +240,11 @@ export function createRuntimeRecipeCatalog({
       return { manifest, actionSources };
     },
   };
+}
+
+function taskLibraryRoot(manifestPath: string): string {
+  const directory = path.dirname(manifestPath);
+  return path.basename(directory) === 'manifests' ? path.dirname(directory) : directory;
 }
 
 export interface DescribedAction {

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-04-29
-- Updated: 2026-10-13
+- Updated: 2026-10-19
 
 ## Context
 
@@ -261,3 +261,48 @@ must ship together before adopters rely on file-content claim proof.
 The [normative rule](../reference/recipe-protocol-v1.md#amendment-5-file-content-proof-assertions)
 and the existing recipe guide define authoring and conformance. P2/P5 proof on
 one UI and one non-UI ticket per pack precedes the normal-writer cutover.
+
+## Amendment 6 (2026-10-19): Library action declarations
+
+**Status:** Proposed. **Shipping PR:** this one.
+
+### Decision
+
+A runtime's action catalog takes official actions and observers only from
+manifests the runtime owns: its own manifest, the bundled library's manifests
+and an explicitly selected task action manifest. A library selected as a
+source, and a parent runtime's manifest from such a library, may add namespaced
+custom actions only.
+The catalog refuses a library manifest that declares an official action or any
+observer, instead of letting first-source precedence replace the runtime's
+declaration or add an observer to every run.
+
+A task action manifest keeps its implementations where a library does: in
+`<root>/actions`, where `<root>` is the directory that holds the manifest, or
+its parent when that directory is `manifests/`. An explicit task action root
+still wins.
+
+### Rationale and consequences
+
+First-source precedence suits custom actions: a team library may override a
+lower-priority custom action, and the shadow stays visible. It does not suit
+official actions or observers. An official action's declaration is the
+runtime's contract for a capability the protocol names, and a library that
+redeclares it changes the schema the runner validates against. An observer
+runs around every node it applies to, so a library observer would run library
+code on nodes the library did not author. Libraries still call official actions;
+they cannot redeclare them.
+
+The task root follows the library layout, so a task laid out like a library
+needs no extra setting and its action files are covered by its digest. Before,
+a task manifest in `manifests/` resolved its actions inside `manifests/`, where
+no action tree lives.
+
+### Public surface
+
+No action, flag or error code is added; a refused manifest reports
+`ACTION_MANIFEST_INVALID` with the action or observer it declares. The shared
+runtime catalog applies the rule for every provider that uses it; a provider
+that resolves its own catalog applies the same rule. Discovery listings still
+show every declaration. The [normative rule](../reference/recipe-protocol-v1.md#amendment-6-library-action-declarations)
+defines the refusals and the task root.

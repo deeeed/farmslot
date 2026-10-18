@@ -367,6 +367,25 @@ content-match success and contrary-content failure, existence-only and empty
 expectation refusals, and screenshot-only/navigation-only negative controls.
 Keep the existing enabled-state amendment and visual-review contract intact.
 
+### Amendment 6: library action declarations
+
+**Status:** Proposed under [ADR-034 amendment 6](../adr/034-recipe-protocol-v1.md#amendment-6-2026-10-19-library-action-declarations).
+
+A runtime's action catalog MUST take official actions and observers only from
+manifests the runtime owns: its own manifest, the bundled library's
+`manifests/` and an explicitly selected task action manifest. Any other manifest
+in the selected adapter's view, from a library selected as a source or a parent
+runtime declared by one, MUST declare only namespaced custom actions. The
+catalog MUST refuse, with `ACTION_MANIFEST_INVALID`, such a manifest that
+declares an official action or any observer. The runtime's own manifest stays
+the runtime's when it lives inside a selected library. Custom actions keep
+first-source precedence, and a shadowed declaration stays visible.
+
+A task action manifest's implementation root is the explicit task action root
+when one is given. Otherwise it is `<root>/actions`, where `<root>` is the
+directory that holds the manifest, or its parent when that directory is
+`manifests/`.
+
 ## Libraries
 
 ```text
