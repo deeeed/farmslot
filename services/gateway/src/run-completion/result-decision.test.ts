@@ -9,6 +9,7 @@ import { after, beforeEach, mock, test } from 'node:test';
 import {
   FLOW_STEPS,
   isSuccessfulRun,
+  pendingResultDecision,
   type PipelineStep,
   PipelineSteps as S,
   type ResultDecisionPayload,
@@ -28,6 +29,7 @@ let releases: SlotReleaseParams[] = [];
 let starts: string[] = [];
 let replayError: Error | null = null;
 let onReplay: (() => void) | null = null;
+let failPersist: string | null = null;
 const analyticsDir = mkdtempSync(path.join(tmpdir(), 'result-decision-analytics-'));
 process.env.FARMSLOT_ANALYTICS_DIR = analyticsDir;
 after(() => rmSync(analyticsDir, { recursive: true, force: true }));
@@ -41,7 +43,9 @@ mock.module('../runs/store.js', {
     updateRun: (_id: string, patch: Partial<Run>) => Object.assign(run, patch),
     updateRunStep: (_id: string, name: string, patch: Partial<RunStep>) =>
       Object.assign(run.steps.find((step) => step.name === name)!, patch),
-    persistRunNow: async () => undefined,
+    persistRunNow: async (_run: Run, reason: string) => {
+      if (failPersist === reason) throw new Error('disk full');
+    },
   },
 });
 mock.module('../server.js', { namedExports: { broadcastEvent: () => {} } });
@@ -103,6 +107,7 @@ const { restartDisposition, representResultDecisions } = await import('../run-en
 const { runCancelTransitionLocked } = await import('../methods/run/lifecycle-control.js');
 
 beforeEach(() => {
+  failPersist = null;
   replayError = null;
   onReplay = null;
   replays = [];
@@ -168,7 +173,7 @@ async function heldOpus(admissions = 5): Promise<Run> {
     reportPath: 'artifacts/pr-description.md',
   };
   run.reviewRoundAdmissions = Array.from({ length: admissions }, (_, i) => `admission-${i}`);
-  const decision = await buildResultDecision(run, 'review', 'Review found 1 issue(s)');
+  const decision = await buildResultDecision(run, 'review');
   Object.assign(run, { status: 'needs-decision', decisions: [decision] });
   return run;
 }
@@ -208,13 +213,12 @@ async function heldQa(): Promise<Run> {
   };
   run.steps.find((step) => step.name === S.COMPLETE)!.detail =
     'A declared deterministic check has no current passing receipt.';
-  const decision = await buildResultDecision(run, 'complete', 'COMPLETE was refused');
+  const decision = await buildResultDecision(run, 'complete');
   Object.assign(run, { status: 'needs-decision', decisions: [...run.decisions, decision] });
   return run;
 }
 
-const pending = () =>
-  run.decisions.find((entry) => entry.payload?.kind === 'result-decision' && !entry.resolvedAt)!;
+const pending = () => pendingResultDecision(run)!;
 
 test('Accept settles an artifact-only result as a success, with its written reason', async () => {
   await heldOpus();
@@ -225,6 +229,7 @@ test('Accept settles an artifact-only result as a success, with its written reas
   await resolveResultDecision({ ...params, reason: 'Finding is test coverage only' });
 
   assert.equal(run.status, 'done');
+  assert.equal(run.error, undefined, 'an accepted result settles its stop reason');
   assert.equal(run.resultDecisionReceipt?.action, 'accept-result');
   assert.equal(run.resultDecisionReceipt?.reason, 'Finding is test coverage only');
   assert.deepEqual(run.resultDecisionReceipt?.delivered, {
@@ -444,4 +449,53 @@ test('restart re-projection replaces the failure record, and the next result is 
   const result = aggregateAnalytics(records, {}, at);
   assert.deepEqual(result.byStatus, { done: 1 });
   assert.equal(isSuccessfulRun(run), true);
+});
+
+test('the decision states why the run stopped in one line', async () => {
+  await heldOpus();
+  assert.equal(pending().payload.reason, 'Review found 1 issue after 1/2 fix attempts.');
+  await heldQa();
+  assert.equal(pending().payload.reason, 'COMPLETE was refused.');
+});
+
+test('restart holds again a run a cut-short completion send-back left without a decision', async () => {
+  await heldQa();
+  Object.assign(run, {
+    decisions: run.decisions.map((entry) =>
+      entry.payload?.kind === 'result-decision'
+        ? { ...entry, resolvedAt: '2026-10-19T00:00:00.000Z', resolvedAction: 'send-back' }
+        : entry,
+    ),
+  });
+  assert.equal(pending(), undefined);
+
+  await representResultDecisions([run]);
+
+  assert.equal(run.status, 'needs-decision');
+  assert.equal(pending().payload.stoppedAt, 'complete');
+});
+
+test('a send-back whose replay and re-hold both fail reports both', async () => {
+  await heldQa();
+  replayError = new Error('Slot is no longer reclaimable');
+  failPersist = 'held for a result decision';
+
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    (error: unknown) =>
+      error instanceof AggregateError &&
+      /no longer reclaimable\. The run could not be held again: disk full/.test(error.message),
+  );
+  assert.equal(run.status, 'needs-decision');
+});
+
+test('a re-projected run with no earlier record appends nothing', async () => {
+  await heldQa();
+  Object.assign(run, { id: 'no-record-run', status: 'failed', decisions: [run.decisions[0]] });
+  const before = (await readAllAnalyticsRecords()).records.length;
+
+  await representResultDecisions([run]);
+
+  assert.equal(run.status, 'needs-decision');
+  assert.equal((await readAllAnalyticsRecords()).records.length, before);
 });

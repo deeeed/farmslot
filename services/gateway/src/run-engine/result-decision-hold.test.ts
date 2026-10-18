@@ -182,6 +182,7 @@ test('8cff6e80: review findings on a pushed comparison result need a decision, n
   assert.equal(run.steps.find((step) => step.name === S.COMPLETE)?.status, 'pending');
   const payload = heldPayload();
   assert.equal(payload.stoppedAt, 'review');
+  assert.equal(payload.reason, 'Review found 2 issues after 1/2 fix attempts.');
   assert.deepEqual(payload.findings, opusFindings);
   assert.deepEqual(payload.delivered, {
     headSha: '3522954595facf528417ec6dfa65fd83d2aba02e',
@@ -240,6 +241,7 @@ test('3e2f400a: a refused QA completion with a captured report needs a decision'
   assert.ok(complete.outputs?.gatePrerequisiteRefusal, 'Amendment 6 keeps the refusal record');
   const payload = heldPayload();
   assert.equal(payload.stoppedAt, 'complete');
+  assert.equal(payload.reason, 'COMPLETE was refused: 3 prerequisites not met.');
   assert.deepEqual(payload.refusal?.reasons, refusalReasons);
   assert.deepEqual(payload.delivered, {
     reportPath: 'artifacts/report.html',

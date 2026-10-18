@@ -139,14 +139,37 @@ function acceptState(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionAct
     : { id: 'accept-result', available: true, requiresReason: true };
 }
 
+/** One line on why the run stopped; the findings or refused prerequisites follow it. */
+function decisionReason(
+  run: Run,
+  stoppedAt: ResultDecisionStop,
+  findings: ReviewIssue[] | undefined,
+  refused: ResultDecisionPayload['refusal'],
+): string {
+  const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+  if (stoppedAt === 'review') {
+    const review = run.steps.find((step) => step.name === PipelineSteps.REVIEW)?.outputs;
+    const attempts =
+      typeof review?.retryCount === 'number' && typeof review.maxRetries === 'number'
+        ? ` after ${review.retryCount}/${review.maxRetries} fix attempts`
+        : '';
+    return `Review found ${plural(findings?.length ?? 0, 'issue')}${attempts}.`;
+  }
+  const step = stoppedAt === 'complete' ? 'COMPLETE' : 'FINALIZE';
+  const unmet = refused?.reasons.length ?? 0;
+  return unmet
+    ? `${step} was refused: ${plural(unmet, 'prerequisite')} not met.`
+    : `${step} was refused.`;
+}
+
 /** One result decision on the run's current state. */
 export async function buildResultDecision(
   run: Run,
   stoppedAt: ResultDecisionStop,
-  reason: string,
 ): Promise<RunDecision> {
   const findings = stoppedAt === 'review' ? reviewFindings(run) : undefined;
   const refused = stoppedAt === 'review' ? undefined : refusal(run);
+  const reason = decisionReason(run, stoppedAt, findings, refused);
   const outputReview = pendingOutputReview(run);
   const payload: ResultDecisionPayload = {
     kind: 'result-decision',
@@ -202,8 +225,17 @@ export async function holdRunForResultDecision(
 ): Promise<Run | null> {
   const run = getRun(runId);
   if (!run) return null;
-  const decision = await buildResultDecision({ ...run, ...options.patch }, stoppedAt, reason);
-  const before = { status: run.status, error: run.error, decisions: run.decisions };
+  const decision = await buildResultDecision({ ...run, ...options.patch }, stoppedAt);
+  // Everything the hold writes, so an unrecorded hold can be put back.
+  const restored = new Set<keyof Run>([
+    'status',
+    'error',
+    'completedAt',
+    'decisions',
+    ...(Object.keys(options.patch ?? {}) as (keyof Run)[]),
+  ]);
+  const before: Partial<Run> = {};
+  for (const key of restored) Object.assign(before, { [key]: run[key] });
   const now = new Date().toISOString();
   let held: Run;
   try {
@@ -264,16 +296,10 @@ export async function representResultDecision(runId: string): Promise<Run | null
     const previous = run && pendingResultDecision(run);
     if (!run || !isHeldForResultDecision(run) || previous?.payload?.kind !== 'result-decision')
       return null;
-    const payload = previous.payload;
-    const next = await buildResultDecision(run, payload.stoppedAt, payload.reason);
-    const now = new Date().toISOString();
+    const next = await buildResultDecision(run, previous.payload.stoppedAt);
     const updated = updateRun(runId, {
       decisions: [
-        ...run.decisions.map((decision) =>
-          decision.id === previous.id
-            ? { ...decision, resolvedAt: now, resolvedAction: 'superseded' }
-            : decision,
-        ),
+        ...supersedePendingResultDecisions(run.decisions, new Date().toISOString()),
         next,
       ],
     });
@@ -430,6 +456,8 @@ export async function resolveResultDecision(
       const patch: Partial<Run> = {
         status: 'done',
         completedAt: now,
+        // An accepted result settles the stop reason; a closed one keeps it.
+        ...(actionId === 'accept-result' ? { error: undefined } : {}),
         // Steps after a REVIEW hold never run once the result is settled.
         steps: run.steps.map((step) =>
           step.status === 'pending' ? { ...step, status: 'skipped' as const } : step,
@@ -490,8 +518,11 @@ async function sendBack(run: Run, stoppedAt: ResultDecisionStop, reason: string)
         try {
           await holdRunForResultDecision(run.id, stoppedAt, reason);
         } catch (holdError) {
-          console.error(
-            `[result-decision] ${run.id.slice(0, 8)} could not be held again: ${(holdError as Error).message}`,
+          // The run waits without a decision until restart holds it again; the
+          // caller must see both failures.
+          throw new AggregateError(
+            [error, holdError],
+            `${(error as Error).message}. The run could not be held again: ${(holdError as Error).message}`,
           );
         }
       }

@@ -494,6 +494,16 @@ export function aggregateAnalytics(
 }
 
 /**
+ * A restart re-projects a failed run to `needs-decision` (ADR-065 Amendment 7).
+ * Queries keep each run's latest record, so a newer one stops the old failure
+ * from counting; the run's next terminal record replaces it.
+ */
+export async function recordHeldResultAnalytics(run: Run): Promise<void> {
+  if (!isHeldForResultDecision(run)) return;
+  await appendAnalyticsRecord(buildAnalyticsRecord(run));
+}
+
+/**
  * Emit the analytics record for a run that has just reached a terminal state. Returns the append
  * promise (which rejects on a sink-write failure), or null when nothing was emitted (non-terminal,
  * already emitted, or a build failure).
@@ -504,16 +514,6 @@ export function aggregateAnalytics(
  * skip eviction on rejection so a run is never pruned before its record lands. A second emit within
  * the append window can write a duplicate line — harmless, since the query layer dedups by runId.
  */
-/**
- * A restart re-projects a failed run to `needs-decision` (ADR-065 Amendment 7).
- * Queries keep each run's latest record, so a newer one stops the old failure
- * from counting; the run's next terminal record replaces it.
- */
-export async function recordHeldResultAnalytics(run: Run): Promise<void> {
-  if (!isHeldForResultDecision(run)) return;
-  await appendAnalyticsRecord(buildAnalyticsRecord(run));
-}
-
 export function emitAnalyticsForTerminalRun(
   run: Run,
   opts?: { backfilled?: boolean },
