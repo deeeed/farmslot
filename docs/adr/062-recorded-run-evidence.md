@@ -873,13 +873,16 @@ with their next recipe-runner version. The normative timing rule is in
 A recorder's start returns once its first segment's frame zero is bounded at
 runtime. An active recording that restarts capture exposes `ready()`, which
 resolves once the current segment's zero is bounded, waiting through a restart.
-The engine awaits it before every proof node. Amendment 14's bind point and 1 s
-lead-in are unchanged, and the engine never asks a recorder to roll.
+The engine awaits it before every proof node. A recorder with a segment limit
+may restart capture inside `ready()` when the current segment nears that limit,
+so the restart falls between proof nodes rather than inside one. Amendment 14's
+bind point and 1 s lead-in are unchanged; the engine has no roll API.
 
 Android `adb screenrecord` starts each segment only once its file holds bytes.
 The muxer writes its header only after the encoder's first output, so frame zero
 precedes them. The segment's clock is `[spawn, first bytes]` instead of the
-process lifetime, which also spans any static screen before the stop.
+process lifetime, which also spans any static screen before the stop. Its
+`ready()` restarts a segment older than 150 s, 30 s before the 180 s limit.
 
 ### Rationale and consequences
 
@@ -891,9 +894,17 @@ right after the 180 s roll the runner could not see. On an owned emulator with a
 static screen, the file's first bytes came 572 ms after spawn, while the lifetime
 bound put zero up to 5126 ms after spawn because of the static tail.
 
-Recording starts take a little longer, until the header is written. A proof
-node that arrives during a roll waits for the restarted segment. A proof node
-that itself spans a roll stays outside recording; this is rare and accepted.
+With the bounded start alone, a replay on the same device measured 17 of 18
+AC-1 indices: the venue assertions moved inside segment 0 ([+1003, +1683] ms on
+a 680 ms window). AC-1..3 stayed weak only because a 3 s `ui.wait_for` spanned
+the 180 s limit. QA-03 spends 99% of its 349 s proof span inside proof nodes, so
+a limit-driven restart almost always lands inside one; restarting at a node
+boundary from `ready()` avoids that.
+
+Recording starts take a little longer, until the header is written, and a long
+recording gains a restart gap about every 150 s, between nodes. A proof node
+that arrives during a restart waits for the new segment. A single proof node
+longer than 30 s can still span the 180 s limit and stay outside recording.
 Harness recorder wrappers must forward `ready()`, as they forward `snapshot()`.
 
 ### Public surface

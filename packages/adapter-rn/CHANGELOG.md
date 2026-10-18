@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
-- Android `adb screenrecord` starts each segment only once its file has its first bytes, and times the segment from its start to those bytes instead of the process lifetime, which a static screen before the stop could stretch by seconds. Its recording exposes `ready()`, so after a 180 s roll the next proof node waits for the restarted segment (ADR-062 Amendment 15).
+- Android `adb screenrecord` starts each segment only once its file has its first bytes, and times the segment from its start to those bytes instead of the process lifetime, which a static screen before the stop could stretch by seconds. Its recording exposes `ready()`: the next proof node waits for a restarted segment, and a segment older than 150 s is restarted there, between proof nodes, instead of hitting the 180 s limit inside one (ADR-062 Amendment 15).
 
 ## 0.22.26 - 2026-10-18
 

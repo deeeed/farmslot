@@ -201,6 +201,28 @@ test('ready waits through a 180-second roll until the restarted segment has a fr
   assert.equal((await recording.stop()).segments.length, 2);
 });
 
+test('ready restarts a segment past 150 seconds, so the roll falls between proof nodes', async (t) => {
+  const d = device(t);
+  const realNow = Date.now.bind(Date);
+  let offset = 0;
+  t.mock.method(Date, 'now', () => realNow() + offset);
+  const starts = () =>
+    d.calls().filter((call) => call.startsWith('shell screenrecord --time')).length;
+  const recording = await d.recorder.start(d.request);
+  await recording.ready!();
+  assert.equal(starts(), 1, 'a young segment keeps recording');
+  offset = 151_000;
+  await recording.ready!();
+  assert.equal(starts(), 2, 'an old segment restarts before its limit');
+  const restarted = fs
+    .readdirSync(path.join(d.dir, 'device'))
+    .find((name) => name.endsWith('-1.mp4'));
+  assert.ok(restarted && fs.statSync(path.join(d.dir, 'device', restarted)).size > 0);
+  const result = await recording.stop();
+  assert.equal(result.segments.length, 2);
+  assert.equal(result.interruption, undefined);
+});
+
 test('180-second completion rotates into ordered original segments with explicit restart gaps', async (t) => {
   const d = device(t);
   const recording = await d.recorder.start(d.request);

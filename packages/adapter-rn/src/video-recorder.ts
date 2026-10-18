@@ -15,6 +15,8 @@ import {
 const RECORDING_START_TIMEOUT_MS = 5_000;
 const RECORDING_STOP_TIMEOUT_MS = 10_000;
 const RECORDING_TIME_LIMIT_SECONDS = 180;
+// ready() restarts a segment this old, so the roll falls between proof nodes rather than in one.
+const SEGMENT_ROLL_AFTER_MS = 150_000;
 const START_GRACE_MS = 1_000;
 const HOST_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
@@ -226,8 +228,21 @@ async function startAndroidRecording(
 
   let stopped = false;
   return {
-    // A 180 s roll restarts screenrecord; the restarted segment is ready once it bounds its zero.
-    ready: () => chain,
+    // The restarted segment is ready once it bounds its zero. A segment near screenrecord's
+    // limit is restarted here, between proof nodes; its exit handler starts the next one first.
+    async ready() {
+      const current = segments.at(-1)!;
+      if (
+        !stopping &&
+        current.stoppedAtUnixMs === undefined &&
+        Date.now() - current.startedAtUnixMs >= SEGMENT_ROLL_AFTER_MS
+      ) {
+        for (const pid of screenrecordPids(adb, current.remotePath))
+          adb(['shell', 'kill', '-2', pid]);
+        await current.exited;
+      }
+      await chain;
+    },
     async stop() {
       if (stopped) throw new Error(`Android screen recording on ${serial} was already stopped.`);
       stopped = true;

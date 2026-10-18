@@ -134,7 +134,9 @@ once its first segment's frame zero is bounded, and a recorder that restarts cap
 exposes `ready()`, which resolves once the current segment's zero is bounded; the
 engine awaits it before every proof node, so no proof node starts in a restart gap
 (ADR-062 Amendment 15). Android `adb screenrecord` bounds zero by the first bytes of
-its file, which the muxer writes only after the first encoded frame. Recorder readiness is
+its file, which the muxer writes only after the first encoded frame, and its
+`ready()` restarts a segment older than 150 s so the 180 s limit falls between
+proof nodes. Recorder readiness is
 checked before setup; target resolution and admission bind the process running
 at the first proof node. Explicit recording for a recipe without UI nodes starts
 at run entry. Play
