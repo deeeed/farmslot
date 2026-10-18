@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
+import { alive, durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import {
   paneOpenQuestion,
@@ -240,15 +240,22 @@ function paths(meta, selection = {}) {
 // SIGKILL) does not leave the pane busy until its model restarts. Same idiom as
 // scripts/lib/node-cli-refresh.sh.
 function acquireLock(files) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  // Taking the lock, clearing a dead reaper's mutex and reaping a dead holder each retry once.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       fs.mkdirSync(files.lock, { mode: 0o700 });
-      fs.writeFileSync(path.join(files.lock, 'pid'), `${process.pid}\n`, { mode: 0o600 });
-      return true;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
+      if (reapStaleLock(files.lock)) continue;
+      return false;
     }
-    if (!reapStaleLock(files.lock)) return false;
+    try {
+      fs.writeFileSync(path.join(files.lock, 'pid'), `${process.pid}\n`, { mode: 0o600 });
+    } catch (error) {
+      fs.rmSync(files.lock, { recursive: true, force: true });
+      throw error;
+    }
+    return true;
   }
   return false;
 }
@@ -269,19 +276,14 @@ const olderThanAMinute = (dir) => {
 
 // A holder that is gone, or one that never wrote its pid a minute on, is stale.
 function lockHolderGone(lock, holder) {
-  const pid = Number(holder);
-  if (!holder || !Number.isSafeInteger(pid) || pid <= 0) return olderThanAMinute(lock);
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    return error.code === 'ESRCH';
-  }
+  const pid = /^\d{1,10}$/.test(holder) ? Number(holder) : 0;
+  if (pid <= 0 || pid > 0x7fffffff) return olderThanAMinute(lock);
+  return !alive(pid);
 }
 
 // Reap under a second mutex, and only if the lock still belongs to the holder seen first:
 // two waiters that saw the same dead holder must not both remove it, or the second removes
-// the lock the first just took.
+// the lock the first just took. True when the caller should try the lock again.
 function reapStaleLock(lock) {
   const holder = readOptional(path.join(lock, 'pid'))?.trim() ?? '';
   if (!lockHolderGone(lock, holder)) return false;
@@ -291,8 +293,9 @@ function reapStaleLock(lock) {
   } catch (error) {
     if (error.code !== 'EEXIST') throw error;
     // A reaper killed mid-reap leaves its mutex behind; it is stale a minute on.
-    if (olderThanAMinute(reap)) fs.rmSync(reap, { recursive: true, force: true });
-    return false;
+    if (!olderThanAMinute(reap)) return false;
+    fs.rmSync(reap, { recursive: true, force: true });
+    return true;
   }
   try {
     const current = readOptional(path.join(lock, 'pid'))?.trim() ?? '';
