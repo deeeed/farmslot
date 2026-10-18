@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A run's engine runs one loop per generation. Startup recovery that resumes a monitor an auto-recovery or `run.resume` replay already re-attached no longer starts a second loop, whose replaced monitor advanced the run to review when the worker's blocked signal arrived. A replay drives the run under its stored ownership instead of the requesting principal, so a service principal's resume no longer makes review refuse the run's workspace owner.
 - A run blocked before it recorded a proof plan, and holding no capability leases, can resume monitoring (`run.replayStep` monitor, `run.resume`, auto-recovery) on a slot whose capability catalog is not empty. Before, every re-attach was refused with "No proof plan is recorded" and the only exit was a relaunch. A run with a plan or leases still needs fresh healthy leases.
 - Runner auth blockers match only login-banner shapes at the start of a line. A lane whose own answer quotes an auth error in prose, such as `claude reports "OAuth session expired and could not be refreshed"`, is no longer refused as `auth-required`.
 - A remote node's node-support bundle now carries the project's templates (and template sources rooted inside the pack), so hosted task initialization on macpro or mini can select the gateway's template. Since hosted task init moved to the node CLI, every non-QA run on a remote node was refused with `Execution template "dev/default" is missing or incompatible. Compatible ids: (none)`.
