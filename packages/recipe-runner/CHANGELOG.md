@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- The capture-helper recorder waits for the host's capture slot when another slot on the same host is recording. capture-helper 0.3.4 lets one of its commands use ScreenCaptureKit per host user, and refused the second slot's run-start doctor or `record.video` start with `capture_busy`, failing the proof. Doctor and start now retry for up to 10 minutes, and past that fail with the reason. The run's cancel ends the wait: `VideoRecorderStartRequest.signal` and `doctor({ signal })` are new and optional.
 
 ## 0.39.4 - 2026-10-18
 

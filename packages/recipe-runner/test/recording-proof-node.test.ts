@@ -182,6 +182,7 @@ async function runFixture(
   await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
   await writeFile(path.join(libraryRoot, 'recipes', 'guard.recipe.json'), JSON.stringify(guard));
   const events: string[] = [];
+  const signals: { doctor?: AbortSignal; start?: AbortSignal } = {};
   let captureStartedAt = 0;
   const runner = createRecipeRunner({
     actionManifest: manifest,
@@ -232,12 +233,14 @@ async function runFixture(
       },
       videoRecorder: {
         name: 'fixture',
-        async doctor() {
+        async doctor(doctorOptions) {
           events.push('doctor');
+          signals.doctor = doctorOptions?.signal;
           return { ok: true, code: 'ok', message: 'Fixture ready' };
         },
         async start(request: VideoRecorderStartRequest) {
           events.push('start');
+          signals.start = request.signal;
           await writeFile(request.outputPath, 'video fixture');
           captureStartedAt = Date.now();
           options.onCaptureStart?.();
@@ -286,7 +289,7 @@ async function runFixture(
   const entries: { nodeId: string; ok: boolean; error_code?: string }[] = Array.isArray(trace)
     ? trace
     : trace.entries;
-  return { root, result, events, entries };
+  return { root, result, events, entries, signals };
 }
 
 for (const { target, nested } of [
@@ -349,6 +352,14 @@ test('a cancel during setup still lets teardown bind capture and run its first p
   assert.deepEqual(events, ['doctor', 'restart', 'target', 'acquire', 'start', 'ui', 'stop']);
   assert.equal(entries.find((entry) => entry.nodeId === 'restore')?.ok, true);
   assert.equal(entries.at(-1)?.nodeId, 'closed');
+});
+
+test('the recorder gets the run signal, so a wait for the host capture slot can be cancelled', async (t) => {
+  const controller = new AbortController();
+  const { result, signals } = await runFixture(t, { recipe: flat, signal: controller.signal });
+  assert.equal(result.status, 'pass');
+  assert.equal(signals.doctor, controller.signal);
+  assert.equal(signals.start, controller.signal);
 });
 
 test('a cancel during the lead-in stops the run before the first proof node', async (t) => {

@@ -500,6 +500,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         projectRoot,
         artifactsDir,
         env,
+        signal: request.signal,
       });
     let runRecording: RunVideoRecording | undefined;
     let captureInterruption: RecipeRunCaptureInterruption | undefined;
@@ -508,7 +509,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     let canExecute = true;
     if (videoRecorder) {
       try {
-        const doctor = await videoRecorder.doctor?.();
+        const doctor = await videoRecorder.doctor?.({ signal: request.signal });
         if (doctor && !doctor.ok) {
           throw new RecipeExecutionError(
             'environment',
@@ -1186,6 +1187,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     projectRoot,
     artifactsDir,
     env,
+    signal,
   }: {
     recorder: VideoRecorder;
     videoOptions: RecipeVideoRecordingOptions;
@@ -1193,6 +1195,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     projectRoot: string;
     artifactsDir: string;
     env: Record<string, string | undefined>;
+    signal?: AbortSignal;
   }): Promise<RunVideoRecording> {
     const node = {
       action: 'record.video',
@@ -1243,6 +1246,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         maxSize: videoOptions.maxSize,
         nodeId: 'recipe-run',
         record: 'full_run',
+        signal,
       });
       recording = {
         ...backend,

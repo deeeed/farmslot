@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type { RecipeArtifactRecorderTarget } from '@farmslot/protocol';
 import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
@@ -27,9 +28,22 @@ import { optionalVideoTiming } from './timeline.js';
 export interface CaptureHelperVideoRecorderOptions {
   captureHelperPath?: string;
   stopTimeoutMs?: number;
+  /** How long doctor and start wait for this host's capture slot (`whenCaptureSlotFree`). */
+  captureSlotWaitMs?: number;
+  captureSlotPollMs?: number;
 }
 
 const DEFAULT_STOP_TIMEOUT_MS = 10_000;
+// A recipe recording on the farm runs about four minutes; this outlasts two back to back.
+const DEFAULT_CAPTURE_SLOT_WAIT_MS = 10 * 60_000;
+const DEFAULT_CAPTURE_SLOT_POLL_MS = 1_000;
+
+/**
+ * capture-helper refused before touching ScreenCaptureKit: another of its commands holds this
+ * host user's capture lock. replayd ties streams to the executable, so a second capture-helper
+ * process exiting could stop the first one's recording, and two cannot run at once.
+ */
+class CaptureSlotBusy extends Error {}
 
 interface CaptureHelperDoctorDocument {
   ok?: boolean;
@@ -75,18 +89,23 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
   readonly platform = 'macos';
   readonly #captureHelperPath: string;
   readonly #stopTimeoutMs: number;
+  readonly #captureSlot: { waitMs: number; pollMs: number };
   #version: string | undefined;
 
   constructor(options: CaptureHelperVideoRecorderOptions) {
     this.#captureHelperPath = options.captureHelperPath ?? captureHelperPath();
     this.#stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
+    this.#captureSlot = {
+      waitMs: options.captureSlotWaitMs ?? DEFAULT_CAPTURE_SLOT_WAIT_MS,
+      pollMs: options.captureSlotPollMs ?? DEFAULT_CAPTURE_SLOT_POLL_MS,
+    };
   }
 
   get version(): string | undefined {
     return this.#version;
   }
 
-  async doctor(): Promise<VideoRecorderDoctorResult> {
+  async doctor(options: { signal?: AbortSignal } = {}): Promise<VideoRecorderDoctorResult> {
     if (process.platform !== 'darwin') {
       return {
         ok: false,
@@ -95,6 +114,23 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
         suggestedFix: 'Run on macOS or omit --record-video.',
       };
     }
+    try {
+      return await whenCaptureSlotFree(() => this.#doctorOnce(), {
+        ...this.#captureSlot,
+        signal: options.signal,
+      });
+    } catch (error) {
+      if (!(error instanceof CaptureSlotBusy)) throw error;
+      return {
+        ok: false,
+        code: 'capture_busy',
+        message: error.message,
+        suggestedFix: 'Retry once the other recording on this host has finished.',
+      };
+    }
+  }
+
+  async #doctorOnce(): Promise<VideoRecorderDoctorResult> {
     let result: CommandResult;
     try {
       result = await runCommand(this.#captureHelperPath, ['doctor', '--json'], {
@@ -112,6 +148,7 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
           'Run `command -v capture-helper && capture-helper doctor --json` in this same environment. Ensure PATH includes the binary (e.g. ~/.npm-global/bin), or set CAPTURE_HELPER_PATH to the real binary. Unset a stale CAPTURE_HELPER_PATH if checksum_mismatch is reported.',
       };
     }
+    if (doctorFoundSlotBusy(result.stdout)) throw new CaptureSlotBusy();
     if (result.exitCode !== 0) {
       return {
         ok: false,
@@ -142,7 +179,14 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
     };
   }
 
-  async start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording> {
+  start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording> {
+    return whenCaptureSlotFree(() => this.#startOnce(request), {
+      ...this.#captureSlot,
+      signal: request.signal,
+    });
+  }
+
+  async #startOnce(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording> {
     const versionResult = await runCommand(this.#captureHelperPath, ['version', '--json'], {
       timeoutMs: 10_000,
     });
@@ -270,13 +314,19 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
         clearTimeout(timeout);
         reject(error);
       });
-      child.once('exit', (code, signal) => {
+      child.once('exit', () => {
         clearTimeout(timeout);
-        reject(
-          new Error(
-            `capture-helper record exited early (${formatExit(code, signal)}): ${stderr.join('').trim()}`,
-          ),
-        );
+        // 'close' has the whole stderr, including a capture_busy refusal.
+        void exit.then(({ code, signal }) => {
+          const output = stderr.join('').trim();
+          reject(
+            hasCaptureBusyEvent(output)
+              ? new CaptureSlotBusy()
+              : new Error(
+                  `capture-helper record exited early (${formatExit(code, signal)}): ${output}`,
+                ),
+          );
+        });
       });
     });
 
@@ -296,9 +346,9 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
           onTimeout: () => child.kill('SIGKILL'),
           message: 'Capture-helper did not stop after readiness failure.',
         });
-        throw new Error(
-          `Capture-helper did not provide a recorded first frame: ${stderr.join('').trim()}`,
-        );
+        const output = stderr.join('').trim();
+        if (hasCaptureBusyEvent(output)) throw new CaptureSlotBusy();
+        throw new Error(`Capture-helper did not provide a recorded first frame: ${output}`);
       }
     }
     const getVersion = () => this.version;
@@ -391,6 +441,52 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
       },
     };
   }
+}
+
+/**
+ * Runs `attempt` again while another capture-helper command holds this host's capture slot,
+ * e.g. a recording in another slot, until `waitMs` passes or `signal` cancels the run.
+ */
+async function whenCaptureSlotFree<T>(
+  attempt: () => Promise<T>,
+  options: { waitMs: number; pollMs: number; signal?: AbortSignal },
+): Promise<T> {
+  const deadline = Date.now() + options.waitMs;
+  for (;;) {
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof CaptureSlotBusy)) throw error;
+      if (Date.now() + options.pollMs > deadline)
+        throw new CaptureSlotBusy(
+          `Waited ${Math.round(options.waitMs / 1000)} s for this host's capture slot; another capture-helper command, likely a recording in another slot, still holds it (capture_busy).`,
+        );
+    }
+    await delay(options.pollMs, undefined, { signal: options.signal });
+  }
+}
+
+/** Doctor failed only because another command holds the capture slot. */
+function doctorFoundSlotBusy(stdout: string): boolean {
+  let document: CaptureHelperDoctorDocument;
+  try {
+    document = JSON.parse(stdout) as CaptureHelperDoctorDocument;
+  } catch {
+    return false;
+  }
+  const failed = (document.checks ?? []).filter((check) => check.required && !check.ok);
+  return failed.length > 0 && failed.every((check) => check.code === 'capture_busy');
+}
+
+function hasCaptureBusyEvent(output: string): boolean {
+  return output.split('\n').some((line) => {
+    try {
+      const event: unknown = JSON.parse(line);
+      return isRecord(event) && event.code === 'capture_busy';
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** A screenshot of the same target taken outside the (interrupted) recording session. */
