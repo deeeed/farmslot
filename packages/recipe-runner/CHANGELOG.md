@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- A recorder's active recording can expose `ready()`, resolving once its current segment's frame zero is bounded; the runner waits for it before every proof node, so a node no longer starts while capture restarts. Segmented and limit-bound recordings pass it through (ADR-062 Amendment 15).
 
 ## 0.39.3 - 2026-10-18
 

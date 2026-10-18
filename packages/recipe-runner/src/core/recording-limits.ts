@@ -72,6 +72,7 @@ export function boundRecording(
   poll.unref();
   return {
     stop,
+    ...(active.ready ? { ready: () => active.ready!() } : {}),
     ...(active.snapshot
       ? {
           snapshot: async (file: string) => {

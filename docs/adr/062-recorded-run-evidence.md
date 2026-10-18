@@ -863,3 +863,46 @@ recording starts; `RecordingTargetProvider`, `VideoRecorder`, the recording
 artifacts and the recording-required policy are unchanged. Harnesses inherit it
 with their next recipe-runner version. The normative timing rule is in
 [the recorded-evidence specification](../reference/recorded-run-evidence.md).
+
+## Amendment 15 (2026-10-18): Recorders bound frame zero at start and through restarts
+
+**Status:** Proposed. The lead approves once both paired reviews pass.
+
+### Decision
+
+A recorder's start returns once its first segment's frame zero is bounded at
+runtime. An active recording that restarts capture exposes `ready()`, which
+resolves once the current segment's zero is bounded, waiting through a restart.
+The engine awaits it before every proof node. Amendment 14's bind point and 1 s
+lead-in are unchanged, and the engine never asks a recorder to roll.
+
+Android `adb screenrecord` starts each segment only once its file holds bytes.
+The muxer writes its header only after the encoder's first output, so frame zero
+precedes them. The segment's clock is `[spawn, first bytes]` instead of the
+process lifetime, which also spans any static screen before the stop.
+
+### Rationale and consequences
+
+After Amendment 14, a 0.92.27 replay of QA-03 on a Pixel 6a still left AC-1..3
+weak: 4 of 18 AC-1 assertion indices fell outside recording. Three venue
+assertions started inside segment 0's 1737 ms lifetime-bound zero window, longer
+than the lead-in, and `limit-price` started inside segment 1's 1127 ms window,
+right after the 180 s roll the runner could not see. On an owned emulator with a
+static screen, the file's first bytes came 572 ms after spawn, while the lifetime
+bound put zero up to 5126 ms after spawn because of the static tail.
+
+Recording starts take a little longer, until the header is written. A proof
+node that arrives during a roll waits for the restarted segment. A proof node
+that itself spans a roll stays outside recording; this is rare and accepted.
+Harness recorder wrappers must forward `ready()`, as they forward `snapshot()`.
+
+### Public surface
+
+`ActiveVideoRecording.ready?()` in `@farmslot/recipe-runner`: optional, consumed
+by the engine before every proof node, produced by `@farmslot/adapter-rn`'s
+Android recorder, and passed through by `startSegmentedRecording` and the
+recording-limit wrapper. The Android recorder's timing evidence adds each
+segment's `zeroBoundAtUnixMs`, and its clock source is
+`adb-screenrecord-first-write`. The MetaMask harness forwards `ready()` from its
+`withRecordingOutcomes` wrapper with its dependency bump. Normative timing rule:
+[the recorded-evidence specification](../reference/recorded-run-evidence.md).
