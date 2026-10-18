@@ -923,7 +923,7 @@ segment's `zeroBoundAtUnixMs`, and its clock source is
 
 ## Amendment 16 (2026-10-18): A restarted segment gets the first bind's lead-in
 
-**Status:** Proposed.
+**Status:** Accepted (lead, 2026-10-18). Ships in #1315.
 
 ### Decision
 
