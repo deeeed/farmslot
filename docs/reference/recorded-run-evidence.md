@@ -129,15 +129,17 @@ including a node inside a called recipe. After binding, the engine waits
 `EVIDENCE_PADDING_MS` before running that node, so the node clears the recorder's
 start and has padded footage before it. Capture stops after the final HUD outcome.
 Setup before the first proof node that proves nothing, such as an app restart or
-state seeding, stays unrecorded (ADR-062 Amendment 14). A recorder's start returns
-once its first segment's frame zero is bounded, and a recorder that restarts capture
-exposes `ready()`, which resolves once the current segment's zero is bounded; the
-engine awaits it before every proof node, so no proof node starts in a restart gap
-(ADR-062 Amendment 15). Android `adb screenrecord` bounds zero by the first bytes of
-its file, which the muxer writes only after the first encoded frame, and its
-`ready()` restarts a segment older than 150 s so the 180 s limit falls between
-proof nodes. Recorder readiness is
-checked before setup; target resolution and admission bind the process running
+state seeding, stays unrecorded (ADR-062 Amendment 14). A recorder that restarts
+capture may expose `ready()`, which resolves once the current segment's frame zero
+is bounded; the engine awaits it before every proof node, so no proof node starts
+in a restart that recorder reports (ADR-062 Amendment 15). Android
+`adb screenrecord` starts each segment only once its file has bytes, which the
+muxer writes only after the encoder's first output, and bounds zero by them
+instead of its process lifetime. Its `ready()` restarts a segment older than
+150 s, after one more `EVIDENCE_PADDING_MS` of footage, so the 180 s limit falls
+between proof nodes; a single proof node longer than 30 s can still span it. The
+iOS `simctl` recorder still bounds zero by its process lifetime. Recorder doctor
+checks run before setup; target resolution and admission bind the process running
 at the first proof node. Explicit recording for a recipe without UI nodes starts
 at run entry. Play
 `[startRangeMs[0] - 1000, endRangeMs[1] + 1000]`, using one

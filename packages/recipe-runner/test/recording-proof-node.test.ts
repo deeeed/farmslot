@@ -372,19 +372,46 @@ test('a cancel during the lead-in stops the run before the first proof node', as
 
 test('a proof node waits until a restarting recorder is ready', async (t) => {
   let calls = 0;
-  let readyAt = 0;
+  let restartedAt = 0;
   const { result, entries } = await runFixture(t, {
     recipe: flat,
     // The second proof node arrives during a capture restart that takes 300 ms.
     ready: async () => {
-      if (++calls === 2) await new Promise((resolve) => setTimeout(resolve, 300));
-      readyAt = Date.now();
+      if (++calls !== 2) return;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      restartedAt = Date.now();
     },
   });
   assert.equal(result.status, 'pass');
   assert.equal(calls, 3, 'Each proof node asks once: gate, open and market');
   const open = entries.find((entry) => entry.nodeId === 'open') as { startedAt: string };
-  const gate = entries.find((entry) => entry.nodeId === 'gate') as { endedAt: string };
-  assert.ok(Date.parse(open.startedAt) - Date.parse(gate.endedAt) >= 290, 'open waited for ready');
-  assert.ok(Date.parse(open.startedAt) <= readyAt);
+  assert.ok(Date.parse(open.startedAt) >= restartedAt, 'open starts after the restart is ready');
 });
+
+test(
+  'a cancel while waiting for ready stops the run before the next proof node',
+  { timeout: 5_000 },
+  async (t) => {
+    const controller = new AbortController();
+    let calls = 0;
+    let abortedAt = 0;
+    const { result, events, entries } = await runFixture(t, {
+      recipe: flat,
+      signal: controller.signal,
+      // The restart before the second proof node never becomes ready; the operator cancels.
+      ready: () => {
+        if (++calls !== 2) return Promise.resolve();
+        setTimeout(() => {
+          abortedAt = Date.now();
+          controller.abort('SIGTERM');
+        }, 50);
+        return new Promise<void>(() => {});
+      },
+    });
+    const settledAfterMs = Date.now() - abortedAt;
+    assert.equal(result.status, 'fail');
+    assert.equal(entries.find((entry) => entry.error_code === 'RECIPE_ABORTED')?.nodeId, 'open');
+    assert.ok(!events.includes('ui'), 'No UI node runs after the cancel');
+    assert.ok(settledAfterMs < EVIDENCE_PADDING_MS, 'The cancel does not wait for ready');
+  },
+);

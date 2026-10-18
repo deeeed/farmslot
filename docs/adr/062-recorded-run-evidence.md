@@ -870,8 +870,8 @@ with their next recipe-runner version. The normative timing rule is in
 
 ### Decision
 
-A recorder's start returns once its first segment's frame zero is bounded at
-runtime. An active recording that restarts capture exposes `ready()`, which
+A recorder may bound its first segment's frame zero at runtime before its start
+returns. An active recording that restarts capture may expose `ready()`, which
 resolves once the current segment's zero is bounded, waiting through a restart.
 The engine awaits it before every proof node. A recorder with a segment limit
 may restart capture inside `ready()` when the current segment nears that limit,
@@ -884,7 +884,8 @@ precedes them. The segment's clock is `[spawn, first bytes]` instead of the
 process lifetime, which also spans any static screen before the stop. Its
 `ready()` restarts a segment older than 150 s, 30 s before the 180 s limit,
 after recording one `EVIDENCE_PADDING_MS` past the previous node, so that node's
-end and playback padding stay on camera.
+end and playback padding stay on camera. The iOS `simctl` recorder is unchanged
+and still bounds zero by its process lifetime.
 
 ### Rationale and consequences
 
