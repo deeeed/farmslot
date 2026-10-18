@@ -96,22 +96,28 @@ function detectCodexUpdatePrompt(pane: string): boolean {
   return !/[\n\r]\s*›\s+ask codex to do anything\b/i.test(pane.slice(confirm));
 }
 
+// Login-banner shapes only, anchored to the line start (optionally behind box borders or a
+// runner's message or error glyph), like the usage-limit banners: a lane quoting an auth error in prose
+// ('claude reports "OAuth session expired and could not be refreshed"') must never classify.
+const AUTH_BANNER_PATTERNS = [
+  /authentication\s+(is\s+)?(expired|required|failed|needed)\b/,
+  /auth\s+(is\s+)?(required|needed|failed)\b/,
+  /(login|log in)\s+(is\s+)?(required|needed|failed|to continue)\b/,
+  /(oauth|api key|token|login|auth(?:entication)?)(\s+token)?\s+(has\s+)?(expired|revoked)\b/,
+  /session\s+(has\s+)?expired\b.*\b(login|log in|auth|authenticate|reauthenticate)\b/,
+  /please\s+run\s+\/?login\b/,
+  /run\s+(codex|claude|cursor-agent)?\s*login\b/,
+  /requires?\s+(login|log in|authentication|authenticate)\b/,
+  /please\s+(log in|login|authenticate)\b/,
+  /not\s+(authenticated|logged in)\b/,
+  /unauthorized\b.*\b(login|log in|auth|authenticate|authentication|token|session)\b/,
+  // Claude leads with the failure: "Invalid API key · please run /login".
+  /invalid api key\b/,
+  /your access token could not be refreshed\b/,
+].map((pattern) => new RegExp(`^[│┃║⏺⎿■✗⚠\\s]*${pattern.source}`));
+
 export function lineHasAuthBlockerPhrase(line: string): boolean {
-  return (
-    /\bauthentication\s+(is\s+)?(expired|required|failed|needed)\b/.test(line) ||
-    /\bauth\s+(is\s+)?(required|needed|failed)\b/.test(line) ||
-    /\b(login|log in)\s+(is\s+)?(required|needed|failed|to continue)\b/.test(line) ||
-    /\b(oauth|api key|token|login|auth(?:entication)?)\s+(has\s+)?expired\b/.test(line) ||
-    (/\bsession\s+(has\s+)?expired\b/.test(line) &&
-      /\b(login|log in|auth|authenticate|reauthenticate)\b/.test(line)) ||
-    /\bplease\s+run\s+\/?login\b/.test(line) ||
-    /\brun\s+(codex|claude|cursor-agent)?\s*login\b/.test(line) ||
-    /\brequires?\s+(login|log in|authentication|authenticate)\b/.test(line) ||
-    /\bplease\s+(log in|login|authenticate)\b/.test(line) ||
-    /\bnot\s+(authenticated|logged in)\b/.test(line) ||
-    (/\bunauthorized\b/.test(line) &&
-      /\b(login|log in|auth|authenticate|authentication|token|session)\b/.test(line))
-  );
+  return AUTH_BANNER_PATTERNS.some((pattern) => pattern.test(line));
 }
 
 function detectLaunchBlocker(

@@ -646,6 +646,13 @@ describe('cursor runner', () => {
       { runner: 'codex', text: 'Session expired. Run codex login to reauthenticate.' },
       { runner: 'codex', text: 'Authentication is required to continue.' },
       { runner: 'cursor', text: 'Login is required before starting a session.' },
+      // Rendered with the runner's own glyphs, as the panes show them.
+      { runner: 'claude', text: '⏺ Please run /login · API Error: 403 Request not allowed' },
+      { runner: 'claude', text: '  ⎿  OAuth token revoked · Please run /login' },
+      {
+        runner: 'codex',
+        text: '■ Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again.',
+      },
     ];
 
     for (const { runner, text } of panes) {
@@ -738,6 +745,18 @@ describe('cursor runner', () => {
     ].join('\n');
 
     assert.equal(detectRunnerLaunchBlocker(pane, 'claude'), null);
+  });
+
+  it('does not classify a lane quoting an auth error in prose as a runner auth blocker', () => {
+    // cx-tcompare's answer as lane-send saw it on 10-18; the send was refused as auth-required.
+    const pane = [
+      '⏺ Claude/opus workers ran fine on macpro as recently as six hours ago, so the SSH "OAuth expired" result is likely just a locked keychain rather than a real logout. Now checking if any cursor workers',
+      '  - macpro, over SSH only: cursor-agent reports "login keychain is locked", and claude reports "OAuth session expired and could not be refreshed". An SSH session can\'t read the login keychain, and',
+      '❯ ',
+    ].join('\n');
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'claude'), null);
+    assert.equal(readPaneStateFromCapture(pane, 'claude').launchBlocker, null);
   });
 
   it('does not classify shell launch command text with auth.json paths as runner auth blockers', () => {
