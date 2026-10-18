@@ -38,6 +38,7 @@ import {
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
+  runEvidenceSettled,
   runFamilyPrStatus,
   runHasTrimmedDetail,
   shouldAcceptTaskProgressUpdate,
@@ -940,4 +941,18 @@ test('a step-owned artifact link reopens in the step inspector, or says why it c
   assert.deepEqual(locateStepArtifact(owned, stepFiles, { ...ctx, urlStepName: 'write-task' }), {
     index: 0,
   });
+});
+
+test('run evidence settles once the run retains it, so the page reads it again', () => {
+  const working = { id: 'run-1', status: 'monitoring' as const };
+  const retained = {
+    ...working,
+    artifactBundle: { storeId: 's', bundleDigest: 'd', taskKey: 't', manifestDigest: 'm' },
+  };
+  assert.equal(runEvidenceSettled(working, retained), true);
+  assert.equal(runEvidenceSettled(working, { ...working, status: 'done' }), true);
+  assert.equal(runEvidenceSettled(working, working), false);
+  assert.equal(runEvidenceSettled(retained, retained), false);
+  assert.equal(runEvidenceSettled(undefined, retained), false);
+  assert.equal(runEvidenceSettled({ ...working, id: 'run-2' }, retained), false);
 });

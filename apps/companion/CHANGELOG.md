@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Run acceptance: a run that is still working no longer shows its evidence as Invalid before the worker finishes. A criterion row shows More and Review evidence only when they have something to open, and while nothing is assessed the panel shows only its counts line, with the list on demand.
+- Run acceptance: a run that is still working no longer shows its evidence as Invalid before the worker finishes. A criterion row shows More and Review evidence only when they have something to open, and while nothing is assessed the panel shows only its counts line, with the list on demand; it opens once a criterion is assessed. Check details lists a criterion's recipe nodes, as Command Center does.
 
 - Terminal and replay checks use the shared terminal status helper.
 

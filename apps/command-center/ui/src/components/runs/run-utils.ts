@@ -312,6 +312,8 @@ const ENGINE_NAME_WORDS: ReadonlySet<string> = new Set(
     .filter((word) => /^[a-z]/u.test(word) && !MODEL_QUALIFIERS.has(word)),
 );
 
+const RUNNER_NAME_WORDS: ReadonlySet<string> = new Set(Object.keys(RUNNER_PICKER_MODELS));
+
 /**
  * Whether a lane tag names a runner or model other than the dispatched engine. A tag may
  * name the runner ('claude-opus') or only the model ('opus', 'grok', 'luna-6'); a tag that
@@ -323,7 +325,9 @@ export function variantNamesOtherEngine(
 ): boolean {
   if (!engine.runner) return false;
   const dispatched = new Set([...engineWords(engine.runner), ...engineWords(engine.model ?? '')]);
-  return engineWords(variant).some((word) => ENGINE_NAME_WORDS.has(word) && !dispatched.has(word));
+  // With the model unknown, only a different runner name is a mismatch.
+  const names = engine.model ? ENGINE_NAME_WORDS : RUNNER_NAME_WORDS;
+  return engineWords(variant).some((word) => names.has(word) && !dispatched.has(word));
 }
 
 /** Resolved runner/model for display — metrics first, then find-slot step outputs. */

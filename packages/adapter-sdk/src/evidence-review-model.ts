@@ -104,6 +104,12 @@ export interface EvidenceReviewGateSnapshot {
   nextAction: string;
 }
 
+/** What a client offers on a criterion row: a proof player and the untestable override. */
+export interface EvidenceReviewClaimOffers {
+  playable?: boolean;
+  overridable?: boolean;
+}
+
 export interface EvidenceReviewInput {
   visualReviewContext?: { snapshotIdentity: string; decisionId?: string };
   gateDecision?: RunDecision;
@@ -284,9 +290,11 @@ export interface EvidenceReviewModel {
     id: string,
   ): Pick<import('@farmslot/protocol').RunOverrideClaimParams, 'claimId' | 'recipeRunId'> | null;
   /** Whether a criterion row has anything behind its "More" toggle; both clients ask this
-   * instead of each listing the parts. `playable` and `overridable` are what the client
-   * offers: a proof player and the untestable override. */
-  claimHasDetails(id: string, offers?: { playable?: boolean; overridable?: boolean }): boolean;
+   * instead of each listing the parts. */
+  claimHasDetails(id: string, offers?: EvidenceReviewClaimOffers): boolean;
+  /** The file a criterion's Review evidence opens: its selected proof, else its first evidence
+   * file. None while the evidence is pending: a working run has retained nothing to open. */
+  claimFocusPath(id: string): string | undefined;
   readonly context: EvidenceReviewContext;
   readonly summary: AcceptanceStatusSummary;
   readonly claims: readonly EvidenceReviewClaim[];
@@ -339,7 +347,6 @@ export interface EvidenceReviewModel {
   ): readonly [number, number] | null;
 }
 
-/** Experimental ADR-062 projection shared by web and native review contexts. */
 /** The worker is still working and the run has retained nothing, so there is no evidence
  * package to judge yet. Its verdicts show as reported; package checks wait for completion. */
 export function runEvidencePending(
@@ -348,6 +355,7 @@ export function runEvidencePending(
   return !isTerminalRunStatus(run.status) && !run.artifactBundle && !run.output?.artifactBundle;
 }
 
+/** Experimental ADR-062 projection shared by web and native review contexts. */
 export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceReviewModel {
   // Gate refreshes cannot mutate the already-validated selection. Inputs are protocol JSON.
   input = JSON.parse(JSON.stringify(input)) as EvidenceReviewInput;
@@ -1058,6 +1066,12 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         status?.engineVerdict ||
         (claim?.timing && claim.timing !== 'measured') ||
         (overridable && claimOverrideCandidate(id)),
+      );
+    },
+    claimFocusPath(id) {
+      if (input.evidencePending) return undefined;
+      return (
+        claimDisplay(id).selected[0]?.artifactPath ?? byClaim.get(id)?.evidence[0]?.artifactPath
       );
     },
     judgmentRows(principal) {

@@ -825,4 +825,7 @@ test('a lane tag warns only when it names a runner or model other than the dispa
   assert.equal(variantNamesOtherEngine('claude-sonnet', { runner: 'claude', model: 'opus' }), true);
   // A tag that names no engine never warns.
   assert.equal(variantNamesOtherEngine('baseline', { runner: 'claude', model: 'opus' }), false);
+  // With the model unknown, only another runner's name warns.
+  assert.equal(variantNamesOtherEngine('claude-opus', { runner: 'claude', model: null }), false);
+  assert.equal(variantNamesOtherEngine('codex-luna', { runner: 'claude', model: null }), true);
 });

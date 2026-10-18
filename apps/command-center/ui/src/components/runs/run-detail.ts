@@ -99,6 +99,7 @@ import {
   runArtifactsWithOperationLogs,
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
+  runEvidenceSettled,
   runFamilyPrStatus,
   runHasTrimmedDetail,
   runOutputEvidenceSelection,
@@ -485,6 +486,8 @@ export class RunDetail extends RunDetailState {
       void this._refreshRecipeRunsForRun(this.run);
       this._applySelectedStepFromHash();
     }
+    if (this.run && runEvidenceSettled(prev, this.run))
+      void this._refreshRecipeRunsForRun(this.run, { force: true });
     this._maybeRefreshLiveTimeoutPrStatus();
     this._maybeRefreshPostureStatus();
     this._maybeResetPostureGate();

@@ -84,10 +84,6 @@ function TaskAcceptanceContent({
     acceptanceEvidenceLinks ?? [],
     evidenceModel ?? undefined,
   );
-  const focusPath = (id: string) => {
-    const row = view.rows.find(({ criterion }) => criterion.id === id);
-    return row?.display.selected[0]?.artifactPath ?? row?.evidence[0]?.path;
-  };
   const [showDetails, setShowDetails] = React.useState(false);
   const [showWarnings, setShowWarnings] = React.useState(false);
   const [overrideClaim, setOverrideClaim] = React.useState<string | null>(null);
@@ -127,11 +123,12 @@ function TaskAcceptanceContent({
   React.useEffect(() => {
     if (
       error ||
+      view.defaultOpen ||
       evidenceModel?.errors.length ||
       evidenceModel?.claims.some((claim) => claim.kind === 'qa-case')
     )
       setExpanded(true);
-  }, [error, evidenceModel]);
+  }, [error, evidenceModel, view.defaultOpen]);
   if (view.rows.length === 0 && !error && !packageStatus && !evidenceModel?.occurrences.length)
     return null;
   return (
@@ -234,12 +231,12 @@ function TaskAcceptanceContent({
           onFocus={
             onOpenEvidence
               ? (id) => {
-                  const path = focusPath(id);
+                  const path = view.model.claimFocusPath(id);
                   if (path) onOpenEvidence(id, path);
                 }
               : undefined
           }
-          canFocus={(id) => Boolean(focusPath(id))}
+          canFocus={(id) => Boolean(view.model.claimFocusPath(id))}
           hasDetails={(id) =>
             view.model.claimHasDetails(id, {
               playable: Boolean(onOpenEvidence),
@@ -310,7 +307,9 @@ function TaskAcceptanceContent({
                   </Pressable>
                 ) : null}
                 {renderFiles(criterion.id, display.selected)}
-                {display.raw.length || review?.occurrences.length ? (
+                {display.raw.length ||
+                review?.occurrences.length ||
+                criterion.status?.recipeNodes.length ? (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityState={{ expanded: rawClaims.has(criterion.id) }}
@@ -335,6 +334,11 @@ function TaskAcceptanceContent({
                 ) : null}
                 {rawClaims.has(criterion.id) ? (
                   <View>
+                    {criterion.status?.recipeNodes.map((node) => (
+                      <Text key={node} style={baseStyles.textMuted}>
+                        {node}
+                      </Text>
+                    ))}
                     {review?.occurrences.map((occurrence) => (
                       <View key={occurrence.traceIndex}>
                         <Text style={styles.text}>{occurrence.intent}</Text>

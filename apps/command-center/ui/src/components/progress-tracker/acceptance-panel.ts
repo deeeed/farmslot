@@ -18,6 +18,7 @@ import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import {
   createEvidenceReviewModel,
   type EvidenceReviewClaim,
+  type EvidenceReviewClaimOffers,
   type EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
 import type {
@@ -62,6 +63,7 @@ export const acceptancePanelStyles = css`
     display: flex;
     align-items: center;
     gap: ${unsafeCSS(spacing.sm)};
+    min-height: 44px;
     padding: 4px ${unsafeCSS(spacing.md)};
     cursor: pointer;
     list-style: none;
@@ -541,13 +543,13 @@ export function renderAcceptancePanel(
             ...options.judgments,
             canFocus: options.judgments?.focusClaim
               ? undefined
-              : (id) => Boolean(rows.find(({ view }) => view.id === id)?.evidence.length),
+              : (id) => Boolean(model.claimFocusPath(id)),
             focusClaim:
               options.judgments?.focusClaim ??
               (options.openEvidence
                 ? (id) => {
                     const row = rows.find(({ view }) => view.id === id);
-                    if (!row || !row.evidence.length) return;
+                    if (!row || !model.claimFocusPath(id)) return;
                     model.selectClaim(id);
                     const selected = model.claimDisplay(id).selected[0]?.artifactPath;
                     options.openEvidence?.({
@@ -560,7 +562,7 @@ export function renderAcceptancePanel(
                 : undefined),
             details: (id) => {
               const row = rows.find(({ view }) => view.id === id);
-              const offers = {
+              const offers: EvidenceReviewClaimOffers = {
                 playable: Boolean(options.openEvidence),
                 overridable: Boolean(options.markUntestable),
               };

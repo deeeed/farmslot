@@ -589,6 +589,15 @@ test('a criterion row has details only when something would open behind More', (
   assert.equal(linked.claimHasDetails('AC-1'), false);
   assert.equal(linked.claimHasDetails('AC-1', { playable: true, overridable: true }), false);
   assert.equal(linked.claimHasDetails('AC-2'), true);
+  // Review evidence opens the same file in both clients, and nothing while it is pending.
+  assert.equal(linked.claimFocusPath('AC-1'), undefined);
+  assert.match(linked.claimFocusPath('AC-2') ?? '', /still\.png$/);
+  const pending = createEvidenceReviewModel({
+    criteria: [{ id: 'AC-2', text: 'Linked.' }],
+    evidenceLinks: [{ id: 'AC-2', evidence: ['still.png'] }],
+    evidencePending: true,
+  });
+  assert.equal(pending.claimFocusPath('AC-2'), undefined);
   const noted = createEvidenceReviewModel({
     ledger: {
       schemaVersion: 1,

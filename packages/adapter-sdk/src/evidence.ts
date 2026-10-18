@@ -3,6 +3,7 @@ export type {
   EvidenceReviewArtifact,
   EvidenceReviewClaim,
   EvidenceReviewClaimDisplay,
+  EvidenceReviewClaimOffers,
   EvidenceReviewClip,
   EvidenceReviewComparisonFilter,
   EvidenceReviewComparisonMedia,
