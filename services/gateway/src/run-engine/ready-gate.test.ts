@@ -810,6 +810,33 @@ test(
   },
 );
 
+test(
+  'a gate re-binds an unowned slot before its package refresh reads the source',
+  { timeout: 4000 },
+  async (t) => {
+    // TAT-4145 bda11b1a gate 42ac7052: the slot was reset during the replay, so the package
+    // refresh refused with 'no longer owned' and the gate offered only Hold.
+    const { run, next } = sourceGateFixture(t);
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    let rebound = false;
+    const execution = executeReadyGate(run.id, {
+      rebindSlot: async () => (rebound = true),
+      ensurePackage: async () => {
+        if (!rebound) throw new Error('Publication source slot is no longer owned by this run');
+        return prepared;
+      },
+    });
+    const card = await next(execution);
+    assert.doesNotMatch(card.description, /Publication package is unavailable/);
+    assert.notDeepEqual(
+      card.actions.map(({ id }) => id),
+      ['hold'],
+    );
+  },
+);
+
 for (const mode of ['cold', 'warm', 'continue-review-fix'] as const) {
   test(`recovered source gate consumes ${mode} exactly once`, { timeout: 4000 }, async (t) => {
     const { run, next } = sourceGateFixture(t);

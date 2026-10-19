@@ -76,6 +76,7 @@ import {
   renderCurrentDescription,
   scanArtifacts,
 } from '../run-completion/orchestrator.js';
+import { rebindUnownedPublicationSlot } from '../run-completion/publication-source.js';
 import {
   readReadyGatePreparedPackage,
   readyGateCurrentDescription,
@@ -896,6 +897,7 @@ export function freedSlotGateResolutionBlocker(run: Run): BlockedRunError | null
 interface ReadyGatePackageDependencies {
   ensurePackage?: typeof ensureCurrentPublishPackage;
   createDecision?: typeof createEngineDecision;
+  rebindSlot?: typeof rebindUnownedPublicationSlot;
 }
 
 export async function executeReadyGate(
@@ -924,6 +926,12 @@ export async function executeReadyGate(
   if (publicationApprovalGate) {
     for (;;) {
       try {
+        // A slot can lose its owner while the run keeps the checkout (a reconcile during a
+        // replay); re-bind it before the package refresh reads the publication source.
+        if (await (dependencies.rebindSlot ?? rebindUnownedPublicationSlot)(getRun(runId)!))
+          console.log(
+            `[ready-gate] run ${runId.slice(0, 8)} — re-bound its unowned slot ${getRun(runId)?.slotId} on ${getRun(runId)?.branch}`,
+          );
         preparedPackage = await (dependencies.ensurePackage ?? ensureCurrentPublishPackage)(runId);
         break;
       } catch (error) {

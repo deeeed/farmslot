@@ -18,6 +18,7 @@ import {
   slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
 } from '../dispatch/slot-scoring.js';
+import { rebindRunSlot } from '../fleet.js';
 
 import {
   blockedRunWorkerRunningAgain,
@@ -396,4 +397,27 @@ test('a dispatch claim racing the re-bind of a released slot: exactly one wins',
     assert.equal(row.current_run_id, dispatchFirst ? 'dispatch-run' : run.id);
     if (dispatchFirst) assert.equal(second, 'run dispatch-run');
   }
+});
+
+test('a slot that lost its owner while its run kept it is re-bound only under the gate rule', async (t) => {
+  // TAT-4145 bda11b1a: busy/review-gate with no owner after a reconcile reset it during a replay.
+  const run = await blockedRun(t, 'GATE-UNOWNED');
+  const unowned = {
+    ...heldBy(run.slotId!, run.id),
+    current_run_id: null,
+    lifecycle: 'busy',
+    phase: 'review-gate',
+  };
+  await setSlotRow(unowned);
+  assert.match(
+    (await rebindReleasedSlot(run)) ?? '',
+    /busy\/review-gate/,
+    'a replay re-binds only a released slot',
+  );
+  await setSlotRow({ ...unowned, current_run_id: 'foreign-run' });
+  assert.equal(await rebindRunSlot(run, { unownedHeld: true }), 'run foreign-run');
+  await setSlotRow(unowned);
+  assert.equal(await rebindRunSlot(run, { unownedHeld: true }), null);
+  const rows = JSON.parse(await readFile(statusFile, 'utf8')).slots as Record<string, unknown>[];
+  assert.equal(rows.find((row) => row.slot === run.slotId)?.current_run_id, run.id);
 });

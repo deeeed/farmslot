@@ -19,6 +19,7 @@ import {
 
 import { summarizeAgentContexts } from '../agents/contexts.js';
 import {
+  claimSlotStatusIf,
   execOnSlot,
   expandHook,
   expandPlatformField,
@@ -42,10 +43,15 @@ import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.j
 import { loadFleetStatus } from '../fleet/state.js';
 import { fixtureCheckVars } from '../node-support/ensure.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
+import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
-import { listRuns } from '../runs/store.js';
+import { getAllRuns, getRun, listRuns } from '../runs/store.js';
 
-import { slotPinIsRequestOnly } from './dispatch/slot-scoring.js';
+import {
+  isActiveSlotHolder,
+  slotClaimBlockedByRelease,
+  slotPinIsRequestOnly,
+} from './dispatch/slot-scoring.js';
 import { isLinkedGitWorktreeMarker, probeDefaultBranch } from './slot/slot-tracking.js';
 
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
@@ -315,6 +321,50 @@ export function slotOwnershipFieldsForRun(
         ? summarizeAgentContexts(run)
         : fallbackAgentContexts,
   };
+}
+
+/**
+ * Bind a run's slot back to it with the fields a fleet refresh writes, in a claim-type write on
+ * the dispatcher's write chain: a dispatch claim and this re-bind cannot both win, and the epoch
+ * bump aborts a teardown's remaining writes. A released (ready) slot qualifies; with
+ * `unownedHeld`, so does a busy or held slot that lost its owner while the run kept its
+ * checkout. Returns what holds the slot instead (a run, a handoff reservation, or a lifecycle
+ * that is not free), or null when re-bound.
+ */
+export async function rebindRunSlot(
+  run: Run,
+  options: { unownedHeld?: boolean } = {},
+): Promise<string | null> {
+  const slotId = run.slotId!;
+  // A run created for this slot but not yet claiming it counts as its holder,
+  // by the same rule dispatch uses.
+  const rival = getAllRuns().find(
+    (other) => other.slotId === slotId && isActiveSlotHolder(other, run.id),
+  );
+  if (rival) return `run ${rival.id}`;
+  let holder: string | null = null;
+  const { claimed } = await claimSlotStatusIf(
+    slotId,
+    (slot) => {
+      const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
+      const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
+      const free =
+        slot.lifecycle === 'ready' ||
+        (options.unownedHeld === true &&
+          !owner &&
+          (slot.lifecycle === 'busy' || slot.lifecycle === 'held'));
+      // An archive evicts the run without this slot; re-binding would leave the
+      // slot held by a run that no longer exists.
+      if (isRunArchiving(run.id) || !getRun(run.id)) holder = 'nobody: the run is being archived';
+      else if (owner && owner !== run.id) holder = `run ${owner}`;
+      else if (reserved && reserved !== run.id) holder = `a handoff to run ${reserved}`;
+      else if (slotClaimBlockedByRelease(slot) !== null || !free)
+        holder = `nobody, but it is ${String(slot.lifecycle ?? 'missing')}/${String(slot.phase ?? '-')}`;
+      return holder === null;
+    },
+    { ...slotOwnershipFieldsForRun(run), handoff_run_id: null, dispatchable: false },
+  );
+  return claimed ? null : (holder ?? 'an unknown holder');
 }
 
 export async function fleetRefresh(): Promise<FleetStatusResult> {
