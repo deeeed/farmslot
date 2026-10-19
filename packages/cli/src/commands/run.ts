@@ -116,6 +116,7 @@ export interface RunGateCliOptions {
   reviewMode?: string;
   reviewSequence?: string;
   reviewContext?: string;
+  slot?: string;
 }
 
 export function buildRunGateParams(
@@ -158,6 +159,16 @@ export function buildRunGateParams(
     options.reviewContext
   ) {
     throw new Error('Review selection options require --action request-review');
+  }
+  // The gateway binds a picked slot from selectionData; a slot picker without one fails the run.
+  const slotPicker = decision.payload?.kind === 'slot_picker' ? decision.payload : undefined;
+  if (actionId === 'pick' && slotPicker && !options.slot?.trim())
+    throw new Error(
+      `Picking a slot requires --slot <id>. Candidates: ${slotPicker.candidates.map((c) => c.slotId).join(', ') || 'none'}.`,
+    );
+  if (options.slot?.trim()) {
+    if (actionId !== 'pick') throw new Error('--slot requires --action pick');
+    selectionData = { slotId: options.slot.trim() };
   }
   // A result decision takes a written reason of its own (ADR-065 Amendment 7).
   if (decision.payload?.kind === 'result-decision')
@@ -851,6 +862,7 @@ export function registerRunCommand(program: Command): void {
     .option('--review-mode <mode>', 'Review mode: warm or cold (default: cold)')
     .option('--review-sequence <json>', 'Additional ordered review selections as JSON')
     .option('--review-context <json>', 'Retained review lineage context as JSON')
+    .option('--slot <id>', 'Slot to bind for --action pick')
     .action(async (runId: string, opts: RunGateCliOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);

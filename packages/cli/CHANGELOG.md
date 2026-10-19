@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot run gate --action pick --slot <id>` binds the chosen slot on a slot-picker decision. On a slot picker, `pick` without `--slot` is now refused with the candidate slots. Before, the request reached the gateway, which failed the run with "No slot selected".
+
 - `farmslot recipe run --list`, `run <name> --describe` and `run <recipe> [key=value…] --plan`, and `farmslot recipe actions`, `actions <query>` and `actions --action <name>`, read recipe libraries without a project when given `--project-root <dir>`, the standalone core mode, with `--library-source name=path` and `--platform`. They print the recipe discovery envelopes. `--describe` and `--action` include a node and a recipe that wraps it, and the commands they suggest use this CLI's syntax. This replaces the removed `farmslot-recipe` executable.
 - Standalone `farmslot recipe run` runs a library recipe by ref, platform alias or `<library>.<ref>` id, as well as a recipe file. The recipe keeps its library's trust, and `summary.json` records the selection (`recipeSelection`) and each library's digest.
 
