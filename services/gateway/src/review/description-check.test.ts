@@ -269,6 +269,20 @@ test('review criteria from the task ledger are appended to the review document o
     ticketOrPr: 'REVIEW-CRITERIA',
     runner: 'claude',
   });
+  const ticket = (acceptanceCriteria: string[]) =>
+    updateRun(run.id, {
+      ticketData: {
+        source: 'manual',
+        title: 'Review criteria',
+        description: '',
+        acceptanceCriteria,
+        affectedArea: '',
+        stepsToReproduce: [],
+        screenshots: [],
+        labels: [],
+      },
+    });
+  ticket(['The counter is one.', 'The change is easy to revert.']);
   t.after(async () => {
     updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
     await deleteRun(run.id);
@@ -329,4 +343,7 @@ test('review criteria from the task ledger are appended to the review document o
   // A ledger that exists but cannot be read fails the launch instead of hiding the criteria.
   await chmod(ledger, 0o000);
   await assert.rejects(render(), /Review artifact read failed/);
+  // Without registered criteria there is nothing for the review to check, so nothing is read.
+  ticket([]);
+  assert.doesNotMatch(await render(), new RegExp(heading));
 });

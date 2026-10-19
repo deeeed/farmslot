@@ -10,6 +10,7 @@ import {
   DEFAULT_BRANCH,
   DEFAULT_TASK_DIR,
   type EvidenceManifest,
+  registeredAcceptanceCriteria,
   type ReviewIssue,
   type ReviewMode,
   type ReviewValidationDepth,
@@ -167,13 +168,16 @@ async function descriptionCheckSection(
 
 /**
  * ADR-062 Amendment 18: the `review` criteria of the task's acceptance ledger, as the
- * gate's ledger reader accepts them. No ledger adds no section. A failed read fails
- * the launch: the gate would otherwise count a pass for criteria nobody was shown.
+ * gate's ledger reader accepts them. A run without registered criteria has none to
+ * read, and no ledger adds no section. A failed read fails the launch: the gate would
+ * otherwise count a pass for criteria nobody was shown.
  */
 async function reviewCriteriaSection(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
+  run: Run,
 ): Promise<string> {
+  if (!registeredAcceptanceCriteria(run.ticketData?.acceptanceCriteria ?? []).length) return '';
   const ledger = ledgerFromArtifactText(
     await readReviewArtifact(
       vars,
@@ -381,7 +385,7 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   const [check, scope, criteria] = await Promise.all([
     descriptionCheckSection(vars, taskDir, run, pv?.projectJson),
     diffScopeSection(vars, run, pv ? getProjectField(pv.projectJson, 'default_branch') : undefined),
-    reviewCriteriaSection(vars, taskDir),
+    reviewCriteriaSection(vars, taskDir, run),
   ]);
   return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n${criteria ? `\n${criteria}\n` : ''}${reviewBudgetScopeBrief(getRun(run.id) ?? run)}`;
 }
