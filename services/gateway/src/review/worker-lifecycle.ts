@@ -12,6 +12,7 @@ import {
 } from '../runners/native/worker-control.js';
 import { turnTokenSessionId } from '../runners/observability-files.js';
 import {
+  detectRunnerLaunchBlocker,
   readRunnerTurnState,
   resolvePrimaryWorkerTarget,
   runnerPaneLooksIdle,
@@ -57,6 +58,20 @@ export async function runnerTurnIsActive(
   if (state?.confidence !== 'high' || state.value !== 'active') return false;
   if (ownsTurn && (!state.turnToken || !ownsTurn(state.turnToken, state.sessionId))) return false;
   return paneHostsRunnerProcess(vars, target, runner);
+}
+
+/** The runner's pane shows a usage limit: no prompt lands, in this session or a new one, until it resets. */
+export async function runnerUsageLimit(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+): Promise<string | null> {
+  const pane = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
+  );
+  const blocker = detectRunnerLaunchBlocker(pane.stdout, runner);
+  return blocker?.kind === 'usage-limit' ? blocker.summary : null;
 }
 
 function recreateRoleWindowName(roleWindowName?: string | null, flowType?: string | null): string {

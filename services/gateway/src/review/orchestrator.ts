@@ -118,6 +118,7 @@ import {
   rediscoverAcceptingWorkerPane,
   runnerTurnIsActive,
   runnerTurnLeaseIsActive,
+  runnerUsageLimit,
   type WorkerPaneRediscovery,
 } from './worker-lifecycle.js';
 export { handleReviewFsChanged } from './progress.js';
@@ -129,6 +130,8 @@ export interface ReviewResult {
   reviewerSessionId?: string | null;
   skipped?: boolean;
   reason?: string;
+  /** Why the fix never reached the worker, when that ended the loop. */
+  fixDeliveryFailure?: string;
   verdict?: 'pass' | 'issues' | 'blocked';
   issues?: ReviewIssue[];
   reviewSnapshot?: ReviewDiffSnapshot;
@@ -152,6 +155,11 @@ export interface ReviewResult {
 /** The fix checklist exists, but the retained worker did not accept its prompt. */
 export class ReviewFixDeliveryError extends Error {
   override name = 'ReviewFixDeliveryError';
+}
+
+/** The worker's runner is out of quota, so a relaunched session would hit the same limit. */
+export class RunnerOutOfQuotaError extends ReviewFixDeliveryError {
+  override name = 'RunnerOutOfQuotaError';
 }
 
 function resolveWorkerModel(
@@ -906,19 +914,23 @@ export async function runReviewRetryLoop({
     } catch (error) {
       if (!(error instanceof ReviewFixDeliveryError)) throw error;
       let deliveryError: unknown = error;
+      // A relaunched session would hit the same quota, so the findings wait for a person.
+      const outOfQuota = error instanceof RunnerOutOfQuotaError;
       console.warn(
-        `[review] run ${runId.slice(0, 8)} — retained worker rejected the fix task; relaunching once before preserving the findings`,
+        `[review] run ${runId.slice(0, 8)} — retained worker rejected the fix task; ${outOfQuota ? 'runner out of quota, preserving the findings without a relaunch' : 'relaunching once before preserving the findings'}`,
       );
       const run = deps.getRun(runId);
       const fixContext = run?.agentContexts?.find(
         (context) => context.role === 'review-fix' && context.taskFile,
       );
-      const relaunched = await deps.relaunchWorkerForFix(
-        vars,
-        workerRunner,
-        resolveWorkerModel(run, workerRunner, model),
-        runId,
-      );
+      const relaunched =
+        !outOfQuota &&
+        (await deps.relaunchWorkerForFix(
+          vars,
+          workerRunner,
+          resolveWorkerModel(run, workerRunner, model),
+          runId,
+        ));
       if (relaunched) {
         const relaunchedFixContext =
           deps
@@ -951,6 +963,7 @@ export async function runReviewRetryLoop({
         return {
           verdict: 'issues',
           reason: `fix-delivery-unavailable: ${message}`,
+          fixDeliveryFailure: message,
           issues: result.issues,
           validationDepth,
           usage: result.usage,
@@ -2352,6 +2365,7 @@ async function sendOwnedFeedbackToWorker(
     const runner = normalizeRunner(run?.metrics.runner);
     let lastRetainedHoldReason: string | null = null;
     let terminalRetainedHoldReason: string | null = null;
+    let runnerOutOfQuota: string | null = null;
     let structuredDeliveryAccepted = false;
     let acceptedTurnToken: string | undefined;
     let acceptedDeliveryStartedAt: string | undefined;
@@ -2360,7 +2374,7 @@ async function sendOwnedFeedbackToWorker(
     let deliveryBoundaryRecorded = false;
     const loggedRetainedHoldReasons = new Set<string>();
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
-      if (terminalRetainedHoldReason) return false;
+      if (terminalRetainedHoldReason || runnerOutOfQuota) return false;
       // One boundary per attempt: the prompt text follows it, and a retry must never type a
       // different text over an earlier one left in the composer.
       if (!deliveryBoundaryRecorded) {
@@ -2422,6 +2436,7 @@ async function sendOwnedFeedbackToWorker(
       if (retained.disposition === 'hold') {
         lastRetainedHoldReason = retained.reason;
         if (retained.retryable === false) terminalRetainedHoldReason = retained.reason;
+        runnerOutOfQuota = await runnerUsageLimit(vars, target, runner);
         if (!loggedRetainedHoldReasons.has(retained.reason)) {
           loggedRetainedHoldReasons.add(retained.reason);
           console.warn(`[review] retained worker handoff held: ${retained.reason}`);
@@ -2432,7 +2447,7 @@ async function sendOwnedFeedbackToWorker(
     };
     let sent = await deliverFixPrompt(workerTarget);
     let deliverySeenWindows: string[] = [];
-    if (!sent && !terminalRetainedHoldReason) {
+    if (!sent && !terminalRetainedHoldReason && !runnerOutOfQuota) {
       // A busy worker is the NORMAL state of a healthy worker — it is usually
       // busy doing this very run's work when the review lands. Two immediate
       // probes failed the same run three times in one day (02866fe6) while the
@@ -2458,7 +2473,10 @@ async function sendOwnedFeedbackToWorker(
         },
         getRun,
         // A long turn must not let a superseded review deliver its old fix after the turn ends.
-        shouldAbort: () => terminalRetainedHoldReason != null || !nativeReviewOperationIsCurrent(),
+        shouldAbort: () =>
+          terminalRetainedHoldReason != null ||
+          runnerOutOfQuota != null ||
+          !nativeReviewOperationIsCurrent(),
         isTargetBound: () => promptSendAttempted,
         deferredReason: () => lastRetainedHoldReason,
         turnInProgress: (retryTarget) => runnerTurnIsActive(vars, retryTarget, runner),
@@ -2486,6 +2504,10 @@ async function sendOwnedFeedbackToWorker(
       const retainedSummary = lastRetainedHoldReason
         ? ` Retained-session handoff: ${lastRetainedHoldReason}.`
         : '';
+      if (runnerOutOfQuota)
+        throw new RunnerOutOfQuotaError(
+          `Runner out of quota: ${runnerOutOfQuota} Fix delivery and the relaunch stopped (${fixTaskFile}).`,
+        );
       const failureSummary = terminalRetainedHoldReason
         ? 'review fix task delivery stopped after the retained runner was replaced but did not acknowledge the prompt'
         : `review fix task delivery kept deferring for ${Math.round(REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt`;
