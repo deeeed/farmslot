@@ -48,6 +48,16 @@ test('native visual results use the protocol schema and require actual media ref
     false,
   );
 });
+test('a reviewer is never required to return a closure identity; a legacy one still validates', () => {
+  assert.ok(!PIPELINE_VISUAL_JUDGMENTS_SCHEMA.required.includes('closureIdentity'));
+  const { closureIdentity: _closure, ...reviewer } = value;
+  assert.ok(isPipelineVisualJudgments(reviewer));
+  assert.ok(isPipelineVisualJudgments(value));
+  assert.deepEqual(
+    nativeStructuredResult(PIPELINE_VISUAL_RESULT_SCHEMA, reviewer)?.value,
+    reviewer,
+  );
+});
 test('prose, fabricated actor fields, empty notes and duplicate AC answers do not validate', () => {
   for (const invalid of [
     'PASS',

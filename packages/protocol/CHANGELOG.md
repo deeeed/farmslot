@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A pipeline visual reviewer no longer returns a closure identity: `closureIdentity` is optional in the reviewer schema for v1 results and v2 retained rows, and an earlier runner's value still validates. `PipelineVisualReviewerJudgments` and `PipelineRepairReviewerJudgments` type what a reviewer returns; `PipelineVisualJudgments` stays the bound result.
 
 ## 0.57.0 - 2026-10-19
 
