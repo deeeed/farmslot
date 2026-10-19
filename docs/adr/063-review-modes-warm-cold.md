@@ -208,7 +208,8 @@ bounded exception keeps review provenance and publication in the original run.
 
 The gate displays the effective limit and extension receipt. Unauthorized,
 stale or conflicting requests refuse before mutation. Failed and interrupted
-reviews still consume their admissions. Existing approval policy is unchanged.
+reviews keep their admissions; under Amendment 2 a no-verdict attempt spends no
+round. Existing approval policy is unchanged.
 
 ### Public surface
 
@@ -226,7 +227,7 @@ reviews still consume their admissions. Existing approval policy is unchanged.
 
 **Status:** Accepted (lead, 2026-10-18).
 **Trigger:** run 8cff6e80 stopped after one of its two fix attempts with all five rounds spent. Only two of those rounds returned a review: one reviewer timed out after 30 minutes and another emitted invalid JSON. A separate restart double-count (fixed by its own bug PR) spent a third.
-**Specification:** on acceptance, these [Round budget](../reference/review-modes-warm-cold.md#round-budget) rules change to match:
+**Specification:** [No-verdict attempts](../reference/review-modes-warm-cold.md#no-verdict-attempts). These [Round budget](../reference/review-modes-warm-cold.md#round-budget) rules changed to match:
 
 - "including failed and interrupted attempts" (only counted attempts spend a round);
 - "Replay, restart and a different gate or run MUST NOT refund rounds", and the scoped-extension rule "Restart, replay and a copied result MUST NOT refund attempts" (these still never refund by themselves; only the admission owner's settlement below does);

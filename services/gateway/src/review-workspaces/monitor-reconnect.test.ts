@@ -132,6 +132,8 @@ mock.module('./progress.js', {
   },
 });
 const { executeReviewWorkspaceStep } = await import('./pipeline.js');
+const { admitReviewRound, reviewRoundAdmissionId } =
+  await import('../review/review-round-budget.js');
 
 let snapshot: NativeSessionReadResult;
 const requests: Array<{ method: string; params?: Record<string, unknown> }> = [];
@@ -327,6 +329,72 @@ test('a reconnected node with a different owner is refused without waiting again
   await assert.rejects(f.monitor(), /unavailable for this owner/);
   assert.deepEqual(waits, [1000]);
   assert.equal(requests.length, 0);
+});
+
+/** The receipt this run's DISPATCH admitted at `generation`. */
+const workspaceRound = (runId: string, generation: number) =>
+  reviewRoundAdmissionId(`workspace-review-${runId}`, generation + 1, getRun(runId)!.createdAt);
+
+test('a reviewer that stops without a result settles the workspace round no-verdict', async () => {
+  const f = fixture();
+  connect();
+  const round = workspaceRound(f.runId, 7);
+  await admitReviewRound(f.runId, round);
+  snapshot.commands = [{ ...snapshot.commands[0]!, outcome: 'failed' }];
+  await assert.rejects(f.monitor(), /stopped before producing a valid result/);
+  assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round]?.reason, 'review-worker-stopped');
+});
+
+test('a replay that supersedes the monitor settles that attempt, not the one it dispatched', async () => {
+  const f = fixture();
+  updateRun(f.runId, { engineState: { generation: 7, workspaceReviewDispatchGeneration: 7 } });
+  await admitReviewRound(f.runId, workspaceRound(f.runId, 7));
+  await admitReviewRound(f.runId, workspaceRound(f.runId, 8));
+  afterWait = () => {
+    connect();
+    // The operator's replay owns a new generation and has dispatched its own attempt.
+    updateRun(f.runId, { engineState: { generation: 8, workspaceReviewDispatchGeneration: 8 } });
+  };
+  await assert.rejects(f.monitor(), /no longer owns/);
+  const settlements = getRun(f.runId)?.reviewRoundSettlements ?? {};
+  assert.match(settlements[workspaceRound(f.runId, 7)]?.reason ?? '', /no longer owns/);
+  assert.equal(settlements[workspaceRound(f.runId, 8)], undefined);
+});
+
+test('a monitor-only replay settles the attempt it superseded; its verdict counts that round again', async () => {
+  const f = fixture();
+  updateRun(f.runId, { engineState: { generation: 7, workspaceReviewDispatchGeneration: 7 } });
+  const round = workspaceRound(f.runId, 7);
+  await admitReviewRound(f.runId, round);
+  afterWait = () => {
+    connect();
+    // The replay re-enters MONITOR at a new generation; nothing dispatches again.
+    updateRun(f.runId, { engineState: { generation: 8, workspaceReviewDispatchGeneration: 7 } });
+  };
+  await assert.rejects(f.monitor(), /no longer owns/);
+  assert.match(getRun(f.runId)?.reviewRoundSettlements?.[round]?.reason ?? '', /no longer owns/);
+
+  afterWait = undefined;
+  await executeReviewWorkspaceStep(f.runId, PipelineSteps.MONITOR, 8, () => {});
+  assert.deepEqual(getRun(f.runId)?.reviewResult, result);
+  assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round], undefined);
+  assert.equal(getRun(f.runId)?.reviewRoundAdmissions?.filter((id) => id === round).length, 1);
+});
+
+test('a monitor that recorded its review result before failing settles nothing', async () => {
+  const f = fixture();
+  connect();
+  const round = workspaceRound(f.runId, 7);
+  await admitReviewRound(f.runId, round);
+  await assert.rejects(
+    executeReviewWorkspaceStep(f.runId, PipelineSteps.MONITOR, 7, () => {
+      throw new Error('broadcast failed');
+    }),
+    /broadcast failed/,
+  );
+  assert.deepEqual(getRun(f.runId)?.reviewResult, result);
+  // Fixture runs share one PR scope, so only this attempt's receipt is checked.
+  assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round], undefined);
 });
 
 for (const change of ['cancel', 'generation', 'lease'] as const) {

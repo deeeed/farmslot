@@ -72,6 +72,7 @@ import {
   admitReviewRound,
   reviewLaunchStartedAt,
   reviewRoundAdmissionId,
+  settleReviewRoundNoVerdict,
 } from './review-round-budget.js';
 import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
 import {
@@ -93,6 +94,7 @@ import {
 import { expandReviewTemplate } from './templates.js';
 import {
   isTerminalReviewArtifactError,
+  isUncertainReviewerOperation,
   nativeReviewerFailure,
   ReviewerExitedError,
   reviewerExitForNativeSnapshot,
@@ -233,6 +235,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
   const taskMdPath = taskDirRelPath(taskDir, target.checklist);
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
   const startedAt = reviewLaunchStartedAt(context);
+  const roundId = reviewRoundAdmissionId(lineage, loopNumber, startedAt);
   let resultSchema = context?.nativeSession?.resultSchema;
   let progress: { stop(): void | Promise<void> } | undefined;
   let activeTaskSet = false;
@@ -282,7 +285,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           'session-unavailable',
           'the retained reviewer uses another result contract; choose cold',
         );
-      await admitReviewRound(runId, reviewRoundAdmissionId(lineage, loopNumber, startedAt));
+      await admitReviewRound(runId, roundId);
       if (retained) retained = claimWarmReviewerSession(scope, { consume: true });
       if (!recovering) {
         admit();
@@ -529,6 +532,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       ),
     );
     await persistRunNow(getRun(runId)!, 'native reviewer result validated');
+    if (feedback.incomplete) await settleReviewRoundNoVerdict(runId, roundId, 'no-feedback-file');
 
     if (retained && context.runnerSessionId !== retained.runnerSessionId)
       throw new WarmReviewRefusal(
@@ -632,6 +636,23 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           { cause: failure },
         );
       }
+    }
+    // Every end here is no-verdict, a superseded attempt included (ADR-063 Amendment 2).
+    // An uncertain launch or delivery may still be running a reviewer; its round
+    // counts until recovery settles it.
+    try {
+      if (!isUncertainReviewerOperation(failure))
+        await settleReviewRoundNoVerdict(
+          runId,
+          roundId,
+          failure instanceof Error ? failure.message : String(failure),
+        );
+    } catch (settleError) {
+      // An unsettled receipt still counts, which fails closed. The reviewer's own
+      // failure keeps its type so relaunch and cleanup still recognize it.
+      console.warn(
+        `[review] ${runId.slice(0, 8)}: no-verdict settlement failed: ${String(settleError)}`,
+      );
     }
     throw primaryFailure;
   } finally {

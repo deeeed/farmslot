@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { reviewRoundBudgetLabel } from '@farmslot/protocol';
 import { PUBLICATION_GATE_TABS, publicationGateCriteria } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
@@ -189,6 +190,12 @@ export function GateReviewScreen({
         />
       </ScrollView>
       <View style={styles.section}>
+        {viewModel.decision.payload?.kind === 'ready' &&
+        viewModel.decision.payload.reviewRoundBudget?.noVerdict ? (
+          <Text style={styles.muted} testID="companion-gate-review-round-budget">
+            {reviewRoundBudgetLabel(viewModel.decision.payload.reviewRoundBudget)}
+          </Text>
+        ) : null}
         <GateActions
           run={viewModel.run}
           showClaims={false}

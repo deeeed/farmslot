@@ -26,6 +26,7 @@ import {
   type ResourcePostureGateChoice,
   resourcePostureTransitionBaseline,
   reviewChainForRun,
+  reviewRoundBudgetLabel,
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
@@ -1787,7 +1788,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           <Text style={styles.sectionTitle}>Evidence-reviewed actions</Text>
           {reviewBudget ? (
             <Text style={styles.safetyText} testID="companion-review-round-budget">
-              {reviewBudget.label}
+              {reviewRoundBudgetLabel(reviewBudget)}
               {reviewBudget.diagnosis ? `\n${reviewBudget.diagnosis}` : ''}
             </Text>
           ) : null}
