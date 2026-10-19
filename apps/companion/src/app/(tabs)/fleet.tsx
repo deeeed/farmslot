@@ -4,11 +4,12 @@ import React, { useCallback, useMemo } from 'react';
 import { type GestureResponderEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { Run, SlotStatus } from '@farmslot/protocol';
+import { cancelledRunSlotHold, type Run, type SlotStatus } from '@farmslot/protocol';
 
 import { FilterEmptyState } from '../../components/FilterEmptyState';
 import { RunTitle } from '../../components/RunTitle';
 import { NodeSourceStatusDisclosure } from '../../features/sources/SourceStatusSection';
+import { CancelledRunSlotRelease } from '../../features/workspace-shared/CancelledRunSlotRelease';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '../../lib/artifact-url';
 import { runDisplayTitle } from '../../lib/run-display';
 import { baseStyles, colors, fonts, lifecycleColor, spacing } from '../../lib/theme';
@@ -44,6 +45,7 @@ function SlotCard({
     });
   };
   const showTerminalAction = Boolean(contextRunId || slot.lifecycle === 'busy');
+  const cancelledHold = cancelledRunSlotHold(slot);
   const displayTitle = contextRun
     ? runDisplayTitle(contextRun)
     : { title: slot.currentTicketOrPr ?? slot.branch, subtitle: slot.branch };
@@ -103,6 +105,7 @@ function SlotCard({
           ) : null}
         </View>
       </View>
+      {cancelledHold ? <CancelledRunSlotRelease hold={cancelledHold} /> : null}
       {slot.taskStepProgress != null && slot.taskStepProgress > 0 && (
         <View style={styles.progressTrack}>
           <View

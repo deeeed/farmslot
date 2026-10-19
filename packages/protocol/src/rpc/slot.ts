@@ -177,6 +177,12 @@ export interface SlotReleaseParams {
   requestId?: string;
 }
 
+/** A release that did not run says why, so a caller never sees a bare refusal. */
+export interface SlotReleaseResult {
+  released: boolean;
+  reason?: string;
+}
+
 export interface SlotRecycleParams {
   slotId: string;
   forceReset?: boolean;

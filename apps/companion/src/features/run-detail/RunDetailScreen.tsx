@@ -8,6 +8,7 @@ import { createEvidenceReviewModel, runEvidencePending } from '@farmslot/adapter
 import {
   type AcceptanceCriterionRef,
   type AcceptanceStatusLedger,
+  cancelledRunSlotChoices,
   deriveRunLifecycleView,
   Events,
   extractRunArtifactManifest,
@@ -80,10 +81,12 @@ import {
   workspaceRouteContextParams,
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
+import { useFleetStore } from '../../store/fleet';
 import { useRunStore } from '../../store/runs';
 import { GateReviewEntryCard } from '../gate-review/components/gate-review-panels';
 import { NativeWorkerLinks } from '../native-conversation/components/NativeWorkerLinks';
 import { SourceStatusSection } from '../sources/SourceStatusSection';
+import { CancelledRunSlotRelease } from '../workspace-shared/CancelledRunSlotRelease';
 import { formatDuration } from '../workspace-shared/format';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
 import { readReviewRun } from '../workspace-shared/review-publication-action';
@@ -137,6 +140,7 @@ export default function RunDetailScreen() {
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const storeRun = useRunStore((s) => s.runs.find((r) => r.id === resolvedRunId));
+  const fleetSlots = useFleetStore((s) => s.fleet?.slots);
   const upsertRun = useRunStore((s) => s.upsertRun);
   const profileId = useConnectionStore((s) => s.activeProfileId);
   const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
@@ -570,6 +574,7 @@ export default function RunDetailScreen() {
     !run.engineState?.operatorForceCompleted &&
     Boolean(client) &&
     connectionStatus === 'connected';
+  const cancelledSlot = cancelledRunSlotChoices(run, fleetSlots ?? []);
   const focusedArtifactPath = requestedArtifactPath.trim() || null;
   const focusedArtifactIsDiff = Boolean(
     focusedArtifactPath && diffArtifactCandidate([{ path: focusedArtifactPath }]),
@@ -703,6 +708,16 @@ export default function RunDetailScreen() {
             )}
             <Text style={baseStyles.textMuted}>{formatDuration(run.metrics?.durationMs)}</Text>
           </View>
+          {cancelledSlot ? (
+            <CancelledRunSlotRelease
+              hold={cancelledSlot.hold}
+              replay={{
+                label: cancelledSlot.replayLabel,
+                disabled: !replayAllowed || Boolean(replayingStepName),
+                onReplay: () => confirmReplayStep(cancelledSlot.replayStepName),
+              }}
+            />
+          ) : null}
         </View>
 
         {reviewStatus ? (

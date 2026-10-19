@@ -24,12 +24,14 @@ import type {
   RunSessionCommandResult,
   RuntimePosturePreviewResult,
   RuntimePostureStatusResult,
+  SlotStatus,
   TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import { validVisualJudgmentReason } from '@farmslot/protocol';
 import {
   buildRunResolveDecisionParams,
+  cancelledRunSlotChoices,
   Events,
   liveGateParkView,
   Methods,
@@ -221,9 +223,9 @@ export class RunDetail extends RunDetailState {
 
   connectedCallback() {
     super.connectedCallback();
-    this.syncRun(getState());
+    this._syncState(getState());
     window.addEventListener('hashchange', this._onHashChange);
-    this.unsub = subscribe((s) => this.syncRun(s));
+    this.unsub = subscribe((s) => this._syncState(s));
     this.unsubProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
       Events.TASK_PROGRESS_UPDATED,
       (p) => {
@@ -298,6 +300,14 @@ export class RunDetail extends RunDetailState {
     if (this._jumpTimer) clearTimeout(this._jumpTimer);
     if (this._recipeRunsDelayedRefreshTimer) clearTimeout(this._recipeRunsDelayedRefreshTimer);
     this._ciPoke.dispose();
+  }
+
+  /** Fleet slots, so a released or reclaimed slot re-renders the run's slot choices. */
+  @state() private _fleetSlots: readonly SlotStatus[] = [];
+
+  private _syncState(s: AppState) {
+    this._fleetSlots = s.fleet?.slots ?? this._fleetSlots;
+    this.syncRun(s);
   }
 
   private syncRun(s: AppState) {
@@ -1619,6 +1629,7 @@ export class RunDetail extends RunDetailState {
         getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.branch ?? '',
       _slotHealthForRun: (run) =>
         getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.health ?? null,
+      _cancelledRunSlot: this.run ? cancelledRunSlotChoices(this.run, this._fleetSlots) : null,
       _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _publicationActions: this._publicationActions,
       _retryReviewPublication: (run) => this._retryReviewPublication(run),

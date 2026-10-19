@@ -15,6 +15,7 @@ import {
   primaryRoleForFlow,
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
+  type SlotReleaseResult,
 } from '@farmslot/protocol';
 
 import {
@@ -111,10 +112,23 @@ import { findUnmergedSlotWork } from './unmerged-work.js';
 // whatever claimed the slot after the first release finished.
 const inflightReleases = new Map<string, { key: string; promise: Promise<SlotReleaseResult> }>();
 
-/** A release that did not run says why, so a caller never sees a bare refusal. */
-export interface SlotReleaseResult {
-  released: boolean;
-  reason?: string;
+/**
+ * A reset release discards the checkout's local work without checking it
+ * (ADR-054, 2026-10-19). One log line names it, so the reflog can recover it.
+ */
+async function logDiscardedWork(
+  vars: SlotVars,
+  slotId: string,
+  owner: string | null,
+): Promise<void> {
+  const work = await execOnSlot(
+    vars,
+    `cd ${shellQuote(vars.remoteRepo)} && { git rev-parse HEAD 2>/dev/null || echo unknown; git status --porcelain 2>/dev/null | wc -l; }`,
+  );
+  const [head, dirty] = work.stdout.trim().split('\n');
+  console.log(
+    `[slot.release] ${slotId}: reset discards HEAD ${head?.trim() || 'unknown'} and ${dirty?.trim() || 'unknown'} dirty file(s)${owner ? ` of run ${owner}` : ''}`,
+  );
 }
 
 /** How long a release waits for an aborted in-flight prepare to settle. A
@@ -738,6 +752,8 @@ async function slotReleaseImpl(
       await markSlotBusy(params.slotId, 'working');
       throw unmergedWorkError(unmergedWork);
     }
+  } else if (!keepWork) {
+    await logDiscardedWork(vars, params.slotId, boundOwner);
   }
 
   // 3. Collect artifacts + clean task files + git reset
