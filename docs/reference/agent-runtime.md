@@ -47,10 +47,13 @@ owns recovery of a stopped host whose cleanup marker remains unresolved.
   It MUST preserve journal bytes, session/native IDs, generations, command outcomes,
   pending requests, owner/account bindings and run links. It MUST NOT signal a
   process, reset state, resume a runner or resend a command.
-- The shared observer census of a host's process tree MUST fail its observers,
-  which stops the host, only when `ps` fails or runs past 30 seconds
-  ([ADR-057 Amendment 3](../adr/057-structured-runner-transports.md#amendment-3-a-slow-process-census-does-not-stop-the-native-host-2026-10-20)).
-  Synchronous reads by cleanup and startup recovery keep a 5-second timeout.
+- A process census failure MUST fail every observer of the shared observer census,
+  which stops the host when the observer is its supervisor. A slow census is a
+  failure only once `ps` runs past 30 seconds
+  ([ADR-057 Amendment 3](../adr/057-structured-runner-transports.md#amendment-3-a-slow-process-census-does-not-stop-the-native-host-2026-10-20));
+  a failed `ps` or an observer's own failure still fails at once. Synchronous
+  reads by session launch, runner stop, cleanup and startup recovery keep a
+  5-second timeout.
 
 ### Public surface
 

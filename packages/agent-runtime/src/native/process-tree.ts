@@ -36,7 +36,8 @@ export function journalProcesses(
   return processes;
 }
 const columns = 'pid=,ppid=,pgid=,lstart=';
-// Synchronous reads (cleanup, startup recovery) block their caller, so they stay short.
+// Synchronous reads (session launch, runner stop, cleanup, startup recovery) block
+// their caller, so they stay short.
 const censusTimeoutMs = 5_000;
 // The shared observer census runs off the event loop. A slow `ps` on a loaded
 // machine is not lost ownership, so observers fail only past this deadline

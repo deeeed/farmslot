@@ -190,7 +190,7 @@ The synchronous reads used by host cleanup and startup recovery keep their 5-sec
 
 ### Rationale and consequences
 
-On a loaded machine, a single slow `ps` is not evidence that ownership was lost. It killed the host and every session it ran, even though the next census would have succeeded. The cost is detection time: a truly hung census is noticed after up to 30 seconds instead of 5. In that window a descendant that detaches can go unobserved, but the next census still checks the live tree against the recorded identities.
+On a loaded machine, a single slow `ps` is not evidence that ownership was lost. It killed the host and every session it ran, even though the next census would have succeeded. The cost is detection time: a truly hung census is noticed after up to 30 seconds instead of 5. A descendant that is spawned and orphaned between two censuses was never observable, whatever the deadline; a longer census widens that window. While `ps` is between 5 and 30 seconds, the synchronous 5-second reads still fail closed: a session launch fails, and a runner close is left unconfirmed until reconciliation finds its group gone or the host restarts. The host and its other sessions keep running.
 
 ### Public surface
 

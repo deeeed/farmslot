@@ -57,7 +57,7 @@ export async function runScenario({
   timeoutMs = 120_000,
   via = 'sharing',
 }) {
-  assert.ok(['sharing', 'transient', 'persistent', 'deadline'].includes(via));
+  assert.ok(['sharing', 'slow', 'transient', 'persistent', 'deadline'].includes(via));
   assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:19787');
   const root = fs.realpathSync(process.env.FARMSLOT_NATIVE_STATE_DIR);
   const fault = path.resolve(process.env.FARMSLOT_NATIVE_CENSUS_FAULT);
@@ -216,7 +216,7 @@ export async function runScenario({
     const fixture = path.join(cwd, 'spawn-descendant.cjs');
     fs.writeFileSync(
       fixture,
-      `const fs=require('node:fs'), cp=require('node:child_process');\nconst child=cp.spawn(process.execPath,['-e',${JSON.stringify(`setTimeout(()=>require('node:fs').writeFileSync(${JSON.stringify(effectFile)},'unexpected'),30000);`)}],{detached:true,stdio:'ignore'});\nfs.writeFileSync(${JSON.stringify(pidFile)},JSON.stringify({pid:child.pid,parent:process.pid,at:Date.now()}));child.unref();setTimeout(()=>{},45000);\n`,
+      `const fs=require('node:fs'), cp=require('node:child_process');\nconst child=cp.spawn(process.execPath,['-e',${JSON.stringify(`setTimeout(()=>require('node:fs').writeFileSync(${JSON.stringify(effectFile)},'unexpected'),60000);`)}],{detached:true,stdio:'ignore'});\nfs.writeFileSync(${JSON.stringify(pidFile)},JSON.stringify({pid:child.pid,parent:process.pid,at:Date.now()}));child.unref();setTimeout(()=>{},75000);\n`,
     );
     const commandId = randomUUID();
     await rpc('native.session.send', {
@@ -261,7 +261,19 @@ export async function runScenario({
     );
     report.measurements.detached = detached;
     const started = Date.now();
-    if (via === 'sharing') {
+    if (via === 'slow') {
+      // A census slower than the old 5 s deadline but inside the observer deadline
+      // keeps readiness and the host (ADR-057 Amendment 3).
+      configure({ roles: ['supervisor'], delayMs: 8000 });
+      await sleep(12_000);
+      assert.ok(fs.existsSync(path.join(root, 'ready.json')), 'A slow census withdrew readiness');
+      assert.ok(alive(supervisor) && alive(victim.hostPid), 'A slow census stopped the host');
+      configure();
+      report.checks.push(
+        'a census slower than 5 s but inside the observer deadline keeps readiness, the supervisor and the host',
+      );
+    }
+    if (via === 'sharing' || via === 'slow') {
       await rpc('native.session.close', { sessionId: victim.id });
       await wait(
         () => !alive(victim.processPid) && !alive(detached.pid),
@@ -284,7 +296,7 @@ export async function runScenario({
         await wait(
           () => !fs.existsSync(path.join(root, 'ready.json')),
           'census deadline withdraws readiness',
-          8000,
+          40_000,
         );
         report.measurements.readinessWithdrawMs = Date.now() - started;
       }
@@ -326,7 +338,7 @@ export async function runScenario({
       report.measurements.faultStopMs = Date.now() - started;
     }
     if (via !== 'persistent') {
-      await sleep(Math.max(0, detached.at + 31000 - Date.now()));
+      await sleep(Math.max(0, detached.at + 61000 - Date.now()));
       assert.equal(fs.existsSync(effectFile), false, 'Detached descendant performed a late write');
       report.checks.push(
         'real native shell launches detached child; cleanup stops root and detached child before its delayed file write',
