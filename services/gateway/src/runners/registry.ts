@@ -1439,6 +1439,18 @@ export async function resolveLaunchBlockerWithFreshEvidence(opts: {
   return { outcome: 'sent', key };
 }
 
+/** Capture the runner's pane and classify the launch blocker on it, if any. */
+export async function readRunnerLaunchBlocker(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runnerId?: string | null,
+): Promise<{ pane: string; blocker: RunnerLaunchBlocker | null }> {
+  const pane = (
+    await execOnSlot(vars, tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`))
+  ).stdout;
+  return { pane, blocker: detectRunnerLaunchBlocker(pane, runnerId) };
+}
+
 export function detectRunnerLaunchBlocker(
   pane: string,
   runnerId?: string | null,
@@ -2068,13 +2080,9 @@ async function waitForRunnerPromptSendReady(
   const startedAt = Date.now();
   let pane = '';
   while (Date.now() < opts.deadlineMs) {
-    pane = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
-      )
-    ).stdout;
-    const blocker = detectRunnerLaunchBlocker(pane, runner);
+    const read = await readRunnerLaunchBlocker(vars, target, runner);
+    pane = read.pane;
+    const blocker = read.blocker;
     if (runnerPaneHasDeferredLaunchBlocker(pane, runner, blocker)) {
       console.log(
         `[${logPrefix}] waiting for ${blocker?.kind ?? 'launch-blocker'} before prompt send to ${target}`,
