@@ -176,3 +176,22 @@ record the stop, so that journal stayed idle and unconfirmed. Amendment 1 then
 refused every later host start, even once `ps` was fast. Cleanup that a census
 timeout leaves unconfirmed is now confirmed by the next start; a survivor or a
 failed census still refuses, and the next start tries again.
+
+## Amendment 3: a slow process census does not stop the native host, 2026-10-20
+
+**Status:** Proposed. The lead approved the direction on 2026-10-20; acceptance follows paired review.
+**Trigger:** five native host deaths on macwork between 10-15 and 10-19, each recorded in `cleanup-recoveries/`: 10-15 14:06Z, 10-18 08:55Z, 10-18 ~11Z, 10-19 ~11:2xZ and 10-19 13:24Z. Each began with "Native process census exceeded its deadline" while the machine was overloaded; on 10-19 it was at load 305 with about 2000 processes. Each death killed every native session in flight, including TAT-4006 7721a02b's reviewer.
+
+### Decision
+
+The shared process census that observes a native host's process tree waits up to 30 seconds for `ps` before it fails its observers. The deadline was 5 seconds. A census that misses the 30-second deadline, or a `ps` that fails, still fails every observer, so the supervisor still stops the host fail-closed.
+
+The synchronous reads used by host cleanup and startup recovery keep their 5-second timeout. A cleanup that times out still leaves cleanup `unknown`, and the next start recovers under Amendments 1 and 2.
+
+### Rationale and consequences
+
+On a loaded machine, a single slow `ps` is not evidence that ownership was lost. It killed the host and every session it ran, even though the next census would have succeeded. The cost is detection time: a truly hung census is noticed after up to 30 seconds instead of 5. In that window a descendant that detaches can go unobserved, but the next census still checks the live tree against the recorded identities.
+
+### Public surface
+
+No API, flag or field. The change is in `@farmslot/agent-runtime` `native/process-tree.ts`, where the observer census and the synchronous reads now use separate deadlines. It ships as a runtime patch, and every node needs the runtime update and a native host restart.

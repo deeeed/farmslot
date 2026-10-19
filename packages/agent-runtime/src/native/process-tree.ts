@@ -36,7 +36,12 @@ export function journalProcesses(
   return processes;
 }
 const columns = 'pid=,ppid=,pgid=,lstart=';
+// Synchronous reads (cleanup, startup recovery) block their caller, so they stay short.
 const censusTimeoutMs = 5_000;
+// The shared observer census runs off the event loop. A slow `ps` on a loaded
+// machine is not lost ownership, so observers fail only past this deadline
+// (ADR-057 Amendment 3).
+const observerCensusDeadlineMs = 30_000;
 function parseProcesses(output: string): Map<number, ProcessIdentity> {
   const result = new Map<number, ProcessIdentity>();
   for (const line of output.split('\n')) {
@@ -104,7 +109,7 @@ function scheduleCensus(): void {
       ['-axo', columns],
       {
         encoding: 'utf8',
-        timeout: censusTimeoutMs,
+        timeout: observerCensusDeadlineMs,
         killSignal: 'SIGKILL',
         maxBuffer: 16 * 1024 * 1024,
       },
@@ -146,7 +151,7 @@ function scheduleCensus(): void {
       // execFile's timeout waits for child/pipe closure before its callback. Fail
       // ownership observation now, keeping this scan reserved until it really exits.
       for (const observer of [...observers.values()]) observer.failed(stalledCensus);
-    }, censusTimeoutMs);
+    }, observerCensusDeadlineMs);
     deadline.unref();
   }, 100);
   censusTimer.unref();
