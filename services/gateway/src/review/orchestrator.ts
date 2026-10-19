@@ -77,6 +77,7 @@ import {
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
+import { signalIsNewerThanContext } from '../tasks/worker-signal-context.js';
 import {
   normalizeWorkerSignal,
   signalFreshSince,
@@ -1335,13 +1336,18 @@ export function canRecoverReviewFixPass(
   taskDir: string,
   findingsArtifactScope?: string | null,
 ): boolean {
+  // A pass its worker blocked belongs only to its own findings generation: never to a
+  // publication review or a Send back, and never through the legacy null-scope match.
   const matchesFindingsGeneration =
-    !findingsArtifactScope ||
-    !fixContext?.artifactScope ||
-    fixContext.artifactScope === findingsArtifactScope;
+    fixContext?.status === 'blocked'
+      ? (fixContext.artifactScope ?? null) === (findingsArtifactScope ?? null)
+      : !findingsArtifactScope ||
+        !fixContext?.artifactScope ||
+        fixContext.artifactScope === findingsArtifactScope;
   return (
     fixContext?.role === 'review-fix' &&
-    fixContext.status === 'working' &&
+    // A worker that blocked mid-fix can reopen its attempt and finish (TAT-4006 7721a02b).
+    (fixContext.status === 'working' || fixContext.status === 'blocked') &&
     fixContext.taskFile === taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist) &&
     fixContext.signalFile === taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal) &&
     matchesFindingsGeneration
@@ -1629,6 +1635,25 @@ export async function reconcileRecoveredFixPromptDelivery(
   return { status: 'deferred' };
 }
 
+/**
+ * A recovered fix signal belongs to this pass: its own attempt, or one the worker reopened
+ * after it, by the watcher's own rule (TAT-4006 7721a02b).
+ */
+export function recoveredFixSignalMatches(signal: WorkerSignal, fixContext: AgentContext): boolean {
+  return fixContext.signalAttemptId
+    ? signal.attemptId === fixContext.signalAttemptId ||
+        signalIsNewerThanContext(signal, fixContext)
+    : signalFreshSince(signal, fixContext.attemptStartedAt ?? fixContext.startedAt);
+}
+
+/** The worker of a blocked fix pass reopened it and finished a newer attempt. */
+export function blockedFixPassReopened(
+  fixContext: Pick<AgentContext, 'signalAttemptId'>,
+  fixSignal: Pick<WorkerSignal, 'attemptId'> | undefined,
+): boolean {
+  return Boolean(fixSignal?.attemptId && fixSignal.attemptId !== fixContext.signalAttemptId);
+}
+
 export function canSettleRecoveredFixContext(
   current: AgentContext | undefined,
   snapshot: AgentContext,
@@ -1643,12 +1668,12 @@ export function canSettleRecoveredFixContext(
   )
     return false;
   if (current.signalAttemptId === expectedAttemptId) return true;
-  // Recovery may first observe an already-complete signal. Adopt its validated
-  // identity only if no newer delivery or watcher binding replaced our snapshot.
+  // Recovery may first observe an already-complete signal, or one from an attempt the worker
+  // reopened after a block. Adopt its validated identity only if no newer delivery or
+  // watcher binding replaced our snapshot.
   return (
     Boolean(expectedAttemptId) &&
-    !current.signalAttemptId &&
-    !snapshot.signalAttemptId &&
+    current.signalAttemptId === snapshot.signalAttemptId &&
     current.attemptStartedAt === snapshot.attemptStartedAt &&
     current.promptDeliveryStartedAt === snapshot.promptDeliveryStartedAt
   );
@@ -1744,10 +1769,7 @@ async function recoverReviewFixPass({
       try {
         const signal = terminalWorkerSignalFromRaw(raw ?? '');
         if (!signal) return undefined;
-        const matchesAttempt = fixContext.signalAttemptId
-          ? signal.attemptId === fixContext.signalAttemptId
-          : signalFreshSince(signal, fixContext.attemptStartedAt ?? fixContext.startedAt);
-        return matchesAttempt ? signal : undefined;
+        return recoveredFixSignalMatches(signal, fixContext) ? signal : undefined;
       } catch (err) {
         console.warn(
           `[review] ignoring invalid recovered review fix signal for ${runId.slice(0, 8)}: ${(err as Error).message}`,
@@ -1757,6 +1779,10 @@ async function recoverReviewFixPass({
     };
     const rawSignal = await readOptionalReviewFixSignal(vars, fixSignalPath);
     let fixSignal = matchingFixSignal(rawSignal);
+    // A blocked pass is adopted only once its worker reopened and finished a newer attempt.
+    // Otherwise recovery declines, as it did before blocked passes were recoverable.
+    if (fixContext.status === 'blocked' && !blockedFixPassReopened(fixContext, fixSignal))
+      return null;
 
     // Older contexts can be migrated only after their opaque worker attempt
     // matches. Bind the review generation then; never infer it from clocks.

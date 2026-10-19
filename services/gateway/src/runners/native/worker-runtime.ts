@@ -1,4 +1,4 @@
-import type { Run } from '@farmslot/protocol';
+import { nativeWorkerBindingIsHeld, type Run } from '@farmslot/protocol';
 
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 
@@ -10,8 +10,9 @@ export async function reconcileNativeRunAgentRuntime(run: Run): Promise<void> {
   for (const context of run.agentContexts ?? []) {
     const binding = context.nativeSession;
     // Dispatch and resume own their durable in-flight intents. Subtasks share
-    // their direct owner's binding and must not be reconciled twice.
-    if (!binding?.generation || binding.releasedAt || binding.recovery) continue;
+    // their direct owner's binding and must not be reconciled twice. A closed
+    // binding has nothing left to reconcile, and its old failure is not the run's.
+    if (!binding?.generation || !nativeWorkerBindingIsHeld(binding) || binding.recovery) continue;
     const snapshot = await readNativeWorkerSnapshot(run.id, undefined, context.id);
     if (context.runnerSessionId && context.runnerSessionId !== snapshot.session.nativeSessionId)
       throw new Error('Native runtime recovery found a different saved conversation');

@@ -11,6 +11,7 @@ import {
 import {
   buildNoChangeGateInputs,
   CONTINUE_REVIEW_FIX_ACTION,
+  gateReviewContinuation,
   isOwnPrApprovalError,
   noChangeDispositionLabel,
   noChangeRejectionMessage,
@@ -744,4 +745,48 @@ test('a review loop owned by an active Send back continues only through Send bac
   assert.ok(ids().includes(CONTINUE_REVIEW_FIX_ACTION));
   assert.ok(!ids('review-1').includes(CONTINUE_REVIEW_FIX_ACTION), 'no second, charged route');
   assert.ok(ids('review-1').includes(SEND_BACK_TO_AGENT_ACTION));
+});
+
+/** TAT-4145 bda11b1a: codex at the gate found a P1 on the last of five rounds, before any fix. */
+const roundLimitedGateReview = {
+  id: 'review-bda11b1a-e1ba-4b8d-9880-dcff987afff0-9afafeda-94b5-460a-b310-d2110a715f98',
+  source: 'dispatch',
+  runner: 'codex',
+  mode: 'cold' as const,
+  verdict: 'issues',
+  loopNumber: 1,
+  unresolvedCount: 1,
+  feedbackSent: false,
+  recoveryContinuationPending: false,
+  retryCount: 0,
+  maxRetries: 2,
+  reason:
+    'The five review rounds are spent. A design problem or scope creep has exhausted the review budget; stop and narrow the change or redesign it.',
+  reviewedHeadSha: 'e2c042209a44e829a4e0502611aa7240b44243e8',
+  issues: [
+    {
+      file: 'src/features/perpetuals/order/hooks/useOrderMarginMode.ts',
+      description: '[P1] Gate cached capability data with crossMarginEnabled.',
+    },
+  ],
+} satisfies ReviewStatus;
+
+test('round-limited gate findings continue only while a round is available', () => {
+  const reviews = [roundLimitedGateReview];
+  const headSha = roundLimitedGateReview.reviewedHeadSha;
+  assert.equal(pendingReviewContinuation(reviews), undefined, 'recovery never delivers them alone');
+  assert.equal(gateReviewContinuation(reviews, { roundAvailable: false, headSha }), undefined);
+  assert.equal(
+    gateReviewContinuation(reviews, { roundAvailable: true, headSha: 'f'.repeat(40) }),
+    undefined,
+    'findings on an older head',
+  );
+  const continuation = gateReviewContinuation(reviews, { roundAvailable: true, headSha });
+  assert.equal(continuation?.id, roundLimitedGateReview.id);
+  const actions = publicationGateDecisionActions({
+    reviewSatisfied: false,
+    pendingReviewContinuation: continuation,
+    reviews,
+  });
+  assert.ok(actions.some((action) => action.id === CONTINUE_REVIEW_FIX_ACTION));
 });

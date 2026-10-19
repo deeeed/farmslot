@@ -340,3 +340,38 @@ The dispatcher already states, per run, which reviewer it wants. Using that choi
 ### Public surface
 
 No protocol or RPC change. `reviewSequence` row 1 now also selects the pipeline reviewer, and gate review plans count a pipeline review as that row. The spec in `docs/reference/review-modes-warm-cold.md` states both.
+
+## Amendment 4: unresolved code findings at the publish gate, 2026-10-20
+
+**Status:** Accepted (lead, 2026-10-20).
+**Related:** Amendment 1, [ADR-065](065-fail-closed-run-lifecycle.md) Amendment 7, [ADR-062](062-recorded-run-evidence.md) Amendment 10.
+
+### Decision
+
+A publication review at the gate can return code findings when the review budget has no round left for the fix. The fix loop then stops before delivery. Those findings stay pending delivery.
+
+While a review round is available, the gate offers the existing "Continue Fixing N Findings" action for findings at the package head. It resumes the review loop's fix path: the retained worker receives the findings, and the fix is re-reviewed, which spends one round. The action is not offered while the budget is spent. A pending fix also comes before the gate's automatic re-review of changed inputs, so that re-review does not spend the round on the same code.
+
+A recorded grant re-presents a pending publish gate. The gate then shows the effective limit, the grant receipt and the actions that limit allows (Amendment 1), including Continue Fixing. As before, a grant starts no reviewer and delivers nothing by itself; a person chooses the action.
+
+Unchanged:
+
+- visual Send back (ADR-062 Amendment 10);
+- approval rules, so findings at the package head still block Approve Publish;
+- ADR-065 Amendment 7's held results.
+
+### Rationale and consequences
+
+On TAT-4145 run bda11b1a, a codex review at the gate found a P1 on admission 5 of 5. The loop stopped before delivery and recorded the findings as not pending. The gate offered only Hold and Request Review. The 5→6 grant at 16:11Z left the gate saying five rounds were spent.
+
+The gate offered no supported path to the worker. The P1 reached it only through a manual operator terminal message, and was fixed in 25867794. Request Review then reviewed the new head.
+
+### Public surface
+
+There is no new action, status, field or RPC:
+
+- the gateway keeps round-limited findings pending;
+- it offers `continue-review-fix` only while a round is available;
+- it re-presents a pending gate after `run.extendReviewBudget`.
+
+The CLI, Command Center and Companion already render the action and the budget.

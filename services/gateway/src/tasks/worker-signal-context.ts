@@ -3,7 +3,7 @@ import type { AgentContext, AgentRole, WorkerSignal } from '@farmslot/protocol';
 import { TERMINAL_AGENT_STATUSES, upsertAgentContext } from '../agents/contexts.js';
 import { getRun } from '../runs/store.js';
 
-function signalIsNewerThanContext(signal: WorkerSignal, context: AgentContext): boolean {
+export function signalIsNewerThanContext(signal: WorkerSignal, context: AgentContext): boolean {
   // An opaque identity is authoritative on first adoption. This is the
   // migration path for persisted contexts created before attempt IDs existed,
   // and avoids comparing worker and gateway clocks.

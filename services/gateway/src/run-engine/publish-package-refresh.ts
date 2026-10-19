@@ -42,7 +42,7 @@ import { BlockedRunError } from './errors.js';
 import {
   buildEvidenceRefreshAction,
   countStalePublicationReviews,
-  pendingReviewContinuation,
+  gateReviewContinuationForRun,
   publicationGateDecisionActions,
   reviewerIsActiveForReview,
   reviewFinalSnapshotMatchesPreparedPackage,
@@ -473,7 +473,7 @@ async function refreshPublishPackageTransitionLocked(
     ? null
     : buildEvidenceRefreshAction(reviews, prPackage);
   const exhaustedReview = latestExhaustedReview(reviews);
-  const pendingReview = pendingReviewContinuation(reviews);
+  const pendingReview = await gateReviewContinuationForRun(refreshedRun, prPackage.headSha);
   const actions = publicationGateDecisionActions({
     reviewSatisfied,
     evidenceRefreshAction,

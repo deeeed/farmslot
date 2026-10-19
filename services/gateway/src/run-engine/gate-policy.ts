@@ -35,6 +35,7 @@ export { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
 
 import { REQUESTED_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
 import type { ReviewResult } from '../review/orchestrator.js';
+import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import { resolveSelectedEvidenceRef } from '../run-completion/evidence-paths.js';
 import { assertPublicationEvidenceSelection } from '../run-completion/publication-evidence-policy.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
@@ -173,10 +174,14 @@ export function reviewNeedsContinuation(
     | 'attempts'
   >,
 ): boolean {
+  return review.recoveryContinuationPending === true && undeliveredReviewFindings(review);
+}
+
+/** Findings the review loop has not delivered to the worker, with fix retries left. */
+function undeliveredReviewFindings(review: Parameters<typeof reviewNeedsContinuation>[0]): boolean {
   return (
     review.verdict === 'issues' &&
     review.feedbackSent !== true &&
-    review.recoveryContinuationPending === true &&
     review.unresolvedCount > 0 &&
     (review.issues?.length ?? 0) > 0 &&
     !reviewFixRetriesExhausted(review)
@@ -217,10 +222,43 @@ export function normalizeExhaustedReviewContinuation(review: ReviewStatus): Revi
 export function pendingReviewContinuation(
   reviews: readonly ReviewStatus[],
 ): ReviewStatus | undefined {
-  const latest = [...reviews]
+  const latest = latestTerminalReview(reviews);
+  return latest && reviewNeedsContinuation(latest) ? latest : undefined;
+}
+
+function latestTerminalReview(reviews: readonly ReviewStatus[]): ReviewStatus | undefined {
+  return [...reviews]
     .reverse()
     .find((review) => review.verdict === 'pass' || review.verdict === 'issues');
-  return latest && reviewNeedsContinuation(latest) ? latest : undefined;
+}
+
+/**
+ * The review whose findings the publish gate can continue: a pending continuation or, while a
+ * review round is available, findings at `headSha` the loop never delivered because the round
+ * budget stopped it (ADR-063 Amendment 4). Recovery reads only pendingReviewContinuation, so a
+ * restart never delivers them on its own; a person chooses Continue Fixing.
+ */
+export function gateReviewContinuation(
+  reviews: readonly ReviewStatus[],
+  { roundAvailable, headSha }: { roundAvailable: boolean; headSha?: string | null },
+): ReviewStatus | undefined {
+  const pending = pendingReviewContinuation(reviews);
+  if (pending || !roundAvailable) return pending;
+  const latest = latestTerminalReview(reviews);
+  if (!latest || !undeliveredReviewFindings(latest)) return undefined;
+  const reviewedHead = latest.reviewSnapshot?.headSha ?? latest.reviewedHeadSha;
+  return headSha && reviewedHead !== headSha ? undefined : latest;
+}
+
+/** gateReviewContinuation for this run's reviews and current round budget. */
+export async function gateReviewContinuationForRun(
+  run: Run,
+  headSha?: string | null,
+): Promise<ReviewStatus | undefined> {
+  return gateReviewContinuation(run.engineState?.publishGate?.reviews ?? [], {
+    roundAvailable: (await runReviewRoundBudget(run)).remaining > 0,
+    headSha,
+  });
 }
 
 export function isOwnPrApprovalError(err: unknown): boolean {

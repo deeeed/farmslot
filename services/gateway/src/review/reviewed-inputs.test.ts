@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import type { ReviewSelection } from '@farmslot/protocol';
+import type { ReviewSelection, ReviewStatus } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../fleet/state.js';
 import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
@@ -336,4 +336,64 @@ test('a fingerprint recorded with the description in it still matches until evid
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), false);
   await writeFile(path.join(artifacts, 'on-after.png'), 'png-v2');
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), true);
+});
+
+test('findings awaiting a fix come before the gate re-review of changed inputs', async (t) => {
+  // TAT-4145 bda11b1a: after the 16:11Z grant, a gate re-review would have spent round 6 on the
+  // same code before the codex P1 reached the worker.
+  const { run, artifacts } = await slotWithTask(t);
+  await reviewPasses(run.id);
+  const findings: ReviewStatus = {
+    id: 'review-bda11b1a-codex',
+    source: 'dispatch',
+    runner: 'codex',
+    mode: 'cold',
+    verdict: 'issues',
+    loopNumber: 1,
+    unresolvedCount: 1,
+    feedbackSent: false,
+    recoveryContinuationPending: false,
+    retryCount: 0,
+    maxRetries: 2,
+    issues: [
+      {
+        file: 'src/features/perpetuals/order/hooks/useOrderMarginMode.ts',
+        description: '[P1] Gate cached capability data with crossMarginEnabled.',
+      },
+    ],
+  };
+  updateRun(run.id, {
+    engineState: { ...getRun(run.id)!.engineState, publishGate: { reviews: [findings] } },
+  });
+  await writeFile(path.join(artifacts, 'on-after.png'), '## Hidden behind a flag\n');
+  const plans: ReviewSelection[][] = [];
+  const context = {
+    executePublishGateReviewPlan: async (
+      _runId: string,
+      _slotId: string,
+      plan: ReviewSelection[],
+    ) => {
+      plans.push(plan);
+      return { reviewIds: [`review-${plans.length}`] };
+    },
+    getDiffStat: async () => ({ files: 1, additions: 1, deletions: 0 }),
+    prepareCompletionPackageForRun: async (): Promise<PrepareCompletionPackageResult> => ({
+      completion: {
+        prNumber: null,
+        ciRepo: null,
+        artifactsCopied: true,
+        prCommentPosted: false,
+        prTitleUpdated: false,
+        prMarkedReady: false,
+        retrospectiveCreated: false,
+        artifacts: [],
+      },
+      prPackage: makeReadyGatePackage(),
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+      reviews: [],
+    }),
+  };
+  assert.notEqual(await reviewedInputsAwaitingReview(getRun(run.id)!), null);
+  assert.equal(await rerunReviewIfReviewedInputsChanged(run.id, context), false);
+  assert.deepEqual(plans, [], 'Continue Fixing re-reviews after the fix');
 });

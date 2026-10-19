@@ -73,6 +73,7 @@ import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import {
   CLOSE_AS_SHIPPED_ACTION,
   CONTINUE_REVIEW_FIX_ACTION,
+  gateReviewContinuationForRun,
   isPublishApprovalAction,
   reviewFinalSnapshotMatchesPreparedPackage,
   shouldForceNoChangeHumanGate,
@@ -894,6 +895,10 @@ export async function rerunReviewIfReviewedInputsChanged(
   if (!latest || !reviewSlotId) return false;
   const changedInputs = await reviewedInputsAwaitingReview(latest);
   if (!changedInputs) return false;
+  const reviewedPackage = await readReadyGatePreparedPackage(latest);
+  // Findings awaiting a fix come first: Continue Fixing re-reviews after the fix, and a review
+  // now would spend the round on the same code (ADR-063 Amendment 4).
+  if (await gateReviewContinuationForRun(latest, reviewedPackage?.headSha)) return false;
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — evidence or HEAD changed since the last review; running review again`,
   );
@@ -905,7 +910,6 @@ export async function rerunReviewIfReviewedInputsChanged(
       ? { ...parseReviewSelection(reviewSelection), mode: resolveReviewMode() }
       : { runner: 'claude', model: null, effort: null, mode: resolveReviewMode() },
   ];
-  const reviewedPackage = await readReadyGatePreparedPackage(latest);
   const reviewPlanResult = await context.executePublishGateReviewPlan(
     runId,
     reviewSlotId,
