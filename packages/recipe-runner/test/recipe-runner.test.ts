@@ -1665,6 +1665,17 @@ test('runner rejects proof-window video mode until focused clips are implemented
         }),
       /recordVideo mode must be full-run or off/,
     );
+    await assert.rejects(
+      () =>
+        runner.run({
+          recipeDocument: createSmokeRecipe(),
+          artifactsDir: path.join(tempRoot, 'gif-artifacts'),
+          projectRoot: tempRoot,
+          // @ts-expect-error stillFormat accepts only 'webp' or 'png'.
+          recordVideo: { mode: 'full-run', stillFormat: 'gif' },
+        }),
+      /Recording stillFormat must be webp or png, got "gif"/,
+    );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -4041,6 +4052,34 @@ test('CLI rejects proof-window video mode until focused clips are implemented', 
           'proof_window',
         ]),
       /proof-window is reserved for future focused clips/,
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('CLI accepts only webp or png evidence stills', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    const manifestPath = path.join(tempRoot, 'action-manifest.json');
+    await writeJsonFile(recipePath, createSmokeRecipe());
+    await writeJsonFile(manifestPath, coreActionManifest);
+
+    await assert.rejects(
+      () =>
+        runRecipeRunnerCli([
+          'run',
+          recipePath,
+          '--artifacts-dir',
+          path.join(tempRoot, 'artifacts'),
+          '--action-manifest',
+          manifestPath,
+          '--record-video',
+          '--record-still-format',
+          'gif',
+        ]),
+      /--record-still-format must be webp or png/,
     );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

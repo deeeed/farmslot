@@ -19,6 +19,7 @@ import {
   interactiveOperatorPacketArtifacts,
   isInternalRunArtifactPath,
   isPublishEvidenceArtifact,
+  isRunArtifactImagePath,
   isTerminalRunStatus as protocolIsTerminalRunStatus,
   modeForFlow,
   parseGitHubRef,
@@ -608,7 +609,7 @@ function purposeForArtifactPath(path: string): string {
   const name = path.split('/').pop()?.toLowerCase() ?? path.toLowerCase();
   if (/\.(mp4|mov|webm)$/.test(name))
     return name.includes('before') ? 'video-before' : 'video-after';
-  if (/\.(png|jpg|jpeg|gif)$/.test(name))
+  if (isRunArtifactImagePath(name))
     return name.includes('before') ? 'screenshot-before' : 'screenshot-after';
   if (name === 'report.md' || name.includes('report')) return 'report';
   if (name === 'recipe.json' || name.includes('recipe')) return 'recipe';

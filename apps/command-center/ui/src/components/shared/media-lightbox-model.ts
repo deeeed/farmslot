@@ -1,3 +1,4 @@
+import { isRunArtifactImagePath } from '@farmslot/protocol';
 import { isHtmlArtifactPath } from '@farmslot/review-dispatch';
 
 import { JSON_EXTS, MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
@@ -12,7 +13,6 @@ export type LightboxFileType =
   | 'log'
   | 'file';
 
-const IMAGE_EXTS = /\.(png|jpg|jpeg|gif)$/i;
 const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
 const IMAGE_PURPOSES = new Set(['screenshot', 'debug-screenshot']);
 const VIDEO_PURPOSES = new Set(['video', 'video-before', 'video-after']);
@@ -24,7 +24,7 @@ export interface LightboxTypedItem {
 }
 
 export function isImageLightboxItem(item: LightboxTypedItem): boolean {
-  return IMAGE_EXTS.test(item.path) || IMAGE_PURPOSES.has(item.purpose);
+  return isRunArtifactImagePath(item.path) || IMAGE_PURPOSES.has(item.purpose);
 }
 
 export function isVideoLightboxItem(item: LightboxTypedItem): boolean {

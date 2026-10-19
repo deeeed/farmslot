@@ -2,6 +2,8 @@ import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type ArtifactRef,
   isPublishEvidenceArtifact,
+  isRunArtifactImagePath,
+  isRunArtifactMediaPath,
   type RecipeRunArtifactGroup,
   withArtifactBundleDigest,
 } from '@farmslot/protocol';
@@ -12,8 +14,6 @@ export type ArtifactGroup = 'before' | 'after' | 'review' | 'other';
 export type ArtifactFilter = 'all' | ArtifactGroup;
 export type ArtifactTypeFilter = 'all' | 'image' | 'video' | 'markdown' | 'json' | 'diff' | 'other';
 
-export const MEDIA_EXTS = /\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i;
-export const IMAGE_EXTS = /\.(png|jpg|jpeg|gif)$/i;
 export const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
 export const DIFF_EXTS = /(?:^|\/)(?:diff\.txt|.*\.diff)$/i;
 export const MARKDOWN_EXTS = /\.(md|markdown)$/i;
@@ -78,7 +78,7 @@ export function workspaceArtifactGroup(
 ): ArtifactGroup {
   const role = model?.artifactRole(artifact.path);
   if (role === 'review') return role;
-  if (!MEDIA_EXTS.test(artifact.path) && artifact.purpose.toLowerCase().includes('review'))
+  if (!isRunArtifactMediaPath(artifact.path) && artifact.purpose.toLowerCase().includes('review'))
     return 'review';
   const kind = artifactKind(artifact.path, artifact.purpose, model);
   if (kind === 'before' || kind === 'after') return kind;
@@ -101,7 +101,7 @@ export function workspaceArtifactGroupLabel(group: ArtifactGroup): string {
 export function workspaceArtifactType(
   artifact: Pick<ArtifactRef, 'path' | 'purpose'>,
 ): ArtifactTypeFilter {
-  if (IMAGE_EXTS.test(artifact.path)) return 'image';
+  if (isRunArtifactImagePath(artifact.path)) return 'image';
   if (VIDEO_EXTS.test(artifact.path)) return 'video';
   if (MARKDOWN_EXTS.test(artifact.path)) return 'markdown';
   if (JSON_EXTS.test(artifact.path)) return 'json';

@@ -105,7 +105,7 @@ export const PUBLISH_PACKAGE_MAX_FILES = 20_000;
 const SCAN_LINE_LIMIT = PUBLISH_PACKAGE_MAX_FILES * 2;
 
 const TOP_LEVEL_KEPT_EXT =
-  /\.(md|markdown|txt|text|json|jsonl|ndjson|log|ya?ml|toml|csv|tsv|html?|xml|mmd|diff|patch|png|jpe?g|gif|mp4|mov|webm)$/i;
+  /\.(md|markdown|txt|text|json|jsonl|ndjson|log|ya?ml|toml|csv|tsv|html?|xml|mmd|diff|patch|png|jpe?g|gif|webp|mp4|mov|webm)$/i;
 const TOP_LEVEL_EXCLUDES = new Set<string>([
   ...WORKER_ARTIFACT_COPY_EXCLUDES,
   ...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES,
@@ -245,7 +245,7 @@ export function parsePublishPackageScan(
  */
 export function prBodyCitedArtifactPaths(body: string): string[] {
   const paths = new Set<string>();
-  for (const [token] of body.matchAll(/[^\s<>()[\]'"`|]+\.(?:png|jpe?g|gif|mp4|mov|webm)/gi)) {
+  for (const [token] of body.matchAll(/[^\s<>()[\]'"`|]+\.(?:png|jpe?g|gif|webp|mp4|mov|webm)/gi)) {
     if (token.includes('://')) continue;
     const marker = token.lastIndexOf('artifacts/');
     const candidate =
