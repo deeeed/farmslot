@@ -110,6 +110,6 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
     }
   }
   ```
-- [ ] **19. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
+- [ ] **19. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
 - [ ] **20. Write completion signal** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, pr-description, checklist, artifact contract)
       **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.

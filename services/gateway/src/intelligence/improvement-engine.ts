@@ -38,6 +38,8 @@ import { callLLMChat } from '../llm/index.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { getRun, updateRun } from '../runs/store.js';
 
+import { improvementSystemPrompt } from './improvement-prompt.js';
+
 // ─── Chat State (with TTL) ───
 
 const MAX_CHAT_SESSIONS = 20;
@@ -393,9 +395,12 @@ export async function analyzeAndPropose(
     PROJECT_NAME: project,
   });
 
-  const systemPrompt =
-    (projectPrompt ?? DEFAULT_SYSTEM_PROMPT) +
-    `\n\n## Current Learning\n${learningContent}\n\n## Project\n${project}`;
+  const systemPrompt = improvementSystemPrompt(
+    projectPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    learningContent,
+    project,
+    runId,
+  );
 
   const cfg = getLLMConfig();
 
