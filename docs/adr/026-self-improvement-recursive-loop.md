@@ -190,10 +190,10 @@ Retrospective view  →  human grades against proof_targets
 
 ## Phases
 
-| Phase   | Scope                                                                                                                                                                        | Status                              |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| Phase 1 | Move grading into retrospective; proof-target checklist; rerun verdict; improvement-trigger stub; converged pill                                                             | This ADR (UI ships in follow-up PR) |
-| Phase 2 | Real improvement-engine wiring per ADR-021 (LLM call, multi-turn chat, diff proposals); delete `grade-form.ts`                                                               | Later PR                            |
+| Phase   | Scope                                                                                                                                                                            | Status                              |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Phase 1 | Move grading into retrospective; proof-target checklist; rerun verdict; improvement-trigger stub; converged pill                                                                 | This ADR (UI ships in follow-up PR) |
+| Phase 2 | Real improvement-engine wiring per ADR-021 (LLM call, multi-turn chat, diff proposals); delete `grade-form.ts`                                                                   | Later PR                            |
 | Phase 3 | recipe-cook validator integration (automated quality/pass_rate/cost_efficiency scoring, 3-lane bundle rendering, convergence math from VALIDATOR-LOOP.md — 0.90/0.90 thresholds) | Later PR                            |
 
 ## Phase 3 integration notes
@@ -229,3 +229,33 @@ remain the intended integration targets for a later Gateway/UI PR:
 2. Cross-family improvement aggregation (grade trends per project, model, flow).
 3. Companion / mobile grading entry point (still deferred per ADR-025 Follow-up #2).
 4. Route `improvement-engine.applyImprovement` through `packages/skills/scripts/record-validator-run.cjs` once its CLI scope accepts `projects/<project>/**` paths; today the gateway writes a minimal ledger row directly.
+
+## Amendment 1 (2026-10-19): Lessons are signal only
+
+**Status:** Proposed.
+
+### Decision
+
+A lesson changes a template, fixture, review instruction, engine prompt or curated
+learnings file only when both hold:
+
+- It comes from a failure seen on a real run that is likely to recur. The run's own
+  record (trace, logs, review findings, diff or gate outcome) must show that the
+  failure cost a retry, a fix round or a wrong result.
+- It changes what a worker, a reviewer or the engine does.
+
+A worker's `learnings.md` is a claim, not evidence. A claim that can't be verified
+is dropped, and so is a failure that an existing rule already catches.
+
+The lesson is written once, as one line, where its reader acts. A merged code fix
+replaces the instruction. Removing a stale line is preferred to adding one. Run
+histories, per-model notes, operator trivia and record-only entries are not lessons.
+
+Workers report under the same bar: one bullet per qualifying failure in the run,
+and "none" is a valid answer.
+
+### Consequences
+
+The default task template, every pack's learnings step, the improvement engine's
+prompt and bulk retro curation apply this rule. Curated learnings files keep only
+lines that change a run, and the engine proposes nothing for noise.
