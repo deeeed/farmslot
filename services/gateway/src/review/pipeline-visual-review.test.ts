@@ -8,6 +8,7 @@ import test, { after } from 'node:test';
 import {
   type AgentContext,
   type NativeSessionReadResult,
+  type NativeStructuredResult,
   PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
   PIPELINE_VISUAL_RESULT_SCHEMA,
   recordedEvidenceClosureIdentity,
@@ -276,10 +277,10 @@ test('a repair result binds each source and retained row to its launch closure',
   const v1 = snapshot.commands[0]!.structuredResult!.value;
   assert.ok('judgments' in v1);
   const { closureIdentity: _launch, ...fresh } = v1;
-  const repair = (claimId: string) => ({
+  const repair = (claimId: string): NativeStructuredResult => ({
     schema: PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
     value: {
-      schemaVersion: 2 as const,
+      schemaVersion: 2,
       headSha: source.headSha,
       scopeDigest: `sha256:${'d'.repeat(64)}`,
       sources: [fresh],
