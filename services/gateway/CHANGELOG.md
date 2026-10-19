@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A run dispatched with a `reviewSequence` runs its pipeline review, and that review's rechecks after an evidence or head change, with row 1's runner, model and effort (ADR-063 Amendment 3). When row 1 is COLD, the publication gate counts a passing pipeline review of its head as row 1 and runs only the remaining rows; an older-head pipeline review still sends row 1 again, and a WARM row 1 runs at the gate with its own lineage. Runs without a sequence keep the project `review` configuration. Before, TAT-4145 run bda11b1a asked for a codex review and its pipeline review ran the project's claude/opus instead; the gate would then have run codex as an extra review.
 
 ## 0.28.0 - 2026-10-19
 

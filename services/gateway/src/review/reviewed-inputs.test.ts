@@ -264,6 +264,54 @@ test('the publication gate re-runs review once per change before it is presented
   assert.equal(await awaiting(), true);
 });
 
+test('the re-run reviews with the row the pipeline review ran, after the gate consumed it', async (t) => {
+  const { run, artifacts } = await slotWithTask(t);
+  const row: ReviewSelection = {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'xhigh',
+    mode: 'cold',
+  };
+  // The REVIEW step records the dispatch's row 1; the gate has since cleared the sequence.
+  updateRun(run.id, {
+    steps: getRun(run.id)!.steps.map((step) =>
+      step.name === 'review' ? { ...step, inputs: { ...step.inputs, reviewSelection: row } } : step,
+    ),
+  });
+  await reviewPasses(run.id);
+  const plans: ReviewSelection[][] = [];
+  const context = {
+    executePublishGateReviewPlan: async (
+      _runId: string,
+      _slotId: string,
+      plan: ReviewSelection[],
+    ) => {
+      plans.push(plan);
+      return { reviewIds: [] };
+    },
+    getDiffStat: async () => ({ files: 1, additions: 1, deletions: 0 }),
+    prepareCompletionPackageForRun: async (): Promise<PrepareCompletionPackageResult> => ({
+      completion: {
+        prNumber: null,
+        ciRepo: null,
+        artifactsCopied: true,
+        prCommentPosted: false,
+        prTitleUpdated: false,
+        prMarkedReady: false,
+        retrospectiveCreated: false,
+        artifacts: [],
+      },
+      prPackage: makeReadyGatePackage(),
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+      reviews: [],
+    }),
+  };
+
+  await writeFile(path.join(artifacts, 'on-after.png'), 'png-v2');
+  await rerunReviewIfReviewedInputsChanged(run.id, context);
+  assert.deepEqual(plans, [[row]]);
+});
+
 test('a fingerprint recorded with the description in it still matches until evidence, HEAD or (once) the description changes', async (t) => {
   const { run, artifacts } = await slotWithTask(t);
   const current = await readReviewedInputs(getRun(run.id)!);

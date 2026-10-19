@@ -20,6 +20,7 @@ import {
 import {
   automaticPublicationReviewPlan,
   humanGateReviewPolicy,
+  pipelineReviewSatisfiesFirstRow,
   recoveryReviewPlanForActiveFix,
   remainingExplicitReviewPlan,
   repairUnboundRecoveryReviewPlan,
@@ -268,6 +269,35 @@ test('explicit sequence matches each session only once and preserves order', () 
       [passing('one', 'session-1'), passing('retry', 'session-1')],
     ),
     [selection],
+  );
+});
+
+test('a pipeline review stands for row 1 only, at the gate head, for the plan it preceded', () => {
+  const other = { ...selection, runner: 'claude', model: 'opus', effort: null };
+  const review = passing('pipeline-review-1', 'session-1');
+  const scope = { headSha: 'head' };
+  assert.equal(pipelineReviewSatisfiesFirstRow([selection, other], [review], scope), true);
+  assert.equal(
+    pipelineReviewSatisfiesFirstRow([selection], [review], { headSha: 'newer-head' }),
+    false,
+  );
+  assert.equal(pipelineReviewSatisfiesFirstRow([other, selection], [review], scope), false);
+  assert.equal(
+    pipelineReviewSatisfiesFirstRow([selection], [passing('gate', 'session-2', 'dispatch')], scope),
+    false,
+  );
+  assert.equal(
+    pipelineReviewSatisfiesFirstRow([{ ...selection, mode: 'warm' }], [review], scope),
+    false,
+    'a WARM row 1 continues its own lineage',
+  );
+  assert.equal(
+    pipelineReviewSatisfiesFirstRow([selection], [review], {
+      ...scope,
+      requestedAt: '2026-10-11T00:00:00Z',
+    }),
+    false,
+    'a plan a gate, request or recovery rewrote',
   );
 });
 
