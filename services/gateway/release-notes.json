@@ -1,11 +1,11 @@
 {
-  "version": "0.27.0",
+  "version": "0.28.0",
   "date": "2026-10-19",
   "items": [
-    "Cancel stops everything a run started and keeps its slot for replay.",
-    "A review fix waits for a worker mid-turn and stops when the worker runner is out of quota.",
-    "The monitor timeout no longer hands off a worker that is still making progress.",
-    "Code review requests list the recipe actions the task itself provided.",
-    "Pipeline visual review results bind to the evidence they were launched for."
+    "A reviewer attempt that ends without a verdict no longer spends a review round.",
+    "The publish gate offers Continue Fixing for round-limited code findings once a round is available.",
+    "Cleanup of a week-old cancelled run releases the slot its cancel kept.",
+    "Replaying the review step resumes a fix the worker blocked and later finished.",
+    "A gateway restart keeps a blocked run's own reason."
   ]
 }

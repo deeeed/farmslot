@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.0 - 2026-10-19
+
+- Align with `@farmslot/protocol` 0.59.0.
+
 ## 0.44.0 - 2026-10-19
 
 - Align with `@farmslot/protocol` 0.58.0.
