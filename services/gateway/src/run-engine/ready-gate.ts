@@ -15,6 +15,7 @@ import {
   latestExhaustedReview,
   MachineParkEligibilityCodes,
   PipelineSteps,
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type PublicationReviewLaunchRejection,
   type ReadyGateInputSnapshot,
   type ReadyGatePayload,
@@ -41,6 +42,7 @@ import {
 
 import { getProjectField, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import {
   invalidateArtifactTextCache,
@@ -58,7 +60,10 @@ import {
   executeReview as executeReviewDefault,
   type ReviewResult,
 } from '../review/orchestrator.js';
-import { assertReviewRoundAvailable } from '../review/review-round-budget.js';
+import {
+  assertReviewRoundAvailable,
+  reviewNoVerdictCapReason,
+} from '../review/review-round-budget.js';
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { reviewPRIdentity } from '../review/session-mode.js';
 import { removeSlotFiles } from '../review/snapshots.js';
@@ -514,6 +519,15 @@ export async function executePublishGateReviewPlan(
     const launchSnapshot = getRun(runId)!;
     try {
       await assertReviewRoundAvailable(launchSnapshot);
+      // Only an operator request launches past the no-verdict cap.
+      const capReason =
+        source === 'human-gate' ? undefined : await reviewNoVerdictCapReason(launchSnapshot);
+      if (capReason)
+        throw new GatewayMethodError(
+          PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,
+          capReason,
+          { userAction: 'Request a review to retry.' },
+        );
       await assertLaunchAllowed(launchSnapshot.engineState?.publishGate?.reviews ?? [], slotId);
     } catch (error) {
       const rejection = publicationReviewLaunchRejectionFromError(error);

@@ -1008,7 +1008,14 @@ export interface ReviewBudgetExtension {
   approvedAt: string;
 }
 
+/** Why an admitted reviewer attempt ended without a verdict (ADR-063 Amendment 2). */
+export interface ReviewRoundSettlement {
+  reason: string;
+  at: string;
+}
+
 export interface ReviewRoundBudget {
+  /** Admissions minus no-verdict settlements. */
   used: number;
   limit: number;
   remaining: number;
@@ -1016,6 +1023,10 @@ export interface ReviewRoundBudget {
   diagnosis?: string;
   extensions?: ReviewBudgetExtension[];
   extensionSummary?: string;
+  /** Admitted attempts that ended without a verdict; they spend no round. */
+  noVerdict: number;
+  /** At this count, automatic review launches stop. */
+  noVerdictLimit: number;
 }
 
 export interface ReadyGatePayload {
@@ -2711,6 +2722,8 @@ export interface Run {
   sourceProvenance?: import('../sources/contracts.js').RunSourceProvenance;
   /** Gateway-owned, opaque reviewer admission receipts. Replay must retain these. */
   reviewRoundAdmissions?: string[];
+  /** Gateway-owned no-verdict settlements by admission receipt; copied with the admissions. */
+  reviewRoundSettlements?: Record<string, ReviewRoundSettlement>;
   /** Gateway-authorized scoped grants; copied with admissions when a PR scope is shared. */
   reviewBudgetExtensions?: ReviewBudgetExtension[];
   /** Run cleanup preserved resources whose ownership could not be proven. */

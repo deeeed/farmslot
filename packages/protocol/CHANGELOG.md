@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `Run.reviewRoundSettlements` records reviewer attempts that ended without a verdict. `ReviewRoundBudget` adds `noVerdict` and `noVerdictLimit` (`REVIEW_NO_VERDICT_LIMIT`, 3), and `reviewRoundBudgetLabel` formats the gate line with the no-verdict count once there is one (ADR-063 Amendment 2).
 - A pipeline visual reviewer no longer returns a closure identity. The runner schemas (v1 results and v2 retained rows) drop `closureIdentity` and still list every property as required, as strict structured output needs. `nativeStructuredResult` drops a closure identity sent by a runner on the earlier schema before validating. `PipelineVisualReviewerJudgments`, `PipelineRepairReviewerJudgments` and `PipelineRepairReviewerApplicability` type what a reviewer returns; `PipelineVisualJudgments` stays the bound result.
 
 ## 0.57.0 - 2026-10-19

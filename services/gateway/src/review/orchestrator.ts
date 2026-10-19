@@ -94,7 +94,7 @@ import {
 } from './native-review-operation.js';
 import { initReviewProgress, startProgressWatcher } from './progress.js';
 import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
-import { runReviewRoundBudget } from './review-round-budget.js';
+import { reviewNoVerdictCapReason, runReviewRoundBudget } from './review-round-budget.js';
 import { recordReviewedInputs } from './reviewed-inputs.js';
 import {
   invalidateWarmReviewerSessions,
@@ -421,6 +421,8 @@ async function executeOwnedReview(
         artifactScope,
         mode,
         ...(options.reservedFixPass ? { reservedFixPass: options.reservedFixPass } : {}),
+        // Recorded findings resume only for Continue Fixing, Send back or sent feedback.
+        operatorRequested: true,
       });
       return {
         ...retryResult,
@@ -755,6 +757,7 @@ export async function runReviewRetryLoop({
   feedbackAlreadySent = false,
   priorAttempts = [],
   reservedFixPass,
+  operatorRequested = false,
   deps = PRODUCTION_DEPS,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -776,6 +779,8 @@ export async function runReviewRetryLoop({
   feedbackAlreadySent?: boolean;
   priorAttempts?: ReviewAttempt[];
   reservedFixPass?: ReservedFixPass;
+  /** The first pass continues an operator's Continue Fixing or Send back. */
+  operatorRequested?: boolean;
   deps?: ReviewRetryDeps;
 }): Promise<ReviewResult> {
   const reviewGeneration = deps.getRun(runId)?.engineState?.generation ?? 0;
@@ -788,6 +793,7 @@ export async function runReviewRetryLoop({
 
   let roundLimitReason: string | undefined;
   let reserved = reservedFixPass;
+  let operatorPass = operatorRequested;
   while (
     result.verdict === 'issues' &&
     result.issues.length > 0 &&
@@ -800,6 +806,11 @@ export async function runReviewRetryLoop({
       roundLimitReason = budget.diagnosis;
       break;
     }
+    // The no-verdict cap stops automatic re-reviews, not the pass an operator requested.
+    roundLimitReason =
+      budgetRun && !operatorPass ? await reviewNoVerdictCapReason(budgetRun) : undefined;
+    if (roundLimitReason) break;
+    operatorPass = false;
     console.log(
       `[review] run ${runId.slice(0, 8)} — ${result.issues.length} issue(s) found (retry ${retryCount + 1}/${maxRetries})`,
     );

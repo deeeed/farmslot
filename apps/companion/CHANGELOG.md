@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- The decision workspace and gate review show reviewer attempts that ended without a verdict next to the review rounds once there is one, for example `Review rounds 4/5 · 1/3 no-verdict`.
+
 - Run acceptance: a run that is still working no longer shows its evidence as Invalid before the worker finishes. A criterion row shows More and Review evidence only when they have something to open, and while nothing is assessed the panel shows only its counts line, with the list on demand; it opens once a criterion is assessed and not all are proven. Check details lists a criterion's recipe nodes, as Command Center does.
 
 - Terminal and replay checks use the shared terminal status helper.

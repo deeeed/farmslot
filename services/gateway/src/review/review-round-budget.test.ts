@@ -4,7 +4,12 @@ import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import type { ReadyGatePayload, ReviewStatus, RunDecision } from '@farmslot/protocol';
+import {
+  type ReadyGatePayload,
+  reviewRoundBudgetLabel,
+  type ReviewStatus,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
@@ -23,8 +28,10 @@ import {
   assertReviewRoundAvailable,
   attachReviewRoundBudget,
   reviewLaunchStartedAt,
+  reviewNoVerdictCapReason,
   reviewRoundAdmissionId,
   runReviewRoundBudget,
+  settleReviewRoundNoVerdict,
 } from './review-round-budget.js';
 
 function fixture(t: TestContext, ref = `example/budget-${randomUUID()}#42`) {
@@ -212,6 +219,101 @@ test('a new run inherits all spent rounds after its predecessor was archived', a
   const successor = fixture(t, first.ticketOrPr);
   assert.equal((await runReviewRoundBudget(getRun(successor.id)!)).used, 5);
   await assert.rejects(admitReviewRound(successor.id, 'sixth-after-archive'), /five review rounds/);
+});
+
+test('a no-verdict settlement frees its round once and ignores receipts never admitted', async (t) => {
+  const run = fixture(t);
+  for (let index = 0; index < 5; index++) await admitReviewRound(run.id, `round-${index}`);
+  await assert.rejects(admitReviewRound(run.id, 'sixth'), /five review rounds/);
+  await settleReviewRoundNoVerdict(run.id, 'round-3', 'Native reviewer did not complete');
+  await settleReviewRoundNoVerdict(run.id, 'round-3', 'a second end is not recorded');
+  await settleReviewRoundNoVerdict(run.id, 'never-admitted', 'not a round of this work');
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.deepEqual([budget.used, budget.remaining, budget.noVerdict], [4, 1, 1]);
+  const persisted = JSON.parse(
+    await readFile(path.join(runsDirectory(), `${run.id}.json`), 'utf8'),
+  );
+  assert.deepEqual(Object.keys(persisted.reviewRoundSettlements), ['round-3']);
+  assert.equal(
+    persisted.reviewRoundSettlements['round-3'].reason,
+    'Native reviewer did not complete',
+  );
+  await admitReviewRound(run.id, 'replacement');
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 5);
+});
+
+test('settlements reach every run and open gate in the PR scope and survive retiring a run', async (t) => {
+  const first = fixture(t);
+  const second = fixture(t, first.ticketOrPr);
+  updateRun(second.id, {
+    decisions: [
+      {
+        id: 'open-gate',
+        type: 'engine_human_gate',
+        title: 'Ready',
+        description: '',
+        actions: [],
+        payload: {
+          kind: 'ready',
+          prNumber: 42,
+          repo: null,
+          branch: 'feature',
+          workerReport: '',
+          diffStat: { files: 0, additions: 0, deletions: 0 },
+        },
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  });
+  await admitReviewRound(first.id, 'lost-attempt');
+  await admitReviewRound(second.id, 'counted-attempt');
+  await settleReviewRoundNoVerdict(second.id, 'lost-attempt', 'lost on restart');
+  for (const run of [first, second]) {
+    const budget = await runReviewRoundBudget(getRun(run.id)!);
+    assert.deepEqual([budget.used, budget.noVerdict], [1, 1]);
+    assert.equal(
+      getRun(run.id)!.reviewRoundSettlements?.['lost-attempt']?.reason,
+      'lost on restart',
+    );
+  }
+  const gate = getRun(second.id)!.decisions[0].payload as ReadyGatePayload;
+  assert.equal(gate.reviewRoundBudget?.noVerdict, 1);
+  updateRun(first.id, { status: 'failed' });
+  await deleteRun(first.id);
+  const after = await runReviewRoundBudget(getRun(second.id)!);
+  assert.deepEqual([after.used, after.noVerdict], [1, 1]);
+});
+
+test('admitting a settled receipt again spends a round unless that attempt also ends no-verdict', async (t) => {
+  const run = fixture(t);
+  const receipt = reviewRoundAdmissionId(`workspace-review-${run.id}`, 1, run.createdAt);
+  await admitReviewRound(run.id, receipt);
+  await settleReviewRoundNoVerdict(run.id, receipt, 'review-timeout');
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 0);
+  await admitReviewRound(run.id, receipt);
+  const replayed = await runReviewRoundBudget(getRun(run.id)!);
+  assert.deepEqual([replayed.used, replayed.noVerdict], [1, 0]);
+  assert.deepEqual(getRun(run.id)!.reviewRoundSettlements, {});
+
+  await settleReviewRoundNoVerdict(run.id, receipt, 'review-worker-stopped');
+  for (let index = 0; index < 5; index++) await admitReviewRound(run.id, `spent-${index}`);
+  await assert.rejects(admitReviewRound(run.id, receipt), /five review rounds/);
+  assert.ok(getRun(run.id)!.reviewRoundSettlements?.[receipt], 'a refused replay stays settled');
+});
+
+test('the third no-verdict attempt reaches the cap, naming the count and the last failures', async (t) => {
+  const run = fixture(t);
+  for (const [index, reason] of ['timeout', 'invalid JSON', 'lost on restart'].entries()) {
+    await admitReviewRound(run.id, `failed-${index}`);
+    assert.equal(await reviewNoVerdictCapReason(getRun(run.id)!), undefined);
+    await settleReviewRoundNoVerdict(run.id, `failed-${index}`, reason);
+  }
+  const reason = await reviewNoVerdictCapReason(getRun(run.id)!);
+  assert.match(reason ?? '', /^3\/3 reviewer attempts ended without a verdict/);
+  assert.match(reason ?? '', /Last: timeout; invalid JSON; lost on restart$/);
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.deepEqual([budget.used, budget.remaining], [0, 5]);
+  assert.equal(reviewRoundBudgetLabel(budget), 'Review rounds 0/5 · 3/3 no-verdict');
 });
 
 test('legacy gate display adds the budget without changing its captured fields or resolved gates', async (t) => {

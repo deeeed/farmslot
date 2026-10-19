@@ -1,9 +1,25 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
-import type { AgentContext, ReviewStatus, WorkerSignal } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  type Principal,
+  reviewRoundBudgetLabel,
+  type ReviewStatus,
+  type WorkerSignal,
+} from '@farmslot/protocol';
 
+import {
+  admitReviewRound,
+  reviewRoundAdmissionId,
+  runReviewRoundBudget,
+} from '../review/review-round-budget.js';
+import { makeVars } from '../runners/test-fixtures.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
+import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import {
   appendRecoveredContinuationAttempt,
@@ -14,6 +30,7 @@ import {
   recoveredReviewAlreadyIngested,
   recoveredReviewArtifactScope,
   recoveredReviewerActionForPromptRecovery,
+  recoverInflightPublicationReviews,
   reviewerContextIsSettled,
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
@@ -997,4 +1014,75 @@ test('appendRecoveredContinuationAttempt keeps an exhausted review instead of wi
   assert.equal(merged.recoveryContinuationPending, false);
   assert.equal(merged.attempts?.length, 4);
   assert.equal(merged.unresolvedCount, 6);
+});
+
+test('TAT-4006: a reviewer lost to a host outage settles no-verdict, so five admissions use 4/5', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'lost-reviewer-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const vars = makeVars({ remoteRepo: repo, repo });
+  const owner: Principal = {
+    id: 'tat-4006-owner',
+    subject: { type: 'person', displayName: 'Owner' },
+    roles: [{ role: 'admin', scope: { kind: 'global' } }],
+  };
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
+  t.after(() => {
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+  });
+  const run = runWithSessionOriginator(owner, () =>
+    createRun({
+      flowType: 'dev',
+      project: 'example-mobile-farm',
+      ticketOrPr: 'TAT-4006',
+      runner: 'claude',
+      slotId: vars.slotId,
+      transport: 'native',
+    }),
+  );
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const lost: AgentContext = {
+    id: 'reviewer-1312',
+    role: 'review',
+    label: 'Reviewer',
+    status: 'working',
+    runId: run.id,
+    slotId: vars.slotId,
+    runner: 'claude',
+    model: 'opus',
+    reviewId: 'review-4',
+    artifactScope: 'review-4',
+    reviewLoopNumber: 1,
+    startedAt: '2026-10-18T13:12:00.000Z',
+    attemptStartedAt: '2026-10-18T13:12:04.000Z',
+    updatedAt: '2026-10-18T13:12:04.000Z',
+    // The host lost the reviewer process: its session is closed, nothing to reattach.
+    nativeSession: {
+      sessionId: 'reviewer-session',
+      executionNodeId: 'outage-host',
+      ownerPrincipalId: owner.id,
+      leaseId: 'lease',
+      commandId: 'review-command',
+      closedAt: '2026-10-18T13:40:00.000Z',
+    },
+  };
+  const lostRound = reviewRoundAdmissionId('review-4', 1, lost.startedAt!);
+  for (const round of ['round-1', 'round-2', 'round-3', lostRound, 'round-5'])
+    await admitReviewRound(run.id, round);
+  updateRun(run.id, { agentContexts: [lost] });
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 5);
+
+  await recoverInflightPublicationReviews(run.id, vars.slotId, {
+    readers: {
+      slot: async () => vars,
+      config: async () => ({ enabled: true }),
+      package: async () => undefined,
+    },
+  });
+
+  assert.equal(getRun(run.id)!.agentContexts?.[0]?.status, 'failed');
+  assert.equal(getRun(run.id)!.reviewRoundSettlements?.[lostRound]?.reason, 'lost on restart');
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.equal(reviewRoundBudgetLabel(budget), 'Review rounds 4/5 · 1/3 no-verdict');
 });

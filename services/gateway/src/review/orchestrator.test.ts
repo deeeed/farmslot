@@ -3,8 +3,9 @@ import test from 'node:test';
 
 import type { AgentContext, ReviewIssue, WorkerSignal } from '@farmslot/protocol';
 
-import { makeRun } from '../run-engine/test-fixtures.js';
+import { deleteTestRunIfPresent, makeRun } from '../run-engine/test-fixtures.js';
 import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
+import { createRun } from '../runs/store.js';
 
 import { parseReviewIssueBullets } from './issues.js';
 import {
@@ -22,6 +23,7 @@ import {
   shouldSkipForDisabledReviewConfig,
 } from './orchestrator.js';
 import type { ReviewAgentResult } from './review-agent.js';
+import { admitReviewRound, settleReviewRoundNoVerdict } from './review-round-budget.js';
 
 test('deferred handoffs name a missing prior-task receipt instead of claiming worker activity', async (t) => {
   const warnings: string[] = [];
@@ -1289,6 +1291,58 @@ test('runReviewRetryLoop: a reserved Send back pass spends its persisted charge 
   assert.equal(delivered, 1);
   assert.equal(result.retryCount, 2, 'no second increment for the reserved pass');
   assert.equal(calls.reviewAgent, 1, 'the repair is re-reviewed; no unreserved pass follows');
+});
+
+test('runReviewRetryLoop: the no-verdict cap stops automatic re-reviews, not an operator pass', async (t) => {
+  const run = createRun({
+    project: 'review-no-verdict-cap',
+    flowType: 'dev',
+    mode: 'interactive',
+    ticketOrPr: 'CAP-1',
+    runner: 'scripted',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  for (const reason of ['timeout', 'invalid JSON', 'lost on restart']) {
+    await admitReviewRound(run.id, reason);
+    await settleReviewRoundNoVerdict(run.id, reason, reason);
+  }
+  const fixed = (): WorkerSignal => ({ status: 'complete', timestamp: new Date().toISOString() });
+  const issues = { verdict: 'issues', issues: ISSUES } satisfies ReviewAgentResult;
+
+  const automatic = buildDeps({ reviewVerdicts: ['issues'], fixSignals: [fixed()] });
+  const stopped = await runReviewRetryLoop({
+    ...baseArgs,
+    runId: run.id,
+    maxRetries: 2,
+    reviewResult: issues,
+    retryCount: 0,
+    deps: automatic.deps,
+  });
+  assert.equal(
+    automatic.calls.sendFeedback,
+    0,
+    'no fix pass is spent on a re-review that cannot run',
+  );
+  assert.equal(automatic.calls.reviewAgent, 0);
+  assert.match(stopped.reason ?? '', /^3\/3 reviewer attempts ended without a verdict/);
+  assert.equal(stopped.recoveryContinuationPending, false, 'restart does not resume a capped loop');
+
+  const operator = buildDeps({
+    reviewVerdicts: ['issues', 'issues'],
+    fixSignals: [fixed(), fixed()],
+  });
+  const continued = await runReviewRetryLoop({
+    ...baseArgs,
+    runId: run.id,
+    maxRetries: 2,
+    reviewResult: issues,
+    retryCount: 0,
+    operatorRequested: true,
+    deps: operator.deps,
+  });
+  assert.equal(operator.calls.sendFeedback, 1, 'the operator pass is fixed and re-reviewed');
+  assert.equal(operator.calls.reviewAgent, 1, 'the automatic pass after it stops at the cap');
+  assert.match(continued.reason ?? '', /ended without a verdict/);
 });
 
 test('runReviewRetryLoop: a deferred reserved delivery is acknowledged only by its own fix signal', async () => {

@@ -14,7 +14,11 @@ import { loadProjectVars } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
-import { admitReviewRound, reviewRoundAdmissionId } from '../review/review-round-budget.js';
+import {
+  admitReviewRound,
+  reviewRoundAdmissionId,
+  settleReviewRoundNoVerdict,
+} from '../review/review-round-budget.js';
 import {
   buildRepeatReviewContext,
   confirmIncrementalAncestry,
@@ -28,6 +32,8 @@ import {
   observeReviewWorkspaceTransport,
   readReviewWorkspaceWorker,
 } from '../runners/native/review-workspace.js';
+import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
+import { PromptDeliveryUncertainError } from '../runners/registry.js';
 import { observeReviewPromptAcceptance } from '../runners/review-startup.js';
 import {
   launchReviewTmux,
@@ -355,8 +361,38 @@ export function reconcileReviewWorkspaceCleanup(
   return cleanupInProgress;
 }
 
+// Monitor ends where the reviewer left no result for the frozen head (ADR-063 Amendment 2).
+const NO_VERDICT_MONITOR_ENDS = new Set([
+  'review-incomplete',
+  'review-startup-unacknowledged',
+  'review-worker-stopped',
+  'review-result-missing',
+  'review-timeout',
+]);
+
+/** A workspace review run's single receipt; an operator replay admits it again. */
+function workspaceReviewRoundId(run: Pick<Run, 'id' | 'createdAt'>): string {
+  return reviewRoundAdmissionId(`workspace-review-${run.id}`, 1, run.createdAt);
+}
+
 /** Resource-specific step execution under the existing run engine and terminal router. */
 export async function executeReviewWorkspaceStep(
+  runId: string,
+  step: string,
+  generation: number,
+  emit: (event: string, payload: unknown) => void,
+): Promise<{ inputs?: Record<string, unknown>; outputs?: Record<string, unknown> }> {
+  try {
+    return await executeOwnedReviewWorkspaceStep(runId, step, generation, emit);
+  } catch (error) {
+    const run = getRun(runId);
+    if (run && error instanceof BlockedRunError && NO_VERDICT_MONITOR_ENDS.has(error.detail))
+      await settleReviewRoundNoVerdict(runId, workspaceReviewRoundId(run), error.detail);
+    throw error;
+  }
+}
+
+async function executeOwnedReviewWorkspaceStep(
   runId: string,
   step: string,
   generation: number,
@@ -410,14 +446,26 @@ export async function executeReviewWorkspaceStep(
       const started =
         run.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)?.startedAt ??
         new Date().toISOString();
-      await admitReviewRound(
-        runId,
-        reviewRoundAdmissionId(`workspace-review-${runId}`, 1, run.createdAt),
-      );
+      const roundId = workspaceReviewRoundId(run);
+      await admitReviewRound(runId, roundId);
+      // A failed launch is a no-verdict end. One that may have started its
+      // reviewer is reconciled later, so its round still counts.
+      const settleFailedLaunch = async (error: unknown): Promise<never> => {
+        if (
+          !(error instanceof NativeWorkerOperationUncertainError) &&
+          !(error instanceof PromptDeliveryUncertainError)
+        )
+          await settleReviewRoundNoVerdict(
+            runId,
+            roundId,
+            error instanceof Error ? error.message : String(error),
+          );
+        throw error;
+      };
       if (run.transport === 'tmux') {
         const started = await launchReviewTmux(runId, task.prompt, () =>
           admittedRun(runId, generation),
-        );
+        ).catch(settleFailedLaunch);
         return { outputs: { ...started, slotId: null, transport: 'tmux' } };
       }
       const snapshot = await launchReviewWorkspaceWorker({
@@ -429,7 +477,7 @@ export async function executeReviewWorkspaceStep(
         assertCurrent: async () => {
           await admittedRun(runId, generation);
         },
-      });
+      }).catch(settleFailedLaunch);
       return {
         outputs: {
           sessionId: snapshot.session.id,

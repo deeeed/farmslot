@@ -31,6 +31,7 @@ import {
   type ReviewMode,
   reviewPublicationPolicyForRun,
   type ReviewRequestContext,
+  reviewRoundBudgetLabel,
   type ReviewSequence,
   type Run,
   type RunAdoptPublishedPrResult,
@@ -1163,7 +1164,10 @@ export function registerRunCommand(program: Command): void {
             },
           );
           if (emit.machine) emit.ok(result);
-          else output.write(`${result.budget.label}\n${result.budget.extensionSummary}\n`);
+          else
+            output.write(
+              `${reviewRoundBudgetLabel(result.budget)}\n${result.budget.extensionSummary}\n`,
+            );
         } catch (error) {
           emit.fail(error);
         }

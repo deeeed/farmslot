@@ -132,6 +132,8 @@ mock.module('./progress.js', {
   },
 });
 const { executeReviewWorkspaceStep } = await import('./pipeline.js');
+const { admitReviewRound, reviewRoundAdmissionId } =
+  await import('../review/review-round-budget.js');
 
 let snapshot: NativeSessionReadResult;
 const requests: Array<{ method: string; params?: Record<string, unknown> }> = [];
@@ -327,6 +329,20 @@ test('a reconnected node with a different owner is refused without waiting again
   await assert.rejects(f.monitor(), /unavailable for this owner/);
   assert.deepEqual(waits, [1000]);
   assert.equal(requests.length, 0);
+});
+
+test('a reviewer that stops without a result settles the workspace round no-verdict', async () => {
+  const f = fixture();
+  connect();
+  const round = reviewRoundAdmissionId(
+    `workspace-review-${f.runId}`,
+    1,
+    getRun(f.runId)!.createdAt,
+  );
+  await admitReviewRound(f.runId, round);
+  snapshot.commands = [{ ...snapshot.commands[0]!, outcome: 'failed' }];
+  await assert.rejects(f.monitor(), /stopped before producing a valid result/);
+  assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round]?.reason, 'review-worker-stopped');
 });
 
 for (const change of ['cancel', 'generation', 'lease'] as const) {
