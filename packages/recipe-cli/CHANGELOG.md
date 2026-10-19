@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `checklist mark <task-dir> N` on a complete or no-change signal reruns step N when it declares a deterministic check and refreshes its receipt for the current tree; the signal stays complete and a failing check exits non-zero. Before, the mark was ignored, so a commit landed after completion left package preparation refusing with `ci.local_check … status stale` and no way to rerun the step. Other numbered marks and `start` stay ignored.
 
 ## 0.27.0 - 2026-10-19
 

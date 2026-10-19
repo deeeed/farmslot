@@ -546,6 +546,22 @@ if (
 ) {
   assertChecklistComplete(taskPath, { allowOneUnchecked: true });
 }
+// A successful verdict (no-change writes `complete` too) stays put: `./mark N` on
+// a declared deterministic step reruns its check so the receipt matches the
+// current tree, and leaves the box and the signal as they are.
+if (stepNumber != null && readJson(signalPath).status === 'complete') {
+  try {
+    if (deterministicChecks.execute(taskDir, path.basename(taskPath), stepNumber)) {
+      console.log(
+        `signal already terminal: status=complete; refreshed the receipt of deterministic step ${stepNumber} for the current tree`,
+      );
+      process.exit(0);
+    }
+  } catch (error) {
+    console.error(`signal already terminal: status=complete; ${error.message}`);
+    process.exit(1);
+  }
+}
 const target =
   isStartCommand || isOperatorCommand
     ? { stepNumber: null, label: 'started' }
