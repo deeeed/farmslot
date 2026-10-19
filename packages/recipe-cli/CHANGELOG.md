@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.28.0 - 2026-10-19
+
+- `checklist mark <task-dir> N` on a complete or no-change signal reruns step N when it declares a deterministic check and refreshes its receipt for the current tree; the signal stays complete and a failing check exits non-zero. Before, the mark was ignored, so a commit landed after completion left package preparation refusing with `ci.local_check … status stale` and no way to rerun the step. Other numbered marks and `start` stay ignored.
+- Align with `@farmslot/protocol` 0.58.0, `@farmslot/adapter-sdk` 0.23.0, `@farmslot/agent-runtime` 0.34.0 and `@farmslot/recipe-runner` 0.44.0.
+
 ## 0.27.0 - 2026-10-19
 
 - A task action manifest (`--action-manifest`) now adds to the action catalog instead of replacing it. Its declarations come first, and the runtime's own, the bundled library's and the selected libraries' actions stay available. Before, a task manifest dropped every official and library action it did not redeclare. The run passes the actions the task manifest provided to `summary.json` `taskActions`.

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.11.0 - 2026-10-19
+
+- Align with `@farmslot/agent-runtime` 0.34.0.
+
 ## 0.10.0 - 2026-10-19
 
 - Align with `@farmslot/agent-runtime` 0.33.0.

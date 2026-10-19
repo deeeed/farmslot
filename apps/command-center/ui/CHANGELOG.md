@@ -5,8 +5,11 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Cleanup waits as long as a slot release for each run it archives, since archiving a cancelled run releases the slot it kept.
-- A cancelled run that still holds its slot shows it on the run page with Replay from <step> and Release slot side by side, and the fleet card and list row read "held by cancelled run <id>" with Release slot, so a kept slot is not forgotten. Release resets the checkout, as deleting the run does, after a second click to confirm; a refusal shows its reason. Deleting a run, or several, now waits as long as a slot release, as archive does.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.26.0 - 2026-10-19
+
+- A cancelled run that still holds its slot shows it on the run page with Replay from <step> and Release slot side by side, and the fleet card and list row read "held by cancelled run <id>" with Release slot, so a kept slot is not forgotten. Release resets the checkout, as deleting the run does, after a second click to confirm; a refusal shows its reason. Deleting a run, or several, now waits as long as a slot release, as archive does.
 - A blocked run shows its reason and the step it stopped at. The run detail badge and the run list read `Blocked: <reason>` on one line (on its own row at phone width), and the step it stopped at is amber with `! blocked`, with the reason on hover and in the step inspector. Before, it showed a done monitor with every later step skipped, which read as finished.
 
 ## 0.25.0 - 2026-10-19

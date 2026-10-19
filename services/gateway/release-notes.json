@@ -1,8 +1,11 @@
 {
-  "version": "0.26.0",
+  "version": "0.27.0",
   "date": "2026-10-19",
   "items": [
-    "Criteria about the change itself (size, revertability, PR marker) are checked by the code review and count once that review is clean at the package head.",
-    "The improvement engine checks a learning against its source run before proposing it."
+    "Cancel stops everything a run started and keeps its slot for replay.",
+    "A review fix waits for a worker mid-turn and stops when the worker runner is out of quota.",
+    "The monitor timeout no longer hands off a worker that is still making progress.",
+    "Code review requests list the recipe actions the task itself provided.",
+    "Pipeline visual review results bind to the evidence they were launched for."
   ]
 }

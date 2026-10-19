@@ -14,6 +14,9 @@ The shared harness checklist command MUST resolve explicit `--checklist` and
 blocker, run `checklist mark <task-dir> start`, then continue numbered marks. This
 uses the existing runtime start verb, preserves checked boxes and resumes signal
 progress under the launcher's attempt identity. Successful terminal verdicts remain protected.
+On a complete or no-change signal, `checklist mark <task-dir> N` for a declared
+deterministic step reruns that check and refreshes its receipt for the current
+tree without reopening the signal; other numbered marks stay ignored.
 
 Ticket intake preserves an explicit acceptance section, including an empty one. When none is supplied,
 authored `AC1:` or `AC-1:` paragraphs outside fenced code populate the same
@@ -156,7 +159,7 @@ The shared task writer freezes each declaration under `inputs/worker-terminal-co
 
 ### Mark and receipt rules
 
-1. `./mark N` MUST execute the declared command itself before checking the box. Repeating an already checked deterministic step reruns it. Execution uses the Git checkout containing the task, or the caller's target checkout when a standalone task is outside Git. The process inherits the configured environment and runs without a login shell.
+1. `./mark N` MUST execute the declared command itself before checking the box. Repeating an already checked deterministic step reruns it, including after a complete signal. Execution uses the Git checkout containing the task, or the caller's target checkout when a standalone task is outside Git. The process inherits the configured environment and runs without a login shell.
 2. Mark MUST persist a running record first, then an immutable output log and a schema-version-1 completion receipt under `artifacts/deterministic-checks/<checklist>/<step>.json`. The receipt records command, reference, checklist, step, source-input hash, timestamps, exit code, signal and the relative log path/hash.
    Tracked submodules bind their checked-out commit, or their recorded gitlink commit while uninitialized. Uncommitted submodule work MUST fail closed with a commit-and-rerun hint because the parent repository publishes a gitlink, not those local files.
 3. Only exit zero, unchanged publishable inputs and successful receipt persistence permit checking the box. Failure, interruption and missing configuration MUST refuse completion. Bulk/terminal marks and checklist skip flags do not waive these checks. Custom mark engines that cannot produce receipts cannot satisfy declared steps.
