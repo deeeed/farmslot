@@ -1,7 +1,8 @@
 {
-  "version": "0.25.0",
+  "version": "0.26.0",
   "date": "2026-10-19",
   "items": [
-    "Criteria about the change itself read \"Checked in review\" or \"Awaiting code review\", never \"missing\"."
+    "A cancelled run that keeps its slot shows Replay and Release slot side by side.",
+    "A blocked run shows \"Blocked: <reason>\" and marks the step it stopped at."
   ]
 }
