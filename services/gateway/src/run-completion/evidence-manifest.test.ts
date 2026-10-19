@@ -80,6 +80,25 @@ test('buildEvidenceSection renders media and ignores adjacent non-media entries'
   assert.doesNotMatch(section, /report\.json/);
 });
 
+test('buildEvidenceSection renders WebP stills as images, like retained PNG stills', () => {
+  const section = buildEvidenceSection(
+    {
+      before_after_pairs: [{ label: 'AC1', before: 'stills/old.png', after: 'stills/new.webp' }],
+      standalone: [{ label: 'Recorded still', file: 'stills/recorded-3.webp' }],
+    },
+    new Map([
+      ['stills/old.png', 'https://cdn/old.png'],
+      ['stills/new.webp', 'https://cdn/new.webp'],
+      ['stills/recorded-3.webp', 'https://cdn/recorded-3.webp'],
+    ]),
+  );
+
+  assert(section);
+  assert.match(section, /<img[^>]*https:\/\/cdn\/new\.webp/);
+  assert.match(section, /<img[^>]*https:\/\/cdn\/old\.png/);
+  assert.match(section, /<img[^>]*https:\/\/cdn\/recorded-3\.webp/);
+});
+
 test('buildEvidenceSection renders standalone screenshots as a compact two-column grid', () => {
   const section = buildEvidenceSection(
     {

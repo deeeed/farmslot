@@ -5,8 +5,8 @@ import type {
   ResultPackageProjection,
   RunLane,
 } from '@farmslot/protocol';
+import { isRunArtifactImagePath } from '@farmslot/protocol';
 
-const OUTPUT_IMAGE_EXTS = /\.(png|jpg|jpeg|gif)$/i;
 const OUTPUT_VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
 
 export interface FamilyOutputArtifact {
@@ -84,7 +84,7 @@ export function evidenceSummary(
 ): string {
   const artifacts = evidenceForOutputRun(snapshot, run);
   if (artifacts.length === 0) return 'no evidence';
-  const images = artifacts.filter((artifact) => OUTPUT_IMAGE_EXTS.test(artifact.path)).length;
+  const images = artifacts.filter((artifact) => isRunArtifactImagePath(artifact.path)).length;
   const videos = artifacts.filter((artifact) => OUTPUT_VIDEO_EXTS.test(artifact.path)).length;
   const reports = artifacts.filter((artifact) =>
     /report|summary|manifest|coverage|quality/i.test(artifact.path),

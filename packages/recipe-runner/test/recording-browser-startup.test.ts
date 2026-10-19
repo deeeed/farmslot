@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -13,6 +13,8 @@ import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { createStandardUiAdapters } from '../src/adapters/ui.js';
 import { createRecipeRunner } from '../src/core/runner.js';
 import type { RecordingTarget, VideoRecorderStartRequest } from '../src/core/types.js';
+
+import { framePng } from './fixtures/png.js';
 
 const manifest = {
   $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
@@ -55,12 +57,13 @@ const recipe = {
   },
 };
 
-for (const { initialPid, composed } of [
+for (const { initialPid, composed, stillFormat } of [
   { initialPid: 0, composed: false },
   { initialPid: 123, composed: false },
   { initialPid: 123, composed: true },
+  { initialPid: 123, composed: false, stillFormat: 'png' as const },
 ]) {
-  test(`recording binds after ${composed ? 'called' : 'root'} setup when the initial browser PID is ${initialPid}`, async (t) => {
+  test(`recording binds after ${composed ? 'called' : 'root'} setup when the initial browser PID is ${initialPid}${stillFormat ? ` with ${stillFormat} stills` : ''}`, async (t) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'record-browser-setup-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     let pid = initialPid;
@@ -140,7 +143,7 @@ for (const { initialPid, composed } of [
             captureReadyAt = Date.now();
             return {
               async snapshot(output: string) {
-                await writeFile(output, 'PNG fixture');
+                await writeFile(output, framePng());
                 return { output };
               },
               async stop() {
@@ -199,23 +202,39 @@ for (const { initialPid, composed } of [
         : {}),
       projectRoot: root,
       artifactsDir: path.join(root, 'artifacts'),
-      recordVideo: { mode: 'full-run' },
+      recordVideo: { mode: 'full-run', ...(stillFormat ? { stillFormat } : {}) },
     });
     assert.equal(result.status, 'pass');
     const artifactManifest: RecipeArtifactManifestDocument = JSON.parse(
       await readFile(result.artifactManifestPath, 'utf8'),
     );
-    const stills = artifactManifest.artifacts
-      .filter((artifact) => artifact.path.startsWith('stills/'))
-      .map((artifact) => artifact.path);
+    const stillArtifacts = artifactManifest.artifacts.filter((artifact) =>
+      artifact.path.startsWith('stills/'),
+    );
+    const stills = stillArtifacts.map((artifact) => artifact.path);
     assert.equal(stills.length, composed ? 2 : 1);
     assert.equal(new Set(stills).size, stills.length, 'Nested and flattened ids cannot collide');
+    const extension = stillFormat ?? 'webp';
+    for (const artifact of stillArtifacts) {
+      assert.equal(artifact.mimeType, `image/${extension}`);
+      assert.equal(
+        (artifact.metadata?.recordedEvidence as { output?: unknown } | undefined)?.output,
+        artifact.path,
+      );
+    }
     for (const still of stills) {
       assert.equal(path.dirname(still), 'stills');
-      assert.match(path.basename(still), /^[A-Za-z0-9._-]+\.png$/);
+      assert.match(path.basename(still), new RegExp(`^[A-Za-z0-9._-]+\\.${extension}$`));
       assert.ok(path.basename(still).length < 255);
-      assert.equal(await readFile(path.join(root, 'artifacts', still), 'utf8'), 'PNG fixture');
+      const bytes = await readFile(path.join(root, 'artifacts', still));
+      if (stillFormat === 'png') assert.deepEqual(bytes, framePng());
+      else assert.equal(bytes.subarray(8, 12).toString('latin1'), 'WEBP');
     }
+    assert.deepEqual(
+      (await readdir(path.join(root, 'artifacts', 'stills'))).sort(),
+      stills.map((still) => path.basename(still)).sort(),
+      'Only the published stills are kept',
+    );
     assert.deepEqual(events, [
       'doctor',
       'launch',

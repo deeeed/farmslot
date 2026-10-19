@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  type EvidenceStillFormat,
   isRecipeVisualCaptureAction,
   normalizeRecipeClaimId,
   normalizeRecipeRef,
@@ -9,6 +10,8 @@ import {
   type RecipeFailureCause,
   validateResolvedRecipeActionNode,
 } from '@farmslot/protocol';
+
+import { publishEvidenceStill } from '../evidence/still-format.js';
 
 import { withRecipeExecutionSignal } from './execution-signal.js';
 import {
@@ -76,6 +79,8 @@ export interface ExecuteRecipeOptions {
   >;
   logger: RecipeLogger;
   defaultObserverRefs: DefaultObserverRefs;
+  /** Format of the automatic proof stills (ADR-062 Amendment 17). */
+  stillFormat?: EvidenceStillFormat;
   /**
    * Prepare engine-owned capture before the node's context and trace interval begin. `signal` is
    * the executing graph's: teardown's never aborts, so a cancel does not cut cleanup short.
@@ -553,17 +558,27 @@ async function captureAutomaticStill(
   )
     return undefined;
   const nodeKey = createHash('sha256').update(context.nodeId).digest('hex');
-  const file = `stills/${nodeKey}-${attempt}.png`;
   try {
-    const frame = await context.captureRecordingSnapshot(file);
+    const frame = await context.captureRecordingSnapshot(`stills/${nodeKey}-${attempt}.png`);
+    const still = await publishEvidenceStill(
+      context.artifactsDir,
+      `stills/${nodeKey}-${attempt}.png`,
+      options.stillFormat ?? 'webp',
+    );
     const artifact = {
-      path: file,
+      path: still.path,
       type: 'screenshot',
-      mimeType: 'image/png',
+      mimeType: still.mimeType,
       nodeId: context.nodeId,
       category: 'evidence',
       label: typeof node.intent === 'string' ? node.intent : context.nodeId,
-      metadata: { recordedEvidence: { ...frame, traceIndex: options.traceWriter.list().length } },
+      metadata: {
+        recordedEvidence: {
+          ...frame,
+          output: still.path,
+          traceIndex: options.traceWriter.list().length,
+        },
+      },
     };
     await options.registerArtifacts([artifact], context.nodeId);
     return artifact;

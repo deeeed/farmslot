@@ -7,6 +7,7 @@ import {
   type ArtifactRef,
   type HumanPublicationAdoptionReceipt,
   isRecord,
+  isRunArtifactMediaPath,
   type ReadyGatePrPackage,
   RecordedEvidenceReadError,
   type Run,
@@ -481,7 +482,7 @@ export async function publishSelectedEvidence(
 // ─── PR body post-processing (sanitize + author checklist) ───
 
 const BARE_EVIDENCE_FILENAME_PATTERN =
-  /(^|[\s|(='"])(?:\.\/)?(?:before|after|evidence)[^/\s|)>'"]*\.(?:png|jpe?g|gif|mp4|mov|webm)/gi;
+  /(^|[\s|(='"])(?:\.\/)?(?:before|after|evidence)[^/\s|)>'"]*\.(?:png|jpe?g|gif|webp|mp4|mov|webm)/gi;
 const CODE_BLOCK_PATTERN = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
 const INLINE_CODE_SPAN_PATTERN = /``[^`\n]+``|`[^`\n]+`/g;
 
@@ -555,7 +556,6 @@ function protectRemoteLinks(body: string): {
 // `require("file:///…/mod.ts")`, and both killed FINALIZE on real runs even
 // though nothing was linked. So: media residues are flagged everywhere; other
 // local paths are flagged only outside code spans.
-const MEDIA_RESIDUE_RE = /\.(?:png|jpe?g|gif|mp4|mov|webm)$/i;
 
 function extractInlineCodeSpans(body: string): { prose: string; spans: string } {
   const collected: string[] = [];
@@ -579,7 +579,7 @@ function matchResidues(scanned: string, mediaOnly: boolean): string[] {
         // Only media PATHS count inside code spans: `artifacts/after.png` is
         // un-uploaded evidence, but a bare `evidence-ac1.png` is discussing a
         // filename (recipe docs do this constantly; asserted below in tests).
-        if (!MEDIA_RESIDUE_RE.test(cleaned) || !cleaned.includes('/')) continue;
+        if (!isRunArtifactMediaPath(cleaned) || !cleaned.includes('/')) continue;
       }
       residues.push(value);
     }
@@ -624,7 +624,7 @@ export function sanitizePRBody(body: string): string {
   );
   // Strip bare local file paths to media on their own line
   result = result.replace(
-    /^\s*(?:\/Users\/|\/home\/|\/tmp\/|~\/)\S+\.(?:mp4|mov|png|jpg|jpeg|gif)\s*$/gm,
+    /^\s*(?:\/Users\/|\/home\/|\/tmp\/|~\/)\S+\.(?:mp4|mov|png|jpg|jpeg|gif|webp)\s*$/gm,
     '',
   );
   // A relative link resolves against the PR page on GitHub, so it is always
@@ -691,7 +691,7 @@ export function sanitizePRBody(body: string): string {
     .join('\n');
   // Strip markdown image refs with just artifact filenames (before.mp4, after.mp4, evidence-*.png)
   result = result.replace(
-    /!\[[^\]]*\]\((?:before|after|evidence)[^)]*\.(?:mp4|mov|png|jpg|jpeg)\)/g,
+    /!\[[^\]]*\]\((?:before|after|evidence)[^)]*\.(?:mp4|mov|png|jpg|jpeg|webp)\)/g,
     '',
   );
   // Collapse multiple blank lines left by stripping

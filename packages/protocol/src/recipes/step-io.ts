@@ -3,6 +3,8 @@
 // RunStep.inputs/outputs remains Record<string, unknown> for backward compat.
 // These interfaces are used by step executors and consumers via typed casts.
 
+import { isRunArtifactMediaPath } from '../runs/artifact-media.js';
+
 // ─── Shared Foundation Types ───
 
 export interface SubStepRecord {
@@ -135,8 +137,6 @@ export interface ArtifactRef {
   timelineUnavailableReason?: string;
 }
 
-const PUBLISH_EVIDENCE_MEDIA_EXTS = /\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i;
-
 export const INTERNAL_RUN_ARTIFACT_TOP_LEVELS = [
   'harness-launch',
   'harness-relaunch',
@@ -171,7 +171,7 @@ export function isPublishEvidenceArtifact(
 ): boolean {
   const normalizedPath = artifact.path.replace(/\\/g, '/').toLowerCase();
   return (
-    PUBLISH_EVIDENCE_MEDIA_EXTS.test(artifact.path) &&
+    isRunArtifactMediaPath(artifact.path) &&
     !isPublicationEvidenceDependency(artifact) &&
     artifact.purpose?.toLowerCase() !== 'debug-screenshot' &&
     !isInternalRunArtifactPath(normalizedPath) &&
