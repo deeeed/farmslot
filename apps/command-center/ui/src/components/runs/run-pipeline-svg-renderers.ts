@@ -1,6 +1,7 @@
 import { nothing, svg } from 'lit';
 
-import type { Run, RunDecision, RunStep, RunStepStatus } from '@farmslot/protocol';
+import type { Run, RunDecision, RunStep, RunStepDisplayStatus } from '@farmslot/protocol';
+import { runStepDisplayDetail } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -95,7 +96,7 @@ export function renderPipelineLanes(layout: PipelineLayout) {
   `;
 }
 
-export function renderPipelineArrow(arrow: ArrowDef, visibleStatus: RunStepStatus) {
+export function renderPipelineArrow(arrow: ArrowDef, visibleStatus: RunStepDisplayStatus) {
   const markerMap: Record<string, string> = {
     done: 'ah-done',
     running: 'ah-running',
@@ -121,7 +122,7 @@ export function renderPipelineArrow(arrow: ArrowDef, visibleStatus: RunStepStatu
 
 export interface DefaultPipelineNodeContext {
   run: Run;
-  visibleStatus: RunStepStatus;
+  visibleStatus: RunStepDisplayStatus;
   onStepSelect: (step: RunStep) => void;
 }
 
@@ -133,11 +134,9 @@ export function renderDefaultPipelineNode(node: NodePos, context: DefaultPipelin
   const isPending = vis === 'pending';
   const isFailed = vis === 'failed';
   const isSkipped = vis === 'skipped';
-  // Check if this step is blocked waiting for human input
-  const isBlocked =
-    isRunning &&
-    context.run.status === 'blocked' &&
-    context.run.decisions.some((d) => !d.resolvedAt);
+  const isBlocked = vis === 'blocked';
+  // Only a block waiting on a decision pulses; a worker's block has settled.
+  const awaitingDecision = isBlocked && context.run.decisions.some((d) => !d.resolvedAt);
 
   const fillColor = isBlocked
     ? `${colors.statusWarn}18`
@@ -164,6 +163,7 @@ export function renderDefaultPipelineNode(node: NodePos, context: DefaultPipelin
 
   const duration = stepNodeDurationLabel(context.run, node.step);
   const statusIcon = isDone ? 'v' : isRunning ? '*' : isFailed ? 'x' : isSkipped ? '-' : '';
+  const title = runStepDisplayDetail(context.run, node.step);
   const skippedReason = isSkipped
     ? (node.step.outputs as Record<string, unknown> | undefined)?.reason === 'disabled' &&
       context.run.mode === 'autonomous'
@@ -173,8 +173,9 @@ export function renderDefaultPipelineNode(node: NodePos, context: DefaultPipelin
         : 'skipped'
     : '';
   // Show step detail (e.g. "Review: 7/11 steps") when running, fall back to duration
-  const metaText =
-    isRunning && node.step.detail
+  const metaText = isBlocked
+    ? '! blocked'
+    : isRunning && node.step.detail
       ? `${statusIcon} ${node.step.detail}`
       : isSkipped
         ? skippedReason
@@ -183,7 +184,7 @@ export function renderDefaultPipelineNode(node: NodePos, context: DefaultPipelin
           : '';
 
   return svg`
-    <g class="${isBlocked ? 'node-blocked-anim' : isRunning ? 'node-running-anim' : ''}"
+    <g class="${awaitingDecision ? 'node-blocked-anim' : isRunning ? 'node-running-anim' : ''}"
        transform="translate(${node.x}, ${node.y})"
        style="opacity: ${isPending ? 0.4 : isSkipped ? 0.72 : 1}; cursor: pointer"
        @click=${() => context.onStepSelect(node.step)}>
@@ -211,9 +212,9 @@ export function renderDefaultPipelineNode(node: NodePos, context: DefaultPipelin
         }
       </g>
       ${
-        node.step.detail
+        title
           ? svg`
-        <title>${node.step.detail}</title>
+        <title>${title}</title>
       `
           : nothing
       }
@@ -223,7 +224,7 @@ export function renderDefaultPipelineNode(node: NodePos, context: DefaultPipelin
 
 export function renderReviewLoop(
   nodeMap: Map<string, NodePos>,
-  visibleStatus: (step: RunStep) => RunStepStatus,
+  visibleStatus: (step: RunStep) => RunStepDisplayStatus,
 ) {
   const srNode = nodeMap.get('review');
   const monNode = nodeMap.get('monitor');
@@ -283,7 +284,7 @@ export function renderReviewLoop(
 
 export function renderPublicationReviewLoops(
   nodes: NodePos[],
-  visibleStatus: (step: RunStep) => RunStepStatus,
+  visibleStatus: (step: RunStep) => RunStepDisplayStatus,
 ) {
   const reviewNodes = nodes.filter(
     (node) => node.id.includes('publication-review-') && publicationReviewLoopCount(node.step) > 0,
@@ -306,7 +307,7 @@ export function publicationReviewLoopCount(step: RunStep): number {
 
 function renderPublicationReviewLoop(
   node: NodePos,
-  visibleStatus: (step: RunStep) => RunStepStatus,
+  visibleStatus: (step: RunStep) => RunStepDisplayStatus,
 ) {
   const loopCount = publicationReviewLoopCount(node.step);
   if (loopCount <= 0) return nothing;

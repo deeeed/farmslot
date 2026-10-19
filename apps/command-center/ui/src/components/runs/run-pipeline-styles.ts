@@ -40,6 +40,13 @@ export const runPipelineStyles = css`
     position: static;
     flex: 0 0 auto;
   }
+  .pipeline-activity {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .pipeline-svg {
     display: block;

@@ -8,6 +8,8 @@ import test, { after } from 'node:test';
 import {
   type AgentContext,
   type NativeSessionReadResult,
+  type NativeStructuredResult,
+  PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
   PIPELINE_VISUAL_RESULT_SCHEMA,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
@@ -25,6 +27,7 @@ const {
   pipelineReviewerBinding,
   stampPipelineVisualReviews,
   capturePipelineVisualInput,
+  pipelineVisualReviewPrompt,
 } = await import('./pipeline-visual-review.js');
 after(() => rm(directory, { force: true, recursive: true }));
 
@@ -132,7 +135,6 @@ function fixture() {
           value: {
             schemaVersion: 1,
             recipeRunId: input.claims!.recipeRunId,
-            closureIdentity: recordedEvidenceClosureIdentity(input),
             judgments: [
               {
                 claimId: claim.id,
@@ -214,13 +216,12 @@ test('signal or overall PASS cannot replace completed bound native result', () =
   }
 });
 
-test('visual collection refuses different stills, moments, ACs and execution closures', () => {
-  for (const field of ['recipeRunId', 'closureIdentity', 'claimId', 'reviewedFiles', 'moments']) {
+test('visual collection refuses different stills, moments, ACs and executions', () => {
+  for (const field of ['recipeRunId', 'claimId', 'reviewedFiles', 'moments']) {
     const { run, reviewer, snapshot } = fixture();
     const value = snapshot.commands[0]!.structuredResult!.value;
     assert.ok('judgments' in value);
     if (field === 'recipeRunId') value.recipeRunId = 'other';
-    if (field === 'closureIdentity') value.closureIdentity = `sha256:${'b'.repeat(64)}`;
     if (field === 'claimId') value.judgments[0]!.claimId = 'other';
     if (field === 'reviewedFiles') value.judgments[0]!.reviewedFiles = [];
     if (field === 'moments') value.judgments[0]!.moments = [];
@@ -228,6 +229,117 @@ test('visual collection refuses different stills, moments, ACs and execution clo
       () => collectPipelineVisualResult(run, reviewer, snapshot),
       /launch evidence|schema-bound completed/,
     );
+  }
+});
+
+test('a result binds to the launch closure, whatever closure the reviewer returns', () => {
+  // TAT-4145 bda11b1a: the reviewer mis-copied the 64-hex identity it was asked to echo.
+  const launch = recordedEvidenceClosureIdentity(input);
+  const nearMiss = 'sha256:bf0e30edd58fe3420f135d847128ca8149c79b94e06dc7f976b0bd6a989c7e13';
+  for (const legacy of [nearMiss, undefined]) {
+    const { run, reviewer, snapshot } = fixture();
+    const command = snapshot.commands[0]!;
+    // A runner on the earlier schema returns a closure; it reaches the gateway as JSON.
+    if (legacy)
+      command.structuredResult = JSON.parse(
+        JSON.stringify({
+          ...command.structuredResult,
+          value: { ...command.structuredResult!.value, closureIdentity: legacy },
+        }),
+      );
+    const result = collectPipelineVisualResult(run, reviewer, snapshot)!;
+    assert.ok('judgments' in result.result);
+    assert.equal(result.result.closureIdentity, launch);
+  }
+});
+
+test('a repair result binds each source and retained row to its launch closure', () => {
+  const { run, reviewer, snapshot } = fixture();
+  const source = reviewer.pipelineVisualReviewInput!;
+  assert.ok(!('schemaVersion' in source));
+  const retainedClosure = `sha256:${'c'.repeat(64)}`;
+  reviewer.pipelineVisualReviewInput = {
+    schemaVersion: 2,
+    headSha: source.headSha,
+    repairId: 'repair-1',
+    scopeDigest: `sha256:${'d'.repeat(64)}`,
+    sources: [source],
+    retained: [
+      {
+        claimId: 'kept',
+        text: 'Kept criterion',
+        recipeRunId: 'older-run',
+        closureIdentity: retainedClosure,
+        sourceHeadSha: 'e'.repeat(40),
+      },
+    ],
+  };
+  reviewer.nativeSession!.resultSchema = PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA;
+  snapshot.session.resultSchema = PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA;
+  const fresh = snapshot.commands[0]!.structuredResult!.value;
+  assert.ok('judgments' in fresh);
+  const repair = (
+    claimId = 'kept',
+    retainedRunId = 'older-run',
+    sourceRunId = fresh.recipeRunId,
+  ): NativeStructuredResult => ({
+    schema: PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
+    value: {
+      schemaVersion: 2,
+      headSha: source.headSha,
+      scopeDigest: `sha256:${'d'.repeat(64)}`,
+      sources: [{ ...fresh, recipeRunId: sourceRunId }],
+      retained: [
+        {
+          claimId,
+          recipeRunId: retainedRunId,
+          unaffected: true,
+          reason: 'The change does not touch this view.',
+        },
+      ],
+    },
+  });
+  snapshot.commands[0]!.structuredResult = repair();
+  const result = collectPipelineVisualResult(run, reviewer, snapshot)!;
+  assert.ok('retained' in result.result);
+  assert.equal(result.result.sources[0]!.closureIdentity, source.closureIdentity);
+  assert.equal(result.result.retained[0]!.closureIdentity, retainedClosure);
+  for (const mismatch of [
+    repair('other'),
+    repair('kept', 'other-run'),
+    repair('kept', 'older-run', 'other'),
+  ]) {
+    snapshot.commands[0]!.structuredResult = mismatch;
+    assert.throws(() => collectPipelineVisualResult(run, reviewer, snapshot), /launch evidence/);
+  }
+});
+
+test('review prompts never ask for or show a closure identity', () => {
+  const { reviewer } = fixture();
+  const source = reviewer.pipelineVisualReviewInput!;
+  assert.ok(!('schemaVersion' in source));
+  const repair = {
+    schemaVersion: 2 as const,
+    headSha: source.headSha,
+    repairId: 'repair-1',
+    scopeDigest: `sha256:${'d'.repeat(64)}`,
+    sources: [source],
+    retained: [
+      {
+        claimId: 'kept',
+        text: 'Kept criterion',
+        recipeRunId: 'older-run',
+        closureIdentity: `sha256:${'c'.repeat(64)}`,
+        sourceHeadSha: 'e'.repeat(40),
+      },
+    ],
+  };
+  for (const prompt of [
+    pipelineVisualReviewPrompt(source, '/task'),
+    pipelineVisualReviewPrompt(repair, '/task'),
+  ]) {
+    assert.doesNotMatch(prompt, /closureIdentity/);
+    assert.ok(!prompt.includes(source.closureIdentity));
   }
 });
 

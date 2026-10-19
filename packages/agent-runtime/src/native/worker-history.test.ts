@@ -322,7 +322,6 @@ test('a completed structured result remains with its original task lease after h
       value: {
         schemaVersion: 1,
         recipeRunId: 'recording',
-        closureIdentity: 'sha256:' + 'a'.repeat(64),
         judgments: [],
       },
     },

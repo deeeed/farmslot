@@ -8,7 +8,7 @@ import {
   type NativeCommandReceipt,
   type NativeSessionEvent,
   PIPELINE_VISUAL_RESULT_SCHEMA,
-  type PipelineVisualJudgments,
+  type PipelineVisualReviewerJudgments,
 } from '@farmslot/protocol';
 
 import { claudeNativeAdapter } from './claude.js';
@@ -16,10 +16,9 @@ import { NativeSessionManager } from './manager.js';
 import type { NativeAdapterSession } from './types.js';
 
 const digest = 'sha256:' + 'a'.repeat(64);
-const result: PipelineVisualJudgments = {
+const result: PipelineVisualReviewerJudgments = {
   schemaVersion: 1,
   recipeRunId: 'recording',
-  closureIdentity: digest,
   judgments: [
     {
       claimId: 'ac1',

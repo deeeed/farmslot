@@ -677,7 +677,7 @@ export default function RunDetailScreen() {
               <Text style={[styles.flowText, { color: colors.accent }]}>{run.flowType}</Text>
             </View>
             <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>
-              <Text style={[styles.statusText, { color: statusColor }]}>
+              <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1}>
                 {lifecycle.activityLabel ?? lifecycle.label}
               </Text>
             </View>
@@ -1184,6 +1184,7 @@ export default function RunDetailScreen() {
             {(run.steps ?? []).map((step, i) => (
               <PipelineStepCard
                 key={`${step.name}-${i}`}
+                run={run}
                 step={step}
                 index={i}
                 expanded={expandedStep === `${step.name}-${i}`}

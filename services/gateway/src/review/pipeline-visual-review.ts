@@ -15,11 +15,13 @@ import {
   nativeStructuredResult,
   PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
   PIPELINE_VISUAL_RESULT_SCHEMA,
+  type PipelineRepairReviewerJudgments,
   type PipelineRepairVisualJudgments,
   type PipelineRepairVisualReviewInput,
   type PipelineReviewInput,
   type PipelineVisualJudgments,
   type PipelineVisualReviewerBinding,
+  type PipelineVisualReviewerJudgments,
   type PipelineVisualReviewInput,
   type PipelineVisualReviewResult,
   primaryRoleForFlow,
@@ -250,29 +252,30 @@ export function collectPipelineVisualResult(
     !result
   )
     throw new Error('Visual review has no matching schema-bound completed native command');
-  if (
-    isPipelineRepairVisualReviewInput(input)
-      ? result.schema !== PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA ||
-        !repairResultMatches(input, result.value)
-      : result.schema !== PIPELINE_VISUAL_RESULT_SCHEMA || !sourceResultMatches(input, result.value)
-  )
-    throw new Error('Visual review does not match the recorded launch evidence');
+  const bound = isPipelineRepairVisualReviewInput(input)
+    ? result.schema === PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA &&
+      bindRepairResult(input, result.value)
+    : result.schema === PIPELINE_VISUAL_RESULT_SCHEMA && bindSourceResult(input, result.value);
+  if (!bound) throw new Error('Visual review does not match the recorded launch evidence');
   return {
     headSha: input.headSha,
     binding,
-    result: result.value,
+    result: bound,
     completedAt: new Date().toISOString(),
   };
 }
 
-function sourceResultMatches(
+/**
+ * Binds a result to the closure captured at launch for its recipeRunId. A reviewer is never asked
+ * to echo that hash (a model once mis-copied it), so any value it returns is ignored. A different
+ * recipeRunId, AC, reviewed file or moment still fails collection.
+ */
+function bindSourceResult(
   input: PipelineVisualReviewInput,
-  value: PipelineVisualJudgments | PipelineRepairVisualJudgments,
-): boolean {
-  return (
-    'judgments' in value &&
+  value: PipelineVisualReviewerJudgments,
+): PipelineVisualJudgments | undefined {
+  const matches =
     value.recipeRunId === input.recipeRunId &&
-    value.closureIdentity === input.closureIdentity &&
     value.judgments.every((j) => {
       const claim = input.claims.find((c) => c.claimId === j.claimId);
       return (
@@ -280,36 +283,44 @@ function sourceResultMatches(
         digestRecipeDocument(j.reviewedFiles) === digestRecipeDocument(claim.reviewedFiles) &&
         digestRecipeDocument(j.moments) === digestRecipeDocument(claim.moments)
       );
-    })
-  );
+    });
+  return matches ? { ...value, closureIdentity: input.closureIdentity } : undefined;
 }
 
-function repairResultMatches(
+function bindRepairResult(
   input: PipelineRepairVisualReviewInput,
-  value: PipelineVisualJudgments | PipelineRepairVisualJudgments,
-): boolean {
-  return (
-    'retained' in value &&
-    value.headSha === input.headSha &&
-    value.scopeDigest === input.scopeDigest &&
-    value.sources.every((source) =>
-      input.sources.some((entry) => sourceResultMatches(entry, source)),
-    ) &&
-    value.retained.every((row) =>
-      input.retained.some(
-        (entry) =>
-          entry.claimId === row.claimId &&
-          entry.recipeRunId === row.recipeRunId &&
-          entry.closureIdentity === row.closureIdentity,
-      ),
-    )
-  );
+  value: PipelineRepairReviewerJudgments,
+): PipelineRepairVisualJudgments | undefined {
+  if (value.headSha !== input.headSha || value.scopeDigest !== input.scopeDigest) return;
+  const sources: PipelineVisualJudgments[] = [];
+  for (const source of value.sources) {
+    const entry = input.sources.find((candidate) => candidate.recipeRunId === source.recipeRunId);
+    const bound = entry && bindSourceResult(entry, source);
+    if (!bound) return;
+    sources.push(bound);
+  }
+  const retained: PipelineRepairVisualJudgments['retained'] = [];
+  for (const row of value.retained) {
+    const entry = input.retained.find(
+      (candidate) => candidate.claimId === row.claimId && candidate.recipeRunId === row.recipeRunId,
+    );
+    if (!entry) return;
+    retained.push({ ...row, closureIdentity: entry.closureIdentity });
+  }
+  return { ...value, sources, retained };
 }
 
 export function pipelineVisualReviewPrompt(input: PipelineReviewInput, taskDir: string): string {
   if (isPipelineRepairVisualReviewInput(input))
-    return `\n## Independent visual verification of a repair\nThis head repairs criteria a person or reviewer rejected. Keep the code review report and terminal mark as instructed. Your FINAL response must be only the schema-constrained JSON result with schemaVersion 2, headSha ${JSON.stringify(input.headSha)}, scopeDigest ${JSON.stringify(input.scopeDigest)}, sources and retained.\nsources: for each fresh source below, inspect its retained media (paths relative to ${taskDir}/<artifactPrefix>) and return its recipeRunId, closureIdentity and judgments exactly as for a normal visual verification: claimId, verdict confirmed/rejected, a concrete one-line reason, and the exact reviewedFiles/moments listed. Omit any AC you cannot inspect.\nretained: these ACs keep older proof recorded at sourceHeadSha. Read git diff <sourceHeadSha>..${input.headSha} and set unaffected true only when that change cannot alter what the AC proves; otherwise false. Each row has claimId, recipeRunId, closureIdentity, unaffected and a concrete one-line reason. Do not infer success from the overall code review.\nFresh sources:\n${JSON.stringify(input.sources, null, 2)}\nRetained:\n${JSON.stringify(input.retained, null, 2)}\n`;
-  return `\n## Independent visual verification\nInspect the retained media for each AC below. Paths are relative to ${taskDir}/${input.artifactPrefix}. Check the stills and exact engine moments, not the worker's claims. Keep the code review report and terminal mark as instructed. Your FINAL response must be only the schema-constrained JSON result with schemaVersion 1, recipeRunId ${JSON.stringify(input.recipeRunId)}, closureIdentity ${JSON.stringify(input.closureIdentity)}, and judgments. Each judgment has claimId, verdict confirmed/rejected, a concrete one-line reason, and the exact reviewedFiles/moments below. Omit any AC you cannot inspect; do not infer success from the overall code review.\n${JSON.stringify(input.claims, null, 2)}\n`;
+    return `\n## Independent visual verification of a repair\nThis head repairs criteria a person or reviewer rejected. Keep the code review report and terminal mark as instructed. Your FINAL response must be only the schema-constrained JSON result with schemaVersion 2, headSha ${JSON.stringify(input.headSha)}, scopeDigest ${JSON.stringify(input.scopeDigest)}, sources and retained.\nsources: for each fresh source below, inspect its retained media (paths relative to ${taskDir}/<artifactPrefix>) and return its recipeRunId and judgments exactly as for a normal visual verification: claimId, verdict confirmed/rejected, a concrete one-line reason, and the exact reviewedFiles/moments listed. Omit any AC you cannot inspect.\nretained: these ACs keep older proof recorded at sourceHeadSha. Read git diff <sourceHeadSha>..${input.headSha} and set unaffected true only when that change cannot alter what the AC proves; otherwise false. Each row has claimId, recipeRunId, unaffected and a concrete one-line reason. Do not infer success from the overall code review.\nFresh sources:\n${JSON.stringify(input.sources.map(withoutClosure), null, 2)}\nRetained:\n${JSON.stringify(input.retained.map(withoutClosure), null, 2)}\n`;
+  return `\n## Independent visual verification\nInspect the retained media for each AC below. Paths are relative to ${taskDir}/${input.artifactPrefix}. Check the stills and exact engine moments, not the worker's claims. Keep the code review report and terminal mark as instructed. Your FINAL response must be only the schema-constrained JSON result with schemaVersion 1, recipeRunId ${JSON.stringify(input.recipeRunId)} and judgments. Each judgment has claimId, verdict confirmed/rejected, a concrete one-line reason, and the exact reviewedFiles/moments below. Omit any AC you cannot inspect; do not infer success from the overall code review.\n${JSON.stringify(input.claims, null, 2)}\n`;
+}
+
+function withoutClosure<T extends { closureIdentity: string }>({
+  closureIdentity: _closure,
+  ...rest
+}: T): Omit<T, 'closureIdentity'> {
+  return rest;
 }
 
 /** Package preparation is the sole activation point for validated launch results. */

@@ -9,7 +9,7 @@ import {
   PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
   PIPELINE_VISUAL_JUDGMENTS_SCHEMA,
   PIPELINE_VISUAL_RESULT_SCHEMA,
-  type PipelineRepairVisualJudgments,
+  type PipelineRepairReviewerJudgments,
   type RecipeClaimEvidence,
   recipeRepairId,
   type RecipeRepairScope,
@@ -253,7 +253,7 @@ test('v2 repair results carry per-source judgments and typed retained applicabil
     nativeResultJsonSchema(PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA),
     PIPELINE_REPAIR_VISUAL_JUDGMENTS_SCHEMA,
   );
-  const value: PipelineRepairVisualJudgments = {
+  const value: PipelineRepairReviewerJudgments = {
     schemaVersion: 2,
     headSha: 'a'.repeat(40),
     scopeDigest: digest('1'),
@@ -261,7 +261,6 @@ test('v2 repair results carry per-source judgments and typed retained applicabil
       {
         schemaVersion: 1,
         recipeRunId: 'fresh-run',
-        closureIdentity: digest('2'),
         judgments: [
           {
             claimId: 'AC-2',
@@ -277,7 +276,6 @@ test('v2 repair results carry per-source judgments and typed retained applicabil
       {
         claimId: 'AC-1',
         recipeRunId: 'original',
-        closureIdentity: digest('e'),
         unaffected: true,
         reason: 'The repair diff only touches the chart component.',
       },
