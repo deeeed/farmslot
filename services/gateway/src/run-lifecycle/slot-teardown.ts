@@ -68,6 +68,8 @@ export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
     !run ||
     run.slotId !== slotId ||
     !isTerminalRunStatus(run.status) ||
+    // A cancelled run keeps its slot for replay until release, delete or archive (ADR-054).
+    run.status === 'cancelled' ||
     isCompletionPrerequisiteFailure(run) ||
     isActiveSlotHolder(run)
   )
@@ -418,10 +420,16 @@ export async function stopRunOwnedTmuxAndWatches(
 }
 
 /** Foreign occupancy prevents destructive cleanup, but does not retain a terminal run's pointer. */
+/** What a cancelled run's slot shows while it is kept for replay (ADR-054, 2026-10-19). */
+export function cancelledRunHoldReason(runId: string): string {
+  return `Held by cancelled run ${runId}: replay it or release the slot`;
+}
+
 export async function releaseRunSlotOwnership(
   run: Run,
   fence: RunSlotCleanupFence,
   blocker: string | null,
+  { keepForReplay = false }: { keepForReplay?: boolean } = {},
 ): Promise<boolean> {
   if (!run.slotId) return false;
   const before = fence.before;
@@ -443,6 +451,17 @@ export async function releaseRunSlotOwnership(
     const { killSlotScreenSessions } = await import('../runtime/screen-session.js');
     await assertOwned();
     killSlotScreenSessions(run.slotId, run.id);
+    if (keepForReplay)
+      // The checkout and the run's ownership stay, so run.replayStep can reclaim the slot.
+      return updateSlotStatusIf(run.slotId, current, {
+        lifecycle: 'held',
+        phase: 'occupied',
+        held_reason: cancelledRunHoldReason(run.id),
+        cleanup_release_token: null,
+        [SLOT_RELEASING_SINCE]: null,
+        agent: 'idle',
+        ...(before?.handoff_run_id === run.id ? { handoff_run_id: null } : {}),
+      });
     return resetSlotIf(run.slotId, current, true);
   }
   await updateSlotStatusIf(run.slotId, current, {

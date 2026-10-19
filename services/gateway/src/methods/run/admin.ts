@@ -26,7 +26,15 @@ import {
 } from '@farmslot/protocol';
 
 import { markBacklogRunReleased } from '../../backlog/store.js';
-import { readSlotField, readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
+import {
+  execOnSlot,
+  loadSlotVars,
+  ownsRunSlotCleanup,
+  readSlotField,
+  readSlotRow,
+  SLOT_PHASE_RELEASING,
+} from '../../core/index.js';
+import { shellQuote } from '../../core/tmux.js';
 import { cleanupReviewWorkspaceCaches } from '../../review-workspaces/cache-cleanup.js';
 import { STALE_RELEASE_RECLAIM_MS } from '../../run-engine/recovery.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
@@ -99,7 +107,13 @@ export function runGetGrade(params: RunGetGradeParams): RunGetGradeResult {
   return { grade: existing.humanGrade ?? null };
 }
 
-export async function runDelete(params: RunDeleteParams, emit: Emit): Promise<RunDeleteResult> {
+export async function runDelete(
+  params: RunDeleteParams,
+  emit: Emit,
+  slot: ArchiveSlotRelease = ARCHIVE_SLOT_RELEASE,
+): Promise<RunDeleteResult> {
+  const run = getRun(params.runId);
+  if (run) await releaseCancelledRunSlot(run, emit, slot);
   const ok = await storeDeleteRun(params.runId);
   if (!ok) throw new Error(`Run not found: ${params.runId}`);
   await reconcileDeletedRun(params.runId);
@@ -131,6 +145,7 @@ export async function runArchive(
       fenced = true;
       await releaseBlockedRunSlot(run, emit, slot);
     }
+    if (run) await releaseCancelledRunSlot(run, emit, slot);
     const ok = await storeArchiveRun(params.runId);
     if (!ok) throw new Error(`Run not found: ${params.runId}`);
   } finally {
@@ -192,6 +207,38 @@ async function releaseBlockedRunSlot(
     throw await slotStillHeldError(run.id, slotId);
 }
 
+/**
+ * Deleting or archiving a cancelled run ends it, so the slot its cancel kept for
+ * replay is released with the reset of `slot release --reset` (ADR-054 amendment,
+ * 2026-10-19). No unrelated process blocks that release. The discarded HEAD and
+ * dirty file count are logged so the work stays recoverable from the reflog.
+ */
+async function releaseCancelledRunSlot(
+  run: Run,
+  emit: Emit,
+  slot: ArchiveSlotRelease,
+): Promise<void> {
+  if (run.status !== 'cancelled' || !run.slotId) return;
+  const slotId = run.slotId;
+  // Another active run owns the slot now; it keeps it.
+  if (!ownsRunSlotCleanup(await readSlotRow(slotId), run.id)) return;
+  const vars = await loadSlotVars(slotId);
+  const work = await execOnSlot(
+    vars,
+    `cd ${shellQuote(vars.remoteRepo)} && { git rev-parse HEAD; git status --porcelain | wc -l; }`,
+  );
+  const [head = 'unknown', dirty = 'unknown'] = work.stdout.trim().split('\n');
+  console.log(
+    `[run] releasing slot ${slotId} of cancelled run ${run.id} with reset: discarding HEAD ${head.trim()} and ${dirty.trim()} dirty file(s)`,
+  );
+  const { released } = await slot.release(
+    { slotId, expectedRunId: run.id, forceReset: true },
+    emit,
+  );
+  if (!released && ownsRunSlotCleanup(await readSlotRow(slotId), run.id))
+    throw new Error(`Cannot release slot ${slotId} of cancelled run ${run.id}: it is still held`);
+}
+
 async function slotStillHeldError(runId: string, slotId: string): Promise<Error> {
   const row = await readSlotRow(slotId);
   // A release that could not finish its teardown leaves the slot held and says why.
@@ -216,6 +263,8 @@ export async function runBulkDelete(
   let deleted = 0;
   for (const id of params.runIds) {
     try {
+      const run = getRun(id);
+      if (run) await releaseCancelledRunSlot(run, emit, ARCHIVE_SLOT_RELEASE);
       const ok = await storeDeleteRun(id);
       if (!ok) continue;
       await reconcileDeletedRun(id);

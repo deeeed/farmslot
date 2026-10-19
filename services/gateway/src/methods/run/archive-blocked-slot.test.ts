@@ -13,6 +13,7 @@ import {
   endRunArchive,
   isRunArchiving,
 } from '../../run-lifecycle/archive-fence.js';
+import { cancelledRunHoldReason } from '../../run-lifecycle/slot-teardown.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, getRunWithArchived, updateRun } from '../../runs/store.js';
 import { type SlotReleasePreflight, slotReleasePreflight } from '../slot/release.js';
@@ -393,4 +394,41 @@ test('a release that throws because it left the slot held aborts the archive wit
   );
   assert.equal(getRun(run.id)?.status, 'blocked', 'the run is not archived');
   assert.equal(isRunArchiving(run.id), false, 'the fence is ended');
+});
+
+// Cancel then replay (Arthur, 10-19): cancel keeps the checkout and the slot bound to the run,
+// held with the replay-or-release reason, and a replay from a later step reclaims it.
+test('a cancelled run replays from a later step on the slot its cancel kept', async (t) => {
+  const created = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${(Date.now() % 100_000) + 1}`,
+    slotId,
+  });
+  t.after(() => cleanupRun(created.id));
+  const run = updateRun(created.id, {
+    status: 'cancelled',
+    decisions: [],
+    steps: created.steps.map((step) =>
+      ['review', 'complete', 'human-gate', 'finalize', 'ci-watch'].includes(step.name)
+        ? { ...step, status: 'skipped' }
+        : { ...step, status: 'done' },
+    ),
+  });
+  await holdSlotFor(t, run.id, 'occupied');
+  await updateSlotStatus(slotId, { held_reason: cancelledRunHoldReason(run.id) });
+  let engineStarted = false;
+
+  await runReplayStep({ runId: run.id, stepName: 'review', triggeredBy: 'operator' }, noopEmit, {
+    startEngine: async () => {
+      engineStarted = true;
+    },
+  });
+
+  assert.equal(engineStarted, true);
+  assert.notEqual(getRun(run.id)?.status, 'cancelled');
+  assert.equal(getRun(run.id)?.slotId, slotId);
+  assert.equal(await readSlotField(slotId, 'current_run_id'), run.id, 'the replay reclaimed it');
+  assert.equal(await readSlotField(slotId, 'lifecycle'), 'busy');
 });
