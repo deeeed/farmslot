@@ -12,6 +12,10 @@ recipes/greet-twice.recipe.json        calls greet twice
 recipes/web/greet.recipe.json          web variant of greet
 ```
 
+The shared manifest declares the official `command` and `assert_output` actions so the library can
+run on its own through `--action-manifest`. A project runtime declares official actions itself, so
+its catalog refuses this manifest from a selected library ([ADR-034 Amendment 6](../../docs/adr/034-recipe-protocol-v1.md#amendment-6-2026-10-19-library-action-declarations)).
+
 ```sh
 export RECIPE_LIBRARY_PATH="hello=$PWD/examples/recipe-library-hello"
 farmslot-recipe list

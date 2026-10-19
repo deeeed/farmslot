@@ -181,10 +181,20 @@ export interface IndexedActionDeclaration {
   file: string;
 }
 
+export interface IndexActionsOptions {
+  /**
+   * True for an action manifest from a library the runtime does not own. Such a
+   * manifest may declare namespaced custom actions only: one that declares an
+   * official action or any observer is refused.
+   */
+  restricted?(library: ResolvedDiscoveryLibrary, file: string): boolean;
+}
+
 export async function indexActions(
   libraries: readonly ResolvedDiscoveryLibrary[],
   platform: string | null,
   handlers: ReadonlySet<string>,
+  options: IndexActionsOptions = {},
 ): Promise<{
   actions: Map<string, IndexedAction>;
   manifest: RecipeActionManifestDocument;
@@ -206,6 +216,8 @@ export async function indexActions(
     for (const file of files) {
       if (viewScopes && !viewScopes.includes(file.scope)) continue;
       const document = await readActionManifest(library, file.file);
+      if (options.restricted?.(library, file.file))
+        refuseRestrictedDeclarations(library, file.file, document);
       // The all-platform view can only rely on shared declarations.
       const inView = platform !== null || file.scope === SHARED_RECIPE_SCOPE;
       for (const [name, entry] of Object.entries(document.actions)) {
@@ -263,6 +275,31 @@ export async function indexActions(
     actions: new Map([...actions].sort(([left], [right]) => left.localeCompare(right))),
     manifest,
   };
+}
+
+function refuseRestrictedDeclarations(
+  library: ResolvedDiscoveryLibrary,
+  file: string,
+  document: RecipeActionManifestDocument,
+): void {
+  const absolute = path.join(library.info.root, file);
+  const official = Object.keys(document.actions).find((name) => OFFICIAL_ACTIONS.has(name));
+  if (official) {
+    throw new DiscoveryError(
+      'ACTION_MANIFEST_INVALID',
+      `Library action ${official} from ${absolute} conflicts with an official action; ` +
+        'libraries may declare namespaced custom actions only.',
+      `remove ${official} from ${absolute}; the project runtime declares official actions`,
+    );
+  }
+  if (document.observers?.length) {
+    throw new DiscoveryError(
+      'ACTION_MANIFEST_INVALID',
+      `Library manifest ${absolute} declares observers, but external library observers are not executable; ` +
+        'remove observers or use an explicit task action manifest.',
+      `remove observers from ${absolute}, or select the manifest with --action-manifest`,
+    );
+  }
 }
 
 async function readActionManifest(
