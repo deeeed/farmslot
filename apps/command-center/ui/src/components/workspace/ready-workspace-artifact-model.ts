@@ -1,6 +1,7 @@
 import type { ArtifactRef, ReadyGatePayload } from '@farmslot/protocol';
+import { isRunArtifactMediaPath } from '@farmslot/protocol';
 
-import { DIFF_EXTS, isWorkspaceEvidenceArtifact, MEDIA_EXTS } from './workspace-artifacts.js';
+import { DIFF_EXTS, isWorkspaceEvidenceArtifact } from './workspace-artifacts.js';
 
 export function readyWorkspaceReviewArtifacts(payload: ReadyGatePayload): ArtifactRef[] {
   return (payload.reviews ?? []).flatMap((review) =>
@@ -65,7 +66,7 @@ function selectedPackageMediaEvidenceArtifacts(payload: ReadyGatePayload): Artif
   const selected = new Set(selectedEvidenceKeys.flatMap(evidenceKeyVariants));
   return evidenceManifest.filter(
     (artifact) =>
-      MEDIA_EXTS.test(artifact.path) &&
+      isRunArtifactMediaPath(artifact.path) &&
       evidenceKeyVariants(artifact.path).some((variant) => selected.has(variant)),
   );
 }

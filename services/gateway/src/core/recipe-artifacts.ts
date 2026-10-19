@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import type { RecipeArtifactType } from '@farmslot/protocol';
+import { isRunArtifactImagePath, type RecipeArtifactType } from '@farmslot/protocol';
 
 export {
   type LatestValidRecipeRunPointer,
@@ -52,7 +52,7 @@ export function inferArtifactPurpose(relativePath: string): string {
   }
   const exactPurpose = EXACT_ARTIFACT_PURPOSES.get(filename);
   if (exactPurpose) return exactPurpose;
-  if (/\.(png|jpg|jpeg|gif)$/i.test(filename)) {
+  if (isRunArtifactImagePath(filename)) {
     if (relativePath.startsWith('screenshots/')) return 'debug-screenshot';
     return 'screenshot';
   }

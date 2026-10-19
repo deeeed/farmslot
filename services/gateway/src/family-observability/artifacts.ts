@@ -1,6 +1,10 @@
 // artifacts.ts — Family observability artifact discovery and normalization helpers
 
-import type { FamilyObservabilityArtifact, Run } from '@farmslot/protocol';
+import {
+  type FamilyObservabilityArtifact,
+  isRunArtifactImagePath,
+  type Run,
+} from '@farmslot/protocol';
 
 export function dedupeArtifacts(
   items: FamilyObservabilityArtifact[],
@@ -31,7 +35,7 @@ export function dedupeArtifacts(
 }
 
 export function inferPurpose(filename: string): string {
-  if (/\.(png|jpg|jpeg|gif)$/i.test(filename)) {
+  if (isRunArtifactImagePath(filename)) {
     if (filename.includes('before')) return 'screenshot-before';
     if (filename.includes('after')) return 'screenshot-after';
     return 'screenshot';

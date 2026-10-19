@@ -3,6 +3,7 @@ import type {
   EvidenceManifestStandalone,
   RecipeRunArtifactGroup,
 } from '@farmslot/protocol';
+import { isRunArtifactImagePath } from '@farmslot/protocol';
 
 function artifactMimeType(artifact: ArtifactRef): string {
   return artifact.mimeType?.toLowerCase().trim() ?? '';
@@ -26,7 +27,7 @@ export function isImageRecipeArtifact(artifact: ArtifactRef): boolean {
   return (
     artifactType(artifact) === 'screenshot' ||
     mimeType.startsWith('image/') ||
-    /\.(png|jpg|jpeg|gif)$/i.test(artifact.path)
+    isRunArtifactImagePath(artifact.path)
   );
 }
 
@@ -113,6 +114,7 @@ const MANIFEST_EVIDENCE_FILE_EXTENSIONS = [
   '.jpg',
   '.jpeg',
   '.gif',
+  '.webp',
   '.mp4',
   '.mov',
   '.webm',

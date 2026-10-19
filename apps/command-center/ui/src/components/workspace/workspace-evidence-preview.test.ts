@@ -171,6 +171,23 @@ test('renderWorkspaceEvidencePreview discloses sliced preview overflow', () => {
   assert.match(text, /\+1 more visual artifact/);
 });
 
+test('a WebP still previews as an image, labelled like a PNG still', () => {
+  const text = litText(
+    renderWorkspaceEvidencePreview({
+      title: 'Generated visual artifacts',
+      totalCount: 2,
+      items: [
+        { artifact: artifact('artifacts/stills/recorded-3.webp'), url: '/new' },
+        { artifact: artifact('artifacts/stills/recorded-2.png'), url: '/old' },
+      ],
+    }),
+  );
+
+  assert.equal(text.match(/<img/g)?.length, 2);
+  assert.match(text, /alt=Recorded 3\n/);
+  assert.match(text, /alt=Recorded 2\n/);
+});
+
 test('an unqualified capture keeps its original and limitation browsable', () => {
   const fixture: { input: RecordedEvidencePackageInput } = JSON.parse(
     readFileSync(

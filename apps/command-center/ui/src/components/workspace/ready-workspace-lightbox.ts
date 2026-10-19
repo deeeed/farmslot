@@ -1,11 +1,12 @@
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
+import { isRunArtifactMediaPath } from '@farmslot/protocol';
 
 import { artifactLightboxItems, artifactLightboxPairs } from '../shared/artifact-lightbox-model.js';
 import { mediaLightboxFileType } from '../shared/media-lightbox-model.js';
 import type { LightboxItem, LightboxPair } from '../shared/media-lightbox-types.js';
 
-import { JSON_EXTS, MARKDOWN_EXTS, MEDIA_EXTS, VIDEO_EXTS } from './workspace-artifacts.js';
+import { JSON_EXTS, MARKDOWN_EXTS, VIDEO_EXTS } from './workspace-artifacts.js';
 
 export function selectedReadyWorkspaceLightboxRecipeRun(
   recipeRuns: readonly RecipeRunArtifactGroup[],
@@ -33,7 +34,7 @@ export function readyWorkspaceLightboxSourceArtifacts(args: {
 
 export function readyWorkspaceOpensInLightbox(artifact: Pick<ArtifactRef, 'path'>): boolean {
   return (
-    MEDIA_EXTS.test(artifact.path) ||
+    isRunArtifactMediaPath(artifact.path) ||
     MARKDOWN_EXTS.test(artifact.path) ||
     JSON_EXTS.test(artifact.path) ||
     mediaLightboxFileType({ path: artifact.path, purpose: '' }) === 'log'
@@ -56,7 +57,7 @@ export function readyWorkspaceLightboxPairs(
   return artifactLightboxPairs(
     sourceArtifacts,
     artifactUrl,
-    (artifact) => MEDIA_EXTS.test(artifact.path),
+    (artifact) => isRunArtifactMediaPath(artifact.path),
     (artifact) => VIDEO_EXTS.test(artifact.path),
     model,
   );

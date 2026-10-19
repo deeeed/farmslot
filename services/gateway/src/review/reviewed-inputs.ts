@@ -12,7 +12,7 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { resolveWorkerTaskDir } from './templates.js';
 
-const EVIDENCE_MEDIA = ['png', 'jpg', 'jpeg', 'gif', 'mp4', 'mov', 'webm'];
+const EVIDENCE_MEDIA = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'mp4', 'mov', 'webm'];
 // Files that choose or label evidence, wherever a recipe run put them.
 const EVIDENCE_INDEXES = ['evidence-manifest.json', 'latest-valid-recipe-run.json'];
 

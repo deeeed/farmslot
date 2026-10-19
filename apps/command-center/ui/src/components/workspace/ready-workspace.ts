@@ -12,6 +12,7 @@ import {
   type ArtifactRef,
   buildRunDecisionActionRequest,
   isInternalRunArtifactPath,
+  isRunArtifactMediaPath,
   MARK_CLAIM_UNTESTABLE_ACTION,
   Methods,
   type ReadyGatePayload,
@@ -79,11 +80,7 @@ import {
   renderReadyRecipeTab,
 } from './ready-workspace-tab-renderers.js';
 import { loadRecipeRunnerUiOptionsForProject } from './recipe-runner-options-model.js';
-import {
-  isWorkspaceDiffArtifact,
-  MEDIA_EXTS,
-  workspaceArtifactBasename,
-} from './workspace-artifacts.js';
+import { isWorkspaceDiffArtifact, workspaceArtifactBasename } from './workspace-artifacts.js';
 import { renderWorkspaceEvidencePreview } from './workspace-evidence-preview.js';
 
 interface EvidenceReadScope {
@@ -728,7 +725,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     const artifacts = selectedArtifacts.filter((artifact) => {
       if (isInternalRunArtifactPath(artifact.path)) return false;
       if (packageEvidencePaths.size > 0) return packageEvidencePaths.has(artifact.path);
-      return MEDIA_EXTS.test(artifact.path);
+      return isRunArtifactMediaPath(artifact.path);
     });
     return renderReadySelectedRecipeRunArtifacts({
       group,
@@ -904,7 +901,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     const isDiff = isWorkspaceDiffArtifact(artifact);
     const opensInLightbox = this._opensInLightbox(artifact);
     const mediaUrl =
-      MEDIA_EXTS.test(artifact.path) && this.runId
+      isRunArtifactMediaPath(artifact.path) && this.runId
         ? this._artifactUrl(artifact.path, artifact)
         : null;
     const selectable =

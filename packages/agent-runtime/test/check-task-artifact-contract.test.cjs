@@ -232,6 +232,26 @@ result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });
 assert.equal(result.status, 1);
 assert.match(result.stderr, /recipe\.json: invalid JSON/);
 
+// A WebP still is evidence media like a PNG one, so a missing one is caught.
+taskDir = makeTaskDir('farmslot-agent-artifact-webp-still-');
+writeFileSync(
+  path.join(taskDir, 'artifacts', 'evidence-manifest.json'),
+  JSON.stringify({
+    version: 1,
+    standalone: [{ label: 'Recorded still', file: 'recipe-run/stills/recorded-1.webp' }],
+  }),
+);
+result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });
+assert.equal(result.status, 1);
+assert.match(
+  result.stderr,
+  /references missing artifact: artifacts\/recipe-run\/stills\/recorded-1\.webp/,
+);
+mkdirSync(path.join(taskDir, 'artifacts', 'recipe-run', 'stills'));
+writeFileSync(path.join(taskDir, 'artifacts', 'recipe-run', 'stills', 'recorded-1.webp'), 'webp');
+result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+
 taskDir = makeTaskDir('farmslot-agent-artifact-empty-evidence-manifest-');
 writeFileSync(path.join(taskDir, 'artifacts', 'evidence-manifest.json'), '');
 result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });

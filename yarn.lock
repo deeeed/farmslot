@@ -5107,10 +5107,13 @@ __metadata:
   resolution: "@farmslot/recipe-runner@workspace:packages/recipe-runner"
   dependencies:
     "@farmslot/protocol": "workspace:*"
+    "@jsquash/webp": "npm:^1.5.0"
     "@types/node": "npm:^22.0.0"
+    "@types/pngjs": "npm:^6.0.5"
     "@types/ws": "npm:^8.5.12"
     commander: "npm:^12.0.0"
     eslint: "npm:^10.3.0"
+    pngjs: "npm:^7.0.0"
     prettier: "npm:^3.8.3"
     semver: "npm:^7.7.3"
     tsx: "npm:^4.19.0"
@@ -5644,6 +5647,15 @@ __metadata:
   peerDependencies:
     tslib: 2
   checksum: 10c0/a720a6accaae71fa9e7fa06e93e382702aa5760ef2bdc3bc45c19dc2228a01cc735d36cb970c654bc5e88f1328d55d1f0d5eceef0b76bcc327a2ce863e7b0021
+  languageName: node
+  linkType: hard
+
+"@jsquash/webp@npm:^1.5.0":
+  version: 1.5.0
+  resolution: "@jsquash/webp@npm:1.5.0"
+  dependencies:
+    wasm-feature-detect: "npm:^1.2.11"
+  checksum: 10c0/f76f776ad5e70bef9286ebecad124f5fcee744aa92239bbd518e267291af760f5319d06041026ad969c3a4f0547f878f3ba48fa45c9f56cfa22d583bd54e5963
   languageName: node
   linkType: hard
 
@@ -22769,6 +22781,13 @@ __metadata:
   version: 0.1.1
   resolution: "warn-once@npm:0.1.1"
   checksum: 10c0/f531e7b2382124f51e6d8f97b8c865246db8ab6ff4e53257a2d274e0f02b97d7201eb35db481843dc155815e154ad7afb53b01c4d4db15fb5aa073562496aff7
+  languageName: node
+  linkType: hard
+
+"wasm-feature-detect@npm:^1.2.11":
+  version: 1.9.0
+  resolution: "wasm-feature-detect@npm:1.9.0"
+  checksum: 10c0/d902be44b57fa963d8ff284cb86332f38c3c9b4af04e6c057b09904cf091a8da1c81ec9da7cd57cdf75afe45eeec449f11344fc66b62ea55314837041550f08f
   languageName: node
   linkType: hard
 

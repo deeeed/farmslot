@@ -15,6 +15,7 @@ import {
   FLOW_WORKER_REPORT_ARTIFACTS,
   GATE_SUMMARY_KINDS,
   isActiveListRun,
+  isRunArtifactMediaPath,
   parseGitHubRef,
   prNumberFromRunInput,
   type RecipeQualitySignal,
@@ -856,7 +857,7 @@ function isFamilyEvidenceArtifact(artifact: FamilyObservabilityArtifact): boolea
   const purpose = artifact.purpose;
   return (
     FAMILY_EVIDENCE_PURPOSES.has(purpose) ||
-    /\.(png|jpe?g|gif|mp4|mov|webm)$/i.test(artifact.path) ||
+    isRunArtifactMediaPath(artifact.path) ||
     /(^|\/)(comments-report|report|review|review-feedback)\.md$/i.test(artifact.path)
   );
 }

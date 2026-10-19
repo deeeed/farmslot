@@ -1,10 +1,12 @@
 import path from 'node:path';
 
-import type {
-  EvidenceManifest,
-  EvidenceManifestPair,
-  EvidenceManifestStandalone,
-  EvidenceManifestVideo,
+import {
+  type EvidenceManifest,
+  type EvidenceManifestPair,
+  type EvidenceManifestStandalone,
+  type EvidenceManifestVideo,
+  isRunArtifactImagePath,
+  isRunArtifactMediaPath,
 } from '@farmslot/protocol';
 
 import { evidenceKeyVariants } from './evidence-paths.js';
@@ -18,9 +20,7 @@ export type {
 
 type JsonRecord = Record<string, unknown>;
 
-const EVIDENCE_IMAGE_EXT = /\.(png|jpe?g|gif)$/i;
 export const EVIDENCE_VIDEO_EXT = /\.(mp4|mov|webm)$/i;
-const EVIDENCE_MEDIA_EXT = /\.(png|jpe?g|gif|mp4|mov|webm)$/i;
 
 const MANIFEST_KEYS = new Set([
   'version',
@@ -194,7 +194,7 @@ export function normalizeEvidenceManifestArtifactPath(
   if (segments.some((segment) => segment === '.' || segment === '..')) return null;
   const withoutArtifacts =
     segments[0] === 'artifacts' ? segments.slice(1).join('/') : segments.join('/');
-  if (!withoutArtifacts || (mediaOnly && !EVIDENCE_MEDIA_EXT.test(withoutArtifacts))) return null;
+  if (!withoutArtifacts || (mediaOnly && !isRunArtifactMediaPath(withoutArtifacts))) return null;
   return `artifacts/${withoutArtifacts}`;
 }
 
@@ -238,7 +238,7 @@ export function autoDetectEvidenceManifest(
   artifactUrls?: Map<string, string>,
 ): EvidenceManifest | null {
   if (!artifactUrls || artifactUrls.size === 0) return null;
-  const imageFiles = [...artifactUrls.keys()].filter((name) => /\.(png|jpg|jpeg|gif)$/i.test(name));
+  const imageFiles = [...artifactUrls.keys()].filter((name) => isRunArtifactImagePath(name));
   const beforeMap = new Map<string, string>();
   const afterMap = new Map<string, string>();
   const standalone: EvidenceManifestStandalone[] = [];
@@ -358,7 +358,7 @@ export function collectLowCaptions(manifest: EvidenceManifest): LowCaption[] {
   const fileUsage = manifestFileUsage(manifest);
   const out: LowCaption[] = [];
   for (const pair of manifest.before_after_pairs ?? []) {
-    if (![pair.before, pair.after].some((file) => file && EVIDENCE_MEDIA_EXT.test(file))) continue;
+    if (![pair.before, pair.after].some((file) => file && isRunArtifactMediaPath(file))) continue;
     const c = captionConfidenceFor(pair, fileUsage);
     if (c.level === 'LOW') {
       out.push({
@@ -369,7 +369,7 @@ export function collectLowCaptions(manifest: EvidenceManifest): LowCaption[] {
     }
   }
   for (const shot of manifest.standalone ?? []) {
-    if (!EVIDENCE_MEDIA_EXT.test(shot.file)) continue;
+    if (!isRunArtifactMediaPath(shot.file)) continue;
     const c = captionConfidenceFor(shot, fileUsage);
     if (c.level === 'LOW') {
       out.push({ label: shot.label, file: shot.file, reason: c.reason ?? 'unknown' });
@@ -425,7 +425,7 @@ export function buildEvidenceSection(
     bumpUsage(s.file);
   }
   const urlFor = (file?: string): string | undefined => {
-    if (!file || !EVIDENCE_MEDIA_EXT.test(file)) return undefined;
+    if (!file || !isRunArtifactMediaPath(file)) return undefined;
     for (const variant of evidenceKeyVariants(file)) {
       const url = artifactUrls.get(variant);
       if (url) return url;
@@ -471,7 +471,7 @@ export function buildEvidenceSection(
 
     // Standalone screenshots: compact grid
     if (standalone.length > 0) {
-      const imageShots = standalone.filter((shot) => EVIDENCE_IMAGE_EXT.test(shot.file));
+      const imageShots = standalone.filter((shot) => isRunArtifactImagePath(shot.file));
       const videoShots = standalone.filter((shot) => EVIDENCE_VIDEO_EXT.test(shot.file));
 
       if (imageShots.length > 0) {

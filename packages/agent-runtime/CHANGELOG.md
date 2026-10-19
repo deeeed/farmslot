@@ -4,6 +4,11 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.0 - 2026-10-19
+
+- The task artifact contract check treats a `.webp` still in `evidence-manifest.json` as evidence media, so a missing one is reported.
+- Align with `@farmslot/protocol` 0.56.0 and `@farmslot/adapter-sdk` 0.20.0.
+
 ## 0.30.0 - 2026-10-19
 
 - Align with `@farmslot/adapter-sdk` 0.19.0.
