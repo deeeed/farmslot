@@ -5,6 +5,9 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.27.0 - 2026-10-19
+
 - A task action manifest (`--action-manifest`) now adds to the action catalog instead of replacing it. Its declarations come first, and the runtime's own, the bundled library's and the selected libraries' actions stay available. Before, a task manifest dropped every official and library action it did not redeclare. The run passes the actions the task manifest provided to `summary.json` `taskActions`.
 
 ## 0.26.0 - 2026-10-19
