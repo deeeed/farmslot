@@ -562,25 +562,31 @@ test('a plugin keeps its library as the source of its own actions and its parent
   }
 });
 
-test('a selected library may require the recipe CLI the catalog runs in', async (t) => {
-  const { root, catalog } = setup(t, { 'example.read': declaration() });
-  const team = path.join(root, 'team');
-  writeLibraryManifest(team, { actions: { 'example.write': declaration('example.write') } });
-  const requires = (range: string) =>
-    fs.writeFileSync(
-      path.join(team, 'recipe-library.json'),
-      JSON.stringify({ requires: { '@farmslot/recipe-cli': range } }),
-    );
-  requires('>=0.0.1');
-  const { actionSources } = await catalog.resolveActionManifest('api', undefined, [
-    { name: 'team', root: team },
-  ]);
-  assert.equal(actionSources.get('example.write')?.name, 'team');
-  requires('>=999.0.0');
-  await assert.rejects(
-    catalog.resolveActionManifest('api', undefined, [{ name: 'team', root: team }]),
-    /requires @farmslot\/recipe-cli >=999\.0\.0; this host has/u,
+test('the closest selected library owns a runtime manifest when library roots nest', async (t) => {
+  const { runtime, catalog } = setup(t, { 'example.read': declaration() });
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-outer-'));
+  t.after(() => fs.rmSync(outer, { recursive: true, force: true }));
+  const inner = path.join(outer, 'plugins', 'inner');
+  writeLibraryManifest(inner, { actions: { 'example.child': declaration('example.child') } });
+  const parent = path.join(inner, 'manifests', 'parent.action-manifest.json');
+  fs.writeFileSync(
+    parent,
+    JSON.stringify({
+      $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+      actions: { 'example.inherited': declaration('example.inherited') },
+    }),
   );
+  const own = fs.realpathSync(path.join(inner, 'manifests', 'api.action-manifest.json'));
+  runtime.actions.manifestPath = () => own;
+  runtime.actions.manifestPaths = () => [own, fs.realpathSync(parent)];
+  const { actionSources } = await catalog.resolveActionManifest('api', undefined, [
+    { name: 'outer', root: outer, provenance: { kind: 'library', trust: 'trusted' } },
+    { name: 'inner', root: inner, provenance: { kind: 'library', trust: 'untrusted' } },
+  ]);
+  const inherited = actionSources.get('example.inherited');
+  assert.equal(inherited?.name, 'inner');
+  assert.equal(inherited?.trust, 'untrusted');
+  assert.equal(inherited?.implementationRoot, path.join(inner, 'actions'));
 });
 
 test('a runtime parent manifest outside the bundled library may not declare an official action', async (t) => {

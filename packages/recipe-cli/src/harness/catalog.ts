@@ -23,7 +23,6 @@ import {
 } from '../action-catalog.js';
 import { indexActions } from '../discovery-index.js';
 import { resolveDiscoveryLibraries } from '../libraries.js';
-import { RECIPE_CLI_PACKAGE_VERSIONS } from '../version.js';
 
 import { libraryName } from './adapter-plugins.js';
 import { harnessAdapters } from './adapters.js';
@@ -33,6 +32,7 @@ import { harnessHost } from './host.js';
 import { prepareLiveAdapterScript, runLiveAdapterScript } from './live-adapter-contract.js';
 import { runNetworkCaptureAction } from './network-observation.js';
 import { isRecord, shellQuoteArg } from './parse-args.js';
+import { isPathWithin } from './paths.js';
 import { closest } from './suggest.js';
 
 export type {
@@ -134,7 +134,6 @@ export function createRuntimeRecipeCatalog({
         ? await resolveDiscoveryLibraries({
             libraries: selected.map((source) => `${libraryName(source)}=${source.root}`),
             env: { RECIPE_LIBRARY_PATH: '' },
-            packageVersions: RECIPE_CLI_PACKAGE_VERSIONS,
           })
         : [];
       for (const library of libraries) {
@@ -150,7 +149,6 @@ export function createRuntimeRecipeCatalog({
         : await resolveDiscoveryLibraries({
             libraries: [`${bundledLibrary.name}=${bundledLibrary.root}`],
             env: { RECIPE_LIBRARY_PATH: '' },
-            packageVersions: RECIPE_CLI_PACKAGE_VERSIONS,
           });
       for (const library of bundledLibraries) {
         library.source.provenance = {
@@ -179,12 +177,16 @@ export function createRuntimeRecipeCatalog({
       const taskImplementationRoot = taskRoot && (taskActionRoot ?? path.join(taskRoot, 'actions'));
       // A runtime manifest outside the bundled library belongs to the selected
       // library that holds it (a plugin's own manifest or its parent plugin's), so
-      // its actions keep that library's name, trust, digest and action root.
+      // its actions keep that library's name, trust, digest and action root. The
+      // closest holder wins when selected roots nest.
       const selectedLibraries = [...libraries];
       const holder = (file: string) => {
-        const real = realPath(file);
-        if (overridePath || path.dirname(real) === bundledManifests) return undefined;
-        return selectedLibraries.find((library) => isWithin(realPath(library.info.root), real));
+        if (overridePath || isPathWithin(bundledLibrary.root, file)) return undefined;
+        return selectedLibraries
+          .filter((library) => isPathWithin(library.info.root, file))
+          .sort(
+            (left, right) => realPath(right.info.root).length - realPath(left.info.root).length,
+          )[0];
       };
       // Parent declarations come first in the SDK; the derived runtime wins.
       for (const manifestPath of runtimePaths) {
@@ -270,11 +272,6 @@ export function createRuntimeRecipeCatalog({
       return { manifest, actionSources };
     },
   };
-}
-
-function isWithin(root: string, file: string): boolean {
-  const relative = path.relative(root, file);
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 function realPath(file: string): string {
