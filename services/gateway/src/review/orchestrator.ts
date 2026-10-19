@@ -2075,6 +2075,36 @@ async function recoverReviewFixPass({
     // Restart recovery stops at the no-verdict cap like the retry loop (ADR-063 Amendment 2).
     const capRun = getRun(runId);
     const capReason = capRun && (await reviewNoVerdictCapReason(capRun));
+    // A worker that blocked mid-fix keeps its block; the cap only stops the re-review.
+    if (capReason && workerBlockReason)
+      return {
+        verdict: 'blocked',
+        reason: `${workerBlockReason}; ${capReason}`,
+        issues,
+        validationDepth,
+        usage: priorResult.usage,
+        reviewSnapshot: priorResult.reviewSnapshot,
+        fixDelta: fixDelta.snapshot,
+        attempts: [
+          initialAttempt,
+          {
+            mode,
+            loopNumber: 2,
+            verdict: 'failed',
+            reason: workerBlockReason,
+            unresolvedCount: issues.length,
+            issues,
+            validationDepth,
+            fixDelta: fixDelta.snapshot,
+            artifactPaths: fixDelta.artifactPaths,
+          },
+        ],
+        retryCount: recoveredRetryCount,
+        maxRetries,
+        feedbackSent: true,
+        recoveryContinuationPending: false,
+        durationMs: Date.now() - start,
+      };
     if (capReason)
       return {
         ...priorResult,

@@ -2988,6 +2988,12 @@ export interface RunTaskExecution {
 export interface RunEngineState {
   slotCapabilityRequirements?: RunSlotCapabilityRequirements;
   /**
+   * The engine generation a workspace review's DISPATCH admitted its reviewer
+   * round under, so its MONITOR settles that attempt after a monitor-only replay
+   * (ADR-063 Amendment 2).
+   */
+  workspaceReviewDispatchGeneration?: number;
+  /**
    * What the last passing review (pipeline review or a publication review)
    * judged on the slot: HEAD, the evidence manifest and the evidence files. When
    * any of them changes, review must run again before publication is

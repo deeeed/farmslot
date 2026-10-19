@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { after, mock, test } from 'node:test';
+import { after, mock, test, type TestContext } from 'node:test';
 
 await import('../runtime/mock-pty.test-support.js');
 const repo = await mkdtemp(path.join(os.tmpdir(), 'fix-recovery-cap-'));
@@ -42,12 +42,12 @@ const { REVIEW_FIX_CHECKLIST_TARGET, taskDirRelPath } =
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { deleteTestRunIfPresent } = await import('../run-engine/test-fixtures.js');
 
-test('a fix recovered after a restart at the no-verdict cap is not re-reviewed automatically', async (t) => {
+async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, string>) {
   const run = createRun({
     project,
     flowType: 'dev',
     mode: 'interactive',
-    ticketOrPr: 'CAP-RECOVERED-FIX',
+    ticketOrPr: `CAP-RECOVERED-FIX-${fixSignal.status}`,
     runner: 'claude',
     slotId: vars.slotId,
   });
@@ -65,18 +65,14 @@ test('a fix recovered after a restart at the no-verdict cap is not re-reviewed a
     await admitReviewRound(run.id, reason);
     await settleReviewRoundNoVerdict(run.id, reason, reason);
   }
-  // The worker finished the delivered fix while the gateway was down.
+  // The worker ended the delivered fix while the gateway was down.
   const checklist = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist);
   const signal = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal);
   await mkdir(path.join(repo, taskDir), { recursive: true });
   await writeFile(path.join(repo, checklist), '## Issues\n\n- **a.ts:1** — fix the finding\n');
   await writeFile(
     path.join(repo, signal),
-    JSON.stringify({
-      status: 'complete',
-      timestamp: new Date().toISOString(),
-      attemptId: 'fix-attempt',
-    }),
+    JSON.stringify({ ...fixSignal, timestamp: new Date().toISOString(), attemptId: 'fix-attempt' }),
   );
   updateRun(run.id, {
     status: 'reviewing',
@@ -99,13 +95,18 @@ test('a fix recovered after a restart at the no-verdict cap is not re-reviewed a
       },
     ],
   });
-
+  const launchesBefore = reviewerLaunches;
   const result = await executeReview(run.id, vars.slotId, {
     reviewRunner: 'claude',
     validationDepth: 'static-code',
   });
+  return { run, result, launches: reviewerLaunches - launchesBefore };
+}
 
-  assert.equal(reviewerLaunches, 0, 'the recovered fix is not re-reviewed at the cap');
+test('a fix recovered after a restart at the no-verdict cap is not re-reviewed automatically', async (t) => {
+  const { run, result, launches } = await recoveredFixAtCap(t, { status: 'complete' });
+
+  assert.equal(launches, 0, 'the recovered fix is not re-reviewed at the cap');
   assert.equal(result.verdict, 'issues');
   assert.match(result.reason ?? '', /^3\/3 reviewer attempts ended without a verdict/);
   assert.equal(result.feedbackSent, true);
@@ -115,4 +116,21 @@ test('a fix recovered after a restart at the no-verdict cap is not re-reviewed a
     getRun(run.id)!.agentContexts!.find((context) => context.id === 'review-fix')?.status,
     'complete',
   );
+});
+
+test('a recovered fix the worker blocked keeps its block at the no-verdict cap', async (t) => {
+  const { result, launches } = await recoveredFixAtCap(t, {
+    status: 'blocked',
+    reason: 'needs the staging credentials',
+  });
+
+  assert.equal(launches, 0);
+  assert.equal(result.verdict, 'blocked');
+  assert.match(
+    result.reason ?? '',
+    /^needs the staging credentials; 3\/3 reviewer attempts ended without a verdict/,
+  );
+  assert.equal(result.attempts?.at(-1)?.verdict, 'failed', 'the block stays authoritative');
+  assert.equal(result.feedbackSent, true);
+  assert.equal(result.recoveryContinuationPending, false);
 });

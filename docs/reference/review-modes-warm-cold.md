@@ -100,15 +100,18 @@ and time against the receipt:
 - a reviewer a restart could not reattach, or whose recovered signal or result
   shows a failure;
 - a workspace review whose launch failed after admission, or whose monitor
-  ended without recording a result, a cancel or supersession included. Each
-  DISPATCH launch is its own attempt; a restart that reattaches keeps it.
+  ended without recording a result, a cancel or supersession included. A
+  replay that dispatches again at a new engine generation is a new attempt; a
+  restart that re-enters DISPATCH at the same generation keeps its receipt, and
+  a monitor-only replay still settles the attempt its DISPATCH admitted.
 
 A receipt without a settlement counts, so in-flight, older and rolled-back
 receipts fail closed. A launch or delivery with an uncertain outcome still
 counts, because its reviewer may be running, and so does a legacy tmux reviewer.
-Admitting a receipt again (a reattach) keeps its settlement. When restart
-recovery later ingests a pass or issues verdict for a settled attempt, the
-settlement is cleared and the attempt counts.
+Admitting a receipt again (a reattach) keeps its settlement. When a settled
+attempt's pass or issues verdict arrives later, through restart recovery or a
+workspace monitor replay that records it, the settlement is cleared and the
+attempt counts.
 
 Settlements MUST be merged across the admission scope and copied to every live
 run in it. Rounds used are admissions minus no-verdict settlements;

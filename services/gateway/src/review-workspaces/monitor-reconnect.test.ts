@@ -331,14 +331,14 @@ test('a reconnected node with a different owner is refused without waiting again
   assert.equal(requests.length, 0);
 });
 
+/** The receipt this run's DISPATCH admitted at `generation`. */
+const workspaceRound = (runId: string, generation: number) =>
+  reviewRoundAdmissionId(`workspace-review-${runId}`, generation + 1, getRun(runId)!.createdAt);
+
 test('a reviewer that stops without a result settles the workspace round no-verdict', async () => {
   const f = fixture();
   connect();
-  const round = reviewRoundAdmissionId(
-    `workspace-review-${f.runId}`,
-    1,
-    getRun(f.runId)!.createdAt,
-  );
+  const round = workspaceRound(f.runId, 7);
   await admitReviewRound(f.runId, round);
   snapshot.commands = [{ ...snapshot.commands[0]!, outcome: 'failed' }];
   await assert.rejects(f.monitor(), /stopped before producing a valid result/);
@@ -347,40 +347,44 @@ test('a reviewer that stops without a result settles the workspace round no-verd
 
 test('a replay that supersedes the monitor settles that attempt, not the one it dispatched', async () => {
   const f = fixture();
-  const workspaceRound = (launchedAt: string) =>
-    reviewRoundAdmissionId(`workspace-review-${f.runId}`, 1, launchedAt);
-  const dispatched = new Date(clock - 2000).toISOString();
-  const replayed = new Date(clock + 1).toISOString();
-  updateRun(f.runId, {
-    steps: [
-      { name: PipelineSteps.DISPATCH, status: 'done', startedAt: dispatched },
-      ...getRun(f.runId)!.steps,
-    ],
-  });
-  await admitReviewRound(f.runId, workspaceRound(dispatched));
-  await admitReviewRound(f.runId, workspaceRound(replayed));
+  updateRun(f.runId, { engineState: { generation: 7, workspaceReviewDispatchGeneration: 7 } });
+  await admitReviewRound(f.runId, workspaceRound(f.runId, 7));
+  await admitReviewRound(f.runId, workspaceRound(f.runId, 8));
   afterWait = () => {
     connect();
     // The operator's replay owns a new generation and has dispatched its own attempt.
-    updateRun(f.runId, {
-      engineState: { generation: 8 },
-      steps: [{ name: PipelineSteps.DISPATCH, status: 'running', startedAt: replayed }],
-    });
+    updateRun(f.runId, { engineState: { generation: 8, workspaceReviewDispatchGeneration: 8 } });
   };
   await assert.rejects(f.monitor(), /no longer owns/);
   const settlements = getRun(f.runId)?.reviewRoundSettlements ?? {};
-  assert.match(settlements[workspaceRound(dispatched)]?.reason ?? '', /no longer owns/);
-  assert.equal(settlements[workspaceRound(replayed)], undefined);
+  assert.match(settlements[workspaceRound(f.runId, 7)]?.reason ?? '', /no longer owns/);
+  assert.equal(settlements[workspaceRound(f.runId, 8)], undefined);
+});
+
+test('a monitor-only replay settles the attempt it superseded; its verdict counts that round again', async () => {
+  const f = fixture();
+  updateRun(f.runId, { engineState: { generation: 7, workspaceReviewDispatchGeneration: 7 } });
+  const round = workspaceRound(f.runId, 7);
+  await admitReviewRound(f.runId, round);
+  afterWait = () => {
+    connect();
+    // The replay re-enters MONITOR at a new generation; nothing dispatches again.
+    updateRun(f.runId, { engineState: { generation: 8, workspaceReviewDispatchGeneration: 7 } });
+  };
+  await assert.rejects(f.monitor(), /no longer owns/);
+  assert.match(getRun(f.runId)?.reviewRoundSettlements?.[round]?.reason ?? '', /no longer owns/);
+
+  afterWait = undefined;
+  await executeReviewWorkspaceStep(f.runId, PipelineSteps.MONITOR, 8, () => {});
+  assert.deepEqual(getRun(f.runId)?.reviewResult, result);
+  assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round], undefined);
+  assert.equal(getRun(f.runId)?.reviewRoundAdmissions?.filter((id) => id === round).length, 1);
 });
 
 test('a monitor that recorded its review result before failing settles nothing', async () => {
   const f = fixture();
   connect();
-  const round = reviewRoundAdmissionId(
-    `workspace-review-${f.runId}`,
-    1,
-    getRun(f.runId)!.createdAt,
-  );
+  const round = workspaceRound(f.runId, 7);
   await admitReviewRound(f.runId, round);
   await assert.rejects(
     executeReviewWorkspaceStep(f.runId, PipelineSteps.MONITOR, 7, () => {

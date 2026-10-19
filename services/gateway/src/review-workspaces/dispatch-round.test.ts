@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { after, mock, test } from 'node:test';
+import { after, mock, test, type TestContext } from 'node:test';
 
 import { PipelineSteps } from '@farmslot/protocol';
 
@@ -36,21 +36,24 @@ mock.module('./support.js', {
 });
 const nativeWorkspace = await import('../runners/native/review-workspace.js');
 let launches = 0;
+let launchFailure: Error | undefined;
 mock.module('../runners/native/review-workspace.js', {
   namedExports: {
     ...nativeWorkspace,
     launchReviewWorkspaceWorker: async () => {
       launches++;
+      if (launchFailure) throw launchFailure;
       return { session: { id: 'reviewer-session', generation: 'reviewer-generation' } };
     },
   },
 });
 const { executeReviewWorkspaceStep } = await import('./pipeline.js');
-const { createRun, getRun, updateRun } = await import('../runs/store.js');
+const { createRun, getRun, updateRun, updateRunStep } = await import('../runs/store.js');
 const { deleteTestRunIfPresent } = await import('../run-engine/test-fixtures.js');
-const { reviewRoundAdmissionId } = await import('../review/review-round-budget.js');
+const { reviewRoundAdmissionId, runReviewRoundBudget } =
+  await import('../review/review-round-budget.js');
 
-test('a workspace replay that dispatches again admits a new round; a reattach does not', async (t) => {
+function workspaceRun(t: TestContext) {
   const created = createRun(
     {
       flowType: 'review-pr',
@@ -63,15 +66,13 @@ test('a workspace replay that dispatches again admits a new round; a reattach do
     },
     { nativeOwnerPrincipalId: 'review-owner' },
   );
-  const launchedAt = (at: string) => [
-    { name: PipelineSteps.DISPATCH, status: 'running' as const, startedAt: at },
-  ];
-  const first = '2026-10-19T10:00:00.000Z';
-  const replayed = '2026-10-19T11:00:00.000Z';
   const run = updateRun(created.id, {
     status: 'dispatching',
     slotId: null,
-    steps: launchedAt(first),
+    engineState: { generation: 0 },
+    steps: [
+      { name: PipelineSteps.DISPATCH, status: 'running', startedAt: '2026-10-19T10:00:00.000Z' },
+    ],
     reviewWorkspace: {
       workspaceId: 'owned',
       machine: 'review-node',
@@ -93,21 +94,52 @@ test('a workspace replay that dispatches again admits a new round; a reattach do
     },
   });
   t.after(async () => {
+    launchFailure = undefined;
     updateRun(run.id, {
       reviewWorkspace: { ...run.reviewWorkspace!, cleanedAt: new Date().toISOString() },
     });
     await deleteTestRunIfPresent(run.id);
   });
-  const dispatch = () => executeReviewWorkspaceStep(run.id, PipelineSteps.DISPATCH, 0, () => {});
-  const round = (at: string) => reviewRoundAdmissionId(`workspace-review-${run.id}`, 1, at);
+  return {
+    run,
+    dispatch: (generation: number) =>
+      executeReviewWorkspaceStep(run.id, PipelineSteps.DISPATCH, generation, () => {}),
+    // The engine stamps a step again each time it enters it (run-engine/orchestrator.ts).
+    enterDispatch: (startedAt: string) =>
+      updateRunStep(run.id, PipelineSteps.DISPATCH, { status: 'running', startedAt }),
+    round: (generation: number) =>
+      reviewRoundAdmissionId(`workspace-review-${run.id}`, generation + 1, run.createdAt),
+  };
+}
 
-  await dispatch();
-  // A restart re-enters the same DISPATCH launch: the same attempt and receipt.
-  await dispatch();
-  assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, [round(first)]);
+test('a restart that re-enters DISPATCH reattaches to its round; a later no-verdict end settles it', async (t) => {
+  const f = workspaceRun(t);
+  await f.dispatch(0);
+  // The gateway restarts during DISPATCH; recovery re-enters the step at the same generation.
+  f.enterDispatch('2026-10-19T10:30:00.000Z');
+  launchFailure = new Error('reviewer launch refused');
+  await assert.rejects(f.dispatch(0), /reviewer launch refused/);
 
-  updateRun(run.id, { steps: launchedAt(replayed) });
-  await dispatch();
-  assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, [round(first), round(replayed)]);
-  assert.equal(launches, 3);
+  const run = getRun(f.run.id)!;
+  assert.deepEqual(run.reviewRoundAdmissions, [f.round(0)], 'one reviewer is charged once');
+  assert.equal(run.reviewRoundSettlements?.[f.round(0)]?.reason, 'reviewer launch refused');
+  const budget = await runReviewRoundBudget(run);
+  assert.deepEqual([budget.used, budget.noVerdict], [0, 1]);
+});
+
+test('a replay at a new generation dispatches a new round and records which generation it is', async (t) => {
+  const f = workspaceRun(t);
+  const before = launches;
+  await f.dispatch(0);
+  assert.equal(getRun(f.run.id)!.engineState?.workspaceReviewDispatchGeneration, 0);
+
+  // An operator replay owns a new generation and dispatches its own attempt.
+  updateRun(f.run.id, { engineState: { ...getRun(f.run.id)!.engineState, generation: 1 } });
+  f.enterDispatch('2026-10-19T11:00:00.000Z');
+  await f.dispatch(1);
+
+  const run = getRun(f.run.id)!;
+  assert.deepEqual(run.reviewRoundAdmissions, [f.round(0), f.round(1)]);
+  assert.equal(run.engineState?.workspaceReviewDispatchGeneration, 1);
+  assert.equal(launches - before, 2);
 });
