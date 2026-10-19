@@ -260,7 +260,6 @@ export async function runScenario({
       'Fixture is not a detached group',
     );
     report.measurements.detached = detached;
-    const started = Date.now();
     if (via === 'slow') {
       // A census slower than the old 5 s deadline but inside the observer deadline
       // keeps readiness and the host (ADR-057 Amendment 3).
@@ -273,6 +272,7 @@ export async function runScenario({
         'a census slower than 5 s but inside the observer deadline keeps readiness, the supervisor and the host',
       );
     }
+    const started = Date.now();
     if (via === 'sharing' || via === 'slow') {
       await rpc('native.session.close', { sessionId: victim.id });
       await wait(
