@@ -966,11 +966,11 @@ No new API. `ActiveVideoRecording.ready()` resolves up to one
 
 Stills the engine names and writes from a recording are lossy WebP at quality 85. This covers the automatic proof stills and the stills derived from recorded frames. Each still is one `.webp` file registered with `mimeType: image/webp`, and that file is the evidence: no PNG original is kept. Its sha256 goes into the artifact manifest like any other file, so gate packages, publication selection and refresh digests cover the WebP bytes.
 
-One setting chooses the format: `stillFormat`, either `webp` (the default) or `png` (lossless). It sits in the recording policy next to `maxFps` and `maxSize`, and is set the same way: in the recipe's `recordVideo` options or with `recipe run --record-still-format`.
+One setting chooses the format: `stillFormat`, either `webp` (the default) or `png` (lossless). It sits in the recording policy next to `maxFps` and `maxSize`, and is set the same way: in the run's `recordVideo` options or with `recipe run --record-still-format`.
 
-Recorders keep handing over lossless frames, and recipe-runner encodes each still once before registering it. It uses libwebp compiled to WebAssembly, an npm dependency of recipe-runner, so every recorder shares one encoder and no host binary is needed. Recorders that share it: capture-helper, CDP screencast, the Android mirror, and stills ffmpeg derives from video.
+Recorders keep handing over PNG frames (a still derived from video is its decoded frame), and recipe-runner encodes each still once before registering it. It uses libwebp compiled to WebAssembly, an npm dependency of recipe-runner, so every recorder shares one encoder and no host binary is needed. Recorders that share it: capture-helper, CDP screencast, the Android mirror, and stills ffmpeg derives from video.
 
-Screenshots a recipe names, such as `ui.screenshot` paths, keep the format of the name the recipe or harness gives them, because recipes and ledgers refer to those paths. A harness's own screenshots registered as `image/png` are one example.
+Screenshots taken by `ui.screenshot` keep the format of their path, including its default `screenshots/<node>.png`, because recipes and ledgers refer to those paths. A harness's own screenshots registered as `image/png` are one example.
 
 Retained runs keep their PNG stills. Every consumer chooses how to show or package a still from that file's `mimeType` or extension.
 
@@ -997,7 +997,7 @@ A check that needs exact pixel values sets `stillFormat: png`.
 
 capture-helper cannot do the encoding. macOS ImageIO does not write WebP on the farm hosts, the hosts' ffmpeg builds have no libwebp, and Chrome screencast frames are PNG or JPEG only. capture-helper therefore keeps writing deflated PNG (0.3.5), which recipe-runner converts.
 
-Clients, the gateway publish packager and model reviewers already decide per file. Today several of them still list only `png|jpg|jpeg|gif`. Each of them must accept `image/webp`, deployed, before any worker runs a recipe-runner that writes WebP. The writer release is the last change.
+Clients, the gateway publish packager and model reviewers already decide per file. Today several of them still list only `png|jpg|jpeg|gif`. Every such list must accept `image/webp`, deployed, before any worker runs a recipe-runner that writes WebP. The writer release is the last change.
 
 GitHub renders WebP in PR bodies, and the vision models used as reviewers accept it.
 
@@ -1006,17 +1006,17 @@ GitHub renders WebP in PR bodies, and the vision models used as reviewers accept
 **`@farmslot/protocol`**
 
 - `RecordedEvidencePolicy.stillFormat?: 'webp' | 'png'`; `DEFAULT_RECORDED_EVIDENCE_POLICY.stillFormat` is `'webp'`.
-- The one image-path check, `isRunArtifactImagePath` (already includes `.webp`), replaces the per-consumer extension lists.
+- Consumers use the existing checks, `isRunArtifactImagePath` (images the clients show inline, already including `.webp`) and `isRunEvidenceVisualArtifact` where a list also covers video, instead of their own extension lists.
 
 **`@farmslot/recipe-runner`**
 
-- `recipe run --record-still-format webp|png`.
-- Engine stills are `stills/<key>-<attempt>.webp` and `stills/recorded-<n>.webp`; recipe-named screenshots are unchanged.
+- `RecipeVideoRecordingOptions.stillFormat` (the run's `recordVideo` options, which harnesses set) and `recipe run --record-still-format webp|png`.
+- Engine stills are `stills/<key>-<attempt>.webp` and `stills/recorded-<n>.webp`; `ui.screenshot` files are unchanged.
 - `ActionExecutionContext.captureRecordingSnapshot` still returns PNG at the path the caller asks for, so harness callers are unchanged.
 
 **Consumers**
 
-- Command Center artifact, lightbox, evidence and family views, Companion, and the gateway artifact typing, PR body and publish packager, and reviewer inputs all accept `image/webp`.
+- Every image list accepts `image/webp`: Command Center (artifact, lightbox, evidence, family and eval views), Companion, and the gateway's artifact typing, eval packages, PR body and publish packager, and reviewer inputs.
 - The artifact route already serves `.webp` as `image/webp`.
 
 **Harnesses** inherit the change; a harness needs no code change, only its dependency bump.
