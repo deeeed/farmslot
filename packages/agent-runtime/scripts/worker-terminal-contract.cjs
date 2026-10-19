@@ -621,11 +621,12 @@ function logHash(file) {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
+// False when the step declares no deterministic check; throws when the check fails.
 function executeDeterministicStep(taskDir, checklist, stepNumber) {
   const step = recordedDeterministicSteps(taskDir, checklist).find(
     (item) => item.stepNumber === stepNumber,
   );
-  if (!step) return;
+  if (!step) return false;
   if (!step.command)
     throw new Error(
       `Deterministic step ${stepNumber}: ${step.reference} has no frozen command; initialize the task again`,
@@ -675,6 +676,7 @@ function executeDeterministicStep(taskDir, checklist, stepNumber) {
       `Deterministic step ${stepNumber} failed${inputHash !== afterHash ? ': command changed publishable inputs' : ` with exit ${result.status ?? result.signal ?? 'unknown'}`}. See ${logPath}`,
     );
   console.log(`Deterministic step ${stepNumber} passed, exit 0. Log: ${logPath}`);
+  return true;
 }
 
 function readDeterministicChecks(taskDir, checklist, options = {}) {
