@@ -39,7 +39,7 @@ import {
 } from '../../backlog/dispatch-queue.js';
 import { assertPRRunActivation } from '../../backlog/pr-admission.js';
 import { execOnSlot, isLocal } from '../../core/exec.js';
-import { claimSlotStatusIf, readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
+import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
@@ -63,11 +63,7 @@ import {
 } from '../../run-engine/run-monitor.js';
 import { replaySlotCapabilityRequirements } from '../../run-engine/slot-capability-requirements.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
-import {
-  assertRunNotArchiving,
-  isRunArchiving,
-  isRunArchivingRefusal,
-} from '../../run-lifecycle/archive-fence.js';
+import { assertRunNotArchiving, isRunArchivingRefusal } from '../../run-lifecycle/archive-fence.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
@@ -84,9 +80,8 @@ import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
 import { readFrozenWorkerTerminalContractForRun } from '../../tasks/worker-terminal-contract.js';
 import { writeTextFileOnSlot } from '../dispatch/slot-file-write.js';
-import { isActiveSlotHolder, slotClaimBlockedByRelease } from '../dispatch/slot-scoring.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
-import { slotOwnershipFieldsForRun } from '../fleet.js';
+import { rebindRunSlot } from '../fleet.js';
 import { runtimeCapabilityStatus } from '../runtime-capabilities.js';
 import { assertReleaseRunGuards, slotReleasePreflight } from '../slot/release.js';
 
@@ -612,39 +607,9 @@ export async function resumeBlockedRunWhoseWorkerContinued(
   });
 }
 
-/**
- * Bind a blocked run's released slot back to it with the fields a fleet
- * refresh writes, in a claim-type write on the dispatcher's write chain: a
- * dispatch claim and this re-bind cannot both win, and the epoch bump aborts a
- * teardown's remaining writes. Returns what holds the slot instead (a run, a
- * handoff reservation, or a lifecycle that is not free), or null when re-bound.
- */
-export async function rebindReleasedSlot(run: Run): Promise<string | null> {
-  const slotId = run.slotId!;
-  // A run created for this slot but not yet claiming it counts as its holder,
-  // by the same rule dispatch uses.
-  const rival = getAllRuns().find(
-    (other) => other.slotId === slotId && isActiveSlotHolder(other, run.id),
-  );
-  if (rival) return `run ${rival.id}`;
-  let holder: string | null = null;
-  const { claimed } = await claimSlotStatusIf(
-    slotId,
-    (slot) => {
-      const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
-      const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
-      // An archive evicts the run without this slot; re-binding would leave the
-      // slot held by a run that no longer exists.
-      if (isRunArchiving(run.id) || !getRun(run.id)) holder = 'nobody: the run is being archived';
-      else if (owner && owner !== run.id) holder = `run ${owner}`;
-      else if (reserved && reserved !== run.id) holder = `a handoff to run ${reserved}`;
-      else if (slotClaimBlockedByRelease(slot) !== null || slot.lifecycle !== 'ready')
-        holder = `nobody, but it is ${String(slot.lifecycle ?? 'missing')}/${String(slot.phase ?? '-')}`;
-      return holder === null;
-    },
-    { ...slotOwnershipFieldsForRun(run), handoff_run_id: null, dispatchable: false },
-  );
-  return claimed ? null : (holder ?? 'an unknown holder');
+/** A blocked run's released slot, re-bound to it (see rebindRunSlot). */
+export function rebindReleasedSlot(run: Run): Promise<string | null> {
+  return rebindRunSlot(run);
 }
 
 export function blockedMonitorProofReady(run: Run, status: RuntimeCapabilityStatusResult): boolean {

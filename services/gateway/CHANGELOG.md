@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The publish gate re-binds its slot when the slot lost its owner but still has the run's checkout on the run's branch and no other run holds it. Before, TAT-4145 run bda11b1a's human-gate replay re-claimed its slot, a reconcile reset it to ready during the replay's artifact copy, and the gate (42ac7052) offered only Hold: 'Publication source slot is no longer owned by this run'. It took a fleet refresh and Retry Gate.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.28.0 - 2026-10-19
