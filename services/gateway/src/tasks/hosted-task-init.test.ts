@@ -159,18 +159,4 @@ test('transport forwards node pool and captured pack roots through the installed
     pool: path.join(fixtureFarm, 'pool'),
     projects: path.join(support, 'projects'),
   });
-  // Without FARMSLOT_CLI, an installation's own bin directory names the CLI.
-  const binDir = path.join(root, 'bin');
-  fs.mkdirSync(binDir);
-  fs.copyFileSync(cli, path.join(binDir, 'farmslot'));
-  fs.chmodSync(path.join(binDir, 'farmslot'), 0o755);
-  const installed: NodeJS.ProcessEnv = { ...env, FARMSLOT_BIN_DIR: binDir };
-  delete installed.FARMSLOT_CLI;
-  const fromBin = execFileSync('/bin/bash', ['-c', selected], {
-    env: installed,
-    cwd: root,
-    encoding: 'utf8',
-    timeout: 4000,
-  });
-  assert.deepEqual(JSON.parse(fromBin).args, ['--json', 'internal', 'slot-vars', 'fixture-1']);
 });

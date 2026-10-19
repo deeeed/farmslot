@@ -4,7 +4,6 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
-- The project-compatibility tutorial says the first `up` needs an interactive terminal, and shows how to bind the tutorial slot when a run blocks on a slot picker. The example-app provider declares `commandOptions.task.stepGates` (none), which a dispatched task needs since node task initialization (#1186); without it the tutorial's run failed at `write-task`. Write a recipe: standalone discovery takes `--platform`, and a standalone run takes `--adapter`.
 - The worker reference pages ask for one learnings bullet per failure likely to recur that should change a template, reviewer or engine step, with `- None` as a valid answer (ADR-026 Amendment 1).
 - Recipe discovery runs through `farmslot recipe` (`run --list`, `--describe`, `--plan` and `actions`), with `--project-root` outside a project, instead of the removed `farmslot-recipe` executable. The Expo, headless, write-a-recipe and adoption guides and the composition-quality and runner-protocol references use the same commands.
 - The Recipe Protocol v1 reference adds Amendment 6, accepted 2026-10-19: a selected library may declare namespaced custom actions only, and a task action manifest's implementations resolve from `<root>/actions`.

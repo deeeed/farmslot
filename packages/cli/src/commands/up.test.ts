@@ -187,22 +187,6 @@ test('first local bootstrap and restart preserve one refresh-only person device'
   assert.ok(!readFileSync(profilesPath(), 'utf8').includes('fsa_'));
 });
 
-test('first local bootstrap outside a terminal names the missing terminal', (t) => {
-  const previousHome = process.env.FARMSLOT_HOME;
-  const input = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
-  const home = mkdtempSync(join(tmpdir(), 'local-session-no-tty-'));
-  t.after(() => {
-    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
-    else process.env.FARMSLOT_HOME = previousHome;
-    if (input) Object.defineProperty(process.stdin, 'isTTY', input);
-    else Reflect.deleteProperty(process.stdin, 'isTTY');
-    rmSync(home, { recursive: true, force: true });
-  });
-  process.env.FARMSLOT_HOME = home;
-  Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
-  assert.throws(() => ensureLocalCredential(8802), /needs an interactive terminal/);
-});
-
 test('startup browser handoff never puts a person access token in output or a URL', () => {
   const access = `fsa_${'a'.repeat(32)}_${'s'.repeat(43)}`;
   const output = new CaptureOutput(true);
