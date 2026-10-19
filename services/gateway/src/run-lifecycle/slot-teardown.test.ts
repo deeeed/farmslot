@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import { cancelledRunHoldReason, type Run } from '@farmslot/protocol';
 
 // mock.module replaces a module wholesale, so the real namespaces are spread in
 // and only the slot row, project vars, exec layer, worker stop, run store,
@@ -282,12 +282,8 @@ mock.module('../methods/slot/release.js', {
   },
 });
 
-const {
-  cancelledRunHoldReason,
-  slotTeardownBlocker,
-  stopRunOwnedTmuxAndWatches,
-  retryOccupiedRunSlot,
-} = await import('./slot-teardown.js');
+const { slotTeardownBlocker, stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } =
+  await import('./slot-teardown.js');
 const { replaySlotReclaimCheck } = await import('../methods/run/replay-step.js');
 const { defaultCancelCollaborators } = await import('./cancel-transition.js');
 const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');

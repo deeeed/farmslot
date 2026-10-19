@@ -5,6 +5,7 @@ import type {
   AcceptanceCriterionRef,
   AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
+  CancelledRunSlotChoices,
   CiCheckUpdatedPayload,
   DevInteractiveCompletionAction,
   FamilyObservabilityArtifact,
@@ -35,6 +36,7 @@ import { runResultsSummary } from '@farmslot/review-dispatch';
 
 import '../slot-view/worker-session-history.js';
 import '../shared/workspace-pin.js';
+import '../shared/cancelled-run-slot-release.js';
 import '../shared/hydrating-placeholder.js';
 
 import { isPrLinkageMissing } from '../../state.js';
@@ -48,6 +50,7 @@ import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
 import { ticketUrlForRun } from './family-observability-link-model.js';
 import { familyRunHash } from './family-observability-url-state.js';
 import type { RunLifecycleAction } from './run-detail-actions.js';
+import { renderCancelledRunSlotChoices } from './run-detail-cancelled-slot-renderers.js';
 import {
   canLaunchComparisonSibling,
   canReplayRunSteps,
@@ -130,6 +133,8 @@ export interface RunDetailViewContext {
   _buildRerunAlongsideHref: (run: Run) => string;
   _slotBranchForRun: (run: Run) => string;
   _slotHealthForRun: (run: Run) => import('@farmslot/protocol').SlotHealth | null;
+  /** The slot a cancelled run still holds for replay, with its two choices. */
+  _cancelledRunSlot: CancelledRunSlotChoices | null;
   _setRunTags: (run: Run, tags: string[]) => void | Promise<void>;
   _renderInteractiveDevGate: (run: Run) => unknown;
   _currentCiStatus: (run: Run) => CiCheckUpdatedPayload | null;
@@ -960,7 +965,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                         : 'A free-slot park released this slot; answering the gate restores the run into it.'}
                       >freed for dispatch</span
                     >`
-                  : nothing}`
+                  : nothing}
+                ${renderCancelledRunSlotChoices(r, {
+                  choices: ctx._cancelledRunSlot,
+                  replayAllowed: canReplayRunSteps(r, actionsBlocked),
+                  onReplayStep: ctx._onReplayStep,
+                })}`
             : r.reviewWorkspace
               ? html`<span
                     data-testid="run-workspace-location"

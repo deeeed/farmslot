@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { PipelineSteps, type Run, type SlotReleaseParams } from '@farmslot/protocol';
+import {
+  cancelledRunHoldReason,
+  PipelineSteps,
+  type Run,
+  type SlotReleaseParams,
+} from '@farmslot/protocol';
 
 import { assertReloadStillOwnsSlot, restoreTmuxWorker } from '../../agents/runtime-recovery.js';
 import { readSlotField, updateSlotStatus } from '../../core/index.js';
@@ -13,7 +18,6 @@ import {
   endRunArchive,
   isRunArchiving,
 } from '../../run-lifecycle/archive-fence.js';
-import { cancelledRunHoldReason } from '../../run-lifecycle/slot-teardown.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, getRunWithArchived, updateRun } from '../../runs/store.js';
 import { type SlotReleasePreflight, slotReleasePreflight } from '../slot/release.js';

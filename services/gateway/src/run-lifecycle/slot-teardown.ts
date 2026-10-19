@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  cancelledRunHoldReason,
   Events,
   isCompletionPrerequisiteFailure,
   isTerminalRunStatus,
@@ -420,11 +421,6 @@ export async function stopRunOwnedTmuxAndWatches(
 }
 
 /** Foreign occupancy prevents destructive cleanup, but does not retain a terminal run's pointer. */
-/** What a cancelled run's slot shows while it is kept for replay (ADR-054, 2026-10-19). */
-export function cancelledRunHoldReason(runId: string): string {
-  return `Held by cancelled run ${runId}: replay it or release the slot`;
-}
-
 export async function releaseRunSlotOwnership(
   run: Run,
   fence: RunSlotCleanupFence,

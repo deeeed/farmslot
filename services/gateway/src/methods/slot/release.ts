@@ -15,6 +15,7 @@ import {
   primaryRoleForFlow,
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
+  type SlotReleaseResult,
 } from '@farmslot/protocol';
 
 import {
@@ -110,12 +111,6 @@ import { findUnmergedSlotWork } from './unmerged-work.js';
 // must be ONE teardown — the slower duplicate previously re-killed and reset
 // whatever claimed the slot after the first release finished.
 const inflightReleases = new Map<string, { key: string; promise: Promise<SlotReleaseResult> }>();
-
-/** A release that did not run says why, so a caller never sees a bare refusal. */
-export interface SlotReleaseResult {
-  released: boolean;
-  reason?: string;
-}
 
 /** How long a release waits for an aborted in-flight prepare to settle. A
  * git command stalled on a dropped network never observes the abort; past
