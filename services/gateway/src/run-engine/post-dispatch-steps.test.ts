@@ -8,6 +8,7 @@ import {
   type CompleteStepOutput,
   type PublicationReviewLaunchRejection,
   type RecipeRepairScope,
+  type ReviewRequestContext,
   type ReviewSelection,
   type ReviewStatus,
   type Run,
@@ -285,104 +286,263 @@ test('complete re-entry with zero pending decisions restores Codex after a curre
   }
 });
 
-test('the gate counts a passing pipeline review of its head as the dispatch row 1', async (t) => {
-  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'pipeline-row-one-'));
-  t.after(() => rm(taskDir, { recursive: true, force: true }));
-  const head = 'b'.repeat(40);
-  await mkdir(path.join(taskDir, 'artifacts'));
-  await writeFile(
-    path.join(taskDir, 'artifacts/pr-package.json'),
-    JSON.stringify(makeReadyGatePackage({ headSha: head })),
-  );
-  const plan: ReviewSelection[] = [
-    { runner: 'codex', model: 'gpt-6.1-sol', effort: null, mode: 'cold' },
-    { runner: 'claude', model: 'opus', effort: null, mode: 'cold' },
-  ];
-  // What the REVIEW step recorded after running row 1 (codex's default effort).
-  const pipelineReview = (reviewedHeadSha: string): ReviewStatus => ({
-    id: 'pipeline-review-1',
-    source: 'pipeline',
-    mode: 'cold',
+const rowOneHead = 'b'.repeat(40);
+const codexRow: ReviewSelection = {
+  runner: 'codex',
+  model: 'gpt-6.1-sol',
+  effort: null,
+  mode: 'cold',
+};
+const claudeRow: ReviewSelection = { runner: 'claude', model: 'opus', effort: null, mode: 'cold' };
+
+/** What the REVIEW step recorded after running a row (codex's default effort). */
+function pipelineReview(
+  reviewedHeadSha = rowOneHead,
+  ran: Pick<ReviewStatus, 'runner' | 'model' | 'effort'> = {
     runner: 'codex',
     model: 'gpt-6.1-sol',
     effort: 'high',
+  },
+  completedAt = '2026-10-19T00:01:00Z',
+): ReviewStatus {
+  return {
+    id: 'pipeline-review-1',
+    source: 'pipeline',
+    mode: 'cold',
+    ...ran,
     loopNumber: 1,
     verdict: 'pass',
     unresolvedCount: 0,
-    reviewerSessionId: 'pipeline-session',
+    reviewerSessionId: `pipeline-session-${completedAt}`,
     reviewedHeadSha,
-    completedAt: '2026-10-19T00:01:00Z',
-  });
-  const gatePlan = async (reviewSequence: ReviewSelection[], reviewedHeadSha: string) => {
-    const run = createRun({
-      project: 'pipeline-row-one',
-      flowType: 'fix-bug',
-      mode: 'autonomous',
-      ticketOrPr: 'ROW-ONE',
-    });
-    t.after(() => deleteTestRunIfPresent(run.id));
-    updateRun(run.id, {
-      status: 'human-gating',
-      slotId: 'isolated-review-slot',
-      taskFile: path.join(taskDir, 'TASK.md'),
-      steps: [{ name: 'human-gate', status: 'running' }],
-      decisions: [],
-      engineState: {
-        publishGate: {
-          publicationStatus: 'not_published',
-          reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
-          ...(reviewSequence.length
-            ? {
-                reviewSequence,
-                reviewSequenceContext: { reviewLineages: reviewSequence.map(() => null) },
-              }
-            : {}),
-          reviews: [pipelineReview(reviewedHeadSha)],
-        },
-      },
-    });
-    const requested: Array<{ plan: ReviewSelection[]; trigger: string; lineages?: number }> = [];
-    await executeHumanGateStep(run.id, {
-      ...restartReplayContext(),
-      executePublishGateReviewPlan: async (_runId, _slotId, actualPlan, trigger) => {
-        requested.push({
-          plan: actualPlan,
-          trigger,
-          lineages: getRun(run.id)!.engineState?.publishGate?.reviewSequenceContext?.reviewLineages
-            .length,
-        });
-        return { reviewIds: [] };
-      },
-      prepareCompletionPackageForRun: async () => ({
-        completion: {
-          prNumber: null,
-          ciRepo: null,
-          artifactsCopied: true,
-          prCommentPosted: false,
-          prTitleUpdated: false,
-          prMarkedReady: false,
-          retrospectiveCreated: false,
-          artifacts: [],
-        },
-        prPackage: makeReadyGatePackage({ headSha: head }),
-        reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
-        reviews: [],
-      }),
-    });
-    return requested;
+    completedAt,
   };
+}
+
+/** A fix-bug run at its publication gate, with its package prepared at `rowOneHead`. */
+async function publicationGateRun(
+  t: import('node:test').TestContext,
+  publishGate: NonNullable<Run['engineState']>['publishGate'],
+): Promise<string> {
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'pipeline-row-one-'));
+  t.after(() => rm(taskDir, { recursive: true, force: true }));
+  await mkdir(path.join(taskDir, 'artifacts'));
+  await writeFile(
+    path.join(taskDir, 'artifacts/pr-package.json'),
+    JSON.stringify(makeReadyGatePackage({ headSha: rowOneHead })),
+  );
+  const run = createRun({
+    project: 'pipeline-row-one',
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    ticketOrPr: 'ROW-ONE',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: 'isolated-review-slot',
+    taskFile: path.join(taskDir, 'TASK.md'),
+    steps: [
+      { name: 'review', status: 'done' },
+      { name: 'human-gate', status: 'running' },
+    ],
+    decisions: [],
+    engineState: { publishGate: { publicationStatus: 'not_published', ...publishGate } },
+  });
+  return run.id;
+}
+
+interface GateReviewRequest {
+  plan: ReviewSelection[];
+  trigger: string;
+  lineages?: ReviewRequestContext['reviewLineages'];
+}
+
+/** Enters the gate and returns the review plans it requested; `interrupt` fails the first one. */
+async function enterPublicationGate(
+  runId: string,
+  interrupt = false,
+): Promise<GateReviewRequest[]> {
+  const requested: GateReviewRequest[] = [];
+  const entry = executeHumanGateStep(runId, {
+    ...restartReplayContext(),
+    executePublishGateReviewPlan: async (_runId, _slotId, plan, trigger) => {
+      requested.push({
+        plan,
+        trigger,
+        lineages: getRun(runId)!.engineState?.publishGate?.reviewSequenceContext?.reviewLineages,
+      });
+      if (interrupt) throw new Error('gateway restarted mid-review');
+      return { reviewIds: [] };
+    },
+    prepareCompletionPackageForRun: async () => ({
+      completion: {
+        prNumber: null,
+        ciRepo: null,
+        artifactsCopied: true,
+        prCommentPosted: false,
+        prTitleUpdated: false,
+        prMarkedReady: false,
+        retrospectiveCreated: false,
+        artifacts: [],
+      },
+      prPackage: makeReadyGatePackage({ headSha: rowOneHead }),
+      reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+      reviews: [],
+    }),
+  });
+  if (interrupt) await assert.rejects(entry, /gateway restarted mid-review/);
+  else await entry;
+  return requested;
+}
+
+test('the gate counts a passing pipeline review of its head as the dispatch row 1', async (t) => {
+  const plan = [codexRow, claudeRow];
+  const dispatched = (reviewedHeadSha: string): NonNullable<Run['engineState']>['publishGate'] => ({
+    reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+    reviewSequence: plan,
+    reviewSequenceContext: { reviewLineages: [null, null] },
+    reviews: [pipelineReview(reviewedHeadSha)],
+  });
 
   assert.deepEqual(
-    await gatePlan(plan, head),
-    [{ plan: [plan[1]], trigger: 'dispatch', lineages: 1 }],
+    await enterPublicationGate(await publicationGateRun(t, dispatched(rowOneHead))),
+    [{ plan: [claudeRow], trigger: 'dispatch', lineages: [null] }],
     'only rows 2..n run, with their own lineages',
   );
   assert.deepEqual(
-    await gatePlan(plan, 'c'.repeat(40)),
-    [{ plan, trigger: 'dispatch', lineages: 2 }],
+    await enterPublicationGate(await publicationGateRun(t, dispatched('c'.repeat(40)))),
+    [{ plan, trigger: 'dispatch', lineages: [null, null] }],
     'a pipeline review of an older head leaves row 1 to run again',
   );
-  assert.deepEqual(await gatePlan([], head), [], 'a run without a sequence is unchanged');
+  assert.deepEqual(
+    await enterPublicationGate(
+      await publicationGateRun(t, {
+        reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+        reviews: [pipelineReview()],
+      }),
+    ),
+    [],
+    'a run without a sequence is unchanged',
+  );
+});
+
+test('a WARM row 1 runs at the gate with its lineage despite a passing COLD pipeline review', async (t) => {
+  const lineage = { repository: 'example/app', prNumber: 7, reviewId: 'review-lineage-1' };
+  const warmRow: ReviewSelection = { ...codexRow, mode: 'warm' };
+  const runId = await publicationGateRun(t, {
+    reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+    reviewSequence: [warmRow, claudeRow],
+    reviewSequenceContext: { reviewLineages: [lineage, null] },
+    reviews: [pipelineReview()],
+  });
+
+  assert.deepEqual(await enterPublicationGate(runId), [
+    { plan: [warmRow, claudeRow], trigger: 'dispatch', lineages: [lineage, null] },
+  ]);
+});
+
+test('a gate restart after counting the pipeline review keeps the remaining row', async (t) => {
+  const runId = await publicationGateRun(t, {
+    reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+    reviewSequence: [codexRow, codexRow],
+    reviews: [pipelineReview()],
+  });
+  const remaining = [{ plan: [codexRow], trigger: 'dispatch', lineages: undefined }];
+
+  assert.deepEqual(await enterPublicationGate(runId, true), remaining, 'row 2 starts');
+  assert.deepEqual(
+    await enterPublicationGate(runId, true),
+    remaining,
+    'the same-runner pipeline review is not counted again for row 2',
+  );
+  const latest = getRun(runId)!;
+  updateRun(runId, {
+    engineState: {
+      ...latest.engineState,
+      publishGate: {
+        ...latest.engineState?.publishGate,
+        reviews: [
+          ...(latest.engineState?.publishGate?.reviews ?? []),
+          {
+            ...pipelineReview(),
+            id: 'gate-row-2',
+            source: 'dispatch',
+            reviewerSessionId: 'gate-row-2-session',
+            completedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(await enterPublicationGate(runId), [], 'row 2 passed');
+});
+
+test('a plan requested at the human gate neither selects nor is satisfied by the pipeline review', async (t) => {
+  const runId = await publicationGateRun(t, {
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'human-gate' },
+    reviewSequence: [codexRow],
+    reviews: [pipelineReview()],
+  });
+  const calls: Array<ReviewOptions | undefined> = [];
+  await executeReviewStep(runId, {
+    ...restartReplayContext(),
+    executeReviewForRun: async (_runId, _slotId, options) => {
+      calls.push(options);
+      return { verdict: 'pass', retryCount: 0 };
+    },
+  });
+  assert.equal(calls[0]?.reviewRunner, undefined, 'the project config selects the reviewer');
+
+  assert.deepEqual(await enterPublicationGate(runId), [
+    { plan: [codexRow], trigger: 'human-gate', lineages: undefined },
+  ]);
+});
+
+test('a review replay after the gate trimmed the sequence runs the project config, not row 2', async (t) => {
+  const runId = await publicationGateRun(t, {
+    reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+    reviewSequence: [codexRow, claudeRow],
+    reviews: [pipelineReview()],
+  });
+  await enterPublicationGate(runId, true);
+  assert.deepEqual(getRun(runId)!.engineState?.publishGate?.reviewSequence, [claudeRow]);
+
+  const calls: Array<ReviewOptions | undefined> = [];
+  const io = await executeReviewStep(runId, {
+    ...restartReplayContext(),
+    executeReviewForRun: async (_runId, _slotId, options) => {
+      calls.push(options);
+      return { verdict: 'pass', retryCount: 0 };
+    },
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(
+    ['reviewRunner', 'model', 'effort'].filter((key) => key in (calls[0] ?? {})),
+    [],
+  );
+  assert.equal(io.inputs?.reviewSelection, undefined);
+
+  // The replayed review ran the project's claude/opus. It is not row 2's result.
+  const latest = getRun(runId)!;
+  updateRun(runId, {
+    engineState: {
+      ...latest.engineState,
+      publishGate: {
+        ...latest.engineState?.publishGate,
+        reviews: [
+          pipelineReview(
+            rowOneHead,
+            { runner: 'claude', model: 'opus', effort: null },
+            new Date().toISOString(),
+          ),
+        ],
+      },
+    },
+  });
+  assert.deepEqual(await enterPublicationGate(runId), [
+    { plan: [claudeRow], trigger: 'dispatch', lineages: undefined },
+  ]);
 });
 
 test('artifact-only QA complete identifies execution completion to the canonical gate guard', async (t) => {

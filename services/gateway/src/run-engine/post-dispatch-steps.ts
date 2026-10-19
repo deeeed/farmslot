@@ -637,8 +637,15 @@ export async function executeReviewStep(
   const current = getRun(runId)!;
   if (!current.slotId) throw new Error('No slot assigned');
   // ADR-063 Amendment 3: the dispatch's first review row also selects the pipeline
-  // reviewer. Recorded on the step, so its rechecks use it after the gate consumes the row.
-  const reviewSelection = current.engineState?.publishGate?.reviewSequence?.[0];
+  // reviewer, while the stored sequence is still the dispatch's own plan (a gate,
+  // request or recovery that rewrites it stamps requestedAt). Recorded on the step,
+  // so its rechecks use it after the gate consumes the row.
+  const publishGate = current.engineState?.publishGate;
+  const reviewSelection =
+    !publishGate?.reviewSequenceRequestedAt &&
+    publishGate?.reviewPolicy?.requestedBy !== 'human-gate'
+      ? publishGate?.reviewSequence?.[0]
+      : undefined;
   const inputs: Record<string, unknown> = {
     slotId: current.slotId,
     enabled: true,
@@ -1130,7 +1137,7 @@ export async function executeHumanGateStep(
           ? 'human-gate'
           : 'dispatch';
       // ADR-063 Amendment 3: the pipeline review ran the dispatch's row 1. Its pass
-      // of the gate head is that row's result; at an older head row 1 runs again.
+      // of the gate head is a COLD row 1's result; at an older head row 1 runs again.
       const pipelineReviewedFirstRow =
         explicitPlanSource === 'dispatch' &&
         pipelineReviewSatisfiesFirstRow(explicitInitialPlan, reviewsForInitial, {

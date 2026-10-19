@@ -20,10 +20,11 @@ existing review result; retry attempts do not increase the qualifying-review cou
 
 When a run carries a `reviewSequence`, row 1 also selects the runner, model and
 effort of its pipeline review and of that review's rechecks after the evidence
-or head changes (ADR-063 Amendment 3). The publication gate counts a passing
-pipeline review of the gate head as row 1's result and requests only the
-remaining rows. Runs without a sequence take the pipeline reviewer from the
-project `review` configuration.
+or head changes (ADR-063 Amendment 3). When row 1 is COLD, the publication gate
+counts a passing pipeline review of the gate head as row 1's result and requests
+only the remaining rows. A WARM row 1 continues its own review lineage at the
+gate. Runs without a sequence take the pipeline reviewer from the project
+`review` configuration.
 
 ## Round budget
 

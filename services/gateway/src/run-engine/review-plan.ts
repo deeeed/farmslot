@@ -117,7 +117,9 @@ export function remainingExplicitReviewPlan(
 
 /**
  * ADR-063 Amendment 3: the pipeline review ran the dispatch's first row, so its
- * pass of the gate head is that row's result. It never stands for a later row.
+ * pass of the gate head is that row's result. It never stands for a later row, nor
+ * for a WARM row 1, which continues its own lineage at the gate. A plan with a
+ * requestedAt was rewritten by a gate, request or recovery: its first row is not row 1.
  */
 export function pipelineReviewSatisfiesFirstRow(
   plan: ReviewSequence,
@@ -126,11 +128,12 @@ export function pipelineReviewSatisfiesFirstRow(
 ): boolean {
   return (
     !!scope.headSha &&
-    plan.length > 0 &&
+    !scope.requestedAt &&
+    plan[0]?.mode === 'cold' &&
     remainingExplicitReviewPlan(
       plan.slice(0, 1),
       reviews.filter((review) => review.reviewedHeadSha === scope.headSha),
-      { requestedAt: scope.requestedAt, source: 'pipeline' },
+      { source: 'pipeline' },
     ).length === 0
   );
 }

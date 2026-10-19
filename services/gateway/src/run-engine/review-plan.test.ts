@@ -287,12 +287,17 @@ test('a pipeline review stands for row 1 only, at the gate head, for the plan it
     false,
   );
   assert.equal(
+    pipelineReviewSatisfiesFirstRow([{ ...selection, mode: 'warm' }], [review], scope),
+    false,
+    'a WARM row 1 continues its own lineage',
+  );
+  assert.equal(
     pipelineReviewSatisfiesFirstRow([selection], [review], {
       ...scope,
-      requestedAt: '2026-10-11T02:00:00Z',
+      requestedAt: '2026-10-11T00:00:00Z',
     }),
     false,
-    'a plan requested after the pipeline review',
+    'a plan a gate, request or recovery rewrote',
   );
 });
 

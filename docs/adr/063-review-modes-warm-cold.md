@@ -330,7 +330,7 @@ A run's pipeline review takes its runner and model from the project's `review` c
 
 1. **The pipeline review runs row 1.** When a run carries a `reviewSequence`, its pipeline review uses the first row's runner, model and effort. The project `review` configuration applies only to runs without a sequence. This is an absolute selection, which the dispatcher makes per run. No rule compares it with the worker.
 2. **Rechecks use the same row.** A pipeline review rerun after the evidence or the head changes uses the same row-1 selection, not a fixed runner.
-3. **The gate counts it as row 1.** The publication gate counts that pipeline review as row 1's result, and requests only the remaining rows. Row 1 runs again only when the head or the reviewed inputs changed, like any recheck of the same review.
+3. **The gate counts it as row 1.** The publication gate counts that pipeline review as row 1's result, and requests only the remaining rows. Row 1 runs again only when the head or the reviewed inputs changed, like any recheck of the same review. A WARM row 1 continues its own review lineage at the gate, so only a COLD row 1 is counted from the pipeline review.
 
 ### Rationale and consequences
 
