@@ -24,6 +24,7 @@ import {
   buildRunGateParams,
   formatResultDecision,
   formatReviewChainLine,
+  formatRunListLines,
   formatRunSessionLines,
   formatRunStepTimingLines,
   parseAgentRole,
@@ -712,6 +713,21 @@ test('run get shows each step queue time, run time and last progress', () => {
     'find-slot: queued 2m10s · ran 3s',
     'prepare: ran 5m12s · last progress 40s ago',
   ]);
+});
+
+test('run list clamps a blocked run reason so the table columns stay aligned', () => {
+  const reason =
+    'Step 6 recipe prerequisite cannot be met: the configured action catalog has no rendered ' +
+    'order-book value/change timing observation to assert AC-3 refresh gaps <=500 ms.';
+  const lines = formatRunListLines([
+    { ...repeatReviewRun(), id: '4237202e-c2a6', status: 'blocked', error: reason },
+    { ...repeatReviewRun(), id: '7721a02b-0000', status: 'monitoring' },
+  ]);
+  assert.equal(
+    lines[0],
+    '4237202e  Blocked: Step 6 recipe prerequisite can… review-pr    deeeed/farmslot#505',
+  );
+  assert.equal(lines[1], `7721a02b  ${'monitoring'.padEnd(40)} review-pr    deeeed/farmslot#505`);
 });
 
 test('parseAgentRole accepts a known role and rejects the rest', () => {

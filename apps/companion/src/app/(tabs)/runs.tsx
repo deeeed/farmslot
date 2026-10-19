@@ -237,6 +237,7 @@ function RunCard({
             steps={run.steps}
             runStatus={run.status}
             waitingForOperator={run.waitingForOperator}
+            error={run.error}
           />
         )}
         {primaryVisualPair ? (

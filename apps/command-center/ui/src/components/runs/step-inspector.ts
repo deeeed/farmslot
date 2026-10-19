@@ -5,6 +5,8 @@ import {
   type FamilyObservabilityArtifact,
   resolveRunSlotId,
   type RunStep,
+  runStepDisplayDetail,
+  runStepDisplayStatus,
   staticReviewReplayBlock,
 } from '@farmslot/protocol';
 
@@ -74,7 +76,10 @@ export class StepInspector extends StepInspectorState {
   render() {
     if (!this.step) return nothing;
     const s = this.step;
-    const sc = stepStatusColor(s.status);
+    // The engine records a blocked run's stopped step as done; show it as the pipeline does.
+    const status = this.run ? runStepDisplayStatus(this.run, s) : s.status;
+    const detail = this.run ? runStepDisplayDetail(this.run, s) : s.detail;
+    const sc = stepStatusColor(status);
     const duration = this._stepDurationLabel(s);
 
     const stepArtifacts = this._stepArtifacts();
@@ -116,7 +121,7 @@ export class StepInspector extends StepInspectorState {
       <div class="inspector">
         <div class="header">
           <span class="step-name">${s.name}</span>
-          <span class="status" style="background:${sc}22; color:${sc}">${s.status}</span>
+          <span class="status" style="background:${sc}22; color:${sc}">${status}</span>
           ${duration ? html`<span class="duration">${duration}</span>` : nothing}
           ${reviewBlock &&
           this.run &&
@@ -291,10 +296,10 @@ export class StepInspector extends StepInspectorState {
               ${outputs.map(([k, v]) => this._renderRow(k, v))}
             `
           : nothing}
-        ${s.detail
+        ${detail
           ? html`
-              <div class="detail ${s.status === 'failed' ? 'detail-fail' : 'detail-running'}">
-                ${s.detail}
+              <div class="detail ${status === 'failed' ? 'detail-fail' : 'detail-running'}">
+                ${detail}
               </div>
             `
           : nothing}
