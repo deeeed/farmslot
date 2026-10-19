@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.27.0 - 2026-10-19
+
+- Align with `@farmslot/protocol` 0.58.0, `@farmslot/recipe-runner` 0.44.0 and `@farmslot/agent-runtime` 0.34.0.
+
 ## 0.26.0 - 2026-10-19
 
 - Align with `@farmslot/agent-runtime` 0.33.0 and `@farmslot/recipe-runner` 0.43.0.
