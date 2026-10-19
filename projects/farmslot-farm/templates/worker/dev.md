@@ -145,7 +145,7 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
       assertion that over-claims. Prove each new node can fail before trusting it. Unit tests do not cover wiring.
 - [ ] **20. Commit** — atomic commit(s) following Conventional Commits.
 - [ ] **21. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include root cause, fix summary, test results, and retained evidence paths from `evidence-manifest.json`. Include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
-- [ ] **22. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
+- [ ] **22. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
 - [ ] **23. Signal completion**:
   ```bash
   {{TASK_DIR}}/mark complete --mark-last

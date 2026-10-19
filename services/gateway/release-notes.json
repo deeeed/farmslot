@@ -1,11 +1,11 @@
 {
-  "version": "0.24.0",
-  "date": "2026-10-18",
+  "version": "0.25.0",
+  "date": "2026-10-19",
   "items": [
-    "A QA run that records one package per case keeps every case's verdicts: each acceptance criterion binds to the case that proved it",
-    "Releasing or recycling a slot whose run failed completion is refused, so the checkout a completion replay needs is kept; replay the completion or discard the workspace with the named force release",
-    "QA can prepare at a frozen release-range head after the release branch has moved, including on a detached slot",
-    "Idle resource cleanup finds and stops simulators and dev servers that disabled slots left running, and confirms each stop with a fresh probe",
-    "A run whose refused completion was discarded no longer counts as active or owns its PR, so a new run can start on that PR"
+    "A run whose worker delivered a result waits in Needs decision instead of failing when review findings remain or a completion step is refused",
+    "Cancel always frees its slot unless another active run owns it, and cancel, settlement and slot release stop a browser session the run left behind",
+    "A relaunched worker no longer shows its failed predecessor's error, and a native reviewer no longer waits on an approval nobody can see",
+    "A chunked file transfer survives a node restart, and a request on a closed node connection fails at once",
+    "WebP evidence stills are packaged, published in PR bodies and given to reviewers like PNG stills"
   ]
 }

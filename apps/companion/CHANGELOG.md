@@ -8,7 +8,6 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Terminal and replay checks use the shared terminal status helper.
 
-- The evidence workspace reads a `review` criterion as "Checked in review" or "Awaiting code review" instead of its raw verdict (ADR-062 Amendment 18).
 - Reload a run's recorded evidence each time the gateway reconnects, as run detail already does for the run itself. Run detail, the artifact viewer and the decision workspace opened before the connection was ready, or during a gateway restart, now show the run's report and recipe evidence without being reopened, and a reconnect keeps an open viewer and its position. A failed re-read no longer empties the decision workspace's recipe evidence, and the artifact viewer's recipe error clears after the next successful read.
 
 - Show a Run results card on run detail with the run's retained report, the same results Command Center shows. The report bytes are verified against the retained bundle, and an HTML report (a QA run's per-criterion verdicts, coverage gaps and evidence) renders as a page with scripts off. Tapping an evidence link in it opens that retained artifact in Companion, a web link opens in the browser, and nothing else loads; recorded case claims show beneath it. The decision workspace opens reports through the same viewer. The acceptance tally now matches Command Center and shows no proven count before any criterion is assessed.
@@ -30,6 +29,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand.
 
 - A run that needs a decision shows it in the decision workspace with the same reason, findings or refused prerequisite, delivered head or report, and three actions as Command Center; an action that can't be taken shows why, and Accept needs a written reason. The Review queue labels it Needs decision, opens it with Open decision, and skips the held output review. When the gateway re-presents the decision (new output, a granted review round, a restart), the open workspace follows the new one and stays on it. Its run card says Needs decision instead of Failed.
+- The evidence workspace reads a `review` criterion as "Checked in review" or "Awaiting code review" instead of its raw verdict (ADR-062 Amendment 18).
 
 ## 0.8.2 - 2026-10-16
 
