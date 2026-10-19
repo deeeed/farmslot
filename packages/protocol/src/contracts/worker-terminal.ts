@@ -49,6 +49,8 @@ export interface WorkerTerminalProjectConfig {
 export interface WorkerTerminalContractDocument {
   /** Gateway-derived completion destination; never a project/worker waiver. */
   claimReviewGate?: boolean;
+  /** Gateway-derived: the run's gate has a publication code review that can check `review` claims. */
+  publicationReview?: boolean;
   /** Projection of the gateway-owned run contract, never a project/worker option. */
   recordedEvidenceContractVersion?: number;
   schemaVersion: 1;

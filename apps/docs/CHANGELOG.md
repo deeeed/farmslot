@@ -200,3 +200,4 @@ All notable changes to `@farmslot/docs` are tracked here.
 - The published `recipe-suite-result-v1` schema allows `evidence_incomplete` on a suite verdict (`reason: capture_interrupted`, `detail`, `evidence_path`).
 
 - Document `node_support_dir` for hooks and fixtures and `NODE_SUPPORT_DIR` for worker templates.
+- The published recipe-v1 schema accepts proof mode `review` (ADR-062 Amendment 18).

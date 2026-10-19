@@ -140,7 +140,10 @@ export interface RecipeVisualJudgmentReceipt extends Omit<
   precedence?: 'person-first-v1';
 }
 
-/** Consumers load receipts from the gateway store, never from a recipe/task file. */
+/**
+ * Gateway review authority for one execution: stored visual receipts and the code-review
+ * fact. Consumers load it from the gateway, never from a recipe/task file.
+ */
 export interface RecipeVisualReviewAuthority {
   runId: string;
   recipeRunId: string;
@@ -149,6 +152,11 @@ export interface RecipeVisualReviewAuthority {
   projectPolicy?: ProjectVisualClaimReviewPolicy;
   /** Read-only frozen projection retains the policy qualification recorded by its receipts. */
   historical?: boolean;
+  /**
+   * The gate's publication-review prerequisite is met at the package head, so `review`
+   * claims are proven (ADR-062 Amendment 18). Only the gateway computes it.
+   */
+  codeReviewCertified?: boolean;
 }
 
 export interface QualifiedRecipeVisualJudgment extends Omit<RecipeVisualJudgment, 'reason'> {

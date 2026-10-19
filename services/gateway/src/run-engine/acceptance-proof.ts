@@ -36,6 +36,8 @@ interface RecordedAcceptanceContext {
   visualJudgmentReceiptIds?: readonly string[];
   qaOutput?: boolean;
   reviewBinding?: 'captured' | 'current' | 'approved';
+  /** The gate's code review certifies the evidence package head (ADR-062 Amendment 18). */
+  codeReviewCertified?: boolean;
 }
 
 /** One evidence/claim assessment for completion, publication and inherited proof. */
@@ -53,9 +55,10 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
         ),
       }
     : context.run;
-  const selection = approved
-    ? { historical: true, capturedIds: context.visualJudgmentReceiptIds ?? [] }
-    : undefined;
+  const selection = {
+    ...(approved ? { historical: true, capturedIds: context.visualJudgmentReceiptIds ?? [] } : {}),
+    ...(context.codeReviewCertified ? { codeReviewCertified: true } : {}),
+  };
   const acceptance = projectGateAcceptance(
     context.acceptance,
     run,

@@ -21,10 +21,16 @@ import {
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
 
 await import('../runtime/mock-pty.test-support.js');
-const { collectRunGateReadiness, gateActionsForReadiness, refreshRunGateReadiness } =
-  await import('./gate-prerequisites.js');
+const {
+  collectRunGateAssessment,
+  collectRunGateReadiness,
+  gateActionsForReadiness,
+  refreshRunGateReadiness,
+} = await import('./gate-prerequisites.js');
 const { makeRun, makeReadyGatePackage, deleteTestRunIfPresent } =
   await import('./test-fixtures.js');
+const { certifyingReview, openFindingAtHead, PASSING_REVIEW_RESULT, writeReviewClaimPackage } =
+  await import('./review-claim.test-support.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { runBundleStore, retainedRunTaskDirectory } =
   await import('../run-completion/retained-artifacts.js');
@@ -1414,5 +1420,63 @@ test('zero-review publication policy still refuses changed reviewed inputs befor
       readiness,
     ),
     [{ id: 'hold' }],
+  );
+});
+
+test('a review claim is satisfied only by the gate review prerequisite at the package head', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'gate-review-claim-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { claims } = await writeReviewClaimPackage(root);
+  const input = (await readRecordedEvidencePackage(root)).input;
+  const owner = validateRecordedEvidencePackage(input);
+  assert.equal(owner.status, 'valid', JSON.stringify(owner.findings));
+
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+  });
+  const pass = certifyingReview(prepared);
+  const sources = {
+    deterministic: passed,
+    progress: idle,
+    selectedEvidence: passed,
+    acceptance: async () => ({
+      criteria: claims.criteria.map(({ id, text }) => ({ id, text })),
+      ledger: claims,
+      issues: [],
+    }),
+    recordedEvidence: async () => [input],
+    reviewResult: async () => PASSING_REVIEW_RESULT,
+  };
+  const gate = (reviews: ReviewStatus[], overrides = {}) =>
+    collectRunGateAssessment(makeRun({ engineState: { publishGate: { reviews } } }), prepared, {
+      ...sources,
+      ...overrides,
+    });
+  const claimVerdictBlocked = (readiness: { reasons: { evidencePolicy?: string }[] }) =>
+    readiness.reasons.some((reason) => reason.evidencePolicy === 'claim-verdict');
+
+  const clean = await gate([pass]);
+  assert.equal(clean.readiness.state, 'ready', JSON.stringify(clean.readiness.reasons));
+  // The projection carries the satisfied claim; the engine verdict stays visible.
+  const projected = clean.acceptance?.criteria.find(({ id }) => id === 'AC-2');
+  assert.equal(projected?.verdict, 'proven');
+  assert.equal(projected?.engineVerdict, 'awaiting-review');
+  assert.equal(clean.acceptance?.criteria[0]?.engineVerdict, undefined);
+
+  assert.ok(claimVerdictBlocked((await gate([])).readiness), 'before any review');
+  assert.ok(
+    claimVerdictBlocked(
+      (await gate([{ ...pass, reviewedHeadSha: 'other-head', reviewSnapshot: undefined }]))
+        .readiness,
+    ),
+    'a pass at a different head',
+  );
+  assert.ok(
+    claimVerdictBlocked((await gate([pass], { reviewResult: async () => undefined })).readiness),
+    'a pass without a valid structured result',
+  );
+  assert.ok(
+    claimVerdictBlocked((await gate([pass, openFindingAtHead(prepared)])).readiness),
+    'an open finding at the head',
   );
 });

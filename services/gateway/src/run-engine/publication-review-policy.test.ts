@@ -9,6 +9,7 @@ import {
   assertUnavailableSnapshotOverrideAvailable,
   buildPublishGateReviewStatus,
   buildUnavailableSnapshotAction,
+  codeReviewCertifiesPackage,
   countStalePublicationReviews,
   reviewFinalSnapshotMatchesPreparedPackage,
   stampPublishGateReviewStatusForPackage,
@@ -324,6 +325,100 @@ test('snapshot-unavailable publication requires an explicit exact-package operat
     /requires passing reviews/,
   );
 });
+
+test('a review claim needs a clean certifying code review at the package head', () => {
+  const pkg = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+  });
+  const pass = (overrides: Partial<ReviewStatus> = {}): ReviewStatus => ({
+    id: 'review-1',
+    source: 'human-gate',
+    mode: 'cold',
+    loopNumber: 1,
+    reviewerSessionId: 'session-1',
+    reviewedHeadSha: pkg.headSha,
+    reviewedReviewSubjectHash: pkg.reviewSubjectHash,
+    reviewSnapshot: pkg.reviewSnapshot,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    ...overrides,
+  });
+  const certified = (reviews: ReviewStatus[], prepared = pkg) =>
+    codeReviewCertifiesPackage(makeRun({ engineState: { publishGate: { reviews } } }), prepared);
+  const second = pass({ id: 'review-2', reviewerSessionId: 'session-2' });
+
+  assert.equal(certified([pass()]), true);
+  assert.equal(certified([]), false, 'before any review');
+  assert.equal(
+    codeReviewCertifiesPackage(
+      makeRun({ engineState: { publishGate: { reviews: [pass()] } } }),
+      null,
+    ),
+    false,
+    'no prepared package, as for QA output',
+  );
+  assert.equal(
+    certified([pass({ reviewedHeadSha: 'other-head', reviewSnapshot: undefined })]),
+    false,
+    'a pass at a different head',
+  );
+  assert.equal(
+    certified([pass(), { ...second, verdict: 'issues', unresolvedCount: 1 }]),
+    false,
+    'an open finding at the head',
+  );
+  assert.equal(
+    certified([pass(), pass({ verdict: 'failed' })]),
+    false,
+    'a pass replaced by a failure at the same head',
+  );
+  assert.equal(certified([pass({ reviewerSessionId: null })]), false, 'no reviewer session');
+  assert.equal(
+    certified([], { ...pkg, reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' } }),
+    false,
+    'zero required reviews and no review',
+  );
+  const two = { ...pkg, reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' as const } };
+  assert.equal(certified([pass()], two), false, 'two required, one pass');
+  assert.equal(certified([pass(), second], two), true);
+
+  // The snapshot-unavailable override approves publication but never checks a criterion.
+  const unavailable = makeReadyGatePackage({
+    reviewSnapshot: {
+      source: 'unavailable',
+      missingReason: 'slot-load-error',
+      capturedAt: '2026-04-15T00:00:00.000Z',
+    },
+  });
+  const blind = pass({ reviewSnapshot: unavailable.reviewSnapshot });
+  const overridden = makeRun({
+    engineState: { publishGate: { reviews: [blind] } },
+    decisions: [
+      {
+        id: 'decision-1',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: 'Snapshot unavailable',
+        actions: [],
+        createdAt: '2026-04-15T00:00:00.000Z',
+        resolvedAt: '2026-04-15T00:01:00.000Z',
+        resolvedAction: APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          diffStat: unavailable.diffStat,
+          workerReport: '',
+          branch: unavailable.branch,
+          prPackage: unavailable,
+        },
+      },
+    ],
+  });
+  assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(overridden, unavailable));
+  assert.equal(codeReviewCertifiesPackage(overridden, unavailable), false);
+});
+
 test('publication review policy rejects semantic review subject drift', () => {
   const pkg = makeReadyGatePackage({
     headSha: 'head-good',

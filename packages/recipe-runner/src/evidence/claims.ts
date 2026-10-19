@@ -32,6 +32,8 @@ export interface DeriveRecipeClaimsInput {
   segments: readonly RecordingSegmentRef[];
   timelines?: ReadonlyMap<string, RecipeRecordingTimelineDocument>;
   judgments?: readonly RecipeVisualJudgment[];
+  /** Gateway review authority: the publication review certifies the package head. */
+  codeReviewCertified?: boolean;
 }
 
 const parentVerdictOrder: readonly RecipeClaimVerdict[] = [
@@ -118,7 +120,9 @@ export function deriveRecipeClaims(
           ? 'untimed'
           : 'measured';
     let verdict: RecipeClaimVerdict;
-    if (assertionIndices.some((index) => input.trace[index]?.ok === false)) verdict = 'failed';
+    // ADR-062 Amendment 18: no node proves a review claim; only a certified code review does.
+    if (proofMode === 'review') verdict = input.codeReviewCertified ? 'proven' : 'awaiting-review';
+    else if (assertionIndices.some((index) => input.trace[index]?.ok === false)) verdict = 'failed';
     else if (!recipeNodes.length || indices.some((index) => index === null)) verdict = 'missing';
     else if (proofMode !== 'state' && timing === 'outside-recording') verdict = 'weak';
     else verdict = proofMode === 'state' ? 'proven' : 'awaiting-review';
@@ -157,7 +161,7 @@ export function deriveRecipeClaims(
     const judgment =
       qualified ??
       input.judgments?.filter((entry) => normalizeRecipeClaimId(entry.claimId) === id).at(-1);
-    if (verdict === 'awaiting-review' && judgment) {
+    if (verdict === 'awaiting-review' && judgment && proofMode !== 'review') {
       if (
         judgment.recipeRunId !== input.recipeRunId ||
         !judgment.actor.trim() ||
@@ -193,7 +197,7 @@ export function deriveRecipeClaims(
       .map((child) => aggregate(child.id));
     if (children.length) {
       const verdicts = children.map((child) => child.verdict);
-      if (claim.recipeNodes.length) verdicts.push(claim.verdict);
+      if (claim.recipeNodes.length || claim.proofMode === 'review') verdicts.push(claim.verdict);
       claim.verdict = parentVerdictOrder.find((verdict) => verdicts.includes(verdict)) ?? 'proven';
       claim.recipeNodes = [
         ...new Set([...claim.recipeNodes, ...children.flatMap((child) => child.recipeNodes)]),

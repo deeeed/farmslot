@@ -111,6 +111,10 @@ export function planRecipeEvidence(
   }
   visit(root);
   for (const [id, node] of nodes)
+    for (const claim of node.proves ?? [])
+      if (declarations.get(claim)?.proofMode === 'review')
+        throw new Error(`Node ${id} proves review claim ${claim}; only the code review checks it.`);
+  for (const [id, node] of nodes)
     if (node.proves?.length && !potentiallyEligibleProof(id, nodes))
       throw new Error(`Node ${id} declares proof without an observation-bound expectation.`);
   return { declarations: [...declarations.values()], nodes };

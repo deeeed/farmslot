@@ -6,6 +6,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.3.0 - 2026-10-19
+
+- Align with `@farmslot/protocol` 0.57.0.
+
 ## 0.2.0 - 2026-10-19
 
 - Align with `@farmslot/protocol` 0.56.0.

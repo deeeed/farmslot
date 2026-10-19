@@ -4,6 +4,11 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.4.0 - 2026-10-19
+
+- `acceptanceClaimRows` reads a `review` claim (ADR-062 Amendment 18) as "Checked in review" when proven and "Awaiting code review" otherwise, never `missing`.
+- Align with `@farmslot/protocol` 0.57.0 and `@farmslot/adapter-sdk` 0.21.0.
+
 ## 0.3.0 - 2026-10-19
 
 - The needs-decision view model that Command Center and Companion share (ADR-065 Amendment 7): `resultDecisionView`, `pendingResultDecision`, `isResultDecision`, `evidenceOnlyDecisionIds` and `resultDecisionActionReady`. Refused prerequisites are titled by count. `runResultsSummary` says a held run waits for a decision and an accepted one was accepted, with its reason.

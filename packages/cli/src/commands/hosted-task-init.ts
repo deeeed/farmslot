@@ -107,7 +107,7 @@ function terminalContract(value: unknown): value is WorkerTerminalContractDocume
         ),
     ) &&
     stringFields(value, ['mode']) &&
-    ['claimReviewGate'].every((key) =>
+    ['claimReviewGate', 'publicationReview'].every((key) =>
       optional(value[key], (entry) => typeof entry === 'boolean'),
     ) &&
     optional(value.recordedEvidenceContractVersion, (entry) => Number.isInteger(entry)) &&
@@ -278,6 +278,7 @@ export function hostedTerminalPolicy(
   const identity = ({
     resolvedAt: _time,
     claimReviewGate: _gate,
+    publicationReview: _review,
     recordedEvidenceContractVersion: _version,
     ...policy
   }: WorkerTerminalContractDocument): unknown => JSON.parse(JSON.stringify(policy));
@@ -292,6 +293,7 @@ export function hostedTerminalPolicy(
   return {
     ...configured,
     claimReviewGate: task.terminalContract?.claimReviewGate,
+    publicationReview: task.terminalContract?.publicationReview,
     recordedEvidenceContractVersion: task.terminalContract?.recordedEvidenceContractVersion,
   };
 }

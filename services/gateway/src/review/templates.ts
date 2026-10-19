@@ -6,9 +6,11 @@ import path from 'node:path';
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import { buildDiffScopePacket } from '@farmslot/agent-runtime/scripts/review-diff-scope.cjs';
 import {
+  ACCEPTANCE_STATUS_ARTIFACT,
   DEFAULT_BRANCH,
   DEFAULT_TASK_DIR,
   type EvidenceManifest,
+  registeredAcceptanceCriteria,
   type ReviewIssue,
   type ReviewMode,
   type ReviewValidationDepth,
@@ -37,6 +39,7 @@ import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { getRun } from '../runs/store.js';
+import { ledgerFromArtifactText } from '../tasks/acceptance-status.js';
 import { farmslotDirectoryForSlot, renderRoleTemplate } from '../tasks/agent-runtime-script.js';
 import { REVIEW_FIX_CHECKLIST_TARGET } from '../tasks/checklist-target.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
@@ -161,6 +164,35 @@ async function descriptionCheckSection(
       ? { unavailable: selectionError }
       : await runDescriptionPreCheck(vars, taskDir, baseBranch, publication?.manifest ?? null),
   });
+}
+
+/**
+ * ADR-062 Amendment 18: the `review` criteria of the task's acceptance ledger, as the
+ * gate's ledger reader accepts them. A run without registered criteria has none to
+ * read, and no ledger adds no section. A failed read fails the launch: the gate would
+ * otherwise count a pass for criteria nobody was shown.
+ */
+async function reviewCriteriaSection(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+  run: Run,
+): Promise<string> {
+  if (!registeredAcceptanceCriteria(run.ticketData?.acceptanceCriteria ?? []).length) return '';
+  const ledger = ledgerFromArtifactText(
+    await readReviewArtifact(
+      vars,
+      path.posix.join(vars.remoteRepo, taskDir, ACCEPTANCE_STATUS_ARTIFACT),
+    ),
+  );
+  const criteria = ledger?.criteria.filter((row) => row.proofMode === 'review') ?? [];
+  if (!criteria.length) return '';
+  return [
+    '## Criteria checked in this review',
+    '',
+    'These acceptance criteria are checked by this code review, not by the recipe. They apply to the whole change at the current head, including on a continuation review. Report each unmet criterion as a finding; only a new commit clears a finding.',
+    '',
+    ...criteria.map((row) => `- ${row.id}: ${row.text}`),
+  ].join('\n');
 }
 
 async function diffScopeSection(
@@ -350,11 +382,12 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   // Reviewers get the worker's frozen related-context snapshot, not a fresh
   // derivation: a prerequisite that moved since dispatch must be detectable.
   const planningBrief = await buildReviewPlanningBrief(run?.taskFile ?? null, taskDir);
-  const [check, scope] = await Promise.all([
+  const [check, scope, criteria] = await Promise.all([
     descriptionCheckSection(vars, taskDir, run, pv?.projectJson),
     diffScopeSection(vars, run, pv ? getProjectField(pv.projectJson, 'default_branch') : undefined),
+    reviewCriteriaSection(vars, taskDir, run),
   ]);
-  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n${reviewBudgetScopeBrief(getRun(run.id) ?? run)}`;
+  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n${criteria ? `\n${criteria}\n` : ''}${reviewBudgetScopeBrief(getRun(run.id) ?? run)}`;
 }
 
 export async function expandReviewFixTemplate(

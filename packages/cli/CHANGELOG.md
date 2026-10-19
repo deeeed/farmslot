@@ -196,6 +196,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Accept `--node-support-dir` in `internal fixture-plan` and render it as `{{node_support_dir}}`.
+- Hosted task init carries the gateway-derived `publicationReview` terminal-contract flag as it does `claimReviewGate` (ADR-062 Amendment 18).
 
 ## 0.3.0 - 2026-07-13
 

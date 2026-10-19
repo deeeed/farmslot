@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -257,4 +257,93 @@ test('a pre-check whose diff fails says Not run, never None found', async (t) =>
   );
   assert.match(rendered, /- Not run: could not read the diff against origin\/main\./);
   assert.doesNotMatch(rendered, /None found/);
+});
+
+test('review criteria from the task ledger are appended to the review document only when present', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-review-criteria-'));
+  const taskDir = 'temp/tasks/review-criteria';
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'REVIEW-CRITERIA',
+    runner: 'claude',
+  });
+  const ticket = (acceptanceCriteria: string[]) =>
+    updateRun(run.id, {
+      ticketData: {
+        source: 'manual',
+        title: 'Review criteria',
+        description: '',
+        acceptanceCriteria,
+        affectedArea: '',
+        stepsToReproduce: [],
+        screenshots: [],
+        labels: [],
+      },
+    });
+  ticket(['The counter is one.', 'The change is easy to revert.']);
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+    await rm(repo, { recursive: true, force: true });
+  });
+  const render = () =>
+    expandReviewTemplate(
+      {
+        slotId: 'review-criteria',
+        projectName: 'farmslot-farm',
+        host: 'localhost',
+        machine: 'review-criteria',
+        remoteRepo: repo,
+        platform: 'cli',
+        session: 'review-criteria',
+        resourceVars: {},
+      } as never,
+      taskDir,
+      run.id,
+      'static-code',
+    );
+  const heading = '## Criteria checked in this review';
+  assert.doesNotMatch(await render(), new RegExp(heading));
+  await mkdir(path.join(repo, taskDir, 'artifacts'), { recursive: true });
+  const row = (id: string, text: string, proofMode: string) => ({
+    id,
+    text,
+    proofMode,
+    kind: 'acceptance',
+    verdict: 'awaiting-review',
+    evidence: [],
+    recipeNodes: [],
+    assertionIndices: [],
+    moments: [],
+  });
+  const ledgerText = (criteria: ReturnType<typeof row>[]) =>
+    JSON.stringify({
+      schemaVersion: 2,
+      recipeRunId: 'recipe-run-1',
+      recording: { status: 'not-required', segments: [] },
+      criteria,
+    });
+  const ledger = path.join(repo, taskDir, 'artifacts/acceptance-status.json');
+  await writeFile(ledger, ledgerText([row('AC-1', 'The counter is one.', 'state')]));
+  assert.doesNotMatch(await render(), new RegExp(heading));
+  await writeFile(
+    ledger,
+    ledgerText([
+      row('AC-1', 'The counter is one.', 'state'),
+      row('AC-2', 'The change is easy to revert.', 'review'),
+    ]),
+  );
+  const section = (await render()).split(heading)[1] ?? '';
+  assert.match(section, /whole change at the current head, including on a continuation review/);
+  assert.match(section, /only a new commit clears a finding/);
+  assert.match(section, /^- AC-2: The change is easy to revert\.$/m);
+  assert.doesNotMatch(section, /AC-1/);
+  // A ledger that exists but cannot be read fails the launch instead of hiding the criteria.
+  await chmod(ledger, 0o000);
+  await assert.rejects(render(), /Review artifact read failed/);
+  // Without registered criteria there is nothing for the review to check, so nothing is read.
+  ticket([]);
+  assert.doesNotMatch(await render(), new RegExp(heading));
 });

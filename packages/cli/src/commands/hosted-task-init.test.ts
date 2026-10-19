@@ -292,11 +292,13 @@ test('normal hosted tasks cannot weaken configured terminal gates', async () => 
       terminalContract: {
         ...configured,
         claimReviewGate: true,
+        publicationReview: true,
         recordedEvidenceContractVersion: 1,
       },
     },
     configured,
   );
   assert.equal(projected.claimReviewGate, true);
+  assert.equal(projected.publicationReview, true);
   assert.deepEqual(projected.acceptance, { require: true });
 });

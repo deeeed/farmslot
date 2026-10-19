@@ -90,6 +90,8 @@ over their required child checks.
 | Required visual judgment confirms the claim and assertions pass           | `proven`          |
 | Recorded visual judgment rejects the claim                                | `failed`          |
 | Authorized untestable override with reason/audit trail                    | `untestable`      |
+| `review` claim before the code review certifies the package head          | `awaiting-review` |
+| `review` claim at a package head the code review certifies                | `proven`          |
 
 A parent is proven only if all required children are proven; otherwise use the
 first applicable result in this order: failed, missing, weak, awaiting-review,
@@ -100,6 +102,16 @@ acknowledgment is never a substitute for the eligible assertion/visual judgment.
 Only the Accepted [verified override contract](#verified-claim-overrides) grants
 an untestable exception through a credential-backed gateway receipt. It never
 changes the immutable engine ledger or manufactures a proven verdict.
+
+Proof mode `review` (ADR-062 Amendment 18) marks a criterion about the change
+itself: diff size, revertability, commits, branch, or PR title or labels. The
+run's code review checks it, not the recipe. Planning refuses a node that
+`proves` it, and the engine records it as `awaiting-review` with no recipe
+nodes, never `missing`. Only the gateway's code-review fact, carried by the
+review authority, makes it `proven`; parents re-aggregate with it. A run with no
+publication review cannot satisfy it, and worker completion refuses one there.
+Clients label it "Checked in review" when proven and "Awaiting code review"
+otherwise.
 
 Examples the reducer MUST satisfy: failed then passed in one declared retry group
 uses the final result and retains both; a failed independent iteration still
@@ -745,6 +757,27 @@ policy findings; integrity and unrelated prerequisites still block.
    applicable state criterion through its retained successful result and checked
    citations. Do not require a fabricated recipe claim. Missing/failed results,
    uncited files or unit-only evidence for a visual criterion remain unsatisfied.
+
+### Criteria checked in review
+
+Status: Proposed, 2026-10-19, ADR-062 Amendment 18.
+
+The claim-verdict policy counts a `review` claim only when the gate's own
+publication-review prerequisite is met at the package head: no open finding at
+that head, and at least one certifying pass (the policy's required count when
+higher) with a valid structured result. A new head, a failing review or an open
+finding makes it unsatisfied again. A run without a prepared package cannot
+satisfy it. Inherited acceptance uses the approved parent package's head and the
+parent's recorded reviews. The snapshot-unavailable override never counts, and
+attested approval waives the finding without proving the claim. The gateway
+appends the run's `review` criteria to every code review request; only a new
+commit clears a finding.
+
+`run.get` and `decision.list` present the gate's projected acceptance on a
+pending ready decision: receipts, authorized overrides and satisfied `review`
+claims over the engine ledger. A row whose verdict changed keeps the engine's
+as `engineVerdict`. The projection is never written to `acceptance-status.json`,
+and a resolved decision keeps its last projection.
 
 ### Public surface and conformance
 

@@ -5,10 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test, type TestContext } from 'node:test';
 
+import { deriveReviewedRecipeClaims } from '@farmslot/adapter-sdk/evidence';
 import type {
   ReadyGatePrPackage,
   RecipeRunArtifactGroup,
   RecordedEvidencePackageInput,
+  ReviewStatus,
   Run,
   RunDecision,
   RunOutput,
@@ -39,6 +41,9 @@ const { readRunRecordedEvidence, retainedComparisonSnapshot } =
 const { runBundleStore, retainedRunTaskDirectory } =
   await import('../../run-completion/retained-artifacts.js');
 const { computeReadyGatePackageHash } = await import('../../run-completion/ready-gate-package.js');
+const { makeReadyGatePackage } = await import('../../run-engine/test-fixtures.js');
+const { certifyingReview, openFindingAtHead, PASSING_REVIEW_RESULT, writeReviewClaimPackage } =
+  await import('../../run-engine/review-claim.test-support.js');
 
 async function fixture(t: TestContext): Promise<RecipeRunArtifactGroup> {
   run.id = randomUUID();
@@ -439,4 +444,93 @@ test('historical comparisons require the same execution, package prefix and summ
     ),
     undefined,
   );
+});
+
+test('decision-bound and ordinary views certify a review claim only at a clean reviewed head', async (t) => {
+  remote = false;
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'gateway-review-claim-view-'));
+  t.after(() => rm(taskDir, { recursive: true, force: true }));
+  await mkdir(path.join(taskDir, 'artifacts/proof'), { recursive: true });
+  const { claims, files } = await writeReviewClaimPackage(path.join(taskDir, 'artifacts/proof'));
+  // The default reader finds the structured review result in the retained task.
+  const result = path.join(taskDir, 'artifacts/review-1/loop-1/review-result.json');
+  await mkdir(path.dirname(result), { recursive: true });
+  await writeFile(result, PASSING_REVIEW_RESULT);
+  const reviewed: Run = { ...run, id: randomUUID(), taskFile: path.join(taskDir, 'TASK.md') };
+  await retainFixtureTask(taskDir, reviewed, await runBundleStore(true));
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+    evidenceManifest: files.map(({ file, sha256 }) => ({
+      path: `artifacts/proof/${file}`,
+      purpose: 'evidence',
+      sha256,
+    })),
+  });
+  prepared.artifactBundle = reviewed.artifactBundle;
+  prepared.packageHash = computeReadyGatePackageHash(prepared);
+  const decision: RunDecision = {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'Publish',
+    description: 'Review retained proof',
+    actions: [],
+    createdAt: '2026-10-19T00:00:00Z',
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      workerReport: 'Done',
+      branch: prepared.branch,
+      diffStat: prepared.diffStat,
+      acceptanceStatus: claims,
+      prPackage: prepared,
+    },
+  };
+  const group: RecipeRunArtifactGroup = {
+    id: 'current-artifacts',
+    label: 'Retained proof',
+    groupKind: 'current-artifacts',
+    promoted: false,
+    status: 'pass',
+    artifactRoot: path.join(await retainedRunTaskDirectory(reviewed), 'artifacts/proof'),
+    artifactBundle: reviewed.artifactBundle,
+    artifactManifest: null,
+    source: 'recipe-run-artifacts',
+    selectionReason: 'latest-run',
+    isStale: false,
+    recipeRunId: null,
+    recipeJson: null,
+    recipeQualityArtifact: null,
+    qualityReport: null,
+    workerLearnings: null,
+  };
+  const views = async (reviews: ReviewStatus[]) => {
+    const current: Run = {
+      ...reviewed,
+      decisions: [decision],
+      engineState: { publishGate: { reviews } },
+    };
+    return [
+      await readRunRecordedEvidence(current, group, {
+        decisionId: decision.id,
+        packageHash: prepared.packageHash,
+      }),
+      await readRunRecordedEvidence(current, group),
+    ];
+  };
+  for (const source of await views([certifyingReview(prepared)])) {
+    assert.deepEqual(source.errors, []);
+    assert.ok(source.input && source.visualReviewAuthority);
+    assert.equal(source.visualReviewAuthority.codeReviewCertified, true);
+    // Clients derive the same verdict from this authority.
+    const derived = deriveReviewedRecipeClaims(source.input, source.visualReviewAuthority);
+    assert.equal(derived.find(({ id }) => id === 'AC-2')?.verdict, 'proven');
+  }
+  for (const reviews of [[certifyingReview(prepared), openFindingAtHead(prepared)], []]) {
+    for (const source of await views(reviews)) {
+      assert.deepEqual(source.errors, []);
+      assert.ok(source.visualReviewAuthority);
+      assert.notEqual(source.visualReviewAuthority.codeReviewCertified, true);
+    }
+  }
 });
