@@ -54,7 +54,7 @@ export interface RecipeCatalog {
   bundledLibrary: { name: string; root: string; actionNamespace: string };
   /**
    * The adapter's action manifest merged across the library sources (the
-   * bundled one last), or the override manifest with its task action root.
+   * bundled one last), with a selected task manifest first and its task action root.
    */
   resolveActionManifest(
     adapter: string,

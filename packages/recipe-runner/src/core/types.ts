@@ -53,6 +53,8 @@ export interface RecipeRunRequest {
   packageVersions?: Readonly<Record<string, string>>;
   /** How the caller chose a library recipe by name; recorded in the summary. */
   selection?: RecipeSelection;
+  /** Actions the selected task action manifest provides; recorded in the summary. */
+  taskActions?: RecipeTaskAction[];
   /**
    * Partial execution: stop the root graph after this node succeeds, then run the recipe's
    * declared teardown. The node must be reachable from workflow.entry.
@@ -162,6 +164,17 @@ export interface RecipeLogger {
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
+}
+
+/**
+ * An action the run's task action manifest declared. `official` marks a redeclared
+ * official action; `shadows` names the runtime or library sources it replaced.
+ */
+export interface RecipeTaskAction {
+  action: string;
+  official: boolean;
+  shadows?: string[];
+  digest?: string;
 }
 
 export interface RecipeRunnerProvenance {
@@ -442,6 +455,8 @@ export interface SummaryDocument {
   recipeLibraries?: RecipeLibrarySummary;
   /** Present when the caller selected a library recipe by name. */
   recipeSelection?: RecipeSelection;
+  /** Present when a task action manifest was selected: the actions it provides. */
+  taskActions?: RecipeTaskAction[];
   /** Present when the run was partial; the root graph stopped after this node. */
   stopAfterNode?: string;
 }
