@@ -1,9 +1,7 @@
 {
-  "version": "0.24.0",
+  "version": "0.25.0",
   "date": "2026-10-19",
   "items": [
-    "A run that needs a decision shows why it stopped and what it delivered, with Send back, Accept (with a written reason) and Close; the Decisions inbox lists it",
-    "A run that is still working no longer shows its evidence as Invalid, and the acceptance panel stays one counts line until a criterion is assessed",
-    "WebP evidence stills show as images, like PNG stills"
+    "Criteria about the change itself read \"Checked in review\" or \"Awaiting code review\", never \"missing\"."
   ]
 }
