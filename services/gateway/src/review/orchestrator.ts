@@ -77,6 +77,7 @@ import {
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
+import { signalIsNewerThanContext } from '../tasks/worker-signal-context.js';
 import {
   normalizeWorkerSignal,
   signalFreshSince,
@@ -1341,7 +1342,8 @@ export function canRecoverReviewFixPass(
     fixContext.artifactScope === findingsArtifactScope;
   return (
     fixContext?.role === 'review-fix' &&
-    fixContext.status === 'working' &&
+    // A worker that blocked mid-fix can reopen its attempt and finish (TAT-4006 7721a02b).
+    (fixContext.status === 'working' || fixContext.status === 'blocked') &&
     fixContext.taskFile === taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist) &&
     fixContext.signalFile === taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal) &&
     matchesFindingsGeneration
@@ -1629,6 +1631,17 @@ export async function reconcileRecoveredFixPromptDelivery(
   return { status: 'deferred' };
 }
 
+/**
+ * A recovered fix signal belongs to this pass: its own attempt, or one the worker reopened
+ * after it, by the watcher's own rule (TAT-4006 7721a02b).
+ */
+export function recoveredFixSignalMatches(signal: WorkerSignal, fixContext: AgentContext): boolean {
+  return fixContext.signalAttemptId
+    ? signal.attemptId === fixContext.signalAttemptId ||
+        signalIsNewerThanContext(signal, fixContext)
+    : signalFreshSince(signal, fixContext.attemptStartedAt ?? fixContext.startedAt);
+}
+
 export function canSettleRecoveredFixContext(
   current: AgentContext | undefined,
   snapshot: AgentContext,
@@ -1643,12 +1656,12 @@ export function canSettleRecoveredFixContext(
   )
     return false;
   if (current.signalAttemptId === expectedAttemptId) return true;
-  // Recovery may first observe an already-complete signal. Adopt its validated
-  // identity only if no newer delivery or watcher binding replaced our snapshot.
+  // Recovery may first observe an already-complete signal, or one from an attempt the worker
+  // reopened after a block. Adopt its validated identity only if no newer delivery or
+  // watcher binding replaced our snapshot.
   return (
     Boolean(expectedAttemptId) &&
-    !current.signalAttemptId &&
-    !snapshot.signalAttemptId &&
+    current.signalAttemptId === snapshot.signalAttemptId &&
     current.attemptStartedAt === snapshot.attemptStartedAt &&
     current.promptDeliveryStartedAt === snapshot.promptDeliveryStartedAt
   );
@@ -1744,10 +1757,7 @@ async function recoverReviewFixPass({
       try {
         const signal = terminalWorkerSignalFromRaw(raw ?? '');
         if (!signal) return undefined;
-        const matchesAttempt = fixContext.signalAttemptId
-          ? signal.attemptId === fixContext.signalAttemptId
-          : signalFreshSince(signal, fixContext.attemptStartedAt ?? fixContext.startedAt);
-        return matchesAttempt ? signal : undefined;
+        return recoveredFixSignalMatches(signal, fixContext) ? signal : undefined;
       } catch (err) {
         console.warn(
           `[review] ignoring invalid recovered review fix signal for ${runId.slice(0, 8)}: ${(err as Error).message}`,
@@ -1757,6 +1767,8 @@ async function recoverReviewFixPass({
     };
     const rawSignal = await readOptionalReviewFixSignal(vars, fixSignalPath);
     let fixSignal = matchingFixSignal(rawSignal);
+    // A blocked worker that has not signalled again is waiting on a person: never re-prompt it.
+    if (fixContext.status === 'blocked' && !fixSignal) return null;
 
     // Older contexts can be migrated only after their opaque worker attempt
     // matches. Bind the review generation then; never infer it from clocks.
