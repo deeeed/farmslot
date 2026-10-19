@@ -1,6 +1,6 @@
 # Gateway change notifications
 
-**Status:** Proposed specification for [ADR-071](../adr/071-gateway-change-notifications.md).
+**Status:** Specification for [ADR-071](../adr/071-gateway-change-notifications.md), accepted 2026-10-19.
 **Owner:** Farmslot gateway and protocol maintainers.
 **Delivery:** Unimplemented. This document defines a proposed contract, not available APIs.
 

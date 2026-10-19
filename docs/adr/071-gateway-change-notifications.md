@@ -1,9 +1,9 @@
 # ADR-071: Gateway change notifications and shared client cache
 
-**Status:** Proposed, awaiting Arthur's approval
+**Status:** Accepted (owner, 2026-10-19)
 **Date:** 2026-10-17
 **Owner:** Arthur / Farmslot
-**Delivery:** Design only. No implementation, release or rollout is authorized by this draft.
+**Delivery:** Design only. Implementation follows in separate PRs; no implementation, release or rollout is authorized by this document.
 **Specification:** [Gateway change notifications](../reference/gateway-change-notifications.md)
 
 ## Context
