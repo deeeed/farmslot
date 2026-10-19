@@ -63,7 +63,11 @@ test('a stalled census fails observation before child closure and cannot start o
   try {
     t.mock.timers.tick(100);
     assert.equal(scans, 1);
-    t.mock.timers.tick(5000);
+    assert.equal(mock.mock.calls[0]?.arguments[2]?.timeout, 30_000);
+    // A census slower than 5 s on a loaded machine still owns its observers (ADR-057 Amendment 3).
+    t.mock.timers.tick(29_999);
+    assert.equal(errors.length, 0, 'a slow census failed its observers before its deadline');
+    t.mock.timers.tick(1);
     assert.equal(errors.length, 1);
     assert.match(errors[0]!.message, /deadline/);
     assert.deepEqual(signals, ['SIGKILL']);
