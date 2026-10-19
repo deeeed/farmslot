@@ -372,7 +372,7 @@ Keep the existing enabled-state amendment and visual-review contract intact.
 
 ### Amendment 6: library action declarations
 
-**Status:** Proposed under [ADR-034 amendment 6](https://github.com/deeeed/farmslot/blob/main/docs/adr/034-recipe-protocol-v1.md#amendment-6-2026-10-19-library-action-declarations).
+**Status:** Accepted under [ADR-034 amendment 6](https://github.com/deeeed/farmslot/blob/main/docs/adr/034-recipe-protocol-v1.md#amendment-6-2026-10-19-library-action-declarations). Approved on 2026-10-19; this section is normative.
 
 A runtime's action catalog MUST take official actions and observers only from
 manifests the runtime owns: its own manifest, the bundled library's
