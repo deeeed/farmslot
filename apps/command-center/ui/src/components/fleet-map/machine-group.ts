@@ -10,9 +10,10 @@ import type {
   SlotStatus,
   TaskProgressStructured,
 } from '@farmslot/protocol';
-import { isTerminalRunStatus } from '@farmslot/protocol';
+import { cancelledRunSlotHold, isTerminalRunStatus } from '@farmslot/protocol';
 
 import './slot-card.js';
+import '../shared/cancelled-run-slot-release.js';
 import './machine-health-bar.js';
 import '../runs/run-pipeline.js';
 
@@ -966,6 +967,7 @@ ${deployHint}"
     const isExpanded = this.expandedSlotId === s.slot;
     const hasRun = !!run;
     const isWorking = s.lifecycle === 'busy' && s.phase === 'working';
+    const cancelledHold = cancelledRunSlotHold(s);
     const branch = slotBranchDisplay(s, getProjectSlotTrackingConfigs());
     const branchLabel = branch.label;
     const branchClass =
@@ -994,6 +996,9 @@ ${deployHint}"
           <span class="lc-text" style="color:${lc}">${s.lifecycle}</span>
           ${isWorking
             ? html`<span class="working-spinner" title="Agent actively working"></span>`
+            : ''}
+          ${cancelledHold
+            ? html`<cancelled-run-slot-release .hold=${cancelledHold}></cancelled-run-slot-release>`
             : ''}
         </td>
         <td>

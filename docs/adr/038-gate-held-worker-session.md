@@ -38,7 +38,7 @@ MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live)
    - **Successful CI end / no chain** — `slotRelease` (kills agents unless `preserveAgents`).
    - **Engine blocked/failed after FINALIZE** — `teardownGateHeldAgentsIfNeeded` only when status is `failed`/`blocked`/`cancelled` **and** gate-held FINALIZE is done, then `resetSlot`.
    - **Pre-FINALIZE gate failure** — `shouldTeardownGateHeldAgents` stays false so the operator can still attach; cancel still kills.
-   - **Operator cancel** (`run.cancel`): stops the run's own workers, using the exact identity-checked stop when the context recorded it and otherwise `killAgentInSession` + `killAllAgentWindows` (the `killSlotAgents` primitives), then resets the slot. Does **not** call `teardownGateHeldAgentsIfNeeded`. Only another active run keeps the slot; an unrelated process never does ([ADR-054 amendment, 2026-10-19](054-run-resource-posture.md#amendment-cancel-always-frees-the-slot-2026-10-19)).
+   - **Operator cancel** (`run.cancel`): stops the run's own workers, using the exact identity-checked stop when the context recorded it and otherwise `killAgentInSession` + `killAllAgentWindows` (the `killSlotAgents` primitives). It keeps the checkout and the slot bound to the run for `run.replayStep`. Does **not** call `teardownGateHeldAgentsIfNeeded`. `slot.release`, `run.delete` or `run.archive` frees the slot; only another active run keeps it, and an unrelated process never does ([ADR-054 amendment, 2026-10-19](054-run-resource-posture.md#amendment-cancel-stops-the-run-and-keeps-its-slot-for-replay-2026-10-19)).
 
 ### Fleet refresh
 

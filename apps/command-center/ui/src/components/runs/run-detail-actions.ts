@@ -79,7 +79,8 @@ export async function confirmRunLifecycleAction(
     context.navigateToRuns();
     return;
   }
-  await gateway.request(Methods.RUN_DELETE, { runId: run.id });
+  // Deleting a cancelled run releases the slot its cancel kept, like archive.
+  await gateway.request(Methods.RUN_DELETE, { runId: run.id }, SLOT_OPERATION_TIMEOUT_MS);
   context.navigateToRuns();
 }
 

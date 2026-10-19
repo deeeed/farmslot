@@ -429,7 +429,15 @@ export class RunList extends RunListState {
         return run ? TERMINAL_STATUSES.has(run.status) : false;
       });
       if (ids.length === 0) return;
-      await gateway.request<RunBulkDeleteResult>(Methods.RUN_BULK_DELETE, { runIds: ids });
+      // Each cancelled run's delete releases the slot its cancel kept, one after another.
+      const releases = ids.filter(
+        (id) => this.runs.find((run) => run.id === id)?.status === 'cancelled',
+      ).length;
+      await gateway.request<RunBulkDeleteResult>(
+        Methods.RUN_BULK_DELETE,
+        { runIds: ids },
+        SLOT_OPERATION_TIMEOUT_MS * Math.max(1, releases),
+      );
       this.selectedIds = new Set();
     } catch (err) {
       console.error('[run-list] bulk delete failed:', err);

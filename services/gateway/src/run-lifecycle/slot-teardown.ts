@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  cancelledRunHoldReason,
   Events,
   isCompletionPrerequisiteFailure,
   isTerminalRunStatus,
@@ -68,6 +69,9 @@ export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
     !run ||
     run.slotId !== slotId ||
     !isTerminalRunStatus(run.status) ||
+    // A cancelled run keeps the slot it still owns for replay until release,
+    // delete or archive (ADR-054); its cleanup hold is retried as before.
+    (run.status === 'cancelled' && before.current_run_id === run.id) ||
     isCompletionPrerequisiteFailure(run) ||
     isActiveSlotHolder(run)
   )
@@ -422,6 +426,7 @@ export async function releaseRunSlotOwnership(
   run: Run,
   fence: RunSlotCleanupFence,
   blocker: string | null,
+  { keepForReplay = false }: { keepForReplay?: boolean } = {},
 ): Promise<boolean> {
   if (!run.slotId) return false;
   const before = fence.before;
@@ -443,6 +448,17 @@ export async function releaseRunSlotOwnership(
     const { killSlotScreenSessions } = await import('../runtime/screen-session.js');
     await assertOwned();
     killSlotScreenSessions(run.slotId, run.id);
+    if (keepForReplay)
+      // The checkout and the run's ownership stay, so run.replayStep can reclaim the slot.
+      return updateSlotStatusIf(run.slotId, current, {
+        lifecycle: 'held',
+        phase: 'occupied',
+        held_reason: cancelledRunHoldReason(run.id),
+        cleanup_release_token: null,
+        [SLOT_RELEASING_SINCE]: null,
+        agent: 'idle',
+        ...(before?.handoff_run_id === run.id ? { handoff_run_id: null } : {}),
+      });
     return resetSlotIf(run.slotId, current, true);
   }
   await updateSlotStatusIf(run.slotId, current, {
