@@ -6,6 +6,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - The publication gate's review-round line adds the reviewer attempts that ended without a verdict once there is one, for example `Review rounds 4/5 · 1/3 no-verdict`.
+- A blocked run shows its reason and the step it stopped at. The run detail badge and the run list read `Blocked: <reason>` on one line (on its own row at phone width), and the step it stopped at is amber with `! blocked`, with the reason on hover and in the step inspector. Before, it showed a done monitor with every later step skipped, which read as finished.
 
 ## 0.25.0 - 2026-10-19
 

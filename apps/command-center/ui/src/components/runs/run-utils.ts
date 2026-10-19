@@ -10,6 +10,7 @@ import type {
   RunSelfLearningEligibilityState,
   RunStatus,
   RunStep,
+  RunStepDisplayStatus,
   RunStepStatus,
   WorkerTerminalDisposition,
 } from '@farmslot/protocol';
@@ -114,17 +115,7 @@ export function stepStatusIcon(status: RunStepStatus): string {
   }
 }
 
-export function effectiveStepStatus(
-  stepStatus: RunStepStatus,
-  runStatus: RunStatus | string,
-): RunStepStatus {
-  if (runStatus === 'cancelled' && (stepStatus === 'running' || stepStatus === 'pending')) {
-    return 'skipped';
-  }
-  return stepStatus;
-}
-
-export function stepStatusColor(status: RunStepStatus): string {
+export function stepStatusColor(status: RunStepDisplayStatus): string {
   switch (status) {
     case 'done':
       return colors.statusOk;
@@ -132,6 +123,8 @@ export function stepStatusColor(status: RunStepStatus): string {
       return '#3b82f6';
     case 'failed':
       return colors.statusFail;
+    case 'blocked':
+      return colors.statusWarn;
     case 'skipped':
       return colors.textMuted;
     case 'pending':

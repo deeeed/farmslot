@@ -64,6 +64,23 @@ export const runDetailStyles = css`
     font-size: 11px;
     font-weight: 700;
   }
+  .run-activity-label {
+    flex: 1 1 0;
+    max-width: max-content;
+    min-width: 6ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  @media (max-width: 640px) {
+    .header {
+      flex-wrap: wrap;
+    }
+    /* At touch width the label takes its own row under the title, so the reason stays readable. */
+    .run-activity-label {
+      flex-basis: 100%;
+    }
+  }
   .external-links {
     display: flex;
     gap: 6px;

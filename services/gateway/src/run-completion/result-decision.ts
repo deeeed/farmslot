@@ -153,7 +153,11 @@ function decisionReason(
       typeof review?.retryCount === 'number' && typeof review.maxRetries === 'number'
         ? ` after ${review.retryCount}/${review.maxRetries} fix attempts`
         : '';
-    return `Review found ${plural(findings?.length ?? 0, 'issue')}${attempts}.`;
+    const undelivered =
+      typeof review?.fixDeliveryFailure === 'string'
+        ? ` The fix was not delivered: ${review.fixDeliveryFailure}`
+        : '';
+    return `Review found ${plural(findings?.length ?? 0, 'issue')}${attempts}.${undelivered}`;
   }
   const step = stoppedAt === 'complete' ? 'COMPLETE' : 'FINALIZE';
   const unmet = refused?.reasons.length ?? 0;

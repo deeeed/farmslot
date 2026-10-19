@@ -499,3 +499,17 @@ test('a re-projected run with no earlier record appends nothing', async () => {
   assert.equal(run.status, 'needs-decision');
   assert.equal((await readAllAnalyticsRecords()).records.length, before);
 });
+
+test('a review whose fix never reached the worker says why in its decision', async () => {
+  // TAT-4006 7721a02b: the worker's runner was out of quota when the fix was due.
+  const quota =
+    'Runner out of quota: grok hit a usage/rate limit — the composer will not accept prompts until the limit resets. Fix delivery and the relaunch stopped (REVIEW-FIX.md).';
+  await heldOpus();
+  const review = run.steps.find((step) => step.name === S.REVIEW)!;
+  review.outputs = { ...review.outputs, fixDeliveryFailure: quota };
+  run.decisions = [await buildResultDecision(run, 'review')];
+  assert.equal(
+    pending().payload.reason,
+    `Review found 1 issue after 1/2 fix attempts. The fix was not delivered: ${quota}`,
+  );
+});

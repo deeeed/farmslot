@@ -467,6 +467,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   }
   const r = ctx.run;
   const sc = runStatusColor(r.status);
+  const activityLabel = deriveRunLifecycleView(r).activityLabel;
   const disposition = dispositionLabel(r.metrics.disposition);
   const suggestedComparePartner = pickComparisonPartner(r, ctx.siblings);
   // ctx.siblings excludes the current run, so add it back when it is itself a
@@ -564,8 +565,11 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             >`
           : r.ticketOrPr}
       </h2>
-      <span class="status-badge" style="border:1px solid ${sc}; color:${sc}"
-        >${deriveRunLifecycleView(r).activityLabel ?? r.status}</span
+      <span
+        class="status-badge ${activityLabel ? 'run-activity-label' : ''}"
+        style="border:1px solid ${sc}; color:${sc}"
+        title=${activityLabel ?? nothing}
+        >${activityLabel ?? r.status}</span
       >
       ${disposition
         ? html`<span
@@ -1166,6 +1170,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       : nothing}
     <div class="pipeline-section">
       <run-pipeline
+        reason-in-header
         .run=${r}
         .taskProgress=${ctx.taskProgress}
         .evidenceModel=${ctx.evidenceModel}

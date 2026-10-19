@@ -25,7 +25,13 @@ export const runDetailStyles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   flowBadge: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: 4 },
   flowText: { fontSize: fonts.sizeSm, fontWeight: '600' },
-  statusBadge: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: 4 },
+  statusBadge: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: 4,
+    flexShrink: 1,
+    marginLeft: spacing.sm,
+  },
   statusText: { fontSize: fonts.sizeSm, fontWeight: '600' },
   ticketText: {
     color: colors.textPrimary,

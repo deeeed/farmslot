@@ -216,6 +216,22 @@ export function buildReviewChainResult(run: Run): { chain: ReviewChainEntry[] } 
   return { chain: reviewChainForRun(run) };
 }
 
+/**
+ * `run list` rows. A long status, such as a blocked run's reason, is clamped
+ * so the columns stay aligned.
+ */
+export function formatRunListLines(runs: readonly Run[]): string[] {
+  const rows = runs.map((r) => {
+    const label = deriveRunLifecycleView(r).activityLabel ?? r.status;
+    return { r, label: label.length > 40 ? `${label.slice(0, 39)}…` : label };
+  });
+  const width = Math.max(14, ...rows.map(({ label }) => label.length));
+  return rows.map(
+    ({ r, label }) =>
+      `${String(r.id).slice(0, 8)}  ${label.padEnd(width)} ${String(r.flowType ?? '-').padEnd(12)} ${String(r.ticketOrPr ?? '-')}`,
+  );
+}
+
 export function formatReviewChainLine(entry: ReviewChainEntry): string {
   return `G${entry.generation} ${entry.runId.slice(0, 8)}  ${entry.baseSha?.slice(0, 7) ?? '-'} -> ${entry.headSha?.slice(0, 7) ?? 'pending'}  ${entry.mode}/${entry.validationDepth}  ${entry.verdict}  ${entry.unresolvedCount == null ? 'unresolved pending' : `${entry.unresolvedCount} unresolved`}  ${observedReviewSessionContinuity(entry)}`;
 }
@@ -751,11 +767,7 @@ export function registerRunCommand(program: Command): void {
         if (emit.machine) {
           emit.ok(result);
         } else {
-          for (const r of result.runs) {
-            output.write(
-              `${String(r.id).slice(0, 8)}  ${(deriveRunLifecycleView(r).activityLabel ?? r.status).padEnd(14)} ${String(r.flowType ?? '-').padEnd(12)} ${String(r.ticketOrPr ?? '-')}\n`,
-            );
-          }
+          for (const line of formatRunListLines(result.runs)) output.write(`${line}\n`);
         }
       } catch (err) {
         emit.fail(err);

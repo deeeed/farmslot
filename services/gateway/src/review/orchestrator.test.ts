@@ -28,6 +28,7 @@ import {
   retryDeferredFixDelivery,
   ReviewFixDeliveryError,
   type ReviewRetryDeps,
+  RunnerOutOfQuotaError,
   runReviewRetryLoop,
   shouldSkipForDisabledReviewConfig,
 } from './orchestrator.js';
@@ -1589,6 +1590,29 @@ test('runReviewRetryLoop: relaunches once when the retained worker rejects fix d
   assert.equal(result.feedbackSent, true);
   assert.equal(calls.relaunches, 1);
   assert.equal(calls.sendFeedback, 1);
+});
+
+test('runReviewRetryLoop: a runner out of quota keeps its findings without a relaunch', async () => {
+  // TAT-4006 7721a02b: grok showed 'You hit your weekly limit' when round 5's fix was due. A
+  // relaunched session hits the same quota, so the findings wait for a person instead.
+  const quota =
+    'Runner out of quota: grok hit a usage/rate limit — the composer will not accept prompts until the limit resets. Fix delivery and the relaunch stopped (REVIEW-FIX.md).';
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['pass'],
+    feedbackErrors: [new RunnerOutOfQuotaError(quota)],
+  });
+
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 2,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+
+  assert.equal(calls.relaunches, 0);
+  assert.equal(result.verdict, 'issues');
+  assert.equal(result.fixDeliveryFailure, quota);
 });
 
 test(
