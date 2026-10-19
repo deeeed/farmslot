@@ -531,6 +531,64 @@ test('a plugin runtime keeps the official actions of a bundled parent it extends
   assert.ok(manifest.actions['example.child']);
 });
 
+test('a plugin keeps its library as the source of its own actions and its parent plugin actions', async (t) => {
+  const { runtime, catalog } = setup(t, { 'example.read': declaration() });
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-plugins-'));
+  t.after(() => fs.rmSync(plugin, { recursive: true, force: true }));
+  writeLibraryManifest(plugin, { actions: { 'example.child': declaration('example.child') } });
+  // The parent plugin's manifest is in the same library under its own scope,
+  // so only the runtime's manifest list brings it into this adapter's view.
+  const parent = path.join(plugin, 'manifests', 'parent.action-manifest.json');
+  fs.writeFileSync(
+    parent,
+    JSON.stringify({
+      $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+      actions: { 'example.inherited': declaration('example.inherited') },
+    }),
+  );
+  const own = fs.realpathSync(path.join(plugin, 'manifests', 'api.action-manifest.json'));
+  runtime.actions.manifestPath = () => own;
+  runtime.actions.manifestPaths = () => [own, fs.realpathSync(parent)];
+  const { actionSources } = await catalog.resolveActionManifest('api', undefined, [
+    { name: 'plugin', root: plugin, provenance: { kind: 'library', trust: 'untrusted' } },
+  ]);
+  for (const name of ['example.child', 'example.inherited']) {
+    const source = actionSources.get(name);
+    assert.equal(source?.name, 'plugin', name);
+    assert.equal(source?.tier, 'team', name);
+    assert.equal(source?.trust, 'untrusted', name);
+    assert.equal(source?.implementationRoot, path.join(plugin, 'actions'), name);
+    assert.equal(source?.shadows, undefined, name);
+  }
+});
+
+test('the closest selected library owns a runtime manifest when library roots nest', async (t) => {
+  const { runtime, catalog } = setup(t, { 'example.read': declaration() });
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-outer-'));
+  t.after(() => fs.rmSync(outer, { recursive: true, force: true }));
+  const inner = path.join(outer, 'plugins', 'inner');
+  writeLibraryManifest(inner, { actions: { 'example.child': declaration('example.child') } });
+  const parent = path.join(inner, 'manifests', 'parent.action-manifest.json');
+  fs.writeFileSync(
+    parent,
+    JSON.stringify({
+      $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+      actions: { 'example.inherited': declaration('example.inherited') },
+    }),
+  );
+  const own = fs.realpathSync(path.join(inner, 'manifests', 'api.action-manifest.json'));
+  runtime.actions.manifestPath = () => own;
+  runtime.actions.manifestPaths = () => [own, fs.realpathSync(parent)];
+  const { actionSources } = await catalog.resolveActionManifest('api', undefined, [
+    { name: 'outer', root: outer, provenance: { kind: 'library', trust: 'trusted' } },
+    { name: 'inner', root: inner, provenance: { kind: 'library', trust: 'untrusted' } },
+  ]);
+  const inherited = actionSources.get('example.inherited');
+  assert.equal(inherited?.name, 'inner');
+  assert.equal(inherited?.trust, 'untrusted');
+  assert.equal(inherited?.implementationRoot, path.join(inner, 'actions'));
+});
+
 test('a runtime parent manifest outside the bundled library may not declare an official action', async (t) => {
   const { manifestPath, runtime, catalog } = setup(t, { 'example.read': declaration() });
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-parent-'));

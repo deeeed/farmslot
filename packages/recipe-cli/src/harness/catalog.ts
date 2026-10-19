@@ -32,6 +32,7 @@ import { harnessHost } from './host.js';
 import { prepareLiveAdapterScript, runLiveAdapterScript } from './live-adapter-contract.js';
 import { runNetworkCaptureAction } from './network-observation.js';
 import { isRecord, shellQuoteArg } from './parse-args.js';
+import { isPathWithin } from './paths.js';
 import { closest } from './suggest.js';
 
 export type {
@@ -174,9 +175,35 @@ export function createRuntimeRecipeCatalog({
       // task action root wins.
       const taskRoot = overridePath ? taskLibraryRoot(path.resolve(overridePath)) : undefined;
       const taskImplementationRoot = taskRoot && (taskActionRoot ?? path.join(taskRoot, 'actions'));
+      // A runtime manifest outside the bundled library belongs to the selected
+      // library that holds it (a plugin's own manifest or its parent plugin's), so
+      // its actions keep that library's name, trust, digest and action root. The
+      // closest holder wins when selected roots nest.
+      const selectedLibraries = [...libraries];
+      const holder = (file: string) => {
+        if (overridePath || isPathWithin(bundledLibrary.root, file)) return undefined;
+        return selectedLibraries
+          .filter((library) => isPathWithin(library.info.root, file))
+          .sort(
+            (left, right) => realPath(right.info.root).length - realPath(left.info.root).length,
+          )[0];
+      };
       // Parent declarations come first in the SDK; the derived runtime wins.
       for (const manifestPath of runtimePaths) {
         const absolute = path.resolve(manifestPath);
+        const library = holder(absolute);
+        if (library) {
+          libraries.push({
+            ...library,
+            info: {
+              ...library.info,
+              rank: libraries.length + 1,
+              root: path.dirname(absolute),
+              actionManifests: [{ scope: adapter, file: path.basename(absolute) }],
+            },
+          });
+          continue;
+        }
         const root = taskRoot ? (taskActionRoot ?? taskRoot) : bundledLibrary.root;
         const digest = await digestRecipeLibrary(root);
         libraries.push({
