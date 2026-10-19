@@ -54,8 +54,12 @@ mock.module('../core/prompt-templates.js', {
 const { makeRun, makeReadyGatePackage } = await import('../run-engine/test-fixtures.js');
 const { runBundleStore } = await import('./retained-artifacts.js');
 const { computeReadyGatePackageHash, sha256Text } = await import('./ready-gate-package.js');
-const { readInheritedAcceptanceCandidate: readInheritedAcceptanceSource } =
-  await import('./inherited-acceptance.js');
+const {
+  readInheritedAcceptanceCandidate: readInheritedAcceptanceSource,
+  readInheritedAcceptanceSource: readQualifiedInheritedAcceptance,
+} = await import('./inherited-acceptance.js');
+const { certifyingReview, openFindingAtHead, writeReviewClaimPackage } =
+  await import('../run-engine/review-claim.test-support.js');
 const { postPRComment } = await import('./pr-publication.js');
 
 async function fixture(t: TestContext, requireFresh = false, noLedger = false) {
@@ -313,4 +317,51 @@ test('a required provenance comment refuses a write failure instead of claiming 
     postPRComment(f.child, null, 'owner/repo', 210, { inheritedAcceptance: proof.provenance }),
     /permission denied/,
   );
+});
+
+test('an inherited review claim needs a clean code review at the approved parent head', async (t) => {
+  const f = await fixture(t);
+  const parentDir = path.dirname(parent!.taskFile!);
+  await mkdir(path.join(parentDir, 'artifacts/proof'), { recursive: true });
+  await mkdir(path.join(parentDir, 'inputs'), { recursive: true });
+  const { claims, files } = await writeReviewClaimPackage(path.join(parentDir, 'artifacts/proof'));
+  const criteria = claims.criteria.map(({ text }) => text);
+  const ledger = JSON.stringify(claims);
+  await writeFile(path.join(parentDir, 'artifacts/acceptance-status.json'), ledger);
+  await writeFile(
+    path.join(parentDir, 'inputs/handoff.json'),
+    JSON.stringify({ task: { acceptanceCriteria: criteria } }),
+  );
+  await retainFixtureTask(path.dirname(parentDir), parent!, await runBundleStore(true));
+  // The approved parent package freezes the ledger and the recorded proof.
+  f.prepared.reviewPolicy = { minimumReviews: 1, requestedBy: 'dispatch' };
+  f.prepared.evidenceManifest = [
+    { path: 'artifacts/acceptance-status.json', purpose: 'json', sha256: sha256Text(ledger) },
+    ...files.map(({ file, sha256 }) => ({
+      path: `artifacts/proof/${file}`,
+      purpose: 'evidence',
+      sha256,
+    })),
+  ];
+  f.prepared.artifactBundle = parent!.artifactBundle;
+  f.prepared.packageHash = computeReadyGatePackageHash(f.prepared);
+  f.child.ticketData!.acceptanceCriteria = criteria;
+  const inherit = (reviews: ReturnType<typeof certifyingReview>[]) => {
+    parent!.engineState = {
+      publishGate: {
+        approvedPackageHash: f.prepared.packageHash,
+        publicationStatus: 'published_ready',
+        prNumber: 210,
+        reviews,
+      },
+    };
+    return readQualifiedInheritedAcceptance(f.child);
+  };
+  const proof = await inherit([certifyingReview(f.prepared)]);
+  assert.equal(
+    proof?.acceptance.ledger?.criteria.find(({ id }) => id === 'AC-2')?.verdict,
+    'proven',
+  );
+  assert.equal(await inherit([certifyingReview(f.prepared), openFindingAtHead(f.prepared)]), null);
+  assert.equal(await inherit([]), null);
 });

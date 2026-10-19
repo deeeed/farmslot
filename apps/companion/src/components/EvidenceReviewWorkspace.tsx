@@ -14,7 +14,7 @@ import type {
   EvidenceReviewComparisonFilter,
   EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
-import type { SelfPrincipalSummary } from '@farmslot/protocol';
+import { acceptanceVerdictLabel, type SelfPrincipalSummary } from '@farmslot/protocol';
 
 import {
   type ArtifactHttpHeaders,
@@ -322,7 +322,7 @@ export function EvidenceReviewWorkspace({
                   </Pressable>
                 ))}
                 <Text style={styles.railSubtitle}>
-                  {row.claim.status?.verdict ?? 'not assessed'} ·{' '}
+                  {row.claim.status ? acceptanceVerdictLabel(row.claim.status) : 'not assessed'} ·{' '}
                   {row.claim.status?.proofMode ?? 'no proof mode'} ·{' '}
                   {row.claim.proofKinds.join(', ') || 'no recorded proof'} ·{' '}
                   {row.claim.reviewLabels.join('; ')}

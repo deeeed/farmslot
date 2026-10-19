@@ -9,7 +9,7 @@ const ACCEPTANCE_VERDICTS = [
   'failed',
   'awaiting-review',
 ];
-const ACCEPTANCE_PROOF_MODES = ['state', 'visual', 'mixed'];
+const ACCEPTANCE_PROOF_MODES = ['state', 'visual', 'mixed', 'review'];
 const ACCEPTANCE_CRITERION_ID_PATTERN = /^AC-[1-9][0-9]*$/;
 
 function acceptanceCriterionId(index) {
@@ -219,6 +219,17 @@ function list(values) {
   return values.length > 0 ? cell(values.join(', ')) : '-';
 }
 
+/**
+ * Display text for a verdict. The code review checks a `review` claim, so it reads
+ * "Checked in review" or "Awaiting code review", never `missing` (ADR-062 Amendment 18).
+ * A failed or untestable verdict keeps its own text.
+ */
+function acceptanceVerdictLabel(status) {
+  if (status.proofMode !== 'review' || ['failed', 'untestable'].includes(status.verdict))
+    return status.verdict;
+  return status.verdict === 'proven' ? 'Checked in review' : 'Awaiting code review';
+}
+
 function renderAcceptanceCoverage(ledger, criteria = ledger.criteria) {
   const summary = summarizeAcceptanceStatus(ledger, criteria);
   const rows = acceptanceCriteriaView(criteria, ledger);
@@ -234,7 +245,7 @@ function renderAcceptanceCoverage(ledger, criteria = ledger.criteria) {
   for (const row of rows) {
     const status = row.status;
     lines.push(
-      `| ${row.id} | ${cell(row.text)} | ${status ? status.verdict.toUpperCase() : 'NO VERDICT'} | ` +
+      `| ${row.id} | ${cell(row.text)} | ${status ? acceptanceVerdictLabel(status).toUpperCase() : 'NO VERDICT'} | ` +
         `${status?.proofMode ?? '-'} | ${list(status?.recipeNodes ?? [])} | ` +
         `${list(status?.evidence ?? [])} | ${cell(status?.note ?? '')} |`,
     );
@@ -264,6 +275,7 @@ export {
   acceptanceCriteriaView,
   acceptanceCriterionId,
   acceptanceRowExecution,
+  acceptanceVerdictLabel,
   INHERITED_ACCEPTANCE_INPUT,
   registeredAcceptanceCriteria,
   renderAcceptanceCoverage,

@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
 import {
+  type ReadyGatePrPackage,
   type RecipeRunArtifactGroup,
   type RecordedEvidencePackageInput,
   RecordedEvidenceReadError,
@@ -17,6 +18,8 @@ import {
 } from '../../run-completion/retained-artifacts.js';
 import { claimOverrideAuthority } from '../../run-engine/claim-overrides.js';
 import { readVisualReviewPolicy, visualReviewAuthority } from '../../run-engine/claim-reviews.js';
+import { codeReviewCertifiesPackage } from '../../run-engine/gate-policy.js';
+import { reviewsWithValidResults } from '../../run-engine/gate-prerequisites.js';
 import {
   readFrozenRecordedEvidenceSources,
   readGateRecordedEvidenceSources,
@@ -148,6 +151,10 @@ export async function readRunRecordedEvidence(
                       : [],
                 await readVisualReviewPolicy(run),
                 Boolean(frozen && decision?.resolvedAt),
+                await codeReviewCertifies(
+                  run,
+                  payload?.kind === 'ready' ? payload.prPackage : undefined,
+                ),
               ),
               // This hint fences a future write. Only the writer qualifies QA
               // registration; missing registration must not hide readable history.
@@ -173,12 +180,12 @@ export async function readRunRecordedEvidence(
       .filter((check) => check.status === 'fail')
       .map((check) => check.message);
     errors.push(...reviewValidationErrors(result.input));
+    const retained =
+      errors.length === 0 ? retainedReadyPackage(run, result.input, packagePath) : undefined;
     return {
       input: result.input,
       contractVersion,
-      ...(errors.length === 0
-        ? { comparisonSnapshot: retainedComparisonSnapshot(run, result.input, packagePath) }
-        : {}),
+      ...(errors.length === 0 ? { comparisonSnapshot: retained?.reviewSnapshot } : {}),
       artifactPrefix,
       packagePath,
       errors,
@@ -191,6 +198,8 @@ export async function readRunRecordedEvidence(
               result.input,
               undefined,
               await readVisualReviewPolicy(run),
+              false,
+              await codeReviewCertifies(run, retained),
             ),
           }
         : {}),
@@ -220,6 +229,15 @@ export function retainedComparisonSnapshot(
   input: RecordedEvidencePackageInput,
   packagePath: string | undefined,
 ): RunRecordedEvidenceReview['comparisonSnapshot'] {
+  return retainedReadyPackage(run, input, packagePath)?.reviewSnapshot;
+}
+
+/** The newest ready package that retained exactly this execution. */
+function retainedReadyPackage(
+  run: Run,
+  input: RecordedEvidencePackageInput,
+  packagePath: string | undefined,
+): ReadyGatePrPackage | undefined {
   const recipeRunId = input.claims?.recipeRunId;
   const summaryDigest = input.artifactDigests['summary.json']?.replace(/^sha256:/u, '');
   if (!recipeRunId || !summaryDigest || !packagePath) return undefined;
@@ -242,7 +260,18 @@ export function retainedComparisonSnapshot(
         summaryDigest &&
       !recordedEvidenceInventoryMismatch(input, root, inventory)
     )
-      return payload.prPackage?.reviewSnapshot;
+      return payload.prPackage;
   }
   return undefined;
+}
+
+/** The code-review fact gate readiness applies to this package (ADR-062 Amendment 18). */
+async function codeReviewCertifies(
+  run: Run,
+  preparedPackage: ReadyGatePrPackage | undefined,
+): Promise<boolean> {
+  return (
+    Boolean(preparedPackage) &&
+    codeReviewCertifiesPackage(run, preparedPackage, await reviewsWithValidResults(run))
+  );
 }

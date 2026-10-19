@@ -171,6 +171,7 @@ test('every nested role inherits only the frozen parent review authority', async
     const parent = JSON.stringify({
       ...resolveWorkerTerminalContract(null, 'dev'),
       claimReviewGate,
+      publicationReview: claimReviewGate,
       recordedEvidenceContractVersion: claimReviewGate === undefined ? undefined : 1,
     });
     await writeFile(contractFile, parent);
@@ -192,6 +193,7 @@ test('every nested role inherits only the frozen parent review authority', async
         ),
       );
       assert.equal(scoped.claimReviewGate, claimReviewGate);
+      assert.equal(scoped.publicationReview, claimReviewGate);
       assert.equal(
         scoped.recordedEvidenceContractVersion,
         claimReviewGate === undefined ? undefined : 1,

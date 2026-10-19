@@ -6,6 +6,7 @@ import {
   acceptanceCriterionId,
   type AcceptanceCriterionRef,
   type AcceptanceCriterionView,
+  acceptanceVerdictLabel,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   evidenceAttestationAvailable,
@@ -116,10 +117,14 @@ export function acceptanceClaimRows(
     pending: pending.has(claim.id),
   }));
   for (const row of claims) {
+    // The code review checks a `review` claim (ADR-062 Amendment 18).
+    const status = row.source?.status;
+    if (status?.proofMode === 'review' && !['failed', 'untestable'].includes(status.verdict))
+      row.state = acceptanceVerdictLabel(status);
     row.tone =
       row.state === 'Issue'
         ? 'issue'
-        : row.state === 'Checked'
+        : row.state === 'Checked' || row.state === 'Checked in review'
           ? 'checked'
           : row.state === 'Verified by agent'
             ? 'verified'

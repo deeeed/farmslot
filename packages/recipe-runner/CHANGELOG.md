@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.42.0 - 2026-10-19
+
+- A `review` claim (ADR-062 Amendment 18) derives `awaiting-review`, never `missing`, and `proven` only when the gateway review authority says the code review certifies the package; its parent re-aggregates with it, and planning refuses a node that `proves` one.
+- Align with `@farmslot/protocol` 0.57.0.
+
 ## 0.41.0 - 2026-10-19
 
 - Engine stills are lossy WebP at quality 85 (ADR-062 Amendment 17): `stills/<key>-<attempt>.webp` and `stills/recorded-<n>.webp`, registered as `image/webp`, and no PNG original is kept. `recordVideo.stillFormat: 'png'` or `recipe run --record-still-format png` keeps lossless PNG. The encoder is libwebp compiled to WebAssembly (`@jsquash/webp`) on a worker thread. `captureRecordingSnapshot` and recipe-named screenshots are unchanged.

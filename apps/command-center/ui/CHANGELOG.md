@@ -7,6 +7,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - A cancelled run that still holds its slot shows it on the run page with Replay from <step> and Release slot side by side, and the fleet card and list row read "held by cancelled run <id>" with Release slot, so a kept slot is not forgotten. Release resets the checkout, as deleting the run does, after a second click to confirm; a refusal shows its reason. Deleting a run, or several, now waits as long as a slot release, as archive does.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.0 - 2026-10-19
+
+- The evidence preview reads a `review` criterion as "Checked in review" or "Awaiting code review" instead of its raw verdict (ADR-062 Amendment 18).
+
 ## 0.24.0 - 2026-10-19
 
 - A run that needs a decision shows it in run detail: why it stopped, its findings or refused prerequisite, what it delivered, and three actions. Send back for another fix, Accept (needs a written reason; publishes nothing) and Close. An action that can't be taken stays visible with the reason. The held output review's evidence sits under the decision. The Decisions inbox links a result decision to its run and no longer lists the held output review. Cancel is hidden on a held run (the gateway refuses it; Close ends the run). Its results card says the worker delivered the result and it waits for a decision, without repeating the stop reason; once accepted it says so, with the written reason. The run list says Needs decision, and the sidebar Decisions count matches the inbox.

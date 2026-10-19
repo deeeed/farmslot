@@ -104,9 +104,16 @@ export function projectGateAcceptance(
           claim,
           claimOverrideAuthority(run, claimSourceInput(input, row.id) ?? input),
         );
-        return projected.verdict === 'untestable'
-          ? { ...row, ...projected, evidence: row.evidence }
-          : { ...row, ...reviewed.find(({ id }) => id === row.id), evidence: row.evidence };
+        if (projected.verdict === 'untestable')
+          return { ...row, ...projected, evidence: row.evidence };
+        const current = reviewed.find(({ id }) => id === row.id);
+        return {
+          ...row,
+          ...current,
+          // A receipt or code review changed the verdict; the engine verdict stays visible.
+          ...(current && current.verdict !== row.verdict ? { engineVerdict: row.verdict } : {}),
+          evidence: row.evidence,
+        };
       }),
     },
   };

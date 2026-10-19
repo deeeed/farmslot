@@ -5,8 +5,12 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - `run.cancel` stops everything the run started, its own worker included even without a recorded pane identity, and keeps the checkout and the slot bound to the run. The slot reads `held`, "Held by cancelled run <id>: replay it or release the slot", so `run.replayStep` reclaims it with the work intact (ADR-054 amendment, 2026-10-19). `run.delete`, bulk delete and `run.archive` of a cancelled run release that slot with the reset of `slot release --reset`, under the archive fence so a replay cannot reclaim it meanwhile; an editor or other process with the checkout open never blocks it. A replay that fails after reclaiming the slot gives it back to the run. Every `slot.release` with `forceReset` logs the HEAD and dirty file count it discards, for reflog recovery. Another active run still keeps its slot. A run-owned process that survives the stop is named in `slotTeardownSkipped`, and the next prepare that runs a preflight stops a browser session left on the slot's CDP port. This replaces 0.25.0's cancel, which freed the slot: another dispatch could take it and its prepare reset the work, breaking cancel-then-replay. Before 0.25.0, four cancels at the human gate on 10-19 left their slots held, and deleting the runs left them stuck until a manual `slot release`.
-- The improvement engine verifies a learning against its source run's evidence before proposing: the prompt now names that run for `read_task_file`, and the default rules propose nothing for an unverified claim, a code-enforced rule or noise (ADR-026 Amendment 1).
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.26.0 - 2026-10-19
+
+- The improvement engine verifies a learning against its source run's evidence before proposing: the prompt now names that run for `read_task_file`, and the default rules propose nothing for an unverified claim, a code-enforced rule or noise (ADR-026 Amendment 1).
+- A `review` criterion (ADR-062 Amendment 18) is satisfied only when the gate's publication-review prerequisite is met at the package head (the approved parent head for inherited acceptance); code review requests list these criteria, the evidence view and `run.get`/`decision.list` show the projected acceptance with `engineVerdict` on each changed row, and the worker terminal contract records `publicationReview`.
 
 ## 0.25.0 - 2026-10-19
 

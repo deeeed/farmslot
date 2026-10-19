@@ -370,7 +370,14 @@ export function validateRecipeDocument(
             .map((target) => normalizeRecipeClaimId(String(target.parentId)))
         : [],
     );
-    validateProofLinks(ctx, workflow.nodes, proofTargetIds, parentIds);
+    // The code review checks a `review` claim, so no node covers it (ADR-062 Amendment 18).
+    const reviewIds = Array.isArray(recipe.proofTargets)
+      ? recipe.proofTargets
+          .filter(isRecord)
+          .filter((target) => target.proofMode === 'review' && isNonEmptyString(target.id))
+          .map((target) => normalizeRecipeClaimId(String(target.id)))
+      : [];
+    validateProofLinks(ctx, workflow.nodes, proofTargetIds, new Set([...parentIds, ...reviewIds]));
   }
 
   return finishResult(ctx);
@@ -392,7 +399,7 @@ function validateProofLinks(
   ctx: ReturnType<typeof createContext>,
   nodes: Record<string, Record<string, unknown>>,
   declared: Set<string>,
-  parents: ReadonlySet<string>,
+  uncovered: ReadonlySet<string>,
 ): void {
   const covered = new Set<string>();
   for (const [nodeId, node] of Object.entries(nodes)) {
@@ -426,7 +433,7 @@ function validateProofLinks(
     });
   }
   for (const target of declared) {
-    if (!covered.has(target) && !parents.has(target)) {
+    if (!covered.has(target) && !uncovered.has(target)) {
       addFinding(
         ctx,
         'error',

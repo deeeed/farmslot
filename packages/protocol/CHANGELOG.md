@@ -7,6 +7,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - `cancelledRunHoldReason`, `cancelledRunSlotHold`, `cancelledRunSlotChoices` and `releaseCancelledRunSlot`: the shared view model for a slot a cancelled run keeps for replay (ADR-054 amendment, 2026-10-19), with its release (`slot.release` with the run as expected owner and `forceReset`). `SlotReleaseResult` (`released`, `reason`) types the `slot.release` result.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.57.0 - 2026-10-19
+
+- Proof mode `review` (ADR-062 Amendment 18) joins `RecipeClaimProofMode`, its validation, the recipe-v1 schema and `ACCEPTANCE_PROOF_MODES`; a `review` proof target needs no covering node, `acceptanceVerdictLabel` reads such a claim as "Checked in review" or "Awaiting code review", and `RecipeVisualReviewAuthority.codeReviewCertified` and `WorkerTerminalContractDocument.publicationReview` carry the gateway's code-review facts.
+
 ## 0.56.0 - 2026-10-19
 
 - Runs gain the `needs-decision` status (ADR-065 Amendment 7): a run whose worker delivered a result that review or a completion prerequisite did not accept waits for a person. The `result-decision` payload carries the reason, the findings or refused prerequisite, the delivered head or report and three actions (`send-back`, `accept-result`, `close-result`) with their availability; `Run.resultDecisionReceipt` records the choice; `RunResolveDecisionParams.reason` carries its written reason. New helpers `hasDeliveredResult` and `isHeldForResultDecision`; `isSuccessfulRun` counts an accepted result as a success and a closed one as not; the refused-completion helpers also accept `needs-decision`; `deriveRunLifecycleView` labels it "Needs decision". `RunAnalyticsRecord` gains `resultDecision` (`ANALYTICS_RECORD_SCHEMA_VERSION` 2). `deriveRunLifecycleView` gives it the activity label Needs decision, so run lists and the CLI say what it waits on.
