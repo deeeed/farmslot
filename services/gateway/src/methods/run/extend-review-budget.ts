@@ -17,11 +17,12 @@ import { publicationStatusForRun } from '../../run-completion/orchestrator.js';
 import { capturePublicationSource } from '../../run-completion/publication-source.js';
 import {
   hasEngineDecisionWaiter,
+  recordDecisionResolution,
   resolveEngineDecision,
 } from '../../run-engine/engine-decisions.js';
 import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
-import { getRun, updateRun } from '../../runs/store.js';
+import { getRun } from '../../runs/store.js';
 
 export interface ReviewBudgetExtensionDependencies {
   authorize?: () => Principal;
@@ -123,13 +124,12 @@ export async function runExtendReviewBudget(
         (decision) =>
           decision.type === 'engine_human_gate' &&
           !decision.resolvedAt &&
-          decision.payload?.kind === 'ready',
+          decision.payload?.kind === 'ready' &&
+          hasEngineDecisionWaiter(decision.id),
       )
     : undefined;
-  if (gate && hasEngineDecisionWaiter(gate.id)) {
-    gate.resolvedAt = new Date().toISOString();
-    gate.resolvedAction = 'hold';
-    updateRun(current.id, { decisions: current.decisions });
+  if (gate) {
+    recordDecisionResolution(current.id, gate.id, 'hold');
     resolveEngineDecision(gate.id, 'hold');
     return { ...extended, run: getRun(current.id)! };
   }

@@ -119,7 +119,7 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import { buildCIWatchChainedRunParams } from '../run-engine/ci-watch-chain.js';
 import { isHumanGateReviewRequestAction } from '../run-engine/decision-replay.js';
-import { resolveEngineDecision } from '../run-engine/engine-decisions.js';
+import { recordDecisionResolution, resolveEngineDecision } from '../run-engine/engine-decisions.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
@@ -2333,15 +2333,12 @@ export async function resolveRunDecision(
       }
     }
 
-    // Mark decision as resolved
-    decision.resolvedAt = new Date().toISOString();
-    decision.resolvedAction = params.actionId;
     if (params.triageAssessmentId) decision.triageAssessmentId = params.triageAssessmentId;
     const extendMonitorWindow =
       params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
       (decision.type === 'monitor_timeout' || interactiveHandoffAllowsExtend(decision));
     if (extendMonitorWindow) persistMonitorWindowStart(params.runId);
-    updateRun(params.runId, { decisions: getRun(params.runId)!.decisions });
+    recordDecisionResolution(params.runId, params.decisionId, params.actionId);
     if (
       isPublishApprovalAction(params.actionId) &&
       decision.payload?.kind === 'ready' &&

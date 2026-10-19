@@ -84,6 +84,22 @@ export function hasEngineDecisionWaiter(decisionId: string): boolean {
   return engineDecisionResolvers.has(decisionId);
 }
 
+/**
+ * Records a stored decision's resolution and persists it. Callers record it before waking the
+ * decision's waiter, so a resolved card never stays pending in the run.
+ */
+export function recordDecisionResolution(
+  runId: string,
+  decisionId: string,
+  actionId: string,
+): void {
+  const decision = getRun(runId)?.decisions.find((entry) => entry.id === decisionId);
+  if (!decision) return;
+  decision.resolvedAt = new Date().toISOString();
+  decision.resolvedAction = actionId;
+  updateRun(runId, { decisions: getRun(runId)!.decisions });
+}
+
 export function resolveEngineDecision(decisionId: string, actionId: string): boolean {
   const resolver = engineDecisionResolvers.get(decisionId);
   if (resolver) {
