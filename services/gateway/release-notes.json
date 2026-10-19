@@ -1,11 +1,8 @@
 {
-  "version": "0.25.0",
+  "version": "0.26.0",
   "date": "2026-10-19",
   "items": [
-    "A run whose worker delivered a result waits in Needs decision instead of failing when review findings remain or a completion step is refused",
-    "Cancel always frees its slot unless another active run owns it, and cancel, settlement and slot release stop a browser session the run left behind",
-    "A relaunched worker no longer shows its failed predecessor's error, and a native reviewer no longer waits on an approval nobody can see",
-    "A chunked file transfer survives a node restart, and a request on a closed node connection fails at once",
-    "WebP evidence stills are packaged, published in PR bodies and given to reviewers like PNG stills"
+    "Criteria about the change itself (size, revertability, PR marker) are checked by the code review and count once that review is clean at the package head.",
+    "The improvement engine checks a learning against its source run before proposing it."
   ]
 }
