@@ -5,6 +5,7 @@ import {
   type FamilyObservabilityRunSummary,
   type FamilyObservabilitySnapshot,
   githubPullUrl,
+  isRunArtifactImagePath,
   isRunEvidenceVideoArtifact,
   parseGitHubRef,
   type PRStatus,
@@ -23,8 +24,6 @@ import {
   MAX_ARTIFACTS_PER_EVIDENCE_GROUP,
 } from './family-observability-evidence.js';
 import { flowColor, flowLabel, formatCreatedAt, runStatusColor } from './run-utils.js';
-
-const IMAGE_EXTS = /\.(png|jpg|jpeg|gif)$/i;
 
 export interface FamilyEvidenceRenderContext {
   evidenceFilter: FamilyEvidenceFilter;
@@ -199,7 +198,7 @@ function renderFamilyEvidenceArtifact(
       >
         ${broken
           ? html`<div class="artifact-fallback artifact-broken">Preview unavailable</div>`
-          : IMAGE_EXTS.test(artifact.path)
+          : isRunArtifactImagePath(artifact.path)
             ? html`<img
                 class="artifact-preview"
                 src=${gatewayMediaSrc(url)}

@@ -118,7 +118,7 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 
 - [ ] **21. Write `{{TASK_DIR}}/artifacts/review.md`** — use report contract in `{{review_quality_path}}`. Include Recipe Coverage matrix, Evidence Audit, Recommended Action. Coverage &lt; 100% without UNTESTABLE rationale → `REQUEST_CHANGES` or explicit escalation.
 - [ ] **22. Write `{{TASK_DIR}}/artifacts/line-comments.json`** — inline findings with severities; empty array if none.
-- [ ] **23. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — review completed without novel findings.`
+- [ ] **23. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
 
 ### Finish (24)
 

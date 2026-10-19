@@ -1,6 +1,7 @@
 import { type Command } from 'commander';
 
 import {
+  type EvidenceStillFormat,
   getRecipeActionManifestActionNames,
   isRecord,
   type RecipeActionManifestDocument,
@@ -35,6 +36,7 @@ interface RunCommandOptions {
   recordVideo?: boolean | string;
   recordMaxFps?: string;
   recordMaxSize?: string;
+  recordStillFormat?: string;
   recordAppName?: string;
   recordWindowName?: string;
   recordWindowId?: string;
@@ -76,6 +78,7 @@ export function registerRunCommand(program: Command, context: RecipeCliCommandCo
     .option('--record-video [mode]', 'Record one whole-recipe MP4 when visual motion proof helps')
     .option('--record-max-fps <fps>', 'Maximum video frame rate')
     .option('--record-max-size <px>', 'Maximum recorded video dimension')
+    .option('--record-still-format <format>', 'Evidence still format: webp (lossy, default) or png')
     .option('--record-app-name <name>', 'macOS app name for recording target')
     .option('--record-window-name <substring>', 'macOS window title substring for recording target')
     .option('--record-window-id <id>', 'macOS window id from `capture-helper list --json`')
@@ -297,6 +300,14 @@ function parseRecordVideoOptions(options: RunCommandOptions): false | RecipeVide
     mode,
     ...(options.recordMaxFps ? { maxFps: parsePositiveInteger(options.recordMaxFps) } : {}),
     ...(options.recordMaxSize ? { maxSize: parsePositiveInteger(options.recordMaxSize) } : {}),
+    ...(options.recordStillFormat
+      ? { stillFormat: parseStillFormat(options.recordStillFormat) }
+      : {}),
     ...(target ? { target } : {}),
   };
+}
+
+function parseStillFormat(value: string): EvidenceStillFormat {
+  if (value === 'webp' || value === 'png') return value;
+  throw new Error('--record-still-format must be webp or png.');
 }

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- The default task template asks for one `learnings.md` bullet per failure in the run that is likely to recur and should change a template, reviewer or engine step, with `- None` as a valid answer (ADR-026 Amendment 1).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.3.2 - 2026-10-17

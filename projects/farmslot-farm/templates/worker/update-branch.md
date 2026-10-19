@@ -46,7 +46,7 @@ merge commit.
 
 - [ ] **7. Push** — publish the updated branch with an explicit lease against the recorded remote PR-head SHA. Record the exact push command used.
 - [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/report.md` recording: publication base, validation results, conflict resolution, exact push command and any remaining risks.
-- [ ] **9. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
+- [ ] **9. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
 - [ ] **10. Signal completion** — run `{{TASK_DIR}}/mark complete --mark-last`
 
 ## Recipe proof + acceptance review

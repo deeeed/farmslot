@@ -1,4 +1,4 @@
-import { runDisplayTitle } from '@farmslot/protocol';
+import { isRunArtifactMediaPath, runDisplayTitle } from '@farmslot/protocol';
 import {
   type DiffStat,
   type EvalExperimentSource,
@@ -355,10 +355,7 @@ function evidenceSummaryFromRun(
       if (typeof artifact.sizeBytes === 'number') artifactBytes += artifact.sizeBytes;
       const purpose = typeof artifact.purpose === 'string' ? artifact.purpose.toLowerCase() : '';
       const pathLower = artifact.path.toLowerCase();
-      if (
-        /screenshot|video|visual/.test(purpose) ||
-        /\.(png|jpe?g|gif|mp4|mov|webm)$/.test(pathLower)
-      )
+      if (/screenshot|video|visual/.test(purpose) || isRunArtifactMediaPath(pathLower))
         visualEvidenceCount += 1;
       if (
         /recipe|validation|report|summary|trace|coverage|manifest/.test(purpose) ||

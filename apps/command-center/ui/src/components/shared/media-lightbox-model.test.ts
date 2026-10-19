@@ -34,6 +34,7 @@ test('media lightbox type badges match existing UI labels', () => {
 
 test('media lightbox media predicates mirror file type shortcuts', () => {
   assert.equal(isImageLightboxItem({ path: 'image.gif', purpose: 'artifact' }), true);
+  assert.equal(isImageLightboxItem({ path: 'stills/recorded-3.webp', purpose: 'artifact' }), true);
   assert.equal(isVideoLightboxItem({ path: 'movie.mov', purpose: 'artifact' }), true);
   assert.equal(isImageLightboxItem({ path: 'notes.md', purpose: 'artifact' }), false);
   assert.equal(isVideoLightboxItem({ path: 'notes.md', purpose: 'artifact' }), false);

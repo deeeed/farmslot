@@ -1,9 +1,9 @@
 {
-  "version": "0.23.0",
-  "date": "2026-10-18",
+  "version": "0.24.0",
+  "date": "2026-10-19",
   "items": [
-    "The idle cleanup preview says that disabled slots' running resources are included; manual, active, held, working and current-run slots stay excluded",
-    "Run counts in the sidebar badge, family views, dispatch warnings and pinned views use the same active rule as the Runs Active tab, and active views load every active run instead of the newest 1000",
-    "Run results, the acceptance tally and report links render from the same view model as Companion; a malformed web link in a report no longer opens"
+    "A run that needs a decision shows why it stopped and what it delivered, with Send back, Accept (with a written reason) and Close; the Decisions inbox lists it",
+    "A run that is still working no longer shows its evidence as Invalid, and the acceptance panel stays one counts line until a criterion is assessed",
+    "WebP evidence stills show as images, like PNG stills"
   ]
 }

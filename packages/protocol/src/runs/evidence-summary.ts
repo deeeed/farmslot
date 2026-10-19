@@ -2,6 +2,14 @@ import type { EvidenceManifestEntry, Run } from '../contracts/runs.js';
 import { isRelativeArtifactPath } from '../recipe/common.js';
 import { isInternalRunArtifactPath } from '../recipes/step-io.js';
 
+import {
+  isRunArtifactImagePath,
+  isRunArtifactMediaPath,
+  isRunEvidenceVideoArtifact,
+} from './artifact-media.js';
+
+export { isRunArtifactImagePath, isRunArtifactMediaPath, isRunEvidenceVideoArtifact };
+
 /** A run artifact with the metadata its source recorded. */
 export interface RunArtifactManifestEntry extends EvidenceManifestEntry {
   type?: string;
@@ -84,10 +92,6 @@ export function summarizeRunEvidence(
   };
 }
 
-export function isRunEvidenceVideoArtifact(entry: Pick<EvidenceManifestEntry, 'path'>): boolean {
-  return /\.(mp4|mov|m4v|webm)$/i.test(entry.path);
-}
-
 export function isRunEvidenceImageArtifact(entry: Pick<EvidenceManifestEntry, 'path'>): boolean {
   return /\.(png|jpe?g|gif|webp|avif|bmp|svg|heic|heif|tiff?)$/i.test(entry.path);
 }
@@ -100,11 +104,6 @@ export function isRunEvidenceVisualArtifact(entry: Pick<EvidenceManifestEntry, '
 
 export function runArtifactPathsToManifest(paths: readonly string[]): RunArtifactManifestEntry[] {
   return paths.map((path) => ({ path, purpose: inferRunArtifactPurpose(path) }));
-}
-
-/** Image formats the clients show inline; `isRunEvidenceImageArtifact` also counts ones they can't. */
-export function isRunArtifactImagePath(path: string): boolean {
-  return /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(path);
 }
 
 export function inferRunArtifactPurpose(path: string): string {
@@ -169,11 +168,7 @@ function looksLikeRunArtifactEntry(record: Record<string, unknown>): boolean {
 }
 
 function looksLikeRunArtifactPath(value: string): boolean {
-  return (
-    isRunArtifactImagePath(value) ||
-    isRunEvidenceVideoArtifact({ path: value }) ||
-    /\.(md|json|txt|log|diff|patch)$/i.test(value)
-  );
+  return isRunArtifactMediaPath(value) || /\.(md|json|txt|log|diff|patch)$/i.test(value);
 }
 
 function countRunEvidenceVisualPairs(entries: EvidenceManifestEntry[]): number {

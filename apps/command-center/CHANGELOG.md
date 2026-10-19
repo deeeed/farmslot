@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.15.0 - 2026-10-19
+
 - Agentic recipe runs (`scripts/agentic/run-recipe.mjs`) keep their capture-helper recorder from waiting for the host capture slot (`captureSlotWaitMs: 0`), as before: a host where another slot is recording falls back to the CDP recorder at once.
 
 ## 0.14.0 - 2026-10-16

@@ -57,7 +57,7 @@ cd temp/tasks/my-task
 
 | Flow                                   | Outcome artifact (before `./mark complete`)                               | Learnings                                                       |
 | -------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **dev**                                | `artifacts/pr-description.md` — PR body + summary + evidence placeholders | `artifacts/learnings.md` — 3–5 bullets; one if nothing relevant |
+| **dev**                                | `artifacts/pr-description.md` — PR body + summary + evidence placeholders | `artifacts/learnings.md` — recurring failures only; or `- None` |
 | **fix-bug**                            | `artifacts/pr-description.md`                                             | same                                                            |
 | **review-pr**                          | `artifacts/review.md`, `artifacts/line-comments.json` (may be `[]`)       | same                                                            |
 | **pr-complete**                        | `artifacts/comments-report.md`                                            | same                                                            |
@@ -83,7 +83,7 @@ Do **not** write both `report.md` and `pr-description.md` on dev/fix-bug — `pr
 Add this block near the end of every terminal worker template (adjust outcome path for the flow — see [Worker artifacts by flow](worker-artifacts-by-flow.md)):
 
 ```markdown
-- [ ] **Write `{{TASK_DIR}}/artifacts/learnings.md`** — 3–5 bullets on key learnings or struggles; if nothing relevant, one bullet.
+- [ ] **Write `{{TASK_DIR}}/artifacts/learnings.md`** — one bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
 - [ ] **Write the flow outcome artifact** — e.g. `pr-description.md` (dev/fix-bug), `review.md` (review-pr), `report.md` (update-branch).
 - [ ] **Finish** — `{{TASK_DIR}}/mark complete --mark-last` (never hand-write `SIGNAL.json`).
 ```

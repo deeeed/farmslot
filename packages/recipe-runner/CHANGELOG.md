@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.41.0 - 2026-10-19
+
+- Engine stills are lossy WebP at quality 85 (ADR-062 Amendment 17): `stills/<key>-<attempt>.webp` and `stills/recorded-<n>.webp`, registered as `image/webp`, and no PNG original is kept. `recordVideo.stillFormat: 'png'` or `recipe run --record-still-format png` keeps lossless PNG. The encoder is libwebp compiled to WebAssembly (`@jsquash/webp`) on a worker thread. `captureRecordingSnapshot` and recipe-named screenshots are unchanged.
+- Align with `@farmslot/protocol` 0.56.0, which carries the `stillFormat` default.
+
 ## 0.40.0 - 2026-10-19
 
 - `ActiveVideoRecording.ready()`'s contract now includes the lead-in: it resolves once the segment's zero is bounded and one `EVIDENCE_PADDING_MS` has been recorded past it (ADR-062 Amendment 16). Documentation only; the runner is unchanged.

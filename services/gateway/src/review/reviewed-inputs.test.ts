@@ -140,6 +140,10 @@ test('what a passing review judged changes with the evidence or HEAD, not the de
   await writeFile(path.join(inherited, 'flag-on.png'), 'png');
   assert.equal(await changed(), true, 'inherited evidence media');
   await reviewPasses(run.id);
+  await mkdir(path.join(artifacts, 'stills'), { recursive: true });
+  await writeFile(path.join(artifacts, 'stills', 'recorded-1.webp'), 'webp');
+  assert.equal(await changed(), true, 'a WebP still');
+  await reviewPasses(run.id);
 
   await git(repo, 'commit', '-q', '--allow-empty', '-m', 'squash');
   assert.equal(await changed(), true, 'a new HEAD, e.g. a squash');

@@ -138,6 +138,10 @@ test('unbound legacy names and purposes never supply an AC role or comparison pa
 
 test('workspaceArtifactType classifies filters and labels', () => {
   assert.equal(workspaceArtifactType({ path: 'shots/home.png', purpose: 'Screenshot' }), 'image');
+  assert.equal(
+    workspaceArtifactType({ path: 'stills/recorded-3.webp', purpose: 'artifact' }),
+    'image',
+  );
   assert.equal(workspaceArtifactType({ path: 'video/demo.webm', purpose: 'Recording' }), 'video');
   assert.equal(workspaceArtifactType({ path: 'report.md', purpose: 'Markdown' }), 'markdown');
   assert.equal(workspaceArtifactType({ path: 'data/result.json', purpose: 'Payload' }), 'json');

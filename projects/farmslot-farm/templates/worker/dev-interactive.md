@@ -95,7 +95,7 @@ When the operator says the interactive session is complete:
    ```bash
    node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe --require-learnings
    ```
-4. Write `{{TASK_DIR}}/artifacts/learnings.md` — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
+4. Write `{{TASK_DIR}}/artifacts/learnings.md` — required packaged evidence. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
 5. If the operator explicitly approved publication, run repo hygiene before creating the PR:
    ```bash
    cd {{REPO}}

@@ -558,6 +558,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           claimProjections: evidencePlan.nodes,
           logger: this.#logger,
           defaultObserverRefs: this.#defaultObserverRefs,
+          stillFormat: videoOptions.stillFormat ?? DEFAULT_RECORDED_EVIDENCE_POLICY.stillFormat,
           prepareNode: async (nodeId, node, signal) => {
             const captureAnnotations = isRecipeVisualCaptureAction(node.action);
             if (
@@ -852,6 +853,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           timeline,
           traceIndex,
           trace,
+          videoOptions.stillFormat ?? DEFAULT_RECORDED_EVIDENCE_POLICY.stillFormat,
         );
         if (still) artifactWriter.register(still);
       } catch (error) {
@@ -1624,9 +1626,14 @@ function normalizeVideoRecordingOptions(
     maxSize: DEFAULT_RECORDED_EVIDENCE_POLICY.maxSize,
     maxDurationMs: DEFAULT_RECORDED_EVIDENCE_POLICY.maxDurationMs,
     maxBytes: DEFAULT_RECORDED_EVIDENCE_POLICY.maxBytes,
+    stillFormat: DEFAULT_RECORDED_EVIDENCE_POLICY.stillFormat,
     ...(typeof input === 'object' ? input : {}),
     mode: normalizeVideoRecordingMode(mode).mode,
   };
+  if (options.stillFormat !== 'webp' && options.stillFormat !== 'png')
+    throw new Error(
+      `Recording stillFormat must be webp or png, got ${JSON.stringify(options.stillFormat)}.`,
+    );
   for (const key of ['maxFps', 'maxSize', 'maxDurationMs', 'maxBytes'] as const) {
     if (!Number.isFinite(options[key]) || options[key] <= 0)
       throw new Error(`Recording ${key} must be finite and positive.`);

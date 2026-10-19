@@ -6,6 +6,7 @@ import type {
   EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
 import type { ArtifactRef, SelfPrincipalSummary } from '@farmslot/protocol';
+import { isRunArtifactImagePath } from '@farmslot/protocol';
 
 import '../shared/hydrating-placeholder.js';
 
@@ -14,7 +15,6 @@ import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 
 import { renderVisualClaimJudgment } from './visual-claim-judgment.js';
 import {
-  IMAGE_EXTS,
   VIDEO_EXTS,
   workspaceArtifactBasename,
   workspaceArtifactTypeBadge,
@@ -32,10 +32,10 @@ function evidenceArtifactLabel(artifact: ArtifactRef): string {
   const explicit = artifact.label?.trim();
   if (explicit) return explicit;
   const basename = workspaceArtifactBasename(artifact.path);
-  const withoutFinalExtension = basename.replace(/\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i, '');
+  const withoutFinalExtension = basename.replace(/\.(png|jpg|jpeg|gif|webp|mp4|mov|webm)$/i, '');
   const withoutTimestamp = withoutFinalExtension.replace(/-\d{10,}(?:\.\w+)?$/i, '');
   const withoutEmbeddedExtension = withoutTimestamp.replace(
-    /\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i,
+    /\.(png|jpg|jpeg|gif|webp|mp4|mov|webm)$/i,
     '',
   );
   const withoutEvidencePrefix = withoutEmbeddedExtension.replace(/^evidence[-_]?/i, '');
@@ -124,7 +124,7 @@ export function renderWorkspaceEvidencePreview(input: {
           : '200px'}, 1fr)); gap:${spacing.sm};"
       >
         ${input.items.map(({ artifact, url, open, openLabel = 'Open in lightbox', selected }) => {
-          const isImage = IMAGE_EXTS.test(artifact.path);
+          const isImage = isRunArtifactImagePath(artifact.path);
           const isVideo = VIDEO_EXTS.test(artifact.path);
           const label = evidenceArtifactLabel(artifact);
           const clickable = Boolean(open) && !isVideo;

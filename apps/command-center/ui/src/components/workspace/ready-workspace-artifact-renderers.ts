@@ -2,6 +2,7 @@ import { html, nothing, type TemplateResult } from 'lit';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
+import { isRunArtifactImagePath, isRunArtifactMediaPath } from '@farmslot/protocol';
 
 import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
 import { formatBytes } from '../../utils/format.js';
@@ -12,9 +13,7 @@ import {
   type ArtifactFilter,
   type ArtifactGroup,
   type ArtifactTypeFilter,
-  IMAGE_EXTS,
   isWorkspaceDiffArtifact,
-  MEDIA_EXTS,
   VIDEO_EXTS,
   workspaceArtifactBasename,
   workspaceArtifactGroup,
@@ -149,7 +148,7 @@ export function renderReadyArtifactGroups(ctx: ReadyArtifactGroupsContext) {
       : groupFiltered.filter((artifact) => workspaceArtifactType(artifact) === activeTypeFilter);
   const groups: ArtifactGroup[] = ['before', 'after', 'review', 'other'];
   const pairCount = buildBeforeAfterPairs(
-    ctx.artifacts.filter((artifact) => MEDIA_EXTS.test(artifact.path)),
+    ctx.artifacts.filter((artifact) => isRunArtifactMediaPath(artifact.path)),
     ctx.evidenceModel,
   ).length;
   const filters: Array<{ value: ArtifactFilter; label: string; count: number }> = [
@@ -257,7 +256,7 @@ export interface ReadyArtifactCardContext {
 
 export function renderReadyArtifactCard(ctx: ReadyArtifactCardContext) {
   const artifact = ctx.artifact;
-  const isImage = IMAGE_EXTS.test(artifact.path);
+  const isImage = isRunArtifactImagePath(artifact.path);
   const isVideo = VIDEO_EXTS.test(artifact.path);
   const isDiff = isWorkspaceDiffArtifact(artifact);
   const isMedia = isImage || isVideo;

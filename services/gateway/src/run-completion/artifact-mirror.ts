@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   DEFAULT_TASK_DIR,
   isInternalRunArtifactPath,
+  isRunArtifactMediaPath,
   RecordedEvidenceReadError,
   type Run,
   SUBTASKS_DIR,
@@ -278,9 +279,7 @@ async function copyEvidenceManifestReferencedArtifacts(
       ...retainedPaths.map((file) => `artifacts/${file}`),
     ]),
   ];
-  const mediaPaths = new Set(
-    paths.filter((file) => /\.(png|jpe?g|gif|mp4|mov|webm)$/iu.test(file)),
-  );
+  const mediaPaths = new Set(paths.filter((file) => isRunArtifactMediaPath(file)));
   let copied = 0;
   for (const artifactPath of paths) {
     // Media is the PR evidence, so a bad media reference fails the mirror.
