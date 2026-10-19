@@ -157,6 +157,16 @@ retain source provenance; they are not mislabeled as native snapshots. A missing
 frame remains missing evidence. The HUD renderer remains; the engine publishes
 its final outcome before stopping capture. No unrelated image fills a proof gap.
 
+**Still format:** Stills the engine names (automatic proof stills and stills
+derived from recorded frames) are lossy WebP at quality 85: one `.webp` file per
+still, registered with `mimeType: image/webp`. Recipe-runner encodes each still
+once from the recorder's PNG frame. The WebP file is the evidence, no PNG
+original is kept, and its digest is the one manifests and gate packages check.
+The recording policy's `stillFormat: png` keeps them lossless PNG. Screenshots
+taken by `ui.screenshot` keep the format of their path. Consumers decide how to
+show or package each file from its `mimeType` or extension, so retained PNG
+stills stay valid (ADR-062 Amendment 17).
+
 ## HUD requirements
 
 The HUD MUST display the complete node intent, wrapping to at most two lines,
@@ -202,8 +212,8 @@ signatures migrate in the coordinated breaking recipe-cli release. The `run`/`ca
 commands and provider `RunObserver.finalize(path?)` interface keep their existing
 arguments; the host supplies the observer sidecar path during closeout.
 
-Default UI policy records without author instructions, at ≤15 FPS and a 1080-pixel
-maximum edge. Explicit operator off requires a reason and appears at the gate.
+Default UI policy records without author instructions, at ≤15 FPS and a
+1080-pixel maximum edge, and writes engine stills as WebP (`stillFormat`, above). Explicit operator off requires a reason and appears at the gate.
 Headless state-only execution does not require video. Proposed performance
 budgets count the recorder, encoder and automatic derivation together:
 
