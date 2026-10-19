@@ -2457,11 +2457,13 @@ async function sendOwnedFeedbackToWorker(
           }
         },
         getRun,
-        shouldAbort: () => terminalRetainedHoldReason != null,
+        // A long turn must not let a superseded review deliver its old fix after the turn ends.
+        shouldAbort: () => terminalRetainedHoldReason != null || !nativeReviewOperationIsCurrent(),
         isTargetBound: () => promptSendAttempted,
         deferredReason: () => lastRetainedHoldReason,
         turnInProgress: (retryTarget) => runnerTurnIsActive(vars, retryTarget, runner),
       });
+      assertNativeReviewOperationCurrent();
       sent = retry.sent;
       workerTarget = retry.target;
       deliverySeenWindows = retry.seenWindows;

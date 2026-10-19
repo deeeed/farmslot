@@ -28,31 +28,34 @@ export async function runnerTurnLeaseIsActive(
   /** Also hold the lease through later turns the worker starts itself in the same session. */
   followContinuations = false,
 ): Promise<boolean> {
-  const state = await readRunnerTurnState(vars, target, runner, expectedTurnToken);
-  if (state?.confidence !== 'high' || state.value !== 'active' || !state.turnToken) return false;
-  if (state.turnToken !== expectedTurnToken) {
+  return runnerTurnIsActive(vars, target, runner, expectedTurnToken, (turnToken, sessionId) => {
+    if (turnToken === expectedTurnToken) return true;
     // A session runs one turn at a time, so another active turn in it started after the leased
     // one: a continuation, such as Grok resuming after a background command finished.
     const session = turnTokenSessionId(expectedTurnToken);
-    if (
-      !followContinuations ||
-      !session ||
-      turnTokenSessionId(state.turnToken) !== session ||
-      (state.sessionId !== undefined && state.sessionId !== session)
-    )
-      return false;
-  }
-  return paneHostsRunnerProcess(vars, target, runner);
+    return (
+      followContinuations &&
+      !!session &&
+      turnTokenSessionId(turnToken) === session &&
+      (sessionId === undefined || sessionId === session)
+    );
+  });
 }
 
-/** The pane's runner is mid-turn, whichever turn it is: a fix, an operator request or its own. */
+/**
+ * The pane's runner is mid-turn, whichever turn it is: a fix, an operator request or its own.
+ * With a token, only a turn `ownsTurn` accepts counts.
+ */
 export async function runnerTurnIsActive(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
+  expectedTurnToken?: string,
+  ownsTurn?: (turnToken: string, sessionId: string | undefined) => boolean,
 ): Promise<boolean> {
-  const state = await readRunnerTurnState(vars, target, runner);
+  const state = await readRunnerTurnState(vars, target, runner, expectedTurnToken);
   if (state?.confidence !== 'high' || state.value !== 'active') return false;
+  if (ownsTurn && (!state.turnToken || !ownsTurn(state.turnToken, state.sessionId))) return false;
   return paneHostsRunnerProcess(vars, target, runner);
 }
 
