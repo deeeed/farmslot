@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.23.0 - 2026-10-19
+
+- Align with `@farmslot/agent-runtime` 0.30.0 and `@farmslot/recipe-runner` 0.40.0.
+
 ## 0.22.29 - 2026-10-18
 
 - After a segment restart, the Android recorder's `ready()` resolves only once the new segment has recorded one `EVIDENCE_PADDING_MS` past its frame zero, so the next proof node gets the same 1 s lead-in as the first (ADR-062 Amendment 16). On a QA-03 replay, a node that started right after the 150 s roll fell outside both segments and kept AC-1..3 weak.
