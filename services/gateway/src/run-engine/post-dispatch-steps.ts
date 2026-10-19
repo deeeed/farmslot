@@ -870,8 +870,8 @@ export async function rerunReviewIfReviewedInputsChanged(
   const changedInputs = await reviewedInputsAwaitingReview(latest);
   if (!changedInputs) return false;
   const reviewedPackage = await readReadyGatePreparedPackage(latest);
-  // Findings awaiting a fix at this head come first: Continue Fixing re-reviews after the fix,
-  // and a review now would spend the round on the same code (ADR-063 Amendment 4).
+  // Findings awaiting a fix come first: Continue Fixing re-reviews after the fix, and a review
+  // now would spend the round on the same code (ADR-063 Amendment 4).
   if (await gateReviewContinuationForRun(latest, reviewedPackage?.headSha)) return false;
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — evidence or HEAD changed since the last review; running review again`,

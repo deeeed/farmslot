@@ -15,14 +15,17 @@ import {
 } from '../../review/review-round-budget.js';
 import { publicationStatusForRun } from '../../run-completion/orchestrator.js';
 import { capturePublicationSource } from '../../run-completion/publication-source.js';
-import { resolveEngineDecision } from '../../run-engine/engine-decisions.js';
+import {
+  hasEngineDecisionWaiter,
+  resolveEngineDecision,
+} from '../../run-engine/engine-decisions.js';
+import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
-import { getRun } from '../../runs/store.js';
+import { getRun, updateRun } from '../../runs/store.js';
 
 export interface ReviewBudgetExtensionDependencies {
   authorize?: () => Principal;
   source?: typeof capturePublicationSource;
-  resolveEngineDecision?: typeof resolveEngineDecision;
 }
 
 function identity(run: Run): string {
@@ -112,15 +115,24 @@ export async function runExtendReviewBudget(
   });
   // A waiting publish gate is presented again with the granted limit and the actions it allows,
   // such as Continue Fixing (ADR-063 Amendments 1 and 4). Hold only re-presents; nothing starts.
-  const gate = extended.run.decisions.find(
-    (decision) =>
-      decision.type === 'engine_human_gate' &&
-      !decision.resolvedAt &&
-      decision.payload?.kind === 'ready' &&
-      decision.actions.some((action) => action.id === 'hold'),
-  );
-  if (gate && (dependencies.resolveEngineDecision ?? resolveEngineDecision)(gate.id, 'hold'))
-    return extended;
+  // As run.decide does, the stored card is resolved before the engine wakes, so one gate stays
+  // pending. Only a publication gate: on a Mark Ready gate, Hold completes the step.
+  const current = getRun(extended.run.id)!;
+  const gate = requiresPublicationApproval(current)
+    ? current.decisions.find(
+        (decision) =>
+          decision.type === 'engine_human_gate' &&
+          !decision.resolvedAt &&
+          decision.payload?.kind === 'ready',
+      )
+    : undefined;
+  if (gate && hasEngineDecisionWaiter(gate.id)) {
+    gate.resolvedAt = new Date().toISOString();
+    gate.resolvedAction = 'hold';
+    updateRun(current.id, { decisions: current.decisions });
+    resolveEngineDecision(gate.id, 'hold');
+    return { ...extended, run: getRun(current.id)! };
+  }
   // A held result decision offers Send back once the granted round exists.
   if (!isHeldForResultDecision(extended.run)) return extended;
   const { representResultDecision } = await import('../../run-completion/result-decision.js');
