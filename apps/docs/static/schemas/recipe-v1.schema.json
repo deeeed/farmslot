@@ -51,8 +51,8 @@
             "description": "Registered parent claim whose outcome includes this required check."
           },
           "proofMode": {
-            "enum": ["state", "visual", "mixed"],
-            "description": "State assertions, visual review, or both are required to prove this claim."
+            "enum": ["state", "visual", "mixed", "review"],
+            "description": "State assertions, visual review, or both are required to prove this claim. A review claim is checked by the run code review, and no node proves it."
           }
         },
         "additionalProperties": false

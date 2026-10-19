@@ -883,6 +883,26 @@ export function certifyingPublicationReviews(
   );
 }
 
+/**
+ * ADR-062 Amendment 18: the code review checks `review` claims only when the package head
+ * has no open finding and at least one certifying pass (the policy count when higher).
+ * A snapshot-unavailable override approves publication; it never counts here.
+ */
+export function codeReviewCertifiesPackage(
+  current: Run,
+  preparedPackage: ReadyGatePrPackage | null | undefined,
+  reviews: ReviewStatus[] = current.engineState?.publishGate?.reviews ?? [],
+): boolean {
+  if (!preparedPackage?.headSha || publicationReviewBlockingReason(current, preparedPackage))
+    return false;
+  const reviewPolicy = preparedPackage.reviewPolicy ?? publicationReviewPolicyForRun(current);
+  return (
+    qualifyingPassingReviews(reviews).filter((review) =>
+      reviewCertifiesPreparedPackage(review, preparedPackage),
+    ).length >= Math.max(1, effectiveRequiredReviewCount(reviewPolicy))
+  );
+}
+
 export function assertPublicationReviewPolicySatisfied(
   current: Run,
   preparedPackage: ReadyGatePrPackage,

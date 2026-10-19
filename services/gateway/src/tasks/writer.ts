@@ -1206,10 +1206,15 @@ export async function writeTaskFile(
     mode: run.mode ?? undefined,
   });
   terminalContract.recordedEvidenceContractVersion = run.recordedEvidenceContractVersion ?? 0;
+  const humanGate =
+    run.steps.some((step) => step.name === 'human-gate' && step.status !== 'skipped') &&
+    humanGateEnabled(run.flowType, run.mode ?? undefined, projectVars.projectJson);
   terminalContract.claimReviewGate =
-    (run.steps.some((step) => step.name === 'human-gate' && step.status !== 'skipped') &&
-      humanGateEnabled(run.flowType, run.mode ?? undefined, projectVars.projectJson)) ||
+    humanGate ||
     (runOutputReviewEnabled(run) && Boolean(terminalContract.commands.complete.report));
+  // ADR-062 Amendment 18: only a publication code review can check a `review` claim.
+  terminalContract.publicationReview =
+    humanGate && run.steps.some((step) => step.name === 'review' && step.status !== 'skipped');
 
   const taskData: Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'> = {
     taskDir: path.posix.join(slotVars.remoteRepo, vars.TASK_DIR),

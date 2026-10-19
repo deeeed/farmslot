@@ -9,6 +9,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 - `farmslot run gate` prints a refused completion's message when it lists no prerequisites, such as a publish package that could not be built.
 - `farmslot run gate` shows a held run's result decision first (reason, findings or refused prerequisite, delivered head or report, and each action's availability), lists its output review as evidence only, picks the result decision when no `--decision` is given, and sends `--reason` with `accept-result` (ADR-065 Amendment 7).
+- Hosted task init carries the gateway-derived `publicationReview` terminal-contract flag as it does `claimReviewGate` (ADR-062 Amendment 18).
 - Gateway sockets use the `ws` client on every Node version instead of the runtime's WebSocket. A socket that fails says why, for example `Connection failed — is the gateway running? (connect ECONNREFUSED 127.0.0.1:7801)` or `(Unexpected server response: 503)`, with one entry per address tried. Before, the CLI printed the bare message on every Node version, so a gateway restart looked like a Node 24 incompatibility. One-shot calls now apply `--timeout` while the socket opens.
 
 - `review checklist` prints one "Domain patterns" heading and points setup step 2 at the domain's antipatterns file. `review domain` names its source on stderr. An owned-paths file with an empty domain is refused. `recipe logs` words its refusals generically and returns `--events`, undetected-adapter and unknown-adapter errors as usage envelopes. Doctor's recorder failure line includes the recorder detail.

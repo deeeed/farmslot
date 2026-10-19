@@ -746,6 +746,15 @@ if (
 ) {
   let deferClaimVerdicts = false;
   const ledger = readAcceptanceLedger(taskDir);
+  // ADR-062 Amendment 18: only the run's publication code review checks a `review` claim.
+  if (terminalCommand === 'complete' && terminalContract?.publicationReview !== true) {
+    for (const row of Array.isArray(ledger?.criteria) ? ledger.criteria : []) {
+      if (row?.proofMode === 'review')
+        issues.push(
+          `${row.id} uses proof mode review, but this run has no code review to check it. Prove it with state, visual or mixed.`,
+        );
+    }
+  }
   if (
     terminalCommand === 'complete' &&
     terminalContract?.claimReviewGate === true &&

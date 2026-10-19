@@ -112,7 +112,8 @@ export function hasUnresolvedRecipeFailure(entries: readonly unknown[]): boolean
 export type RecipeClaimKind = (typeof RECIPE_CLAIM_KINDS)[number];
 export const RECIPE_CLAIM_VERDICTS = ACCEPTANCE_VERDICTS;
 export type RecipeClaimVerdict = (typeof RECIPE_CLAIM_VERDICTS)[number];
-export type RecipeClaimProofMode = 'state' | 'visual' | 'mixed';
+/** `review`: the run's code review checks the claim; no recipe node proves it (ADR-062 Amendment 18). */
+export type RecipeClaimProofMode = 'state' | 'visual' | 'mixed' | 'review';
 
 /** Extends the existing proofTargets declaration; it is not a second registry. */
 export interface RecipeClaimDeclaration {
@@ -260,7 +261,7 @@ export function validateRecipeClaimDeclarations(value: unknown): RecipeValidatio
       issue(`${path}.parentId`, 'Parent claim id must be non-empty.');
     if (
       target.proofMode !== undefined &&
-      !['state', 'visual', 'mixed'].includes(String(target.proofMode))
+      !['state', 'visual', 'mixed', 'review'].includes(String(target.proofMode))
     )
       issue(`${path}.proofMode`, 'Unknown claim proof mode.');
   }

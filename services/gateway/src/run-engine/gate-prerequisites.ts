@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { type RecordedEvidencePackageInput } from '@farmslot/adapter-sdk/evidence';
 import {
   acceptanceCriteriaMatch,
+  type AcceptanceStatusLedger,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   digestRecipeDocument,
@@ -75,6 +76,7 @@ import {
   assertPublicationReviewPolicySatisfied,
   buildEvidenceRefreshAction,
   buildUnavailableSnapshotAction,
+  codeReviewCertifiesPackage,
   isPublishApprovalAction,
   publicationReviewBlockingReason,
   publicationReviewMatchesPreparedPackage,
@@ -308,13 +310,43 @@ const readers: GatePrerequisiteReaders = {
     ),
 };
 
+/** Completed reviews whose structured result artifact records the same verdict. */
+export async function reviewsWithValidResults(
+  run: Run,
+  readReviewResult: GatePrerequisiteReaders['reviewResult'] = readers.reviewResult,
+): Promise<ReviewStatus[]> {
+  const valid: ReviewStatus[] = [];
+  for (const review of qualifyingTerminalReviewInputs(
+    run.engineState?.publishGate?.reviews ?? [],
+  )) {
+    const artifact = reviewResultArtifactPath(review);
+    const raw = artifact ? await readReviewResult(run, artifact) : undefined;
+    if (raw) {
+      const result = parseStructuredReviewFeedback(raw, artifact!);
+      if (!result.incomplete && result.verdict === review.verdict) valid.push(review);
+    }
+  }
+  return valid;
+}
+
 /** Compose owner validators; absent validation is a refusal, never a success. */
 export async function collectRunGateReadiness(
+  ...params: Parameters<typeof collectRunGateAssessment>
+): Promise<RunGateReadiness> {
+  return (await collectRunGateAssessment(...params)).readiness;
+}
+
+/**
+ * Readiness plus the gate's projected ledger: receipts, authorized overrides and
+ * satisfied `review` claims over the engine rows (ADR-062 Amendment 18). Absent when
+ * no evidence assessment ran.
+ */
+export async function collectRunGateAssessment(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
   overrides: Partial<GatePrerequisiteReaders> = {},
   phase: 'publication' | 'post-publication' = 'publication',
-): Promise<RunGateReadiness> {
+): Promise<{ readiness: RunGateReadiness; acceptance?: AcceptanceStatusLedger }> {
   const publicationFulfilled =
     phase === 'post-publication' && Boolean(run.engineState?.publishGate?.humanPublicationAdoption);
   if (phase === 'post-publication' && !publicationFulfilled)
@@ -384,6 +416,12 @@ export async function collectRunGateReadiness(
       actionId: 'hold',
     });
   }
+  // One structured-result read serves the review prerequisite and `review` claims.
+  const validInputs =
+    !publicationFulfilled && preparedPackage
+      ? await reviewsWithValidResults(run, source.reviewResult)
+      : [];
+  let projected: AcceptanceStatusLedger | undefined;
   let acceptance = await source.acceptance(artifactRun);
   if (acceptance.error) {
     reasons.push({
@@ -439,8 +477,14 @@ export async function collectRunGateReadiness(
             (outputDecision?.payload?.kind === 'output-review'
               ? outputDecision.payload.visualJudgmentReceiptIds
               : undefined),
+          // Inherited proof uses the approved parent package and its recorded reviews.
+          codeReviewCertified: acceptance.inheritedSource
+            ? codeReviewCertifiesPackage(evidenceRun, evidencePackage)
+            : codeReviewCertifiesPackage(run, preparedPackage, validInputs),
         });
         acceptance = assessed.acceptance;
+        // An inherited ledger names the parent's execution; the payload keeps its own.
+        projected = acceptance.inheritedSource ? undefined : (acceptance.ledger ?? undefined);
         reasons.push(
           ...assessed.reasons,
           ...visualRepairEvidenceReasons(evidenceRun, inputs, evidencePackage),
@@ -474,17 +518,6 @@ export async function collectRunGateReadiness(
       recordedPolicySatisfied = true;
     } catch {
       recordedPolicySatisfied = false;
-    }
-    const validInputs: ReviewStatus[] = [];
-    for (const review of qualifyingTerminalReviewInputs(
-      run.engineState?.publishGate?.reviews ?? [],
-    )) {
-      const artifact = reviewResultArtifactPath(review);
-      const raw = artifact ? await source.reviewResult(run, artifact) : undefined;
-      if (raw) {
-        const result = parseStructuredReviewFeedback(raw, artifact!);
-        if (!result.incomplete && result.verdict === review.verdict) validInputs.push(review);
-      }
     }
     const validReviews = qualifyingPassingReviews(validInputs);
     const policy = preparedPackage.reviewPolicy ?? {
@@ -588,15 +621,18 @@ export async function collectRunGateReadiness(
       actionId: 'hold',
     });
   return {
-    state:
-      progress.kind === 'making-progress' ? 'collecting' : reasons.length ? 'not-ready' : 'ready',
-    identity: {
-      runId: run.id,
-      generation,
-      headSha: preparedPackage?.headSha,
-      packageHash: preparedPackage?.packageHash,
+    readiness: {
+      state:
+        progress.kind === 'making-progress' ? 'collecting' : reasons.length ? 'not-ready' : 'ready',
+      identity: {
+        runId: run.id,
+        generation,
+        headSha: preparedPackage?.headSha,
+        packageHash: preparedPackage?.packageHash,
+      },
+      reasons,
     },
-    reasons,
+    ...(projected ? { acceptance: projected } : {}),
   };
 }
 
@@ -725,7 +761,7 @@ export async function refreshRunGateReadiness(
     pending.map(async (decision) => {
       const payload = decision.payload!;
       const prepared = payload.kind === 'ready' ? (payload.prPackage ?? null) : null;
-      const readiness = await collectRunGateReadiness(run, prepared, {
+      const { readiness, acceptance } = await collectRunGateAssessment(run, prepared, {
         ...overrides,
         progress: async () => progress,
       });
@@ -734,7 +770,12 @@ export async function refreshRunGateReadiness(
         ...decision,
         actions: gateActionsForReadiness(definitions, readiness),
         context: { ...decision.context, gateActions: definitions },
-        payload: { ...payload, gateReadiness: readiness },
+        // The projection lives on the decision only; task and engine ledgers stay unchanged.
+        payload: {
+          ...payload,
+          gateReadiness: readiness,
+          ...(payload.kind === 'ready' && acceptance ? { acceptanceStatus: acceptance } : {}),
+        },
       } as RunDecision;
     }),
   );

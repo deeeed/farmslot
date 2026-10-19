@@ -16,7 +16,7 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
 
 ### Phase 1: Setup
 
-- [ ] **1. Read requirements** — map acceptance criteria to proof mode (`state`, `visual`, `mixed`) in this TASK file. Record **which surfaces the ticket actually needs** (choose only what ACs require; default is none extra):
+- [ ] **1. Read requirements** — map acceptance criteria to proof mode (`state`, `visual`, `mixed`, or `review` for a criterion about the change itself: diff size, revertability, commits, branch, or PR title or labels) in this TASK file. Record **which surfaces the ticket actually needs** (choose only what ACs require; default is none extra):
   - `gateway-cli` — backend/gateway only. **Still needs a recipe** via CLI/RPC/logs (Phase 2).
   - `command-center` — Command Center browser UI (CDP / Vite)
   - `companion-device` — Companion app UX on the slot sim/device (install + launch; Metro alone is not enough)

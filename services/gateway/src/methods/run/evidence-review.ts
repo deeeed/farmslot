@@ -17,6 +17,8 @@ import {
 } from '../../run-completion/retained-artifacts.js';
 import { claimOverrideAuthority } from '../../run-engine/claim-overrides.js';
 import { readVisualReviewPolicy, visualReviewAuthority } from '../../run-engine/claim-reviews.js';
+import { codeReviewCertifiesPackage } from '../../run-engine/gate-policy.js';
+import { reviewsWithValidResults } from '../../run-engine/gate-prerequisites.js';
 import {
   readFrozenRecordedEvidenceSources,
   readGateRecordedEvidenceSources,
@@ -148,6 +150,13 @@ export async function readRunRecordedEvidence(
                       : [],
                 await readVisualReviewPolicy(run),
                 Boolean(frozen && decision?.resolvedAt),
+                // The same code-review fact gate readiness applies to this package.
+                payload?.kind === 'ready' &&
+                  codeReviewCertifiesPackage(
+                    run,
+                    payload.prPackage,
+                    await reviewsWithValidResults(run),
+                  ),
               ),
               // This hint fences a future write. Only the writer qualifies QA
               // registration; missing registration must not hide readable history.

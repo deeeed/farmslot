@@ -4,6 +4,7 @@
 
 - The needs-decision view model that Command Center and Companion share (ADR-065 Amendment 7): `resultDecisionView`, `pendingResultDecision`, `isResultDecision`, `evidenceOnlyDecisionIds` and `resultDecisionActionReady`. Refused prerequisites are titled by count. `runResultsSummary` says a held run waits for a decision and an accepted one was accepted, with its reason.
 - `acceptancePanelPresentation` returns `defaultOpen` in place of `hasOpenCriteria`. While no criterion is assessed, the panel shows only its counts line and the criteria list opens on demand.
+- `acceptanceClaimRows` reads a `review` claim (ADR-062 Amendment 18) as "Checked in review" when proven and "Awaiting code review" otherwise, never `missing`.
 
 ## 0.2.5 - 2026-10-18
 

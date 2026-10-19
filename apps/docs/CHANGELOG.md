@@ -7,6 +7,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 - Recipe discovery runs through `farmslot recipe` (`run --list`, `--describe`, `--plan` and `actions`), with `--project-root` outside a project, instead of the removed `farmslot-recipe` executable. The Expo, headless, write-a-recipe and adoption guides and the composition-quality and runner-protocol references use the same commands.
 - The Recipe Protocol v1 reference adds Amendment 6, accepted 2026-10-19: a selected library may declare namespaced custom actions only, and a task action manifest's implementations resolve from `<root>/actions`.
 - Resource pressure relief lists manual slots among the cleanup exclusions and says a disabled slot's running resources are included and probed.
+- The published recipe-v1 schema accepts proof mode `review` (ADR-062 Amendment 18).
 - Describe recipe library discovery hosts generically instead of naming one project's harness.
 
 - Align the API reference with the parent acceptance worker release.

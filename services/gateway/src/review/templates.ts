@@ -9,6 +9,7 @@ import {
   DEFAULT_BRANCH,
   DEFAULT_TASK_DIR,
   type EvidenceManifest,
+  isRecord,
   type ReviewIssue,
   type ReviewMode,
   type ReviewValidationDepth,
@@ -161,6 +162,53 @@ async function descriptionCheckSection(
       ? { unavailable: selectionError }
       : await runDescriptionPreCheck(vars, taskDir, baseBranch, publication?.manifest ?? null),
   });
+}
+
+/**
+ * ADR-062 Amendment 18: the `review` criteria of the task's acceptance ledger, or an
+ * empty string when it has none.
+ */
+function reviewCriteriaSection(ledgerText: string | null): string {
+  let ledger: unknown;
+  try {
+    ledger = ledgerText ? JSON.parse(ledgerText) : undefined;
+  } catch {
+    // An unreadable ledger fails the gate elsewhere; it adds no criteria here.
+    return '';
+  }
+  const rows: unknown[] = isRecord(ledger) && Array.isArray(ledger.criteria) ? ledger.criteria : [];
+  const criteria = rows.filter(
+    (row): row is { id: string; text: string } =>
+      isRecord(row) &&
+      row.proofMode === 'review' &&
+      typeof row.id === 'string' &&
+      typeof row.text === 'string',
+  );
+  if (!criteria.length) return '';
+  return [
+    '## Criteria checked in this review',
+    '',
+    'These acceptance criteria are checked by this code review, not by the recipe. They apply to the whole change at the current head, including on a continuation review. Report each unmet criterion as a finding; only a new commit clears a finding.',
+    '',
+    ...criteria.map((row) => `- ${row.id}: ${row.text}`),
+  ].join('\n');
+}
+
+async function reviewCriteria(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+): Promise<string> {
+  try {
+    const ledger = await execOnSlot(
+      vars,
+      `cd ${shellQuote(vars.remoteRepo)} && cat ${shellQuote(`${taskDir}/artifacts/acceptance-status.json`)}`,
+      { timeout: 60_000 },
+    );
+    return reviewCriteriaSection(ledger.exitCode === 0 ? ledger.stdout : null);
+  } catch {
+    // A slot that cannot be read has no ledger to show; the gate still owns the verdict.
+    return '';
+  }
 }
 
 async function diffScopeSection(
@@ -350,11 +398,12 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   // Reviewers get the worker's frozen related-context snapshot, not a fresh
   // derivation: a prerequisite that moved since dispatch must be detectable.
   const planningBrief = await buildReviewPlanningBrief(run?.taskFile ?? null, taskDir);
-  const [check, scope] = await Promise.all([
+  const [check, scope, criteria] = await Promise.all([
     descriptionCheckSection(vars, taskDir, run, pv?.projectJson),
     diffScopeSection(vars, run, pv ? getProjectField(pv.projectJson, 'default_branch') : undefined),
+    reviewCriteria(vars, taskDir),
   ]);
-  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n${reviewBudgetScopeBrief(getRun(run.id) ?? run)}`;
+  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n${criteria ? `\n${criteria}\n` : ''}${reviewBudgetScopeBrief(getRun(run.id) ?? run)}`;
 }
 
 export async function expandReviewFixTemplate(
