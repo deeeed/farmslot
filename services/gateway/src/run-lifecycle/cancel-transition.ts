@@ -17,11 +17,12 @@ import { schedulerTick } from '../work-graph/store.js';
 
 import {
   fenceRunSlotCleanup,
-  recordSlotTeardownBlocker,
+  recordSlotTeardownSkipped,
   releaseRunOwnedCapabilities,
   releaseRunSlotOwnership,
   type RunSlotCleanupFence,
   settleFailedRunSlotCleanup,
+  slotOwnershipBlocker,
   stopRunOwnedTmuxAndWatches,
 } from './slot-teardown.js';
 import {
@@ -262,9 +263,12 @@ export function defaultCancelCollaborators(): CancelCollaborators {
       const { readSlotRow } = await import('../core/index.js');
       state.fence.before = run.slotId ? await readSlotRow(run.slotId) : null;
       await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
-      const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
+      // Cancel always frees the slot unless another active run owns it (ADR-054
+      // amendment, 2026-10-19). What the run started but could not stop is named.
+      const survivors = await stopRunOwnedTmuxAndWatches(run, { stopUnverifiedWorkers: true });
       await releaseRunOwnedCapabilities(run);
-      const blocker = await recordSlotTeardownBlocker(run, workerBlocker);
+      const blocker = await slotOwnershipBlocker(run);
+      await recordSlotTeardownSkipped(run, blocker ?? survivors);
       state.blocker = blocker;
       state.succeeded = true;
       state.fence = await fenceRunSlotCleanup(run, blocker);
@@ -275,7 +279,8 @@ export function defaultCancelCollaborators(): CancelCollaborators {
         ? state.succeeded
           ? state.blocker
           : 'Run-owned provider cleanup was not confirmed'
-        : await recordSlotTeardownBlocker(run);
+        : await slotOwnershipBlocker(run);
+      if (!state) await recordSlotTeardownSkipped(run, blocker);
       const fence = state?.fence ?? (await fenceRunSlotCleanup(run, blocker));
       cleanup.delete(run.id);
       try {

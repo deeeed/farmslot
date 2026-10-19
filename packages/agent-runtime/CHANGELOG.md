@@ -3,9 +3,13 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- The task artifact contract check treats a `.webp` still in `evidence-manifest.json` as evidence media, so a missing one is reported.
+
+## 0.30.0 - 2026-10-19
+
+- Align with `@farmslot/adapter-sdk` 0.19.0.
 - A runner event line over 1 MiB no longer stops the runner. The recorded copy keeps only the size of each base64 payload (an image or document the runner read), and only an event still over 1 MiB after that stops the runner, as `Native runner event exceeds 1 MiB` rather than `Native runner emitted invalid JSON`. Claude Code puts a Read image in its line twice, so any image over about 390 KB stopped native reviewers (TAT-4146 run 70bf7864, TAT-4145 run 8cff6e80).
 - Native host startup recovers a host that was stopped while one of its sessions was still running and whose cleanup could not confirm the stop, for example after a `ps` census timeout. Recovery checks that the session's runner and recorded descendants are gone, and the new host marks the session failed. Before, that session's journal blocked every later host start.
-- The task artifact contract check treats a `.webp` still in `evidence-manifest.json` as evidence media, so a missing one is reported.
 
 ## 0.29.5 - 2026-10-18
 
