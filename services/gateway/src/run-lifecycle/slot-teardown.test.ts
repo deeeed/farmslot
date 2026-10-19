@@ -42,6 +42,8 @@ let rawProcessCensus: string | null = null;
 let cwdProcessCensus: string | null = null;
 let tmuxInventory = '';
 let runnerProbe: RunnerDescendantPidProbe = { state: 'absent' };
+let runUpdates: Partial<Run>[] = [];
+let slotAgentKills: string[] = [];
 
 /** A process on the slot machine, for the browser session a run leaves behind. */
 interface SlotProcess {
@@ -207,7 +209,10 @@ mock.module('../runs/store.js', {
     listRuns: () => ({ runs: otherRuns }),
     getRun: (id: string) => (liveRun && id === RUN_ID ? run : undefined),
     getRunWithArchived: async (id: string) => (id === RUN_ID ? run : undefined),
-    updateRun: (_id: string, patch: Partial<Run>) => ({ ...run, ...patch }),
+    updateRun: (_id: string, patch: Partial<Run>) => {
+      runUpdates.push(patch);
+      return { ...run, ...patch };
+    },
   },
 });
 mock.module('../runners/owned-stop.js', {
@@ -265,8 +270,19 @@ mock.module('../fleet/resource-manager.js', {
   namedExports: { ...realResourceManager, getActiveResources: () => activeResources },
 });
 
+const realRelease = await import('../methods/slot/release.js');
+mock.module('../methods/slot/release.js', {
+  namedExports: {
+    ...realRelease,
+    killSlotAgents: async (slotId: string) => {
+      slotAgentKills.push(slotId);
+    },
+  },
+});
+
 const { slotTeardownBlocker, stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } =
   await import('./slot-teardown.js');
+const { defaultCancelCollaborators } = await import('./cancel-transition.js');
 const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
 
 const run = {
@@ -300,6 +316,8 @@ beforeEach(() => {
   slotProcesses = [];
   leases = [];
   activeResources = new Map();
+  runUpdates = [];
+  slotAgentKills = [];
 });
 
 test('cancel during or after prepare stops the run prepare-scope holder', async () => {
@@ -710,4 +728,82 @@ test('the browser session of a slot another active run uses is left alone', asyn
   await stopRunOwnedTmuxAndWatches(run);
 
   assert.equal(alivePids().length, slotProcesses.length);
+});
+
+// TAT-4146 run db0b2ef5 on macpro-mmt-1, 10-19 06:47:20Z: cancel held the slot with "Process 5054
+// still uses the slot repository" for the run's own detached harness helper, still exiting. An
+// editor with the checkout open held macwork-mmt-1 the same way on Arthur's cancels that day.
+test('cancel frees the slot past its own exiting helper and an editor in the checkout', async () => {
+  slotProcesses = [
+    {
+      pid: 5054,
+      ppid: 1,
+      pgid: 5054,
+      args: 'node metamask-harness/adapters/extension/console-collector.mjs',
+      cwd: '/slot',
+      alive: true,
+    },
+    {
+      pid: 44809,
+      ppid: 44700,
+      pgid: 44700,
+      args: 'Cursor Helper (Plugin)',
+      cwd: '/slot',
+      alive: true,
+    },
+  ];
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(run);
+  assert.equal(await cancel.releaseSlot(run), undefined);
+
+  assert.equal(slotRow?.lifecycle, 'ready');
+  assert.equal(slotRow?.current_run_id, null);
+  assert.equal(runUpdates.at(-1)?.slotTeardownSkipped, undefined);
+});
+
+// macwork-mmt-3 on Arthur's cancels: the run's own finished worker had no exact pane identity.
+test('cancel stops its own worker without a pane identity the way slot.release does', async () => {
+  workerBlocker = `Worker dev has no exact pane identity; cleanup deferred. Verify its window, then use farmslot slot release --keep-work ${SLOT_ID}`;
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(run);
+  assert.equal(await cancel.releaseSlot(run), undefined);
+
+  assert.deepEqual(slotAgentKills, [SLOT_ID]);
+  assert.equal(slotRow?.lifecycle, 'ready');
+  assert.equal(runUpdates.at(-1)?.slotTeardownSkipped, undefined);
+});
+
+test('a run-owned process that survives cancel is named, and the slot is still freed', async () => {
+  slotProcesses = leftBrowserSession();
+  slotProcesses.find((proc) => proc.pid === 20419)!.survives = true;
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(run);
+  assert.equal(await cancel.releaseSlot(run), undefined);
+
+  assert.equal(slotRow?.lifecycle, 'ready');
+  assert.match(
+    runUpdates.at(-1)?.slotTeardownSkipped ?? '',
+    /^Browser session process 20419 .* did not stop$/,
+  );
+});
+
+test('another active run on the slot still keeps it on cancel', async () => {
+  otherRuns = [{ ...run, id: 'run-active', status: 'monitoring' } as Run];
+  workerBlocker = 'Worker dev has no exact pane identity; cleanup deferred';
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(run);
+  assert.deepEqual(await cancel.releaseSlot(run), {
+    skipped: 'Another active run run-active uses this slot',
+  });
+
+  assert.deepEqual(slotAgentKills, [], 'the other run keeps its workers');
+  assert.equal(slotRow?.lifecycle, 'held');
+  assert.equal(
+    runUpdates.at(-1)?.slotTeardownSkipped,
+    'Another active run run-active uses this slot',
+  );
 });

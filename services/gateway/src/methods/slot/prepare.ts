@@ -1472,6 +1472,11 @@ async function slotPrepareInner(
   //     exists to keep the warm server alive.
   const preflightOverridden = Boolean(prepareProfile?.hooks.preflight);
   if (phaseEnabled('preflight') && !preflightOverridden) {
+    // A cancelled run's browser session can outlive it on the slot's CDP port
+    // (ADR-054 amendment, 2026-10-19); this prepare is the one that clears it.
+    const { reapSlotBrowserSession } = await import('../../run-lifecycle/browser-session-reap.js');
+    const browserSurvivors = await reapSlotBrowserSession(vars);
+    if (browserSurvivors) throw new Error(browserSurvivors);
     const devServerPort = vars.resourceVars.port;
     const devServerCleanup = buildDevServerPortCleanup(devServerPort, slotIsLocal);
     if (devServerCleanup.command) {

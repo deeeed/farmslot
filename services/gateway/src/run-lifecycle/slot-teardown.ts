@@ -118,10 +118,9 @@ function findOtherActiveRunOnSlot(run: Run): Run | undefined {
   );
 }
 
-/** Run transitions may never turn a shared workspace release into a global teardown. */
-export async function slotTeardownBlocker(run: Run): Promise<string | null> {
+/** Another run, reservation or release that owns this slot keeps it; cancel checks only this. */
+export async function slotOwnershipBlocker(run: Run): Promise<string | null> {
   if (!run.slotId) return null;
-  const vars = await loadSlotVars(run.slotId);
   const row = await readSlotRow(run.slotId);
   const owner = row?.current_run_id;
   if (row?.phase === SLOT_PHASE_RELEASING) return 'Another slot release is in progress';
@@ -140,6 +139,15 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
     return `Slot belongs to ${owner ?? 'no run'}, not ${run.id}`;
   const other = findOtherActiveRunOnSlot(run);
   if (other) return `Another active run ${other.id} uses this slot`;
+  return null;
+}
+
+/** Run transitions may never turn a shared workspace release into a global teardown. */
+export async function slotTeardownBlocker(run: Run): Promise<string | null> {
+  if (!run.slotId) return null;
+  const ownership = await slotOwnershipBlocker(run);
+  if (ownership) return ownership;
+  const vars = await loadSlotVars(run.slotId);
   const listed = await execOnSlot(
     vars,
     tmuxShellSnippet(
@@ -296,12 +304,16 @@ export async function recordSlotTeardownBlocker(
   workerBlocker?: string | null,
 ): Promise<string | null> {
   const reason = workerBlocker ?? (await slotTeardownBlocker(run));
-  if (getRun(run.id)) {
-    const updated = updateRun(run.id, { slotTeardownSkipped: reason ?? undefined });
-    const { broadcastEvent } = await import('../server.js');
-    broadcastEvent(Events.RUN_UPDATED, { run: updated });
-  }
+  await recordSlotTeardownSkipped(run, reason);
   return reason;
+}
+
+/** Name what slot cleanup kept or could not stop on the run, or clear it. */
+export async function recordSlotTeardownSkipped(run: Run, reason: string | null): Promise<void> {
+  if (!getRun(run.id)) return;
+  const updated = updateRun(run.id, { slotTeardownSkipped: reason ?? undefined });
+  const { broadcastEvent } = await import('../server.js');
+  broadcastEvent(Events.RUN_UPDATED, { run: updated });
 }
 
 /** Settle our fence before attempting fallible client notification. */
@@ -354,8 +366,11 @@ export async function releaseRunOwnedCapabilities(run: Run): Promise<void> {
     );
 }
 
-export async function stopRunOwnedTmuxAndWatches(run: Run): Promise<string | null> {
-  const blocker = await stopRunOwnedTmuxWorkers(run);
+export async function stopRunOwnedTmuxAndWatches(
+  run: Run,
+  { stopUnverifiedWorkers = false }: { stopUnverifiedWorkers?: boolean } = {},
+): Promise<string | null> {
+  let blocker = await stopRunOwnedTmuxWorkers(run);
   if (!run.slotId) return blocker;
   const slotId = run.slotId;
   await unwatchSlot(slotId, { expectedRunId: run.id });
@@ -370,6 +385,13 @@ export async function stopRunOwnedTmuxAndWatches(run: Run): Promise<string | nul
   let prepareBlocker: string | null = null;
   let browserBlocker: string | null = null;
   if ((!slot?.handoff_run_id || slot.handoff_run_id === run.id) && !findOtherActiveRunOnSlot(run)) {
+    if (blocker && stopUnverifiedWorkers) {
+      // Cancel owns its workers through agentContexts, recorded identity or not:
+      // stop them the way slot.release does (ADR-054 amendment, 2026-10-19).
+      const { killSlotAgents } = await import('../methods/slot/release.js');
+      await killSlotAgents(slotId, run.id);
+      blocker = null;
+    }
     const stillOwned = async () => {
       const row = await readSlotRow(slotId);
       return ownsRunSlotCleanup(row, run.id) && row?.slot_epoch === slot?.slot_epoch;
