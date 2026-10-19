@@ -22,6 +22,7 @@ export function visualReviewAuthority(
   capturedIds?: readonly string[],
   projectPolicy?: ProjectVisualClaimReviewPolicy,
   historical = false,
+  codeReviewCertified = false,
 ): RecipeVisualReviewAuthority {
   return {
     runId: run.id,
@@ -29,6 +30,7 @@ export function visualReviewAuthority(
     closureIdentity: recordedEvidenceClosureIdentity(input),
     ...(historical ? { historical: true } : {}),
     ...(projectPolicy ? { projectPolicy } : {}),
+    ...(codeReviewCertified ? { codeReviewCertified: true } : {}),
     receipts: (run.visualJudgmentReceipts ?? []).filter(
       (receipt) => capturedIds === undefined || capturedIds.includes(receipt.id),
     ),
@@ -59,6 +61,8 @@ export function claimSourceInput(
 export interface VisualReviewReadSelection {
   capturedIds?: readonly string[];
   historical?: boolean;
+  /** Computed by gate readiness for the package head; never read from a task file. */
+  codeReviewCertified?: boolean;
 }
 
 export function reviewedRecipeClaims(
@@ -69,7 +73,14 @@ export function reviewedRecipeClaims(
 ) {
   return deriveReviewedRecipeClaims(
     input,
-    visualReviewAuthority(run, input, selection.capturedIds, policy, selection.historical),
+    visualReviewAuthority(
+      run,
+      input,
+      selection.capturedIds,
+      policy,
+      selection.historical,
+      selection.codeReviewCertified,
+    ),
   );
 }
 

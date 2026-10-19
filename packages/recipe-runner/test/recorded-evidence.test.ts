@@ -353,6 +353,61 @@ test('task registration retains required unmentioned claims and rejects invented
   );
 });
 
+test('only the code review proves a review claim; it is never missing and no node proves it', () => {
+  const review = {
+    id: 'AC2',
+    claim: 'The change is easy to revert.',
+    proofMode: 'review' as const,
+  };
+  const declarations = [base.declarations[0]!, review];
+  const awaiting = deriveRecipeClaims({ ...base, declarations })[1]!;
+  assert.equal(awaiting.verdict, 'awaiting-review');
+  assert.deepEqual(awaiting.recipeNodes, []);
+  assert.equal(awaiting.note, undefined);
+  assert.equal(
+    deriveRecipeClaims({ ...base, declarations, codeReviewCertified: true })[1]?.verdict,
+    'proven',
+  );
+  // A parent re-aggregates with its review child, and a review parent with its own verdict.
+  const children = [
+    { id: 'case-a', claim: 'The change ships.', kind: 'qa-case' as const },
+    { ...base.declarations[0]!, kind: 'qa-check' as const, parentId: 'case-a' },
+    { ...review, kind: 'qa-check' as const, parentId: 'case-a' },
+  ];
+  assert.equal(
+    deriveRecipeClaims({ ...base, declarations: children })[0]?.verdict,
+    'awaiting-review',
+  );
+  assert.equal(
+    deriveRecipeClaims({ ...base, declarations: children, codeReviewCertified: true })[0]?.verdict,
+    'proven',
+  );
+  const reviewParent = [
+    { ...review, kind: 'qa-case' as const },
+    { ...base.declarations[0]!, kind: 'qa-check' as const, parentId: 'AC2' },
+  ];
+  assert.equal(
+    deriveRecipeClaims({ ...base, declarations: reviewParent })[0]?.verdict,
+    'awaiting-review',
+  );
+  assert.equal(
+    deriveRecipeClaims({ ...base, declarations: reviewParent, codeReviewCertified: true })[0]
+      ?.verdict,
+    'proven',
+  );
+  assert.throws(
+    () =>
+      planRecipeEvidence(
+        {
+          proofTargets: [{ ...base.declarations[0]!, proofMode: 'review' }],
+          workflow: { nodes: Object.fromEntries(nodes) },
+        },
+        new Map(),
+      ),
+    /Node assert proves review claim AC-1; only the code review checks it/,
+  );
+});
+
 test('measured proof outside the captured span is weak and never linked as a valid moment', () => {
   const segment = { videoPath: 'video.mp4', videoDigest: `sha256:${'a'.repeat(64)}` };
   const timeline = {

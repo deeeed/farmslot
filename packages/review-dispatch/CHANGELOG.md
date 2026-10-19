@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `acceptanceClaimRows` reads a `review` claim (ADR-062 Amendment 18) as "Checked in review" when proven and "Awaiting code review" otherwise, never `missing`.
 
 ## 0.3.0 - 2026-10-19
 

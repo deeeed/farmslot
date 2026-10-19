@@ -25,6 +25,7 @@ import { slotWriteFiles } from '../core/slot-io.js';
 import { reviewPRIdentity } from '../review/session-mode.js';
 import { assessRecordedAcceptance } from '../run-engine/acceptance-proof.js';
 import { readVisualReviewPolicy } from '../run-engine/claim-reviews.js';
+import { codeReviewCertifiesPackage } from '../run-engine/gate-policy.js';
 import type { GateAcceptanceRead } from '../run-engine/gate-prerequisites.js';
 import { readGateRecordedEvidenceSources } from '../run-engine/recorded-evidence-sources.js';
 import { getRunWithArchived } from '../runs/store.js';
@@ -134,6 +135,8 @@ export async function readInheritedAcceptanceSource(
     visualPolicy: await readVisualReviewPolicy(source.run),
     claimOverrideReceiptIds: source.prPackage.claimOverrideReceiptIds,
     visualJudgmentReceiptIds: source.prPackage.visualJudgmentReceiptIds,
+    // The parent's recorded reviews at its approved package head.
+    codeReviewCertified: codeReviewCertifiesPackage(source.run, source.prPackage),
   });
   const expected = registeredAcceptanceCriteria(run.ticketData?.acceptanceCriteria ?? []);
   if (

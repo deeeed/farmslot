@@ -81,6 +81,9 @@ export interface AcceptanceStatusLedger {
 /** The execution whose retained package a task-ledger row binds to. */
 export const acceptanceRowExecution = contract.acceptanceRowExecution;
 
+/** One verdict label for every surface; a `review` claim never reads `missing`. */
+export const acceptanceVerdictLabel = contract.acceptanceVerdictLabel;
+
 /**
  * One criterion as task init registered it: the id and the text, with no verdict.
  * Clients pair this with the ledger so a criterion the worker has not judged yet is

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A `review` claim (ADR-062 Amendment 18) derives `awaiting-review`, never `missing`, and `proven` only when the gateway review authority says the code review certifies the package; its parent re-aggregates with it, and planning refuses a node that `proves` one.
 
 ## 0.41.0 - 2026-10-19
 

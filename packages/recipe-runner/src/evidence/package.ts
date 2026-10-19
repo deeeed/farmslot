@@ -37,6 +37,7 @@ function deriveClaimsFromInput(
   input: RecordedEvidencePackageInput,
   judgments: readonly RecipeVisualJudgment[] = [],
   qualifiedJudgments: readonly QualifiedRecipeVisualJudgment[] = [],
+  codeReviewCertified = false,
 ): RecipeClaimEvidence[] {
   const resolution = input.recipeResolution as RecipeResolutionDocument;
   const documents = new Map(
@@ -66,6 +67,7 @@ function deriveClaimsFromInput(
       segments: input.claims!.recording.segments,
       judgments,
       timelines: indexRecordingTimelines(Object.values(input.timelines)),
+      codeReviewCertified,
     },
     qualifiedJudgments,
   );
@@ -156,6 +158,10 @@ export function deriveReviewedRecipeClaims(
         source,
         [],
         scoped ? recordedVisualJudgments(source, scoped) : [],
+        // The code-review fact binds the execution and closure its authority names.
+        scoped?.codeReviewCertified === true &&
+          scoped.recipeRunId === source.claims?.recipeRunId &&
+          scoped.closureIdentity === recordedEvidenceClosureIdentity(source),
       );
       reviewed.set(source, derived);
     }

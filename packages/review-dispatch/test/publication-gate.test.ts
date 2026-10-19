@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  type AcceptanceVerdict,
+  acceptanceVerdictLabel,
   EVIDENCE_ATTESTATION_ACTION,
   type RecipeRepairScope,
+  renderAcceptanceCoverage,
   type ReviewStatus,
   type RunGateReadiness,
   SEND_BACK_TO_AGENT_ACTION,
@@ -116,6 +119,45 @@ test('all AC views distinguish assertions, qualified reviews and unchecked visua
     rows.map((row) => row.tone),
     ['proven', 'verified', 'checked', 'pending'],
   );
+});
+
+test('review claims read as checked in review or awaiting code review, never missing', () => {
+  const claim = (
+    id: string,
+    verdict: AcceptanceVerdict,
+    proofMode: 'review' | 'state' = 'review',
+  ): PublicationGateClaim => ({
+    id,
+    text: id,
+    status: { id, text: id, verdict, proofMode, evidence: [], recipeNodes: [] },
+  });
+  const rows = acceptanceClaimRows({
+    claims: [
+      claim('AC-1', 'proven'),
+      claim('AC-2', 'awaiting-review'),
+      claim('AC-3', 'failed'),
+      claim('AC-4', 'untestable'),
+      claim('AC-5', 'missing', 'state'),
+    ],
+  });
+  assert.deepEqual(
+    rows.map((row) => row.state),
+    ['Checked in review', 'Awaiting code review', 'Issue', 'Untestable', 'missing'],
+  );
+  assert.deepEqual(
+    rows.map((row) => row.tone),
+    ['checked', 'pending', 'issue', 'untestable', 'pending'],
+  );
+  assert.deepEqual(
+    rows.map((row) => acceptanceVerdictLabel(row.source!.status!)),
+    ['Checked in review', 'Awaiting code review', 'failed', 'untestable', 'missing'],
+  );
+  const coverage = renderAcceptanceCoverage({
+    schemaVersion: 2,
+    criteria: rows.slice(0, 2).map((row) => row.source!.status!),
+  });
+  assert.match(coverage, /\| AC-1 \| AC-1 \| CHECKED IN REVIEW \| review \|/);
+  assert.match(coverage, /\| AC-2 \| AC-2 \| AWAITING CODE REVIEW \| review \|/);
 });
 
 test('eligible attestation requires a written reason and is never invented', () => {

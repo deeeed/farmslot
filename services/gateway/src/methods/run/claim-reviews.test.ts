@@ -31,7 +31,8 @@ const { deleteTestRunIfPresent, makeReadyGatePackage, retainRunFixture } =
   await import('../../run-engine/test-fixtures.js');
 const { retainedRunTaskDirectory } = await import('../../run-completion/retained-artifacts.js');
 const { computeReadyGatePackageHash } = await import('../../run-completion/ready-gate-package.js');
-const { collectRunGateReadiness } = await import('../../run-engine/gate-prerequisites.js');
+const { collectRunGateReadiness, refreshRunGateReadiness } =
+  await import('../../run-engine/gate-prerequisites.js');
 const { readRunRecordedEvidence } = await import('./evidence-review.js');
 
 export async function fixture(t: TestContext) {
@@ -599,6 +600,52 @@ test('publication freezes qualified reviews and rejected evidence stays blocked 
   f.prepared.visualJudgmentReceiptIds.push(rejected.receipt.id);
   const blocked = await collectRunGateReadiness(f.run, f.prepared, sources);
   assert.ok(blocked.reasons.some(({ evidencePolicy }) => evidencePolicy === 'claim-verdict'));
+});
+
+test('a pending gate presents the projected ledger and keeps the engine verdict', async (t) => {
+  const f = await fixture(t);
+  f.prepared.reviewPolicy = { minimumReviews: 0, requestedBy: 'dispatch' };
+  f.prepared.packageHash = computeReadyGatePackageHash(f.prepared);
+  f.params.snapshotIdentity = visualReviewSnapshotIdentity(f.run, f.decision.id);
+  const confirmed = await runReviewVisualClaim(f.params, () => {}, f.dependencies);
+  f.prepared.visualJudgmentReceiptIds = [confirmed.receipt.id];
+  f.prepared.packageHash = computeReadyGatePackageHash(f.prepared);
+  const current = getRun(f.run.id)!;
+  updateRun(f.run.id, {
+    decisions: current.decisions.map((decision) =>
+      decision.id === f.decision.id && decision.payload?.kind === 'ready'
+        ? {
+            ...decision,
+            payload: {
+              ...decision.payload,
+              prPackage: f.prepared,
+              acceptanceStatus: f.input.claims,
+            },
+          }
+        : decision,
+    ),
+  });
+  const engineBytes = JSON.stringify(f.input.claims);
+  await refreshRunGateReadiness(getRun(f.run.id)!, {
+    acceptance: async () => ({
+      criteria: f.input.claims!.criteria.map(({ id, text }) => ({ id, text })),
+      ledger: f.input.claims!,
+      issues: [],
+    }),
+    deterministic: async () => {},
+    selectedEvidence: async () => {},
+    progress: async () => ({ kind: 'idle' as const }),
+    recordedEvidence: async () => [f.input],
+  });
+  const payload = getRun(f.run.id)!.decisions.find(({ id }) => id === f.decision.id)?.payload;
+  assert.equal(payload?.kind, 'ready');
+  const rows = payload?.kind === 'ready' ? (payload.acceptanceStatus?.criteria ?? []) : [];
+  for (const id of ['case-1', 'check-1']) {
+    const row = rows.find((entry) => entry.id === id);
+    assert.equal(row?.verdict, 'proven', id);
+    assert.equal(row?.engineVerdict, 'awaiting-review', id);
+  }
+  assert.equal(JSON.stringify(f.input.claims), engineBytes, 'engine claims stay unchanged');
 });
 
 test('QA review consumes only frozen case registration, even when another retained package is valid', async (t) => {

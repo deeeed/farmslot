@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Completion refuses a criterion with proof mode `review` when the terminal contract has no `publicationReview`, and the task document tells the worker to give criteria about the change itself proof mode `review` (ADR-062 Amendment 18).
 
 ## 0.31.0 - 2026-10-19
 

@@ -8,7 +8,7 @@ export const ACCEPTANCE_VERDICTS: readonly [
   'failed',
   'awaiting-review',
 ];
-export const ACCEPTANCE_PROOF_MODES: readonly ['state', 'visual', 'mixed'];
+export const ACCEPTANCE_PROOF_MODES: readonly ['state', 'visual', 'mixed', 'review'];
 export const ACCEPTANCE_CRITERION_ID_PATTERN: RegExp;
 export function acceptanceCriterionId(index: number): string;
 export function registeredAcceptanceCriteria(
@@ -22,6 +22,7 @@ export function acceptanceRowExecution(
   ledger: { recipeRunId?: string },
   row: { recipeRunId?: string },
 ): string | undefined;
+export function acceptanceVerdictLabel(status: { verdict: string; proofMode?: string }): string;
 export function validateAcceptanceStatusLedger(value: unknown): string[];
 export function acceptanceCriteriaView(criteria: readonly unknown[], ledger: unknown): unknown[];
 export function summarizeAcceptanceStatus(ledger: unknown, criteria?: readonly unknown[]): unknown;

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Proof mode `review` (ADR-062 Amendment 18) joins `RecipeClaimProofMode`, its validation, the recipe-v1 schema and `ACCEPTANCE_PROOF_MODES`; a `review` proof target needs no covering node, `acceptanceVerdictLabel` reads such a claim as "Checked in review" or "Awaiting code review", and `RecipeVisualReviewAuthority.codeReviewCertified` and `WorkerTerminalContractDocument.publicationReview` carry the gateway's code-review facts.
 
 ## 0.56.0 - 2026-10-19
 

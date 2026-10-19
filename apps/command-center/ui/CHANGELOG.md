@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- The evidence preview reads a `review` criterion as "Checked in review" or "Awaiting code review" instead of its raw verdict (ADR-062 Amendment 18).
 
 ## 0.24.0 - 2026-10-19
 

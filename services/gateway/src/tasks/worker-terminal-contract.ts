@@ -320,6 +320,7 @@ export async function syncTerminalContractForFlowOnSlot(
     contract = {
       ...contract,
       claimReviewGate: parent.claimReviewGate,
+      publicationReview: parent.publicationReview,
       recordedEvidenceContractVersion: parent.recordedEvidenceContractVersion,
     };
   }

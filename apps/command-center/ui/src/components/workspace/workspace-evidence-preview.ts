@@ -5,8 +5,12 @@ import type {
   EvidenceReviewComparisonMedia,
   EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
-import type { ArtifactRef, SelfPrincipalSummary } from '@farmslot/protocol';
-import { isRunArtifactImagePath } from '@farmslot/protocol';
+import {
+  acceptanceVerdictLabel,
+  type ArtifactRef,
+  isRunArtifactImagePath,
+  type SelfPrincipalSummary,
+} from '@farmslot/protocol';
 
 import '../shared/hydrating-placeholder.js';
 
@@ -460,7 +464,7 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
               : nothing}
           </div>
           <div style="margin:8px 0;color:${colors.textSecondary};">
-            ${row.claim.status?.verdict ?? 'not assessed'} ·
+            ${row.claim.status ? acceptanceVerdictLabel(row.claim.status) : 'not assessed'} ·
             ${row.claim.status?.proofMode ?? 'no proof mode'} ·
             ${row.claim.proofKinds.join(', ') || 'no recorded proof'}
             ${row.claim.reviewLabels.join('; ')}
