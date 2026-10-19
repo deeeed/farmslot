@@ -1807,9 +1807,16 @@ export async function monitorRun(
         if (announceProgress) broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       }
 
-      // 5. Check total timeout
+      // 5. Check total timeout. Elapsed time alone never stops a progressing worker:
+      // it times out once it also has no structured activity for the stuck window.
       const elapsed = Date.now() - state.startedAt - state.operatorWaitMs;
-      if (!waitingForOperator && elapsed > config.totalTimeoutMs) {
+      const sinceActivity =
+        Date.now() - Math.max(state.lastStructuredProgressAt, state.operatorResumedAt);
+      if (
+        !waitingForOperator &&
+        elapsed > config.totalTimeoutMs &&
+        sinceActivity > config.stuckTimeoutMs
+      ) {
         console.log(
           `[run-monitor] run ${runId.slice(0, 8)} — total timeout (${config.totalTimeoutMs / 60000}min)`,
         );
