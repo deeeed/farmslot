@@ -1,7 +1,7 @@
 # ADR-062: Recorded run evidence
 
 **Status:** Accepted
-**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011; amendment 4 Accepted under #1015; amendments 5, 6 and 7 Accepted on 2026-10-14; amendment 8 Proposed. Historical/footprint implementation remains pending; curation delivery is recorded below.
+**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011; amendment 4 Accepted under #1015; amendments 5, 6 and 7 Accepted on 2026-10-14; amendment 8 Proposed. Historical/footprint implementation remains pending; curation delivery is recorded below; amendment 18 Proposed on 2026-10-19.
 **Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
@@ -957,3 +957,31 @@ No new API. `ActiveVideoRecording.ready()` resolves up to one
 `EVIDENCE_PADDING_MS` later after a restart. Harness wrappers already forward
 `ready()`. Normative timing rule:
 [the recorded-evidence specification](../reference/recorded-run-evidence.md).
+
+## Amendment 18 (2026-10-19): Criteria checked in code review
+
+**Status:** Proposed
+**Specification:** [Claim registration and verdicts](../reference/recorded-run-evidence.md#claim-registration-and-verdicts), [Evidence gate policy](../reference/recorded-run-evidence.md#evidence-gate-policy).
+
+### Context
+
+Some acceptance criteria describe the change itself rather than runtime behaviour: its size or revertability, commit or branch hygiene, a PR marker. No recipe can execute them. Today every AC registers as a recipe claim with proof mode `state`, `visual` or `mixed`. Such a criterion either ends `missing` ("A required executed expectation is missing.") or waits for a visual judgment that never comes. Either way the claim-verdict policy blocks publication even after the code review has passed, and the evidence tab reads as if the agent did not deliver. Four held validation runs show exactly this: their criteria "the change is minimal and easy to revert" and "the branch or PR is marked DO NOT MERGE" block publication, although each run's code review passed at the gate head.
+
+### Decision
+
+1. **Mode.** Add a fourth proof mode, `review`: the criterion is checked by the run's code review, not by the recipe. It is declared like the other modes, in the root recipe's `proofTargets[].proofMode`. Planning rejects any recipe node that `proves` a `review` claim.
+2. **Engine verdict.** The engine records a `review` claim as `awaiting-review` with no recipe nodes. It is never `missing`.
+3. **Gate.** The claim-verdict evaluation counts a `review` claim as satisfied exactly when the publication review that the gate already requires has passed for the same head. That review is checked with the existing qualifying-review predicate, and its reviewed head must equal the gate's `headSha`. Until then the claim blocks like any other unproven claim, and a new head or a failing review makes it unsatisfied again. No new verdict writer, receipt or store is added: the result derives from the existing review record, the same way visual receipts are merged today.
+4. **Display.** The shared claim-row mapping shows a satisfied `review` claim as "Checked in review" and an unsatisfied one as "Awaiting code review", never "missing". Command Center and Companion use that mapping unchanged.
+5. **Who marks it.** The worker sets the mode when it writes the recipe's claim declarations. The execution templates add one rule: a criterion about the change itself (diff size, revertability, commits, branch, or PR title or labels) gets `review`, and anything observable in the running product keeps `state`, `visual` or `mixed`. There is no per-AC rule engine and no text classifier in code.
+6. **One projected status.** `run.get`, `decision.list`, Command Center and Companion show the gate's projected acceptance: receipts, authorized overrides and review-checked claims merged over the engine ledger. The raw engine verdict stays visible as the engine verdict. Today the projection is computed for readiness and then discarded, so a criterion with a confirmed visual receipt still shows `awaiting-review`.
+
+### Rationale and consequences
+
+A code review already certifies the exact package head before publication. Letting it satisfy criteria that only a review can judge adds no new authority and no new evidence store. It also stops those criteria being mislabelled as missing proof. Runtime criteria are unaffected, and an `untestable` override (Amendment 4) still means "could not be tested", never "proven".
+
+### Public surface and migration
+
+- **Protocol:** `RecipeClaimProofMode` gains `review`, and the recipe-v1 schema enum is extended. Recipe-runner planning and claim derivation, the gateway's claim-verdict evaluation, and the shared claim-row labels change. Execution templates gain one instruction line.
+- **Held runs:** runs already held keep their frozen declarations. Their status is re-projected through point 6, so confirmed visual claims show as checked and the other claims show as their recipe declared them. They gain no review satisfaction after the fact: an AC declared `state` or `mixed` keeps blocking until a new run declares it `review`. The held validation runs are re-run with the updated templates to prove the path.
+- **Tests:** a regression test covers a review-mode AC that is satisfied at the reviewed head, and the same AC blocking at a different head or before the review passes.
