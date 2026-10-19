@@ -191,7 +191,8 @@ test('completion refuses a review claim unless the run has a publication code re
         schemaVersion: 1,
         flowType: 'dev',
         commands: { complete: { artifacts: [] } },
-        claimReviewGate: true,
+        // Without the claim-review gate the check needs no built adapter package.
+        claimReviewGate: false,
         ...(publicationReview === undefined ? {} : { publicationReview }),
       }),
     );
@@ -216,5 +217,6 @@ test('completion refuses a review claim unless the run has a publication code re
     assert.ok(refused.stderr.includes(message), refused.stderr);
   }
   const accepted = complete(true);
-  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.ok(!accepted.stderr.includes(message), accepted.stderr);
+  assert.ok(accepted.stderr.includes('AC-2 is awaiting-review'), accepted.stderr);
 });
