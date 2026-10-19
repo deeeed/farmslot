@@ -235,3 +235,44 @@ test('a spent PR budget points at an extension only for the run that can receive
   const published = await runReviewRoundBudget(getRun(owner.run.id)!);
   assert.match(published.diagnosis ?? '', /this run is already published; only the unpublished/);
 });
+
+test('a grant re-presents a waiting publish gate (TAT-4145 bda11b1a)', async (t) => {
+  // bda11b1a: the 16:11Z grant (5 -> 6) left gate 22ae4d45 saying five rounds were spent.
+  const { run, params, deps } = fixture(t);
+  for (let i = 0; i < 5; i++) await admitReviewRound(run.id, `spent-${i}`);
+  const gateId = randomUUID();
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [
+      {
+        id: gateId,
+        type: 'engine_human_gate',
+        title: 'TAT-4145 — human gate',
+        description:
+          '**Review launch paused:** The five review rounds are spent. A design problem or scope creep has exhausted the review budget; stop and narrow the change or redesign it.',
+        actions: [
+          { id: 'hold', label: 'Hold', style: 'secondary' },
+          { id: 'request-review', label: 'Request Review', style: 'secondary' },
+        ],
+        createdAt: new Date().toISOString(),
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          diffStat: { files: 47, additions: 1811, deletions: 140 },
+          workerReport: 'Cross margin in the Terminal order form.',
+          branch: 'feat/tat-4145-cross-margin',
+        },
+      },
+    ],
+  });
+  const woken: Array<[string, string]> = [];
+  await runExtendReviewBudget({ ...params, limit: 6 }, emit, {
+    ...deps,
+    resolveEngineDecision: (decisionId, actionId) => {
+      woken.push([decisionId, actionId]);
+      return true;
+    },
+  });
+  assert.deepEqual(woken, [[gateId, 'hold']]);
+});

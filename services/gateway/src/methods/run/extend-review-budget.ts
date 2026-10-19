@@ -15,12 +15,14 @@ import {
 } from '../../review/review-round-budget.js';
 import { publicationStatusForRun } from '../../run-completion/orchestrator.js';
 import { capturePublicationSource } from '../../run-completion/publication-source.js';
+import { resolveEngineDecision } from '../../run-engine/engine-decisions.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { getRun } from '../../runs/store.js';
 
 export interface ReviewBudgetExtensionDependencies {
   authorize?: () => Principal;
   source?: typeof capturePublicationSource;
+  resolveEngineDecision?: typeof resolveEngineDecision;
 }
 
 function identity(run: Run): string {
@@ -108,6 +110,17 @@ export async function runExtendReviewBudget(
     emit(Events.RUN_UPDATED, { run: updated });
     return { run: updated, ...result };
   });
+  // A waiting publish gate is presented again with the granted limit and the actions it allows,
+  // such as Continue Fixing (ADR-063 Amendments 1 and 4). Hold only re-presents; nothing starts.
+  const gate = extended.run.decisions.find(
+    (decision) =>
+      decision.type === 'engine_human_gate' &&
+      !decision.resolvedAt &&
+      decision.payload?.kind === 'ready' &&
+      decision.actions.some((action) => action.id === 'hold'),
+  );
+  if (gate && (dependencies.resolveEngineDecision ?? resolveEngineDecision)(gate.id, 'hold'))
+    return extended;
   // A held result decision offers Send back once the granted round exists.
   if (!isHeldForResultDecision(extended.run)) return extended;
   const { representResultDecision } = await import('../../run-completion/result-decision.js');
