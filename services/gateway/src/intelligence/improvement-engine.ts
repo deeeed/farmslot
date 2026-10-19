@@ -38,6 +38,8 @@ import { callLLMChat } from '../llm/index.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { getRun, updateRun } from '../runs/store.js';
 
+import { improvementSystemPrompt } from './improvement-prompt.js';
+
 // ─── Chat State (with TTL) ───
 
 const MAX_CHAT_SESSIONS = 20;
@@ -242,7 +244,7 @@ A worker agent just completed a task and reported a learning. Your job is to:
 - Always read the actual file content before proposing changes — never guess
 - Make the smallest change that addresses the learning
 - Preserve existing formatting, step numbering, and structure
-- If the learning is noise (not actionable), call propose_changes with an empty changes array and explain why`;
+- Verify the learning against the run's evidence first; propose only for a verified failure likely to recur, as one line where its reader acts, preferring to remove a stale line; if it is unverified, already enforced by code, or noise, call propose_changes with an empty changes array and explain why`;
 
 // ─── Core Functions ───
 
@@ -393,9 +395,12 @@ export async function analyzeAndPropose(
     PROJECT_NAME: project,
   });
 
-  const systemPrompt =
-    (projectPrompt ?? DEFAULT_SYSTEM_PROMPT) +
-    `\n\n## Current Learning\n${learningContent}\n\n## Project\n${project}`;
+  const systemPrompt = improvementSystemPrompt(
+    projectPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    learningContent,
+    project,
+    runId,
+  );
 
   const cfg = getLLMConfig();
 

@@ -90,8 +90,8 @@ Typical checks:
 | Checklist all `[x]`                  | when `--mark-last`                               | when `--mark-last`        | `--skip-checklist` |
 | Recipe artifacts                     | when `recipe.json` exists                        | when `recipe.json` exists | —                  |
 
-Write **3–5 markdown bullets** on key learnings or struggles during the session.
-When nothing relevant, one bullet is enough: `- Nothing relevant — straightforward run; no blockers or surprises.`
+Write one bullet per failure in the run that is likely to recur and should change a template, reviewer or engine step.
+When there is none, write `- None`.
 
 Projects may optionally declare overrides in `project.json` → `worker_terminal`
 (see [ADR-045](https://github.com/deeeed/farmslot/blob/main/docs/adr/045-worker-terminal-contract.md)); the gateway

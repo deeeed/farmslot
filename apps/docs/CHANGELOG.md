@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- The worker reference pages ask for one learnings bullet per failure likely to recur that should change a template, reviewer or engine step, with `- None` as a valid answer (ADR-026 Amendment 1).
 - Recipe discovery runs through `farmslot recipe` (`run --list`, `--describe`, `--plan` and `actions`), with `--project-root` outside a project, instead of the removed `farmslot-recipe` executable. The Expo, headless, write-a-recipe and adoption guides and the composition-quality and runner-protocol references use the same commands.
 - The Recipe Protocol v1 reference adds Amendment 6, accepted 2026-10-19: a selected library may declare namespaced custom actions only, and a task action manifest's implementations resolve from `<root>/actions`.
 - Resource pressure relief lists manual slots among the cleanup exclusions and says a disabled slot's running resources are included and probed.

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The improvement engine verifies a learning against its source run's evidence before proposing: the prompt now names that run for `read_task_file`, and the default rules propose nothing for an unverified claim, a code-enforced rule or noise (ADR-026 Amendment 1).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.25.0 - 2026-10-19
