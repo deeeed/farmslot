@@ -9,7 +9,7 @@ title: Expo / React Native project integration
 ## Install
 
 ```sh
-yarn add -D @farmslot/adapter-rn @farmslot/recipe-runner @farmslot/recipe-cli @farmslot/protocol
+yarn add -D @farmslot/adapter-rn @farmslot/recipe-runner @farmslot/protocol
 farmslot-adapter-rn init
 yarn recipe:doctor
 yarn recipe:validate
@@ -38,13 +38,15 @@ Do not add wallet, product, or ticket-specific behavior to the Expo package. Put
 Start from the generated smoke recipe or another working recipe:
 
 ```sh
-farmslot recipe run --list --adapter mobile --json
-farmslot recipe run <closest-recipe> --describe --adapter mobile --json
+farmslot recipe run --list --project-root . --platform mobile \
+  --library-source app=scripts/agentic/recipe --json
+farmslot recipe run <closest-recipe> --describe --project-root . --platform mobile \
+  --library-source app=scripts/agentic/recipe --json
 farmslot-adapter-rn validate ./proof.recipe.json --param key=value
 farmslot-adapter-rn run ./proof.recipe.json --param key=value
 ```
 
-Task-only dependencies beside `artifacts/recipe.json` belong in `artifacts/recipe-library/`; no library flag is required.
+The discovery commands come from the `farmslot` CLI; in a registered Farmslot project, `farmslot recipe run --list --adapter mobile --json` reads the project's libraries without the other flags. Task-only dependencies beside `artifacts/recipe.json` belong in `artifacts/recipe-library/`; no library flag is required.
 
 Use device UI actions only for visible behavior. Keep deterministic fixture setup before the proof boundary and declare teardown when a run mutates state. Read captured images and runtime evidence; do not infer success from bridge reachability alone.
 

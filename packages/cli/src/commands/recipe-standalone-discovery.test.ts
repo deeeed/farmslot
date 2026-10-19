@@ -134,17 +134,23 @@ test('standalone discovery prints this CLI syntax and its library option', async
   assert.match(selected.json.recipe?.runCommand ?? '', / --library-source hello=/u);
 });
 
-test('standalone discovery refuses execution flags, stray inputs and a query with --action', async () => {
+test('standalone discovery refuses execution flags, stray inputs and a query with --action', async (t) => {
+  // A preview never becomes core execution: with execution flags it is refused, nothing runs.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-standalone-preview-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const execution = await recipe<DiscoveryErrorEnvelope>([
     'run',
     'greet',
     '--plan',
     '--project-root',
-    '.',
+    root,
+    '--action-manifest',
+    path.join(HELLO, 'manifests/shared.action-manifest.json'),
     '--artifacts-dir',
-    'artifacts',
+    path.join(root, 'artifacts'),
   ]);
   assert.equal(execution.json.error.code, 'CLI_UNKNOWN_OPTION');
+  assert.equal(fs.existsSync(path.join(root, 'artifacts')), false);
 
   const inputs = await recipe<DiscoveryErrorEnvelope>([
     'run',
@@ -165,11 +171,42 @@ test('standalone discovery refuses execution flags, stray inputs and a query wit
     '.',
   ]);
   assert.match(both.json.error.message, /--action takes no query/u);
+
+  const source = await recipe<DiscoveryErrorEnvelope>([
+    'run',
+    'greet',
+    '--describe',
+    '--source',
+    'hello',
+    '--project-root',
+    '.',
+  ]);
+  assert.match(source.json.error.message, /--source filters --list/u);
+
+  const words = await recipe<DiscoveryErrorEnvelope>([
+    'actions',
+    'greet',
+    'name',
+    '--project-root',
+    '.',
+  ]);
+  assert.match(words.json.error.message, /Quote a query of several words/u);
 });
 
 test('standalone run executes a library recipe by ref once its plan is approved', async (t) => {
   const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-standalone-ref-'));
   t.after(() => fs.rmSync(artifacts, { recursive: true, force: true }));
+  // The root recipe keeps its library's unknown trust, so its shell command needs approval.
+  const root = await recipe<DiscoveryErrorEnvelope>([
+    'run',
+    'greet',
+    '--action-manifest',
+    path.join(HELLO, 'manifests/shared.action-manifest.json'),
+    '--artifacts-dir',
+    artifacts,
+  ]);
+  assert.equal(root.json.error.code, 'RECIPE_TRUST_REQUIRED');
+
   const run = [
     'run',
     'greet-twice',

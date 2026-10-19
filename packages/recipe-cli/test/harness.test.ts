@@ -83,7 +83,7 @@ afterEach(() => {
 describe('host identity', () => {
   test('defaults to the farmslot CLI and the shared runtime layout', () => {
     const host = harnessHost();
-    assert.equal(host.name, 'farmslot');
+    assert.equal(host.name, 'farmslot recipe');
     assert.equal(hostEnvName('OPERATION_ID'), 'FARMSLOT_RECIPE_OPERATION_ID');
     assert.equal(recipeEnvName('ADAPTER_INPUT'), 'RECIPE_ADAPTER_INPUT');
     assert.equal(recipeRuntimeDir(), 'temp/recipe/runtime');

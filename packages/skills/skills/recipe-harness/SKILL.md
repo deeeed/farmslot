@@ -5,7 +5,7 @@ compatibility: Claude, Codex, Cursor, and Markdown skill runners with shell acce
 metadata:
   package: '@farmslot/skills'
   related_package: '@farmslot/recipe-runner'
-allowed-tools: Read Bash(rg:*) Bash(node:*) Bash(npm:*) Bash(yarn:*) Bash(pnpm:*) Bash(farmslot:*)
+allowed-tools: Read Bash(rg:*) Bash(node:*) Bash(npm:*) Bash(yarn:*) Bash(pnpm:*) Bash(farmslot recipe:*)
 ---
 
 # Recipe Harness

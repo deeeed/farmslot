@@ -11,6 +11,8 @@ farmslot recipe run --list --adapter <adapter> --json
 farmslot recipe run <closest-recipe> --describe --adapter <adapter> --json
 ```
 
+These run inside a registered Farmslot project. Outside one, add `--project-root .` and `--library-source <name>=<library>`, and pass the platform as `--platform <adapter>`; running a recipe there also needs `--action-manifest` and `--artifacts-dir`.
+
 Call the closest recipe when its graph already fits. Copy it only when the workflow itself must change, then edit only the nodes required by the claim. Use the project's runner to search its strict action manifest and inspect exact action schemas; action discovery is project-owned.
 
 ## Minimal recipe

@@ -713,8 +713,9 @@ for (const [refusal, flags, code, hint] of [
   });
 }
 
-test('standalone execution refuses project-only preview flags before any command', (t) => {
+test('standalone execution refuses project flags with a preview before any command', (t) => {
   const { root, file } = runFixture(t);
+  // callPublic adds --target and --project, which no standalone mode accepts.
   const result = callPublic(root, [file, '--project-root', root, '--plan'], 'run');
   assert.notEqual(result.status, 0);
   assert.equal(JSON.parse(result.stdout).error.code, 'CLI_UNKNOWN_OPTION');

@@ -18,10 +18,9 @@ import {
   applyTaskLocalInvocationTrust,
   createRecipeRunner,
   createStandardCoreAdapters,
-  findLibraryRecipe,
-  loadRecipeLibraries,
   type RecipeRunRequest,
   resolveRecipeLibrarySources,
+  resolveRecipeRunSelection,
   resolveRecipeTrustInput,
 } from '@farmslot/recipe-runner';
 import {
@@ -404,40 +403,20 @@ export function registerRecipeCommand(program: Command): void {
         approvalDigest: opts.approvePlan,
       });
       const invocationTrust = trust.source?.trust ?? 'trusted';
-      // A library ref, platform alias or <library>.<ref> id runs the recipe it names; the libraries
-      // beside a recipe file count only when the active libraries do not name it.
-      const loadOptions = opts.adapter ? { adapter: opts.adapter } : {};
-      const findRecipe = async (sources: Awaited<ReturnType<typeof resolveRecipeLibrarySources>>) =>
-        findLibraryRecipe(
-          recipePath,
-          sources,
-          await loadRecipeLibraries(sources, loadOptions),
-          loadOptions,
-        );
-      let sources = await resolveRecipeLibrarySources({ cliEntries: opts.librarySource });
-      let match = await findRecipe(sources);
-      if (!match) {
-        sources = await resolveRecipeLibrarySources({
-          cliEntries: opts.librarySource,
-          recipePath: resolveRecipeCliPath(recipePath),
-        });
-        match = await findRecipe(sources);
-      }
+      const {
+        librarySources: sources,
+        match,
+        selection,
+      } = await resolveRecipeRunSelection(recipePath, {
+        ...(opts.adapter ? { adapter: opts.adapter } : {}),
+        cliEntries: opts.librarySource,
+        recipePath: resolveRecipeCliPath(recipePath),
+      });
       const librarySources = applyTaskLocalInvocationTrust(sources, invocationTrust);
       const { withRecipeSignals } = await import('@farmslot/recipe-cli/harness');
       const request: RecipeRunRequest = {
         recipePath: match ? match.recipe.path : resolveRecipeCliPath(recipePath),
-        ...(match
-          ? {
-              selection: {
-                name: recipePath,
-                resolvedBy: match.resolvedBy,
-                source: match.recipe.source,
-                file: match.recipe.file,
-                path: match.recipe.path,
-              },
-            }
-          : {}),
+        ...(selection ? { selection } : {}),
         artifactsDir: resolveRecipeCliPath(opts.artifactsDir),
         projectRoot: opts.projectRoot
           ? resolveRecipeCliPath(opts.projectRoot)
@@ -446,6 +425,8 @@ export function registerRecipeCommand(program: Command): void {
         ...(opts.adapter ? { adapter: opts.adapter } : {}),
         librarySources,
         ...trust,
+        // A library recipe keeps its library's trust unless the caller sets one.
+        ...(!trust.source && match ? { source: match.recipe.provenance } : {}),
       };
       const result = await withRecipeSignals((signal) => runner.run({ ...request, signal }));
       if (emit.machine) {

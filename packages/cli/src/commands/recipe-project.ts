@@ -85,11 +85,15 @@ export function projectCommandInvocation(
   return { argv, contract: { ...contract, options: { ...specs, '--json': { kind: 'boolean' } } } };
 }
 
-/** Standalone discovery accepts only its own flags; one mode, and inputs only for a plan. */
+/**
+ * Standalone discovery accepts only its own flags. `run` takes one mode, inputs only with
+ * `--plan` and `--source` only with `--list`; `actions` takes one quoted query.
+ */
 function standaloneDiscoveryInvocation(
   invocation: ProjectCommandInvocation,
-  flags: readonly string[],
+  command: 'run' | 'actions',
 ): ProjectCommandInvocation {
+  const flags = command === 'run' ? ['--list', '--describe', '--plan', '--source'] : ['--action'];
   const allowed = new Set([...flags, '--project-root', '--library-source', '--platform', '--json']);
   return {
     ...invocation,
@@ -98,15 +102,17 @@ function standaloneDiscoveryInvocation(
       options: Object.fromEntries(
         Object.entries(invocation.contract.options).filter(([flag]) => allowed.has(flag)),
       ),
-      refine: (positionals, seen, failure) =>
-        ['--list', '--describe', '--plan'].filter((flag) => seen.has(flag)).length > 1
-          ? failure.usage(
-              'CLI_INVALID_OPTION_VALUE',
-              'Choose one of --list, --describe and --plan.',
-            )
-          : positionals.length > 1 && !seen.has('--plan')
-            ? failure.usage('CLI_INVALID_OPTION_VALUE', 'Recipe inputs belong to --plan.')
-            : null,
+      refine: (positionals, seen, failure) => {
+        const refusal =
+          command === 'actions'
+            ? positionals.length > 1 && 'Quote a query of several words.'
+            : ['--list', '--describe', '--plan'].filter((flag) => seen.has(flag)).length > 1
+              ? 'Choose one of --list, --describe and --plan.'
+              : positionals.length > 1 && !seen.has('--plan')
+                ? 'Recipe inputs belong to --plan.'
+                : seen.has('--source') && !seen.has('--list') && '--source filters --list.';
+        return refusal ? failure.usage('CLI_INVALID_OPTION_VALUE', refusal) : null;
+      },
     },
   };
 }
@@ -271,7 +277,7 @@ export function registerProjectExecutionCommand(
       if (standalone && projectRoot !== undefined && discoveryModes(options).length > 0) {
         const parsed = shared.parseProjectInvocation(
           operation,
-          standaloneDiscoveryInvocation(invocation, ['--list', '--describe', '--plan', '--source']),
+          standaloneDiscoveryInvocation(invocation, 'run'),
         );
         const [name, ...params] = parsed.positional;
         const mode = discoveryModes(options)[0];
@@ -503,7 +509,7 @@ export function registerProjectActionsCommand(recipe: Command): void {
             'actions',
             standaloneDiscoveryInvocation(
               projectCommandInvocation(cmd, { positionals: [{ label: 'query' }] }),
-              ['--action'],
+              'actions',
             ),
           );
           const action = shared.optionString(options, 'action');

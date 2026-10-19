@@ -50,7 +50,7 @@ export interface HarnessHost {
 }
 
 const defaultHost: HarnessHost = {
-  name: 'farmslot',
+  name: 'farmslot recipe',
   product: 'project',
   envPrefix: 'FARMSLOT_RECIPE',
   recipeEnvPrefix: 'RECIPE',
