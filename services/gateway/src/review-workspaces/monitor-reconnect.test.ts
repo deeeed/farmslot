@@ -345,6 +345,54 @@ test('a reviewer that stops without a result settles the workspace round no-verd
   assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round]?.reason, 'review-worker-stopped');
 });
 
+test('a replay that supersedes the monitor settles that attempt, not the one it dispatched', async () => {
+  const f = fixture();
+  const workspaceRound = (launchedAt: string) =>
+    reviewRoundAdmissionId(`workspace-review-${f.runId}`, 1, launchedAt);
+  const dispatched = new Date(clock - 2000).toISOString();
+  const replayed = new Date(clock + 1).toISOString();
+  updateRun(f.runId, {
+    steps: [
+      { name: PipelineSteps.DISPATCH, status: 'done', startedAt: dispatched },
+      ...getRun(f.runId)!.steps,
+    ],
+  });
+  await admitReviewRound(f.runId, workspaceRound(dispatched));
+  await admitReviewRound(f.runId, workspaceRound(replayed));
+  afterWait = () => {
+    connect();
+    // The operator's replay owns a new generation and has dispatched its own attempt.
+    updateRun(f.runId, {
+      engineState: { generation: 8 },
+      steps: [{ name: PipelineSteps.DISPATCH, status: 'running', startedAt: replayed }],
+    });
+  };
+  await assert.rejects(f.monitor(), /no longer owns/);
+  const settlements = getRun(f.runId)?.reviewRoundSettlements ?? {};
+  assert.match(settlements[workspaceRound(dispatched)]?.reason ?? '', /no longer owns/);
+  assert.equal(settlements[workspaceRound(replayed)], undefined);
+});
+
+test('a monitor that recorded its review result before failing settles nothing', async () => {
+  const f = fixture();
+  connect();
+  const round = reviewRoundAdmissionId(
+    `workspace-review-${f.runId}`,
+    1,
+    getRun(f.runId)!.createdAt,
+  );
+  await admitReviewRound(f.runId, round);
+  await assert.rejects(
+    executeReviewWorkspaceStep(f.runId, PipelineSteps.MONITOR, 7, () => {
+      throw new Error('broadcast failed');
+    }),
+    /broadcast failed/,
+  );
+  assert.deepEqual(getRun(f.runId)?.reviewResult, result);
+  // Fixture runs share one PR scope, so only this attempt's receipt is checked.
+  assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round], undefined);
+});
+
 for (const change of ['cancel', 'generation', 'lease'] as const) {
   test(`${change} during reconnection prevents stale monitor completion`, async () => {
     const f = fixture();

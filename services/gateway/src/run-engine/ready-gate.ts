@@ -429,6 +429,11 @@ export interface PublishGateReviewPlanDependencies {
   assertLaunchAllowed?: (reviews: readonly ReviewStatus[], slotId: string) => Promise<void>;
   executeReview?: typeof executeReviewDefault;
   reviewSequenceContext?: ReviewRequestContext;
+  /**
+   * These launches are automatic, so they stop at the no-verdict cap (ADR-063
+   * Amendment 2). Defaults to every source but an operator's human-gate request.
+   */
+  automaticLaunch?: boolean;
 }
 
 function clearPublicationReviewLaunchRejection(runId: string, rejectedAt?: string): Run {
@@ -521,7 +526,9 @@ export async function executePublishGateReviewPlan(
       await assertReviewRoundAvailable(launchSnapshot);
       // Only an operator request launches past the no-verdict cap.
       const capReason =
-        source === 'human-gate' ? undefined : await reviewNoVerdictCapReason(launchSnapshot);
+        (dependencies.automaticLaunch ?? source !== 'human-gate')
+          ? await reviewNoVerdictCapReason(launchSnapshot)
+          : undefined;
       if (capReason)
         throw new GatewayMethodError(
           PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,

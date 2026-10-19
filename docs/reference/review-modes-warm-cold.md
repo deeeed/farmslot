@@ -91,25 +91,44 @@ An extension MUST NOT make stale reviews or an old package publishable.
 
 Each admitted reviewer attempt settles once, through the admission owner, when
 it ends. An attempt that returned its required result for the reviewed head with
-a pass or issues verdict is counted and records nothing. Any other end is
-no-verdict and spends no round: a timeout, an exit, a missing or unusable
-result, a launch that started no reviewer, a cancel or supersession, or a
-restart that could not reattach. `Run.reviewRoundSettlements` records its reason
-and time against the receipt. A receipt without a settlement counts, so
-in-flight, older and rolled-back receipts fail closed.
+a pass or issues verdict is counted and records nothing. These ends are
+no-verdict and spend no round; `Run.reviewRoundSettlements` records the reason
+and time against the receipt:
+
+- a native reviewer that timed out, exited, left a missing or unusable result,
+  failed to launch, or was cancelled or superseded;
+- a reviewer a restart could not reattach, or whose recovered signal or result
+  shows a failure;
+- a workspace review whose launch failed after admission, or whose monitor
+  ended without recording a result, a cancel or supersession included. Each
+  DISPATCH launch is its own attempt; a restart that reattaches keeps it.
+
+A receipt without a settlement counts, so in-flight, older and rolled-back
+receipts fail closed. A launch or delivery with an uncertain outcome still
+counts, because its reviewer may be running, and so does a legacy tmux reviewer.
+Admitting a receipt again (a reattach) keeps its settlement. When restart
+recovery later ingests a pass or issues verdict for a settled attempt, the
+settlement is cleared and the attempt counts.
 
 Settlements MUST be merged across the admission scope and copied to every live
 run in it. Rounds used are admissions minus no-verdict settlements;
 `ReviewRoundBudget.noVerdict` counts the settlements against `noVerdictLimit`
-(default 3). Admitting a settled receipt again, such as a workspace review
-replay, clears its settlement.
+(default 3).
 
-Below the cap, run behaviour is unchanged. At the cap, restart recovery replay,
-review-sequence continuation and the re-review after a fix MUST NOT start a
-reviewer; they stop with a reason naming the count and the last failures, and a
-run whose reviewer failed stays `review-failed`. An operator-requested review
-still launches, and its no-verdict end counts again. The gate shows `N/L` and,
-once there are any, the no-verdict count against its cap.
+Below the cap, run behaviour is unchanged. At the cap, these automatic launches
+stop with a reason naming the count and the last failures:
+
+- the re-review after a fix: the loop stops before its next fix pass and keeps
+  the findings for Continue Fixing;
+- the re-review of a fix pass recovered after a restart;
+- a publication review plan no operator request started, including configured
+  sequences, reviewed-input reruns and a plan restart recovery resumes: the gate
+  records a launch refusal.
+
+An operator's Request Review still launches, and so does the first fix pass and
+re-review of Continue Fixing or Send back. Their no-verdict ends count again.
+The gate shows `N/L` and, once there are any, the no-verdict count against its
+cap.
 
 ## Session and range
 

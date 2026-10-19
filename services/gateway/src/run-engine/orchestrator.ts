@@ -46,7 +46,6 @@ import {
   prepareIdentityPath,
   reapSlotPrepareScope,
 } from '../methods/slot.js';
-import { reviewNoVerdictCapReason } from '../review/review-round-budget.js';
 import {
   executeReviewWorkspaceStep,
   reconcileReviewWorkspaceCleanup,
@@ -1446,22 +1445,11 @@ async function resumeHeldPublicationGate(runId: string): Promise<void> {
   await startRunWithStepAcknowledgement(runId, getRunGeneration(runId));
 }
 
-/** False when the no-verdict cap left the run waiting for an operator instead. */
-async function replayHumanGateForRecovery(runId: string): Promise<boolean> {
+async function replayHumanGateForRecovery(runId: string): Promise<void> {
   const run = getRun(runId);
   if (run && shouldResumePublicationGate(run)) {
     await resumeHeldPublicationGate(runId);
-    return true;
-  }
-  // Restart recovery stops relaunching reviewers at the no-verdict cap (ADR-063 Amendment 2).
-  const capReason = run && (await reviewNoVerdictCapReason(run));
-  if (capReason) {
-    await markTerminalReviewArtifactOperatorRequired(
-      { updateRun, getRun, observeRunProgress: readRunProgress },
-      run,
-      capReason,
-    );
-    return false;
+    return;
   }
   // replay-step.ts imports this module (startRun), so import lazily.
   const { runReplayStep } = await import('../methods/run/replay-step.js');
@@ -1469,7 +1457,6 @@ async function replayHumanGateForRecovery(runId: string): Promise<boolean> {
     { runId, stepName: S.HUMAN_GATE, triggeredBy: 'auto-recovery' },
     (event, payload) => broadcastFn(event, payload),
   );
-  return true;
 }
 
 function rearmPublicationReviewRecovery(
@@ -1626,9 +1613,9 @@ function rearmPublicationReviewRecovery(
           return;
         }
       }
-      const replayed = await replayHumanGateForRecovery(latest.id);
+      await replayHumanGateForRecovery(latest.id);
       if (settled) return;
-      if (replayed) persistRecovery(getRun(latest.id) ?? latest, 'recovered');
+      persistRecovery(getRun(latest.id) ?? latest, 'recovered');
       state.cleanup();
     } catch (err) {
       failures += 1;
@@ -1722,9 +1709,7 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
       }),
     rearmPublicationReviewRecovery,
     recoverInflightPublicationReviews,
-    replayHumanGate: async (runId) => {
-      await replayHumanGateForRecovery(runId);
-    },
+    replayHumanGate: replayHumanGateForRecovery,
     resumeHeldPublicationGate,
   };
 }

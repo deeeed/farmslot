@@ -44,7 +44,8 @@ import {
   reviewerFeedbackRelPath,
 } from '../review/review-agent.js';
 import {
-  reviewRoundAdmissionId,
+  clearReviewRoundSettlement,
+  reviewContextRoundId,
   settleReviewRoundNoVerdict,
 } from '../review/review-round-budget.js';
 import { recordReviewedInputs } from '../review/reviewed-inputs.js';
@@ -143,18 +144,13 @@ async function markRecoveredReviewerContext(
   return updated !== null;
 }
 
-// The native reviewer admitted its round under its context's launch time.
 async function settleRecoveredReviewerNoVerdict(
   runId: string,
   ctx: AgentContext,
   reason: string,
 ): Promise<void> {
-  if (!ctx.startedAt) return;
-  await settleReviewRoundNoVerdict(
-    runId,
-    reviewRoundAdmissionId(ctx.reviewId ?? ctx.id, ctx.reviewLoopNumber ?? 1, ctx.startedAt),
-    reason,
-  );
+  const roundId = reviewContextRoundId(ctx);
+  if (roundId) await settleReviewRoundNoVerdict(runId, roundId, reason);
 }
 
 function signalMatchesReviewerAttempt(signal: WorkerSignal, ctx: AgentContext): boolean {
@@ -819,6 +815,10 @@ async function ingestRecoveredReviewer(
   });
   // A recovered pass vouches for what its document gave the reviewer (F42).
   if (persisted.verdict === 'pass' && !repairing) await recordReviewedInputs(runId);
+  // The attempt returned a verdict after all, so a no-verdict settlement no longer applies.
+  const roundId = reviewContextRoundId(ctx);
+  if (roundId && (persisted.verdict === 'pass' || persisted.verdict === 'issues'))
+    await clearReviewRoundSettlement(runId, roundId);
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered in-flight publication review ${persisted.id} (verdict ${persisted.verdict}) from reviewer context ${ctx.id}`,
   );

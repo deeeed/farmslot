@@ -13,8 +13,16 @@ const { rewriteStatusFile } = await import('../core/state.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
 const { runWithSessionOriginator } = await import('../security/work-originator.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
+const { NativeWorkerOperationUncertainError } = await import('../runners/native/worker-error.js');
+const { PromptDeliveryUncertainError } = await import('../runners/registry.js');
 
-type Ending = 'timeout' | 'exit' | 'incomplete' | 'verdict';
+type Ending =
+  | 'timeout'
+  | 'exit'
+  | 'incomplete'
+  | 'verdict'
+  | 'uncertain-launch'
+  | 'uncertain-delivery';
 let ending: Ending = 'verdict';
 const vars = makeVars();
 const owner: Principal = {
@@ -65,6 +73,11 @@ mock.module('../runners/native/worker.js', {
         status: 'working',
         nativeSession: binding,
       });
+      // The host may have started the reviewer before its reply was lost.
+      if (ending === 'uncertain-launch')
+        throw new NativeWorkerOperationUncertainError('launch', 'launch reply lost', undefined);
+      if (ending === 'uncertain-delivery')
+        throw new PromptDeliveryUncertainError('review prompt delivery is unconfirmed');
     },
   },
 });
@@ -221,3 +234,17 @@ test('a reviewer that leaves no feedback file settles no-verdict; a verdict coun
   const budget = await runReviewRoundBudget(getRun(reviewed.id)!);
   assert.deepEqual([budget.used, budget.noVerdict], [1, 0]);
 });
+
+for (const [end, uncertainty] of [
+  ['uncertain-launch', NativeWorkerOperationUncertainError],
+  ['uncertain-delivery', PromptDeliveryUncertainError],
+] as const) {
+  test(`an ${end.replace('-', ' ')} leaves its round counted while the reviewer may run`, async (t) => {
+    ending = end;
+    const run = await nativeRun(t);
+    await assert.rejects(review(run.id), uncertainty);
+    assert.equal(getRun(run.id)!.reviewRoundSettlements, undefined);
+    const budget = await runReviewRoundBudget(getRun(run.id)!);
+    assert.deepEqual([budget.used, budget.noVerdict], [1, 0]);
+  });
+}

@@ -94,6 +94,7 @@ import {
 import { expandReviewTemplate } from './templates.js';
 import {
   isTerminalReviewArtifactError,
+  isUncertainReviewerOperation,
   nativeReviewerFailure,
   ReviewerExitedError,
   reviewerExitForNativeSnapshot,
@@ -637,17 +638,20 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       }
     }
     // Every end here is no-verdict, a superseded attempt included (ADR-063 Amendment 2).
+    // An uncertain launch or delivery may still be running a reviewer; its round
+    // counts until recovery settles it.
     try {
-      await settleReviewRoundNoVerdict(
-        runId,
-        roundId,
-        failure instanceof Error ? failure.message : String(failure),
-      );
+      if (!isUncertainReviewerOperation(failure))
+        await settleReviewRoundNoVerdict(
+          runId,
+          roundId,
+          failure instanceof Error ? failure.message : String(failure),
+        );
     } catch (settleError) {
-      primaryFailure = new AggregateError(
-        [primaryFailure, settleError],
-        `${String(failure)}; review round settlement also failed: ${String(settleError)}`,
-        { cause: failure },
+      // An unsettled receipt still counts, which fails closed. The reviewer's own
+      // failure keeps its type so relaunch and cleanup still recognize it.
+      console.warn(
+        `[review] ${runId.slice(0, 8)}: no-verdict settlement failed: ${String(settleError)}`,
       );
     }
     throw primaryFailure;

@@ -47,6 +47,24 @@ export function reviewLaunchStartedAt(
   return context?.startedAt ?? now;
 }
 
+/**
+ * The receipt a native reviewer context was admitted under. Admission keys on the
+ * context's launch `startedAt`, not `attemptStartedAt`, which the reviewer's mark
+ * start rewrites; only legacy `historicalAdmissions` reads `attemptStartedAt` first.
+ */
+export function reviewContextRoundId(
+  context: Pick<AgentContext, 'id' | 'reviewId' | 'reviewLoopNumber' | 'startedAt'>,
+): string | undefined {
+  return (
+    context.startedAt &&
+    reviewRoundAdmissionId(
+      context.reviewId ?? context.id,
+      context.reviewLoopNumber ?? 1,
+      context.startedAt,
+    )
+  );
+}
+
 function historicalAdmissions(run: Run): string[] {
   if (run.reviewRoundAdmissions) return run.reviewRoundAdmissions;
   const ids = new Set<string>();
@@ -315,14 +333,12 @@ async function persistScopedRounds(
 export async function admitReviewRound(runId: string, attemptId: string): Promise<void> {
   return withBudget(runId, async (run, scope) => {
     const admissions = admissionsFor(scope);
-    const { [attemptId]: settled, ...settlements } = settlementsFor(scope);
-    // Admitting a settled receipt again (a workspace review replay) starts a
-    // new attempt: it needs a round and counts unless it also ends no-verdict.
-    if (!admissions.includes(attemptId) || settled) {
+    // A receipt admitted again (a reattach) is the same attempt and keeps its settlement.
+    if (!admissions.includes(attemptId)) {
       refuseSpentBudget(budgetForRun(run, budgetFor(scope)));
-      if (!admissions.includes(attemptId)) admissions.push(attemptId);
+      admissions.push(attemptId);
     }
-    await persistScopedRounds(scope, admissions, settlements);
+    await persistScopedRounds(scope, admissions, settlementsFor(scope));
   });
 }
 
@@ -344,6 +360,15 @@ export async function settleReviewRoundNoVerdict(
     if (!admissions.includes(attemptId) || settlements[attemptId]) return;
     settlements[attemptId] = { reason, at: new Date().toISOString() };
     await persistScopedRounds(scope, admissions, settlements);
+  });
+}
+
+/** A settled attempt whose pass or issues verdict recovery later ingested counts again. */
+export async function clearReviewRoundSettlement(runId: string, attemptId: string): Promise<void> {
+  if (!getRun(runId)) return;
+  return withBudget(runId, async (_run, scope) => {
+    const { [attemptId]: settled, ...settlements } = settlementsFor(scope);
+    if (settled) await persistScopedRounds(scope, admissionsFor(scope), settlements);
   });
 }
 

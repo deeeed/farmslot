@@ -284,21 +284,19 @@ test('settlements reach every run and open gate in the PR scope and survive reti
   assert.deepEqual([after.used, after.noVerdict], [1, 1]);
 });
 
-test('admitting a settled receipt again spends a round unless that attempt also ends no-verdict', async (t) => {
+test('a reattach admits its settled receipt again without spending the round or clearing it', async (t) => {
   const run = fixture(t);
-  const receipt = reviewRoundAdmissionId(`workspace-review-${run.id}`, 1, run.createdAt);
+  const receipt = reviewRoundAdmissionId('reattached-review', 1, '2026-10-19T08:00:00.000Z');
   await admitReviewRound(run.id, receipt);
-  await settleReviewRoundNoVerdict(run.id, receipt, 'review-timeout');
-  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 0);
+  await settleReviewRoundNoVerdict(run.id, receipt, 'Native review was superseded');
   await admitReviewRound(run.id, receipt);
-  const replayed = await runReviewRoundBudget(getRun(run.id)!);
-  assert.deepEqual([replayed.used, replayed.noVerdict], [1, 0]);
-  assert.deepEqual(getRun(run.id)!.reviewRoundSettlements, {});
-
-  await settleReviewRoundNoVerdict(run.id, receipt, 'review-worker-stopped');
-  for (let index = 0; index < 5; index++) await admitReviewRound(run.id, `spent-${index}`);
-  await assert.rejects(admitReviewRound(run.id, receipt), /five review rounds/);
-  assert.ok(getRun(run.id)!.reviewRoundSettlements?.[receipt], 'a refused replay stays settled');
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.deepEqual([budget.used, budget.noVerdict], [0, 1]);
+  assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, [receipt]);
+  assert.equal(
+    getRun(run.id)!.reviewRoundSettlements?.[receipt]?.reason,
+    'Native review was superseded',
+  );
 });
 
 test('the third no-verdict attempt reaches the cap, naming the count and the last failures', async (t) => {

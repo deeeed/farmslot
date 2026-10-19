@@ -25,6 +25,8 @@ const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { makeReadyGatePackage, deleteTestRunIfPresent } = await import('./test-fixtures.js');
 const { copyWorkerArtifacts } = await import('./review-artifacts.js');
 const { readRetainedRunText } = await import('../run-completion/retained-artifacts.js');
+const { admitReviewRound, reviewContextRoundId, runReviewRoundBudget, settleReviewRoundNoVerdict } =
+  await import('../review/review-round-budget.js');
 
 async function fixture(t: TestContext, scenario = 'matching') {
   const root = await mkdtemp(path.join(fixtureRoot, 'worker-'));
@@ -268,6 +270,20 @@ test('an ingested PASS regains its launch snapshot and exact structured result w
   await rm(f.gatewayDir, { recursive: true, force: true });
   assert.equal((await f.readiness()).state, 'ready');
   assert.equal(await readRetainedRunText(getRun(f.run.id)!, result), f.raw);
+});
+
+test('a settled attempt whose verdict recovery ingests counts again', async (t) => {
+  const f = await fixture(t);
+  // The reviewer's launch reply was lost, so its attempt was settled; it went on to finish.
+  const round = reviewContextRoundId(f.ctx)!;
+  await admitReviewRound(f.run.id, round);
+  await settleReviewRoundNoVerdict(f.run.id, round, 'Native reviewer launch is unconfirmed');
+  const before = await runReviewRoundBudget(getRun(f.run.id)!);
+  assert.equal(before.noVerdict, 1);
+  assert.deepEqual((await f.recover()).repairedIds, ['review-2']);
+  assert.equal(getRun(f.run.id)!.reviewRoundSettlements?.[round], undefined);
+  const after = await runReviewRoundBudget(getRun(f.run.id)!);
+  assert.deepEqual([after.used, after.noVerdict], [before.used + 1, 0]);
 });
 
 test('failed artifact capture leaves the same review repairable without spending another attempt', async (t) => {

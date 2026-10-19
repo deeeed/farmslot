@@ -3,9 +3,18 @@ import test from 'node:test';
 
 import type { AgentContext, ReviewIssue, WorkerSignal } from '@farmslot/protocol';
 
+import {
+  CONTINUE_REVIEW_FIX_ACTION,
+  pendingReviewContinuation,
+  publicationGateDecisionActions,
+} from '../run-engine/gate-policy.js';
+import {
+  executePublishGateReviewPlan,
+  resumeInterruptedPublicationReview,
+} from '../run-engine/ready-gate.js';
 import { deleteTestRunIfPresent, makeRun } from '../run-engine/test-fixtures.js';
 import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
-import { createRun } from '../runs/store.js';
+import { createRun, getRun } from '../runs/store.js';
 
 import { parseReviewIssueBullets } from './issues.js';
 import {
@@ -1325,7 +1334,13 @@ test('runReviewRetryLoop: the no-verdict cap stops automatic re-reviews, not an 
   );
   assert.equal(automatic.calls.reviewAgent, 0);
   assert.match(stopped.reason ?? '', /^3\/3 reviewer attempts ended without a verdict/);
-  assert.equal(stopped.recoveryContinuationPending, false, 'restart does not resume a capped loop');
+  assert.equal(stopped.feedbackSent, false);
+  assert.equal(
+    stopped.recoveryContinuationPending,
+    true,
+    'the undelivered findings stay continuable by the operator',
+  );
+  assert.equal('maxRetriesExhausted' in stopped, false, 'a cap stop is not a spent fix budget');
 
   const operator = buildDeps({
     reviewVerdicts: ['issues', 'issues'],
@@ -1343,6 +1358,72 @@ test('runReviewRetryLoop: the no-verdict cap stops automatic re-reviews, not an 
   assert.equal(operator.calls.sendFeedback, 1, 'the operator pass is fixed and re-reviewed');
   assert.equal(operator.calls.reviewAgent, 1, 'the automatic pass after it stops at the cap');
   assert.match(continued.reason ?? '', /ended without a verdict/);
+});
+
+test('at the no-verdict cap an operator review offers Continue Fixing, and choosing it delivers the fix', async (t) => {
+  const run = createRun({
+    project: 'review-no-verdict-cap',
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    ticketOrPr: 'CAP-GATE',
+    runner: 'claude',
+    slotId: 'cap-gate-slot',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  for (const reason of ['timeout', 'invalid JSON', 'lost on restart']) {
+    await admitReviewRound(run.id, reason);
+    await settleReviewRoundNoVerdict(run.id, reason, reason);
+  }
+  const plan = [{ runner: 'codex' as const, model: null, effort: null, mode: 'cold' as const }];
+
+  // Request Review: the operator's reviewer returns issues; the fix pass after it
+  // is automatic, so it stops at the cap.
+  const requested = buildDeps({ reviewVerdicts: [], fixSignals: [] });
+  await executePublishGateReviewPlan(run.id, 'cap-gate-slot', plan, 'human-gate', {
+    assertLaunchAllowed: async () => {},
+    executeReview: async (runId) =>
+      runReviewRetryLoop({
+        ...baseArgs,
+        runId,
+        maxRetries: 1,
+        reviewResult: { verdict: 'issues', issues: ISSUES },
+        retryCount: 0,
+        deps: requested.deps,
+      }),
+  });
+  assert.equal(requested.calls.sendFeedback, 0);
+  const reviews = getRun(run.id)!.engineState!.publishGate!.reviews!;
+  const pending = pendingReviewContinuation(reviews);
+  assert.ok(pending, 'the capped findings stay continuable');
+  assert.ok(
+    publicationGateDecisionActions({
+      reviewSatisfied: false,
+      pendingReviewContinuation: pending,
+      reviews,
+    }).some((action) => action.id === CONTINUE_REVIEW_FIX_ACTION),
+  );
+
+  // Continue Fixing resumes the recorded findings, an operator pass the cap does not stop.
+  const continued = buildDeps({
+    reviewVerdicts: ['pass'],
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  const resumed = await resumeInterruptedPublicationReview(run.id, 'cap-gate-slot', {
+    executeReview: async (runId, _slotId, options = {}) => {
+      assert.deepEqual(options.resumeFromResult?.issues, ISSUES);
+      return runReviewRetryLoop({
+        ...baseArgs,
+        runId,
+        maxRetries: 1,
+        reviewResult: { verdict: 'issues', issues: options.resumeFromResult!.issues! },
+        retryCount: options.resumeFromResult!.retryCount,
+        operatorRequested: true,
+        deps: continued.deps,
+      });
+    },
+  });
+  assert.equal(continued.calls.sendFeedback, 1, 'Continue Fixing delivers the fix at the cap');
+  assert.equal(resumed?.verdict, 'pass');
 });
 
 test('runReviewRetryLoop: a deferred reserved delivery is acknowledged only by its own fix signal', async () => {

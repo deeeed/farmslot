@@ -16,9 +16,11 @@ import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import {
   admitReviewRound,
+  clearReviewRoundSettlement,
   reviewRoundAdmissionId,
   settleReviewRoundNoVerdict,
 } from '../review/review-round-budget.js';
+import { isUncertainReviewerOperation } from '../review/terminal-result.js';
 import {
   buildRepeatReviewContext,
   confirmIncrementalAncestry,
@@ -32,8 +34,6 @@ import {
   observeReviewWorkspaceTransport,
   readReviewWorkspaceWorker,
 } from '../runners/native/review-workspace.js';
-import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
-import { PromptDeliveryUncertainError } from '../runners/registry.js';
 import { observeReviewPromptAcceptance } from '../runners/review-startup.js';
 import {
   launchReviewTmux,
@@ -159,6 +159,9 @@ export async function recordWorkspaceReviewCompletion(
     metrics: withSubtaskMetrics(currentWorkspaceRun(runId, generation).metrics, subtasks),
   });
   await persistRunNow(updated, 'workspace review result');
+  // A monitor replay watches the same attempt; its verdict counts even if the
+  // superseded monitor settled that receipt (ADR-063 Amendment 2).
+  await clearReviewRoundSettlement(runId, workspaceReviewRoundId(updated));
   return updated;
 }
 
@@ -361,18 +364,14 @@ export function reconcileReviewWorkspaceCleanup(
   return cleanupInProgress;
 }
 
-// Monitor ends where the reviewer left no result for the frozen head (ADR-063 Amendment 2).
-const NO_VERDICT_MONITOR_ENDS = new Set([
-  'review-incomplete',
-  'review-startup-unacknowledged',
-  'review-worker-stopped',
-  'review-result-missing',
-  'review-timeout',
-]);
-
-/** A workspace review run's single receipt; an operator replay admits it again. */
-function workspaceReviewRoundId(run: Pick<Run, 'id' | 'createdAt'>): string {
-  return reviewRoundAdmissionId(`workspace-review-${run.id}`, 1, run.createdAt);
+/**
+ * A workspace review attempt's receipt, keyed by its DISPATCH launch: a restart
+ * that reattaches reuses it, a replay that dispatches again gets a new one.
+ */
+function workspaceReviewRoundId(run: Pick<Run, 'id' | 'createdAt' | 'steps'>): string {
+  const launched =
+    run.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)?.startedAt ?? run.createdAt;
+  return reviewRoundAdmissionId(`workspace-review-${run.id}`, 1, launched);
 }
 
 /** Resource-specific step execution under the existing run engine and terminal router. */
@@ -382,12 +381,33 @@ export async function executeReviewWorkspaceStep(
   generation: number,
   emit: (event: string, payload: unknown) => void,
 ): Promise<{ inputs?: Record<string, unknown>; outputs?: Record<string, unknown> }> {
+  const before = getRun(runId);
+  const resultBefore = before?.reviewResult;
+  // Resolve the attempt now: a replay that supersedes this monitor rewrites DISPATCH.
+  const roundId = before && workspaceReviewRoundId(before);
   try {
     return await executeOwnedReviewWorkspaceStep(runId, step, generation, emit);
   } catch (error) {
+    // A monitor that ends without recording the reviewer's result is a no-verdict
+    // end, a cancel or supersession included (ADR-063 Amendment 2). An uncertain
+    // native operation may still be running its reviewer, so its round counts.
     const run = getRun(runId);
-    if (run && error instanceof BlockedRunError && NO_VERDICT_MONITOR_ENDS.has(error.detail))
-      await settleReviewRoundNoVerdict(runId, workspaceReviewRoundId(run), error.detail);
+    if (
+      run &&
+      roundId &&
+      step === PipelineSteps.MONITOR &&
+      run.reviewResult === resultBefore &&
+      !isUncertainReviewerOperation(error)
+    )
+      await settleReviewRoundNoVerdict(
+        runId,
+        roundId,
+        error instanceof BlockedRunError
+          ? error.detail
+          : error instanceof Error
+            ? error.message
+            : String(error),
+      );
     throw error;
   }
 }
@@ -451,10 +471,7 @@ async function executeOwnedReviewWorkspaceStep(
       // A failed launch is a no-verdict end. One that may have started its
       // reviewer is reconciled later, so its round still counts.
       const settleFailedLaunch = async (error: unknown): Promise<never> => {
-        if (
-          !(error instanceof NativeWorkerOperationUncertainError) &&
-          !(error instanceof PromptDeliveryUncertainError)
-        )
+        if (!isUncertainReviewerOperation(error))
           await settleReviewRoundNoVerdict(
             runId,
             roundId,

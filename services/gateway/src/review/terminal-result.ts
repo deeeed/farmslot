@@ -47,6 +47,14 @@ export async function nativeReviewerFailure(
   return reviewerExitForNativeSnapshot(snapshot, error) ?? error;
 }
 
+/** The launch or delivery outcome is unknown, so the reviewer may still be running. */
+export function isUncertainReviewerOperation(error: unknown): boolean {
+  return (
+    error instanceof NativeWorkerOperationUncertainError ||
+    error instanceof PromptDeliveryUncertainError
+  );
+}
+
 /** Cleanup has settled before retrying; all other failures retain their existing handling. */
 export async function withReviewerRelaunch<T>(
   review: () => Promise<T>,
@@ -87,6 +95,7 @@ import path from 'node:path';
 import type { NativeSessionReadResult, ReviewStatus } from '@farmslot/protocol';
 
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
+import { PromptDeliveryUncertainError } from '../runners/registry.js';
 
 /** The final native attempt is the sole structured verdict used for publication. */
 export function reviewResultArtifactPath(

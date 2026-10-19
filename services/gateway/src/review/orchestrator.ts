@@ -792,6 +792,7 @@ export async function runReviewRetryLoop({
       : [reviewAttemptFromResult(result, retryCount + 1)];
 
   let roundLimitReason: string | undefined;
+  let capReason: string | undefined;
   let reserved = reservedFixPass;
   let operatorPass = operatorRequested;
   while (
@@ -807,9 +808,8 @@ export async function runReviewRetryLoop({
       break;
     }
     // The no-verdict cap stops automatic re-reviews, not the pass an operator requested.
-    roundLimitReason =
-      budgetRun && !operatorPass ? await reviewNoVerdictCapReason(budgetRun) : undefined;
-    if (roundLimitReason) break;
+    capReason = budgetRun && !operatorPass ? await reviewNoVerdictCapReason(budgetRun) : undefined;
+    if (capReason) break;
     operatorPass = false;
     console.log(
       `[review] run ${runId.slice(0, 8)} — ${result.issues.length} issue(s) found (retry ${retryCount + 1}/${maxRetries})`,
@@ -1270,6 +1270,8 @@ export async function runReviewRetryLoop({
     feedbackSent: latestFindingsPendingDelivery ? false : feedbackSent,
     recoveryContinuationPending: latestFindingsPendingDelivery && !retriesExhausted,
     ...(roundLimitReason ? { reason: roundLimitReason, maxRetriesExhausted: true } : {}),
+    // A cap stop leaves its findings continuable: Continue Fixing is an operator pass.
+    ...(capReason ? { reason: capReason } : {}),
     durationMs: Date.now() - start,
   };
 }
@@ -2057,6 +2059,23 @@ async function recoverReviewFixPass({
         durationMs: Date.now() - start,
       };
     }
+    // Restart recovery stops at the no-verdict cap like the retry loop (ADR-063 Amendment 2).
+    const capRun = getRun(runId);
+    const capReason = capRun && (await reviewNoVerdictCapReason(capRun));
+    if (capReason)
+      return {
+        ...priorResult,
+        reason: capReason,
+        fixDelta: fixDelta.snapshot,
+        attempts: [initialAttempt],
+        timeline: initialAttempt.timeline ?? [],
+        retryCount: recoveredRetryCount,
+        maxRetries,
+        // The fix reached the worker; an operator's Request Review re-reviews it.
+        feedbackSent: true,
+        recoveryContinuationPending: false,
+        durationMs: Date.now() - start,
+      };
     setProgressDetail(
       runId,
       `${workerBlockReason ? 'Worker made partial fixes before blocking' : 'Worker fix complete'}; running ${reviewRunner} re-review (2)...`,
