@@ -1471,12 +1471,15 @@ async function slotPrepareInner(
   //     preflight (e.g. relaunch) owns the dev-server lifecycle and typically
   //     exists to keep the warm server alive.
   const preflightOverridden = Boolean(prepareProfile?.hooks.preflight);
-  if (phaseEnabled('preflight') && !preflightOverridden) {
+  if (phaseEnabled('preflight')) {
     // A cancelled run's browser session can outlive it on the slot's CDP port
-    // (ADR-054 amendment, 2026-10-19); this prepare is the one that clears it.
+    // (ADR-054 amendment, 2026-10-19). Every prepare that runs a preflight, the
+    // default or a profile's own, clears it; a browser a live lease holds stays.
     const { reapSlotBrowserSession } = await import('../../run-lifecycle/browser-session-reap.js');
     const browserSurvivors = await reapSlotBrowserSession(vars);
     if (browserSurvivors) throw new Error(browserSurvivors);
+  }
+  if (phaseEnabled('preflight') && !preflightOverridden) {
     const devServerPort = vars.resourceVars.port;
     const devServerCleanup = buildDevServerPortCleanup(devServerPort, slotIsLocal);
     if (devServerCleanup.command) {

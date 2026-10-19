@@ -389,8 +389,13 @@ export async function stopRunOwnedTmuxAndWatches(
       // Cancel owns its workers through agentContexts, recorded identity or not:
       // stop them the way slot.release does (ADR-054 amendment, 2026-10-19).
       const { killSlotAgents } = await import('../methods/slot/release.js');
-      await killSlotAgents(slotId, run.id);
-      blocker = null;
+      try {
+        await killSlotAgents(slotId, run.id);
+        blocker = null;
+      } catch (error) {
+        // A worker that could not be stopped is named; it does not keep the slot.
+        blocker = error instanceof Error ? error.message : String(error);
+      }
     }
     const stillOwned = async () => {
       const row = await readSlotRow(slotId);

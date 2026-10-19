@@ -301,7 +301,7 @@ Status: Proposed. Arthur decided the rule (2026-10-19 15:10); acceptance follows
 `run.cancel` stops everything the run started and then releases its slot.
 
 - The run's own workers are the agents in its `agentContexts`. Cancel stops them whether or not their pane or saved conversation identity was recorded: an exact, identity-checked stop when it has one, otherwise the slot agent kill that `slot.release` uses (ADR-038).
-- Run-owned providers, its prepare scope and its browser session are stopped as before. A run-owned process that survives the stop does not keep the slot: cancel names it on the run in `slotTeardownSkipped`, and the next prepare stops a browser session left on the slot's CDP port.
+- Run-owned providers, its prepare scope and its browser session are stopped as before. A run-owned process that survives the stop does not keep the slot: cancel names it on the run in `slotTeardownSkipped`, and the next prepare that runs a preflight stops a browser session left on the slot's CDP port, unless a live lease still holds it.
 - Only another active run keeps the slot: one that owns it, is its native handoff successor, or holds an open publication gate there. Cancel then leaves that run's slot alone, as before. The ownership and release-fence checks are unchanged, and a slot this run parked or handed over follows its park record.
 - A process the run did not start never keeps the slot, for example an editor or terminal with the checkout open. Neither does one of the run's own helpers still exiting when cancel checks. Cancel does not inspect other processes in the checkout.
 

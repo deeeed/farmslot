@@ -44,6 +44,7 @@ let tmuxInventory = '';
 let runnerProbe: RunnerDescendantPidProbe = { state: 'absent' };
 let runUpdates: Partial<Run>[] = [];
 let slotAgentKills: string[] = [];
+let slotAgentKillError: Error | null = null;
 
 /** A process on the slot machine, for the browser session a run leaves behind. */
 interface SlotProcess {
@@ -276,6 +277,7 @@ mock.module('../methods/slot/release.js', {
     ...realRelease,
     killSlotAgents: async (slotId: string) => {
       slotAgentKills.push(slotId);
+      if (slotAgentKillError) throw slotAgentKillError;
     },
   },
 });
@@ -318,6 +320,7 @@ beforeEach(() => {
   activeResources = new Map();
   runUpdates = [];
   slotAgentKills = [];
+  slotAgentKillError = null;
 });
 
 test('cancel during or after prepare stops the run prepare-scope holder', async () => {
@@ -773,6 +776,18 @@ test('cancel stops its own worker without a pane identity the way slot.release d
   assert.deepEqual(slotAgentKills, [SLOT_ID]);
   assert.equal(slotRow?.lifecycle, 'ready');
   assert.equal(runUpdates.at(-1)?.slotTeardownSkipped, undefined);
+});
+
+test('a worker the slot agent kill cannot stop is named, and the slot is still freed', async () => {
+  workerBlocker = 'Worker dev has no exact pane identity; cleanup deferred';
+  slotAgentKillError = new Error('Agent windows in mmt-1 did not close');
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(run);
+  assert.equal(await cancel.releaseSlot(run), undefined);
+
+  assert.equal(slotRow?.lifecycle, 'ready');
+  assert.equal(runUpdates.at(-1)?.slotTeardownSkipped, 'Agent windows in mmt-1 did not close');
 });
 
 test('a run-owned process that survives cancel is named, and the slot is still freed', async () => {
