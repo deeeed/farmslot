@@ -6,7 +6,7 @@
 | ---------------- | ------------------------------------------------------------------------------------------ |
 | `protocol/`      | Shared Farmslot API, event, run, slot, recipe, manifest, and artifact contracts.           |
 | `recipe-runner/` | Generic Recipe Protocol v1 runner, adapters, CLI runner support, and artifact writers.     |
-| `recipe-cli/`    | The `farmslot-recipe` command: run, validate, and library-wide recipe/action discovery.    |
+| `recipe-cli/`    | Library-wide recipe/action discovery and the harness SDK behind `farmslot recipe`.         |
 | `adapter-sdk/`   | The platform adapter contract: `ProjectRuntime`, `defineAdapter`, the adapter registry.    |
 | `adapter-node/`  | Headless Node adapter: `createNodeAdapter`, the dependency check, tsx workspace paths.     |
 | `adapter-web/`   | Web platform pieces: browser resolve/launch, CDP-port ownership, extension loading, focus. |
@@ -40,7 +40,7 @@ yarn workspace @farmslot/theme quality
 
 - Put shared schemas, RPC method names, event names, and cross-process data shapes in `protocol/`.
 - Put recipe execution mechanics and generic adapters in `recipe-runner/`.
-- Put the `farmslot-recipe` command and recipe/action discovery in `recipe-cli/`.
+- Put recipe/action discovery and the harness SDK in `recipe-cli/`.
 - Put the platform adapter contract in `adapter-sdk/`.
 - Put the headless Node platform (dependency check, tsx workspace paths, overlay cleanup) in `adapter-node/`.
 - Put browser process and CDP mechanics for web platforms in `adapter-web/`.

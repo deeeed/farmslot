@@ -13,8 +13,8 @@ Do not add a reusable recipe for a one-line action invocation. Do not add an act
 ## Start with discovery
 
 ```bash
-farmslot-recipe run --list --adapter mobile
-farmslot-recipe run wallet.smoke --describe --adapter mobile
+farmslot recipe run --list --adapter mobile
+farmslot recipe run wallet.smoke --describe --adapter mobile
 ```
 
 Then inspect the runner's action manifest. Call the closest recipe when its graph fits. Copy it only when the workflow itself must change, then edit only what the acceptance criteria require.

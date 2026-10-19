@@ -1,6 +1,6 @@
 # Hello recipe library
 
-A minimal recipe library for trying `farmslot-recipe` discovery. It needs no app, device or
+A minimal recipe library for trying `farmslot recipe` discovery. It needs no project, app, device or
 platform adapter.
 
 ```text
@@ -13,16 +13,16 @@ recipes/web/greet.recipe.json          web variant of greet
 ```
 
 The shared manifest declares the official `command` and `assert_output` actions so the library can
-run on its own through `--action-manifest`. A project runtime declares official actions itself, so
+run on its own through `--action-manifest` (standalone mode, `--project-root`). A project runtime declares official actions itself, so
 its catalog refuses this manifest from a selected library ([ADR-034 Amendment 6](../../docs/adr/034-recipe-protocol-v1.md#amendment-6-2026-10-19-library-action-declarations)).
 
 ```sh
 export RECIPE_LIBRARY_PATH="hello=$PWD/examples/recipe-library-hello"
-farmslot-recipe list
-farmslot-recipe actions
-farmslot-recipe describe greet
-farmslot-recipe explain greet-twice --param guest=Ada
-farmslot-recipe explain greet --platform web
+farmslot recipe run --list --project-root .
+farmslot recipe actions --project-root .
+farmslot recipe run greet --describe --project-root .
+farmslot recipe run greet-twice guest=Ada --plan --project-root .
+farmslot recipe run greet --plan --project-root . --platform web
 ```
 
 Walkthrough: https://farmslot.io/docs/reference/recipe-discovery

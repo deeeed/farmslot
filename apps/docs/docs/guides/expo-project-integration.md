@@ -38,8 +38,8 @@ Do not add wallet, product, or ticket-specific behavior to the Expo package. Put
 Start from the generated smoke recipe or another working recipe:
 
 ```sh
-farmslot-recipe run --list --adapter mobile --json
-farmslot-recipe run <closest-recipe> --describe --adapter mobile --json
+farmslot recipe run --list --adapter mobile --json
+farmslot recipe run <closest-recipe> --describe --adapter mobile --json
 farmslot-adapter-rn validate ./proof.recipe.json --param key=value
 farmslot-adapter-rn run ./proof.recipe.json --param key=value
 ```

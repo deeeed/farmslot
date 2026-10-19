@@ -1,29 +1,19 @@
 # @farmslot/recipe-cli
 
-The `farmslot-recipe` command: run and validate Recipe Protocol v1 recipes, and discover what
-your recipe libraries offer. Discovery needs only a library on disk: no app, device or platform
-adapter.
+Recipe discovery and the harness SDK behind `farmslot recipe`. Discovery tells you what your recipe
+libraries offer before you run anything; it needs only a library on disk: no app, device or
+platform adapter.
 
 ```sh
-npm i -D @farmslot/recipe-cli
 export RECIPE_LIBRARY_PATH="hello=./recipe-library"
-npx farmslot-recipe list
-npx farmslot-recipe actions
-npx farmslot-recipe describe hello.greet
-npx farmslot-recipe explain greet-twice --param guest=Ada
+farmslot recipe run --list --project-root .
+farmslot recipe actions --project-root .
+farmslot recipe run hello.greet --describe --project-root .
+farmslot recipe run greet-twice guest=Ada --plan --project-root .
 ```
 
-| command                   | answers                                                                     |
-| ------------------------- | --------------------------------------------------------------------------- |
-| `actions`                 | every action the libraries declare or this CLI handles, with its parameters |
-| `list`                    | recipes across all libraries, with variants and whether they can run        |
-| `describe <name>`         | parameters, examples, outputs, callers and variants of a recipe or action   |
-| `explain <recipe>`        | the resolved call graph, parameter flow, required actions and gaps          |
-| `search <text>`           | ids, descriptions and parameter names                                       |
-| `template <name>`         | a ready-to-edit workflow node and recipe skeleton                           |
-| `completions [bash\|zsh]` | a shell completion script                                                   |
-
-Every command takes `--library name=path` (repeatable), `--platform <id>` and `--json`.
+The package ships no executable. `runRecipeCli` and `registerDiscoveryCommands` give a host the same
+`run`, `validate` and discovery commands, and `@farmslot/recipe-cli/harness` the generic harness.
 
 Docs: https://farmslot.io/docs/reference/recipe-discovery
 
@@ -31,7 +21,7 @@ Docs: https://farmslot.io/docs/reference/recipe-discovery
 
 | path                                                | owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/cli.ts`                                        | the `farmslot-recipe` program: the runner's `run`/`validate` plus discovery                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `src/cli.ts`                                        | `runRecipeCli`: the runner's `run`/`validate` plus discovery, for a host to embed                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `src/commands.ts`                                   | discovery command registration, JSON envelopes and errors                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `src/libraries.ts`                                  | library resolution: precedence, overrides, digests, `requires` checks                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `src/discovery-index.ts`                            | the recipe and action index for one platform view                                                                                                                                                                                                                                                                                                                                                                                                                                                    |

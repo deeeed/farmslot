@@ -47,9 +47,9 @@ Use the canonical recipe skeleton in [Write a recipe](./write-a-recipe.md). Exac
 ## Verify
 
 ```sh
-farmslot-recipe run --list --adapter core
-farmslot-recipe run smoke --describe --adapter core
-farmslot-recipe run smoke --adapter core --artifacts-dir artifacts/recipe-run
+farmslot recipe run --list --adapter core
+farmslot recipe run smoke --describe --adapter core
+farmslot recipe run smoke --adapter core --artifacts-dir artifacts/recipe-run
 ```
 
 Verify the human outcome plus `recipe-resolution.json`, `summary.json`, `trace.json`, and `artifact-manifest.json`.

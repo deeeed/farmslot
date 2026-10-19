@@ -4,6 +4,9 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot recipe run --list`, `run <name> --describe` and `run <recipe> [key=value…] --plan`, and `farmslot recipe actions`, `actions <query>` and `actions --action <name>`, read recipe libraries without a project when given `--project-root <dir>`, the standalone core mode, with `--library-source name=path` and `--platform`. They print the recipe discovery envelopes. `--describe` and `--action` include a node and a recipe that wraps it, and the commands they suggest use this CLI's syntax. This replaces the removed `farmslot-recipe` executable.
+- Standalone `farmslot recipe run` runs a library recipe by ref, platform alias or `<library>.<ref>` id, as well as a recipe file, and records the selection in `summary.json` (`recipeSelection`).
+
 - `farmslot run gate` prints a refused completion's message when it lists no prerequisites, such as a publish package that could not be built.
 - `farmslot run gate` shows a held run's result decision first (reason, findings or refused prerequisite, delivered head or report, and each action's availability), lists its output review as evidence only, picks the result decision when no `--decision` is given, and sends `--reason` with `accept-result` (ADR-065 Amendment 7).
 - Gateway sockets use the `ws` client on every Node version instead of the runtime's WebSocket. A socket that fails says why, for example `Connection failed — is the gateway running? (connect ECONNREFUSED 127.0.0.1:7801)` or `(Unexpected server response: 503)`, with one entry per address tried. Before, the CLI printed the bare message on every Node version, so a gateway restart looked like a Node 24 incompatibility. One-shot calls now apply `--timeout` while the socket opens.

@@ -4,7 +4,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- **Breaking:** the package no longer ships the `farmslot-recipe` executable. The `farmslot` CLI answers the same questions: `farmslot recipe run --list`, `run <name> --describe` and `run <recipe> [key=value…] --plan` for `list`, `describe` and `explain`, and `farmslot recipe actions`, `actions <query>` and `actions --action <name>` for `actions`, `search` and an action's `describe`. Outside a project, pass `--project-root <dir>` and `--library-source name=path`. `template` is the new `template` field of `describe`, and `completions` is `farmslot completion`. `runRecipeCli` and every other export are unchanged, so a host can still embed the same program.
+- `describe` adds `template` (`node`, `recipe`) to an action, and to a recipe that wins its ref's precedence; a node with a shadowed recipe's ref would call the winner, so that recipe has none.
+- `DiscoveryCommandContext.usage` lets a host spell the commands discovery prints (`runCommand` and every hint) and the option that selects a library.
+- The default harness host is the `farmslot` CLI. It ships no executable of its own, so `HarnessHost.bin` is optional and `harnessExecutable()` falls back to the running script; a configured host still names its `bin`.
 
 ## 0.23.8 - 2026-10-19
 

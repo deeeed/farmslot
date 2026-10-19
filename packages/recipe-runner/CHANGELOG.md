@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- The README's CLI examples use `farmslot recipe run`, since `farmslot-recipe` is removed.
 - `ActiveVideoRecording.ready()`'s contract now includes the lead-in: it resolves once the segment's zero is bounded and one `EVIDENCE_PADDING_MS` has been recorded past it (ADR-062 Amendment 16). Documentation only; the runner is unchanged.
 
 ## 0.39.5 - 2026-10-18

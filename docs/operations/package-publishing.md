@@ -10,7 +10,7 @@ ready for review, but the packages remain private until final publish approval. 
 | `@farmslot/protocol`      | Recipe/gateway/node protocol types and validators.                  | <https://farmslot.io/docs/reference/recipe-protocol-v1> |
 | `@farmslot/agent-runtime` | Task lifecycle, artifact checks, and execution-template utilities.  | <https://farmslot.io/docs/reference/agent-runtime>      |
 | `@farmslot/recipe-runner` | Reusable Recipe Protocol v1 runner, adapters, and artifact writers. | <https://farmslot.io/docs/architecture/recipe-runner>   |
-| `@farmslot/recipe-cli`    | The `farmslot-recipe` command: run, validate and recipe discovery.  | <https://farmslot.io/docs/reference/recipe-discovery>   |
+| `@farmslot/recipe-cli`    | Recipe discovery and the harness SDK behind `farmslot recipe`.      | <https://farmslot.io/docs/reference/recipe-discovery>   |
 | `@farmslot/adapter-sdk`   | The platform adapter contract and registry.                         | <https://farmslot.io/docs/reference/adapter-sdk>        |
 | `@farmslot/adapter-node`  | Headless Node platform adapter over the adapter SDK.                | <https://farmslot.io/docs/reference/adapter-node>       |
 | `@farmslot/adapter-rn`    | Expo/React Native recipe scaffold and validation helper.            | <https://farmslot.io/docs/guides/adapter-rn>            |
@@ -91,7 +91,4 @@ The packages now publish from `dist/` rather than TypeScript source.
 `@farmslot/protocol`, `@farmslot/agent-runtime`, `@farmslot/recipe-runner`,
 and `@farmslot/skills` build JavaScript and declaration files before pack, and
 `scripts/quality/check-farmslot-package-readiness.mjs` verifies required packed
-files plus built import contracts. The
-`farmslot-recipe` bin ships in `@farmslot/recipe-cli` and imports `../dist/cli.js`, so
-local workspace CLI smoke testing requires `yarn workspace @farmslot/recipe-cli build`
-first (it builds `@farmslot/recipe-runner` too).
+files plus built import contracts.
