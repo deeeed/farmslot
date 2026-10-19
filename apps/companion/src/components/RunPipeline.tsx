@@ -2,26 +2,22 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
+  blockedRunReason,
   deriveRunLifecycleView,
   type RunStatus,
   type RunStep,
-  type RunStepStatus,
+  type RunStepDisplayStatus,
+  runStepDisplayStatus,
   type WorkerOperatorWait,
 } from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../lib/theme';
 
-function effectiveStatus(stepStatus: RunStepStatus, runStatus?: RunStatus): RunStepStatus {
-  if (runStatus === 'cancelled' && (stepStatus === 'running' || stepStatus === 'pending')) {
-    return 'skipped';
-  }
-  return stepStatus;
-}
-
-function stepColor(status: RunStepStatus): string {
+function stepColor(status: RunStepDisplayStatus): string {
   if (status === 'done') return colors.statusOk;
   if (status === 'running') return '#3b82f6';
   if (status === 'failed') return colors.statusFail;
+  if (status === 'blocked') return colors.statusWarn;
   if (status === 'skipped') return colors.textMuted;
   return colors.textMuted;
 }
@@ -55,30 +51,35 @@ export function RunPipelineMini({
   steps,
   runStatus,
   waitingForOperator,
+  error,
 }: {
   steps: RunStep[];
   runStatus?: RunStatus;
   waitingForOperator?: WorkerOperatorWait;
+  error?: string;
 }) {
   const isCancelled = runStatus === 'cancelled';
   const visible = steps.filter((s) => s.status !== 'skipped');
   if (visible.length === 0) return null;
 
-  const eff = (s: RunStepStatus) => effectiveStatus(s, runStatus);
-  const runningIdx = visible.findIndex((s) => eff(s.status) === 'running');
-  const nextIdx = visible.findIndex((s) => eff(s.status) === 'pending');
+  const eff = (s: RunStep) =>
+    runStatus ? runStepDisplayStatus({ status: runStatus, steps }, s) : s.status;
+  const runningIdx = visible.findIndex((s) => eff(s) === 'running');
+  const nextIdx = visible.findIndex((s) => eff(s) === 'pending');
   const labelIdx = runningIdx >= 0 ? runningIdx : nextIdx >= 0 ? nextIdx : visible.length - 1;
   const active = visible[labelIdx];
   const remaining = active
-    ? visible.slice(labelIdx + 1).filter((s) => eff(s.status) === 'pending').length
+    ? visible.slice(labelIdx + 1).filter((s) => eff(s) === 'pending').length
     : 0;
-  const allDone = visible.every((s) => eff(s.status) === 'done');
-  const hasFailed = visible.some((s) => eff(s.status) === 'failed');
+  const allDone = visible.every((s) => eff(s) === 'done');
+  const hasFailed = visible.some((s) => eff(s) === 'failed');
+  const blocked = visible.find((s) => eff(s) === 'blocked');
+  const detail = blocked ? (blockedRunReason(error) ?? blocked.detail) : active?.detail;
   const duration = active ? stepDuration(active) : null;
   const label = isCancelled
     ? 'cancelled'
     : ((runStatus
-        ? deriveRunLifecycleView({ status: runStatus, waitingForOperator }).activityLabel
+        ? deriveRunLifecycleView({ status: runStatus, waitingForOperator, error }).activityLabel
         : undefined) ??
       (allDone
         ? 'done'
@@ -92,7 +93,7 @@ export function RunPipelineMini({
     <View style={miniStyles.container}>
       <View style={miniStyles.bars}>
         {visible.map((step, i) => {
-          const vis = eff(step.status);
+          const vis = eff(step);
           return (
             <View
               key={`${step.name}-${i}`}
@@ -114,15 +115,16 @@ export function RunPipelineMini({
             allDone && { color: colors.statusOk },
             // A held run's failed step is what it waits on a person for, not a failure.
             hasFailed && runStatus !== 'needs-decision' && { color: colors.statusFail },
+            blocked && { color: colors.statusWarn },
             isCancelled && { color: colors.statusFail },
           ]}
           numberOfLines={1}
         >
           {label}
         </Text>
-        {!allDone && !isCancelled && active?.detail ? (
+        {!allDone && !isCancelled && detail ? (
           <Text style={miniStyles.detail} numberOfLines={2}>
-            {active.detail}
+            {detail}
           </Text>
         ) : null}
       </View>
@@ -142,7 +144,8 @@ export function RunPipelineFull({
   const visible = steps.filter((s) => s.status !== 'skipped');
   if (visible.length === 0) return null;
 
-  const eff = (s: RunStepStatus) => effectiveStatus(s, runStatus);
+  const eff = (s: RunStep) =>
+    runStatus ? runStepDisplayStatus({ status: runStatus, steps }, s) : s.status;
 
   return (
     <ScrollView
@@ -151,9 +154,9 @@ export function RunPipelineFull({
       contentContainerStyle={fullStyles.scrollContent}
     >
       {visible.map((step, i) => {
-        const vis = eff(step.status);
+        const vis = eff(step);
         const color = stepColor(vis);
-        const prevDone = i > 0 && eff(visible[i - 1].status) === 'done';
+        const prevDone = i > 0 && eff(visible[i - 1]) === 'done';
         return (
           <React.Fragment key={`${step.name}-${i}`}>
             {i > 0 && (
@@ -204,10 +207,11 @@ export function RunPipelineFull({
   );
 }
 
-function stepDotIcon(status: RunStepStatus): string {
+function stepDotIcon(status: RunStepDisplayStatus): string {
   if (status === 'done') return '✓';
   if (status === 'running') return '▸';
   if (status === 'failed') return '✗';
+  if (status === 'blocked') return '!';
   return '';
 }
 

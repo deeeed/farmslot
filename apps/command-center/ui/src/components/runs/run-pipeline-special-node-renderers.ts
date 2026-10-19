@@ -1,6 +1,12 @@
 import { nothing, svg } from 'lit';
 
-import type { Run, RunStep, RunStepStatus, TaskProgressStructured } from '@farmslot/protocol';
+import type {
+  Run,
+  RunStep,
+  RunStepDisplayStatus,
+  TaskProgressStructured,
+} from '@farmslot/protocol';
+import { blockedRunReason } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 import {
@@ -20,7 +26,7 @@ import { formatDuration, formatElapsed, stepStatusColor } from './run-utils.js';
 
 export interface RunPipelineSpecialNodeRenderContext {
   run: Run;
-  visibleStatus: (step: RunStep) => RunStepStatus;
+  visibleStatus: (step: RunStep) => RunStepDisplayStatus;
   inlineCiFixActive: boolean;
   monitorTaskProgress: TaskProgressStructured | undefined;
   reviewTaskProgress: TaskProgressStructured | undefined;
@@ -38,21 +44,26 @@ export function renderMonitorPipelineNode(n: NodePos, ctx: RunPipelineSpecialNod
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
+  const isBlocked = vis === 'blocked';
 
-  const fillColor = isDone
-    ? `${colors.statusOk}12`
-    : isRunning
-      ? '#3b82f618'
-      : isFailed
-        ? `${colors.statusFail}12`
-        : 'transparent';
-  const strokeColor = isDone
-    ? `${colors.statusOk}66`
-    : isRunning
-      ? '#3b82f6'
-      : isFailed
-        ? colors.statusFail
-        : `${colors.textMuted}33`;
+  const fillColor = isBlocked
+    ? `${colors.statusWarn}18`
+    : isDone
+      ? `${colors.statusOk}12`
+      : isRunning
+        ? '#3b82f618'
+        : isFailed
+          ? `${colors.statusFail}12`
+          : 'transparent';
+  const strokeColor = isBlocked
+    ? colors.statusWarn
+    : isDone
+      ? `${colors.statusOk}66`
+      : isRunning
+        ? '#3b82f6'
+        : isFailed
+          ? colors.statusFail
+          : `${colors.textMuted}33`;
 
   const elapsed = step.durationMs
     ? formatDuration(step.durationMs)
@@ -115,13 +126,14 @@ export function renderMonitorPipelineNode(n: NodePos, ctx: RunPipelineSpecialNod
           <text class="node-meta" x="${n.w / 2}" y="27"
                 text-anchor="middle" dominant-baseline="central"
                 fill="${stepStatusColor(vis)}">
-            ${isDone ? 'v' : isRunning ? '*' : isFailed ? 'x' : ''}
+            ${isBlocked ? '! blocked' : isDone ? 'v' : isRunning ? '*' : isFailed ? 'x' : ''}
           </text>
         `
             : nothing
         }
       `
       }
+      ${blockedTitle(ctx.run, isBlocked)}
     </g>
   `;
 }
@@ -134,18 +146,19 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
   const isSkipped = vis === 'skipped';
+  const isBlocked = vis === 'blocked';
   // Shared tone map with mini (issues → orange unless maxRetriesExhausted).
-  const tone = pipelineStepTone(step, { runError: ctx.run.error });
+  const tone = isBlocked ? 'warn' : pipelineStepTone(step, { runError: ctx.run.error });
   const toneColors = pipelineToneFillStroke(tone);
 
   const fillColor =
-    isDone || isRunning || isFailed || isSkipped
+    isDone || isRunning || isFailed || isSkipped || isBlocked
       ? isSkipped && tone === 'muted'
         ? `${colors.textMuted}12`
         : toneColors.fill
       : 'transparent';
   const strokeColor =
-    isDone || isRunning || isFailed || isSkipped
+    isDone || isRunning || isFailed || isSkipped || isBlocked
       ? isSkipped && tone === 'muted'
         ? `${colors.textMuted}66`
         : toneColors.stroke
@@ -254,7 +267,15 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
           - skipped
         </text>
       `
-                  : svg`
+                  : isBlocked
+                    ? svg`
+        <text class="node-meta" x="${n.w / 2}" y="27"
+              text-anchor="middle" dominant-baseline="central"
+              fill="${colors.statusWarn}">
+          ! blocked
+        </text>
+      `
+                    : svg`
         ${
           !isPending && !isDone
             ? svg`
@@ -280,6 +301,7 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
       `
           : nothing
       }
+      ${blockedTitle(ctx.run, isBlocked)}
     </g>
   `;
 }
@@ -449,8 +471,8 @@ export function renderHumanGatePipelineNode(n: NodePos, ctx: RunPipelineSpecialN
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
-  const isBlocked =
-    isRunning && ctx.run.status === 'blocked' && ctx.run.decisions.some((d) => !d.resolvedAt);
+  const isBlocked = vis === 'blocked';
+  const awaitingDecision = isBlocked && ctx.run.decisions.some((d) => !d.resolvedAt);
 
   // Human-gate always has a distinct amber border to show where intervention is expected
   const gateAccent = colors.statusWarn;
@@ -493,7 +515,7 @@ export function renderHumanGatePipelineNode(n: NodePos, ctx: RunPipelineSpecialN
         : colors.textMuted;
 
   return svg`
-    <g class="${isBlocked ? 'node-blocked-anim' : isRunning ? 'node-running-anim' : ''}"
+    <g class="${awaitingDecision ? 'node-blocked-anim' : isRunning ? 'node-running-anim' : ''}"
        transform="translate(${n.x}, ${n.y})"
        style="opacity: ${isPending ? 0.4 : 1}; cursor: pointer"
        @click=${() => ctx.onStepSelect(n.step)}>
@@ -539,13 +561,14 @@ export function renderHumanGatePipelineNode(n: NodePos, ctx: RunPipelineSpecialN
           <text class="node-meta" x="${n.w / 2}" y="27"
                 text-anchor="middle" dominant-baseline="central"
                 fill="${isBlocked ? colors.statusWarn : stepStatusColor(vis)}">
-            ${isBlocked ? '! waiting' : isRunning ? (step.detail ?? '*') : isFailed ? 'x' : ''}
+            ${awaitingDecision ? '! waiting' : isBlocked ? '! blocked' : isRunning ? (step.detail ?? '*') : isFailed ? 'x' : ''}
           </text>
         `
             : nothing
         }
       `
       }
+      ${blockedTitle(ctx.run, isBlocked)}
     </g>
   `;
 }
@@ -557,19 +580,24 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
+  const isBlocked = vis === 'blocked';
   const transfer = transferForPipelineNode(ctx.transferProgress, 'finalize');
   const transferActive = transfer?.state === 'running';
   // Package-change / re-review publish failures are reworkable (orange), not terminal red.
-  const tone = pipelineStepTone(
-    { ...step, detail: step.detail ?? ctx.run.error ?? undefined },
-    { runError: ctx.run.error },
-  );
+  const tone = isBlocked
+    ? 'warn'
+    : pipelineStepTone(
+        { ...step, detail: step.detail ?? ctx.run.error ?? undefined },
+        { runError: ctx.run.error },
+      );
   const toneColors = pipelineToneFillStroke(tone);
   const fillColor =
-    transferActive || isDone || isFailed || isRunning ? toneColors.fill : 'transparent';
+    transferActive || isDone || isFailed || isRunning || isBlocked
+      ? toneColors.fill
+      : 'transparent';
   const strokeColor = transferActive
     ? '#3b82f6'
-    : isDone || isFailed || isRunning
+    : isDone || isFailed || isRunning || isBlocked
       ? toneColors.stroke
       : `${colors.textMuted}33`;
 
@@ -653,11 +681,13 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
                 ? 'v'
                 : isRunning || transferActive
                   ? runningMeta
-                  : tone === 'warn'
-                    ? '! rework'
-                    : isFailed
-                      ? 'x'
-                      : ''
+                  : isBlocked
+                    ? '! blocked'
+                    : tone === 'warn'
+                      ? '! rework'
+                      : isFailed
+                        ? 'x'
+                        : ''
             }
           </text>
         `
@@ -676,6 +706,7 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
       `
           : nothing
       }
+      ${blockedTitle(ctx.run, isBlocked)}
     </g>
   `;
 }
@@ -687,8 +718,8 @@ export function renderCompletePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
-  const isBlocked =
-    isRunning && ctx.run.status === 'blocked' && ctx.run.decisions.some((d) => !d.resolvedAt);
+  const isBlocked = vis === 'blocked';
+  const awaitingDecision = isBlocked && ctx.run.decisions.some((d) => !d.resolvedAt);
 
   const fillColor = isBlocked
     ? `${colors.statusWarn}18`
@@ -736,7 +767,7 @@ export function renderCompletePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
   const totalDuration = metrics?.durationMs ? formatDuration(metrics.durationMs) : '';
 
   return svg`
-    <g class="${isBlocked ? 'node-blocked-anim' : isRunning ? 'node-running-anim' : ''}"
+    <g class="${awaitingDecision ? 'node-blocked-anim' : isRunning ? 'node-running-anim' : ''}"
        transform="translate(${n.x}, ${n.y})"
        style="opacity: ${isPending ? 0.4 : 1}; cursor: pointer"
        @click=${() => ctx.onStepSelect(n.step)}>
@@ -786,13 +817,20 @@ export function renderCompletePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
           <text class="node-meta" x="${n.w / 2}" y="27"
                 text-anchor="middle" dominant-baseline="central"
                 fill="${stepStatusColor(vis)}">
-            ${isDone ? 'v' : isRunning ? (step.detail ?? '*') : isFailed ? 'x' : ''}
+            ${isBlocked ? '! blocked' : isDone ? 'v' : isRunning ? (step.detail ?? '*') : isFailed ? 'x' : ''}
           </text>
         `
             : nothing
         }
       `
       }
+      ${blockedTitle(ctx.run, isBlocked)}
     </g>
   `;
+}
+
+/** A blocked step's tooltip carries the run's reason. */
+function blockedTitle(run: Run, isBlocked: boolean) {
+  const reason = isBlocked ? blockedRunReason(run.error) : undefined;
+  return reason ? svg`<title>${reason}</title>` : nothing;
 }

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A blocked run shows its reason and the step it stopped at. The run detail badge, the pipeline and the run list read `Blocked: <reason>` on one line, and the step it stopped at is amber with `! blocked` and the reason on hover. Before, it showed a done monitor with every later step skipped, which read as finished.
 
 ## 0.25.0 - 2026-10-19
 

@@ -9,7 +9,7 @@ import type {
   Run,
   RunCancelResult,
   RunStep,
-  RunStepStatus,
+  RunStepDisplayStatus,
   TaskProgressStructured,
 } from '@farmslot/protocol';
 import {
@@ -17,6 +17,7 @@ import {
   failedRunCancelEffects,
   isTerminalRunStatus,
   Methods,
+  runStepDisplayStatus,
 } from '@farmslot/protocol';
 
 import '../progress-tracker/progress-tracker.js';
@@ -73,7 +74,6 @@ import {
   renderPublicationReviewLoops,
   renderReviewLoop,
 } from './run-pipeline-svg-renderers.js';
-import { effectiveStepStatus } from './run-utils.js';
 
 @customElement('run-pipeline')
 export class RunPipeline extends LitElement {
@@ -151,8 +151,8 @@ export class RunPipeline extends LitElement {
     this._releaseTransfer = null;
   }
 
-  private _vis(status: RunStepStatus): RunStepStatus {
-    return effectiveStepStatus(status, this.run?.status ?? '');
+  private _vis(step: RunStep): RunStepDisplayStatus {
+    return runStepDisplayStatus(this.run, step);
   }
 
   render() {
@@ -166,7 +166,12 @@ export class RunPipeline extends LitElement {
     return html`
       <div class="pipeline-wrap">
         ${activityLabel
-          ? html`<div role="status" class="pipeline-status-row">${activityLabel}</div>`
+          ? html`<div class="pipeline-status-row">
+              <span role="status" class="pipeline-activity" title=${activityLabel}
+                >${activityLabel}</span
+              >
+              ${isActive && !showRecovery ? this.renderControls() : nothing}
+            </div>`
           : nothing}
         ${showRecovery
           ? html`
@@ -175,7 +180,7 @@ export class RunPipeline extends LitElement {
                 ${isActive ? this.renderControls() : nothing}
               </div>
             `
-          : isActive
+          : isActive && !activityLabel
             ? this.renderControls()
             : nothing}
         <svg
@@ -241,7 +246,7 @@ export class RunPipeline extends LitElement {
     return svg`
       ${renderPipelineDefs()}
       ${renderPipelineLanes(layout)}
-      ${layout.arrows.map((a) => renderPipelineArrow(a, this._vis(a.status as RunStepStatus)))}
+      ${layout.arrows.map((a, i) => renderPipelineArrow(a, this._vis(layout.nodes[i].step)))}
       ${layout.nodes.map((n) =>
         n.id === 'monitor'
           ? renderMonitorPipelineNode(n, specialNodeContext)
@@ -259,12 +264,12 @@ export class RunPipeline extends LitElement {
                       ? renderFinalizePipelineNode(n, specialNodeContext)
                       : renderDefaultPipelineNode(n, {
                           run: this.run,
-                          visibleStatus: this._vis(n.step.status),
+                          visibleStatus: this._vis(n.step),
                           onStepSelect: (step) => this._selectStep(step),
                         }),
       )}
-      ${renderReviewLoop(nodeMap, (step) => this._vis(step.status))}
-      ${renderPublicationReviewLoops(layout.nodes, (step) => this._vis(step.status))}
+      ${renderReviewLoop(nodeMap, (step) => this._vis(step))}
+      ${renderPublicationReviewLoops(layout.nodes, (step) => this._vis(step))}
       ${renderPipelineDecisions(this.run, nodeMap)}
       ${renderPipelineFocus({
         nodes: layout.nodes,
@@ -277,7 +282,7 @@ export class RunPipeline extends LitElement {
   private _specialNodeContext(): RunPipelineSpecialNodeRenderContext {
     return {
       run: this.run,
-      visibleStatus: (step) => this._vis(step.status),
+      visibleStatus: (step) => this._vis(step),
       inlineCiFixActive: this._isInlineCIFixActive(),
       monitorTaskProgress: this._monitorTaskProgress(),
       reviewTaskProgress: this._reviewTaskProgress(),

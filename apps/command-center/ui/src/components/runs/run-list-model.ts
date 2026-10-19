@@ -113,7 +113,8 @@ export function runProgressSummary(
     text,
   });
   const pending = run.decisions.find((decision) => !decision.resolvedAt);
-  const activity = deriveRunLifecycleView(run).activityLabel;
+  // A blocked run's reason heads its detail; the list names what the run waits on.
+  const activity = run.status === 'blocked' ? undefined : deriveRunLifecycleView(run).activityLabel;
   if (activity) return summary(run.status === 'fixing' ? 'step' : 'gate', activity);
   if (pending) {
     const action = pending.actions.find((item) => item.style === 'primary') ?? pending.actions[0];

@@ -6,6 +6,7 @@ import {
   type FlowType,
   type Run,
   type RunStep,
+  runStepDisplayStatus,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
 
@@ -38,7 +39,7 @@ import {
   pipelineToneColor,
   publicationReviewVerdictStatus,
 } from './run-pipeline-status.js';
-import { effectiveStepStatus, formatDuration } from './run-utils.js';
+import { formatDuration } from './run-utils.js';
 
 interface MiniSegment {
   name: string;
@@ -142,9 +143,10 @@ export class RunPipelineMini extends LitElement {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 260px;
+      max-width: max-content;
       margin-left: 4px;
-      flex: 0 1 auto;
+      /* Capped by its basis, not max-width, so a long label gives way before the bars. */
+      flex: 0 1000 260px;
     }
   `;
 
@@ -152,12 +154,10 @@ export class RunPipelineMini extends LitElement {
     const isCancelled = this.run?.status === 'cancelled';
     const activityLabel = this.run ? deriveRunLifecycleView(this.run).activityLabel : undefined;
     const awaitingOperator = isInteractiveCompletionAwaitingOperator(this.run);
-    const segments = this.buildSegments();
-    if (isCancelled) {
-      for (const seg of segments) {
-        seg.status = effectiveStepStatus(seg.status, 'cancelled');
-      }
-    }
+    const segments = this.buildSegments().map((segment) => ({
+      ...segment,
+      status: this.run ? runStepDisplayStatus(this.run, segment) : segment.status,
+    }));
     const runningIndex = segments.reduce(
       (latest, segment, index) => (segment.status === 'running' ? index : latest),
       -1,
@@ -197,7 +197,9 @@ export class RunPipelineMini extends LitElement {
             >cancelled</span
           >`
         : activityLabel
-          ? html`<span class="active-label" role="status">${activityLabel}</span>`
+          ? html`<span class="active-label" role="status" title=${activityLabel}
+              >${activityLabel}</span
+            >`
           : awaitingOperator
             ? html`<span class="active-label">awaiting operator action</span>`
             : active
@@ -211,7 +213,7 @@ export class RunPipelineMini extends LitElement {
   }
 
   private activeTaskLabel(
-    active: MiniSegment | undefined,
+    active: Pick<MiniSegment, 'name'> | undefined,
   ): { label: string; title: string } | null {
     if (!active) return null;
     const activeProgressStep = activeTaskProgressStepId(this.run, this.taskProgress);
