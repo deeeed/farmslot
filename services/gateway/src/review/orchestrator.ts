@@ -116,6 +116,7 @@ import {
   isWorkerAlive,
   paneHostsRunnerProcess,
   rediscoverAcceptingWorkerPane,
+  runnerTurnIsActive,
   runnerTurnLeaseIsActive,
   type WorkerPaneRediscovery,
 } from './worker-lifecycle.js';
@@ -2166,6 +2167,7 @@ export async function retryDeferredFixDelivery({
   shouldAbort = () => false,
   isTargetBound = () => false,
   deferredReason,
+  turnInProgress = async () => false,
   retryIntervalMs = REVIEW_DELIVERY_RETRY_INTERVAL_MS,
   retryWindowMs = REVIEW_DELIVERY_RETRY_WINDOW_MS,
 }: {
@@ -2178,10 +2180,12 @@ export async function retryDeferredFixDelivery({
   shouldAbort?: () => boolean;
   isTargetBound?: () => boolean;
   deferredReason?: () => string | null;
+  /** The worker is mid-turn: its busy time does not count against the retry window. */
+  turnInProgress?: (target: string) => Promise<boolean>;
   retryIntervalMs?: number;
   retryWindowMs?: number;
 }): Promise<FixDeliveryRetryResult> {
-  const deadline = Date.now() + retryWindowMs;
+  let deadline = Date.now() + retryWindowMs;
   let currentTarget = target;
   let sent = false;
   let attempt = 1;
@@ -2211,6 +2215,8 @@ export async function retryDeferredFixDelivery({
       }
     }
     sent = await send(currentTarget);
+    // A worker mid-turn is not refusing the task: the window restarts, so it lands at turn end.
+    if (!sent && (await turnInProgress(currentTarget))) deadline = Date.now() + retryWindowMs;
   }
   return { sent, target: currentTarget, attempts: attempt, seenWindows };
 }
@@ -2454,6 +2460,7 @@ async function sendOwnedFeedbackToWorker(
         shouldAbort: () => terminalRetainedHoldReason != null,
         isTargetBound: () => promptSendAttempted,
         deferredReason: () => lastRetainedHoldReason,
+        turnInProgress: (retryTarget) => runnerTurnIsActive(vars, retryTarget, runner),
       });
       sent = retry.sent;
       workerTarget = retry.target;

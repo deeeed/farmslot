@@ -2093,6 +2093,34 @@ test('retryDeferredFixDelivery bails when the run reaches a terminal status', as
   assert.equal(sendCalls, 0);
 });
 
+test('a fix task waits for the worker turn to end instead of closing its window', async (t) => {
+  // TAT-4006 7721a02b: grok ran an operator request for 26 min while review round 2 delivered its
+  // fix. Delivery deferred 22 times, the window closed and the fix relaunch killed the turn.
+  t.mock.method(console, 'warn', () => {});
+  const run = makeRun({ status: 'reviewing' });
+  let turnActive = true;
+  let sends = 0;
+  const result = await retryDeferredFixDelivery({
+    runId: run.id,
+    target: 'coredev-2:1.1',
+    send: async () => {
+      sends += 1;
+      if (sends === 30) turnActive = false;
+      return sends > 30;
+    },
+    rediscover: async () => ({ target: 'coredev-2:1.1', window: '1', seenWindows: [] }),
+    persistTarget: async () => {},
+    getRun: () => run,
+    deferredReason: () =>
+      'Live grok retained handoff was not accepted; refusing a destructive fresh-dispatch fallback',
+    turnInProgress: async () => turnActive,
+    retryIntervalMs: 1,
+    retryWindowMs: 10,
+  });
+  assert.equal(result.sent, true, `fix delivered at turn end, not after ${sends} busy sends`);
+  assert.equal(sends, 31);
+});
+
 test('retryDeferredFixDelivery stops immediately after retained delivery becomes terminal', async () => {
   let terminal = false;
   let rediscoverCalls = 0;

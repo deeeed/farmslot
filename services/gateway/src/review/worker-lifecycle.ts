@@ -45,6 +45,17 @@ export async function runnerTurnLeaseIsActive(
   return paneHostsRunnerProcess(vars, target, runner);
 }
 
+/** The pane's runner is mid-turn, whichever turn it is: a fix, an operator request or its own. */
+export async function runnerTurnIsActive(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+): Promise<boolean> {
+  const state = await readRunnerTurnState(vars, target, runner);
+  if (state?.confidence !== 'high' || state.value !== 'active') return false;
+  return paneHostsRunnerProcess(vars, target, runner);
+}
+
 function recreateRoleWindowName(roleWindowName?: string | null, flowType?: string | null): string {
   const named = roleWindowName?.trim();
   if (named) return named;
