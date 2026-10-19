@@ -18,6 +18,8 @@ import {
   applyTaskLocalInvocationTrust,
   createRecipeRunner,
   createStandardCoreAdapters,
+  findLibraryRecipe,
+  loadRecipeLibraries,
   type RecipeRunRequest,
   resolveRecipeLibrarySources,
   resolveRecipeTrustInput,
@@ -402,16 +404,40 @@ export function registerRecipeCommand(program: Command): void {
         approvalDigest: opts.approvePlan,
       });
       const invocationTrust = trust.source?.trust ?? 'trusted';
-      const librarySources = applyTaskLocalInvocationTrust(
-        await resolveRecipeLibrarySources({
+      // A library ref, platform alias or <library>.<ref> id runs the recipe it names; the libraries
+      // beside a recipe file count only when the active libraries do not name it.
+      const loadOptions = opts.adapter ? { adapter: opts.adapter } : {};
+      const findRecipe = async (sources: Awaited<ReturnType<typeof resolveRecipeLibrarySources>>) =>
+        findLibraryRecipe(
+          recipePath,
+          sources,
+          await loadRecipeLibraries(sources, loadOptions),
+          loadOptions,
+        );
+      let sources = await resolveRecipeLibrarySources({ cliEntries: opts.librarySource });
+      let match = await findRecipe(sources);
+      if (!match) {
+        sources = await resolveRecipeLibrarySources({
           cliEntries: opts.librarySource,
           recipePath: resolveRecipeCliPath(recipePath),
-        }),
-        invocationTrust,
-      );
+        });
+        match = await findRecipe(sources);
+      }
+      const librarySources = applyTaskLocalInvocationTrust(sources, invocationTrust);
       const { withRecipeSignals } = await import('@farmslot/recipe-cli/harness');
       const request: RecipeRunRequest = {
-        recipePath: resolveRecipeCliPath(recipePath),
+        recipePath: match ? match.recipe.path : resolveRecipeCliPath(recipePath),
+        ...(match
+          ? {
+              selection: {
+                name: recipePath,
+                resolvedBy: match.resolvedBy,
+                source: match.recipe.source,
+                file: match.recipe.file,
+                path: match.recipe.path,
+              },
+            }
+          : {}),
         artifactsDir: resolveRecipeCliPath(opts.artifactsDir),
         projectRoot: opts.projectRoot
           ? resolveRecipeCliPath(opts.projectRoot)
