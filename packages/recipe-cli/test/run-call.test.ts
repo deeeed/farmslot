@@ -1611,7 +1611,7 @@ describe('recipe child executable', () => {
         const target = checkout();
         const expected = locked
           ? path.join(target, 'locked', 'bin', 'shop-harness')
-          : path.join(harnessHost().packageRoot, harnessHost().bin);
+          : path.join(harnessHost().packageRoot, 'bin', 'shop-harness');
         if (locked) process.env.SHOP_HARNESS_EXECUTABLE = expected;
         else delete process.env.SHOP_HARNESS_EXECUTABLE;
         const before = process.env.SHOP_HARNESS_EXECUTABLE;

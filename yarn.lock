@@ -5099,8 +5099,6 @@ __metadata:
     semver: "npm:^7.7.3"
     tsx: "npm:^4.19.0"
     typescript: "npm:^5.6.0"
-  bin:
-    farmslot-recipe: ./bin/farmslot-recipe.mjs
   languageName: unknown
   linkType: soft
 

@@ -219,6 +219,10 @@ Options:
   --matrix                       Show action support across the provider runtimes
   --raw                          Print the resolved action manifest
   --action-manifest <path>       Select an action manifest
+  --project-root <path>          Standalone core mode: discover actions without a
+                                 project
+  --library-source <spec>        Standalone recipe library source; repeatable (default:
+                                 [])
   -h, --help                     display help for command
 ```
 
@@ -588,8 +592,8 @@ Options:
   --describe                     Describe one recipe and its dependencies
   --proof                        With --plan, preflight behavioral proof bindings
   --json-stream                  Stream JSONL progress and a terminal result
-  --project-root <path>          Use explicit standalone core execution with a manifest
-                                 and artifact directory
+  --project-root <path>          Standalone core mode: run with a manifest and artifact
+                                 directory, or discover recipes without a project
   --library-source <spec>        Standalone recipe library source; repeatable (default:
                                  [])
   -h, --help                     display help for command

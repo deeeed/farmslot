@@ -70,21 +70,21 @@ task selection follows the retained package.
 
 ## CLI
 
-The `farmslot-recipe` command ships in [`@farmslot/recipe-cli`](https://farmslot.io/docs/reference/recipe-discovery), which also adds library-wide discovery (`actions`, `list`, `describe`, `explain`, `search`, `template`). This package keeps the programmatic `run`/`validate` program at `@farmslot/recipe-runner/cli`.
+The `farmslot` CLI runs recipes with `farmslot recipe run` and discovers what libraries offer ([recipe discovery](https://farmslot.io/docs/reference/recipe-discovery)). Outside a Farmslot project, `--project-root` selects its standalone core mode. This package keeps the programmatic `run`/`validate` program at `@farmslot/recipe-runner/cli`.
 
 Discover first:
 
 ```bash
-farmslot-recipe run --list --adapter core
-farmslot-recipe run service.smoke --describe --adapter core
+farmslot recipe run --list --project-root . --platform core
+farmslot recipe run service.smoke --describe --project-root . --platform core
 ```
 
 Run a library recipe with typed `key=value` parameters:
 
 ```bash
-farmslot-recipe run service.smoke environment=local retries=2 \
+farmslot recipe run service.smoke environment=local retries=2 \
   --adapter core \
-  --library team=../team-recipes \
+  --library-source team=../team-recipes \
   --action-manifest action-manifest.json \
   --artifacts-dir artifacts/recipe-run
 ```

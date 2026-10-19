@@ -85,6 +85,113 @@ export function projectCommandInvocation(
   return { argv, contract: { ...contract, options: { ...specs, '--json': { kind: 'boolean' } } } };
 }
 
+/**
+ * Standalone discovery accepts only its own flags. `run` takes one mode, inputs only with
+ * `--plan` and `--source` only with `--list`; `actions` takes one quoted query.
+ */
+function standaloneDiscoveryInvocation(
+  invocation: ProjectCommandInvocation,
+  command: 'run' | 'actions',
+): ProjectCommandInvocation {
+  const flags = command === 'run' ? ['--list', '--describe', '--plan', '--source'] : ['--action'];
+  const allowed = new Set([...flags, '--project-root', '--library-source', '--platform', '--json']);
+  return {
+    ...invocation,
+    contract: {
+      ...invocation.contract,
+      options: Object.fromEntries(
+        Object.entries(invocation.contract.options).filter(([flag]) => allowed.has(flag)),
+      ),
+      refine: (positionals, seen, failure) => {
+        const refusal =
+          command === 'actions'
+            ? positionals.length > 1 && 'Quote a query of several words.'
+            : ['--list', '--describe', '--plan'].filter((flag) => seen.has(flag)).length > 1
+              ? 'Choose one of --list, --describe and --plan.'
+              : positionals.length > 1 && !seen.has('--plan')
+                ? 'Recipe inputs belong to --plan.'
+                : seen.has('--source') && !seen.has('--list') && '--source filters --list.';
+        return refusal ? failure.usage('CLI_INVALID_OPTION_VALUE', refusal) : null;
+      },
+    },
+  };
+}
+
+function discoveryModes(options: CliOptions): Array<'list' | 'describe' | 'plan'> {
+  return (['list', 'describe', 'plan'] as const).filter((mode) => options[mode] === true);
+}
+
+/**
+ * Standalone discovery reads the recipe libraries without a project, with the standard core
+ * handlers standalone execution runs. It prints the recipe-cli discovery envelopes, and the
+ * commands they suggest use this CLI's syntax.
+ */
+async function runStandaloneDiscovery(
+  argv: readonly string[],
+  projectRoot: string,
+  options: CliOptions,
+): Promise<void> {
+  const [{ registerDiscoveryCommands }, { createStandardCoreAdapters }, shared] = await Promise.all(
+    [
+      import('@farmslot/recipe-cli'),
+      import('@farmslot/recipe-runner'),
+      import('@farmslot/recipe-cli/harness'),
+    ],
+  );
+  const root = ['--project-root', shared.shellQuoteArg(projectRoot)];
+  const program = new Command('farmslot recipe');
+  registerDiscoveryCommands(program, {
+    commandName: 'farmslot recipe',
+    handlers: createStandardCoreAdapters().map((adapter) => adapter.action),
+    usage: {
+      libraryOption: '--library-source',
+      command: (command, args) => standaloneCommand(command, args, root),
+    },
+  });
+  const platform = shared.optionString(options, 'platform');
+  await program.parseAsync(
+    [
+      ...argv,
+      ...(shared.optionStrings(options, 'librarySource') ?? []).flatMap((entry) => [
+        '--library',
+        entry,
+      ]),
+      ...(platform ? ['--platform', platform] : []),
+      ...(options.json === true ? ['--json'] : []),
+    ],
+    { from: 'user' },
+  );
+}
+
+/** A command a discovery hint names, respelled: describe, explain and search have no verb here. */
+function standaloneCommand(
+  command: string,
+  args: readonly string[],
+  root: readonly string[],
+): string {
+  const rest = [...args];
+  const take = (flag: string): string | undefined => {
+    const index = rest.indexOf(flag);
+    return index < 0 ? undefined : rest.splice(index, 2)[1];
+  };
+  const kind = take('--kind');
+  const params: string[] = [];
+  for (let param = take('--param'); param !== undefined; param = take('--param'))
+    params.push(param);
+  const [name = '', ...flags] = rest;
+  const words =
+    command === 'run'
+      ? ['run', ...args]
+      : command === 'search'
+        ? ['actions', ...args, ...root]
+        : command === 'explain'
+          ? ['run', name, ...params, '--plan', ...root, ...flags]
+          : kind === 'action'
+            ? ['actions', '--action', name, ...root, ...flags]
+            : ['run', name, '--describe', ...root, ...flags];
+  return ['farmslot recipe', ...words].join(' ');
+}
+
 export function registerProjectExecutionCommand(
   recipe: Command,
   operation: 'run' | 'call',
@@ -132,7 +239,7 @@ export function registerProjectExecutionCommand(
       command
         .option(
           '--project-root <path>',
-          'Use explicit standalone core execution with a manifest and artifact directory',
+          'Standalone core mode: run with a manifest and artifact directory, or discover recipes without a project',
         )
         .option(
           '--library-source <spec>',
@@ -166,6 +273,26 @@ export function registerProjectExecutionCommand(
             ? failure.usage('CLI_INVALID_OPTION_VALUE', '--proof requires --plan.')
             : null,
       });
+      const projectRoot = shared.optionString(options, 'projectRoot');
+      if (standalone && projectRoot !== undefined && discoveryModes(options).length > 0) {
+        const parsed = shared.parseProjectInvocation(
+          operation,
+          standaloneDiscoveryInvocation(invocation, 'run'),
+        );
+        const [name, ...params] = parsed.positional;
+        const mode = discoveryModes(options)[0];
+        const source = shared.optionString(options, 'source');
+        await runStandaloneDiscovery(
+          mode === 'list'
+            ? ['list', ...(source ? ['--source', source] : [])]
+            : mode === 'describe'
+              ? ['describe', name, '--kind', 'recipe']
+              : ['explain', name, ...params.flatMap((param) => ['--param', param])],
+          projectRoot,
+          options,
+        );
+        return;
+      }
       if (standalone) {
         // The original complete manifest/artifact invocation keeps core-only semantics.
         // Project options select the provider path; preview flags can never become core execution.
@@ -363,12 +490,41 @@ export function registerProjectActionsCommand(recipe: Command): void {
     .option('--matrix', 'Show action support across the provider runtimes')
     .option('--raw', 'Print the resolved action manifest')
     .option('--action-manifest <path>', 'Select an action manifest')
+    .option('--project-root <path>', 'Standalone core mode: discover actions without a project')
+    .option(
+      '--library-source <spec>',
+      'Standalone recipe library source; repeatable',
+      collectRecipeOption,
+      [],
+    )
     .action(async (query: string | undefined, _: unknown, cmd: Command) => {
       const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
       const emit = createEmitter(output, cmd);
       const options: CliOptions = { ...cmd.optsWithGlobals(), json: isMachineMode(output) };
       try {
         const shared = await import('@farmslot/recipe-cli/harness');
+        const projectRoot = shared.optionString(options, 'projectRoot');
+        if (projectRoot !== undefined) {
+          shared.parseProjectInvocation(
+            'actions',
+            standaloneDiscoveryInvocation(
+              projectCommandInvocation(cmd, { positionals: [{ label: 'query' }] }),
+              'actions',
+            ),
+          );
+          const action = shared.optionString(options, 'action');
+          if (action && query) throw shared.usageError('--action takes no query.');
+          await runStandaloneDiscovery(
+            action
+              ? ['describe', action, '--kind', 'action']
+              : query
+                ? ['search', query]
+                : ['actions'],
+            projectRoot,
+            options,
+          );
+          return;
+        }
         process.exitCode = await shared.withProjectRecipeHost(
           await projectRecipeHostOptions('actions', undefined, options),
           ({ engine, cli, librarySources }) =>

@@ -42,7 +42,8 @@ export function recipeHarnessPath(projectRoot: string, ...segments: string[]): s
 export function harnessExecutable(): string {
   const host = harnessHost();
   return path.resolve(
-    process.env[hostEnvName('EXECUTABLE')] ?? path.join(host.packageRoot, host.bin),
+    process.env[hostEnvName('EXECUTABLE')] ??
+      (host.bin ? path.join(host.packageRoot, host.bin) : process.argv[1]),
   );
 }
 

@@ -12,6 +12,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { isRecord } from './json.js';
 import {
   checkRecipeLibraryRequirements,
+  digestRecipeLibrary,
   libraryRootReal,
   listLibraryFiles,
   readRecipeLibraryManifest,
@@ -21,7 +22,12 @@ import {
 import { isPathWithin } from './path.js';
 import { RecipeResolutionError } from './resolution-error.js';
 import { invalidRecipeSource } from './trust-error.js';
-import type { LoadedRecipeLibrarySource, RecipeLibrarySource, RecipeLogger } from './types.js';
+import type {
+  LoadedRecipeLibrarySource,
+  RecipeLibrarySource,
+  RecipeLogger,
+  RecipeSelection,
+} from './types.js';
 
 const LIBRARY_RECIPES_DIR = 'recipes';
 const RECIPE_FILE_SUFFIX = '.recipe.json';
@@ -313,6 +319,73 @@ export async function findLibraryRecipe(
     if (recipe && !recipe.aliasFor) return { recipe, resolvedBy: 'id' };
   }
   return undefined;
+}
+
+export interface RecipeRunSelection {
+  /** The active libraries, each with its content digest in its provenance. */
+  librarySources: RecipeLibrarySource[];
+  library: RecipeLibraryResolution;
+  match?: LibraryRecipeMatch;
+  /** How a named recipe was selected, as the run summary records it. */
+  selection?: RecipeSelection;
+}
+
+/**
+ * The libraries and recipe a run command names: a ref, platform alias or `<library>.<ref>` id
+ * from the active libraries, else a recipe file, whose adjacent task libraries then join them.
+ */
+export async function resolveRecipeRunSelection(
+  recipeInput: string | undefined,
+  options: RecipeLibraryLoadOptions & {
+    cliEntries?: string[];
+    /** The recipe file `recipeInput` names when no library recipe matches it. */
+    recipePath?: string;
+  },
+): Promise<RecipeRunSelection> {
+  const { cliEntries, recipePath, ...loadOptions } = options;
+  let sources = await resolveRecipeLibrarySources({ cliEntries });
+  let library = await loadRecipeLibraries(sources, loadOptions);
+  let match = recipeInput
+    ? await findLibraryRecipe(recipeInput, sources, library, loadOptions)
+    : undefined;
+  if (recipeInput && !match) {
+    sources = await resolveRecipeLibrarySources({ cliEntries, recipePath });
+    library = await loadRecipeLibraries(sources, loadOptions);
+    match = await findLibraryRecipe(recipeInput, sources, library, loadOptions);
+  }
+  const librarySources = await Promise.all(
+    sources.map(async (source) => ({
+      ...source,
+      provenance: {
+        ...(source.provenance ?? {
+          kind: 'library' as const,
+          trust: 'unknown' as const,
+          name: source.name,
+          path: source.root,
+        }),
+        digest: await digestRecipeLibrary(
+          source.root,
+          await readRecipeLibraryManifest(source.root),
+        ),
+      },
+    })),
+  );
+  return {
+    librarySources,
+    library,
+    ...(recipeInput && match
+      ? {
+          match,
+          selection: {
+            name: recipeInput,
+            resolvedBy: match.resolvedBy,
+            source: match.recipe.source,
+            file: match.recipe.file,
+            path: match.recipe.path,
+          },
+        }
+      : {}),
+  };
 }
 
 /** Recipe files under recipes/, relative to it, from the shared library walker. */

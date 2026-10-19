@@ -48,7 +48,7 @@ const MM_HOST = {
   journaledCommands: ['run', 'call', 'launch', 'fixtures'],
 };
 
-// The farmslot-recipe identity, captured before any test reconfigures the host.
+// The default identity, captured before any test reconfigures the host.
 const DEFAULT_HOST = harnessHost();
 
 const roots: string[] = [];
@@ -81,14 +81,15 @@ afterEach(() => {
 });
 
 describe('host identity', () => {
-  test('defaults to farmslot-recipe and the shared runtime layout', () => {
+  test('defaults to the farmslot CLI and the shared runtime layout', () => {
     const host = harnessHost();
-    assert.equal(host.name, 'farmslot-recipe');
+    assert.equal(host.name, 'farmslot recipe');
     assert.equal(hostEnvName('OPERATION_ID'), 'FARMSLOT_RECIPE_OPERATION_ID');
     assert.equal(recipeEnvName('ADAPTER_INPUT'), 'RECIPE_ADAPTER_INPUT');
     assert.equal(recipeRuntimeDir(), 'temp/recipe/runtime');
     assert.ok(fs.existsSync(path.join(host.packageRoot, 'package.json')));
-    assert.ok(fs.existsSync(harnessExecutable()), 'the default executable is the shipped bin');
+    // recipe-cli ships no executable, so the running script is the host's.
+    assert.equal(harnessExecutable(), path.resolve(process.argv[1]));
   });
 
   test('a product host keeps its own names and env prefix', () => {
@@ -107,10 +108,10 @@ describe('host identity', () => {
   test('requires every identity field and defaults the journal to nothing', () => {
     const { journaledCommands: _journaled, ...identity } = MM_HOST;
     assert.deepEqual(configureHarnessHost(identity).journaledCommands, []);
-    const { bin: _bin, ...missingBin } = MM_HOST;
-    // A host that forgets a field must not compile; it would inherit farmslot-recipe's.
-    // @ts-expect-error bin is required
-    const misconfigured = (): unknown => configureHarnessHost(missingBin);
+    const { packageRoot: _packageRoot, ...missingRoot } = MM_HOST;
+    // A host that forgets a field must not compile; it would inherit the default's.
+    // @ts-expect-error packageRoot is required
+    const misconfigured = (): unknown => configureHarnessHost(missingRoot);
     assert.equal(typeof misconfigured, 'function');
   });
 

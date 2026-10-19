@@ -72,8 +72,10 @@ function overlayDelegateValid(target: string, adapter: string): boolean {
   const runnerPath = fs.readFileSync(pointer, 'utf8').trim();
   if (!runnerPath || !fs.existsSync(runnerPath)) return false;
   // Runner dir is present; verify the binary inside still exists — the directory
-  // can survive a package removal while the binary inside is deleted.
-  return fs.existsSync(path.join(runnerPath, harnessHost().bin));
+  // can survive a package removal while the binary inside is deleted. A host
+  // without its own binary has none to lose.
+  const { bin } = harnessHost();
+  return bin === undefined || fs.existsSync(path.join(runnerPath, bin));
 }
 
 // Auto-ensure the runtime overlay (install phase). Missing + heal != off →

@@ -1,4 +1,4 @@
-// Generic harness support shared by every host CLI (`farmslot-recipe`, product
+// Generic harness support shared by every host CLI (the farmslot CLI, product
 // presets such as `mm-harness`): host identity, runtime paths, the resumability
 // journal, the checkout lock, JSON streaming and colour output.
 export {

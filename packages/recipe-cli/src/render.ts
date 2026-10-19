@@ -5,6 +5,7 @@ import type {
   DiscoveryParameter,
   DiscoveryRecipe,
   DiscoveryRecipeDetail,
+  DiscoveryTemplate,
   ExplainEnvelope,
   ExplainRecipeNode,
   SearchResult,
@@ -13,10 +14,11 @@ import type {
 export function renderLibraries(
   libraries: DiscoveryLibrary[],
   rules?: readonly string[],
+  libraryOption = '--library',
 ): string[] {
   const lines = ['Libraries (precedence order):'];
   if (libraries.length === 0)
-    lines.push('  none. Set RECIPE_LIBRARY_PATH=name=path or pass --library.');
+    lines.push(`  none. Set RECIPE_LIBRARY_PATH=name=path or pass ${libraryOption}.`);
   for (const library of libraries) {
     const override = library.overrides ? ` overrides env ${library.overrides}` : '';
     lines.push(
@@ -97,6 +99,7 @@ export function renderDescribeRecipe(recipe: DiscoveryRecipeDetail): string[] {
       ? renderNames('unresolved recipes', recipe.unresolvedRecipes)
       : []),
     ...renderNames('callers', recipe.callers),
+    ...(recipe.template ? renderTemplate(recipe.template) : []),
     `  Run: ${recipe.runCommand}`,
   ];
 }
@@ -121,7 +124,16 @@ export function renderDescribeAction(action: DiscoveryActionDetail): string[] {
         ]
       : []),
     ...renderNames('callers', action.callers),
+    ...renderTemplate(action.template),
   ];
+}
+
+function renderTemplate(template: DiscoveryTemplate): string[] {
+  const indent = (value: unknown) =>
+    JSON.stringify(value, null, 2)
+      .split('\n')
+      .map((line) => `    ${line}`);
+  return ['  node:', ...indent(template.node), '  recipe:', ...indent(template.recipe)];
 }
 
 export function renderExplain(envelope: ExplainEnvelope): string[] {

@@ -14,7 +14,7 @@ export {
 /**
  * Who is running the generic harness commands. A product harness (`mm-harness`)
  * configures this once at startup, so every message and environment variable
- * keeps that product's spelling; `farmslot-recipe` uses the defaults. Runtime
+ * keeps that product's spelling; the farmslot CLI uses the defaults. Runtime
  * paths are not per host: every host shares the checkout layout in paths.ts.
  */
 export interface HarnessHost {
@@ -34,8 +34,11 @@ export interface HarnessHost {
   packageName: string;
   /** The installed package root. */
   packageRoot: string;
-  /** The host executable, relative to `packageRoot`. */
-  bin: string;
+  /**
+   * The host executable, relative to `packageRoot`. The default host ships none,
+   * so the script the process is running stands in for it.
+   */
+  bin?: string;
   /** Commands the resumability journal records. */
   journaledCommands: readonly string[];
   /** A complete diagnostic command when the host exposes different doctor syntax. */
@@ -47,14 +50,13 @@ export interface HarnessHost {
 }
 
 const defaultHost: HarnessHost = {
-  name: 'farmslot-recipe',
+  name: 'farmslot recipe',
   product: 'project',
   envPrefix: 'FARMSLOT_RECIPE',
   recipeEnvPrefix: 'RECIPE',
   packageName: '@farmslot/recipe-cli',
   packageRoot: fileURLToPath(new URL('../..', import.meta.url)),
-  bin: 'bin/farmslot-recipe.mjs',
-  // farmslot-recipe journals nothing yet; a host lists the commands it journals.
+  // The default host journals nothing; a host lists the commands it journals.
   journaledCommands: [],
 };
 
@@ -91,7 +93,7 @@ export type HarnessHostConfig = Omit<HarnessHost, 'journaledCommands'> & {
 
 /**
  * Set the host identity. Call once, before any command runs. Every identity
- * field is required, so a host can't silently inherit farmslot-recipe's names.
+ * field is required, so a host can't silently inherit the default names.
  */
 export function configureHarnessHost(host: HarnessHostConfig): HarnessHost {
   const next: HarnessHost = { ...host, journaledCommands: host.journaledCommands ?? [] };
