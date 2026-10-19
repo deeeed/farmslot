@@ -1,17 +1,10 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { CancelledRunSlotHold } from '@farmslot/protocol';
+import type { CancelledRunSlotHold, CancelledRunSlotReplay } from '@farmslot/protocol';
 
 import { colors, fonts, lifecycleColor, spacing } from '../../lib/theme';
 
 import { useCancelledRunSlotRelease } from './use-cancelled-run-slot-release';
-
-/** The run view's other choice, shown before the release. */
-export interface CancelledRunSlotReplay {
-  label: string;
-  disabled: boolean;
-  onReplay: () => void;
-}
 
 /** A slot a cancelled run keeps for replay, with its release (ADR-054, 2026-10-19). */
 export function CancelledRunSlotRelease({

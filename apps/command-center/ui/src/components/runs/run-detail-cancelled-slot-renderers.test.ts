@@ -7,11 +7,11 @@ import {
   cancelledRunHoldReason,
   cancelledRunSlotChoices,
   type CancelledRunSlotHold,
+  type CancelledRunSlotReplay,
   type Run,
 } from '@farmslot/protocol';
 
 import { litBinding } from '../../testing/lit-text.js';
-import type { CancelledRunSlotReplay } from '../shared/cancelled-run-slot-release.js';
 
 import { renderCancelledRunSlotChoices } from './run-detail-cancelled-slot-renderers.js';
 import { canReplayRunSteps } from './run-detail-model.js';

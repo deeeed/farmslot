@@ -423,16 +423,25 @@ test('terminal cleanup releases providers independently of a surviving worker ho
   assert.equal(slotRow?.phase, 'occupied');
 });
 
-test('an identified terminal hold is freed after its worker disappears', async () => {
-  // A failed run's hold; a cancelled run keeps its slot for replay instead.
-  run.status = 'failed';
-  workerBlocker = 'worker still alive';
-  await releaseCompletedRunSlot(run);
-  workerBlocker = null;
-  assert.equal(await retryOccupiedRunSlot(SLOT_ID), true);
-  assert.equal(slotRow?.lifecycle, 'ready');
-  assert.equal(slotRow?.cleanup_run_id, null);
-});
+// A cancelled run keeps only the slot it still owns for replay; a cleanup hold
+// that names it only as cleanup owner is retried like any terminal run's.
+for (const status of ['failed', 'cancelled'] as const) {
+  test(`an identified ${status} cleanup hold is freed after its worker disappears`, async () => {
+    run.status = status;
+    workerBlocker = 'worker still alive';
+    await releaseCompletedRunSlot(run);
+    assert.equal(
+      slotRow?.current_run_id ?? null,
+      null,
+      'the hold names the run only as cleanup owner',
+    );
+    assert.equal(slotRow?.cleanup_run_id, RUN_ID);
+    workerBlocker = null;
+    assert.equal(await retryOccupiedRunSlot(SLOT_ID), true);
+    assert.equal(slotRow?.lifecycle, 'ready');
+    assert.equal(slotRow?.cleanup_run_id, null);
+  });
+}
 
 for (const name of ['complete', 'finalize']) {
   test(`an occupied ${name} prerequisite hold retains its workspace and providers`, async () => {

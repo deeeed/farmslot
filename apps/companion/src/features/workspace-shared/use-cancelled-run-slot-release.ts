@@ -24,7 +24,7 @@ export function useCancelledRunSlotRelease(hold: CancelledRunSlotHold) {
     setError(null);
     try {
       const refusal = await releaseCancelledRunSlot(
-        (method, params) => client.request<SlotReleaseResult>(method, params),
+        (method, params, timeoutMs) => client.request<SlotReleaseResult>(method, params, timeoutMs),
         hold,
       );
       if (isCurrent()) setError(refusal);

@@ -5,6 +5,7 @@ import type { Run, RunStep } from '../../src/contracts/runs.js';
 import type { SlotStatus } from '../../src/contracts/slots.js';
 import type { SlotReleaseParams } from '../../src/rpc/slot.js';
 import {
+  CANCELLED_RUN_SLOT_RELEASE_TIMEOUT_MS,
   cancelledRunHoldReason,
   cancelledRunSlotChoices,
   cancelledRunSlotHold,
@@ -89,16 +90,20 @@ test('the run view offers nothing once the slot is released or the run moved on'
 test('the release sends the reset release and reports a refusal', async () => {
   const hold = cancelledRunSlotHold(keptSlot());
   if (!hold) return assert.fail('the kept slot has no hold');
-  const sent: Array<[string, SlotReleaseParams]> = [];
+  const sent: Array<[string, SlotReleaseParams, number]> = [];
   assert.equal(
-    await releaseCancelledRunSlot(async (method, params) => {
-      sent.push([method, params]);
+    await releaseCancelledRunSlot(async (method, params, timeoutMs) => {
+      sent.push([method, params, timeoutMs]);
       return { released: true };
     }, hold),
     null,
   );
   assert.deepEqual(sent, [
-    ['slot.release', { slotId: 'macpro-mmt-1', expectedRunId: RUN_ID, forceReset: true }],
+    [
+      'slot.release',
+      { slotId: 'macpro-mmt-1', expectedRunId: RUN_ID, forceReset: true },
+      CANCELLED_RUN_SLOT_RELEASE_TIMEOUT_MS,
+    ],
   ]);
   assert.equal(
     await releaseCancelledRunSlot(

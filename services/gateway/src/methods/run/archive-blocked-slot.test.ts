@@ -23,7 +23,7 @@ import { createRun, deleteRun, getRun, getRunWithArchived, updateRun } from '../
 import { type SlotReleasePreflight, slotReleasePreflight } from '../slot/release.js';
 import { detachRunsForReleasedSlot } from '../slot/release-run-ownership.js';
 
-import { type ArchiveSlotRelease, runArchive } from './admin.js';
+import { type ArchiveSlotRelease, runArchive, runDelete } from './admin.js';
 import { runAdopt } from './adopt.js';
 import { rebindReleasedSlot, runReplayStep } from './replay-step.js';
 
@@ -402,12 +402,13 @@ test('a release that throws because it left the slot held aborts the archive wit
 
 // Cancel then replay (Arthur, 10-19): cancel keeps the checkout and the slot bound to the run,
 // held with the replay-or-release reason, and a replay from a later step reclaims it.
-test('a cancelled run replays from a later step on the slot its cancel kept', async (t) => {
+/** A run cancelled in review, its slot kept for replay as cancel leaves it. */
+async function cancelledRunOnKeptSlot(t: test.TestContext, ticketOffset: number): Promise<Run> {
   const created = createRun({
     flowType: 'fix-bug',
     mode: 'autonomous',
     project: 'farmslot-farm',
-    ticketOrPr: `PROJ-${(Date.now() % 100_000) + 1}`,
+    ticketOrPr: `PROJ-${(Date.now() % 100_000) + ticketOffset}`,
     slotId,
   });
   t.after(() => cleanupRun(created.id));
@@ -422,6 +423,11 @@ test('a cancelled run replays from a later step on the slot its cancel kept', as
   });
   await holdSlotFor(t, run.id, 'occupied');
   await updateSlotStatus(slotId, { held_reason: cancelledRunHoldReason(run.id) });
+  return run;
+}
+
+test('a cancelled run replays from a later step on the slot its cancel kept', async (t) => {
+  const run = await cancelledRunOnKeptSlot(t, 1);
   let engineStarted = false;
 
   await runReplayStep({ runId: run.id, stepName: 'review', triggeredBy: 'operator' }, noopEmit, {
@@ -435,4 +441,82 @@ test('a cancelled run replays from a later step on the slot its cancel kept', as
   assert.equal(getRun(run.id)?.slotId, slotId);
   assert.equal(await readSlotField(slotId, 'current_run_id'), run.id, 'the replay reclaimed it');
   assert.equal(await readSlotField(slotId, 'lifecycle'), 'busy');
+});
+
+test('nothing can replay a cancelled run while its delete resets the kept slot', async (t) => {
+  const run = await cancelledRunOnKeptSlot(t, 2);
+  const { calls, slot } = recordingSlot();
+  const release = slot.release;
+  let replayRefusal: unknown;
+  slot.release = async (params, emit) => {
+    // The operator replays from the other client while the reset runs.
+    replayRefusal = await runReplayStep(
+      { runId: run.id, stepName: 'review', triggeredBy: 'operator' },
+      noopEmit,
+      { startEngine: async () => assert.fail('the replay must not start') },
+    ).then(
+      () => assert.fail('the replay must be refused'),
+      (error: unknown) => error,
+    );
+    return release(params, emit);
+  };
+
+  await runDelete({ runId: run.id }, noopEmit, slot);
+
+  assert.match(String(replayRefusal), /is being archived and its slot released/);
+  assert.deepEqual(calls.releases, [{ slotId, expectedRunId: run.id, forceReset: true }]);
+  assert.equal(getRun(run.id), undefined, 'the delete completed');
+  assert.equal(isRunArchiving(run.id), false);
+});
+
+test('a replay admitted before the delete takes the run keeps its slot from the reset', async (t) => {
+  const run = await cancelledRunOnKeptSlot(t, 3);
+  let finishReplay!: () => void;
+  const replayMayFinish = new Promise<void>((resolve) => (finishReplay = resolve));
+  let replayAdmitted!: () => void;
+  const admitted = new Promise<void>((resolve) => (replayAdmitted = resolve));
+  // Stands in for a replay reviving the run under the run transition.
+  const replay = withRunTransition(run.id, async () => {
+    replayAdmitted();
+    await replayMayFinish;
+    updateRun(run.id, { status: 'reviewing' });
+  });
+  await admitted;
+  const { calls, slot } = recordingSlot();
+
+  const deletion = runDelete({ runId: run.id }, noopEmit, slot);
+  finishReplay();
+  await assert.rejects(deletion, /Cannot delete active run .* \(status=reviewing\)/);
+  await replay;
+
+  assert.equal(calls.releases.length, 0, 'the replayed run kept its checkout');
+  assert.equal(await readSlotField(slotId, 'current_run_id'), run.id);
+  assert.equal(isRunArchiving(run.id), false);
+});
+
+test('a failed replay of a cancelled run gives its kept slot back to the run', async (t) => {
+  const run = await cancelledRunOnKeptSlot(t, 4);
+  const priorInject = process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS;
+  const priorContext = process.env.NODE_TEST_CONTEXT;
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS = run.id;
+  t.after(() => {
+    if (priorInject === undefined) delete process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS;
+    else process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS = priorInject;
+    if (priorContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = priorContext;
+  });
+
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'review', triggeredBy: 'operator' }, noopEmit, {
+      startEngine: async () => assert.fail('the replay failed before its engine'),
+    }),
+    /Injected replay failure after claim/,
+  );
+
+  assert.equal(getRun(run.id)?.status, 'cancelled');
+  assert.equal(await readSlotField(slotId, 'current_run_id'), run.id, 'never published free');
+  assert.equal(await readSlotField(slotId, 'lifecycle'), 'held');
+  assert.equal(await readSlotField(slotId, 'phase'), 'occupied');
+  assert.equal(await readSlotField(slotId, 'held_reason'), cancelledRunHoldReason(run.id));
 });

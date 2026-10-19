@@ -38,6 +38,13 @@ export function cancelledRunSlotHold(slot: HoldSlot): CancelledRunSlotHold | nul
   };
 }
 
+/** The run view's replay choice, shown before the release. */
+export interface CancelledRunSlotReplay {
+  label: string;
+  disabled: boolean;
+  onReplay: () => void;
+}
+
 /** A cancelled run's two choices while it still holds its slot. */
 export interface CancelledRunSlotChoices {
   hold: CancelledRunSlotHold;
@@ -61,11 +68,22 @@ export function cancelledRunSlotChoices(
   return { hold, replayStepName, replayLabel: `Replay from ${replayStepName}` };
 }
 
+/** A release resets the checkout and runs the recycle hook, which takes minutes on a remote node. */
+export const CANCELLED_RUN_SLOT_RELEASE_TIMEOUT_MS = 5 * 60_000;
+
 /** Releases the slot; returns why it was not released, or null once it was. */
 export async function releaseCancelledRunSlot(
-  request: (method: string, params: SlotReleaseParams) => Promise<SlotReleaseResult>,
+  request: (
+    method: string,
+    params: SlotReleaseParams,
+    timeoutMs: number,
+  ) => Promise<SlotReleaseResult>,
   hold: CancelledRunSlotHold,
 ): Promise<string | null> {
-  const result = await request(Methods.SLOT_RELEASE, hold.releaseParams);
+  const result = await request(
+    Methods.SLOT_RELEASE,
+    hold.releaseParams,
+    CANCELLED_RUN_SLOT_RELEASE_TIMEOUT_MS,
+  );
   return result.released ? null : (result.reason ?? `Slot ${hold.slotId} was not released`);
 }

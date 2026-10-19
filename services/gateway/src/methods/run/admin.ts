@@ -27,18 +27,16 @@ import {
 
 import { markBacklogRunReleased } from '../../backlog/store.js';
 import {
-  execOnSlot,
-  loadSlotVars,
   ownsRunSlotCleanup,
   readSlotField,
   readSlotRow,
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
-import { shellQuote } from '../../core/tmux.js';
 import { cleanupReviewWorkspaceCaches } from '../../review-workspaces/cache-cleanup.js';
 import { STALE_RELEASE_RECLAIM_MS } from '../../run-engine/recovery.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import {
+  assertRunNotArchiving,
   beginRunArchive,
   endRunArchive,
   isRunArchiving,
@@ -112,9 +110,9 @@ export async function runDelete(
   emit: Emit,
   slot: ArchiveSlotRelease = ARCHIVE_SLOT_RELEASE,
 ): Promise<RunDeleteResult> {
-  const run = getRun(params.runId);
-  if (run) await releaseCancelledRunSlot(run, emit, slot);
-  const ok = await storeDeleteRun(params.runId);
+  const ok = await withCancelledRunSlotReleased(getRun(params.runId), emit, slot, () =>
+    storeDeleteRun(params.runId),
+  );
   if (!ok) throw new Error(`Run not found: ${params.runId}`);
   await reconcileDeletedRun(params.runId);
   emit(Events.RUN_DELETED, { runId: params.runId });
@@ -145,8 +143,8 @@ export async function runArchive(
       fenced = true;
       await releaseBlockedRunSlot(run, emit, slot);
     }
-    if (run) await releaseCancelledRunSlot(run, emit, slot);
-    const ok = await storeArchiveRun(params.runId);
+    const archive = () => storeArchiveRun(params.runId);
+    const ok = await (fenced ? archive() : withCancelledRunSlotReleased(run, emit, slot, archive));
     if (!ok) throw new Error(`Run not found: ${params.runId}`);
   } finally {
     if (fenced) endRunArchive(params.runId);
@@ -210,27 +208,39 @@ async function releaseBlockedRunSlot(
 /**
  * Deleting or archiving a cancelled run ends it, so the slot its cancel kept for
  * replay is released with the reset of `slot release --reset` (ADR-054 amendment,
- * 2026-10-19). No unrelated process blocks that release. The discarded HEAD and
- * dirty file count are logged so the work stays recoverable from the reflog.
+ * 2026-10-19), before the run leaves the store. The archive fence covers both, as
+ * for a blocked run: replay refuses a fenced run, so it cannot reclaim the slot
+ * while the reset runs. A replay admitted first leaves the run no longer
+ * cancelled, and nothing is released.
  */
-async function releaseCancelledRunSlot(
-  run: Run,
+async function withCancelledRunSlotReleased(
+  run: Run | undefined,
   emit: Emit,
   slot: ArchiveSlotRelease,
-): Promise<void> {
-  if (run.status !== 'cancelled' || !run.slotId) return;
+  evict: () => Promise<boolean>,
+): Promise<boolean> {
+  if (run?.status !== 'cancelled') return evict();
+  const fenced = await withRunTransition(run.id, async () => {
+    if (getRun(run.id)?.status !== 'cancelled') return false;
+    assertRunNotArchiving(run.id);
+    beginRunArchive(run.id);
+    return true;
+  });
+  if (!fenced) return evict();
+  try {
+    await releaseKeptSlot(run, emit, slot);
+    return await evict();
+  } finally {
+    endRunArchive(run.id);
+  }
+}
+
+/** No unrelated process blocks this release; it logs the work its reset discards. */
+async function releaseKeptSlot(run: Run, emit: Emit, slot: ArchiveSlotRelease): Promise<void> {
+  if (!run.slotId) return;
   const slotId = run.slotId;
   // Another active run owns the slot now; it keeps it.
   if (!ownsRunSlotCleanup(await readSlotRow(slotId), run.id)) return;
-  const vars = await loadSlotVars(slotId);
-  const work = await execOnSlot(
-    vars,
-    `cd ${shellQuote(vars.remoteRepo)} && { git rev-parse HEAD; git status --porcelain | wc -l; }`,
-  );
-  const [head = 'unknown', dirty = 'unknown'] = work.stdout.trim().split('\n');
-  console.log(
-    `[run] releasing slot ${slotId} of cancelled run ${run.id} with reset: discarding HEAD ${head.trim()} and ${dirty.trim()} dirty file(s)`,
-  );
   const { released } = await slot.release(
     { slotId, expectedRunId: run.id, forceReset: true },
     emit,
@@ -263,9 +273,9 @@ export async function runBulkDelete(
   let deleted = 0;
   for (const id of params.runIds) {
     try {
-      const run = getRun(id);
-      if (run) await releaseCancelledRunSlot(run, emit, ARCHIVE_SLOT_RELEASE);
-      const ok = await storeDeleteRun(id);
+      const ok = await withCancelledRunSlotReleased(getRun(id), emit, ARCHIVE_SLOT_RELEASE, () =>
+        storeDeleteRun(id),
+      );
       if (!ok) continue;
       await reconcileDeletedRun(id);
       deleted++;

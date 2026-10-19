@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, beforeEach, mock, test } from 'node:test';
 
+import {
+  cancelledRunHoldReason,
+  cancelledRunSlotHold,
+  releaseCancelledRunSlot,
+} from '@farmslot/protocol';
+
 const runRoot = mkdtempSync(path.join(tmpdir(), 'release-owner-runs-'));
 process.env.FARMSLOT_RUNS_DIR = runRoot;
 process.env.FARMSLOT_HOME = path.join(runRoot, 'home');
@@ -54,7 +60,7 @@ const execForTest = async (_vars: unknown, cmd: string) => {
   slotCommands.push(cmd);
   // An editor with the checkout open (macwork-mmt-1, Cursor 44809, 10-19).
   if (cmd.startsWith('lsof -a -d cwd')) return ok('p44809\nn/slot\n');
-  if (cmd.includes('git rev-parse HEAD; git status --porcelain')) return ok('5d0c1a7e\n2\n');
+  if (cmd.includes('git rev-parse HEAD 2>/dev/null')) return ok('5d0c1a7e\n2\n');
   if (cmd.startsWith(': farmslot-browser-session-census')) {
     const pids = [...browserSession.keys()];
     return ok(
@@ -600,32 +606,54 @@ test('a browser session process that survives keeps the slot held and names it',
   assert.ok(!events.includes('reset'), 'readiness is never published');
 });
 
-// Delete and archive end a cancelled run, so they release the slot its cancel kept for
-// replay with the reset of `slot release --reset` (ADR-054 amendment, 2026-10-19).
-for (const [verb, end] of [
-  ['delete', runDelete],
-  ['archive', runArchive],
-] as const) {
-  test(`${verb} of a cancelled run releases its kept slot with a reset, editor or not`, async (t) => {
+// Delete and archive end a cancelled run, and the run view's Release frees its slot:
+// all three release the slot its cancel kept for replay with the reset of
+// `slot release --reset` (ADR-054 amendment, 2026-10-19).
+async function releaseFromRunView(): Promise<void> {
+  const hold = cancelledRunSlotHold({
+    slot: SLOT_ID,
+    lifecycle: 'held',
+    phase: 'occupied',
+    currentRunId: 'cancelled',
+    heldReason: cancelledRunHoldReason('cancelled'),
+  });
+  if (!hold) return assert.fail('the kept slot has no hold');
+  assert.equal(
+    await releaseCancelledRunSlot((_method, params) => slotRelease(params, emit), hold),
+    null,
+  );
+}
+
+const CANCELLED_SLOT_RELEASES: Array<[string, () => Promise<unknown>, boolean]> = [
+  ['delete', () => runDelete({ runId: 'cancelled' }, emit), true],
+  ['archive', () => runArchive({ runId: 'cancelled' }, emit), true],
+  ['the run view Release', releaseFromRunView, false],
+];
+
+for (const [action, release, endsRun] of CANCELLED_SLOT_RELEASES) {
+  test(`${action} of a cancelled run releases its kept slot with a reset, editor or not`, async (t) => {
     realRuns.updateRun('cancelled', { slotId: SLOT_ID });
     slotRow = {
       ...slotRow,
       current_run_id: 'cancelled',
       lifecycle: 'held',
       phase: 'occupied',
-      held_reason: 'Held by cancelled run cancelled: replay it or release the slot',
+      held_reason: cancelledRunHoldReason('cancelled'),
     };
     const log = t.mock.method(console, 'log', () => {});
 
-    assert.deepEqual(await end({ runId: 'cancelled' }, emit), { ok: true });
+    await release();
 
     assert.ok(events.includes('reset'), 'the slot was released');
-    assert.equal(realRuns.getRun('cancelled'), undefined, 'the run left the store after');
-    assert.ok(
-      log.mock.calls.some((call) =>
-        /discarding HEAD 5d0c1a7e and 2 dirty file\(s\)/.test(String(call.arguments[0])),
-      ),
-      'the discarded work is logged for reflog recovery',
+    assert.equal(realRuns.getRun('cancelled') === undefined, endsRun);
+    assert.equal(
+      log.mock.calls.filter((call) =>
+        /reset discards HEAD 5d0c1a7e and 2 dirty file\(s\) of run cancelled/.test(
+          String(call.arguments[0]),
+        ),
+      ).length,
+      1,
+      'the discarded work is logged once, for reflog recovery',
     );
     assert.ok(
       !slotCommands.some((cmd) => cmd.startsWith('lsof -a -d cwd')),

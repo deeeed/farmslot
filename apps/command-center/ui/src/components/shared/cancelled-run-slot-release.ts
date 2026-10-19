@@ -3,22 +3,15 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import {
   type CancelledRunSlotHold,
+  type CancelledRunSlotReplay,
   releaseCancelledRunSlot,
   type SlotReleaseResult,
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
-import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 
 import { ConfirmActionTimer } from './confirm-action-model.js';
-
-/** The run view's other choice, shown before the release. */
-export interface CancelledRunSlotReplay {
-  label: string;
-  disabled: boolean;
-  onReplay: () => void;
-}
 
 /** A slot a cancelled run keeps for replay, with its release (ADR-054, 2026-10-19). */
 @customElement('cancelled-run-slot-release')
@@ -114,8 +107,8 @@ export class CancelledRunSlotRelease extends LitElement {
     this._error = '';
     try {
       const refusal = await releaseCancelledRunSlot(
-        (method, params) =>
-          gateway.request<SlotReleaseResult>(method, params, SLOT_OPERATION_TIMEOUT_MS),
+        (method, params, timeoutMs) =>
+          gateway.request<SlotReleaseResult>(method, params, timeoutMs),
         hold,
       );
       this._error = refusal ?? '';

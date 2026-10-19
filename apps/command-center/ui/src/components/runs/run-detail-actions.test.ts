@@ -37,3 +37,21 @@ test('archive waits as long as a slot release, since it may release the run slot
   ]);
   assert.equal(navigated, true);
 });
+
+test('delete waits as long as a slot release, since a cancelled run releases its kept slot', async () => {
+  requests.length = 0;
+  let navigated = false;
+  await confirmRunLifecycleAction({ id: 'run-1' } as Run, 'delete', {
+    actionsBlocked: () => false,
+    pendingConfirm: () => 'delete:run-1',
+    setPendingConfirm: () => {},
+    confirmTimer: () => undefined,
+    setConfirmTimer: () => {},
+    navigateToRuns: () => (navigated = true),
+  });
+
+  assert.deepEqual(requests, [
+    { method: Methods.RUN_DELETE, params: { runId: 'run-1' }, timeout: SLOT_OPERATION_TIMEOUT_MS },
+  ]);
+  assert.equal(navigated, true);
+});

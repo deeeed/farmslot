@@ -1,8 +1,6 @@
 import { html, nothing } from 'lit';
 
-import type { CancelledRunSlotChoices, Run } from '@farmslot/protocol';
-
-import type { CancelledRunSlotReplay } from '../shared/cancelled-run-slot-release.js';
+import type { CancelledRunSlotChoices, CancelledRunSlotReplay, Run } from '@farmslot/protocol';
 
 import { isFreshDispatchRecovery } from './step-inspector-model.js';
 

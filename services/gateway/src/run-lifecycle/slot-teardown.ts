@@ -69,8 +69,9 @@ export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
     !run ||
     run.slotId !== slotId ||
     !isTerminalRunStatus(run.status) ||
-    // A cancelled run keeps its slot for replay until release, delete or archive (ADR-054).
-    run.status === 'cancelled' ||
+    // A cancelled run keeps the slot it still owns for replay until release,
+    // delete or archive (ADR-054); its cleanup hold is retried as before.
+    (run.status === 'cancelled' && before.current_run_id === run.id) ||
     isCompletionPrerequisiteFailure(run) ||
     isActiveSlotHolder(run)
   )
