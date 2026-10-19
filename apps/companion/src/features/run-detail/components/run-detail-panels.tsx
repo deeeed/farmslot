@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
-  blockedRunReason,
   extractRunArtifactManifest,
   type RecipeRunArtifactGroup,
   type Run,
   type RunDecision,
   type RunStep,
+  runStepDisplayDetail,
   type RunStepDisplayStatus,
   runStepDisplayStatus,
 } from '@farmslot/protocol';
@@ -75,7 +75,7 @@ export function PipelineStepCard({
 }) {
   const status = runStepDisplayStatus(run, step);
   const statusColor = stepStatusColor(status);
-  const detail = status === 'blocked' ? (blockedRunReason(run.error) ?? step.detail) : step.detail;
+  const detail = runStepDisplayDetail(run, step);
   const artifacts = collectStepArtifacts(step);
   return (
     <View style={[styles.stepCard, expanded && styles.stepCardExpanded]}>

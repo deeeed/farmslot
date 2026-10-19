@@ -72,6 +72,15 @@ export const runDetailStyles = css`
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  @media (max-width: 640px) {
+    .header {
+      flex-wrap: wrap;
+    }
+    /* At touch width the label takes its own row under the title, so the reason stays readable. */
+    .run-activity-label {
+      flex-basis: 100%;
+    }
+  }
   .external-links {
     display: flex;
     gap: 6px;

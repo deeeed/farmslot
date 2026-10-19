@@ -124,6 +124,20 @@ export function runStepDisplayStatus(
   return step.status;
 }
 
+/** A step's detail as clients show it: a blocked run's reason on the step it stopped at. */
+export function runStepDisplayDetail(
+  run: {
+    status: RunStatus;
+    steps: readonly Pick<RunStep, 'name' | 'status'>[];
+    error?: string | null;
+  },
+  step: Pick<RunStep, 'name' | 'status' | 'detail'>,
+): string | undefined {
+  return runStepDisplayStatus(run, step) === 'blocked'
+    ? (blockedRunReason(run.error) ?? step.detail)
+    : step.detail;
+}
+
 function isGateReadiness(value: unknown): value is RunGateReadiness {
   return (
     isRecord(value) &&

@@ -8,7 +8,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Terminal and replay checks use the shared terminal status helper.
 
-- A blocked run shows its reason and the step it stopped at. The run detail badge reads `Blocked: <reason>` on one line. The pipeline and the step list mark that step amber with the reason as its detail, as does the runs list bar. Before, it read as done.
+- A blocked run shows its reason and the step it stopped at. The run detail badge and the runs list read `Blocked: <reason>` on one line, and the pipeline and the step list mark that step amber, the step list with the reason as its detail. Before, it read as done.
 
 - Reload a run's recorded evidence each time the gateway reconnects, as run detail already does for the run itself. Run detail, the artifact viewer and the decision workspace opened before the connection was ready, or during a gateway restart, now show the run's report and recipe evidence without being reopened, and a reconnect keeps an open viewer and its position. A failed re-read no longer empties the decision workspace's recipe evidence, and the artifact viewer's recipe error clears after the next successful read.
 

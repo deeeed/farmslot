@@ -2,10 +2,10 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
-  blockedRunReason,
   deriveRunLifecycleView,
   type RunStatus,
   type RunStep,
+  runStepDisplayDetail,
   type RunStepDisplayStatus,
   runStepDisplayStatus,
   type WorkerOperatorWait,
@@ -62,8 +62,8 @@ export function RunPipelineMini({
   const visible = steps.filter((s) => s.status !== 'skipped');
   if (visible.length === 0) return null;
 
-  const eff = (s: RunStep) =>
-    runStatus ? runStepDisplayStatus({ status: runStatus, steps }, s) : s.status;
+  const run = runStatus ? { status: runStatus, steps, error } : undefined;
+  const eff = (s: RunStep) => (run ? runStepDisplayStatus(run, s) : s.status);
   const runningIdx = visible.findIndex((s) => eff(s) === 'running');
   const nextIdx = visible.findIndex((s) => eff(s) === 'pending');
   const labelIdx = runningIdx >= 0 ? runningIdx : nextIdx >= 0 ? nextIdx : visible.length - 1;
@@ -74,7 +74,7 @@ export function RunPipelineMini({
   const allDone = visible.every((s) => eff(s) === 'done');
   const hasFailed = visible.some((s) => eff(s) === 'failed');
   const blocked = visible.find((s) => eff(s) === 'blocked');
-  const detail = blocked ? (blockedRunReason(error) ?? blocked.detail) : active?.detail;
+  const detail = blocked && run ? runStepDisplayDetail(run, blocked) : active?.detail;
   const duration = active ? stepDuration(active) : null;
   const label = isCancelled
     ? 'cancelled'
@@ -122,7 +122,8 @@ export function RunPipelineMini({
         >
           {label}
         </Text>
-        {!allDone && !isCancelled && detail ? (
+        {/* A blocked run's label already carries its reason. */}
+        {!allDone && !isCancelled && detail && !label.includes(detail) ? (
           <Text style={miniStyles.detail} numberOfLines={2}>
             {detail}
           </Text>

@@ -6,6 +6,7 @@ import {
   type FlowType,
   type Run,
   type RunStep,
+  runStepDisplayDetail,
   runStepDisplayStatus,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
@@ -397,9 +398,11 @@ export class RunPipelineMini extends LitElement {
 
   private segmentTitle(step: RunStep): string {
     const outputs = step.outputs as Record<string, unknown> | undefined;
-    const parts = [`${step.name}: ${step.status}`];
+    const status = this.run ? runStepDisplayStatus(this.run, step) : step.status;
+    const detail = this.run ? runStepDisplayDetail(this.run, step) : step.detail;
+    const parts = [`${step.name}: ${status}`];
     if (step.durationMs) parts.push(formatDuration(step.durationMs));
-    if (step.detail) parts.push(step.detail);
+    if (detail) parts.push(detail);
     if (step.name === 'complete' && outputs?.packageHash) {
       parts.push(`package ${String(outputs.packageHash).slice(0, 12)}`);
       parts.push(`review ${outputs.reviewSatisfied ? 'satisfied' : 'pending'}`);

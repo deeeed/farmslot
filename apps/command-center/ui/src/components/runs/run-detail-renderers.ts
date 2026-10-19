@@ -1170,6 +1170,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       : nothing}
     <div class="pipeline-section">
       <run-pipeline
+        reason-in-header
         .run=${r}
         .taskProgress=${ctx.taskProgress}
         .evidenceModel=${ctx.evidenceModel}

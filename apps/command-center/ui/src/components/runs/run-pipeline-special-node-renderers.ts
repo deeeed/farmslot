@@ -6,7 +6,7 @@ import type {
   RunStepDisplayStatus,
   TaskProgressStructured,
 } from '@farmslot/protocol';
-import { blockedRunReason } from '@farmslot/protocol';
+import { runStepDisplayDetail } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 import {
@@ -133,7 +133,7 @@ export function renderMonitorPipelineNode(n: NodePos, ctx: RunPipelineSpecialNod
         }
       `
       }
-      ${blockedTitle(ctx.run, isBlocked)}
+      ${blockedTitle(ctx.run, n.step, isBlocked)}
     </g>
   `;
 }
@@ -148,7 +148,7 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
   const isSkipped = vis === 'skipped';
   const isBlocked = vis === 'blocked';
   // Shared tone map with mini (issues → orange unless maxRetriesExhausted).
-  const tone = isBlocked ? 'warn' : pipelineStepTone(step, { runError: ctx.run.error });
+  const tone = pipelineStepTone({ ...step, status: vis }, { runError: ctx.run.error });
   const toneColors = pipelineToneFillStroke(tone);
 
   const fillColor =
@@ -301,7 +301,7 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
       `
           : nothing
       }
-      ${blockedTitle(ctx.run, isBlocked)}
+      ${blockedTitle(ctx.run, n.step, isBlocked)}
     </g>
   `;
 }
@@ -568,7 +568,7 @@ export function renderHumanGatePipelineNode(n: NodePos, ctx: RunPipelineSpecialN
         }
       `
       }
-      ${blockedTitle(ctx.run, isBlocked)}
+      ${blockedTitle(ctx.run, n.step, isBlocked)}
     </g>
   `;
 }
@@ -584,12 +584,10 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
   const transfer = transferForPipelineNode(ctx.transferProgress, 'finalize');
   const transferActive = transfer?.state === 'running';
   // Package-change / re-review publish failures are reworkable (orange), not terminal red.
-  const tone = isBlocked
-    ? 'warn'
-    : pipelineStepTone(
-        { ...step, detail: step.detail ?? ctx.run.error ?? undefined },
-        { runError: ctx.run.error },
-      );
+  const tone = pipelineStepTone(
+    { ...step, status: vis, detail: step.detail ?? ctx.run.error ?? undefined },
+    { runError: ctx.run.error },
+  );
   const toneColors = pipelineToneFillStroke(tone);
   const fillColor =
     transferActive || isDone || isFailed || isRunning || isBlocked
@@ -706,7 +704,7 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
       `
           : nothing
       }
-      ${blockedTitle(ctx.run, isBlocked)}
+      ${blockedTitle(ctx.run, n.step, isBlocked)}
     </g>
   `;
 }
@@ -824,13 +822,13 @@ export function renderCompletePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
         }
       `
       }
-      ${blockedTitle(ctx.run, isBlocked)}
+      ${blockedTitle(ctx.run, n.step, isBlocked)}
     </g>
   `;
 }
 
 /** A blocked step's tooltip carries the run's reason. */
-function blockedTitle(run: Run, isBlocked: boolean) {
-  const reason = isBlocked ? blockedRunReason(run.error) : undefined;
+function blockedTitle(run: Run, step: RunStep, isBlocked: boolean) {
+  const reason = isBlocked ? runStepDisplayDetail(run, step) : undefined;
   return reason ? svg`<title>${reason}</title>` : nothing;
 }

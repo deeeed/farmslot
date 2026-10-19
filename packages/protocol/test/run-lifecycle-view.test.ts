@@ -7,6 +7,7 @@ import {
   type Run,
   type RunGateReadiness,
   type RunStep,
+  runStepDisplayDetail,
   runStepDisplayStatus,
 } from '../src/index.js';
 
@@ -115,6 +116,21 @@ test('a blocked run names its reason and the step it stopped at, not a finished 
   assert.equal(
     deriveRunLifecycleView({ status: 'blocked', error: '\n  Worker lost  \nstack' }).activityLabel,
     'Blocked: Worker lost',
+  );
+});
+
+test('the step a blocked run stopped at carries its reason; other steps keep their detail', () => {
+  const monitor = { name: 'monitor', status: 'done' as const, detail: 'Worker signaled blocked' };
+  const run = {
+    ...blockedRun,
+    steps: blockedRun.steps.map((step) => (step.name === 'monitor' ? monitor : step)),
+  };
+  assert.equal(runStepDisplayDetail(run, monitor), blockedRun.error);
+  assert.equal(runStepDisplayDetail({ ...run, error: undefined }, monitor), monitor.detail);
+  assert.equal(runStepDisplayDetail({ ...run, status: 'failed' }, monitor), monitor.detail);
+  assert.equal(
+    runStepDisplayDetail(run, { name: 'dispatch', status: 'done', detail: 'Prompt sent' }),
+    'Prompt sent',
   );
 });
 

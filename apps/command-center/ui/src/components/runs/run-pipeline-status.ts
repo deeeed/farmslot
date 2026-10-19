@@ -124,6 +124,8 @@ export function pipelineStepTone(
   },
   opts?: { runError?: string | null },
 ): PipelineDisplayTone {
+  // A blocked run's stopped step reads amber whatever its outputs record.
+  if (step.status === 'blocked') return 'warn';
   const outputs = step.outputs ?? undefined;
   const verdict =
     typeof outputs?.verdict === 'string'

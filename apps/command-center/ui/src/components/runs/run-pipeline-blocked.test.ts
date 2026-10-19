@@ -85,6 +85,19 @@ test('a blocked run reads as blocked at the step it stopped at, with its reason'
   assert.match(monitor, new RegExp(`stroke="${colors.statusWarn}"`));
   assert.doesNotMatch(monitor, new RegExp(`stroke="${colors.statusOk}`));
   assert.ok(monitor.includes(`<title>${reason}</title>`));
+  // With no recorded reason the stopped step falls back to its own detail.
+  const noReason: Run = {
+    ...blockedRun,
+    error: undefined,
+    steps: blockedRun.steps.map((step) =>
+      step.name === 'monitor' ? { ...step, detail: 'Worker signaled blocked' } : step,
+    ),
+  };
+  assert.ok(
+    litText(renderMonitorPipelineNode(nodeFor(noReason, 'monitor'), context(noReason))).includes(
+      '<title>Worker signaled blocked</title>',
+    ),
+  );
 
   const review = litText(
     renderReviewPipelineNode(nodeFor(blockedRun, 'review'), context(blockedRun)),

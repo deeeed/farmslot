@@ -1,7 +1,7 @@
 import { nothing, svg } from 'lit';
 
 import type { Run, RunDecision, RunStep, RunStepDisplayStatus } from '@farmslot/protocol';
-import { blockedRunReason } from '@farmslot/protocol';
+import { runStepDisplayDetail } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -163,9 +163,7 @@ export function renderDefaultPipelineNode(node: NodePos, context: DefaultPipelin
 
   const duration = stepNodeDurationLabel(context.run, node.step);
   const statusIcon = isDone ? 'v' : isRunning ? '*' : isFailed ? 'x' : isSkipped ? '-' : '';
-  const title = isBlocked
-    ? (blockedRunReason(context.run.error) ?? node.step.detail)
-    : node.step.detail;
+  const title = runStepDisplayDetail(context.run, node.step);
   const skippedReason = isSkipped
     ? (node.step.outputs as Record<string, unknown> | undefined)?.reason === 'disabled' &&
       context.run.mode === 'autonomous'
