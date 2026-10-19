@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import type { Principal, RunExtendReviewBudgetParams } from '@farmslot/protocol';
+import type { Principal, ReadyGatePayload, RunExtendReviewBudgetParams } from '@farmslot/protocol';
 
 import '../../runtime/mock-pty.test-support.js';
 
@@ -15,6 +15,11 @@ import {
   reviewBudgetScopeBrief,
   runReviewRoundBudget,
 } from '../../review/review-round-budget.js';
+import {
+  createEngineDecision,
+  hasEngineDecisionWaiter,
+  resolveEngineDecision,
+} from '../../run-engine/engine-decisions.js';
 import { createRun, deleteRun, getRun, runsDirectory, updateRun } from '../../runs/store.js';
 
 import { runExtendReviewBudget } from './extend-review-budget.js';
@@ -234,4 +239,43 @@ test('a spent PR budget points at an extension only for the run that can receive
   });
   const published = await runReviewRoundBudget(getRun(owner.run.id)!);
   assert.match(published.diagnosis ?? '', /this run is already published; only the unpublished/);
+});
+
+test('a grant re-presents a waiting publish gate (TAT-4145 bda11b1a)', async (t) => {
+  // bda11b1a: the 16:11Z grant (5 -> 6) left gate 22ae4d45 saying five rounds were spent.
+  const { run, params, deps } = fixture(t);
+  for (let i = 0; i < 5; i++) await admitReviewRound(run.id, `spent-${i}`);
+  updateRun(run.id, { status: 'human-gating' });
+  const payload: ReadyGatePayload = {
+    kind: 'ready',
+    prNumber: null,
+    repo: null,
+    diffStat: { files: 47, additions: 1811, deletions: 140 },
+    workerReport: 'Cross margin in the Terminal order form.',
+    branch: 'owned-change',
+  };
+  const waiting = createEngineDecision(
+    run.id,
+    'human_gate',
+    '**Review launch paused:** The five review rounds are spent. A design problem or scope creep has exhausted the review budget; stop and narrow the change or redesign it.',
+    [
+      { id: 'hold', label: 'Hold', style: 'secondary' },
+      { id: 'request-review', label: 'Request Review', style: 'secondary' },
+    ],
+    payload,
+    { readProgress: async () => ({ kind: 'idle' }) },
+  );
+  let gateId: string | undefined;
+  for (let i = 0; i < 400 && !(gateId && hasEngineDecisionWaiter(gateId)); i++) {
+    gateId = getRun(run.id)!.decisions[0]?.id;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  t.after(() => resolveEngineDecision(gateId!, 'abort'));
+  await runExtendReviewBudget({ ...params, limit: 6 }, emit, deps);
+  assert.equal(hasEngineDecisionWaiter(gateId!), false, 'the grant woke the waiting gate');
+  assert.equal(await waiting, 'hold');
+  const decisions = getRun(run.id)!.decisions;
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0]!.resolvedAction, 'hold');
+  assert.ok(decisions[0]!.resolvedAt, 'the stored card is resolved, so one gate stays pending');
 });

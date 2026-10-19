@@ -114,9 +114,9 @@ import {
   buildUnavailableSnapshotAction,
   CONTINUE_REVIEW_FIX_ACTION,
   countStalePublicationReviews,
+  gateReviewContinuationForRun,
   hasValidPrNumber,
   isPublishApprovalAction,
-  pendingReviewContinuation as findPendingReviewContinuation,
   publicationGateDecisionActions,
   restampStaleApprovingReviewsForEvidenceRefresh,
   reviewerIsActiveForReview,
@@ -168,18 +168,18 @@ const activePublicationReviewContinuations = new Map<
   Promise<{ reviewId: string; verdict: ReviewResult['verdict'] } | null>
 >();
 
-function interruptedPublicationReview(run: Run): ReviewStatus | undefined {
+async function interruptedPublicationReview(run: Run): Promise<ReviewStatus | undefined> {
   const activeFix = run.agentContexts?.some(
     (context) => context.role === 'review-fix' && context.status === 'working',
   );
   const reviews = run.engineState?.publishGate?.reviews ?? [];
-  const pending = findPendingReviewContinuation(reviews);
   // A gateway restart can happen after the worker fix completed and while the
   // retained reviewer is already checking the new HEAD. The persisted review
   // still carries the prior round's pending findings until that reviewer
   // finishes. Re-delivering them here races the active reviewer and sends the
   // worker stale feedback. Recovery owns the active reviewer; only resume the
   // fix when no reviewer for this review lane is running.
+  const pending = await gateReviewContinuationForRun(run);
   if (pending) return reviewerIsActiveForReview(run, pending) ? undefined : pending;
   if (!activeFix) return undefined;
   const latest = reviews.at(-1);
@@ -246,7 +246,7 @@ async function resumeInterruptedPublicationReviewOnce(
 ): Promise<{ reviewId: string; verdict: ReviewResult['verdict'] } | null> {
   const run = getRun(runId);
   if (!run) return null;
-  const interrupted = interruptedPublicationReview(run);
+  const interrupted = await interruptedPublicationReview(run);
   if (!interrupted) return null;
 
   const executeReview = dependencies.executeReview ?? executeReviewDefault;
@@ -934,7 +934,7 @@ export async function executeReadyGate(
         // packaging. It regenerates the role checklist through the existing owner.
         const fixActions = publicationGateDecisionActions({
           reviewSatisfied: false,
-          pendingReviewContinuation: interruptedPublicationReview(getRun(runId)!),
+          pendingReviewContinuation: await interruptedPublicationReview(getRun(runId)!),
           visualRepairReviewId: activeVisualRepair(getRun(runId)!)?.reviewId,
         }).filter((action) => action.id === CONTINUE_REVIEW_FIX_ACTION);
         recoveredAction = await decide(
@@ -1132,7 +1132,10 @@ export async function executeReadyGate(
       pv?.projectJson,
       current.engineState?.publishGate?.reviewPolicy,
     );
-  const pendingReview = findPendingReviewContinuation(reviews);
+  const pendingReview = await gateReviewContinuationForRun(
+    getRun(runId)!,
+    preparedPackage?.headSha,
+  );
   const pendingReviewContinuation =
     pendingReview && !reviewerIsActiveForReview(current, pendingReview) ? pendingReview : undefined;
   const requiredReviewCount = effectiveRequiredReviewCount(reviewPolicy);

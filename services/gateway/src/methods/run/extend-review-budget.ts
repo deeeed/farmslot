@@ -15,6 +15,12 @@ import {
 } from '../../review/review-round-budget.js';
 import { publicationStatusForRun } from '../../run-completion/orchestrator.js';
 import { capturePublicationSource } from '../../run-completion/publication-source.js';
+import {
+  hasEngineDecisionWaiter,
+  recordDecisionResolution,
+  resolveEngineDecision,
+} from '../../run-engine/engine-decisions.js';
+import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { getRun } from '../../runs/store.js';
 
@@ -108,6 +114,25 @@ export async function runExtendReviewBudget(
     emit(Events.RUN_UPDATED, { run: updated });
     return { run: updated, ...result };
   });
+  // A waiting publish gate is presented again with the granted limit and the actions it allows,
+  // such as Continue Fixing (ADR-063 Amendments 1 and 4). Hold only re-presents; nothing starts.
+  // As run.decide does, the stored card is resolved before the engine wakes, so one gate stays
+  // pending. Only a publication gate: on a Mark Ready gate, Hold completes the step.
+  const current = getRun(extended.run.id)!;
+  const gate = requiresPublicationApproval(current)
+    ? current.decisions.find(
+        (decision) =>
+          decision.type === 'engine_human_gate' &&
+          !decision.resolvedAt &&
+          decision.payload?.kind === 'ready' &&
+          hasEngineDecisionWaiter(decision.id),
+      )
+    : undefined;
+  if (gate) {
+    recordDecisionResolution(current.id, gate.id, 'hold');
+    resolveEngineDecision(gate.id, 'hold');
+    return { ...extended, run: getRun(current.id)! };
+  }
   // A held result decision offers Send back once the granted round exists.
   if (!isHeldForResultDecision(extended.run)) return extended;
   const { representResultDecision } = await import('../../run-completion/result-decision.js');
