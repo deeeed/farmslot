@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import {
   allocateReviewerContext,
@@ -58,6 +58,8 @@ import { startProgressWatcher } from './progress.js';
 import {
   applyTerminalReviewSignal,
   continuationReviewScope,
+  isLiveNativeReviewer,
+  nativeReviewerContextPrefix,
   persistReviewOutputArtifacts,
   prependReviewerExecutionContract,
   readTerminalReviewSignal,
@@ -150,18 +152,18 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
   };
   admit();
   const allocated = allocateReviewerContext({ runId, runner, model });
-  const key = createHash('sha256')
-    .update(JSON.stringify([generation, taskDir, artifactScope ?? null, loopNumber, model]))
-    .digest('hex')
-    .slice(0, 12);
-  const contextPrefix = `${allocated.id}-native-${key}`;
+  const contextPrefix = nativeReviewerContextPrefix({
+    runId,
+    runner,
+    model,
+    generation,
+    taskDir,
+    artifactScope,
+    loopNumber,
+  });
   let context = [...(original.agentContexts ?? [])]
     .reverse()
-    .find(
-      (candidate) =>
-        candidate.id.startsWith(contextPrefix) &&
-        ['launching', 'working', 'waiting'].includes(candidate.status),
-    );
+    .find((candidate) => isLiveNativeReviewer(candidate, contextPrefix));
   const contextId = context?.id ?? `${contextPrefix}-${randomUUID().slice(0, 8)}`;
   const recovering = Boolean(context?.nativeSession);
   const identity = reviewPRIdentity(original);
