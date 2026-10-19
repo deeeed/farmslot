@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `./mark N` on a complete or no-change signal reruns a declared deterministic step and refreshes its receipt for the current tree without touching the box or the signal. Before, it rewrote the signal to `running`; clearing a stale `ci.local_check` receipt after a late commit no longer reopens the run. `deterministicChecks.execute` returns whether the step declared a check.
 
 ## 0.33.0 - 2026-10-19
 
