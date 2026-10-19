@@ -26,6 +26,12 @@ process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = OWNER;
 // projects directories at module load.
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { recordWorkspaceReviewCompletion } = await import('./pipeline.js');
+const {
+  admitReviewRound,
+  reviewRoundAdmissionId,
+  runReviewRoundBudget,
+  settleReviewRoundNoVerdict,
+} = await import('../review/review-round-budget.js');
 
 const CHILD_METRICS: RunSubtaskMetrics[] = [
   {
@@ -100,6 +106,24 @@ test('a settled review records its result and the child roll-up together', async
   assert.equal(updated.metrics.nudgeCount, 2, 'the run’s own metrics survive the roll-up');
   // Persisted, not just held in memory: the retrospective reads the stored run.
   assert.deepEqual(getRun(runId)?.metrics.subtasks, CHILD_METRICS);
+});
+
+test('a verdict a monitor replay records counts the round its superseded monitor settled', async () => {
+  writeFixtures();
+  const runId = makeWorkspaceRun();
+  // No DISPATCH launch time in this fixture, so the receipt keys on createdAt.
+  const receipt = reviewRoundAdmissionId(`workspace-review-${runId}`, 1, getRun(runId)!.createdAt);
+  await admitReviewRound(runId, receipt);
+  await settleReviewRoundNoVerdict(runId, receipt, 'superseded by a monitor replay');
+  assert.equal((await runReviewRoundBudget(getRun(runId)!)).used, 0);
+
+  await recordWorkspaceReviewCompletion(runId, 0, REVIEW_RESULT, {
+    collectSubtasks: async () => null,
+  });
+
+  const budget = await runReviewRoundBudget(getRun(runId)!);
+  assert.equal(budget.used, 1, 'the attempt returned a verdict, so its round counts');
+  assert.equal(budget.noVerdict, 0);
 });
 
 test('a run with no child unit records its result and no roll-up', async () => {

@@ -4,10 +4,12 @@ import test from 'node:test';
 import type { ReviewAttempt } from '../../src/contracts/runs.js';
 import {
   latestExhaustedReview,
+  REVIEW_NO_VERDICT_LIMIT,
   reviewFixRetriesExhausted,
   reviewRetryCapReason,
   reviewRetryCount,
   reviewRoundBudget,
+  reviewRoundBudgetLabel,
   stampReviewRetryCap,
 } from '../../src/runs/review-retries.js';
 
@@ -194,4 +196,18 @@ test('round budget shows spent rounds independently of passing-review counts', (
   assert.equal(reviewRoundBudget(5).remaining, 0);
   assert.match(reviewRoundBudget(5).diagnosis!, /design problem or scope creep/);
   assert.equal(reviewRoundBudget(8).label, 'Review rounds 8/5');
+});
+
+test('round budget reports no-verdict attempts against their cap without changing the rounds', () => {
+  const plain = reviewRoundBudget(5);
+  assert.equal(plain.noVerdict, 0);
+  assert.equal(plain.noVerdictLimit, REVIEW_NO_VERDICT_LIMIT);
+  assert.equal(reviewRoundBudgetLabel(plain), 'Review rounds 5/5');
+
+  const settled = reviewRoundBudget(4, [], 1);
+  assert.equal(settled.remaining, 1);
+  assert.equal(settled.diagnosis, undefined);
+  assert.equal(settled.label, 'Review rounds 4/5');
+  assert.equal(reviewRoundBudgetLabel(settled), 'Review rounds 4/5 · 1/3 no-verdict');
+  assert.equal(reviewRoundBudget(5, [], 2).diagnosis, plain.diagnosis);
 });

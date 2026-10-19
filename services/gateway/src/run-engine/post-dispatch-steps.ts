@@ -87,6 +87,7 @@ import {
 } from './publication-policy.js';
 import { verifyWorkerPushedBranch } from './push-verification.js';
 import {
+  type PublishGateReviewPlanDependencies,
   type PublishGateReviewPlanResult,
   resumeInterruptedPublicationReview,
   resumeVisualRepair,
@@ -172,6 +173,7 @@ export interface PostDispatchStepContext {
     slotId: string,
     plan: ReviewSelection[],
     trigger: 'dispatch' | 'human-gate',
+    options?: Pick<PublishGateReviewPlanDependencies, 'automaticLaunch'>,
   ) => Promise<PublishGateReviewPlanResult>;
   executeReadyGate: (runId: string) => Promise<string>;
   executeReviewGate: (runId: string) => Promise<void>;
@@ -1210,11 +1212,22 @@ export async function executeHumanGateStep(
           getRun(runId)?.engineState?.publishGate?.reviewPolicy?.requestedBy === 'human-gate'
             ? 'human-gate'
             : 'dispatch';
+        // A gate restart recovery replayed re-enters with the operator's persisted
+        // policy, but its launches are automatic: the no-verdict cap applies.
+        const activeRecoveryAttempt = getRun(runId)?.recoveryAttempts?.at(-1);
+        const recoveryReplay =
+          activeRecoveryAttempt?.stepName === S.HUMAN_GATE &&
+          activeRecoveryAttempt.status === 'started' &&
+          activeRecoveryAttempt.triggeredBy === 'auto-recovery';
         const reviewPlanResult = await executePublishGateReviewPlan(
           runId,
           dispatchReviewSlotId,
           dispatchPlan,
           reviewSource,
+          {
+            automaticLaunch:
+              !unconsumedReviewDecision && (reviewSource !== 'human-gate' || recoveryReplay),
+          },
         );
         await reconcilePublishGateReviewPlanResult(runId, dispatchPlan, reviewPlanResult, context);
       } else if (recoveredReviewIds.length > 0) {

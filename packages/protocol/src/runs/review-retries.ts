@@ -1,11 +1,14 @@
 import type { ReviewBudgetExtension, ReviewRoundBudget, ReviewStatus } from '../contracts/runs.js';
 
 export const MAX_REVIEW_ROUNDS = 5;
+/** No-verdict reviewer attempts after which automatic review launches stop (ADR-063 Amendment 2). */
+export const REVIEW_NO_VERDICT_LIMIT = 3;
 
 /** Round budget is separate from the number of qualifying passing reviewers. */
 export function reviewRoundBudget(
   used: number,
   extensions: readonly ReviewBudgetExtension[] = [],
+  noVerdict = 0,
 ): ReviewRoundBudget {
   const count = Number.isFinite(used) ? Math.max(0, Math.floor(used)) : 0;
   const limit = Math.max(MAX_REVIEW_ROUNDS, ...extensions.map((entry) => entry.limit));
@@ -14,6 +17,8 @@ export function reviewRoundBudget(
     limit,
     remaining: Math.max(0, limit - count),
     label: `Review rounds ${count}/${limit}`,
+    noVerdict: Number.isFinite(noVerdict) ? Math.max(0, Math.floor(noVerdict)) : 0,
+    noVerdictLimit: REVIEW_NO_VERDICT_LIMIT,
     ...(extensions.length
       ? {
           extensions: [...extensions],
@@ -34,6 +39,13 @@ export function reviewRoundBudget(
         }
       : {}),
   };
+}
+
+/** The gate's budget line: the round label, plus no-verdict attempts once there are any. */
+export function reviewRoundBudgetLabel(budget: ReviewRoundBudget): string {
+  return budget.noVerdict > 0
+    ? `${budget.label} · ${budget.noVerdict}/${budget.noVerdictLimit} no-verdict`
+    : budget.label;
 }
 
 export const APPROVE_PUBLISH_UNRESOLVED_ACTION = 'approve-publish-unresolved';

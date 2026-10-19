@@ -14,7 +14,13 @@ import { loadProjectVars } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
-import { admitReviewRound, reviewRoundAdmissionId } from '../review/review-round-budget.js';
+import {
+  admitReviewRound,
+  clearReviewRoundSettlement,
+  reviewRoundAdmissionId,
+  settleReviewRoundNoVerdict,
+} from '../review/review-round-budget.js';
+import { isUncertainReviewerOperation } from '../review/terminal-result.js';
 import {
   buildRepeatReviewContext,
   confirmIncrementalAncestry,
@@ -153,6 +159,9 @@ export async function recordWorkspaceReviewCompletion(
     metrics: withSubtaskMetrics(currentWorkspaceRun(runId, generation).metrics, subtasks),
   });
   await persistRunNow(updated, 'workspace review result');
+  // A monitor replay watches the same attempt; its verdict counts even if the
+  // superseded monitor settled that receipt (ADR-063 Amendment 2).
+  await clearReviewRoundSettlement(runId, monitoredWorkspaceReviewRoundId(updated, generation));
   return updated;
 }
 
@@ -355,8 +364,73 @@ export function reconcileReviewWorkspaceCleanup(
   return cleanupInProgress;
 }
 
+/**
+ * A workspace review attempt's receipt, keyed by the engine generation its
+ * DISPATCH ran at. A restart re-enters DISPATCH at the same generation and
+ * reuses it; a replay that dispatches again runs at a new generation. Generation
+ * 0 keeps the receipt runs admitted before attempts were told apart.
+ */
+function workspaceReviewRoundId(
+  run: Pick<Run, 'id' | 'createdAt'>,
+  dispatchGeneration: number,
+): string {
+  return reviewRoundAdmissionId(
+    `workspace-review-${run.id}`,
+    dispatchGeneration + 1,
+    run.createdAt,
+  );
+}
+
+/** The attempt a monitor watches: the one its DISPATCH admitted, even after a monitor-only replay. */
+function monitoredWorkspaceReviewRoundId(
+  run: Pick<Run, 'id' | 'createdAt' | 'engineState'>,
+  generation: number,
+): string {
+  return workspaceReviewRoundId(
+    run,
+    run.engineState?.workspaceReviewDispatchGeneration ?? generation,
+  );
+}
+
 /** Resource-specific step execution under the existing run engine and terminal router. */
 export async function executeReviewWorkspaceStep(
+  runId: string,
+  step: string,
+  generation: number,
+  emit: (event: string, payload: unknown) => void,
+): Promise<{ inputs?: Record<string, unknown>; outputs?: Record<string, unknown> }> {
+  const before = getRun(runId);
+  const resultBefore = before?.reviewResult;
+  // Resolve the attempt now: a replay that supersedes this monitor may dispatch again.
+  const roundId = before && monitoredWorkspaceReviewRoundId(before, generation);
+  try {
+    return await executeOwnedReviewWorkspaceStep(runId, step, generation, emit);
+  } catch (error) {
+    // A monitor that ends without recording the reviewer's result is a no-verdict
+    // end, a cancel or supersession included (ADR-063 Amendment 2). An uncertain
+    // native operation may still be running its reviewer, so its round counts.
+    const run = getRun(runId);
+    if (
+      run &&
+      roundId &&
+      step === PipelineSteps.MONITOR &&
+      run.reviewResult === resultBefore &&
+      !isUncertainReviewerOperation(error)
+    )
+      await settleReviewRoundNoVerdict(
+        runId,
+        roundId,
+        error instanceof BlockedRunError
+          ? error.detail
+          : error instanceof Error
+            ? error.message
+            : String(error),
+      );
+    throw error;
+  }
+}
+
+async function executeOwnedReviewWorkspaceStep(
   runId: string,
   step: string,
   generation: number,
@@ -410,14 +484,32 @@ export async function executeReviewWorkspaceStep(
       const started =
         run.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)?.startedAt ??
         new Date().toISOString();
-      await admitReviewRound(
-        runId,
-        reviewRoundAdmissionId(`workspace-review-${runId}`, 1, run.createdAt),
-      );
+      const roundId = workspaceReviewRoundId(run, generation);
+      await admitReviewRound(runId, roundId);
+      if (getRun(runId)?.engineState?.workspaceReviewDispatchGeneration !== generation) {
+        const admitted = currentWorkspaceRun(runId, generation);
+        await persistRunNow(
+          updateRun(runId, {
+            engineState: { ...admitted.engineState, workspaceReviewDispatchGeneration: generation },
+          }),
+          'workspace review round',
+        );
+      }
+      // A failed launch is a no-verdict end. One that may have started its
+      // reviewer is reconciled later, so its round still counts.
+      const settleFailedLaunch = async (error: unknown): Promise<never> => {
+        if (!isUncertainReviewerOperation(error))
+          await settleReviewRoundNoVerdict(
+            runId,
+            roundId,
+            error instanceof Error ? error.message : String(error),
+          );
+        throw error;
+      };
       if (run.transport === 'tmux') {
         const started = await launchReviewTmux(runId, task.prompt, () =>
           admittedRun(runId, generation),
-        );
+        ).catch(settleFailedLaunch);
         return { outputs: { ...started, slotId: null, transport: 'tmux' } };
       }
       const snapshot = await launchReviewWorkspaceWorker({
@@ -429,7 +521,7 @@ export async function executeReviewWorkspaceStep(
         assertCurrent: async () => {
           await admittedRun(runId, generation);
         },
-      });
+      }).catch(settleFailedLaunch);
       return {
         outputs: {
           sessionId: snapshot.session.id,
