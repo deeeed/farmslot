@@ -76,6 +76,8 @@ export function createProvider(context) {
         ],
       },
     },
+    // A hosted task binds to this provider; it gates no checklist step.
+    commandOptions: { task: { stepGates: [] } },
     cancel: async () => {
       cleanup();
     },

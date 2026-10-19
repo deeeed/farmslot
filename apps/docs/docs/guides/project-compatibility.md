@@ -38,7 +38,7 @@ cp -R packs/example-app/projects/example-app-farm/manifests "$tutorial_project/"
 node --check "$tutorial_project/provider.mjs"
 ```
 
-The module exports `createProvider(context)` and returns `{ runtime, cancel, finalize }`. Its ActionCatalog pairs the strict `example.note` manifest with an ActionHandler. The handler creates, observes or removes one note. Exclusive creation preserves an existing file; cleanup removes only a note owned by this provider session.
+The module exports `createProvider(context)` and returns `{ runtime, commandOptions, cancel, finalize }`. `commandOptions.task.stepGates` lists the checklist steps a dispatched task gates; a provider that dispatches must declare it, and this one declares none. Its ActionCatalog pairs the strict `example.note` manifest with an ActionHandler. The handler creates, observes or removes one note. Exclusive creation preserves an existing file; cleanup removes only a note owned by this provider session.
 
 The runtime is headless. It needs no server, device, overlay or HUD. It supplies readiness and refuses app launch explicitly. The default RecipeEngine handles preflight, execution and artifacts; the provider implements no graph executor.
 
