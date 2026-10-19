@@ -11,6 +11,7 @@ import {
   type HostedTaskInitRequest,
   hostedTaskRecipeHostOptions,
   type HostedTaskTemplateCatalog,
+  ownedTaskDirectory,
   parseHostedTaskInitRequest,
   runHostedTaskInit,
   selectHostedTaskTemplate,
@@ -97,6 +98,29 @@ test('temporary request is removed on refusal and ordinary user files are preser
   fs.writeFileSync(userFile, '{}');
   await assert.rejects(runHostedTaskInit(userFile), /Only owned temporary/);
   assert.equal(fs.readFileSync(userFile, 'utf8'), '{}');
+});
+
+test('a task directory named through a symlinked checkout path stays owned', (t) => {
+  const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'task-dir-owned-')));
+  t.after(() => fs.rmSync(real, { recursive: true, force: true }));
+  const checkoutReal = path.join(real, 'checkout');
+  const outside = path.join(real, 'outside');
+  fs.mkdirSync(path.join(checkoutReal, '.task'), { recursive: true });
+  fs.mkdirSync(outside);
+  const alias = path.join(real, 'alias');
+  fs.symlinkSync(real, alias, 'dir');
+  const checkout = path.join(alias, 'checkout');
+  const requested = path.join(checkout, '.task', 'run-1');
+  assert.equal(ownedTaskDirectory(checkout, '.task', requested), requested);
+  fs.symlinkSync(outside, path.join(checkoutReal, '.task', 'escape'), 'dir');
+  assert.throws(
+    () => ownedTaskDirectory(checkout, '.task', path.join(checkout, '.task', 'escape', 'run-2')),
+    /resolves outside its selected checkout/,
+  );
+  assert.throws(
+    () => ownedTaskDirectory(checkout, '.task', path.join(real, 'other', '.task', 'run-3')),
+    /is outside its selected checkout/,
+  );
 });
 
 test('oversized requests refuse before reading and remove their owned transport file', async (t) => {

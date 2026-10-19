@@ -256,7 +256,12 @@ export function ensureLocalCredential(port: number): GatewayCredential {
     throw new Error(
       'The local profile has an unverified credential. Verify or replace it explicitly before starting a new gateway.',
     );
-  if (runtime.isActivated() || !process.stdin.isTTY || !process.stdout.isTTY) {
+  if (!runtime.isActivated() && (!process.stdin.isTTY || !process.stdout.isTTY)) {
+    throw new Error(
+      'The first `farmslot up` creates the owner sign-in and needs an interactive terminal. Run it once in a terminal; later starts do not need one.',
+    );
+  }
+  if (runtime.isActivated()) {
     throw new Error(
       'A verified local profile is required. Add the local gateway profile and log in with a person pairing code; for recovery, stop every gateway and use credential issue --offline.',
     );

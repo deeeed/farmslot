@@ -253,10 +253,17 @@ export function parseHostedTaskInitRequest(value: unknown): HostedTaskInitReques
   throw refusal('Hosted task data has an invalid or forbidden field.');
 }
 
-function ownedTaskDirectory(checkout: string, taskDirName: string, requested: string): string {
+export function ownedTaskDirectory(
+  checkout: string,
+  taskDirName: string,
+  requested: string,
+): string {
   const target = path.resolve(requested);
   const root = path.join(fs.realpathSync(checkout), taskDirName);
-  if (!target.startsWith(`${root}${path.sep}`))
+  // The gateway names the task directory under the checkout path it knows, which may run through a
+  // symlink (macOS /var is /private/var). The real-path check below still bounds where it lands.
+  const named = path.join(path.resolve(checkout), taskDirName);
+  if (![root, named].some((owned) => target.startsWith(`${owned}${path.sep}`)))
     throw refusal('The task directory is outside its selected checkout.');
   let existing = target;
   while (!fs.existsSync(existing)) existing = path.dirname(existing);

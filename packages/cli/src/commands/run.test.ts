@@ -158,6 +158,46 @@ test('run gate rejects actions that the pending decision does not offer', () => 
   );
 });
 
+test('run gate pick on a slot picker sends the chosen slot', () => {
+  const decision: RunDecision = {
+    id: 'decision-slot',
+    type: 'engine_no_suitable_slot',
+    title: 'No suitable slot',
+    description: 'All free slots score as stale.',
+    actions: [
+      { id: 'pick', label: 'Use Selected Slot', style: 'primary' },
+      { id: 'abort', label: 'Abort Run', style: 'danger' },
+    ],
+    createdAt: '2026-10-19T00:00:00.000Z',
+    payload: {
+      kind: 'slot_picker',
+      project: 'example',
+      reason: 'all_stale',
+      candidates: [
+        {
+          slotId: 'node-example-1',
+          score: 100,
+          branch: 'main',
+          lifecycle: 'ready',
+          health: { ssh: 'LOCAL', device: '-', devserver: 'OFF', cdp: '-', fixtures: 'OK' },
+          machine: 'node',
+        },
+      ],
+    },
+  };
+  const run = { id: 'run' } as Run;
+  assert.throws(
+    () => buildRunGateParams(run, decision, 'pick', {}),
+    /requires --slot <id>\. Candidates: node-example-1/,
+  );
+  assert.throws(
+    () => buildRunGateParams(run, decision, 'abort', { slot: 'node-example-1' }),
+    /--slot requires --action pick/,
+  );
+  const params = buildRunGateParams(run, decision, 'pick', { slot: ' node-example-1 ' });
+  assert.deepEqual(params.selectionData, { slotId: 'node-example-1' });
+});
+
 test('run gate allows continue on a timed-out interactive handoff', () => {
   const decision = {
     id: 'handoff-1',
