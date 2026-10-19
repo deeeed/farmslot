@@ -499,7 +499,13 @@ export class RunList extends RunListState {
     if (this.actionInProgress) return;
     this.actionInProgress = true;
     try {
-      await gateway.request<RunCleanupResult>(Methods.RUN_CLEANUP, { dryRun: false });
+      // Each cancelled run it archives releases the slot its cancel kept, one after another.
+      const archives = this.cleanupPreview?.runsArchived.length ?? 0;
+      await gateway.request<RunCleanupResult>(
+        Methods.RUN_CLEANUP,
+        { dryRun: false },
+        SLOT_OPERATION_TIMEOUT_MS * Math.max(1, archives),
+      );
       this.cleanupPreview = null;
     } catch (err) {
       console.error('[run-list] cleanup execute failed:', err);

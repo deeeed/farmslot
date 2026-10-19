@@ -235,7 +235,7 @@ mock.module('../../runners/native/worker.js', {
 
 const realRuns = await import('../../runs/store.js');
 
-const { slotRelease } = await import('./release.js');
+const { slotRelease, slotReleasePreflight } = await import('./release.js');
 const { runArchive, runCleanup, runDelete } = await import('../run/admin.js');
 const { activePrepareAborts } = await import('./shared.js');
 const { slotPrepare } = await import('./prepare.js');
@@ -676,8 +676,21 @@ test('cleanup archives a week-old cancelled run only after releasing its kept sl
     held_reason: cancelledRunHoldReason('cancelled'),
   };
   t.mock.method(console, 'log', () => {});
+  let presentAtRelease: boolean | undefined;
+  const slot = {
+    preflight: slotReleasePreflight,
+    release: (
+      params: Parameters<typeof slotRelease>[0],
+      releaseEmit: Parameters<typeof slotRelease>[1],
+    ) => {
+      presentAtRelease = realRuns.getRun('cancelled') !== undefined;
+      return slotRelease(params, releaseEmit);
+    },
+  };
 
-  const result = await runCleanup({ dryRun: false }, emit);
+  const result = await runCleanup({ dryRun: false }, slot);
+
+  assert.equal(presentAtRelease, true, 'the slot is released before the run leaves the store');
 
   assert.ok(result.runsArchived.includes('cancelled'));
   assert.ok(events.includes('reset'), 'the kept slot was released, not orphaned');
