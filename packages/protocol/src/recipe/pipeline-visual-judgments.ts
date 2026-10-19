@@ -45,21 +45,21 @@ export interface PipelineRepairVisualJudgments {
 
 /**
  * What a reviewer returns. It never supplies a closure identity: the gateway binds each result to
- * the closure it captured at launch for that recipeRunId. A value from a runner on an earlier
- * schema is accepted and ignored.
+ * the closure it captured at launch for that recipeRunId.
  */
-export type PipelineVisualReviewerJudgments = Omit<PipelineVisualJudgments, 'closureIdentity'> & {
-  closureIdentity?: string;
-};
+export type PipelineVisualReviewerJudgments = Omit<PipelineVisualJudgments, 'closureIdentity'>;
+
+export type PipelineRepairReviewerApplicability = Omit<
+  PipelineRepairApplicability,
+  'closureIdentity'
+>;
 
 export interface PipelineRepairReviewerJudgments extends Omit<
   PipelineRepairVisualJudgments,
   'sources' | 'retained'
 > {
   sources: PipelineVisualReviewerJudgments[];
-  retained: Array<
-    Omit<PipelineRepairApplicability, 'closureIdentity'> & { closureIdentity?: string }
-  >;
+  retained: PipelineRepairReviewerApplicability[];
 }
 
 export type NativeStructuredResult =
@@ -119,7 +119,6 @@ export const PIPELINE_VISUAL_JUDGMENTS_SCHEMA = {
   properties: {
     schemaVersion: { type: 'integer', enum: [1] },
     recipeRunId: text,
-    closureIdentity: digest,
     judgments: {
       type: 'array',
       items: {
@@ -176,7 +175,6 @@ export const PIPELINE_REPAIR_VISUAL_JUDGMENTS_SCHEMA = {
         properties: {
           claimId: text,
           recipeRunId: text,
-          closureIdentity: digest,
           unaffected: { type: 'boolean' },
           reason: text,
         },
@@ -238,20 +236,40 @@ export function isPipelineRepairVisualJudgments(
     sources.add(source.recipeRunId);
   }
   const retained = new Set<string>();
-  for (const row of value.retained as PipelineRepairReviewerJudgments['retained']) {
+  for (const row of value.retained as PipelineRepairReviewerApplicability[]) {
     if (retained.has(row.claimId)) return false;
     retained.add(row.claimId);
   }
   return true;
 }
 
+/**
+ * A runner on the earlier schema still returns closure identities. The gateway binds its own, so
+ * they are dropped before strict validation.
+ */
+function withoutLegacyClosures(schema: unknown, value: unknown): unknown {
+  const drop = (row: unknown) => {
+    if (!isRecord(row) || !('closureIdentity' in row)) return row;
+    const { closureIdentity: _legacy, ...rest } = row;
+    return rest;
+  };
+  if (schema === PIPELINE_VISUAL_RESULT_SCHEMA) return drop(value);
+  if (schema !== PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA || !isRecord(value)) return value;
+  return {
+    ...value,
+    ...(Array.isArray(value.sources) ? { sources: value.sources.map(drop) } : {}),
+    ...(Array.isArray(value.retained) ? { retained: value.retained.map(drop) } : {}),
+  };
+}
+
 export function nativeStructuredResult(
   schema: unknown,
   value: unknown,
 ): NativeStructuredResult | undefined {
-  if (schema === PIPELINE_VISUAL_RESULT_SCHEMA && isPipelineVisualJudgments(value))
-    return { schema, value };
-  if (schema === PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA && isPipelineRepairVisualJudgments(value))
-    return { schema, value };
+  const candidate = withoutLegacyClosures(schema, value);
+  if (schema === PIPELINE_VISUAL_RESULT_SCHEMA && isPipelineVisualJudgments(candidate))
+    return { schema, value: candidate };
+  if (schema === PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA && isPipelineRepairVisualJudgments(candidate))
+    return { schema, value: candidate };
   return undefined;
 }

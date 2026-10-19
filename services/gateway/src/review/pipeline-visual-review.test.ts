@@ -135,7 +135,6 @@ function fixture() {
           value: {
             schemaVersion: 1,
             recipeRunId: input.claims!.recipeRunId,
-            closureIdentity: recordedEvidenceClosureIdentity(input),
             judgments: [
               {
                 claimId: claim.id,
@@ -236,15 +235,18 @@ test('visual collection refuses different stills, moments, ACs and executions', 
 test('a result binds to the launch closure, whatever closure the reviewer returns', () => {
   // TAT-4145 bda11b1a: the reviewer mis-copied the 64-hex identity it was asked to echo.
   const launch = recordedEvidenceClosureIdentity(input);
-  for (const returned of [
-    'sha256:bf0e30edd58fe3420f135d847128ca8149c79b94e06dc7f976b0bd6a989c7e13',
-    undefined,
-  ]) {
+  const nearMiss = 'sha256:bf0e30edd58fe3420f135d847128ca8149c79b94e06dc7f976b0bd6a989c7e13';
+  for (const legacy of [nearMiss, undefined]) {
     const { run, reviewer, snapshot } = fixture();
-    const value = snapshot.commands[0]!.structuredResult!.value;
-    assert.ok('judgments' in value);
-    if (returned) value.closureIdentity = returned;
-    else delete value.closureIdentity;
+    const command = snapshot.commands[0]!;
+    // A runner on the earlier schema returns a closure; it reaches the gateway as JSON.
+    if (legacy)
+      command.structuredResult = JSON.parse(
+        JSON.stringify({
+          ...command.structuredResult,
+          value: { ...command.structuredResult!.value, closureIdentity: legacy },
+        }),
+      );
     const result = collectPipelineVisualResult(run, reviewer, snapshot)!;
     assert.ok('judgments' in result.result);
     assert.equal(result.result.closureIdentity, launch);
@@ -274,34 +276,42 @@ test('a repair result binds each source and retained row to its launch closure',
   };
   reviewer.nativeSession!.resultSchema = PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA;
   snapshot.session.resultSchema = PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA;
-  const v1 = snapshot.commands[0]!.structuredResult!.value;
-  assert.ok('judgments' in v1);
-  const { closureIdentity: _launch, ...fresh } = v1;
-  const repair = (claimId: string): NativeStructuredResult => ({
+  const fresh = snapshot.commands[0]!.structuredResult!.value;
+  assert.ok('judgments' in fresh);
+  const repair = (
+    claimId = 'kept',
+    retainedRunId = 'older-run',
+    sourceRunId = fresh.recipeRunId,
+  ): NativeStructuredResult => ({
     schema: PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
     value: {
       schemaVersion: 2,
       headSha: source.headSha,
       scopeDigest: `sha256:${'d'.repeat(64)}`,
-      sources: [fresh],
+      sources: [{ ...fresh, recipeRunId: sourceRunId }],
       retained: [
         {
           claimId,
-          recipeRunId: 'older-run',
-          closureIdentity: `sha256:${'f'.repeat(64)}`,
+          recipeRunId: retainedRunId,
           unaffected: true,
           reason: 'The change does not touch this view.',
         },
       ],
     },
   });
-  snapshot.commands[0]!.structuredResult = repair('kept');
+  snapshot.commands[0]!.structuredResult = repair();
   const result = collectPipelineVisualResult(run, reviewer, snapshot)!;
   assert.ok('retained' in result.result);
   assert.equal(result.result.sources[0]!.closureIdentity, source.closureIdentity);
   assert.equal(result.result.retained[0]!.closureIdentity, retainedClosure);
-  snapshot.commands[0]!.structuredResult = repair('other');
-  assert.throws(() => collectPipelineVisualResult(run, reviewer, snapshot), /launch evidence/);
+  for (const mismatch of [
+    repair('other'),
+    repair('kept', 'other-run'),
+    repair('kept', 'older-run', 'other'),
+  ]) {
+    snapshot.commands[0]!.structuredResult = mismatch;
+    assert.throws(() => collectPipelineVisualResult(run, reviewer, snapshot), /launch evidence/);
+  }
 });
 
 test('review prompts never ask for or show a closure identity', () => {
