@@ -1995,6 +1995,7 @@ const CLEANUP_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function cleanupRuns(
   dryRun: boolean,
+  archive: (run: Run) => Promise<boolean> = (run) => archiveRun(run.id),
 ): Promise<{ taskDirsRemoved: string[]; runsArchived: string[]; syntheticRunsDeleted: string[] }> {
   const taskDirsRemoved: string[] = [];
   const runsArchived: string[] = [];
@@ -2038,7 +2039,7 @@ export async function cleanupRuns(
     if (age < CLEANUP_AGE_MS) continue;
     if (!dryRun) {
       try {
-        await archiveRun(id);
+        await archive(run);
       } catch (err) {
         // Explicit recovery: a run still carrying `backlogReconcilePending` refuses to
         // archive by design. Skip it so one unsettled run cannot abort the sweep for

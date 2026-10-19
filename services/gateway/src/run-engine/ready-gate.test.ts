@@ -10,6 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { admitReviewRound, settleReviewRoundNoVerdict } from '../review/review-round-budget.js';
 import { TerminalReviewArtifactError } from '../review/terminal-result.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
@@ -430,6 +431,56 @@ test('publish-gate review orchestration preserves a recoverable gate and launche
       ?.userAction,
     'Commit the validated fixes, then request re-review.',
   );
+});
+
+test('at the no-verdict cap an automatic gate plan launches no reviewer; an operator request does', async (t) => {
+  const plan = [{ runner: 'codex' as const, model: null, effort: null, mode: 'cold' as const }];
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-NO-VERDICT-CAP',
+    runner: 'claude',
+    slotId: 'test-no-verdict-cap-slot',
+  });
+  t.after(async () => deleteTestRunIfPresent(run.id));
+  for (const reason of ['timeout', 'invalid JSON', 'lost on restart']) {
+    await admitReviewRound(run.id, reason);
+    await settleReviewRoundNoVerdict(run.id, reason, reason);
+  }
+  let reviewerLaunches = 0;
+  const dependencies = {
+    assertLaunchAllowed: async () => {},
+    executeReview: async () => {
+      reviewerLaunches += 1;
+      return { verdict: 'pass' as const, issues: [], retryCount: 0 };
+    },
+  };
+
+  const automatic = await executePublishGateReviewPlan(
+    run.id,
+    'test-no-verdict-cap-slot',
+    plan,
+    'dispatch',
+    dependencies,
+  );
+  assert.equal(reviewerLaunches, 0);
+  assert.equal(automatic.rejection?.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
+  assert.match(
+    automatic.rejection?.message ?? '',
+    /^3\/3 reviewer attempts ended without a verdict/,
+  );
+
+  const operator = await executePublishGateReviewPlan(
+    run.id,
+    'test-no-verdict-cap-slot',
+    plan,
+    'human-gate',
+    dependencies,
+  );
+  assert.equal(reviewerLaunches, 1);
+  assert.equal(operator.rejection, undefined);
+  assert.equal(getRun(run.id)!.engineState?.publishGate?.reviewLaunchRejection, undefined);
 });
 
 test('a resolved publication gate fails closed when the run park freed its slot', () => {

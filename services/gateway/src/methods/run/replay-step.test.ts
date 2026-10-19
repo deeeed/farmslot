@@ -4,6 +4,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  type AgentContext,
   Events,
   isCompletionPrerequisiteFailure,
   type Principal,
@@ -34,6 +35,7 @@ import { runForceComplete } from './lifecycle-control.js';
 import {
   blockedMonitorOwnsSlot,
   blockedMonitorProofReady,
+  blockedReviewFixTaskFile,
   canAdoptTaskSignalAfterUncertainDispatch,
   freshBlockedMonitorAttempt,
   freshDispatchEngineStateForReplay,
@@ -3361,4 +3363,36 @@ test('a replay refused for PR ownership leaves the discarded run untouched', asy
   const after = getRun(created.id)!;
   assert.equal(after.status, 'failed');
   assert.deepEqual(after.steps, before.steps, 'the refusal and the discard stamp stay');
+});
+
+test('a review replay keeps the fix pass its worker blocked', () => {
+  // TAT-4006 7721a02b at 17:06Z: review done with the worker's block and findings pending delivery.
+  const steps: Run['steps'] = [
+    {
+      name: 'review',
+      status: 'done',
+      outputs: { verdict: 'blocked', recoveryContinuationPending: true, retryCount: 1 },
+    },
+  ];
+  const fix: AgentContext = {
+    id: 'review-fix',
+    role: 'review-fix',
+    runId: '7721a02b-ceda-431a-a741-d743837c40b4',
+    slotId: 'macwork-coredev-2',
+    label: 'Fix',
+    status: 'blocked',
+    taskFile: 'temp/tasks/feat/tat-4006-1019-171024/REVIEW-FIX.md',
+  };
+  const run: Run = { ...makeRun({ status: 'blocked', steps }), agentContexts: [fix] };
+  assert.equal(blockedReviewFixTaskFile(run), fix.taskFile);
+  const delivered = run.steps.map((step) =>
+    step.name === 'review'
+      ? { ...step, outputs: { ...step.outputs, recoveryContinuationPending: false } }
+      : step,
+  );
+  assert.equal(blockedReviewFixTaskFile({ ...run, steps: delivered }), undefined);
+  assert.equal(
+    blockedReviewFixTaskFile({ ...run, agentContexts: [{ ...fix, status: 'complete' }] }),
+    undefined,
+  );
 });

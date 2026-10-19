@@ -77,6 +77,7 @@ import {
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
+import { signalIsNewerThanContext } from '../tasks/worker-signal-context.js';
 import {
   normalizeWorkerSignal,
   signalFreshSince,
@@ -95,7 +96,7 @@ import {
 } from './native-review-operation.js';
 import { initReviewProgress, startProgressWatcher } from './progress.js';
 import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
-import { runReviewRoundBudget } from './review-round-budget.js';
+import { reviewNoVerdictCapReason, runReviewRoundBudget } from './review-round-budget.js';
 import { recordReviewedInputs } from './reviewed-inputs.js';
 import {
   invalidateWarmReviewerSessions,
@@ -429,6 +430,8 @@ async function executeOwnedReview(
         artifactScope,
         mode,
         ...(options.reservedFixPass ? { reservedFixPass: options.reservedFixPass } : {}),
+        // Recorded findings resume only for Continue Fixing, Send back or sent feedback.
+        operatorRequested: true,
       });
       return {
         ...retryResult,
@@ -763,6 +766,7 @@ export async function runReviewRetryLoop({
   feedbackAlreadySent = false,
   priorAttempts = [],
   reservedFixPass,
+  operatorRequested = false,
   deps = PRODUCTION_DEPS,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -784,6 +788,8 @@ export async function runReviewRetryLoop({
   feedbackAlreadySent?: boolean;
   priorAttempts?: ReviewAttempt[];
   reservedFixPass?: ReservedFixPass;
+  /** The first pass continues an operator's Continue Fixing or Send back. */
+  operatorRequested?: boolean;
   deps?: ReviewRetryDeps;
 }): Promise<ReviewResult> {
   const reviewGeneration = deps.getRun(runId)?.engineState?.generation ?? 0;
@@ -795,7 +801,9 @@ export async function runReviewRetryLoop({
       : [reviewAttemptFromResult(result, retryCount + 1)];
 
   let roundLimitReason: string | undefined;
+  let capReason: string | undefined;
   let reserved = reservedFixPass;
+  let operatorPass = operatorRequested;
   while (
     result.verdict === 'issues' &&
     result.issues.length > 0 &&
@@ -808,6 +816,10 @@ export async function runReviewRetryLoop({
       roundLimitReason = budget.diagnosis;
       break;
     }
+    // The no-verdict cap stops automatic re-reviews, not the pass an operator requested.
+    capReason = budgetRun && !operatorPass ? await reviewNoVerdictCapReason(budgetRun) : undefined;
+    if (capReason) break;
+    operatorPass = false;
     console.log(
       `[review] run ${runId.slice(0, 8)} — ${result.issues.length} issue(s) found (retry ${retryCount + 1}/${maxRetries})`,
     );
@@ -1272,6 +1284,8 @@ export async function runReviewRetryLoop({
     feedbackSent: latestFindingsPendingDelivery ? false : feedbackSent,
     recoveryContinuationPending: latestFindingsPendingDelivery && !retriesExhausted,
     ...(roundLimitReason ? { reason: roundLimitReason, maxRetriesExhausted: true } : {}),
+    // A cap stop leaves its findings continuable: Continue Fixing is an operator pass.
+    ...(capReason ? { reason: capReason } : {}),
     durationMs: Date.now() - start,
   };
 }
@@ -1322,13 +1336,18 @@ export function canRecoverReviewFixPass(
   taskDir: string,
   findingsArtifactScope?: string | null,
 ): boolean {
+  // A pass its worker blocked belongs only to its own findings generation: never to a
+  // publication review or a Send back, and never through the legacy null-scope match.
   const matchesFindingsGeneration =
-    !findingsArtifactScope ||
-    !fixContext?.artifactScope ||
-    fixContext.artifactScope === findingsArtifactScope;
+    fixContext?.status === 'blocked'
+      ? (fixContext.artifactScope ?? null) === (findingsArtifactScope ?? null)
+      : !findingsArtifactScope ||
+        !fixContext?.artifactScope ||
+        fixContext.artifactScope === findingsArtifactScope;
   return (
     fixContext?.role === 'review-fix' &&
-    fixContext.status === 'working' &&
+    // A worker that blocked mid-fix can reopen its attempt and finish (TAT-4006 7721a02b).
+    (fixContext.status === 'working' || fixContext.status === 'blocked') &&
     fixContext.taskFile === taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist) &&
     fixContext.signalFile === taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal) &&
     matchesFindingsGeneration
@@ -1616,6 +1635,25 @@ export async function reconcileRecoveredFixPromptDelivery(
   return { status: 'deferred' };
 }
 
+/**
+ * A recovered fix signal belongs to this pass: its own attempt, or one the worker reopened
+ * after it, by the watcher's own rule (TAT-4006 7721a02b).
+ */
+export function recoveredFixSignalMatches(signal: WorkerSignal, fixContext: AgentContext): boolean {
+  return fixContext.signalAttemptId
+    ? signal.attemptId === fixContext.signalAttemptId ||
+        signalIsNewerThanContext(signal, fixContext)
+    : signalFreshSince(signal, fixContext.attemptStartedAt ?? fixContext.startedAt);
+}
+
+/** The worker of a blocked fix pass reopened it and finished a newer attempt. */
+export function blockedFixPassReopened(
+  fixContext: Pick<AgentContext, 'signalAttemptId'>,
+  fixSignal: Pick<WorkerSignal, 'attemptId'> | undefined,
+): boolean {
+  return Boolean(fixSignal?.attemptId && fixSignal.attemptId !== fixContext.signalAttemptId);
+}
+
 export function canSettleRecoveredFixContext(
   current: AgentContext | undefined,
   snapshot: AgentContext,
@@ -1630,12 +1668,12 @@ export function canSettleRecoveredFixContext(
   )
     return false;
   if (current.signalAttemptId === expectedAttemptId) return true;
-  // Recovery may first observe an already-complete signal. Adopt its validated
-  // identity only if no newer delivery or watcher binding replaced our snapshot.
+  // Recovery may first observe an already-complete signal, or one from an attempt the worker
+  // reopened after a block. Adopt its validated identity only if no newer delivery or
+  // watcher binding replaced our snapshot.
   return (
     Boolean(expectedAttemptId) &&
-    !current.signalAttemptId &&
-    !snapshot.signalAttemptId &&
+    current.signalAttemptId === snapshot.signalAttemptId &&
     current.attemptStartedAt === snapshot.attemptStartedAt &&
     current.promptDeliveryStartedAt === snapshot.promptDeliveryStartedAt
   );
@@ -1731,10 +1769,7 @@ async function recoverReviewFixPass({
       try {
         const signal = terminalWorkerSignalFromRaw(raw ?? '');
         if (!signal) return undefined;
-        const matchesAttempt = fixContext.signalAttemptId
-          ? signal.attemptId === fixContext.signalAttemptId
-          : signalFreshSince(signal, fixContext.attemptStartedAt ?? fixContext.startedAt);
-        return matchesAttempt ? signal : undefined;
+        return recoveredFixSignalMatches(signal, fixContext) ? signal : undefined;
       } catch (err) {
         console.warn(
           `[review] ignoring invalid recovered review fix signal for ${runId.slice(0, 8)}: ${(err as Error).message}`,
@@ -1744,6 +1779,10 @@ async function recoverReviewFixPass({
     };
     const rawSignal = await readOptionalReviewFixSignal(vars, fixSignalPath);
     let fixSignal = matchingFixSignal(rawSignal);
+    // A blocked pass is adopted only once its worker reopened and finished a newer attempt.
+    // Otherwise recovery declines, as it did before blocked passes were recoverable.
+    if (fixContext.status === 'blocked' && !blockedFixPassReopened(fixContext, fixSignal))
+      return null;
 
     // Older contexts can be migrated only after their opaque worker attempt
     // matches. Bind the review generation then; never infer it from clocks.
@@ -2059,6 +2098,53 @@ async function recoverReviewFixPass({
         durationMs: Date.now() - start,
       };
     }
+    // Restart recovery stops at the no-verdict cap like the retry loop (ADR-063 Amendment 2).
+    const capRun = getRun(runId);
+    const capReason = capRun && (await reviewNoVerdictCapReason(capRun));
+    // A worker that blocked mid-fix keeps its block; the cap only stops the re-review.
+    if (capReason && workerBlockReason)
+      return {
+        verdict: 'blocked',
+        reason: `${workerBlockReason}; ${capReason}`,
+        issues,
+        validationDepth,
+        usage: priorResult.usage,
+        reviewSnapshot: priorResult.reviewSnapshot,
+        fixDelta: fixDelta.snapshot,
+        attempts: [
+          initialAttempt,
+          {
+            mode,
+            loopNumber: 2,
+            verdict: 'failed',
+            reason: workerBlockReason,
+            unresolvedCount: issues.length,
+            issues,
+            validationDepth,
+            fixDelta: fixDelta.snapshot,
+            artifactPaths: fixDelta.artifactPaths,
+          },
+        ],
+        retryCount: recoveredRetryCount,
+        maxRetries,
+        feedbackSent: true,
+        recoveryContinuationPending: false,
+        durationMs: Date.now() - start,
+      };
+    if (capReason)
+      return {
+        ...priorResult,
+        reason: capReason,
+        fixDelta: fixDelta.snapshot,
+        attempts: [initialAttempt],
+        timeline: initialAttempt.timeline ?? [],
+        retryCount: recoveredRetryCount,
+        maxRetries,
+        // The fix reached the worker; an operator's Request Review re-reviews it.
+        feedbackSent: true,
+        recoveryContinuationPending: false,
+        durationMs: Date.now() - start,
+      };
     setProgressDetail(
       runId,
       `${workerBlockReason ? 'Worker made partial fixes before blocking' : 'Worker fix complete'}; running ${reviewRunner} re-review (2)...`,

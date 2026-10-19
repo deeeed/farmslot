@@ -23,13 +23,15 @@ existing review result; retry attempts do not increase the qualifying-review cou
 The gateway MUST default to at most five reviewer rounds for a repository/PR. Before
 a PR identity exists, admission is scoped to its canonical run. Initial, retry,
 WARM/COLD, pipeline, standalone and publish-gate reviewer attempts MUST spend
-this same budget, including failed and interrupted attempts. A worker fix is
+this same budget; only a counted attempt spends a round (see
+[No-verdict attempts](#no-verdict-attempts)). A worker fix is
 not a reviewer round. Reattaching to an admitted attempt MUST reuse its receipt.
 An ambiguous qualified GitHub reference alone MUST NOT establish PR scope for a
 ticket flow. Existing PR linkage, a pull URL or a PR-bound flow supplies that context.
 
 Admission receipts MUST persist in the existing run snapshots before a runner
-can start. Replay, restart and a different gate or run MUST NOT refund rounds.
+can start. Replay, restart and a different gate or run MUST NOT refund rounds
+by themselves; only the admission owner's no-verdict settlement does.
 Copied review histories MUST NOT count the same admitted attempt twice. The
 round budget is separate from the number of qualifying passing reviewer sessions.
 
@@ -62,7 +64,7 @@ Serialize the grant with review admission, recheck state/head after asynchronous
 reads, and persist the receipt before using its extra capacity. An exact retry
 returns the original receipt; reuse of its key for different inputs refuses.
 Existing admissions MUST remain unchanged. Restart, replay and a copied result
-MUST NOT refund attempts or apply the same extension twice.
+MUST NOT refund attempts by themselves or apply the same extension twice.
 
 The effective limit and used count MUST come from the existing admission owner.
 Before a PR exists, the receipt applies only to its canonical run. Once the run
@@ -75,13 +77,61 @@ The gate shows `N/L` and the grant's scope/provenance. The current approved
 scope brief MUST accompany additional reviewer instructions. A grant does not
 start a reviewer, reset worker-fix retries, mark a result passed or authorize
 publication. Existing review requests/replay collect real results on the same
-run, preserving WARM lineage, immutable ranges, failed-attempt accounting and
+run, preserving WARM lineage, immutable ranges, no-verdict accounting and
 the number of required qualifying reviewers.
 
 Validation MUST cover unauthorized/stale requests, exact retry and conflicting
 keys, concurrent grants/admissions, restart/archive scope preservation, refusal
 without an extension and real sixth/seventh admissions after a bounded grant.
 An extension MUST NOT make stale reviews or an old package publishable.
+
+### No-verdict attempts
+
+**Status:** Accepted (lead, 2026-10-18) under ADR-063 Amendment 2.
+
+Each admitted reviewer attempt settles once, through the admission owner, when
+it ends. An attempt that returned its required result for the reviewed head with
+a pass or issues verdict is counted and records nothing. These ends are
+no-verdict and spend no round; `Run.reviewRoundSettlements` records the reason
+and time against the receipt:
+
+- a native reviewer that timed out, exited, left a missing or unusable result,
+  failed to launch, or was cancelled or superseded;
+- a reviewer a restart could not reattach, or whose recovered signal or result
+  shows a failure;
+- a workspace review whose launch failed after admission, or whose monitor
+  ended without recording a result, a cancel or supersession included. A
+  replay that dispatches again at a new engine generation is a new attempt; a
+  restart that re-enters DISPATCH at the same generation keeps its receipt, and
+  a monitor-only replay still settles the attempt its DISPATCH admitted.
+
+A receipt without a settlement counts, so in-flight, older and rolled-back
+receipts fail closed. A launch or delivery with an uncertain outcome still
+counts, because its reviewer may be running, and so does a legacy tmux reviewer.
+Admitting a receipt again (a reattach) keeps its settlement. When a settled
+attempt's pass or issues verdict arrives later, through restart recovery or a
+workspace monitor replay that records it, the settlement is cleared and the
+attempt counts.
+
+Settlements MUST be merged across the admission scope and copied to every live
+run in it. Rounds used are admissions minus no-verdict settlements;
+`ReviewRoundBudget.noVerdict` counts the settlements against `noVerdictLimit`
+(default 3).
+
+Below the cap, run behaviour is unchanged. At the cap, these automatic launches
+stop with a reason naming the count and the last failures:
+
+- the re-review after a fix: the loop stops before its next fix pass and keeps
+  the findings for Continue Fixing;
+- the re-review of a fix pass recovered after a restart;
+- a publication review plan no operator request started, including configured
+  sequences, reviewed-input reruns and a plan restart recovery resumes: the gate
+  records a launch refusal.
+
+An operator's Request Review still launches, and so does the first fix pass and
+re-review of Continue Fixing or Send back. Their no-verdict ends count again.
+The gate shows `N/L` and, once there are any, the no-verdict count against its
+cap.
 
 ## Session and range
 
@@ -136,10 +186,12 @@ The duplicate units listed in ADR-063 MUST be removed after their callers move.
 - `@farmslot/protocol` owns `ReviewMode`, `ReviewSelection`, `ReviewSequence`,
   `ReviewStatus`, `ReviewAttempt` and `ReviewPolicy`. Run creation, PR options,
   gate resolution, backlog and dispatch queue RPCs consume these types.
-- `@farmslot/protocol` also owns `ReviewRoundBudget`, `MAX_REVIEW_ROUNDS` and
-  `reviewRoundBudget`. Gateway admission and both gate renderers consume the
+- `@farmslot/protocol` also owns `ReviewRoundBudget`, `MAX_REVIEW_ROUNDS`,
+  `REVIEW_NO_VERDICT_LIMIT`, `reviewRoundBudget` and the `reviewRoundBudgetLabel`
+  formatter. Gateway admission, the CLI and both gate renderers consume the
   shared projection. `Run.reviewRoundAdmissions` contains gateway-owned opaque
-  receipts; `ReadyGatePayload.reviewRoundBudget` carries the display snapshot.
+  receipts and `Run.reviewRoundSettlements` their no-verdict settlements;
+  `ReadyGatePayload.reviewRoundBudget` carries the display snapshot.
   No CLI flag or client-written receipt is added.
 - The shared package exports the view-model and selection/sequence validators
   for Command Center, Companion, CLI and gateway consumers.

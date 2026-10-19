@@ -6,6 +6,7 @@ import {
   deriveRunLifecycleView,
   type GitBranchDiffFile,
   type ReadyGatePayload,
+  reviewRoundBudgetLabel,
   type Run,
   type RunDecision,
 } from '@farmslot/protocol';
@@ -308,7 +309,7 @@ export function renderReadyPackageMetadata(input: Parameters<typeof renderReadyT
       <span class="rdy-branch">${branch}</span>
       ${input.payload.reviewRoundBudget
         ? html`<span role="status" data-testid="rdy-review-round-budget"
-            >${input.payload.reviewRoundBudget.label}</span
+            >${reviewRoundBudgetLabel(input.payload.reviewRoundBudget)}</span
           >`
         : nothing}
       ${input.decision?.resolvedAt

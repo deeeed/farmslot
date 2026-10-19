@@ -45,6 +45,13 @@ interface ChecklistTargetOverrides {
   checklist?: string;
   signal?: string;
 }
+const { deterministicChecks } =
+  require('@farmslot/agent-runtime/scripts/worker-terminal-contract.cjs') as {
+    deterministicChecks: {
+      // False when the step declares no deterministic check; throws when the check fails.
+      execute: (taskDir: string, checklist: string, stepNumber: number) => boolean;
+    };
+  };
 const { readSubtaskIndex, SubtaskRefusal } =
   require('@farmslot/agent-runtime/scripts/subtask-unit.cjs') as {
     readSubtaskIndex: (taskDir: string) => SubtaskIndex | null;
@@ -162,19 +169,40 @@ function terminalSignalStatus(taskDir: string, overrides: ChecklistTargetOverrid
   return isTerminalWorkerSignalStatus(signal.status) ? (signal.status ?? null) : null;
 }
 
+// The exit code when the mark stops here, or null to forward it. On a successful
+// verdict (no-change writes `complete` too), a declared deterministic step reruns
+// its check so the receipt matches the current tree; the signal stays as it is.
 function preserveTerminalSignal(
   taskDir: string,
   step: string | undefined,
   overrides: ChecklistTargetOverrides,
-): boolean {
-  if (step !== 'start' && numericMarkStep(step) === null) return false;
+): number | null {
+  const stepNumber = numericMarkStep(step);
+  if (step !== 'start' && stepNumber === null) return null;
 
   const status = terminalSignalStatus(taskDir, overrides);
-  if (!status) return false;
-  if (step === 'start' && status === 'blocked') return false;
+  if (!status) return null;
+  if (step === 'start' && status === 'blocked') return null;
+
+  if (status === 'complete' && stepNumber !== null) {
+    const { checklist } = resolveChecklistTargetWithOverrides(taskDir, overrides);
+    try {
+      if (deterministicChecks.execute(taskDir, checklist, stepNumber)) {
+        console.log(
+          `signal already terminal: status=complete; refreshed the receipt of deterministic step ${step} for the current tree`,
+        );
+        return EXIT.ok;
+      }
+    } catch (error) {
+      console.error(
+        `signal already terminal: status=complete; ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return EXIT.runtime;
+    }
+  }
 
   console.log(`signal already terminal: status=${status}; ignoring non-terminal mark ${step}`);
-  return true;
+  return EXIT.ok;
 }
 
 function numericMarkStep(step: string | undefined): number | null {
@@ -248,7 +276,8 @@ export async function handleChecklist(
       return EXIT.usage;
     }
   }
-  if (preserveTerminalSignal(resolvedTaskDir, step, targetOverrides)) return EXIT.ok;
+  const preserved = preserveTerminalSignal(resolvedTaskDir, step, targetOverrides);
+  if (preserved !== null) return preserved;
   const gates = options.stepGates ?? [];
   if (step === 'sub' && forwarded[2] === 'complete') {
     try {
