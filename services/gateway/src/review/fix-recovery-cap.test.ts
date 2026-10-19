@@ -4,6 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test, type TestContext } from 'node:test';
 
+import type { runNativeReviewAgent } from './native-review-agent.js';
+import type { ReviewAgentResult } from './review-agent.js';
+
 await import('../runtime/mock-pty.test-support.js');
 const repo = await mkdtemp(path.join(os.tmpdir(), 'fix-recovery-cap-'));
 after(() => rm(repo, { recursive: true, force: true }));
@@ -25,17 +28,28 @@ mock.module('../core/config.js', {
 });
 // Every reviewer launch reaches the native reviewer; none may happen at the cap.
 let reviewerLaunches = 0;
+type NativeReviewInput = Parameters<typeof runNativeReviewAgent>[0];
+let nativeReviewer = async (_input: NativeReviewInput): Promise<ReviewAgentResult> => ({
+  verdict: 'pass',
+  issues: [],
+});
 mock.module('./native-review-agent.js', {
   namedExports: {
-    runNativeReviewAgent: async () => {
+    runNativeReviewAgent: async (input: NativeReviewInput) => {
       reviewerLaunches++;
-      return { verdict: 'pass', issues: [] };
+      return nativeReviewer(input);
     },
   },
 });
 
 const { executeReview } = await import('./orchestrator.js');
-const { admitReviewRound, settleReviewRoundNoVerdict } = await import('./review-round-budget.js');
+const {
+  admitReviewRound,
+  reviewLaunchStartedAt,
+  reviewRoundAdmissionId,
+  settleReviewRoundNoVerdict,
+} = await import('./review-round-budget.js');
+const { isLiveNativeReviewer, nativeReviewerContextPrefix } = await import('./review-agent.js');
 const { rewriteStatusFile } = await import('../core/state.js');
 const { REVIEW_FIX_CHECKLIST_TARGET, taskDirRelPath } =
   await import('../tasks/checklist-target.js');
@@ -133,4 +147,117 @@ test('a recovered fix the worker blocked keeps its block at the no-verdict cap',
   assert.equal(result.attempts?.at(-1)?.verdict, 'failed', 'the block stays authoritative');
   assert.equal(result.feedbackSent, true);
   assert.equal(result.recoveryContinuationPending, false);
+});
+
+test('a REVIEW re-entry with all rounds admitted reattaches to the running re-review', async (t) => {
+  // TAT-4158 run 4237202e at 20:36Z: a restart re-entered REVIEW while the loop-2 re-review of
+  // a recovered fix ran, with all five rounds admitted. A fresh first pass needed a sixth.
+  const run = createRun({
+    project,
+    flowType: 'dev',
+    mode: 'interactive',
+    ticketOrPr: 'CAP-REENTRY-SPENT',
+    runner: 'claude',
+    slotId: vars.slotId,
+  });
+  const slotRow = (rows: Record<string, unknown>[]) =>
+    rewriteStatusFile((current) => ({
+      ...current,
+      slots: [...(current?.slots ?? []).filter((entry) => entry.slot !== vars.slotId), ...rows],
+    }));
+  t.after(async () => {
+    nativeReviewer = async () => ({ verdict: 'pass', issues: [] });
+    await slotRow([]);
+    await deleteTestRunIfPresent(run.id);
+  });
+  await slotRow([{ slot: vars.slotId, current_run_id: run.id }]);
+  const generation = getRun(run.id)!.engineState?.generation ?? 0;
+  const prefix = (loopNumber: number) =>
+    nativeReviewerContextPrefix({
+      runId: run.id,
+      runner: 'claude',
+      model: 'opus',
+      generation,
+      taskDir,
+      artifactScope: null,
+      loopNumber,
+    });
+  const pipeline = `pipeline-review-${run.id}`;
+  const lineage2 = `${prefix(2)}-d0e601c0`;
+  const running = `${prefix(2)}-85add757`;
+  const runningSince = '2026-10-19T20:33:40.655Z';
+  // The run's five receipts, as recorded: two first passes and three re-reviews.
+  for (const [lineage, loop, at] of [
+    [pipeline, 1, '2026-10-19T19:05:23.119Z'],
+    [lineage2, 2, '2026-10-19T19:40:59.214Z'],
+    [lineage2, 3, '2026-10-19T20:03:36.075Z'],
+    [pipeline, 1, '2026-10-19T20:12:03.627Z'],
+    [running, 2, runningSince],
+  ] as const)
+    await admitReviewRound(run.id, reviewRoundAdmissionId(lineage, loop, at));
+  const checklist = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist);
+  updateRun(run.id, {
+    status: 'reviewing',
+    taskFile: path.join(config.getOrchestratorTaskRoot(project, projectJson), 'review', 'TASK.md'),
+    agentContexts: [
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'Fix',
+        status: 'complete',
+        runId: run.id,
+        slotId: vars.slotId,
+        runner: 'claude',
+        taskFile: checklist,
+        artifactScope: null,
+      },
+      {
+        id: running,
+        role: 'review',
+        label: 'Claude reviewer',
+        status: 'working',
+        runId: run.id,
+        slotId: vars.slotId,
+        runner: 'claude',
+        taskFile: `${taskDir}/REVIEW.${running}.md`,
+        artifactScope: null,
+        reviewLoopNumber: 2,
+        reviewId: running,
+        startedAt: runningSince,
+      },
+    ],
+  });
+  // The native agent's admission: a launch matching a running reviewer reuses its receipt.
+  const launches: [number, string | null | undefined][] = [];
+  nativeReviewer = async (input) => {
+    launches.push([input.loopNumber, input.reviewId]);
+    const live = getRun(run.id)!.agentContexts!.find((context) =>
+      isLiveNativeReviewer(context, prefix(input.loopNumber)),
+    );
+    const lineage = input.reviewId?.trim() || live?.id || 'fresh-reviewer';
+    await admitReviewRound(
+      run.id,
+      reviewRoundAdmissionId(lineage, input.loopNumber, reviewLaunchStartedAt(live)),
+    );
+    return {
+      verdict: 'issues',
+      issues: [
+        { file: 'src/order-book.tsx', line: 1, description: 'first finding' },
+        { file: 'src/order-book.tsx', line: 2, description: 'second finding' },
+      ],
+    };
+  };
+
+  const result = await executeReview(run.id, vars.slotId, {
+    reviewRunner: 'claude',
+    model: 'opus',
+    validationDepth: 'static-code',
+  });
+
+  assert.deepEqual(launches, [[2, running]], 'reattached at the running reviewer');
+  assert.equal(result.verdict, 'issues');
+  assert.equal(result.issues?.length, 2);
+  assert.equal(result.retryCount, 1);
+  assert.equal('maxRetriesExhausted' in result && result.maxRetriesExhausted, true);
+  assert.match(result.reason ?? '', /The five review rounds are spent/);
 });

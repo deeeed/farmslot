@@ -7,10 +7,12 @@ import type { AgentContext } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
+import { makeRun } from '../run-completion/test-fixtures.js';
 import { retainedReviewerDeliveryPlan } from '../runners/registry.js';
 import { targetForChecklistBasename } from '../tasks/checklist-target.js';
 
 import {
+  liveNativeReviewer,
   prependReviewerExecutionContract,
   reReviewChecklistPrefix,
   resumeReviewAgentPromptDelivery,
@@ -81,6 +83,71 @@ test('restart recovery reclaims only the newest matching in-flight reviewer', ()
     }),
     null,
   );
+});
+
+test('a REVIEW re-entry finds the reviewer a restart left running, at its loop and lineage', () => {
+  // TAT-4158 run 4237202e (generation 3, claude/opus, no artifact scope). The ids are the
+  // recorded ones, so the prefix rule here is the one the native agent used.
+  const taskDir = 'temp/tasks/feat/tat-4158-1019-203908';
+  const pipeline = 'pipeline-review-4237202e-c2a6-4b60-aa84-1c87ad22da6a';
+  const reviewer = (
+    key: string,
+    reviewLoopNumber: number,
+    reviewId: string,
+    status: AgentContext['status'],
+  ) => {
+    const id = `rev-claude-native-${key}`;
+    return {
+      id,
+      role: 'review',
+      label: id,
+      status,
+      slotId: 'macpro-mmt-2',
+      runId: '4237202e-c2a6-4b60-aa84-1c87ad22da6a',
+      runner: 'claude',
+      taskFile: `${taskDir}/REVIEW.${id}.md`,
+      signalFile: `${taskDir}/REVIEW.${id}-SIGNAL.json`,
+      artifactScope: null,
+      reviewLoopNumber,
+      reviewId: reviewId === 'self' ? id : reviewId,
+    } satisfies AgentContext;
+  };
+  const lineage2 = 'rev-claude-native-39adb3121840-d0e601c0';
+  const run = (agentContexts: AgentContext[], generation = 3) => ({
+    ...makeRun({ id: '4237202e-c2a6-4b60-aa84-1c87ad22da6a', engineState: { generation } }),
+    agentContexts,
+  });
+  const params = { runner: 'claude', model: 'opus', taskDir, artifactScope: null };
+  const firstPasses = [
+    reviewer('ddbfd35f6488-f5ab7689', 1, pipeline, 'complete'),
+    reviewer('39adb3121840-d0e601c0', 2, 'self', 'complete'),
+  ];
+
+  // Restart 3 (20:12Z): the loop-3 re-review was running.
+  const third = liveNativeReviewer(
+    run([...firstPasses, reviewer('9f987e055946-595fc400', 3, lineage2, 'working')]),
+    params,
+  );
+  assert.equal(third?.id, 'rev-claude-native-9f987e055946-595fc400');
+  assert.equal(third?.reviewLoopNumber, 3);
+  assert.equal(third?.reviewId, lineage2);
+
+  // Restart 5 (20:36Z): the loop-2 re-review of the recovered fix was running.
+  const fifth = [
+    ...firstPasses,
+    reviewer('9f987e055946-595fc400', 3, lineage2, 'complete'),
+    reviewer('ddbfd35f6488-b5263647', 1, pipeline, 'complete'),
+    reviewer('39adb3121840-85add757', 2, 'self', 'working'),
+  ];
+  const live = liveNativeReviewer(run(fifth), params);
+  assert.equal(live?.id, 'rev-claude-native-39adb3121840-85add757');
+  assert.equal(live?.reviewLoopNumber, 2);
+  assert.equal(live?.reviewId, live?.id);
+
+  // Nothing running, another model or a replay's generation: a fresh first pass.
+  assert.equal(liveNativeReviewer(run(fifth.slice(0, 4)), params), undefined);
+  assert.equal(liveNativeReviewer(run(fifth), { ...params, model: 'sonnet' }), undefined);
+  assert.equal(liveNativeReviewer(run(fifth, 4), params), undefined);
 });
 
 test('re-review prefix is cold on loop 1 and includes worker output from loop 2', () => {

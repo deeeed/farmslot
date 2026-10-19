@@ -1,10 +1,11 @@
 // review/review-agent.ts — launch and collect the independent review runner.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type AgentContext,
+  allocateReviewerContext,
   isTerminalRunStatus,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
@@ -13,6 +14,7 @@ import {
   type ReviewMode,
   type ReviewSessionTrace,
   type ReviewValidationDepth,
+  type Run,
   type RunnerSessionUsage,
   type WorkerSignalChecklistTiming,
 } from '@farmslot/protocol';
@@ -243,6 +245,68 @@ Write \`${resultRelPath}\` as JSON before completing:
 For an issues verdict, set \`verdict\` to \`"issues"\` and include at least one
 \`{ "file": "path", "line": 1, "description": "specific finding" }\` entry.
 The JSON verdict and issues are authoritative; the Markdown file is the human-readable report.`;
+}
+
+/** A native reviewer's context id starts with this; a launch with the same inputs reattaches to it. */
+export function nativeReviewerContextPrefix(input: {
+  runId: string;
+  runner: string;
+  model: string;
+  generation: number;
+  taskDir: string;
+  artifactScope?: string | null;
+  loopNumber: number;
+}): string {
+  const { id } = allocateReviewerContext({
+    runId: input.runId,
+    runner: input.runner,
+    model: input.model,
+  });
+  const key = createHash('sha256')
+    .update(
+      JSON.stringify([
+        input.generation,
+        input.taskDir,
+        input.artifactScope ?? null,
+        input.loopNumber,
+        input.model,
+      ]),
+    )
+    .digest('hex')
+    .slice(0, 12);
+  return `${id}-native-${key}`;
+}
+
+/** A launch reattaches to a native reviewer with its prefix while that reviewer still runs. */
+export function isLiveNativeReviewer(context: AgentContext, prefix: string): boolean {
+  return (
+    context.id.startsWith(prefix) && ['launching', 'working', 'waiting'].includes(context.status)
+  );
+}
+
+/**
+ * The newest native reviewer of this review that is still running. A launch at its loop and
+ * lineage reattaches to it and reuses its admission receipt.
+ */
+export function liveNativeReviewer(
+  run: Run,
+  params: { runner: string; model: string; taskDir: string; artifactScope?: string | null },
+): (AgentContext & { reviewLoopNumber: number; reviewId: string }) | undefined {
+  const generation = run.engineState?.generation ?? 0;
+  return [...(run.agentContexts ?? [])].reverse().find(
+    (context): context is AgentContext & { reviewLoopNumber: number; reviewId: string } =>
+      typeof context.reviewLoopNumber === 'number' &&
+      typeof context.reviewId === 'string' &&
+      isLiveNativeReviewer(
+        context,
+        nativeReviewerContextPrefix({
+          ...params,
+          runId: run.id,
+          generation,
+          loopNumber: context.reviewLoopNumber,
+        }),
+      ),
+  );
 }
 
 export function selectRecoverableReviewContext(

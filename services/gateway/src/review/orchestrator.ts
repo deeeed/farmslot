@@ -95,7 +95,7 @@ import {
   withNativeReviewOperation,
 } from './native-review-operation.js';
 import { initReviewProgress, startProgressWatcher } from './progress.js';
-import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
+import { liveNativeReviewer, type ReviewAgentResult, runReviewAgent } from './review-agent.js';
 import { reviewNoVerdictCapReason, runReviewRoundBudget } from './review-round-budget.js';
 import { recordReviewedInputs } from './reviewed-inputs.js';
 import {
@@ -447,7 +447,23 @@ async function executeOwnedReview(
       `[review] run ${runId.slice(0, 8)} — spawning review agent (${reviewRunner}/${model}, timeout ${reviewTimeoutMs / 60_000}min)`,
     );
     const priorAttempts = options.priorAttempts ?? [];
-    const firstLoopNumber = (priorAttempts.at(-1)?.loopNumber ?? 0) + 1;
+    // A restart can re-enter REVIEW while its reviewer still runs. Continue at that reviewer's
+    // loop and lineage, which reattaches to it and reuses its round, instead of a fresh pass.
+    const live = options.publicationReview
+      ? undefined
+      : liveNativeReviewer(getRun(runId) ?? run, {
+          runner: reviewRunner,
+          model,
+          taskDir,
+          artifactScope,
+        });
+    const firstLoopNumber = live?.reviewLoopNumber ?? (priorAttempts.at(-1)?.loopNumber ?? 0) + 1;
+    // Each loop after the first followed one fix.
+    const firstRetryCount = live ? firstLoopNumber - 1 : 0;
+    if (live)
+      console.log(
+        `[review] run ${runId.slice(0, 8)} — reattaching to running reviewer ${live.id} (loop ${firstLoopNumber})`,
+      );
     const result = await runReviewAgent(
       vars,
       reviewRunner,
@@ -461,7 +477,7 @@ async function executeOwnedReview(
       artifactScope,
       mode,
       effort,
-      reviewId,
+      live?.reviewId ?? reviewId,
     );
 
     if (result.incomplete) {
@@ -475,7 +491,7 @@ async function executeOwnedReview(
         runner: reviewRunner,
         model,
         effort: effort,
-        retryCount: 0,
+        retryCount: firstRetryCount,
         validationDepth,
         usage: result.usage,
         mode: result.mode,
@@ -511,7 +527,7 @@ async function executeOwnedReview(
         runner: reviewRunner,
         model,
         effort: effort,
-        retryCount: 0,
+        retryCount: firstRetryCount,
         durationMs: Date.now() - start,
       };
     }
@@ -530,7 +546,7 @@ async function executeOwnedReview(
       reviewTimeoutMs,
       reviewResult: result,
       priorAttempts: [...priorAttempts, reviewAttemptFromResult(result, firstLoopNumber)],
-      retryCount: 0,
+      retryCount: firstRetryCount,
       validationDepth,
       artifactScope,
       mode,
