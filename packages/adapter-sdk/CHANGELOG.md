@@ -4,6 +4,11 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.19.0 - 2026-10-19
+
+- Align with `@farmslot/recipe-runner` 0.40.0.
 - `EvidenceReviewModel.claimHasDetails(id, offers)` says whether a criterion row has anything behind its More toggle, and `claimFocusPath(id)` names the file its Review evidence opens: none while the run's evidence is pending, since nothing is retained yet. Command Center and Companion use both, so neither shows a More or Review evidence that opens nothing. The offers type is `EvidenceReviewClaimOffers`.
 - `runEvidencePending(run)` is true while a run is still working and has retained nothing. Given `evidencePending`, the review model shows the worker's verdicts as reported and doesn't flag the not-yet-retained package as invalid. The gateway uses the same rule for run-scoped evidence reads.
 

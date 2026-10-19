@@ -4,9 +4,12 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- `ActiveVideoRecording.ready()`'s contract now includes the lead-in: it resolves once the segment's zero is bounded and one `EVIDENCE_PADDING_MS` has been recorded past it (ADR-062 Amendment 16). Documentation only; the runner is unchanged.
+
+## 0.40.0 - 2026-10-19
+
 - `resolveRecipeRunSelection` resolves what a run command names: a ref, platform alias or `<library>.<ref>` id from the active libraries, else a recipe file with its adjacent task libraries. It returns the libraries with their digests, the match and the `selection` for the run summary. The CLI's `run` uses it, unchanged, and so does `farmslot recipe run`.
 - The README's CLI examples use `farmslot recipe run`, since `farmslot-recipe` is removed.
-- `ActiveVideoRecording.ready()`'s contract now includes the lead-in: it resolves once the segment's zero is bounded and one `EVIDENCE_PADDING_MS` has been recorded past it (ADR-062 Amendment 16). Documentation only; the runner is unchanged.
 
 ## 0.39.5 - 2026-10-18
 

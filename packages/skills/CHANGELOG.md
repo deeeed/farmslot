@@ -4,6 +4,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.7.0 - 2026-10-19
+
 - The `recipe-harness` skill inspects recipes with `farmslot recipe run --list` and `--describe` (allowed tool `Bash(farmslot recipe:*)`), since `farmslot-recipe` is removed.
 
 ## 0.6.27 - 2026-10-18
