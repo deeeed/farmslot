@@ -47,6 +47,7 @@ export {
   DEFAULT_RECORDED_EVIDENCE_POLICY,
   EVIDENCE_PADDING_MS,
   type EvidenceMomentRef,
+  type EvidenceStillFormat,
   hasUnresolvedRecipeFailure,
   normalizeRecipeClaimId,
   RECIPE_ASSERTION_ACTIONS,

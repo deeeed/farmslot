@@ -2,8 +2,11 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
 import type { Run } from '../../src/contracts/runs.js';
+import { isPublishEvidenceArtifact } from '../../src/recipes/step-io.js';
 import {
   extractRunArtifactManifest,
+  isRunArtifactImagePath,
+  isRunArtifactMediaPath,
   runEvidenceArtifacts,
   summarizeRunEvidence,
 } from '../../src/runs/evidence-summary.js';
@@ -199,4 +202,16 @@ test('a gate keeps the frozen metadata of a file the run output recaptured', () 
   );
 
   assert.deepEqual([video?.purpose, video?.sha256], ['video-after', 'frozen']);
+});
+
+test('WebP stills are inline images and publishable media, beside retained PNG stills', () => {
+  for (const still of ['stills/a.webp', 'stills/B.WEBP', 'stills/old.png']) {
+    assert.equal(isRunArtifactImagePath(still), true, still);
+    assert.equal(isRunArtifactMediaPath(still), true, still);
+    assert.equal(isPublishEvidenceArtifact({ path: still, purpose: 'screenshot' }), true, still);
+  }
+  assert.equal(isRunArtifactMediaPath('videos/run.mp4'), true);
+  assert.equal(isRunArtifactImagePath('videos/run.mp4'), false);
+  assert.equal(isRunArtifactMediaPath('report.json'), false);
+  assert.equal(isRunArtifactMediaPath('stills/a.webp.json'), false);
 });

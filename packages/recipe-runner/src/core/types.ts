@@ -1,4 +1,5 @@
 import type {
+  EvidenceStillFormat,
   RecipeActionManifestDocument,
   RecipeArtifactManifestEntry,
   RecipeClaimDeclaration,
@@ -187,6 +188,8 @@ export interface RecipeVideoRecordingOptions {
   mode?: RecipeVideoRecordingMode;
   maxFps?: number;
   maxSize?: number;
+  /** Format of the stills the engine writes; WebP unless set (ADR-062 Amendment 17). */
+  stillFormat?: EvidenceStillFormat;
   reason?: string;
   maxDurationMs?: number;
   maxBytes?: number;

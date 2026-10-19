@@ -55,6 +55,28 @@ test('buildPackageEvidenceManifest keeps only publishable or manifest-referenced
   );
 });
 
+test('WebP stills are packaged like the PNG stills of retained runs', async () => {
+  const artifacts: ArtifactRef[] = [
+    { path: 'artifacts/recipe-run/stills/old.png', purpose: 'screenshot' },
+    { path: 'artifacts/recipe-run/stills/new.webp', purpose: 'screenshot' },
+  ];
+
+  const manifest = await buildPackageEvidenceManifest(null, artifacts, {
+    version: 1,
+    preferred_mode: 'screenshots',
+    before_after_pairs: [
+      { label: 'AC1', before: 'recipe-run/stills/old.png', after: 'recipe-run/stills/new.webp' },
+    ],
+    standalone: [],
+    omit: [],
+  });
+
+  assert.deepEqual(manifest.map((artifact) => artifact.path).sort(), [
+    'artifacts/recipe-run/stills/new.webp',
+    'artifacts/recipe-run/stills/old.png',
+  ]);
+});
+
 test('scoped omissions preserve new screenshot pairs sharing one before image', async () => {
   const names = [
     'before-size-change.png',

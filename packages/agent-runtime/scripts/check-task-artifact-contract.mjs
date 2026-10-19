@@ -114,7 +114,7 @@ if (!taskDir) {
 }
 
 const issues = [];
-const mediaExt = /\.(png|jpe?g|gif|mp4|mov|webm)$/i;
+const mediaExt = /\.(png|jpe?g|gif|webp|mp4|mov|webm)$/i;
 const internalArtifactPath =
   /^artifacts\/(?:harness-launch|harness-relaunch|harness-relaunch-node20|runtime-launch|runtime-relaunch|runner-blockers)\//;
 const allowedManifestKeys = new Set([

@@ -21,6 +21,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Runner auth blockers match only login-banner shapes at the start of a line. A lane whose own answer quotes an auth error in prose, such as `claude reports "OAuth session expired and could not be refreshed"`, is no longer refused as `auth-required`.
 - A remote node's node-support bundle now carries the project's templates (and template sources rooted inside the pack), so hosted task initialization on macpro or mini can select the gateway's template. Since hosted task init moved to the node CLI, every non-QA run on a remote node was refused with `Execution template "dev/default" is missing or incompatible. Compatible ids: (none)`.
 - Backlog and auto-recovery edits for a pack-copied project are written to the farm's runtime settings instead of its `project.json`, so `farmslot update` no longer reverts them. The fleet loader reads them back. As for a source-bound project, it takes such a project's visual-claim delegation only from runtime settings, never from the pack's `project.json`.
+- WebP stills (ADR-062 Amendment 17) count as evidence media everywhere PNG stills do: artifact typing, the PR body, the publish package and its scope, the artifact mirror, family observability, the ready gate, eval packages, and the evidence files listed for model reviewers.
 
 ## 0.24.0 - 2026-10-18
 

@@ -10,6 +10,7 @@ import {
   type EvidenceRefreshOverrideRecord,
   GATE_SUMMARY_KINDS,
   isGateParkInFlightOrFreed,
+  isRunArtifactImagePath,
   isSlotFreedByPark,
   latestExhaustedReview,
   MachineParkEligibilityCodes,
@@ -834,7 +835,7 @@ export function localVideoProofWarning(
 ): string | null {
   const paths = evidence?.map((artifact) => artifact.path.toLowerCase()) ?? [];
   if (paths.length === 0) return null;
-  const hasScreenshot = paths.some((path) => /\.(png|jpe?g|gif)$/.test(path));
+  const hasScreenshot = paths.some((path) => isRunArtifactImagePath(path));
   const hasVideo = paths.some((path) => /\.(mp4|mov|webm)$/.test(path));
   if (!hasScreenshot || hasVideo) return null;
   return [

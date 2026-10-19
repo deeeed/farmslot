@@ -1,12 +1,10 @@
 import path from 'node:path';
 
-import type { ArtifactRef } from '@farmslot/protocol';
-
-const MEDIA_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.mp4', '.mov', '.webm']);
+import { type ArtifactRef, isRunArtifactMediaPath } from '@farmslot/protocol';
 
 export function isUploadableMediaPath(file: string): boolean {
   const withoutQuery = file.split(/[?#]/, 1)[0] ?? file;
-  return MEDIA_EXTENSIONS.has(path.extname(withoutQuery).toLowerCase());
+  return isRunArtifactMediaPath(withoutQuery);
 }
 
 function normalizeEvidenceKey(key: string): string {

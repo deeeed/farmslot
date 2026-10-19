@@ -13,6 +13,8 @@ import { createStandardUiAdapters } from '../src/adapters/ui.js';
 import { RecipeExecutionError } from '../src/core/failure.js';
 import { createRecipeRunner } from '../src/core/runner.js';
 
+import { framePng } from './fixtures/png.js';
+
 const manifest: RecipeActionManifestDocument = {
   $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
   actions: {
@@ -95,7 +97,7 @@ for (const outcome of ['passed', 'predicate-failed', 'still-unavailable', 'retry
             return {
               snapshot: async (output) => {
                 if (outcome === 'still-unavailable') throw new Error('No source frame available.');
-                await writeFile(output, 'source frame fixture');
+                await writeFile(output, framePng());
                 return { output };
               },
               stop: async () => {

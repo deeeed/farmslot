@@ -177,11 +177,15 @@ export interface RecordingSegmentRef {
   gapBefore?: boolean;
 }
 
+/** Engine stills: lossy WebP at quality 85, or lossless PNG (ADR-062 Amendment 17). */
+export type EvidenceStillFormat = 'webp' | 'png';
+
 export interface RecordedEvidencePolicy {
   mode?: 'auto' | 'full-run' | 'off';
   reason?: string;
   maxFps?: number;
   maxSize?: number;
+  stillFormat?: EvidenceStillFormat;
   maxDurationMs?: number;
   maxBytes?: number;
 }
@@ -190,6 +194,7 @@ export const DEFAULT_RECORDED_EVIDENCE_POLICY = {
   mode: 'auto',
   maxFps: 15,
   maxSize: 1_080,
+  stillFormat: 'webp',
   maxDurationMs: 120 * 60 * 1_000,
   maxBytes: 1_024 * 1_024 * 1_024,
 } as const satisfies Required<Omit<RecordedEvidencePolicy, 'reason'>>;

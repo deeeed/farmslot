@@ -16,6 +16,7 @@ import {
   isEvalExperimentManifest,
   isFamilyDiffProvenance,
   isResultPackageManifest,
+  isRunArtifactImagePath,
   type PortableTemplateProvenance,
   type ResultPackageManifest,
   type ResultPackageMetrics,
@@ -417,7 +418,7 @@ function artifactStem(artifactPath: string): string {
 function mediaRoleForArtifact(artifact: FamilyObservabilityArtifact): EvalMedia['role'] | null {
   const purpose = artifact.purpose.toLowerCase();
   if (/\.(mp4|mov|webm)$/i.test(artifact.path) || purpose.includes('video')) return 'eval-video';
-  if (!/\.(png|jpe?g|gif)$/i.test(artifact.path) && !purpose.includes('screenshot')) return null;
+  if (!isRunArtifactImagePath(artifact.path) && !purpose.includes('screenshot')) return null;
   const stem = artifactStem(artifact.path);
   if (
     purpose === 'screenshot-before' ||
