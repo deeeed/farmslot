@@ -949,7 +949,7 @@ test('restart recovery requests a fresh worker after an unacknowledged retained 
   assert.deepEqual(result, { status: 'relaunch-required' });
 });
 
-test('review runner defaults come from configuration, independent of the worker', () => {
+test('review runner defaults come from configuration unless the run selects one, independent of the worker', () => {
   assert.deepEqual(resolveReviewRunnerModel({ runner: 'claude', model: 'opus' }), {
     reviewRunner: 'claude',
     model: 'opus',
@@ -959,6 +959,14 @@ test('review runner defaults come from configuration, independent of the worker'
     resolveReviewRunnerModel(
       { runner: 'claude', model: 'opus' },
       { reviewRunner: 'codex', model: null },
+    ),
+    { reviewRunner: 'codex', model: 'gpt-6.1-sol' },
+  );
+  // ADR-063 Amendment 3: a dispatch sequence's row 1 wins over the project review config.
+  assert.deepEqual(
+    resolveReviewRunnerModel(
+      { runner: 'claude', model: 'opus' },
+      { reviewRunner: 'codex', model: 'gpt-6.1-sol' },
     ),
     { reviewRunner: 'codex', model: 'gpt-6.1-sol' },
   );

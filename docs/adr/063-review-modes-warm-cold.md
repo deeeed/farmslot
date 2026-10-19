@@ -317,3 +317,25 @@ clients that show only `N/5` also show the corrected count.
   Center and Companion show both counts through the existing projection.
 - Coordinated protocol, gateway and client release. Existing receipts need no
   conversion: an unsettled receipt counts.
+
+## Amendment 3: the pipeline review runs the dispatch's first review row, 2026-10-19
+
+**Status:** Proposed
+
+### Context
+
+A run's pipeline review takes its runner and model from the project's `review` configuration, even when the dispatcher chose reviewers for the run in `reviewSequence`. The sequence only drives publication-gate reviews. On a validation run, the dispatcher chose a reviewer from a different model family than the worker. The pipeline review still ran the worker's own runner and model from the project configuration, and the gate then ran the chosen reviewer as an extra review.
+
+### Decision
+
+1. **The pipeline review runs row 1.** When a run carries a `reviewSequence`, its pipeline review uses the first row's runner, model and effort. The project `review` configuration applies only to runs without a sequence. This is an absolute selection, which the dispatcher makes per run. No rule compares it with the worker.
+2. **Rechecks use the same row.** A pipeline review rerun after the evidence or the head changes uses the same row-1 selection, not a fixed runner.
+3. **The gate counts it as row 1.** The publication gate counts that pipeline review as row 1's result, and requests only the remaining rows. Row 1 runs again only when the head or the reviewed inputs changed, like any recheck of the same review.
+
+### Rationale and consequences
+
+The dispatcher already states, per run, which reviewer it wants. Using that choice for the pipeline review gives cross-family review wherever the dispatcher asks for it, and the ADR's rule stays intact: review eligibility never depends on the worker's runner. A row-1 reviewer no longer runs twice. Runs without a sequence behave as before.
+
+### Public surface
+
+No protocol or RPC change. `reviewSequence` row 1 now also selects the pipeline reviewer, and gate review plans count a pipeline review as that row. The spec in `docs/reference/review-modes-warm-cold.md` states both.

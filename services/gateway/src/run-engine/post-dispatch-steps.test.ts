@@ -17,6 +17,7 @@ import {
 import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
 import { writeResultPackageManifest } from '../evals/package-store.js';
+import type { ReviewOptions } from '../review/orchestrator.js';
 import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
 import {
@@ -282,6 +283,106 @@ test('complete re-entry with zero pending decisions restores Codex after a curre
     assert.equal(budget.limit, 8);
     assert.equal(budget.remaining, 1);
   }
+});
+
+test('the gate counts a passing pipeline review of its head as the dispatch row 1', async (t) => {
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'pipeline-row-one-'));
+  t.after(() => rm(taskDir, { recursive: true, force: true }));
+  const head = 'b'.repeat(40);
+  await mkdir(path.join(taskDir, 'artifacts'));
+  await writeFile(
+    path.join(taskDir, 'artifacts/pr-package.json'),
+    JSON.stringify(makeReadyGatePackage({ headSha: head })),
+  );
+  const plan: ReviewSelection[] = [
+    { runner: 'codex', model: 'gpt-6.1-sol', effort: null, mode: 'cold' },
+    { runner: 'claude', model: 'opus', effort: null, mode: 'cold' },
+  ];
+  // What the REVIEW step recorded after running row 1 (codex's default effort).
+  const pipelineReview = (reviewedHeadSha: string): ReviewStatus => ({
+    id: 'pipeline-review-1',
+    source: 'pipeline',
+    mode: 'cold',
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'high',
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    reviewerSessionId: 'pipeline-session',
+    reviewedHeadSha,
+    completedAt: '2026-10-19T00:01:00Z',
+  });
+  const gatePlan = async (reviewSequence: ReviewSelection[], reviewedHeadSha: string) => {
+    const run = createRun({
+      project: 'pipeline-row-one',
+      flowType: 'fix-bug',
+      mode: 'autonomous',
+      ticketOrPr: 'ROW-ONE',
+    });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    updateRun(run.id, {
+      status: 'human-gating',
+      slotId: 'isolated-review-slot',
+      taskFile: path.join(taskDir, 'TASK.md'),
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [],
+      engineState: {
+        publishGate: {
+          publicationStatus: 'not_published',
+          reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+          ...(reviewSequence.length
+            ? {
+                reviewSequence,
+                reviewSequenceContext: { reviewLineages: reviewSequence.map(() => null) },
+              }
+            : {}),
+          reviews: [pipelineReview(reviewedHeadSha)],
+        },
+      },
+    });
+    const requested: Array<{ plan: ReviewSelection[]; trigger: string; lineages?: number }> = [];
+    await executeHumanGateStep(run.id, {
+      ...restartReplayContext(),
+      executePublishGateReviewPlan: async (_runId, _slotId, actualPlan, trigger) => {
+        requested.push({
+          plan: actualPlan,
+          trigger,
+          lineages: getRun(run.id)!.engineState?.publishGate?.reviewSequenceContext?.reviewLineages
+            .length,
+        });
+        return { reviewIds: [] };
+      },
+      prepareCompletionPackageForRun: async () => ({
+        completion: {
+          prNumber: null,
+          ciRepo: null,
+          artifactsCopied: true,
+          prCommentPosted: false,
+          prTitleUpdated: false,
+          prMarkedReady: false,
+          retrospectiveCreated: false,
+          artifacts: [],
+        },
+        prPackage: makeReadyGatePackage({ headSha: head }),
+        reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+        reviews: [],
+      }),
+    });
+    return requested;
+  };
+
+  assert.deepEqual(
+    await gatePlan(plan, head),
+    [{ plan: [plan[1]], trigger: 'dispatch', lineages: 1 }],
+    'only rows 2..n run, with their own lineages',
+  );
+  assert.deepEqual(
+    await gatePlan(plan, 'c'.repeat(40)),
+    [{ plan, trigger: 'dispatch', lineages: 2 }],
+    'a pipeline review of an older head leaves row 1 to run again',
+  );
+  assert.deepEqual(await gatePlan([], head), [], 'a run without a sequence is unchanged');
 });
 
 test('artifact-only QA complete identifies execution completion to the canonical gate guard', async (t) => {
@@ -818,6 +919,78 @@ test('interactive send-feedback continues from existing findings without another
   });
   assert.equal(io.outputs?.verdict, 'pass');
   assert.equal(io.outputs?.interactiveRetry, true);
+});
+
+test('the pipeline review runs the dispatch sequence row 1, else the project review config', async (t) => {
+  const row: ReviewSelection = {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'xhigh',
+    mode: 'cold',
+  };
+  const sequenced = createRun({
+    flowType: 'fix-bug',
+    mode: 'interactive',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-ROW-ONE',
+    runner: 'claude',
+    model: 'opus',
+    slotId: 'remote-mobile-1',
+    reviewSequence: [row, { runner: 'claude', model: 'opus', effort: null, mode: 'cold' }],
+  });
+  const unsequenced = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-NO-SEQUENCE',
+    runner: 'claude',
+    model: 'opus',
+    slotId: 'remote-mobile-2',
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(sequenced.id);
+    await deleteTestRunIfPresent(unsequenced.id);
+  });
+  const calls: Array<ReviewOptions | undefined> = [];
+  const context: PostDispatchStepContext = {
+    ...restartReplayContext(),
+    createEngineDecision: async () => 'send_feedback',
+    executeReviewForRun: async (_runId, _slotId, options) => {
+      calls.push(options);
+      return calls.length === 1
+        ? {
+            verdict: 'issues',
+            issues: [{ file: 'src/example.ts', description: 'Fix it' }],
+            retryCount: 0,
+          }
+        : { verdict: 'pass', issues: [], retryCount: 1 };
+    },
+  };
+
+  const io = await executeReviewStep(sequenced.id, context);
+  assert.deepEqual(
+    calls.map((options) => [options?.reviewRunner, options?.model, options?.effort]),
+    [
+      ['codex', 'gpt-6.1-sol', 'xhigh'],
+      ['codex', 'gpt-6.1-sol', 'xhigh'],
+    ],
+    'the first review and its interactive retry',
+  );
+  assert.deepEqual(io.inputs?.reviewSelection, row, 'recorded for its rechecks');
+
+  calls.length = 0;
+  await executeReviewStep(unsequenced.id, {
+    ...context,
+    executeReviewForRun: async (_runId, _slotId, options) => {
+      calls.push(options);
+      return { verdict: 'pass', retryCount: 0 };
+    },
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(
+    ['reviewRunner', 'model', 'effort'].filter((key) => key in (calls[0] ?? {})),
+    [],
+  );
 });
 
 test('local-first complete contract uses gate-held disposition for dev and fix-bug', () => {

@@ -23,6 +23,8 @@ import {
   type WorkerSignal,
 } from '@farmslot/protocol';
 import {
+  executionModelFromSelection,
+  parseReviewSelection,
   resolveReviewDispatchDefaults,
   resolveReviewMode,
   reviewContextFromRequest,
@@ -101,6 +103,7 @@ import {
   automaticPublicationReviewPlan,
   humanGateReviewPolicy,
   humanGateReviewRequestFromDecision,
+  pipelineReviewSatisfiesFirstRow,
   remainingExplicitReviewPlan,
   repairUnboundRecoveryReviewPlan,
   resolveHumanGateReviewExecutionPlan,
@@ -633,7 +636,14 @@ export async function executeReviewStep(
   const { createEngineDecision, interactiveLightweightSkipOutputs, stepPartialIO } = context;
   const current = getRun(runId)!;
   if (!current.slotId) throw new Error('No slot assigned');
-  const inputs: Record<string, unknown> = { slotId: current.slotId, enabled: true };
+  // ADR-063 Amendment 3: the dispatch's first review row also selects the pipeline
+  // reviewer. Recorded on the step, so its rechecks use it after the gate consumes the row.
+  const reviewSelection = current.engineState?.publishGate?.reviewSequence?.[0];
+  const inputs: Record<string, unknown> = {
+    slotId: current.slotId,
+    enabled: true,
+    ...(reviewSelection ? { reviewSelection } : {}),
+  };
 
   const reviewSkip = await evalReviewAxisSkip(current);
   if (reviewSkip.skipped) {
@@ -721,6 +731,11 @@ export async function executeReviewStep(
     inputs: { ...reviewStep?.inputs, validationDepth },
   });
   const executeReviewForRun = context.executeReviewForRun ?? executeReview;
+  const execution = reviewSelection ? executionModelFromSelection(reviewSelection) : null;
+  // Without a sequence the project's review configuration selects the reviewer.
+  const reviewer = execution
+    ? { reviewRunner: execution.runner, model: execution.model, effort: execution.effort }
+    : {};
   const mode = current.reviewMode;
   const primaryContext = current.reviewContext ?? current.prWork?.review?.options.reviewContext;
   const reviewId =
@@ -737,12 +752,13 @@ export async function executeReviewStep(
     current.slotId,
     sendBack
       ? {
+          ...reviewer,
           validationDepth: sendBack.validationDepth ?? validationDepth,
           mode: sendBack.mode ?? mode,
           reviewId: sendBack.reviewId ?? reviewId,
           resumeFromResult: sendBack,
         }
-      : { validationDepth, mode, reviewId },
+      : { ...reviewer, validationDepth, mode, reviewId },
   );
   const cliCommand = `farmslot rpc review.run '{"runId":"${runId}"}'`;
 
@@ -764,6 +780,7 @@ export async function executeReviewStep(
     // ever sees the requested feedback.
     if (actionId === 'send_feedback') {
       const retryResult = await executeReviewForRun(runId, current.slotId, {
+        ...reviewer,
         validationDepth,
         mode: result.mode ?? 'cold',
         reviewId: result.reviewId,
@@ -871,8 +888,13 @@ export async function rerunReviewIfReviewedInputsChanged(
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — evidence or HEAD changed since the last review; running review again`,
   );
+  // ADR-063 Amendment 3: the recheck runs the row the pipeline review ran.
+  const reviewSelection = latest.steps.find((step) => step.name === S.REVIEW)?.inputs
+    ?.reviewSelection;
   const plan: ReviewSelection[] = [
-    { runner: 'claude', model: null, effort: null, mode: resolveReviewMode() },
+    reviewSelection
+      ? { ...parseReviewSelection(reviewSelection), mode: resolveReviewMode() }
+      : { runner: 'claude', model: null, effort: null, mode: resolveReviewMode() },
   ];
   const reviewedPackage = await readReadyGatePreparedPackage(latest);
   const reviewPlanResult = await context.executePublishGateReviewPlan(
@@ -1039,10 +1061,8 @@ export async function executeHumanGateStep(
       // human gate after restart. Repair before deriving an automatic plan so
       // the legacy double-count does not launch a redundant reviewer.
       let beforeInitialPlan = getRun(runId)!;
-      const repairedPlan = repairUnboundRecoveryReviewPlan(
-        beforeInitialPlan,
-        (await readReadyGatePreparedPackage(beforeInitialPlan))?.headSha,
-      );
+      const gateHeadSha = (await readReadyGatePreparedPackage(beforeInitialPlan))?.headSha;
+      const repairedPlan = repairUnboundRecoveryReviewPlan(beforeInitialPlan, gateHeadSha);
       if (repairedPlan) {
         updateRun(runId, {
           engineState: {
@@ -1105,6 +1125,18 @@ export async function executeHumanGateStep(
         persistedReviewPolicy?.requestedBy === 'dispatch'
           ? persistedReviewPolicy
           : publicationReviewPolicyForRun(beforeInitialPlan, replayProjectVars?.projectJson);
+      const explicitPlanSource =
+        beforeInitialPlan.engineState?.publishGate?.reviewPolicy?.requestedBy === 'human-gate'
+          ? 'human-gate'
+          : 'dispatch';
+      // ADR-063 Amendment 3: the pipeline review ran the dispatch's row 1. Its pass
+      // of the gate head is that row's result; at an older head row 1 runs again.
+      const pipelineReviewedFirstRow =
+        explicitPlanSource === 'dispatch' &&
+        pipelineReviewSatisfiesFirstRow(explicitInitialPlan, reviewsForInitial, {
+          headSha: gateHeadSha,
+          requestedAt: beforeInitialPlan.engineState?.publishGate?.reviewSequenceRequestedAt,
+        });
       // A restart can land after a reviewer verdict was persisted but before
       // the durable pending plan was cleared. Execute only the still-missing
       // portion; otherwise every restart launches another already-satisfied
@@ -1117,14 +1149,15 @@ export async function executeHumanGateStep(
         : latestHasOpenFindings
           ? []
           : explicitInitialPlan.length
-            ? remainingExplicitReviewPlan(explicitInitialPlan, reviewsForInitial, {
-                requestedAt: beforeInitialPlan.engineState?.publishGate?.reviewSequenceRequestedAt,
-                source:
-                  beforeInitialPlan.engineState?.publishGate?.reviewPolicy?.requestedBy ===
-                  'human-gate'
-                    ? 'human-gate'
-                    : 'dispatch',
-              })
+            ? remainingExplicitReviewPlan(
+                pipelineReviewedFirstRow ? explicitInitialPlan.slice(1) : explicitInitialPlan,
+                reviewsForInitial,
+                {
+                  requestedAt:
+                    beforeInitialPlan.engineState?.publishGate?.reviewSequenceRequestedAt,
+                  source: explicitPlanSource,
+                },
+              )
             : automaticPublicationReviewPlan(
                 beforeInitialPlan.engineState?.publishGate?.reviewPolicy ??
                   publicationReviewPolicyForRun(beforeInitialPlan),
@@ -1183,7 +1216,12 @@ export async function executeHumanGateStep(
         }
       }
       if (initialPlan.length) {
-        if (explicitInitialPlan.length === 0 || unconsumedReviewDecision) {
+        // A row the pipeline review satisfied leaves the stored plan and its lineages.
+        if (
+          explicitInitialPlan.length === 0 ||
+          unconsumedReviewDecision ||
+          pipelineReviewedFirstRow
+        ) {
           updateRun(runId, {
             engineState: {
               ...beforeInitialPlan.engineState,
