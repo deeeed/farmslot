@@ -4,8 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `cancelledRunHoldReason`, `cancelledRunSlotHold`, `cancelledRunSlotChoices` and `releaseCancelledRunSlot`: the shared view model for a slot a cancelled run keeps for replay (ADR-054 amendment, 2026-10-19), with its release (`slot.release` with the run as expected owner and `forceReset`). `SlotReleaseResult` (`released`, `reason`) types the `slot.release` result.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - A pipeline visual reviewer no longer returns a closure identity. The runner schemas (v1 results and v2 retained rows) drop `closureIdentity` and still list every property as required, as strict structured output needs. `nativeStructuredResult` drops a closure identity sent by a runner on the earlier schema before validating. `PipelineVisualReviewerJudgments`, `PipelineRepairReviewerJudgments` and `PipelineRepairReviewerApplicability` type what a reviewer returns; `PipelineVisualJudgments` stays the bound result.
+- A blocked run shows its reason and the step it stopped at. `deriveRunLifecycleView` takes the run's `error` and labels a blocked run `Blocked: <reason>` (the error's first non-empty line, from `blockedRunReason`), or `Blocked` without one. `runStepDisplayStatus` returns a step's `RunStepDisplayStatus`: `blocked` for the last step of a blocked run that is neither pending nor skipped, and `skipped` for a cancelled run's unfinished steps. `runStepDisplayDetail` returns the reason on that step (or the step's detail when the run has no error) and the step's own detail elsewhere.
 
 ## 0.57.0 - 2026-10-19
 

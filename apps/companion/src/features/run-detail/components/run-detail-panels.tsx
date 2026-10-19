@@ -7,6 +7,9 @@ import {
   type Run,
   type RunDecision,
   type RunStep,
+  runStepDisplayDetail,
+  type RunStepDisplayStatus,
+  runStepDisplayStatus,
 } from '@farmslot/protocol';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
@@ -48,6 +51,7 @@ import { TONE_COLORS } from '../run-detail-model';
 import { runDetailStyles as styles } from '../styles/run-detail.styles';
 
 export function PipelineStepCard({
+  run,
   step,
   index,
   expanded,
@@ -58,6 +62,7 @@ export function PipelineStepCard({
   onReplayStep,
   onDiagnoseFailure,
 }: {
+  run: Run;
   step: RunStep;
   index: number;
   expanded: boolean;
@@ -68,21 +73,23 @@ export function PipelineStepCard({
   onReplayStep: (skipPrepare?: boolean) => void;
   onDiagnoseFailure: () => void;
 }) {
-  const statusColor = stepStatusColor(step.status);
+  const status = runStepDisplayStatus(run, step);
+  const statusColor = stepStatusColor(status);
+  const detail = runStepDisplayDetail(run, step);
   const artifacts = collectStepArtifacts(step);
   return (
     <View style={[styles.stepCard, expanded && styles.stepCardExpanded]}>
       <Pressable onPress={onToggle}>
         <View style={styles.row}>
           <View style={styles.stepLeft}>
-            <Text style={[styles.stepIcon, { color: statusColor }]}>{stepIcon(step.status)}</Text>
+            <Text style={[styles.stepIcon, { color: statusColor }]}>{stepIcon(status)}</Text>
             <View style={styles.stepTitleWrap}>
               <Text style={styles.stepName} numberOfLines={1}>
                 {index + 1}. {step.name}
               </Text>
-              {step.detail && (
+              {detail && (
                 <Text style={styles.stepDetailPreview} numberOfLines={expanded ? 3 : 1}>
-                  {step.detail}
+                  {detail}
                 </Text>
               )}
             </View>
@@ -1116,16 +1123,17 @@ export function StructuredDataBlock({
     </View>
   );
 }
-export function stepIcon(status: RunStep['status']): string {
+export function stepIcon(status: RunStepDisplayStatus): string {
   if (status === 'done') return '✓';
   if (status === 'running') return '▶';
   if (status === 'failed') return '✗';
+  if (status === 'blocked') return '!';
   if (status === 'skipped') return '↷';
   return '○';
 }
-export function stepStatusColor(status: RunStep['status']): string {
+export function stepStatusColor(status: RunStepDisplayStatus): string {
   if (status === 'done') return colors.statusOk;
-  if (status === 'running') return colors.statusWarn;
+  if (status === 'running' || status === 'blocked') return colors.statusWarn;
   if (status === 'failed') return colors.statusFail;
   if (status === 'skipped') return colors.textMuted;
   return colors.accent;

@@ -4,9 +4,13 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- A cancelled run that still holds its slot shows it in run detail with Replay from <step> and Release slot side by side, and the fleet card reads "held by cancelled run <id>" with Release slot. Release resets the checkout, as deleting the run does, after a confirmation; a refusal shows its reason.
+
 - Run acceptance: a run that is still working no longer shows its evidence as Invalid before the worker finishes. A criterion row shows More and Review evidence only when they have something to open, and while nothing is assessed the panel shows only its counts line, with the list on demand; it opens once a criterion is assessed and not all are proven. Check details lists a criterion's recipe nodes, as Command Center does.
 
 - Terminal and replay checks use the shared terminal status helper.
+
+- A blocked run shows its reason and the step it stopped at. The run detail badge and the runs list read `Blocked: <reason>` on one line, and the pipeline and the step list mark that step amber, the step list with the reason as its detail. Before, it read as done.
 
 - Reload a run's recorded evidence each time the gateway reconnects, as run detail already does for the run itself. Run detail, the artifact viewer and the decision workspace opened before the connection was ready, or during a gateway restart, now show the run's report and recipe evidence without being reopened, and a reconnect keeps an open viewer and its position. A failed re-read no longer empties the decision workspace's recipe evidence, and the artifact viewer's recipe error clears after the next successful read.
 

@@ -263,8 +263,8 @@ export function defaultCancelCollaborators(): CancelCollaborators {
       const { readSlotRow } = await import('../core/index.js');
       state.fence.before = run.slotId ? await readSlotRow(run.slotId) : null;
       await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
-      // Cancel always frees the slot unless another active run owns it (ADR-054
-      // amendment, 2026-10-19). What the run started but could not stop is named.
+      // Cancel stops what the run started; only another active run keeps its slot
+      // from it (ADR-054 amendment, 2026-10-19). What could not be stopped is named.
       const survivors = await stopRunOwnedTmuxAndWatches(run, { stopUnverifiedWorkers: true });
       await releaseRunOwnedCapabilities(run);
       const blocker = await slotOwnershipBlocker(run);
@@ -299,11 +299,14 @@ export function defaultCancelCollaborators(): CancelCollaborators {
             return;
           }
         }
-        const reset = await releaseRunSlotOwnership(run, fence, blocker);
+        // The slot stays the run's for replay; release, delete or archive frees it (ADR-054).
+        const kept = await releaseRunSlotOwnership(run, fence, blocker, { keepForReplay: true });
         if (blocker) return { skipped: blocker };
-        if (!reset) return { skipped: 'Slot ownership changed during cancellation' };
+        if (!kept) return { skipped: 'Slot ownership changed during cancellation' };
         await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
-        console.log(`[run-lifecycle] released slot ${run.slotId} on cancel`);
+        console.log(
+          `[run-lifecycle] kept slot ${run.slotId} for cancelled run ${run.id} (replay or release)`,
+        );
       } catch (error) {
         await settleFailedRunSlotCleanup(run, fence, error);
         throw error;

@@ -57,6 +57,18 @@ test('pipelineStepTone uses review verdict outputs for mini+canvas parity', () =
   );
 });
 
+test('a blocked review reads amber on the canvas and in the mini, whatever its verdict', () => {
+  // A review fix that blocks records verdict `blocked`, which the verdict tone reads as muted.
+  assert.equal(
+    pipelineStepTone({ name: 'review', status: 'blocked', outputs: { verdict: 'blocked' } }),
+    'warn',
+  );
+  assert.equal(
+    pipelineStepTone({ name: 'finalize', status: 'blocked', detail: 'hard crash' }),
+    'warn',
+  );
+});
+
 test('package-refresh after issues is orange rework, terminal only after review failed', () => {
   assert.equal(
     pipelineStepTone({

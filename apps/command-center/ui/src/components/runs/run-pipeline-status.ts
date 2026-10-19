@@ -4,7 +4,7 @@
 // - orange (warn) = recoverable: review issues / package refresh / re-publish rework
 // - green (ok) / blue (running) / muted = success / in-flight / idle
 
-import type { Run, RunStep, RunStepStatus } from '@farmslot/protocol';
+import type { Run, RunStep, RunStepDisplayStatus, RunStepStatus } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -37,7 +37,7 @@ export function publicationReviewVerdictTone(
   return 'muted';
 }
 
-export function stepStatusTone(status: RunStepStatus): PipelineDisplayTone {
+export function stepStatusTone(status: RunStepDisplayStatus): PipelineDisplayTone {
   switch (status) {
     case 'done':
       return 'ok';
@@ -45,6 +45,8 @@ export function stepStatusTone(status: RunStepStatus): PipelineDisplayTone {
       return 'running';
     case 'failed':
       return 'fail';
+    case 'blocked':
+      return 'warn';
     case 'skipped':
     case 'pending':
     default:
@@ -116,11 +118,14 @@ export function computePackageRefreshStatus(
  * review must honor maxRetriesExhausted before treating issues as orange.
  */
 export function pipelineStepTone(
-  step: Pick<RunStep, 'name' | 'status' | 'detail'> & {
+  step: Pick<RunStep, 'name' | 'detail'> & {
+    status: RunStepDisplayStatus;
     outputs?: Record<string, unknown> | null;
   },
   opts?: { runError?: string | null },
 ): PipelineDisplayTone {
+  // A blocked run's stopped step reads amber whatever its outputs record.
+  if (step.status === 'blocked') return 'warn';
   const outputs = step.outputs ?? undefined;
   const verdict =
     typeof outputs?.verdict === 'string'
