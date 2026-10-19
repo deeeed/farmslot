@@ -179,7 +179,7 @@ test(
       await client.call(Methods.NATIVE_SESSION_SEND, {
         sessionId: session.id,
         commandId,
-        text: `Inspect square.png with your image tool. Judge this claim: "The centered square is red on a white background." Confirm only if it is red, reject otherwise. Do not change files. Return only the constrained JSON with schemaVersion 1, recipeRunId "provider-visual-fixture", closureIdentity "${digest}", and one judgment with claimId "red-square", observed verdict/reason, reviewedFiles [{"path":"square.png","digest":"${digest}"}], moments [].`,
+        text: `Inspect square.png with your image tool. Judge this claim: "The centered square is red on a white background." Confirm only if it is red, reject otherwise. Do not change files. Return only the constrained JSON with schemaVersion 1, recipeRunId "provider-visual-fixture" and one judgment with claimId "red-square", observed verdict/reason, reviewedFiles [{"path":"square.png","digest":"${digest}"}], moments [].`,
       });
       let snapshot: NativeSessionReadResult | undefined;
       const deadline = Date.now() + 120_000;
@@ -202,7 +202,7 @@ test(
       assert.equal(command.generation, session.generation);
       assert.equal(command.accepted, true);
       assert.equal(command.structuredResult?.schema, PIPELINE_VISUAL_RESULT_SCHEMA);
-      assert.equal(command.structuredResult?.value.closureIdentity, digest);
+      assert.ok(command.structuredResult && !('closureIdentity' in command.structuredResult.value));
       assert.equal(
         command.structuredResult?.value.judgments[0]?.verdict,
         red ? 'confirmed' : 'rejected',

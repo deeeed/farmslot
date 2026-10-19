@@ -43,9 +43,28 @@ export interface PipelineRepairVisualJudgments {
   retained: PipelineRepairApplicability[];
 }
 
+/**
+ * What a reviewer returns. It never supplies a closure identity: the gateway binds each result to
+ * the closure it captured at launch for that recipeRunId.
+ */
+export type PipelineVisualReviewerJudgments = Omit<PipelineVisualJudgments, 'closureIdentity'>;
+
+export type PipelineRepairReviewerApplicability = Omit<
+  PipelineRepairApplicability,
+  'closureIdentity'
+>;
+
+export interface PipelineRepairReviewerJudgments extends Omit<
+  PipelineRepairVisualJudgments,
+  'sources' | 'retained'
+> {
+  sources: PipelineVisualReviewerJudgments[];
+  retained: PipelineRepairReviewerApplicability[];
+}
+
 export type NativeStructuredResult =
-  | { schema: typeof PIPELINE_VISUAL_RESULT_SCHEMA; value: PipelineVisualJudgments }
-  | { schema: typeof PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA; value: PipelineRepairVisualJudgments };
+  | { schema: typeof PIPELINE_VISUAL_RESULT_SCHEMA; value: PipelineVisualReviewerJudgments }
+  | { schema: typeof PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA; value: PipelineRepairReviewerJudgments };
 
 /** Gateway-captured review input; shared task files cannot supply it. */
 export interface PipelineVisualReviewInput {
@@ -96,11 +115,10 @@ const digest = { type: 'string', pattern: '^sha256:[a-f0-9]{64}$' };
 export const PIPELINE_VISUAL_JUDGMENTS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['schemaVersion', 'recipeRunId', 'closureIdentity', 'judgments'],
+  required: ['schemaVersion', 'recipeRunId', 'judgments'],
   properties: {
     schemaVersion: { type: 'integer', enum: [1] },
     recipeRunId: text,
-    closureIdentity: digest,
     judgments: {
       type: 'array',
       items: {
@@ -153,11 +171,10 @@ export const PIPELINE_REPAIR_VISUAL_JUDGMENTS_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['claimId', 'recipeRunId', 'closureIdentity', 'unaffected', 'reason'],
+        required: ['claimId', 'recipeRunId', 'unaffected', 'reason'],
         properties: {
           claimId: text,
           recipeRunId: text,
-          closureIdentity: digest,
           unaffected: { type: 'boolean' },
           reason: text,
         },
@@ -177,7 +194,9 @@ export function nativeResultJsonSchema(schema: NativeResultSchema): Record<strin
     : PIPELINE_VISUAL_JUDGMENTS_SCHEMA;
 }
 
-export function isPipelineVisualJudgments(value: unknown): value is PipelineVisualJudgments {
+export function isPipelineVisualJudgments(
+  value: unknown,
+): value is PipelineVisualReviewerJudgments {
   if (
     !isRecord(value) ||
     validateRecipeParams(value, PIPELINE_VISUAL_JUDGMENTS_SCHEMA).status !== 'valid' ||
@@ -202,7 +221,7 @@ export function isPipelineVisualJudgments(value: unknown): value is PipelineVisu
 
 export function isPipelineRepairVisualJudgments(
   value: unknown,
-): value is PipelineRepairVisualJudgments {
+): value is PipelineRepairReviewerJudgments {
   if (
     !isRecord(value) ||
     validateRecipeParams(value, PIPELINE_REPAIR_VISUAL_JUDGMENTS_SCHEMA).status !== 'valid' ||
@@ -212,25 +231,45 @@ export function isPipelineRepairVisualJudgments(
   )
     return false;
   const sources = new Set<string>();
-  for (const source of value.sources as PipelineVisualJudgments[]) {
+  for (const source of value.sources as PipelineVisualReviewerJudgments[]) {
     if (sources.has(source.recipeRunId)) return false;
     sources.add(source.recipeRunId);
   }
   const retained = new Set<string>();
-  for (const row of value.retained as PipelineRepairApplicability[]) {
+  for (const row of value.retained as PipelineRepairReviewerApplicability[]) {
     if (retained.has(row.claimId)) return false;
     retained.add(row.claimId);
   }
   return true;
 }
 
+/**
+ * A runner on the earlier schema still returns closure identities. The gateway binds its own, so
+ * they are dropped before strict validation.
+ */
+function withoutLegacyClosures(schema: unknown, value: unknown): unknown {
+  const drop = (row: unknown) => {
+    if (!isRecord(row) || !('closureIdentity' in row)) return row;
+    const { closureIdentity: _legacy, ...rest } = row;
+    return rest;
+  };
+  if (schema === PIPELINE_VISUAL_RESULT_SCHEMA) return drop(value);
+  if (schema !== PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA || !isRecord(value)) return value;
+  return {
+    ...value,
+    ...(Array.isArray(value.sources) ? { sources: value.sources.map(drop) } : {}),
+    ...(Array.isArray(value.retained) ? { retained: value.retained.map(drop) } : {}),
+  };
+}
+
 export function nativeStructuredResult(
   schema: unknown,
   value: unknown,
 ): NativeStructuredResult | undefined {
-  if (schema === PIPELINE_VISUAL_RESULT_SCHEMA && isPipelineVisualJudgments(value))
-    return { schema, value };
-  if (schema === PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA && isPipelineRepairVisualJudgments(value))
-    return { schema, value };
+  const candidate = withoutLegacyClosures(schema, value);
+  if (schema === PIPELINE_VISUAL_RESULT_SCHEMA && isPipelineVisualJudgments(candidate))
+    return { schema, value: candidate };
+  if (schema === PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA && isPipelineRepairVisualJudgments(candidate))
+    return { schema, value: candidate };
   return undefined;
 }
