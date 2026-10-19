@@ -264,7 +264,7 @@ one UI and one non-UI ticket per pack precedes the normal-writer cutover.
 
 ## Amendment 6 (2026-10-19): Library action declarations
 
-**Status:** Proposed. **Shipping PR:** [#1327](https://github.com/deeeed/farmslot/pull/1327).
+**Status:** Accepted, approved 2026-10-19. **Shipping PR:** [#1327](https://github.com/deeeed/farmslot/pull/1327).
 
 ### Decision
 
