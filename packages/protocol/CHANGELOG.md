@@ -4,6 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.56.0 - 2026-10-19
+
 - Runs gain the `needs-decision` status (ADR-065 Amendment 7): a run whose worker delivered a result that review or a completion prerequisite did not accept waits for a person. The `result-decision` payload carries the reason, the findings or refused prerequisite, the delivered head or report and three actions (`send-back`, `accept-result`, `close-result`) with their availability; `Run.resultDecisionReceipt` records the choice; `RunResolveDecisionParams.reason` carries its written reason. New helpers `hasDeliveredResult` and `isHeldForResultDecision`; `isSuccessfulRun` counts an accepted result as a success and a closed one as not; the refused-completion helpers also accept `needs-decision`; `deriveRunLifecycleView` labels it "Needs decision". `RunAnalyticsRecord` gains `resultDecision` (`ANALYTICS_RECORD_SCHEMA_VERSION` 2). `deriveRunLifecycleView` gives it the activity label Needs decision, so run lists and the CLI say what it waits on.
 - `RunDecisionActionInput.reason` and `buildRunResolveDecisionParams` carry a result decision's written reason to `run.resolveDecision`: trimmed, and sent only when not empty.
 - `RecordedEvidencePolicy.stillFormat` (`'webp' | 'png'`, type `EvidenceStillFormat`) chooses the format of the stills recipe-runner writes; `DEFAULT_RECORDED_EVIDENCE_POLICY.stillFormat` is `'webp'` (ADR-062 Amendment 17).
