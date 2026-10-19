@@ -4,8 +4,11 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Cleanup waits as long as a slot release for each run it archives, since archiving a cancelled run releases the slot it kept.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.27.0 - 2026-10-19
+
+- Cleanup waits as long as a slot release for each run it archives, since archiving a cancelled run releases the slot it kept.
 - The publication gate's review-round line adds the reviewer attempts that ended without a verdict once there is one, for example `Review rounds 4/5 · 1/3 no-verdict`.
 
 ## 0.26.0 - 2026-10-19

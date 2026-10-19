@@ -1,8 +1,8 @@
 {
-  "version": "0.26.0",
+  "version": "0.27.0",
   "date": "2026-10-19",
   "items": [
-    "A cancelled run that keeps its slot shows Replay and Release slot side by side.",
-    "A blocked run shows \"Blocked: <reason>\" and marks the step it stopped at."
+    "Cleanup waits as long as a slot release for each cancelled run it archives.",
+    "The review-round line counts reviewer attempts that ended without a verdict, for example `Review rounds 4/5 · 1/3 no-verdict`."
   ]
 }
