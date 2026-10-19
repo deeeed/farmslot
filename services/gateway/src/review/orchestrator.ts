@@ -49,6 +49,7 @@ import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
   normalizeRunner,
+  readRunnerLaunchBlocker,
   runnerDefaultModel,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
@@ -118,7 +119,6 @@ import {
   rediscoverAcceptingWorkerPane,
   runnerTurnIsActive,
   runnerTurnLeaseIsActive,
-  runnerUsageLimit,
   type WorkerPaneRediscovery,
 } from './worker-lifecycle.js';
 export { handleReviewFsChanged } from './progress.js';
@@ -2436,7 +2436,8 @@ async function sendOwnedFeedbackToWorker(
       if (retained.disposition === 'hold') {
         lastRetainedHoldReason = retained.reason;
         if (retained.retryable === false) terminalRetainedHoldReason = retained.reason;
-        runnerOutOfQuota = await runnerUsageLimit(vars, target, runner);
+        const { blocker } = await readRunnerLaunchBlocker(vars, target, runner);
+        runnerOutOfQuota = blocker?.kind === 'usage-limit' ? blocker.summary : null;
         if (!loggedRetainedHoldReasons.has(retained.reason)) {
           loggedRetainedHoldReasons.add(retained.reason);
           console.warn(`[review] retained worker handoff held: ${retained.reason}`);
