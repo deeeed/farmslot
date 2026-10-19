@@ -236,7 +236,7 @@ mock.module('../../runners/native/worker.js', {
 const realRuns = await import('../../runs/store.js');
 
 const { slotRelease } = await import('./release.js');
-const { runArchive, runDelete } = await import('../run/admin.js');
+const { runArchive, runCleanup, runDelete } = await import('../run/admin.js');
 const { activePrepareAborts } = await import('./shared.js');
 const { slotPrepare } = await import('./prepare.js');
 
@@ -661,6 +661,29 @@ for (const [action, release, endsRun] of CANCELLED_SLOT_RELEASES) {
     );
   });
 }
+
+test('cleanup archives a week-old cancelled run only after releasing its kept slot', async (t) => {
+  // Cleanup archives failed and cancelled runs untouched for 7 days.
+  const cancelled = { ...realRuns.getRun('cancelled'), slotId: SLOT_ID };
+  cancelled.updatedAt = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+  writeFileSync(path.join(runRoot, 'cancelled.json'), JSON.stringify(cancelled));
+  await realRuns.loadAllRuns();
+  slotRow = {
+    ...slotRow,
+    current_run_id: 'cancelled',
+    lifecycle: 'held',
+    phase: 'occupied',
+    held_reason: cancelledRunHoldReason('cancelled'),
+  };
+  t.mock.method(console, 'log', () => {});
+
+  const result = await runCleanup({ dryRun: false }, emit);
+
+  assert.ok(result.runsArchived.includes('cancelled'));
+  assert.ok(events.includes('reset'), 'the kept slot was released, not orphaned');
+  assert.equal(slotRow.current_run_id ?? null, null);
+  assert.equal(realRuns.getRun('cancelled'), undefined, 'the run was archived after');
+});
 
 test('deleting a cancelled run leaves a slot another active run owns', async () => {
   realRuns.updateRun('cancelled', { slotId: SLOT_ID });

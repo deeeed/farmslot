@@ -319,7 +319,7 @@ export async function routeRunMethod(
     case Methods.RUN_BULK_DELETE:
       return handled(runBulkDelete(p as RunBulkDeleteParams, emit));
     case Methods.RUN_CLEANUP:
-      return handled(runCleanup(p as RunCleanupParams));
+      return handled(runCleanup(p as RunCleanupParams, emit));
     case Methods.RUN_TAGS_SET:
       return handled(runSetTags(p as RunTagsSetParams, emit));
     case Methods.RUN_TAGS_LIST:

@@ -356,9 +356,9 @@ test('public run.cleanup reclaims an archived review cache through the existing 
     else process.env.FARMSLOT_NATIVE_STATE_DIR = previous.native;
   });
   const { runCleanup } = await import('../methods/run/admin.js');
-  const preview = await runCleanup({ dryRun: true });
+  const preview = await runCleanup({ dryRun: true }, () => {});
   assert(existsSync(cache));
-  const result = await runCleanup({ dryRun: false });
+  const result = await runCleanup({ dryRun: false }, () => {});
   assert(!existsSync(cache), 'archived execution cache must be reclaimed by run.cleanup');
   assert(result.cacheDirsRemoved?.includes(cache));
   assert(preview.cacheDirsRemoved?.includes(cache));
