@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, beforeEach, mock, test } from 'node:test';
 
+import {
+  cancelledRunHoldReason,
+  cancelledRunSlotHold,
+  releaseCancelledRunSlot,
+} from '@farmslot/protocol';
+
 const runRoot = mkdtempSync(path.join(tmpdir(), 'release-owner-runs-'));
 process.env.FARMSLOT_RUNS_DIR = runRoot;
 process.env.FARMSLOT_HOME = path.join(runRoot, 'home');
@@ -29,6 +35,8 @@ let claimAfterReap = false;
 let cdpPort: string | undefined;
 /** The browser session a cancelled run left on the slot's CDP port: pid -> survives SIGKILL. */
 let browserSession: Map<number, boolean>;
+/** Every slot command, to show what a release ran (and that it never asked who uses the checkout). */
+let slotCommands: string[];
 
 const STARTED = 'Sun Oct 18 08:48:13 2026';
 const BROWSER_ARGS: Record<number, string> = {
@@ -49,6 +57,10 @@ const applies = (
 };
 
 const execForTest = async (_vars: unknown, cmd: string) => {
+  slotCommands.push(cmd);
+  // An editor with the checkout open (macwork-mmt-1, Cursor 44809, 10-19).
+  if (cmd.startsWith('lsof -a -d cwd')) return ok('p44809\nn/slot\n');
+  if (cmd.includes('git rev-parse HEAD 2>/dev/null')) return ok('5d0c1a7e\n2\n');
   if (cmd.startsWith(': farmslot-browser-session-census')) {
     const pids = [...browserSession.keys()];
     return ok(
@@ -224,6 +236,7 @@ mock.module('../../runners/native/worker.js', {
 const realRuns = await import('../../runs/store.js');
 
 const { slotRelease } = await import('./release.js');
+const { runArchive, runDelete } = await import('../run/admin.js');
 const { activePrepareAborts } = await import('./shared.js');
 const { slotPrepare } = await import('./prepare.js');
 
@@ -243,11 +256,13 @@ beforeEach(async () => {
   claimAfterReap = false;
   cdpPort = undefined;
   browserSession = new Map();
+  slotCommands = [];
 
   for (const [id, status] of [
     ['incoming', 'monitoring'],
     ['blocked', 'blocked'],
     ['finished', 'done'],
+    ['cancelled', 'cancelled'],
   ] as const) {
     const run = realRuns.createRun(
       { flowType: 'dev', project: 'fixture', ticketOrPr: 'TEST-931-owner' },
@@ -589,4 +604,71 @@ test('a browser session process that survives keeps the slot held and names it',
   assert.equal(slotRow.lifecycle, 'held');
   assert.match(String(slotRow.held_reason), /Browser session process 20419/);
   assert.ok(!events.includes('reset'), 'readiness is never published');
+});
+
+// Delete and archive end a cancelled run, and the run view's Release frees its slot:
+// all three release the slot its cancel kept for replay with the reset of
+// `slot release --reset` (ADR-054 amendment, 2026-10-19).
+async function releaseFromRunView(): Promise<void> {
+  const hold = cancelledRunSlotHold({
+    slot: SLOT_ID,
+    lifecycle: 'held',
+    phase: 'occupied',
+    currentRunId: 'cancelled',
+    heldReason: cancelledRunHoldReason('cancelled'),
+  });
+  if (!hold) return assert.fail('the kept slot has no hold');
+  assert.equal(
+    await releaseCancelledRunSlot((_method, params) => slotRelease(params, emit), hold),
+    null,
+  );
+}
+
+const CANCELLED_SLOT_RELEASES: Array<[string, () => Promise<unknown>, boolean]> = [
+  ['delete', () => runDelete({ runId: 'cancelled' }, emit), true],
+  ['archive', () => runArchive({ runId: 'cancelled' }, emit), true],
+  ['the run view Release', releaseFromRunView, false],
+];
+
+for (const [action, release, endsRun] of CANCELLED_SLOT_RELEASES) {
+  test(`${action} of a cancelled run releases its kept slot with a reset, editor or not`, async (t) => {
+    realRuns.updateRun('cancelled', { slotId: SLOT_ID });
+    slotRow = {
+      ...slotRow,
+      current_run_id: 'cancelled',
+      lifecycle: 'held',
+      phase: 'occupied',
+      held_reason: cancelledRunHoldReason('cancelled'),
+    };
+    const log = t.mock.method(console, 'log', () => {});
+
+    await release();
+
+    assert.ok(events.includes('reset'), 'the slot was released');
+    assert.equal(realRuns.getRun('cancelled') === undefined, endsRun);
+    assert.equal(
+      log.mock.calls.filter((call) =>
+        /reset discards HEAD 5d0c1a7e and 2 dirty file\(s\) of run cancelled/.test(
+          String(call.arguments[0]),
+        ),
+      ).length,
+      1,
+      'the discarded work is logged once, for reflog recovery',
+    );
+    assert.ok(
+      !slotCommands.some((cmd) => cmd.startsWith('lsof -a -d cwd')),
+      'no process using the checkout is consulted',
+    );
+  });
+}
+
+test('deleting a cancelled run leaves a slot another active run owns', async () => {
+  realRuns.updateRun('cancelled', { slotId: SLOT_ID });
+  slotRow = { ...slotRow, current_run_id: 'incoming', lifecycle: 'busy', phase: 'working' };
+
+  assert.deepEqual(await runDelete({ runId: 'cancelled' }, emit), { ok: true });
+
+  assert.equal(slotRow.current_run_id, 'incoming');
+  assert.ok(!events.includes('reset'));
+  assert.equal(realRuns.getRun('cancelled'), undefined);
 });

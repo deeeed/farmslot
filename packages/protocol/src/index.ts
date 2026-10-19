@@ -34,6 +34,7 @@ export * from './runs/run-mode.js';
 export * from './runs/run-title.js';
 export * from './runs/slot-resolution.js';
 export * from './runs/step-timing.js';
+export * from './slots/cancelled-run-slot.js';
 export * from './slots/dispatch-scoring.js';
 export * from './slots/tracking-branch.js';
 export * from './sources/changes.js';

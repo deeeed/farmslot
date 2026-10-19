@@ -1476,11 +1476,14 @@ async function replayRunStep(
                   reclaim.reason === 'owned-by-other'
                     ? ` (run ${reclaim.owner} holds it)`
                     : ` (it is ${reclaim.lifecycle})`;
-              // A retained completion failure still owns its checkout; rollback
+              // A retained completion failure, and a cancelled run's kept slot
+              // (ADR-054, 2026-10-19), still own their checkout; rollback
               // restores that claim instead of releasing it.
               if (
                 reclaim.ok &&
-                (existing.status === 'blocked' || retainsCompletionSlot) &&
+                (existing.status === 'blocked' ||
+                  existing.status === 'cancelled' ||
+                  retainsCompletionSlot) &&
                 blockedMonitorOwnsSlot(slot, params.runId)
               ) {
                 priorOwnedSlotFields = {

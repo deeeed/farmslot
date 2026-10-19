@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import { cancelledRunHoldReason, type Run } from '@farmslot/protocol';
 
 // mock.module replaces a module wholesale, so the real namespaces are spread in
 // and only the slot row, project vars, exec layer, worker stop, run store,
@@ -284,6 +284,7 @@ mock.module('../methods/slot/release.js', {
 
 const { slotTeardownBlocker, stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } =
   await import('./slot-teardown.js');
+const { replaySlotReclaimCheck } = await import('../methods/run/replay-step.js');
 const { defaultCancelCollaborators } = await import('./cancel-transition.js');
 const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
 
@@ -422,14 +423,25 @@ test('terminal cleanup releases providers independently of a surviving worker ho
   assert.equal(slotRow?.phase, 'occupied');
 });
 
-test('an identified terminal hold is freed after its worker disappears', async () => {
-  workerBlocker = 'worker still alive';
-  await releaseCompletedRunSlot(run);
-  workerBlocker = null;
-  assert.equal(await retryOccupiedRunSlot(SLOT_ID), true);
-  assert.equal(slotRow?.lifecycle, 'ready');
-  assert.equal(slotRow?.cleanup_run_id, null);
-});
+// A cancelled run keeps only the slot it still owns for replay; a cleanup hold
+// that names it only as cleanup owner is retried like any terminal run's.
+for (const status of ['failed', 'cancelled'] as const) {
+  test(`an identified ${status} cleanup hold is freed after its worker disappears`, async () => {
+    run.status = status;
+    workerBlocker = 'worker still alive';
+    await releaseCompletedRunSlot(run);
+    assert.equal(
+      slotRow?.current_run_id ?? null,
+      null,
+      'the hold names the run only as cleanup owner',
+    );
+    assert.equal(slotRow?.cleanup_run_id, RUN_ID);
+    workerBlocker = null;
+    assert.equal(await retryOccupiedRunSlot(SLOT_ID), true);
+    assert.equal(slotRow?.lifecycle, 'ready');
+    assert.equal(slotRow?.cleanup_run_id, null);
+  });
+}
 
 for (const name of ['complete', 'finalize']) {
   test(`an occupied ${name} prerequisite hold retains its workspace and providers`, async () => {
@@ -462,6 +474,7 @@ for (const name of ['complete', 'finalize']) {
 }
 
 test('an archived terminal owner can finish an identified hold without changing its record', async () => {
+  run.status = 'failed';
   slotRow = {
     current_run_id: null,
     cleanup_run_id: RUN_ID,
@@ -496,6 +509,7 @@ test('an unidentified hold and a successor claim grant no terminal cleanup autho
 });
 
 test('a successor claiming during a retry preserves its owner and epoch', async () => {
+  run.status = 'failed';
   slotRow = {
     current_run_id: null,
     cleanup_run_id: RUN_ID,
@@ -733,10 +747,23 @@ test('the browser session of a slot another active run uses is left alone', asyn
   assert.equal(alivePids().length, slotProcesses.length);
 });
 
-// TAT-4146 run db0b2ef5 on macpro-mmt-1, 10-19 06:47:20Z: cancel held the slot with "Process 5054
-// still uses the slot repository" for the run's own detached harness helper, still exiting. An
-// editor with the checkout open held macwork-mmt-1 the same way on Arthur's cancels that day.
-test('cancel frees the slot past its own exiting helper and an editor in the checkout', async () => {
+/** The slot as replay needs it after cancel: still the run's, held, checkout untouched. */
+function assertKeptForReplay() {
+  assert.equal(slotRow?.lifecycle, 'held');
+  assert.equal(slotRow?.phase, 'occupied');
+  assert.equal(slotRow?.current_run_id, RUN_ID);
+  assert.equal(slotRow?.held_reason, cancelledRunHoldReason(RUN_ID));
+  assert.equal(replaySlotReclaimCheck(slotRow!, RUN_ID).ok, true, 'run.replayStep reclaims it');
+  assert.deepEqual(
+    commands.filter((cmd) => /git (reset|clean|checkout)/.test(cmd)),
+    [],
+    'cancel never touches the checkout',
+  );
+}
+
+// TAT-4146 run db0b2ef5 on macpro-mmt-1, 10-19 06:47:20Z: the run's own detached harness helper
+// was still exiting at cancel, and an editor had the checkout open on Arthur's cancels that day.
+test('cancel keeps the slot for replay past its own exiting helper and an editor', async () => {
   slotProcesses = [
     {
       pid: 5054,
@@ -760,9 +787,11 @@ test('cancel frees the slot past its own exiting helper and an editor in the che
   await cancel.releaseCapabilities(run);
   assert.equal(await cancel.releaseSlot(run), undefined);
 
-  assert.equal(slotRow?.lifecycle, 'ready');
-  assert.equal(slotRow?.current_run_id, null);
+  assertKeptForReplay();
   assert.equal(runUpdates.at(-1)?.slotTeardownSkipped, undefined);
+  // Automatic reconciliation leaves the kept slot alone.
+  assert.equal(await retryOccupiedRunSlot(SLOT_ID), false);
+  assertKeptForReplay();
 });
 
 // macwork-mmt-3 on Arthur's cancels: the run's own finished worker had no exact pane identity.
@@ -774,11 +803,11 @@ test('cancel stops its own worker without a pane identity the way slot.release d
   assert.equal(await cancel.releaseSlot(run), undefined);
 
   assert.deepEqual(slotAgentKills, [SLOT_ID]);
-  assert.equal(slotRow?.lifecycle, 'ready');
+  assertKeptForReplay();
   assert.equal(runUpdates.at(-1)?.slotTeardownSkipped, undefined);
 });
 
-test('a worker the slot agent kill cannot stop is named, and the slot is still freed', async () => {
+test('a worker the slot agent kill cannot stop is named, and the slot is kept for replay', async () => {
   workerBlocker = 'Worker dev has no exact pane identity; cleanup deferred';
   slotAgentKillError = new Error('Agent windows in mmt-1 did not close');
   const cancel = defaultCancelCollaborators();
@@ -786,11 +815,11 @@ test('a worker the slot agent kill cannot stop is named, and the slot is still f
   await cancel.releaseCapabilities(run);
   assert.equal(await cancel.releaseSlot(run), undefined);
 
-  assert.equal(slotRow?.lifecycle, 'ready');
+  assertKeptForReplay();
   assert.equal(runUpdates.at(-1)?.slotTeardownSkipped, 'Agent windows in mmt-1 did not close');
 });
 
-test('a run-owned process that survives cancel is named, and the slot is still freed', async () => {
+test('a run-owned process that survives cancel is named, and the slot is kept for replay', async () => {
   slotProcesses = leftBrowserSession();
   slotProcesses.find((proc) => proc.pid === 20419)!.survives = true;
   const cancel = defaultCancelCollaborators();
@@ -798,7 +827,7 @@ test('a run-owned process that survives cancel is named, and the slot is still f
   await cancel.releaseCapabilities(run);
   assert.equal(await cancel.releaseSlot(run), undefined);
 
-  assert.equal(slotRow?.lifecycle, 'ready');
+  assertKeptForReplay();
   assert.match(
     runUpdates.at(-1)?.slotTeardownSkipped ?? '',
     /^Browser session process 20419 .* did not stop$/,

@@ -2,8 +2,9 @@ import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import type { Run, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
-import { isTerminalRunStatus, runDisplayTitle } from '@farmslot/protocol';
+import { cancelledRunSlotHold, isTerminalRunStatus, runDisplayTitle } from '@farmslot/protocol';
 
+import '../shared/cancelled-run-slot-release.js';
 import '../shared/status-badge.js';
 import './slot-headroom-dot.js';
 
@@ -370,6 +371,7 @@ export class SlotCard extends LitElement {
     const s = this.slotData;
     if (!s) return html``;
 
+    const cancelledHold = cancelledRunSlotHold(s);
     const lc = lifecycleColor(s.lifecycle);
     const isWorking = s.lifecycle === 'busy' && s.phase === 'working';
     const hasActiveRun = !!this.linkedRun && s.lifecycle === 'busy';
@@ -490,6 +492,11 @@ export class SlotCard extends LitElement {
             : ''}
           <div class="card-content">
             <div class="meta">
+              ${cancelledHold
+                ? html`<cancelled-run-slot-release
+                    .hold=${cancelledHold}
+                  ></cancelled-run-slot-release>`
+                : ''}
               ${branchLabel ? html`<div class="${branchClass}">${branchLabel}</div>` : ''}
               ${s.taskId ? html`<div class="task">${this._formatTaskId(s.taskId)}</div>` : ''}
               ${s.currentLane
