@@ -193,6 +193,21 @@ function hasActiveReviewFix(run: Pick<Run, 'agentContexts'>): boolean {
   return activeReviewFixTaskFile(run) !== undefined;
 }
 
+/** A fix pass its worker blocked, which the review step still holds for delivery. */
+export function blockedReviewFixTaskFile(
+  run: Pick<Run, 'agentContexts' | 'steps'>,
+): string | undefined {
+  const review = run.steps.find((step) => step.name === PS.REVIEW);
+  if (review?.outputs?.verdict !== 'blocked' || review.outputs.recoveryContinuationPending !== true)
+    return undefined;
+  return (
+    (run.agentContexts ?? []).find(
+      (context) =>
+        context.role === 'review-fix' && context.status === 'blocked' && context.taskFile?.trim(),
+    )?.taskFile ?? undefined
+  );
+}
+
 function activeReviewFixTaskFile(run: Pick<Run, 'agentContexts'>): string | undefined {
   return (
     (run.agentContexts ?? [])
@@ -1414,6 +1429,8 @@ async function replayRunStep(
       assertNativeReplayCurrent();
     }
     let replayTaskFile = existing.taskFile ?? null;
+    // Captured before the replay resets the review step's outputs below.
+    let blockedFixTaskFile: string | undefined;
     let effectiveSlotId = existing.slotId;
 
     if (targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx > writeTaskIdx && !replayTaskFile) {
@@ -1722,7 +1739,11 @@ async function replayRunStep(
           // Only restarting review invalidates its role artifacts. Later gate
           // and publication replays still need completed fix signals and CI receipts.
           if (reviewIdx >= 0 && targetIdx === reviewIdx) {
-            const preserveReviewFix = hasActiveReviewFix(getRun(params.runId) ?? existing);
+            const runForReviewFix = getRun(params.runId) ?? existing;
+            // A replayed review adopts a fix pass its worker blocked and later finished.
+            blockedFixTaskFile = blockedReviewFixTaskFile(runForReviewFix);
+            const preserveReviewFix =
+              hasActiveReviewFix(runForReviewFix) || blockedFixTaskFile !== undefined;
             const {
               CHECKLIST_TARGET_BY_AGENT_ROLE,
               restoreWorkerChecklistTargetFromSlot,
@@ -1966,7 +1987,8 @@ async function replayRunStep(
     const currentBeforeReplayUpdate = getRun(params.runId) ?? existing;
     const activeFixTaskFile =
       targetIdx >= 0 && reviewIdx >= 0 && targetIdx >= reviewIdx
-        ? activeReviewFixTaskFile(currentBeforeReplayUpdate)
+        ? (activeReviewFixTaskFile(currentBeforeReplayUpdate) ??
+          (targetIdx === reviewIdx ? blockedFixTaskFile : undefined))
         : undefined;
     const engineStateForReplay = freshDispatchEngineStateForReplay(
       replaysCompletionOrGate

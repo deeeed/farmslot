@@ -73,6 +73,7 @@ mock.module('../../security/native-worker-owner.js', {
 });
 const { clearSupersededWorkerError, readNativeWorkerSnapshot } =
   await import('./worker-control.js');
+const { reconcileNativeRunAgentRuntime } = await import('./worker-runtime.js');
 const { makeRun } = await import('../../run-engine/test-fixtures.js');
 
 // TAT-4146 v2 run 70bf7864 at 16:24Z: the reviewer died, its relaunch was working (Review: 4/8
@@ -131,4 +132,30 @@ test('run.error stays for another failure, a relaunch not yet accepted, or anoth
   current = run('', unaccepted);
   await readNativeWorkerSnapshot(current.id, undefined, failed.id);
   assert.equal(current.error, error);
+});
+
+test("a closed reviewer from an earlier round leaves a tmux worker's block reason on the run", async () => {
+  // TAT-4006 7721a02b at the 16:50Z restart: dev and review-fix are tmux claude, and the round-3
+  // native reviewer, closed at 15:33Z, still carries its host failure under another review id.
+  const workerReason = 'Operator item 1 (deposit split) cannot run in this checkout.';
+  const tmuxWorker = (role: 'dev' | 'review-fix'): AgentContext => ({
+    id: role,
+    runId: '7721a02b-ceda-431a-a741-d743837c40b4',
+    role,
+    label: role,
+    status: 'blocked',
+    runner: 'claude',
+    slotId: 'macwork-coredev-2',
+  });
+  current = {
+    ...makeRun({ id: '7721a02b-ceda-431a-a741-d743837c40b4', status: 'blocked' }),
+    error: workerReason,
+    agentContexts: [
+      { ...failed, reviewId: 'rev-claude-native-d3e2200a889b-0941e7a0' },
+      tmuxWorker('dev'),
+      tmuxWorker('review-fix'),
+    ],
+  };
+  await reconcileNativeRunAgentRuntime(current);
+  assert.equal(current.error, workerReason);
 });

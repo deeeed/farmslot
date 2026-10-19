@@ -18,9 +18,11 @@ import { createRun, getRun } from '../runs/store.js';
 
 import { parseReviewIssueBullets } from './issues.js';
 import {
+  blockedFixPassReopened,
   canRecoverReviewFixPass,
   canSettleRecoveredFixContext,
   reconcileRecoveredFixPromptDelivery,
+  recoveredFixSignalMatches,
   resolveRecoveredFixBaseSha,
   resolveReviewMaxRetries,
   resolveReviewRunnerModel,
@@ -145,6 +147,61 @@ test('recovery binds a completed fix when its running signal was missed, but nev
       false,
     );
   }
+});
+
+test('a fix pass its worker blocked and reopened is recovered from the newer attempt', () => {
+  // TAT-4006 7721a02b: the fix worker blocked at 16:13Z on attempt 7faefbbb; an operator message
+  // reopened it with mark start (3cb3deef, 16:35Z) and it completed at 16:43:54Z. The gateway
+  // restart left the context blocked on the older attempt.
+  const taskDir = 'temp/tasks/feat/tat-4006-1019-171024';
+  const blocked: AgentContext = {
+    id: 'review-fix',
+    role: 'review-fix',
+    runId: '7721a02b-ceda-431a-a741-d743837c40b4',
+    slotId: 'macwork-coredev-2',
+    label: 'Fix',
+    status: 'blocked',
+    runner: 'claude',
+    taskFile: `${taskDir}/REVIEW-FIX.md`,
+    signalFile: `${taskDir}/REVIEW-FIX-SIGNAL.json`,
+    signalAttemptId: '7faefbbb-e749-46c2-a49d-23836af47f40',
+    attemptStartedAt: '2026-10-19T16:03:23.859Z',
+    promptDeliveryStartedAt: '2026-10-19T16:02:30.000Z',
+  };
+  const reopened: WorkerSignal = {
+    status: 'complete',
+    attemptId: '3cb3deef',
+    timestamp: '2026-10-19T16:43:54.000Z',
+  };
+  assert.equal(canRecoverReviewFixPass(blocked, taskDir), true);
+  assert.equal(
+    canRecoverReviewFixPass(blocked, taskDir, 'review-bda11b1a-publication'),
+    false,
+    'a publication review or Send back never adopts the pipeline pass its worker blocked',
+  );
+  assert.equal(recoveredFixSignalMatches(reopened, blocked), true);
+  assert.equal(blockedFixPassReopened(blocked, reopened), true);
+  assert.equal(
+    blockedFixPassReopened(blocked, { attemptId: blocked.signalAttemptId }),
+    false,
+    'its own blocked attempt is not a reopened one',
+  );
+  assert.equal(blockedFixPassReopened(blocked, undefined), false);
+  assert.equal(
+    recoveredFixSignalMatches({ ...reopened, timestamp: '2026-10-19T16:00:00.000Z' }, blocked),
+    false,
+    'an attempt older than this pass belongs to another one',
+  );
+  assert.equal(canSettleRecoveredFixContext(blocked, blocked, reopened.attemptId), true);
+  assert.equal(
+    canSettleRecoveredFixContext(
+      { ...blocked, promptDeliveryStartedAt: '2026-10-19T17:00:00.000Z' },
+      blocked,
+      reopened.attemptId,
+    ),
+    false,
+    'a later delivery replaced the recovered snapshot',
+  );
 });
 
 test('parseReviewIssueBullets recovers issues from REVIEW-FIX.md', () => {
