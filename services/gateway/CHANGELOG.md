@@ -4,9 +4,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A review fix task now waits for a worker that is mid-turn and lands when the turn ends. The 15-minute delivery window counts only time the worker is not in a turn, so a long turn no longer runs out the window and sends the fix relaunch over it. A review replayed during the wait stops the old delivery. Before, TAT-4006 run 7721a02b lost a 26-minute operator turn and its uncommitted edits when the window closed and the relaunch started a fresh grok session.
 - The monitor's total timeout no longer hands off a worker that is still making progress. It opens the handoff only once the worker has also had no structured activity (runner session or observability progress) for the stuck window (`stuck_timeout_min`, 20 minutes by default). A runner whose activity cannot be proven still hands off at the total timeout. Before, TAT-4145 (6c5d56fb, 8cff6e80) and TAT-4006 (7721a02b) each got a 90-minute handoff within 2 seconds of the worker's last progress.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - A code review request lists the recipe actions the task's own action manifest provided, read from the task's run summaries, and says a task action that shadows an official or library action is a finding unless the report justifies it.
+- Pipeline visual review binds a reviewer's result to the closure identity it captured at launch for that `recipeRunId` (and each repair source and retained row to theirs), and the prompt no longer asks the reviewer to echo it. A reviewer that mis-copied the 64-hex identity failed the whole review before (TAT-4145 run bda11b1a: 7 of 7 criteria confirmed with matching files and moments). A different `recipeRunId`, criterion, reviewed file or moment still fails collection.
 
 ## 0.26.0 - 2026-10-19
 

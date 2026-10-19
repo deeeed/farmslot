@@ -1320,7 +1320,10 @@ supply JSON Schema. `NativeSessionCapabilities.structuredResultSchemas` and the
 authenticated node's `supportsStructuredResults` advertise support. Native adapters
 retain the validated `structuredResult` only on the exact completed command.
 Native pipeline collection is the consumer. Missing capability, result, matching
-execution or file/moment binding MUST NOT create a pipeline receipt. Existing
+execution or file/moment binding MUST NOT create a pipeline receipt. The reviewer
+does not return a closure identity, and the prompt never asks for one. The gateway
+binds the result to the closure it captured at launch for that `recipeRunId`; a value
+from a runner on the earlier schema is accepted and ignored. Existing
 tmux attempts may finish collection, but new admissions use native review sessions.
 
 `PipelineVisualReviewInput` and `PipelineVisualReviewResult` remain on the admitted
@@ -1484,8 +1487,8 @@ per-source selection, replacing their single-source/package-head assumptions
 only for an authorised repair; ordinary v1 review binding is unchanged.
 `PipelineRepairVisualJudgments` uses `pipeline-visual-judgments-v2`: current
 `headSha`, `scopeDigest`, per-source existing visual-judgment results, and retained
-rows containing `claimId`, original `recipeRunId`/`closureIdentity`, `unaffected`
-and `reason`. Every required independent reviewer MUST agree on applicability.
+rows containing `claimId`, original `recipeRunId`, `unaffected` and `reason`. The
+gateway binds each source and retained row to the closure in its launch input. Every required independent reviewer MUST agree on applicability.
 This is the structured result of the normal admitted review, not another review
 admission or a task-file assertion.
 Harnesses consume `RecipeRunRequest.repairScope` through their existing hosted
