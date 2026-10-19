@@ -43,6 +43,11 @@ import {
   resumeReviewAgentPromptDelivery,
   reviewerFeedbackRelPath,
 } from '../review/review-agent.js';
+import {
+  clearReviewRoundSettlement,
+  reviewContextRoundId,
+  settleReviewRoundNoVerdict,
+} from '../review/review-round-budget.js';
 import { recordReviewedInputs } from '../review/reviewed-inputs.js';
 import { readPersistedReviewSnapshot, reviewArtifactDir } from '../review/snapshots.js';
 import { getReviewConfig } from '../review/templates.js';
@@ -137,6 +142,15 @@ async function markRecoveredReviewerContext(
     },
   );
   return updated !== null;
+}
+
+async function settleRecoveredReviewerNoVerdict(
+  runId: string,
+  ctx: AgentContext,
+  reason: string,
+): Promise<void> {
+  const roundId = reviewContextRoundId(ctx);
+  if (roundId) await settleReviewRoundNoVerdict(runId, roundId, reason);
 }
 
 function signalMatchesReviewerAttempt(signal: WorkerSignal, ctx: AgentContext): boolean {
@@ -623,13 +637,15 @@ async function ingestRecoveredReviewer(
     if (promptRecovery === 'inactive' || promptRecovery === 'retired') {
       const contextSettled = await markRecoveredReviewerContext(runId, ctx, 'failed', {});
       if (!contextSettled) return null;
+      await settleRecoveredReviewerNoVerdict(runId, ctx, 'lost on restart');
       const action = recoveredReviewerActionForPromptRecovery(promptRecovery, ctx);
       if (action) return action;
     } else if (promptRecovery === 'unsupported') {
       console.warn(
         `[run-engine] run ${runId.slice(0, 8)} — reviewer ${ctx.id} cannot resume prompt delivery; marking it failed`,
       );
-      await markRecoveredReviewerContext(runId, ctx, 'failed', {});
+      if (await markRecoveredReviewerContext(runId, ctx, 'failed', {}))
+        await settleRecoveredReviewerNoVerdict(runId, ctx, 'lost on restart');
     }
     return null;
   }
@@ -653,6 +669,7 @@ async function ingestRecoveredReviewer(
     if (options.shouldAbort?.()) return null;
     const contextSettled = await markRecoveredReviewerContext(runId, ctx, 'blocked', {});
     if (!contextSettled) return null;
+    await settleRecoveredReviewerNoVerdict(runId, ctx, feedback.terminalInvalidReason);
     throw new TerminalReviewArtifactError(
       `Reviewer ${ctx.id} completed with an invalid result artifact: ${feedback.terminalInvalidReason}`,
     );
@@ -798,6 +815,10 @@ async function ingestRecoveredReviewer(
   });
   // A recovered pass vouches for what its document gave the reviewer (F42).
   if (persisted.verdict === 'pass' && !repairing) await recordReviewedInputs(runId);
+  // The attempt returned a verdict after all, so a no-verdict settlement no longer applies.
+  const roundId = reviewContextRoundId(ctx);
+  if (roundId && (persisted.verdict === 'pass' || persisted.verdict === 'issues'))
+    await clearReviewRoundSettlement(runId, roundId);
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered in-flight publication review ${persisted.id} (verdict ${persisted.verdict}) from reviewer context ${ctx.id}`,
   );
@@ -879,6 +900,7 @@ async function persistRecoveredFailedReviewer(
       },
     },
   });
+  await settleRecoveredReviewerNoVerdict(runId, ctx, `reviewer-${signal.status}`);
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered terminal ${signal.status} publication review ${persisted.id} from reviewer context ${ctx.id}`,
   );

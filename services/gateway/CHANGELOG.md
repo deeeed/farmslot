@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A reviewer attempt that ends without a pass or issues verdict no longer spends a review round. A timeout, an exit, an unusable result, a failed launch, a cancelled or superseded attempt, or one a restart could not reattach is recorded as no-verdict. A launch with an uncertain outcome still counts, a workspace review restarted mid-dispatch keeps its one round, and a verdict that arrives later counts again. After three no-verdict attempts for the same work, the re-review after a fix stops and leaves its findings for Continue Fixing, a fix recovered after a restart is not re-reviewed, and the gate refuses review plans that no operator request started; each says why. An operator's Request Review still launches (ADR-063 Amendment 2). Before, run 8cff6e80 ran out of rounds with only two reviews returned.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.27.0 - 2026-10-19

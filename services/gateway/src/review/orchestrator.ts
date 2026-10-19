@@ -95,7 +95,7 @@ import {
 } from './native-review-operation.js';
 import { initReviewProgress, startProgressWatcher } from './progress.js';
 import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
-import { runReviewRoundBudget } from './review-round-budget.js';
+import { reviewNoVerdictCapReason, runReviewRoundBudget } from './review-round-budget.js';
 import { recordReviewedInputs } from './reviewed-inputs.js';
 import {
   invalidateWarmReviewerSessions,
@@ -429,6 +429,8 @@ async function executeOwnedReview(
         artifactScope,
         mode,
         ...(options.reservedFixPass ? { reservedFixPass: options.reservedFixPass } : {}),
+        // Recorded findings resume only for Continue Fixing, Send back or sent feedback.
+        operatorRequested: true,
       });
       return {
         ...retryResult,
@@ -763,6 +765,7 @@ export async function runReviewRetryLoop({
   feedbackAlreadySent = false,
   priorAttempts = [],
   reservedFixPass,
+  operatorRequested = false,
   deps = PRODUCTION_DEPS,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -784,6 +787,8 @@ export async function runReviewRetryLoop({
   feedbackAlreadySent?: boolean;
   priorAttempts?: ReviewAttempt[];
   reservedFixPass?: ReservedFixPass;
+  /** The first pass continues an operator's Continue Fixing or Send back. */
+  operatorRequested?: boolean;
   deps?: ReviewRetryDeps;
 }): Promise<ReviewResult> {
   const reviewGeneration = deps.getRun(runId)?.engineState?.generation ?? 0;
@@ -795,7 +800,9 @@ export async function runReviewRetryLoop({
       : [reviewAttemptFromResult(result, retryCount + 1)];
 
   let roundLimitReason: string | undefined;
+  let capReason: string | undefined;
   let reserved = reservedFixPass;
+  let operatorPass = operatorRequested;
   while (
     result.verdict === 'issues' &&
     result.issues.length > 0 &&
@@ -808,6 +815,10 @@ export async function runReviewRetryLoop({
       roundLimitReason = budget.diagnosis;
       break;
     }
+    // The no-verdict cap stops automatic re-reviews, not the pass an operator requested.
+    capReason = budgetRun && !operatorPass ? await reviewNoVerdictCapReason(budgetRun) : undefined;
+    if (capReason) break;
+    operatorPass = false;
     console.log(
       `[review] run ${runId.slice(0, 8)} — ${result.issues.length} issue(s) found (retry ${retryCount + 1}/${maxRetries})`,
     );
@@ -1272,6 +1283,8 @@ export async function runReviewRetryLoop({
     feedbackSent: latestFindingsPendingDelivery ? false : feedbackSent,
     recoveryContinuationPending: latestFindingsPendingDelivery && !retriesExhausted,
     ...(roundLimitReason ? { reason: roundLimitReason, maxRetriesExhausted: true } : {}),
+    // A cap stop leaves its findings continuable: Continue Fixing is an operator pass.
+    ...(capReason ? { reason: capReason } : {}),
     durationMs: Date.now() - start,
   };
 }
@@ -2059,6 +2072,53 @@ async function recoverReviewFixPass({
         durationMs: Date.now() - start,
       };
     }
+    // Restart recovery stops at the no-verdict cap like the retry loop (ADR-063 Amendment 2).
+    const capRun = getRun(runId);
+    const capReason = capRun && (await reviewNoVerdictCapReason(capRun));
+    // A worker that blocked mid-fix keeps its block; the cap only stops the re-review.
+    if (capReason && workerBlockReason)
+      return {
+        verdict: 'blocked',
+        reason: `${workerBlockReason}; ${capReason}`,
+        issues,
+        validationDepth,
+        usage: priorResult.usage,
+        reviewSnapshot: priorResult.reviewSnapshot,
+        fixDelta: fixDelta.snapshot,
+        attempts: [
+          initialAttempt,
+          {
+            mode,
+            loopNumber: 2,
+            verdict: 'failed',
+            reason: workerBlockReason,
+            unresolvedCount: issues.length,
+            issues,
+            validationDepth,
+            fixDelta: fixDelta.snapshot,
+            artifactPaths: fixDelta.artifactPaths,
+          },
+        ],
+        retryCount: recoveredRetryCount,
+        maxRetries,
+        feedbackSent: true,
+        recoveryContinuationPending: false,
+        durationMs: Date.now() - start,
+      };
+    if (capReason)
+      return {
+        ...priorResult,
+        reason: capReason,
+        fixDelta: fixDelta.snapshot,
+        attempts: [initialAttempt],
+        timeline: initialAttempt.timeline ?? [],
+        retryCount: recoveredRetryCount,
+        maxRetries,
+        // The fix reached the worker; an operator's Request Review re-reviews it.
+        feedbackSent: true,
+        recoveryContinuationPending: false,
+        durationMs: Date.now() - start,
+      };
     setProgressDetail(
       runId,
       `${workerBlockReason ? 'Worker made partial fixes before blocking' : 'Worker fix complete'}; running ${reviewRunner} re-review (2)...`,

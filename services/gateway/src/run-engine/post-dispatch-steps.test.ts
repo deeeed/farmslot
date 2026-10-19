@@ -17,7 +17,11 @@ import {
 import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
 import { writeResultPackageManifest } from '../evals/package-store.js';
-import { runReviewRoundBudget } from '../review/review-round-budget.js';
+import {
+  admitReviewRound,
+  runReviewRoundBudget,
+  settleReviewRoundNoVerdict,
+} from '../review/review-round-budget.js';
 import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
 import {
   computeReadyGatePackageHash,
@@ -40,6 +44,7 @@ import {
   shouldSkipRetrospectiveAtComplete,
 } from './post-dispatch-steps.js';
 import { shouldPrepareLocalFirstPackage } from './publication-policy.js';
+import { executePublishGateReviewPlan as executeGateReviewPlan } from './ready-gate.js';
 import {
   deleteTestRunIfPresent,
   makeEvalResultPackage,
@@ -1208,6 +1213,114 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
   });
   assert.deepEqual(replayedPlan, [plan[1]], 'restart must retain the net remaining reviewer');
 });
+
+for (const operatorRequest of [false, true]) {
+  test(`at the no-verdict cap, restart re-entry ${operatorRequest ? 'still launches an unconsumed operator request' : 'presents the gate without relaunching a reviewer'}`, async (t) => {
+    const plan: ReviewSelection[] = [{ runner: 'codex', model: null, effort: null, mode: 'cold' }];
+    const requestedAt = '2026-10-19T09:00:00.000Z';
+    const reviewPolicy = { minimumReviews: 1, requestedBy: 'human-gate' as const };
+    const run = createRun({
+      flowType: 'fix-bug',
+      mode: 'autonomous',
+      project: 'example-mobile-farm',
+      ticketOrPr: `PROJ-CAP-REPLAY-${operatorRequest}`,
+      runner: 'claude',
+      slotId: 'remote-mobile-1',
+      engineState: {
+        publishGate: {
+          publicationTarget: 'ready',
+          publicationStatus: 'not_published',
+          reviewPolicy,
+          // A replayed operator request persisted its plan before the restart.
+          ...(operatorRequest
+            ? {}
+            : { reviewSequence: plan, reviewSequenceRequestedAt: requestedAt }),
+        },
+      },
+    });
+    t.after(async () => {
+      await deleteTestRunIfPresent(run.id);
+    });
+    for (const reason of ['timeout', 'invalid JSON', 'lost on restart']) {
+      await admitReviewRound(run.id, reason);
+      await settleReviewRoundNoVerdict(run.id, reason, reason);
+    }
+    updateRun(run.id, {
+      recoveryAttempts: [
+        {
+          id: 'gate-replay',
+          attempt: 1,
+          stepName: 'human-gate',
+          startedAt: requestedAt,
+          status: 'started',
+          triggeredBy: 'auto-recovery',
+        },
+      ],
+      ...(operatorRequest
+        ? {
+            decisions: [
+              {
+                id: 'operator-review-request',
+                type: 'engine_human_gate',
+                title: 'Publication gate',
+                description: 'Request a review',
+                actions: [],
+                createdAt: requestedAt,
+                resolvedAt: requestedAt,
+                resolvedAction: 'request-review',
+                selectionData: { reviewRequest: reviewRequestFromSequence(plan) },
+              },
+            ],
+          }
+        : {}),
+    });
+    const preparedResult: PrepareCompletionPackageResult = {
+      completion: {
+        prNumber: null,
+        ciRepo: null,
+        artifactsCopied: true,
+        prCommentPosted: false,
+        prTitleUpdated: false,
+        prMarkedReady: false,
+        retrospectiveCreated: false,
+        artifacts: [],
+      },
+      prPackage: makeReadyGatePackage(),
+      reviewPolicy,
+      reviews: [],
+    };
+    let reviewerLaunches = 0;
+    let gatePresentations = 0;
+    await executeHumanGateStep(run.id, {
+      ...restartReplayContext(),
+      executePublishGateReviewPlan: (runId, slotId, actualPlan, trigger, options) =>
+        executeGateReviewPlan(runId, slotId, actualPlan, trigger, {
+          ...options,
+          assertLaunchAllowed: async () => {},
+          executeReview: async () => {
+            reviewerLaunches += 1;
+            return { verdict: 'pass', issues: [], retryCount: 0 };
+          },
+        }),
+      executeReadyGate: async () => {
+        gatePresentations += 1;
+        return 'ready';
+      },
+      prepareCompletionPackageForRun: async () => preparedResult,
+    });
+
+    assert.equal(gatePresentations, 1, 'the gate is presented either way');
+    const rejection = getRun(run.id)!.engineState?.publishGate?.reviewLaunchRejection;
+    if (operatorRequest) {
+      assert.equal(reviewerLaunches, 1);
+      assert.equal(rejection, undefined);
+    } else {
+      assert.equal(reviewerLaunches, 0);
+      assert.equal(rejection?.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
+      assert.match(rejection?.message ?? '', /^3\/3 reviewer attempts ended without a verdict/);
+    }
+  });
+}
 
 test('review-pr always presents its publication gate in autonomous mode', async (t) => {
   const run = createRun({
