@@ -102,6 +102,14 @@ export interface DiscoveryActionDetail extends DiscoveryAction {
   examples: unknown[];
   /** Recipes in this view whose workflow uses the action directly. */
   callers: string[];
+  template: DiscoveryTemplate;
+}
+
+export interface DiscoveryTemplate {
+  /** A workflow node ready to paste into a recipe. */
+  node: Record<string, unknown>;
+  /** A complete recipe document wrapping the node. */
+  recipe: Record<string, unknown>;
 }
 
 export interface DiscoveryRecipeVariant {
@@ -154,6 +162,8 @@ export interface DiscoveryRecipeDetail extends DiscoveryRecipe {
   unresolvedRecipes: string[];
   /** Recipes in this view that call this recipe directly. */
   callers: string[];
+  /** Absent when another library shadows the recipe: a call node with its ref runs the winner. */
+  template?: DiscoveryTemplate;
   runCommand: string;
 }
 
@@ -264,15 +274,11 @@ export interface SearchEnvelope extends DiscoveryEnvelope {
   results: SearchResult[];
 }
 
-export interface TemplateEnvelope extends DiscoveryEnvelope {
+export interface TemplateEnvelope extends DiscoveryEnvelope, DiscoveryTemplate {
   command: 'template';
   platform: string | null;
   kind: 'recipe' | 'action';
   name: string;
-  /** A workflow node ready to paste into a recipe. */
-  node: Record<string, unknown>;
-  /** A complete recipe document wrapping the node. */
-  recipe: Record<string, unknown>;
   /** Command that runs the recipe or a recipe wrapping the action. */
   runCommand: string;
 }

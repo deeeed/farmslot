@@ -18,13 +18,18 @@ import type { DiscoveryActionManifestFile, DiscoveryLibrary } from './types.js';
 
 const ACTION_MANIFEST_FILE = /^manifests\/([^/]+)\.action-manifest\.json$/u;
 
-export const PRECEDENCE_RULES = [
-  'Libraries are searched in rank order: --library entries, then RECIPE_LIBRARY_PATH, else the personal library.',
-  'A --library entry replaces the RECIPE_LIBRARY_PATH entry with the same name.',
-  'The first library that declares a recipe ref or an action wins; later ones are listed as shadows.',
-  'Within one library, a platform variant wins over the generic recipe, and a platform action manifest over shared.',
-  'A namespaced id <library>.<ref> selects that library’s recipe even when it is shadowed.',
-];
+/** The precedence rules, naming the option the host selects a library with. */
+export function precedenceRules(libraryOption: string): string[] {
+  return [
+    `Libraries are searched in rank order: ${libraryOption} entries, then RECIPE_LIBRARY_PATH, else the personal library.`,
+    `A ${libraryOption} entry replaces the RECIPE_LIBRARY_PATH entry with the same name.`,
+    'The first library that declares a recipe ref or an action wins; later ones are listed as shadows.',
+    'Within one library, a platform variant wins over the generic recipe, and a platform action manifest over shared.',
+    'A namespaced id <library>.<ref> selects that library’s recipe even when it is shadowed.',
+  ];
+}
+
+export const PRECEDENCE_RULES = precedenceRules('--library');
 
 export interface ResolvedDiscoveryLibrary {
   info: DiscoveryLibrary;
