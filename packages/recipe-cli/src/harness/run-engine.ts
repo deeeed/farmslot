@@ -27,7 +27,7 @@ import {
 } from '@farmslot/recipe-runner';
 
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
-import type { ActionCapabilitySource, RecipeCatalog } from './catalog.js';
+import { type ActionCapabilitySource, OFFICIAL_ACTIONS, type RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
 import { CliError } from './cli-error.js';
 import { harnessContext, harnessContextField } from './context-state.js';
@@ -329,6 +329,9 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     claims: runtimeOptions.claims,
     comparisonDependencies: runtimeOptions.comparisonDependencies,
     ...(runtimeOptions.repairScope ? { repairScope: runtimeOptions.repairScope } : {}),
+    ...(actionManifestPath
+      ? { taskActions: taskProvidedActions(actionSources, actionManifestPath) }
+      : {}),
     ...trust,
     ...(librarySources ? { librarySources } : {}),
     adapter,
@@ -615,6 +618,23 @@ export function activateRecipeRuntimeEnvironment(
   return () => {
     for (const [key, value] of Object.entries(previousEnv)) restoreEnv(key, value);
   };
+}
+
+// The actions the task manifest declared, found by their manifest: a provider may
+// relabel an official action's tier.
+function taskProvidedActions(
+  sources: ReadonlyMap<string, ActionCapabilitySource>,
+  manifestPath: string,
+) {
+  const task = path.resolve(manifestPath);
+  return [...sources]
+    .filter(([, source]) => source.tier === 'task' || path.resolve(source.manifestPath) === task)
+    .map(([action, source]) => ({
+      action,
+      official: OFFICIAL_ACTIONS.has(action),
+      ...(source.shadows?.length ? { shadows: [...source.shadows] } : {}),
+      ...(source.digest ? { digest: source.digest } : {}),
+    }));
 }
 
 // Where each non-official action's implementation lives, for live adapter scripts.

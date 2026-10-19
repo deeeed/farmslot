@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A code review request lists the recipe actions the task's own action manifest provided, read from the task's run summaries, and says a task action that shadows an official or library action is a finding unless the report justifies it.
 
 ## 0.26.0 - 2026-10-19
 

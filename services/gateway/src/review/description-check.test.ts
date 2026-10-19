@@ -347,3 +347,73 @@ test('review criteria from the task ledger are appended to the review document o
   ticket([]);
   assert.doesNotMatch(await render(), new RegExp(heading));
 });
+
+test('task-provided recipe actions from the run summaries are listed with the finding rule', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-review-task-actions-'));
+  const taskDir = 'temp/tasks/review-task-actions';
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'REVIEW-TASK-ACTIONS',
+    runner: 'claude',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+    await rm(repo, { recursive: true, force: true });
+  });
+  const render = () =>
+    expandReviewTemplate(
+      {
+        slotId: 'review-task-actions',
+        projectName: 'farmslot-farm',
+        host: 'localhost',
+        machine: 'review-task-actions',
+        remoteRepo: repo,
+        platform: 'cli',
+        session: 'review-task-actions',
+        resourceVars: {},
+      } as never,
+      taskDir,
+      run.id,
+      'static-code',
+    );
+  const heading = '## Task-provided recipe actions';
+  assert.doesNotMatch(await render(), new RegExp(heading));
+  const summary = async (dir: string, body: Record<string, unknown>) => {
+    await mkdir(path.join(repo, taskDir, 'artifacts', dir), { recursive: true });
+    await writeFile(
+      path.join(repo, taskDir, 'artifacts', dir, 'summary.json'),
+      JSON.stringify({ status: 'pass', ...body }),
+    );
+  };
+  await summary('recipe-baseline-run', {});
+  assert.doesNotMatch(await render(), new RegExp(heading));
+  await summary('recipe-runs/attempt-1', {
+    taskActions: [
+      { action: 'task.read_book', official: false, digest: 'sha256:task' },
+      { action: 'ui.wait_for', official: true, shadows: ['metamask-harness'] },
+    ],
+  });
+  await summary('recipe-runs/attempt-2', {
+    taskActions: [{ action: 'terminal.perps.read_book', official: false, shadows: ['perps'] }],
+  });
+  const section = (await render()).split(heading)[1] ?? '';
+  assert.match(
+    section,
+    /shadows an official or library action is a finding unless the report justifies it/,
+  );
+  assert.match(section, /^- `task\.read_book`$/m);
+  assert.match(section, /^- `terminal\.perps\.read_book`: shadows perps$/m);
+  assert.match(
+    section,
+    /^- `ui\.wait_for`: redeclares an official action; shadows metamask-harness$/m,
+  );
+  // An unreadable summary shows the check as not run instead of an empty list.
+  await chmod(path.join(repo, taskDir, 'artifacts/recipe-runs/attempt-2/summary.json'), 0o000);
+  assert.match(
+    (await render()).split(heading)[1] ?? '',
+    /^Not checked: Review artifact read failed/m,
+  );
+});

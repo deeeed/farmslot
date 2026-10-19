@@ -642,6 +642,81 @@ test('a task manifest keeps its actions in <root>/actions unless a task action r
   );
 });
 
+test('a task manifest adds to the runtime and library actions and its declarations come first', async (t) => {
+  const { root, catalog } = setup(t, { 'example.read': declaration() });
+  const team = path.join(root, 'team');
+  writeLibraryManifest(team, { actions: { 'team.read': declaration('team.read') } });
+  const task = path.join(root, 'task');
+  writeLibraryManifest(task, {
+    actions: {
+      'task.observe': declaration('task.observe'),
+      'team.read': declaration('team.read', 'Task copy.'),
+    },
+  });
+  const { manifest, actionSources } = await catalog.resolveActionManifest(
+    'api',
+    path.join(task, 'manifests', 'api.action-manifest.json'),
+    [{ name: 'team', root: team, provenance: { kind: 'library', trust: 'trusted' } }],
+  );
+  assert.deepEqual(Object.keys(manifest.actions).sort(), [
+    'example.read',
+    'task.observe',
+    'team.read',
+  ]);
+  assert.equal(manifest.actions['team.read']?.description, 'Task copy.');
+  const shadowing = actionSources.get('team.read');
+  assert.equal(shadowing?.tier, 'task');
+  assert.deepEqual(shadowing?.shadows, ['team']);
+  assert.equal(shadowing?.implementationRoot, path.join(task, 'actions'));
+  assert.equal(actionSources.get('task.observe')?.tier, 'task');
+  assert.equal(actionSources.get('example.read')?.tier, 'canonical');
+  assert.equal(actionSources.get('example.read')?.implementationRoot, path.join(root, 'actions'));
+});
+
+test('a run with a task manifest passes its actions, official redeclarations included, to the summary', async (t) => {
+  const { root, engine } = setup(t, { 'example.read': declaration() }, [
+    {
+      action: 'example.read',
+      source: { kind: 'bundled', trust: 'trusted', name: 'example', digest: 'sha256:example' },
+      execute: async () => ({}),
+    },
+  ]);
+  const task = path.join(root, 'task');
+  writeLibraryManifest(task, {
+    actions: {
+      command: core.actions.command,
+      'example.read': declaration('example.read', 'Task copy.'),
+    },
+  });
+  const document = recipe({
+    read: { action: 'example.read', intent: 'Read the target.', next: 'done' },
+    done: { action: 'end', status: 'pass' },
+  });
+  const artifacts = path.join(root, 'artifacts');
+  const withTask = await preflightRecipe(
+    engine,
+    'api',
+    document,
+    artifacts,
+    root,
+    path.join(task, 'manifests', 'api.action-manifest.json'),
+    { readOnly: true },
+  );
+  const recorded = withTask.runRequest.taskActions ?? [];
+  assert.deepEqual(
+    recorded.map(({ action, official, shadows }) => ({ action, official, shadows })),
+    [
+      { action: 'command', official: true, shadows: undefined },
+      { action: 'example.read', official: false, shadows: ['example'] },
+    ],
+  );
+  assert.ok(recorded.every((entry) => entry.digest?.startsWith('sha256:')));
+  const without = await preflightRecipe(engine, 'api', document, artifacts, root, undefined, {
+    readOnly: true,
+  });
+  assert.equal(without.runRequest.taskActions, undefined);
+});
+
 test('live script execution uses the approved prepared bytes and retains its output artifact', async (t) => {
   const { root, catalog, engine } = setup(t, { 'example.read': declaration() });
   const script = path.join(root, 'actions', 'api', 'example', 'read.mjs');

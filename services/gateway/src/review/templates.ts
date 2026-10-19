@@ -195,6 +195,73 @@ async function reviewCriteriaSection(
   ].join('\n');
 }
 
+/**
+ * ADR-034 Amendment 6: the recipe actions the task's own action manifest provided, read
+ * from the run summaries under the task's artifacts, so a reviewer sees when a task
+ * action replaced an official or library declaration.
+ */
+async function taskActionsSection(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+): Promise<string> {
+  const heading = '## Task-provided recipe actions';
+  const artifacts = path.posix.join(vars.remoteRepo, taskDir, 'artifacts');
+  const actions = new Map<string, { official: boolean; shadows: Set<string> }>();
+  try {
+    await readTaskActions(vars, artifacts, actions);
+  } catch (error) {
+    // A disconnected slot still gets a review packet, with the check shown as not run.
+    return `${heading}\n\nNot checked: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if (!actions.size) return '';
+  return [
+    heading,
+    '',
+    "These recipe actions come from the task's own action manifest, not from the runtime or a library. A task action that shadows an official or library action is a finding unless the report justifies it.",
+    '',
+    ...[...actions]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, { official, shadows }]) => {
+        const notes = [
+          ...(official ? ['redeclares an official action'] : []),
+          ...(shadows.size ? [`shadows ${[...shadows].join(', ')}`] : []),
+        ];
+        return `- \`${name}\`${notes.length ? `: ${notes.join('; ')}` : ''}`;
+      }),
+  ].join('\n');
+}
+
+async function readTaskActions(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  artifacts: string,
+  actions: Map<string, { official: boolean; shadows: Set<string> }>,
+): Promise<void> {
+  const listed = await execOnSlot(
+    vars,
+    `if [ -d ${shellQuote(artifacts)} ]; then find ${shellQuote(artifacts)} -maxdepth 3 -name summary.json -type f -print0; fi`,
+    { cwd: '/', timeout: 30_000 },
+  );
+  if (listed.exitCode !== 0) throw new Error(`Review artifact read failed: ${listed.stderr}`);
+  for (const file of listed.stdout.split('\0').filter(Boolean)) {
+    const text = await readReviewArtifact(vars, file);
+    let summary: unknown;
+    try {
+      summary = JSON.parse(text ?? 'null');
+    } catch {
+      continue; // a malformed summary fails its own package validation
+    }
+    const entries = (summary as { taskActions?: unknown } | null)?.taskActions;
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      if (typeof entry?.action !== 'string') continue;
+      const seen = actions.get(entry.action) ?? { official: false, shadows: new Set<string>() };
+      seen.official ||= entry.official === true;
+      for (const name of Array.isArray(entry.shadows) ? entry.shadows : [])
+        if (typeof name === 'string') seen.shadows.add(name);
+      actions.set(entry.action, seen);
+    }
+  }
+}
+
 async function diffScopeSection(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   run: Run,
@@ -382,12 +449,17 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   // Reviewers get the worker's frozen related-context snapshot, not a fresh
   // derivation: a prerequisite that moved since dispatch must be detectable.
   const planningBrief = await buildReviewPlanningBrief(run?.taskFile ?? null, taskDir);
-  const [check, scope, criteria] = await Promise.all([
+  const [check, scope, criteria, taskActions] = await Promise.all([
     descriptionCheckSection(vars, taskDir, run, pv?.projectJson),
     diffScopeSection(vars, run, pv ? getProjectField(pv.projectJson, 'default_branch') : undefined),
     reviewCriteriaSection(vars, taskDir, run),
+    taskActionsSection(vars, taskDir),
   ]);
-  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n${criteria ? `\n${criteria}\n` : ''}${reviewBudgetScopeBrief(getRun(run.id) ?? run)}`;
+  const extra = [criteria, taskActions]
+    .filter(Boolean)
+    .map((section) => `\n${section}\n`)
+    .join('');
+  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n${extra}${reviewBudgetScopeBrief(getRun(run.id) ?? run)}`;
 }
 
 export async function expandReviewFixTemplate(

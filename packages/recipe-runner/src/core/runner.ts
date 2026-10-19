@@ -961,6 +961,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         ? { recipeLibraries: buildRecipeLibrarySummary(libraryResolution) }
         : {}),
       ...(request.selection ? { recipeSelection: request.selection } : {}),
+      ...(request.taskActions?.length ? { taskActions: request.taskActions } : {}),
       ...(request.stopAfterNode !== undefined ? { stopAfterNode: request.stopAfterNode } : {}),
     };
     const summaryPath = path.join(artifactsDir, 'summary.json');
@@ -981,6 +982,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       'runner',
       'recipeLibraries',
       'recipeSelection',
+      'taskActions',
       'stopAfterNode',
     ]);
     const manifestFields = new Set([

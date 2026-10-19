@@ -1946,6 +1946,41 @@ test('stopAfterNode runs the graph through the named node, then the declared tea
   }
 });
 
+test('the summary records the task-provided actions the host passes', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const taskActions = [
+      { action: 'task.read_book', official: false, digest: 'sha256:task' },
+      { action: 'ui.wait_for', official: true, shadows: ['metamask-harness'] },
+    ];
+    const result = await runner.run({
+      recipeDocument: stopAfterRecipe(),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      taskActions,
+    });
+    assert.equal(result.status, 'pass');
+    const summary = (await readJsonFile(result.summaryPath)) as Record<string, unknown>;
+    assert.deepEqual(summary.taskActions, taskActions);
+    const artifactsDir = path.dirname(result.summaryPath);
+    const packageResult = validateRecipeArtifactPackage({
+      recipe: await readJsonFile(result.recipePath),
+      trace: await readJsonFile(result.tracePath),
+      summary,
+      manifest: await readJsonFile(result.artifactManifestPath),
+      recipeResolution: await readJsonFile(path.join(artifactsDir, 'recipe-resolution.json')),
+      artifactPaths: await listRelativeFiles(artifactsDir),
+    });
+    assert.equal(packageResult.status, 'valid', JSON.stringify(packageResult.findings));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('stopAfterNode rejects nodes outside the main graph before running anything', async () => {
   const tempRoot = await createTempRoot();
   try {
