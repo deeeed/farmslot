@@ -5,10 +5,13 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { Command } from 'commander';
+
 import type { RecipeActionManifestDocument } from '@farmslot/protocol';
 import { loadRecipeLibraries } from '@farmslot/recipe-runner';
 
 import { runRecipeCli } from '../src/cli.js';
+import { registerDiscoveryCommands } from '../src/commands.js';
 import { buildDiscoveryIndex, findRecipe, shadowedRecipes } from '../src/discovery-index.js';
 import { assessRecipe, RECIPE_CLI_VERSION } from '../src/index.js';
 import type {
@@ -146,6 +149,7 @@ async function fixture(
 async function cli<T>(
   argv: string[],
   env: Record<string, string>,
+  run: (argv: string[]) => Promise<void> = runRecipeCli,
 ): Promise<{ json: T; exitCode: number }> {
   const lines: string[] = [];
   const log = console.log;
@@ -155,7 +159,7 @@ async function cli<T>(
   process.env.RECIPE_LIBRARY_PATH = env.RECIPE_LIBRARY_PATH;
   process.exitCode = 0;
   try {
-    await runRecipeCli([...argv, '--json']);
+    await run([...argv, '--json']);
     return { json: JSON.parse(lines.join('\n')) as T, exitCode: Number(process.exitCode ?? 0) };
   } finally {
     console.log = log;
@@ -351,6 +355,47 @@ test('search, template and completions read the same index', async (t) => {
   );
   assert.ok(commands.json.candidates.includes('explain'));
   assert.ok(commands.json.candidates.includes('run'));
+});
+
+test('describe carries the node and recipe template prints', async (t) => {
+  const { env } = await fixture(t);
+  for (const [name, view] of [
+    ['team.open', ['--platform', 'web']],
+    ['shop.setup', []],
+  ] as const) {
+    const template = await cli<TemplateEnvelope>(['template', name, ...view], env);
+    const described = await cli<DescribeEnvelope>(['describe', name, ...view], env);
+    assert.deepEqual((described.json.recipe ?? described.json.action)?.template, {
+      node: template.json.node,
+      recipe: template.json.recipe,
+    });
+  }
+  // A call node with a shadowed recipe's ref would run the winner instead.
+  const shadowed = await cli<DescribeEnvelope>(['describe', 'base.shop.smoke'], env);
+  assert.equal(shadowed.json.recipe?.template, undefined);
+});
+
+test('a host usage respells the commands discovery prints', async (t) => {
+  const { env, team } = await fixture(t);
+  const host = async (argv: string[]) => {
+    const program = new Command('host');
+    registerDiscoveryCommands(program, {
+      commandName: 'host',
+      usage: {
+        libraryOption: '--source',
+        command: (command, args) => ['host', `do-${command}`, ...args].join(' '),
+      },
+    });
+    await program.parseAsync(argv, { from: 'user' });
+  };
+  const described = await cli<DescribeEnvelope>(
+    ['describe', 'shop.setup', '--library', `team=${team}`],
+    env,
+    host,
+  );
+  assert.match(described.json.recipe?.runCommand ?? '', /^host do-run shop\.setup .* --source /u);
+  const missing = await cli<DiscoveryErrorEnvelope>(['describe', 'nope'], env, host);
+  assert.equal(missing.json.error.userAction, 'host do-search nope');
 });
 
 test('an unsatisfied requires range and an invalid action manifest fail closed', async (t) => {
@@ -878,7 +923,7 @@ test('requires vouches only for the packages the host passes, like run', async (
   // A host that does not provide recipe-cli: discovery and run both refuse.
   await assert.rejects(buildDiscoveryIndex({ env }), /cannot provide or check/u);
   await assert.rejects(loadRecipeLibraries([{ name: 'hello', root }]), /cannot provide or check/u);
-  // farmslot-recipe vouches for itself in both paths.
+  // runRecipeCli vouches for itself in both paths.
   const packageVersions = { '@farmslot/recipe-cli': RECIPE_CLI_VERSION };
   const index = await buildDiscoveryIndex({ env, packageVersions });
   assert.equal(index.recipes.get('greet')?.runnable, true);

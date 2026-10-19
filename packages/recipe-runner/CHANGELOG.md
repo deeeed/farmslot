@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- `resolveRecipeRunSelection` resolves what a run command names: a ref, platform alias or `<library>.<ref>` id from the active libraries, else a recipe file with its adjacent task libraries. It returns the libraries with their digests, the match and the `selection` for the run summary. The CLI's `run` uses it, unchanged, and so does `farmslot recipe run`.
+- The README's CLI examples use `farmslot recipe run`, since `farmslot-recipe` is removed.
 - `ActiveVideoRecording.ready()`'s contract now includes the lead-in: it resolves once the segment's zero is bounded and one `EVIDENCE_PADDING_MS` has been recorded past it (ADR-062 Amendment 16). Documentation only; the runner is unchanged.
 - Engine stills are lossy WebP at quality 85 (ADR-062 Amendment 17): `stills/<key>-<attempt>.webp` and `stills/recorded-<n>.webp`, registered as `image/webp`, and no PNG original is kept. `recordVideo.stillFormat: 'png'` or `recipe run --record-still-format png` keeps lossless PNG. The encoder is libwebp compiled to WebAssembly (`@jsquash/webp`) on a worker thread. `captureRecordingSnapshot` and recipe-named screenshots are unchanged.
 

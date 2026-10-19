@@ -42,6 +42,7 @@ export type {
   RecipeLibraryEnv,
   RecipeLibraryLoadOptions,
   RecipeLibraryResolution,
+  RecipeRunSelection,
   ResolvedLibraryRecipe,
 } from './core/library.js';
 export {
@@ -58,6 +59,7 @@ export {
   parseRecipeLibraryPath,
   personalRecipeLibraryRoot,
   resolveRecipeLibrarySources,
+  resolveRecipeRunSelection,
 } from './core/library.js';
 export {
   checkRecipeLibraryRequirements,

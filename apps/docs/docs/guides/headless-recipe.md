@@ -9,8 +9,10 @@ Use a headless recipe when commands, API responses, logs, or files can prove the
 ## Install
 
 ```sh
-yarn add -D @farmslot/recipe-runner @farmslot/recipe-cli @farmslot/protocol
+yarn add -D @farmslot/recipe-runner @farmslot/protocol
 ```
+
+The verification commands below come from the `farmslot` CLI.
 
 Keep the project surface small:
 
@@ -47,10 +49,15 @@ Use the canonical recipe skeleton in [Write a recipe](./write-a-recipe.md). Exac
 ## Verify
 
 ```sh
-farmslot-recipe run --list --adapter core
-farmslot-recipe run smoke --describe --adapter core
-farmslot-recipe run smoke --adapter core --artifacts-dir artifacts/recipe-run
+export RECIPE_LIBRARY_PATH="app=$PWD/scripts/agentic/recipe"
+farmslot recipe run --list --project-root . --platform core
+farmslot recipe run smoke --describe --project-root . --platform core
+farmslot recipe run smoke --project-root . --adapter core \
+  --action-manifest scripts/agentic/recipe/action-manifest.json \
+  --artifacts-dir artifacts/recipe-run
 ```
+
+A library recipe that runs shell commands stops at its plan first; review it, then rerun with `--approve-plan <digest>` ([Recipe discovery](../reference/recipe-discovery.md)). Once the project is registered with Farmslot, its binding supplies the library, manifest and artifact directory: `farmslot recipe run --list --adapter core` and `farmslot recipe run smoke --adapter core`.
 
 Verify the human outcome plus `recipe-resolution.json`, `summary.json`, `trace.json`, and `artifact-manifest.json`.
 

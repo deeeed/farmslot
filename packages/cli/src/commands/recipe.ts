@@ -20,6 +20,7 @@ import {
   createStandardCoreAdapters,
   type RecipeRunRequest,
   resolveRecipeLibrarySources,
+  resolveRecipeRunSelection,
   resolveRecipeTrustInput,
 } from '@farmslot/recipe-runner';
 import {
@@ -402,16 +403,20 @@ export function registerRecipeCommand(program: Command): void {
         approvalDigest: opts.approvePlan,
       });
       const invocationTrust = trust.source?.trust ?? 'trusted';
-      const librarySources = applyTaskLocalInvocationTrust(
-        await resolveRecipeLibrarySources({
-          cliEntries: opts.librarySource,
-          recipePath: resolveRecipeCliPath(recipePath),
-        }),
-        invocationTrust,
-      );
+      const {
+        librarySources: sources,
+        match,
+        selection,
+      } = await resolveRecipeRunSelection(recipePath, {
+        ...(opts.adapter ? { adapter: opts.adapter } : {}),
+        cliEntries: opts.librarySource,
+        recipePath: resolveRecipeCliPath(recipePath),
+      });
+      const librarySources = applyTaskLocalInvocationTrust(sources, invocationTrust);
       const { withRecipeSignals } = await import('@farmslot/recipe-cli/harness');
       const request: RecipeRunRequest = {
-        recipePath: resolveRecipeCliPath(recipePath),
+        recipePath: match ? match.recipe.path : resolveRecipeCliPath(recipePath),
+        ...(selection ? { selection } : {}),
         artifactsDir: resolveRecipeCliPath(opts.artifactsDir),
         projectRoot: opts.projectRoot
           ? resolveRecipeCliPath(opts.projectRoot)
@@ -420,6 +425,8 @@ export function registerRecipeCommand(program: Command): void {
         ...(opts.adapter ? { adapter: opts.adapter } : {}),
         librarySources,
         ...trust,
+        // A library recipe keeps its library's trust unless the caller sets one.
+        ...(!trust.source && match ? { source: match.recipe.provenance } : {}),
       };
       const result = await withRecipeSignals((signal) => runner.run({ ...request, signal }));
       if (emit.machine) {

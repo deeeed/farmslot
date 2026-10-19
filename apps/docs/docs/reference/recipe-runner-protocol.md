@@ -38,8 +38,8 @@ The published Action Manifest schema at `https://farmslot.io/schemas/action-mani
 Runners expose progressive disclosure:
 
 ```sh
-farmslot-recipe run --list --adapter <adapter> --json
-farmslot-recipe run <recipe> --describe --adapter <adapter> --json
+farmslot recipe run --list --adapter <adapter> --json
+farmslot recipe run <recipe> --describe --adapter <adapter> --json
 ```
 
 List output contains only selection facts and exact recipe detail expands only when requested. Action discovery belongs to the project runner because manifests and adapters are project-owned.

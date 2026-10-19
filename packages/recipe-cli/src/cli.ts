@@ -10,7 +10,10 @@ export interface RecipeCliOptions {
   commandName?: string;
 }
 
-/** The `farmslot-recipe` program: the runner's run/validate plus the discovery commands. */
+/**
+ * The recipe program a host embeds (`farmslot-recipe` by default): the runner's run/validate plus
+ * the discovery commands.
+ */
 export function createRecipeCliProgram(options: RecipeCliOptions = {}): Command {
   const commandName = options.commandName ?? 'farmslot-recipe';
   const program = createRecipeRunnerProgram({

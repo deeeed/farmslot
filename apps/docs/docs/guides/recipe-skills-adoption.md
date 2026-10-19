@@ -79,11 +79,20 @@ Install the skills and use them to write or review recipes. The project may not 
 
 ### Level 1 — Recipe runner only
 
-Add a small local script that can run one recipe and emit proof artifacts.
+Add a small local script that can run one recipe and emit proof artifacts. With `@farmslot/recipe-cli` installed, it can be the package's own program:
+
+```js
+// scripts/recipe.mjs
+import { runRecipeCli } from '@farmslot/recipe-cli';
+await runRecipeCli(process.argv.slice(2), { commandName: 'node scripts/recipe.mjs' });
+```
 
 ```bash
-npx -p @farmslot/recipe-cli farmslot-recipe run recipes/example.recipe.json
+node scripts/recipe.mjs run recipes/example.recipe.json \
+  --action-manifest action-manifest.json --artifacts-dir artifacts/recipe-run
 ```
+
+With the `farmslot` CLI installed, `farmslot recipe run recipes/example.recipe.json --project-root . --action-manifest action-manifest.json --artifacts-dir artifacts/recipe-run` does the same.
 
 For Expo / React Native projects, this may start with:
 

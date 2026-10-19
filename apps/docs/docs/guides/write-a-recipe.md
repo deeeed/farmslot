@@ -7,9 +7,11 @@ title: Write a recipe
 Start from working code instead of recalling the schema.
 
 ```sh
-farmslot-recipe run --list --adapter <adapter> --json
-farmslot-recipe run <closest-recipe> --describe --adapter <adapter> --json
+farmslot recipe run --list --adapter <adapter> --json
+farmslot recipe run <closest-recipe> --describe --adapter <adapter> --json
 ```
+
+These run inside a registered Farmslot project. Outside one, add `--project-root .` and `--library-source <name>=<library>`, and pass the platform as `--platform <adapter>`; running a recipe there also needs `--action-manifest` and `--artifacts-dir`.
 
 Call the closest recipe when its graph already fits. Copy it only when the workflow itself must change, then edit only the nodes required by the claim. Use the project's runner to search its strict action manifest and inspect exact action schemas; action discovery is project-owned.
 
@@ -89,8 +91,8 @@ pattern. A file's existence alone does not prove its contents.
 ## Validate
 
 ```sh
-farmslot-recipe validate ./proof.recipe.json --action-manifest <manifest.json>
-farmslot-recipe run ./proof.recipe.json --action-manifest <manifest.json> --adapter <adapter>
+farmslot recipe validate ./proof.recipe.json --action-manifest <manifest.json>
+farmslot recipe run ./proof.recipe.json --adapter <adapter>
 ```
 
 Read the trace and actual evidence. A passing command is not sufficient when the claim is visual or runtime-specific.

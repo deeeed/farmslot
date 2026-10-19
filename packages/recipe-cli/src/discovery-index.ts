@@ -89,7 +89,7 @@ export async function buildDiscoveryIndex(
   options: DiscoveryOptions = {},
 ): Promise<RecipeDiscoveryIndex> {
   // Vouch only for what the host passes, so a library's `requires` gives discovery and the
-  // host's own run the same answer. farmslot-recipe passes @farmslot/recipe-cli itself.
+  // host's own run the same answer. runRecipeCli passes @farmslot/recipe-cli itself.
   const packageVersions = options.packageVersions
     ? { packageVersions: options.packageVersions }
     : {};
