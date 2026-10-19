@@ -43,12 +43,13 @@ export interface HostedTaskInput {
 }
 
 /** Keep CLI distribution, node pools and captured project scripts independently selected. */
+// The node CLI defaults to the installer's link (install.sh FARMSLOT_BIN_DIR, else ~/.local/bin).
 export async function hostedTaskCommand(slot: SlotVars, args: readonly string[]): Promise<string> {
   const farm = await farmslotDirectoryForSlot(slot);
   const support = expandTemplate('{{farmslot_dir}}', slot);
   const supportArg = isShellHomePath(support) ? support : shellQuote(support);
   const script =
-    'farm="$1"; support="$2"; shift 2; unset FARMSLOT_ROOT; export FARMSLOT_POOL_DIR="${FARMSLOT_POOL_DIR:-$farm/pool}" FARMSLOT_PROJECTS_DIR="${FARMSLOT_PROJECTS_DIR:-$support/projects}" FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
+    'farm="$1"; support="$2"; shift 2; unset FARMSLOT_ROOT; export FARMSLOT_POOL_DIR="${FARMSLOT_POOL_DIR:-$farm/pool}" FARMSLOT_PROJECTS_DIR="${FARMSLOT_PROJECTS_DIR:-$support/projects}" FARMSLOT_CLI="${FARMSLOT_CLI:-${FARMSLOT_BIN_DIR:-$HOME/.local/bin}/farmslot}"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
   return `bash -c ${shellQuote(script)} hosted-task ${shellQuote(farm)} ${supportArg} ${args.map(shellQuote).join(' ')}`;
 }
 
