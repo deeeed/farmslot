@@ -57,14 +57,7 @@ function encodeWebp(png: Uint8Array): Promise<Uint8Array> {
 function encoder(): Worker {
   if (worker) return worker;
   const built = new URL('./webp-encoder-worker.js', import.meta.url);
-  // A source run (tests, dev) has only the .ts file next to this one; tsx loads it.
-  const source = new URL('./webp-encoder-worker.ts', import.meta.url).href;
-  const started = existsSync(fileURLToPath(built))
-    ? new Worker(built)
-    : new Worker(
-        `import('tsx/esm/api').then(({ register }) => { register(); return import(${JSON.stringify(source)}); });`,
-        { eval: true },
-      );
+  const started = existsSync(fileURLToPath(built)) ? new Worker(built) : sourceWorker();
   started.on('message', (message: { id: number; webp?: Uint8Array; error?: string }) => {
     const request = pending.get(message.id);
     pending.delete(message.id);
@@ -79,4 +72,17 @@ function encoder(): Worker {
   });
   worker = started;
   return started;
+}
+
+/**
+ * A source run (tests, dev) has only the .ts file next to this one, so tsx loads it. tsx is
+ * resolved here: an eval worker would resolve it from the process's working directory.
+ */
+function sourceWorker(): Worker {
+  const tsx = JSON.stringify(import.meta.resolve('tsx/esm/api'));
+  const source = JSON.stringify(new URL('./webp-encoder-worker.ts', import.meta.url).href);
+  return new Worker(
+    `import(${tsx}).then(({ register }) => { register(); return import(${source}); });`,
+    { eval: true },
+  );
 }

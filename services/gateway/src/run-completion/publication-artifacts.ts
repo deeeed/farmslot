@@ -53,7 +53,7 @@ const REWRITE_SYSTEM_FALLBACK = `You rewrite GitHub PR descriptions. Output ONLY
 
 const REWRITE_RULES_FALLBACK = `Rules:
 1. Replace ALL local path references to these files with proper markdown image/link embeds using the URLs above.
-2. Images (.png, .jpg, .jpeg, .gif): use \`![descriptive alt](url)\`
+2. Images (.png, .jpg, .jpeg, .gif, .webp): use \`![descriptive alt](url)\`
 3. Videos (.mp4, .mov): use \`[filename](url)\` (GitHub doesn't render video embeds)
 4. Place images in the **Screenshots/Recordings** section. If it has a table format, put images in the table cells. If not, create a simple list.
 5. Remove any remaining local file paths (starting with \`.task/\`, \`/Users/\`, \`/home/\`, \`/tmp/\`, \`file://\`) that don't have uploaded URLs.

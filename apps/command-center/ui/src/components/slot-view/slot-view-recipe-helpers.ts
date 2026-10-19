@@ -114,6 +114,7 @@ const MANIFEST_EVIDENCE_FILE_EXTENSIONS = [
   '.jpg',
   '.jpeg',
   '.gif',
+  '.webp',
   '.mp4',
   '.mov',
   '.webm',

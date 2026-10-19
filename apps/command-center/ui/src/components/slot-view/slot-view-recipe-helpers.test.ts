@@ -517,6 +517,21 @@ test('computeRecipeEvidenceArtifacts keeps gif/webm node evidence visible', () =
   );
 });
 
+test('computeRecipeEvidenceArtifacts keeps WebP node evidence visible', () => {
+  const result = computeRecipeEvidenceArtifacts({
+    artifactManifest: [{ path: 'artifacts/start-shot.webp', purpose: 'screenshot' }],
+    recipeJson,
+    selectedNodeId: 'start',
+    evidenceManifest: [],
+    mode: 'node',
+  });
+
+  assert.deepEqual(
+    result.effectiveArtifacts.map((artifact) => artifact.path),
+    ['artifacts/start-shot.webp'],
+  );
+});
+
 test('computeRecipeEvidenceArtifacts does not pull ac10/ac11 manifest entries into ac1 node mode', () => {
   const result = computeRecipeEvidenceArtifacts({
     artifactManifest: [
