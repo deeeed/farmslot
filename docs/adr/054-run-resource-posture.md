@@ -291,3 +291,26 @@ No new CLI flags, project fields or SDK exports are added. Clients observe freed
 slot ownership, released leases and truthful partial-cleanup results. Providers
 and downstream harnesses keep their declared acquire, health and release actions.
 The normative rules are in the [runtime capability contract](../reference/recipe-runtime-capability-contract.md#release-parks-and-terminal-cleanup).
+
+## Amendment: cancel always frees the slot (2026-10-19)
+
+Status: Proposed. Arthur decided the rule (2026-10-19 15:10); acceptance follows paired review.
+
+### Decision
+
+`run.cancel` stops everything the run started and then releases its slot.
+
+- The run's own workers are the agents in its `agentContexts`. Cancel stops them whether or not their pane or saved conversation identity was recorded: an exact, identity-checked stop when it has one, otherwise the slot agent kill that `slot.release` uses (ADR-038).
+- Run-owned providers, its prepare scope and its browser session are stopped as before. A run-owned process that survives the stop does not keep the slot: cancel names it on the run in `slotTeardownSkipped`, and the next prepare that runs a preflight stops a browser session left on the slot's CDP port, unless a live lease still holds it.
+- Only another active run keeps the slot: one that owns it, is its native handoff successor, or holds an open publication gate there. Cancel then leaves that run's slot alone, as before. The ownership and release-fence checks are unchanged, and a slot this run parked or handed over follows its park record.
+- A process the run did not start never keeps the slot, for example an editor or terminal with the checkout open. Neither does one of the run's own helpers still exiting when cancel checks. Cancel does not inspect other processes in the checkout.
+
+Other terminal transitions (complete, fail, block, settlement) keep the occupancy checks of the 2026-10-13 amendment.
+
+### Rationale and consequences
+
+On 10-19 four cancels at the human gate left their slots held. Two were held by processes that were gone a minute later; db0b2ef5's cancel showed the same hold from the run's own detached harness helpers still exiting. One was held by an editor with the checkout open, and one by the run's own finished worker without a recorded pane identity. A plain `slot.release` a minute later freed each one. Cancel is the operator saying the run is over, so it now frees the slot as release does. The next prepare deals with whatever the cancelled worker left in the checkout, as it does after release.
+
+### Public surface
+
+No new API, flag or field. `run.cancel` resets its slot to ready unless another active run owns it. It records `slotTeardownSkipped` for that run or for a run-owned process that survived the stop.
