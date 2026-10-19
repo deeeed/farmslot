@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.14.0 - 2026-10-19
+
+- Align with `@farmslot/adapter-sdk` 0.22.0 and `@farmslot/recipe-runner` 0.43.0.
+
 ## 0.13.0 - 2026-10-19
 
 - Align with `@farmslot/protocol` 0.57.0, `@farmslot/adapter-sdk` 0.21.0 and `@farmslot/recipe-runner` 0.42.0.
