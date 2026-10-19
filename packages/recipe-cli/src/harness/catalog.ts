@@ -23,6 +23,7 @@ import {
 } from '../action-catalog.js';
 import { indexActions } from '../discovery-index.js';
 import { resolveDiscoveryLibraries } from '../libraries.js';
+import { RECIPE_CLI_PACKAGE_VERSIONS } from '../version.js';
 
 import { libraryName } from './adapter-plugins.js';
 import { harnessAdapters } from './adapters.js';
@@ -133,6 +134,7 @@ export function createRuntimeRecipeCatalog({
         ? await resolveDiscoveryLibraries({
             libraries: selected.map((source) => `${libraryName(source)}=${source.root}`),
             env: { RECIPE_LIBRARY_PATH: '' },
+            packageVersions: RECIPE_CLI_PACKAGE_VERSIONS,
           })
         : [];
       for (const library of libraries) {
@@ -148,6 +150,7 @@ export function createRuntimeRecipeCatalog({
         : await resolveDiscoveryLibraries({
             libraries: [`${bundledLibrary.name}=${bundledLibrary.root}`],
             env: { RECIPE_LIBRARY_PATH: '' },
+            packageVersions: RECIPE_CLI_PACKAGE_VERSIONS,
           });
       for (const library of bundledLibraries) {
         library.source.provenance = {
@@ -174,9 +177,31 @@ export function createRuntimeRecipeCatalog({
       // task action root wins.
       const taskRoot = overridePath ? taskLibraryRoot(path.resolve(overridePath)) : undefined;
       const taskImplementationRoot = taskRoot && (taskActionRoot ?? path.join(taskRoot, 'actions'));
+      // A runtime manifest outside the bundled library belongs to the selected
+      // library that holds it (a plugin's own manifest or its parent plugin's), so
+      // its actions keep that library's name, trust, digest and action root.
+      const selectedLibraries = [...libraries];
+      const holder = (file: string) => {
+        const real = realPath(file);
+        if (overridePath || path.dirname(real) === bundledManifests) return undefined;
+        return selectedLibraries.find((library) => isWithin(realPath(library.info.root), real));
+      };
       // Parent declarations come first in the SDK; the derived runtime wins.
       for (const manifestPath of runtimePaths) {
         const absolute = path.resolve(manifestPath);
+        const library = holder(absolute);
+        if (library) {
+          libraries.push({
+            ...library,
+            info: {
+              ...library.info,
+              rank: libraries.length + 1,
+              root: path.dirname(absolute),
+              actionManifests: [{ scope: adapter, file: path.basename(absolute) }],
+            },
+          });
+          continue;
+        }
         const root = taskRoot ? (taskActionRoot ?? taskRoot) : bundledLibrary.root;
         const digest = await digestRecipeLibrary(root);
         libraries.push({
@@ -245,6 +270,11 @@ export function createRuntimeRecipeCatalog({
       return { manifest, actionSources };
     },
   };
+}
+
+function isWithin(root: string, file: string): boolean {
+  const relative = path.relative(root, file);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 function realPath(file: string): string {

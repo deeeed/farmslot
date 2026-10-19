@@ -4,7 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- The runtime action catalog attributes a plugin's own manifest and its parent plugin's manifest to the selected library that holds them. Their actions keep that library's name, tier, trust, digest and `actions/` root. Before, they were labelled as the bundled library, so an inherited action's script resolved under the bundled `actions/`, and a plugin's own actions showed the bundled library as a shadow.
+- The runtime action catalog checks a selected library's `requires` against the recipe CLI it runs in. Before, it passed no package versions, so any `requires` failed closed.
 
 ## 0.23.7 - 2026-10-19
 
