@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The monitor's total timeout no longer hands off a worker that is still making progress. It opens the handoff only once the worker has also had no structured activity (runner session or observability progress) for the stuck window (`stuck_timeout_min`, 20 minutes by default). A runner whose activity cannot be proven still hands off at the total timeout. Before, TAT-4145 (6c5d56fb, 8cff6e80) and TAT-4006 (7721a02b) each got a 90-minute handoff within 2 seconds of the worker's last progress.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.26.0 - 2026-10-19

@@ -518,3 +518,79 @@ test(
     await execution;
   },
 );
+
+// TAT-4006 7721a02b: the window opened 09:18:06Z and the 90-minute handoff opened at
+// 10:48:32Z, 1.5 s after the worker's last structured progress (20-minute stuck window).
+async function pastTotalTimeout(t: TestContext, sinceProgressMs: number) {
+  const f = await fixture(t);
+  await f.writeSignal({ ...f.waiting, waitingForOperator: undefined });
+  await writeFile(
+    path.join(farmslotRoot, 'projects', f.run.project, 'project.json'),
+    JSON.stringify({
+      name: f.run.project,
+      monitoring: {
+        poll_interval_min: 1 / 60_000,
+        stuck_timeout_min: 20,
+        total_timeout_min: 90,
+        max_nudges: 0,
+      },
+    }),
+  );
+  const startedAt = new Date(Date.now() - (90 * 60 + 26) * 1000).toISOString();
+  updateRun(f.run.id, {
+    monitorState: {
+      nudgeCount: 0,
+      startedAt,
+      lastPollAt: startedAt,
+      lastStructuredProgressAt: new Date(Date.now() - sinceProgressMs).toISOString(),
+    },
+  });
+  return f;
+}
+
+test(
+  'a worker making structured progress keeps monitoring past the total timeout',
+  { timeout: 4000 },
+  async (t) => {
+    const f = await pastTotalTimeout(t, 1_500);
+    let polls = 0;
+    const execution = f.start({
+      workerStatus: async () => 'working',
+      violations: async (_run, _slot, state) => {
+        state.lastStructuredProgressAt = Date.now();
+        polls++;
+        return [];
+      },
+    });
+    for (let i = 0; i < 400 && polls < 3 && !getRun(f.run.id)!.decisions.length; i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(
+      getRun(f.run.id)!.decisions.map((decision) => decision.description),
+      [],
+    );
+    assert.ok(polls >= 3);
+    assert.equal(getRun(f.run.id)!.status, 'monitoring');
+    f.controller.abort();
+    await execution;
+  },
+);
+
+test(
+  'a worker with no structured progress for the stuck window still hands off at the total timeout',
+  { timeout: 4000 },
+  async (t) => {
+    const f = await pastTotalTimeout(t, 21 * 60_000);
+    void f.start({
+      workerStatus: async () => 'working',
+      violations: async () => [],
+    });
+    let decision: Run['decisions'][number] | undefined;
+    for (let i = 0; i < 400 && !decision; i++) {
+      decision = getRun(f.run.id)!.decisions[0];
+      if (!decision) await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.ok(decision, 'no total-timeout handoff');
+    assert.equal(decision.type, 'monitor_interactive_handoff');
+    assert.match(decision.description, /Monitor note: exceeded 90 minute timeout\./);
+  },
+);
