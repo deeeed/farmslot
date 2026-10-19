@@ -8,6 +8,7 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## 0.7.0 - 2026-10-19
 
+- Align with `@farmslot/agent-runtime` 0.30.0.
 - The `recipe-harness` skill inspects recipes with `farmslot recipe run --list` and `--describe` (allowed tool `Bash(farmslot recipe:*)`), since `farmslot-recipe` is removed.
 
 ## 0.6.27 - 2026-10-18

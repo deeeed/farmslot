@@ -8,7 +8,7 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## 0.23.0 - 2026-10-19
 
-- Align with `@farmslot/recipe-runner` 0.40.0.
+- Align with `@farmslot/agent-runtime` 0.30.0 and `@farmslot/recipe-runner` 0.40.0.
 
 ## 0.22.29 - 2026-10-18
 
