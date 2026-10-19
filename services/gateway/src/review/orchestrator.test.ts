@@ -18,6 +18,7 @@ import { createRun, getRun } from '../runs/store.js';
 
 import { parseReviewIssueBullets } from './issues.js';
 import {
+  blockedFixPassReopened,
   canRecoverReviewFixPass,
   canSettleRecoveredFixContext,
   reconcileRecoveredFixPromptDelivery,
@@ -173,7 +174,19 @@ test('a fix pass its worker blocked and reopened is recovered from the newer att
     timestamp: '2026-10-19T16:43:54.000Z',
   };
   assert.equal(canRecoverReviewFixPass(blocked, taskDir), true);
+  assert.equal(
+    canRecoverReviewFixPass(blocked, taskDir, 'review-bda11b1a-publication'),
+    false,
+    'a publication review or Send back never adopts the pipeline pass its worker blocked',
+  );
   assert.equal(recoveredFixSignalMatches(reopened, blocked), true);
+  assert.equal(blockedFixPassReopened(blocked, reopened), true);
+  assert.equal(
+    blockedFixPassReopened(blocked, { attemptId: blocked.signalAttemptId }),
+    false,
+    'its own blocked attempt is not a reopened one',
+  );
+  assert.equal(blockedFixPassReopened(blocked, undefined), false);
   assert.equal(
     recoveredFixSignalMatches({ ...reopened, timestamp: '2026-10-19T16:00:00.000Z' }, blocked),
     false,

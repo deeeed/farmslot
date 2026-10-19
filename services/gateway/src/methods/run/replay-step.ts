@@ -1986,9 +1986,8 @@ async function replayRunStep(
     const activeFixTaskFile =
       targetIdx >= 0 && reviewIdx >= 0 && targetIdx >= reviewIdx
         ? (activeReviewFixTaskFile(currentBeforeReplayUpdate) ??
-          (targetIdx === reviewIdx
-            ? blockedReviewFixTaskFile(currentBeforeReplayUpdate)
-            : undefined))
+          // Read before the replay reset the review step's outputs.
+          (targetIdx === reviewIdx ? blockedReviewFixTaskFile(existing) : undefined))
         : undefined;
     const engineStateForReplay = freshDispatchEngineStateForReplay(
       replaysCompletionOrGate
