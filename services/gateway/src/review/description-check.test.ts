@@ -396,7 +396,7 @@ test('task-provided recipe actions from the run summaries are listed with the fi
       { action: 'ui.wait_for', official: true, shadows: ['metamask-harness'] },
     ],
   });
-  await summary('recipe-runs/attempt-2', {
+  await summary('qa/terminal/attempt-2', {
     taskActions: [{ action: 'terminal.perps.read_book', official: false, shadows: ['perps'] }],
   });
   const section = (await render()).split(heading)[1] ?? '';
@@ -410,8 +410,11 @@ test('task-provided recipe actions from the run summaries are listed with the fi
     section,
     /^- `ui\.wait_for`: redeclares an official action; shadows metamask-harness$/m,
   );
-  // An unreadable summary shows the check as not run instead of an empty list.
-  await chmod(path.join(repo, taskDir, 'artifacts/recipe-runs/attempt-2/summary.json'), 0o000);
+  // A malformed or unreadable summary shows the check as not run instead of an empty list.
+  await writeFile(path.join(repo, taskDir, 'artifacts/recipe-baseline-run/summary.json'), '{');
+  assert.match((await render()).split(heading)[1] ?? '', /^Not checked: Unreadable run summary/m);
+  await summary('recipe-baseline-run', {});
+  await chmod(path.join(repo, taskDir, 'artifacts/qa/terminal/attempt-2/summary.json'), 0o000);
   assert.match(
     (await render()).split(heading)[1] ?? '',
     /^Not checked: Review artifact read failed/m,

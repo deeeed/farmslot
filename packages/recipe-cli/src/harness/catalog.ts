@@ -123,6 +123,18 @@ export function createRuntimeRecipeCatalog({
     async resolveActionManifest(adapter, overridePath, sources = [], taskActionRoot) {
       if (adapter !== runtime.id)
         throw new Error(`Runtime ${runtime.id} cannot resolve ${adapter}.`);
+      // The selected task manifest is read once, as the task's: a library or runtime
+      // path naming the same file does not index it again.
+      const taskManifest = overridePath ? path.resolve(overridePath) : undefined;
+      const taskReal = taskManifest && realPath(taskManifest);
+      const notTask = (file: string) => !taskReal || realPath(file) !== taskReal;
+      const dropTaskManifest = (library: {
+        info: { root: string; actionManifests: Array<{ file: string }> };
+      }) => {
+        library.info.actionManifests = library.info.actionManifests.filter(({ file }) =>
+          notTask(path.resolve(library.info.root, file)),
+        );
+      };
       const selected = sources.filter(
         (source) =>
           source.name !== bundledLibrary.name ||
@@ -141,6 +153,7 @@ export function createRuntimeRecipeCatalog({
             libraryName(source) === library.info.name,
         );
         library.source = { ...library.source, ...configured, root: library.info.root };
+        dropTaskManifest(library);
       }
       const bundledLibraries = await resolveDiscoveryLibraries({
         libraries: [`${bundledLibrary.name}=${bundledLibrary.root}`],
@@ -152,10 +165,13 @@ export function createRuntimeRecipeCatalog({
           kind: 'bundled',
           trust: 'trusted',
         };
+        dropTaskManifest(library);
       }
       const runtimePaths = [
         ...(runtime.actions.manifestPaths?.() ?? [runtime.actions.manifestPath()]),
-      ].reverse();
+      ]
+        .reverse()
+        .filter((file) => notTask(path.resolve(file)));
       // Official actions and observers come only from manifests the runtime owns:
       // its own manifest, even inside a selected library, the bundled library's and
       // a selected task manifest. Compared as real paths: plugin loading resolves
@@ -171,7 +187,6 @@ export function createRuntimeRecipeCatalog({
       // keeps its actions where a library does: in <root>/actions, where <root>
       // holds the manifest or its manifests/ directory. An explicit task action
       // root wins.
-      const taskManifest = overridePath ? path.resolve(overridePath) : undefined;
       const taskRoot = taskManifest ? taskLibraryRoot(taskManifest) : undefined;
       const taskImplementationRoot = taskRoot && (taskActionRoot ?? path.join(taskRoot, 'actions'));
       type Library = (typeof libraries)[number];

@@ -36,6 +36,7 @@ import {
 import { shellQuote } from '../core/tmux.js';
 import { projectWorkerTemplatePath } from '../core/worker-templates.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
+import { PUBLISH_PACKAGE_MAX_DEPTH } from '../run-completion/publish-package-scope.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { getRun } from '../runs/store.js';
@@ -238,7 +239,7 @@ async function readTaskActions(
 ): Promise<void> {
   const listed = await execOnSlot(
     vars,
-    `if [ -d ${shellQuote(artifacts)} ]; then find ${shellQuote(artifacts)} -maxdepth 3 -name summary.json -type f -print0; fi`,
+    `if [ -d ${shellQuote(artifacts)} ]; then find ${shellQuote(artifacts)} -maxdepth ${PUBLISH_PACKAGE_MAX_DEPTH + 1} -name summary.json -type f -print0; fi`,
     { cwd: '/', timeout: 30_000 },
   );
   if (listed.exitCode !== 0) throw new Error(`Review artifact read failed: ${listed.stderr}`);
@@ -248,7 +249,7 @@ async function readTaskActions(
     try {
       summary = JSON.parse(text ?? 'null');
     } catch {
-      continue; // a malformed summary fails its own package validation
+      throw new Error(`Unreadable run summary ${file}`);
     }
     const entries = (summary as { taskActions?: unknown } | null)?.taskActions;
     for (const entry of Array.isArray(entries) ? entries : []) {

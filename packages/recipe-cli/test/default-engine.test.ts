@@ -673,6 +673,24 @@ test('a task manifest adds to the runtime and library actions and its declaratio
   assert.equal(actionSources.get('example.read')?.implementationRoot, path.join(root, 'actions'));
 });
 
+test('a task manifest inside a selected library is read once, as the task manifest', async (t) => {
+  const { root, catalog } = setup(t, { 'example.read': declaration() });
+  const team = path.join(root, 'team');
+  writeLibraryManifest(team, {
+    actions: { command: core.actions.command, 'team.read': declaration('team.read') },
+    observers: [{ ref: 'team.watch', default_for: ['team.read'] }],
+  });
+  const { manifest, actionSources } = await catalog.resolveActionManifest(
+    'api',
+    path.join(team, 'manifests', 'api.action-manifest.json'),
+    [{ name: 'team', root: team, provenance: { kind: 'library', trust: 'trusted' } }],
+  );
+  assert.deepEqual(Object.keys(manifest.actions).sort(), ['command', 'example.read', 'team.read']);
+  assert.equal(actionSources.get('team.read')?.tier, 'task');
+  assert.equal(actionSources.get('team.read')?.shadows, undefined);
+  assert.equal(manifest.observers?.length, 1);
+});
+
 test('a run with a task manifest passes its actions, official redeclarations included, to the summary', async (t) => {
   const { root, engine } = setup(t, { 'example.read': declaration() }, [
     {
@@ -711,6 +729,36 @@ test('a run with a task manifest passes its actions, official redeclarations inc
     ],
   );
   assert.ok(recorded.every((entry) => entry.digest?.startsWith('sha256:')));
+  // A provider that relabels official sources, as mm-harness does, keeps them task-provided.
+  const relabeling = {
+    ...engine,
+    async resolveActionManifest(...args: Parameters<typeof engine.resolveActionManifest>) {
+      const resolved = await engine.resolveActionManifest(...args);
+      const command = resolved.actionSources.get('command')!;
+      resolved.actionSources.set('command', {
+        name: 'official',
+        tier: 'official',
+        manifestPath: command.manifestPath,
+      });
+      return resolved;
+    },
+  };
+  const relabeled = await preflightRecipe(
+    relabeling,
+    'api',
+    document,
+    artifacts,
+    root,
+    path.join(task, 'manifests', 'api.action-manifest.json'),
+    { readOnly: true },
+  );
+  assert.deepEqual(
+    relabeled.runRequest.taskActions?.map(({ action, official }) => ({ action, official })),
+    [
+      { action: 'command', official: true },
+      { action: 'example.read', official: false },
+    ],
+  );
   const without = await preflightRecipe(engine, 'api', document, artifacts, root, undefined, {
     readOnly: true,
   });
