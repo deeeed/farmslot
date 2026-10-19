@@ -260,14 +260,16 @@ export function ownedTaskDirectory(
 ): string {
   const target = path.resolve(requested);
   const root = path.join(fs.realpathSync(checkout), taskDirName);
-  // The gateway names the task directory under the checkout path it knows, which may run through a
-  // symlink (macOS /var is /private/var). The real-path check below still bounds where it lands.
-  const named = path.join(path.resolve(checkout), taskDirName);
-  if (![root, named].some((owned) => target.startsWith(`${owned}${path.sep}`)))
-    throw refusal('The task directory is outside its selected checkout.');
   let existing = target;
   while (!fs.existsSync(existing)) existing = path.dirname(existing);
   const actual = fs.realpathSync(existing);
+  // The gateway and the node can name the checkout through different symlinks (macOS /var is
+  // /private/var), so compare both spellings. The real-path check below still bounds where it lands.
+  const named = path.join(path.resolve(checkout), taskDirName);
+  const resolved = path.join(actual, path.relative(existing, target));
+  const inside = (candidate: string, owned: string) => candidate.startsWith(`${owned}${path.sep}`);
+  if (!inside(target, named) && !inside(target, root) && !inside(resolved, root))
+    throw refusal('The task directory is outside its selected checkout.');
   if (
     actual !== root &&
     !actual.startsWith(`${root}${path.sep}`) &&

@@ -112,6 +112,7 @@ test('a task directory named through a symlinked checkout path stays owned', (t)
   const checkout = path.join(alias, 'checkout');
   const requested = path.join(checkout, '.task', 'run-1');
   assert.equal(ownedTaskDirectory(checkout, '.task', requested), requested);
+  assert.equal(ownedTaskDirectory(checkoutReal, '.task', requested), requested);
   fs.symlinkSync(outside, path.join(checkoutReal, '.task', 'escape'), 'dir');
   assert.throws(
     () => ownedTaskDirectory(checkout, '.task', path.join(checkout, '.task', 'escape', 'run-2')),
