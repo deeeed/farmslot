@@ -380,6 +380,10 @@ catalog MUST refuse, with `ACTION_MANIFEST_INVALID`, such a manifest that
 declares an official action or any observer. The runtime's own manifest stays
 the runtime's when it lives inside a selected library. Custom actions keep
 first-source precedence, and a shadowed declaration stays visible.
+A task action manifest adds to the catalog: its declarations come first, and the
+runtime's, the bundled library's and the selected libraries' declarations stay
+available.
+Its run lists the actions it provided in `summary.json` `taskActions`.
 
 A task action manifest's implementation root is the explicit task action root
 when one is given. Otherwise it is `<root>/actions`, where `<root>` is the

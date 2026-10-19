@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `summary.json` records `taskActions` when the host passes the actions a task action manifest provided (`RecipeRunRequest.taskActions`).
 
 ## 0.42.0 - 2026-10-19
 

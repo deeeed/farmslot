@@ -642,6 +642,129 @@ test('a task manifest keeps its actions in <root>/actions unless a task action r
   );
 });
 
+test('a task manifest adds to the runtime and library actions and its declarations come first', async (t) => {
+  const { root, catalog } = setup(t, { 'example.read': declaration() });
+  const team = path.join(root, 'team');
+  writeLibraryManifest(team, { actions: { 'team.read': declaration('team.read') } });
+  const task = path.join(root, 'task');
+  writeLibraryManifest(task, {
+    actions: {
+      'task.observe': declaration('task.observe'),
+      'team.read': declaration('team.read', 'Task copy.'),
+    },
+  });
+  const { manifest, actionSources } = await catalog.resolveActionManifest(
+    'api',
+    path.join(task, 'manifests', 'api.action-manifest.json'),
+    [{ name: 'team', root: team, provenance: { kind: 'library', trust: 'trusted' } }],
+  );
+  assert.deepEqual(Object.keys(manifest.actions).sort(), [
+    'example.read',
+    'task.observe',
+    'team.read',
+  ]);
+  assert.equal(manifest.actions['team.read']?.description, 'Task copy.');
+  const shadowing = actionSources.get('team.read');
+  assert.equal(shadowing?.tier, 'task');
+  assert.deepEqual(shadowing?.shadows, ['team']);
+  assert.equal(shadowing?.implementationRoot, path.join(task, 'actions'));
+  assert.equal(actionSources.get('task.observe')?.tier, 'task');
+  assert.equal(actionSources.get('example.read')?.tier, 'canonical');
+  assert.equal(actionSources.get('example.read')?.implementationRoot, path.join(root, 'actions'));
+});
+
+test('a task manifest inside a selected library is read once, as the task manifest', async (t) => {
+  const { root, catalog } = setup(t, { 'example.read': declaration() });
+  const team = path.join(root, 'team');
+  writeLibraryManifest(team, {
+    actions: { command: core.actions.command, 'team.read': declaration('team.read') },
+    observers: [{ ref: 'team.watch', default_for: ['team.read'] }],
+  });
+  const { manifest, actionSources } = await catalog.resolveActionManifest(
+    'api',
+    path.join(team, 'manifests', 'api.action-manifest.json'),
+    [{ name: 'team', root: team, provenance: { kind: 'library', trust: 'trusted' } }],
+  );
+  assert.deepEqual(Object.keys(manifest.actions).sort(), ['command', 'example.read', 'team.read']);
+  assert.equal(actionSources.get('team.read')?.tier, 'task');
+  assert.equal(actionSources.get('team.read')?.shadows, undefined);
+  assert.equal(manifest.observers?.length, 1);
+});
+
+test('a run with a task manifest passes its actions, official redeclarations included, to the summary', async (t) => {
+  const { root, engine } = setup(t, { 'example.read': declaration() }, [
+    {
+      action: 'example.read',
+      source: { kind: 'bundled', trust: 'trusted', name: 'example', digest: 'sha256:example' },
+      execute: async () => ({}),
+    },
+  ]);
+  const task = path.join(root, 'task');
+  writeLibraryManifest(task, {
+    actions: {
+      command: core.actions.command,
+      'example.read': declaration('example.read', 'Task copy.'),
+    },
+  });
+  const document = recipe({
+    read: { action: 'example.read', intent: 'Read the target.', next: 'done' },
+    done: { action: 'end', status: 'pass' },
+  });
+  const artifacts = path.join(root, 'artifacts');
+  const withTask = await preflightRecipe(
+    engine,
+    'api',
+    document,
+    artifacts,
+    root,
+    path.join(task, 'manifests', 'api.action-manifest.json'),
+    { readOnly: true },
+  );
+  const recorded = withTask.runRequest.taskActions ?? [];
+  assert.deepEqual(
+    recorded.map(({ action, official, shadows }) => ({ action, official, shadows })),
+    [
+      { action: 'command', official: true, shadows: undefined },
+      { action: 'example.read', official: false, shadows: ['example'] },
+    ],
+  );
+  assert.ok(recorded.every((entry) => entry.digest?.startsWith('sha256:')));
+  // A provider that relabels official sources, as mm-harness does, keeps them task-provided.
+  const relabeling = {
+    ...engine,
+    async resolveActionManifest(...args: Parameters<typeof engine.resolveActionManifest>) {
+      const resolved = await engine.resolveActionManifest(...args);
+      const command = resolved.actionSources.get('command')!;
+      resolved.actionSources.set('command', {
+        name: 'official',
+        tier: 'official',
+        manifestPath: command.manifestPath,
+      });
+      return resolved;
+    },
+  };
+  const relabeled = await preflightRecipe(
+    relabeling,
+    'api',
+    document,
+    artifacts,
+    root,
+    path.join(task, 'manifests', 'api.action-manifest.json'),
+    { readOnly: true },
+  );
+  assert.deepEqual(
+    relabeled.runRequest.taskActions?.map(({ action, official }) => ({ action, official })),
+    [
+      { action: 'command', official: true },
+      { action: 'example.read', official: false },
+    ],
+  );
+  const without = await preflightRecipe(engine, 'api', document, artifacts, root, undefined, {
+    readOnly: true,
+  });
+  assert.equal(without.runRequest.taskActions, undefined);
+});
+
 test('live script execution uses the approved prepared bytes and retains its output artifact', async (t) => {
   const { root, catalog, engine } = setup(t, { 'example.read': declaration() });
   const script = path.join(root, 'actions', 'api', 'example', 'read.mjs');
