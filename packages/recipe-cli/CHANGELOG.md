@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.23.7 - 2026-10-19
+
 - The runtime action catalog refuses a selected library's action manifest that declares an official action or any observer (`ACTION_MANIFEST_INVALID`). Before, first-source precedence let it replace the runtime's declaration or add an observer to every run. Official actions and observers come from the runtime's own manifests or an explicit task manifest; libraries add namespaced custom actions (ADR-034 Amendment 6).
 - A task action manifest's implementations resolve from `<root>/actions`, where `<root>` holds the manifest or its `manifests/` directory, unless a task action root is set. Before, they resolved from the manifest's own directory.
 - An action no lower source shadows no longer records an empty `shadows` list.
