@@ -293,9 +293,22 @@ export async function runBulkDelete(
   return { deleted };
 }
 
-export async function runCleanup(params: RunCleanupParams): Promise<RunCleanupResult> {
+export async function runCleanup(
+  params: RunCleanupParams,
+  slot: ArchiveSlotRelease = ARCHIVE_SLOT_RELEASE,
+): Promise<RunCleanupResult> {
   const dryRun = params.dryRun ?? true;
-  const result = await storeCleanup(dryRun);
+  // A week-old cancelled run is archived the way run.archive does it, releasing
+  // the slot its cancel kept (ADR-054, 2026-10-19), so cleanup never orphans it.
+  // Cleanup reports only its result, not release progress.
+  const result = await storeCleanup(dryRun, (run) =>
+    withCancelledRunSlotReleased(
+      run,
+      () => {},
+      slot,
+      () => storeArchiveRun(run.id),
+    ),
+  );
   const cacheDirsRemoved = await cleanupReviewWorkspaceCaches(dryRun, {
     runs: getAllRunsWithArchived,
     runsDir: runsDirectory(),
