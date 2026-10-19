@@ -29,6 +29,8 @@ const {
 } = await import('./gate-prerequisites.js');
 const { makeRun, makeReadyGatePackage, deleteTestRunIfPresent } =
   await import('./test-fixtures.js');
+const { certifyingReview, openFindingAtHead, PASSING_REVIEW_RESULT, writeReviewClaimPackage } =
+  await import('./review-claim.test-support.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { runBundleStore, retainedRunTaskDirectory } =
   await import('../run-completion/retained-artifacts.js');
@@ -1424,110 +1426,7 @@ test('zero-review publication policy still refuses changed reviewed inputs befor
 test('a review claim is satisfied only by the gate review prerequisite at the package head', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'gate-review-claim-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const state = { id: 'AC-1', claim: 'The counter is one.', proofMode: 'state' as const };
-  const review = {
-    id: 'AC-2',
-    claim: 'The change is easy to revert.',
-    proofMode: 'review' as const,
-  };
-  const recipe = {
-    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-    title: 'Counter proof',
-    description: 'Observe the counter and verify its value.',
-    proofTargets: [state, review],
-    workflow: {
-      entry: 'read',
-      nodes: {
-        read: { action: 'state_read', intent: 'Read counter', next: 'assert' },
-        assert: {
-          action: 'assert_output',
-          source: 'read',
-          assert: { path: '$.count', operator: 'eq', value: 1 },
-          proves: ['AC-1'],
-          intent: 'Verify counter',
-          next: 'done',
-        },
-        done: { action: 'end', status: 'pass' },
-      },
-    },
-  };
-  const invocation = {
-    version: 1,
-    recipeDigest: digestRecipeDocument(recipe),
-    recipeRunId: 'review-claim-proof',
-    startedAt: '2026-10-19T00:00:00Z',
-    params: {},
-    redactedPaths: [],
-  };
-  const row = (declaration: RecipeClaimDeclaration) => ({
-    id: declaration.id,
-    text: declaration.claim,
-    kind: 'acceptance' as const,
-    proofMode: declaration.proofMode!,
-    verdict: 'awaiting-review' as const,
-    recipeNodes: [],
-    assertionIndices: [],
-    moments: [],
-    evidence: [],
-  });
-  const claims: RecipeClaimLedger = {
-    schemaVersion: 2,
-    recipeRunId: invocation.recipeRunId,
-    criteria: [
-      { ...row(state), verdict: 'proven', recipeNodes: ['assert'], assertionIndices: [1] },
-      row(review),
-    ],
-    recording: { status: 'not-required', segments: [] },
-  };
-  const trace = [
-    { nodeId: 'read', action: 'state_read', intent: 'Read counter', output: { count: 1 } },
-    {
-      nodeId: 'assert',
-      action: 'assert_output',
-      intent: 'Verify counter',
-      output: { matched: true },
-    },
-    { nodeId: 'done', action: 'end', status: 'pass' },
-  ].map((entry) => ({
-    ...entry,
-    ok: true,
-    startedAt: invocation.startedAt,
-    endedAt: invocation.startedAt,
-    durationMs: 0,
-  }));
-  const documents = {
-    'recipe.json': recipe,
-    'recipe-invocation.json': invocation,
-    'acceptance-status.json': claims,
-    'recipe-resolution.json': {
-      schema_version: 1,
-      root: { ref: '$root', digest: digestRecipeDocument(recipe) },
-      dependencies: [],
-      edges: [],
-    },
-    'trace.json': { entries: trace },
-    'summary.json': {
-      recipeRunId: invocation.recipeRunId,
-      status: 'pass',
-      total: 3,
-      passed: 3,
-      failed: 0,
-      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
-      invocationDigest: digestRecipeDocument(invocation),
-    },
-    'artifact-manifest.json': {
-      version: 1,
-      runStatus: 'pass',
-      artifacts: [
-        { path: 'recipe.json', type: 'recipe' },
-        { path: 'trace.json', type: 'trace' },
-        { path: 'summary.json', type: 'summary' },
-        { path: 'acceptance-status.json', type: 'json' },
-      ],
-    },
-  };
-  for (const [file, document] of Object.entries(documents))
-    await writeFile(path.join(root, file), JSON.stringify(document));
+  const { claims } = await writeReviewClaimPackage(root);
   const input = (await readRecordedEvidencePackage(root)).input;
   const owner = validateRecordedEvidencePackage(input);
   assert.equal(owner.status, 'valid', JSON.stringify(owner.findings));
@@ -1535,19 +1434,7 @@ test('a review claim is satisfied only by the gate review prerequisite at the pa
   const prepared = makeReadyGatePackage({
     reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
   });
-  const pass: ReviewStatus = {
-    id: 'review-1',
-    source: 'human-gate',
-    mode: 'cold',
-    loopNumber: 1,
-    reviewerSessionId: 'session-1',
-    reviewedHeadSha: prepared.headSha,
-    reviewedReviewSubjectHash: prepared.reviewSubjectHash,
-    reviewSnapshot: prepared.reviewSnapshot,
-    verdict: 'pass',
-    unresolvedCount: 0,
-    artifactPaths: ['artifacts/review-1/loop-1/review-result.json'],
-  };
+  const pass = certifyingReview(prepared);
   const sources = {
     deterministic: passed,
     progress: idle,
@@ -1558,7 +1445,7 @@ test('a review claim is satisfied only by the gate review prerequisite at the pa
       issues: [],
     }),
     recordedEvidence: async () => [input],
-    reviewResult: async () => JSON.stringify({ schemaVersion: 1, verdict: 'pass', issues: [] }),
+    reviewResult: async () => PASSING_REVIEW_RESULT,
   };
   const gate = (reviews: ReviewStatus[], overrides = {}) =>
     collectRunGateAssessment(makeRun({ engineState: { publishGate: { reviews } } }), prepared, {
@@ -1589,20 +1476,7 @@ test('a review claim is satisfied only by the gate review prerequisite at the pa
     'a pass without a valid structured result',
   );
   assert.ok(
-    claimVerdictBlocked(
-      (
-        await gate([
-          pass,
-          {
-            ...pass,
-            id: 'review-2',
-            reviewerSessionId: 'session-2',
-            verdict: 'issues',
-            unresolvedCount: 1,
-          },
-        ])
-      ).readiness,
-    ),
+    claimVerdictBlocked((await gate([pass, openFindingAtHead(prepared)])).readiness),
     'an open finding at the head',
   );
 });

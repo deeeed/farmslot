@@ -6,10 +6,10 @@ import path from 'node:path';
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import { buildDiffScopePacket } from '@farmslot/agent-runtime/scripts/review-diff-scope.cjs';
 import {
+  ACCEPTANCE_STATUS_ARTIFACT,
   DEFAULT_BRANCH,
   DEFAULT_TASK_DIR,
   type EvidenceManifest,
-  isRecord,
   type ReviewIssue,
   type ReviewMode,
   type ReviewValidationDepth,
@@ -38,6 +38,7 @@ import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { getRun } from '../runs/store.js';
+import { ledgerFromArtifactText } from '../tasks/acceptance-status.js';
 import { farmslotDirectoryForSlot, renderRoleTemplate } from '../tasks/agent-runtime-script.js';
 import { REVIEW_FIX_CHECKLIST_TARGET } from '../tasks/checklist-target.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
@@ -165,25 +166,21 @@ async function descriptionCheckSection(
 }
 
 /**
- * ADR-062 Amendment 18: the `review` criteria of the task's acceptance ledger, or an
- * empty string when it has none.
+ * ADR-062 Amendment 18: the `review` criteria of the task's acceptance ledger, as the
+ * gate's ledger reader accepts them. No ledger adds no section. A failed read fails
+ * the launch: the gate would otherwise count a pass for criteria nobody was shown.
  */
-function reviewCriteriaSection(ledgerText: string | null): string {
-  let ledger: unknown;
-  try {
-    ledger = ledgerText ? JSON.parse(ledgerText) : undefined;
-  } catch {
-    // An unreadable ledger fails the gate elsewhere; it adds no criteria here.
-    return '';
-  }
-  const rows: unknown[] = isRecord(ledger) && Array.isArray(ledger.criteria) ? ledger.criteria : [];
-  const criteria = rows.filter(
-    (row): row is { id: string; text: string } =>
-      isRecord(row) &&
-      row.proofMode === 'review' &&
-      typeof row.id === 'string' &&
-      typeof row.text === 'string',
+async function reviewCriteriaSection(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+): Promise<string> {
+  const ledger = ledgerFromArtifactText(
+    await readReviewArtifact(
+      vars,
+      path.posix.join(vars.remoteRepo, taskDir, ACCEPTANCE_STATUS_ARTIFACT),
+    ),
   );
+  const criteria = ledger?.criteria.filter((row) => row.proofMode === 'review') ?? [];
   if (!criteria.length) return '';
   return [
     '## Criteria checked in this review',
@@ -192,23 +189,6 @@ function reviewCriteriaSection(ledgerText: string | null): string {
     '',
     ...criteria.map((row) => `- ${row.id}: ${row.text}`),
   ].join('\n');
-}
-
-async function reviewCriteria(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  taskDir: string,
-): Promise<string> {
-  try {
-    const ledger = await execOnSlot(
-      vars,
-      `cd ${shellQuote(vars.remoteRepo)} && cat ${shellQuote(`${taskDir}/artifacts/acceptance-status.json`)}`,
-      { timeout: 60_000 },
-    );
-    return reviewCriteriaSection(ledger.exitCode === 0 ? ledger.stdout : null);
-  } catch {
-    // A slot that cannot be read has no ledger to show; the gate still owns the verdict.
-    return '';
-  }
 }
 
 async function diffScopeSection(
@@ -401,7 +381,7 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   const [check, scope, criteria] = await Promise.all([
     descriptionCheckSection(vars, taskDir, run, pv?.projectJson),
     diffScopeSection(vars, run, pv ? getProjectField(pv.projectJson, 'default_branch') : undefined),
-    reviewCriteria(vars, taskDir),
+    reviewCriteriaSection(vars, taskDir),
   ]);
   return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n${criteria ? `\n${criteria}\n` : ''}${reviewBudgetScopeBrief(getRun(run.id) ?? run)}`;
 }

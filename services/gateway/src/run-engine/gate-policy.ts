@@ -877,9 +877,10 @@ function reviewCertifiesPreparedPackage(
 export function certifyingPublicationReviews(
   current: Run,
   preparedPackage: ReadyGatePrPackage,
+  reviews: ReviewStatus[] = current.engineState?.publishGate?.reviews ?? [],
 ): ReviewStatus[] {
-  return qualifyingPassingReviews(current.engineState?.publishGate?.reviews ?? []).filter(
-    (review) => reviewCertifiesPreparedPackage(review, preparedPackage),
+  return qualifyingPassingReviews(reviews).filter((review) =>
+    reviewCertifiesPreparedPackage(review, preparedPackage),
   );
 }
 
@@ -897,9 +898,8 @@ export function codeReviewCertifiesPackage(
     return false;
   const reviewPolicy = preparedPackage.reviewPolicy ?? publicationReviewPolicyForRun(current);
   return (
-    qualifyingPassingReviews(reviews).filter((review) =>
-      reviewCertifiesPreparedPackage(review, preparedPackage),
-    ).length >= Math.max(1, effectiveRequiredReviewCount(reviewPolicy))
+    certifyingPublicationReviews(current, preparedPackage, reviews).length >=
+    Math.max(1, effectiveRequiredReviewCount(reviewPolicy))
   );
 }
 

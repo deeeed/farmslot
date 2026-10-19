@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -297,27 +297,36 @@ test('review criteria from the task ledger are appended to the review document o
     id,
     text,
     proofMode,
+    kind: 'acceptance',
     verdict: 'awaiting-review',
+    evidence: [],
+    recipeNodes: [],
+    assertionIndices: [],
+    moments: [],
   });
+  const ledgerText = (criteria: ReturnType<typeof row>[]) =>
+    JSON.stringify({
+      schemaVersion: 2,
+      recipeRunId: 'recipe-run-1',
+      recording: { status: 'not-required', segments: [] },
+      criteria,
+    });
   const ledger = path.join(repo, taskDir, 'artifacts/acceptance-status.json');
-  await writeFile(
-    ledger,
-    JSON.stringify({ schemaVersion: 2, criteria: [row('AC-1', 'The counter is one.', 'state')] }),
-  );
+  await writeFile(ledger, ledgerText([row('AC-1', 'The counter is one.', 'state')]));
   assert.doesNotMatch(await render(), new RegExp(heading));
   await writeFile(
     ledger,
-    JSON.stringify({
-      schemaVersion: 2,
-      criteria: [
-        row('AC-1', 'The counter is one.', 'state'),
-        row('AC-2', 'The change is easy to revert.', 'review'),
-      ],
-    }),
+    ledgerText([
+      row('AC-1', 'The counter is one.', 'state'),
+      row('AC-2', 'The change is easy to revert.', 'review'),
+    ]),
   );
   const section = (await render()).split(heading)[1] ?? '';
   assert.match(section, /whole change at the current head, including on a continuation review/);
   assert.match(section, /only a new commit clears a finding/);
   assert.match(section, /^- AC-2: The change is easy to revert\.$/m);
   assert.doesNotMatch(section, /AC-1/);
+  // A ledger that exists but cannot be read fails the launch instead of hiding the criteria.
+  await chmod(ledger, 0o000);
+  await assert.rejects(render(), /Review artifact read failed/);
 });
