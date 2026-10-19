@@ -400,6 +400,11 @@ interface MonitorState {
   openQuestion?: { text: string; polls: number };
 }
 
+/** The worker's inactivity window starts at its last structured progress or operator resume. */
+function inactivityStartMs(state: MonitorState): number {
+  return Math.max(state.lastStructuredProgressAt, state.operatorResumedAt);
+}
+
 /**
  * Fold a pre-increment run's baseline subtraction into its counters.
  *
@@ -1810,12 +1815,10 @@ export async function monitorRun(
       // 5. Check total timeout. Elapsed time alone never stops a progressing worker:
       // it times out once it also has no structured activity for the stuck window.
       const elapsed = Date.now() - state.startedAt - state.operatorWaitMs;
-      const sinceActivity =
-        Date.now() - Math.max(state.lastStructuredProgressAt, state.operatorResumedAt);
       if (
         !waitingForOperator &&
         elapsed > config.totalTimeoutMs &&
-        sinceActivity > config.stuckTimeoutMs
+        Date.now() - inactivityStartMs(state) > config.stuckTimeoutMs
       ) {
         console.log(
           `[run-monitor] run ${runId.slice(0, 8)} — total timeout (${config.totalTimeoutMs / 60000}min)`,
@@ -1904,8 +1907,7 @@ async function detectViolations(
       if (
         snapshot.session.state === 'idle' &&
         !snapshot.pendingRequests.length &&
-        now - Math.max(state.lastStructuredProgressAt, state.operatorResumedAt) >
-          config.stuckTimeoutMs
+        now - inactivityStartMs(state) > config.stuckTimeoutMs
       )
         violations.push({
           slotId,
@@ -1943,7 +1945,7 @@ async function detectViolations(
       target,
       runner,
       now,
-      lastProgressAt: Math.max(state.lastStructuredProgressAt, state.operatorResumedAt),
+      lastProgressAt: inactivityStartMs(state),
       stuckTimeoutMs: config.stuckTimeoutMs,
     });
     if (stuckState.kind === 'making-progress')
