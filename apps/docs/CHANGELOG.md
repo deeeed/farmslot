@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- The Recipe Protocol v1 reference adds Amendment 6: a selected library may declare namespaced custom actions only, and a task action manifest's implementations resolve from `<root>/actions`.
 - Resource pressure relief lists manual slots among the cleanup exclusions and says a disabled slot's running resources are included and probed.
 - Describe recipe library discovery hosts generically instead of naming one project's harness.
 

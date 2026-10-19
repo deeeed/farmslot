@@ -289,7 +289,7 @@ function refuseRestrictedDeclarations(
       'ACTION_MANIFEST_INVALID',
       `Library action ${official} from ${absolute} conflicts with an official action; ` +
         'libraries may declare namespaced custom actions only.',
-      `remove ${official} from ${file} in library ${library.info.name}; the project runtime declares official actions`,
+      `remove ${official} from ${absolute}; the project runtime declares official actions`,
     );
   }
   if (document.observers?.length) {
@@ -297,7 +297,7 @@ function refuseRestrictedDeclarations(
       'ACTION_MANIFEST_INVALID',
       `Library manifest ${absolute} declares observers, but external library observers are not executable; ` +
         'remove observers or use an explicit task action manifest.',
-      `remove observers from ${file} in library ${library.info.name}, or select the manifest with --action-manifest`,
+      `remove observers from ${absolute}, or select the manifest with --action-manifest`,
     );
   }
 }

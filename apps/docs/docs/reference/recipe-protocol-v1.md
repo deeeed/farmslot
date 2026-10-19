@@ -376,7 +376,7 @@ Keep the existing enabled-state amendment and visual-review contract intact.
 
 A runtime's action catalog MUST take official actions and observers only from
 manifests the runtime owns: its own manifest, the bundled library's
-`manifests/` and an explicitly selected task action manifest. Any other manifest
+manifests and an explicitly selected task action manifest. Any other manifest
 in the selected adapter's view, from a library selected as a source or a parent
 runtime declared by one, MUST declare only namespaced custom actions. The
 catalog MUST refuse, with `ACTION_MANIFEST_INVALID`, such a manifest that

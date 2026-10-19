@@ -2,6 +2,7 @@
 // action manifest resolves across library sources, and the risk each bundled
 // action carries. `run`, `call` and the discovery helpers below read actions
 // only through it.
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import type { ActionCapabilitySource, ProjectRuntime, RecipeCatalog } from '@farmslot/adapter-sdk';
@@ -160,10 +161,14 @@ export function createRuntimeRecipeCatalog({
         : [...(runtime.actions.manifestPaths?.() ?? [runtime.actions.manifestPath()])].reverse();
       // Official actions and observers come only from manifests the runtime owns:
       // its own manifest, even inside a selected library, and the bundled library's.
-      const ownManifest = path.resolve(runtime.actions.manifestPath());
-      const bundledManifests = path.join(path.resolve(bundledLibrary.root), 'manifests');
-      const owned = (file: string) =>
-        file === ownManifest || path.dirname(file) === bundledManifests;
+      // Compared as real paths: plugin loading resolves symlinks, discovery keeps
+      // the configured alias.
+      const ownManifest = realPath(runtime.actions.manifestPath());
+      const bundledManifests = realPath(path.join(bundledLibrary.root, 'manifests'));
+      const owned = (file: string) => {
+        const real = realPath(file);
+        return real === ownManifest || path.dirname(real) === bundledManifests;
+      };
       // A task manifest keeps its actions where a library does: in <root>/actions,
       // where <root> holds the manifest or its manifests/ directory. An explicit
       // task action root wins.
@@ -240,6 +245,17 @@ export function createRuntimeRecipeCatalog({
       return { manifest, actionSources };
     },
   };
+}
+
+function realPath(file: string): string {
+  try {
+    return realpathSync(file);
+  } catch (error) {
+    // A path that does not exist yet (a bundled library with no manifests/)
+    // owns nothing; compare it as written.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return path.resolve(file);
+    throw error;
+  }
 }
 
 function taskLibraryRoot(manifestPath: string): string {

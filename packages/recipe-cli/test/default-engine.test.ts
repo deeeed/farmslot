@@ -492,20 +492,43 @@ test('an external library may not declare an official action or observers', asyn
 });
 
 test('the runtime declares official actions from its own manifest inside a selected library', async (t) => {
-  const { root, catalog } = setup(t, {
-    command: core.actions.command,
-    'example.read': declaration(),
-  });
+  const { root, runtime, catalog } = setup(t, { 'example.read': declaration() });
+  // A plugin runtime: its own manifest lives in a separate library, selected
+  // through a symlinked alias while plugin loading resolves the real path.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-plugin-'));
+  t.after(() => fs.rmSync(plugin, { recursive: true, force: true }));
+  writeLibraryManifest(plugin, { actions: { command: core.actions.command } });
+  const own = fs.realpathSync(path.join(plugin, 'manifests', 'api.action-manifest.json'));
+  runtime.actions.manifestPath = () => own;
+  const alias = path.join(root, 'plugin-alias');
+  fs.symlinkSync(plugin, alias);
   const team = path.join(root, 'team');
   writeLibraryManifest(team, { actions: { 'example.write': declaration('example.write') } });
-  // The runtime's manifest is in the bundled root, selected here under another name.
   const { manifest, actionSources } = await catalog.resolveActionManifest('api', undefined, [
-    { name: 'plugin', root },
+    { name: 'plugin', root: alias },
     { name: 'team', root: team },
   ]);
   assert.ok(manifest.actions.command);
   assert.equal(actionSources.get('example.write')?.name, 'team');
   assert.equal(actionSources.get('example.write')?.shadows, undefined);
+});
+
+test('a plugin runtime keeps the official actions of a bundled parent it extends', async (t) => {
+  const { manifestPath, runtime, catalog } = setup(t, {
+    command: core.actions.command,
+    'example.read': declaration(),
+  });
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-child-'));
+  t.after(() => fs.rmSync(plugin, { recursive: true, force: true }));
+  writeLibraryManifest(plugin, { actions: { 'example.child': declaration('example.child') } });
+  const own = fs.realpathSync(path.join(plugin, 'manifests', 'api.action-manifest.json'));
+  runtime.actions.manifestPath = () => own;
+  runtime.actions.manifestPaths = () => [own, manifestPath];
+  const { manifest } = await catalog.resolveActionManifest('api', undefined, [
+    { name: 'plugin', root: plugin },
+  ]);
+  assert.ok(manifest.actions.command);
+  assert.ok(manifest.actions['example.child']);
 });
 
 test('a runtime parent manifest outside the bundled library may not declare an official action', async (t) => {
