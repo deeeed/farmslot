@@ -728,6 +728,17 @@ test('a gate plan continues a pipeline lineage by its lineage id, under the row 
   await executePublishGateReviewPlan(run.id, 'slot-1', plan('warm'), 'human-gate', dependencies);
   assert.equal(launches[2]?.rereview, undefined);
   assert.equal(launches[2]?.mode, 'warm');
+  // A refusal replaces the row but keeps its lineage, so the next request still finds it.
+  await executePublishGateReviewPlan(run.id, 'slot-1', plan('warm'), 'human-gate', {
+    ...dependencies,
+    executeReview: async () => {
+      throw new Error('WARM review refused (slot-mismatch)');
+    },
+  });
+  assert.deepEqual(
+    rows().map((review) => [review.id, review.verdict, review.session?.reviewId]),
+    [[rowId, 'failed', lineageId]],
+  );
 });
 
 function sourceGateFixture(t: TestContext) {

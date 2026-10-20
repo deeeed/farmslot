@@ -624,6 +624,8 @@ export async function executePublishGateReviewPlan(
       reviewResult = {
         mode: planStep.mode,
         reviewId: lineageId ?? reviewId,
+        // The lineage keeps its last session, so the replaced row still names its lineage.
+        ...(priorReview?.session ? { session: priorReview.session } : {}),
         runner: requestedRunner,
         model: planStep.model ?? undefined,
         effort: planStep.effort,
