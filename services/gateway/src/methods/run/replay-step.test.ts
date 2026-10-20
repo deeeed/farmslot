@@ -22,12 +22,13 @@ import {
   stampQueueItemRunId,
 } from '../../backlog/dispatch-queue.js';
 import { isolatedTestPath } from '../../core/isolated-test-path.js';
-import { statusFile } from '../../core/state.js';
+import { statusFile, updateSlotStatus } from '../../core/state.js';
 import {
   createEngineDecision,
   hasEngineDecisionWaiter,
 } from '../../run-engine/engine-decisions.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
+import { executeHumanGateStep } from '../../run-engine/post-dispatch-steps.js';
 import { isPublicationReviewRecoveryHeld } from '../../run-engine/recovery.js';
 import { makeRun } from '../../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
@@ -3562,6 +3563,40 @@ test('a failed replay of a live gate retires the stale engine waiter of the deci
   assert.equal(await waiting, 'abort');
   assert.equal(hasEngineDecisionWaiter(gateId), false);
   assert.equal(getRun(run.id)?.decisions.find((d) => d.id === gateId)?.resolvedAt, undefined);
+});
+
+test('the enclosing human gate cannot mark a replay-restored held slot busy', async (t) => {
+  const run = await blockedGateRun(t, 'gate-stale-caller', []);
+  updateRun(run.id, { flowType: 'review-pr', engineState: { generation: 1 } });
+  const io = await executeHumanGateStep(run.id, {
+    activeMonitors: new Map(),
+    blockedRunError: (message) => new Error(message),
+    broadcastFn: () => {},
+    createEngineDecision: async () => assert.fail('unused decision path'),
+    executeNoChangeGate: async () => assert.fail('unused no-change path'),
+    executePublishGateReviewPlan: async () => assert.fail('unused publication path'),
+    executeReadyGate: async () => assert.fail('unused ready path'),
+    executeReviewGate: async () => {
+      // Replay restored this held slot, then retired the cancelled gate's waiter.
+      updateRun(run.id, { status: 'blocked', engineState: { generation: 2 } });
+      await updateSlotStatus(run.slotId!, { lifecycle: 'held', phase: 'occupied', agent: 'idle' });
+    },
+    getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => true,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    refreshRunLinks: async () => {},
+    stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
+  });
+  const row = JSON.parse(await readFile(statusFile, 'utf8')).slots.find(
+    (slot: { slot: string }) => slot.slot === run.slotId,
+  );
+  assert.equal(row.lifecycle, 'held');
+  assert.equal(row.phase, 'occupied');
+  assert.equal(row.agent, 'idle');
+  assert.equal(row.current_run_id, run.id);
+  assert.equal(io.outputs?.resolvedAction, 'abort');
 });
 
 test('overlapping failed replays reopen the gate decision when the last of them fails', async (t) => {
