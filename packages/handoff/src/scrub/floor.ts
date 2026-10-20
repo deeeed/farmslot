@@ -177,14 +177,14 @@ function unescapeOnce(text: string): string {
  * (labels, prefixes); requiring the checksum stops runs of ordinary words, such
  * as recipe intent prose and node ids, from reading as a phrase. A correctly
  * written mnemonic always passes its checksum.
- * In a text that is one JSON document, a string holding several words is one
- * unit, so a run never crosses from one field's prose into the next key or
- * value; single-word strings (a mnemonic stored as a word array) still compose.
- * A phrase split across separate multi-word JSON values is therefore not
- * composed, as cross-field detection was already scope-capped. Outside a JSON
- * document quotes are ordinary separators, so quoted rows in Markdown, YAML, CSV
- * or plain text still compose, and so does the space-joined view the
- * quarantine audit scans. snake_case identifiers stay single tokens, so
+ * In a text that is one JSON document, the caller fences each string holding
+ * several words (fenceJsonStringUnits), so a run never crosses from one field's
+ * prose into the next key or value; single-word strings (a mnemonic stored as a
+ * word array) still compose. A phrase split across separate multi-word JSON
+ * values is therefore not composed, as cross-field detection was already
+ * scope-capped. Outside a JSON document quotes are ordinary separators, so
+ * quoted rows in Markdown, YAML, CSV or plain text still compose, and so does
+ * the space-joined view the quarantine audit scans. snake_case identifiers stay single tokens, so
  * dictionary-word node IDs do not compose a mnemonic; kebab-case parts still
  * split, because the quarantine audit must catch a phrase composed across
  * kebab-case identity fields (a JSON key or value is already its own unit).
@@ -194,20 +194,10 @@ function unescapeOnce(text: string): string {
  * accidental carrier: embedded logs in summary.json) still tokenizes as a word
  * run instead of gluing the escape letter onto the next word.
  */
-function detectMnemonics(text: string, jsonDocument: boolean): FloorHit[] {
-  const lowered = text.toLowerCase().replace(/\\[ntr]/g, ' ');
-  const tokens = (
-    jsonDocument
-      ? // In a JSON document a string holding several words is one unit: a phrase
-        // does not run out of it into the next key or value. Single-word strings
-        // still compose, so a mnemonic stored as a word array stays one run.
-        lowered.replace(JSON_STRING_LITERAL, (literal) =>
-          literal.startsWith('"') && (literal.match(/[a-z]+/g)?.length ?? 0) > 1
-            ? ` _ ${literal} _ `
-            : literal,
-        )
-      : lowered
-  )
+function detectMnemonics(text: string): FloorHit[] {
+  const tokens = text
+    .toLowerCase()
+    .replace(/\\[ntr]/g, ' ')
     // Keep identifier runs separate before removing Markdown emphasis edges.
     .replace(/\b[a-z0-9]+(?:_[a-z0-9]+)+\b/g, '_')
     .split(/[^a-z_]+/)
@@ -245,8 +235,42 @@ function isJsonDocument(text: string): boolean {
     const value: unknown = JSON.parse(text);
     return typeof value === 'object' && value !== null;
   } catch {
+    // Not JSON: quotes stay ordinary separators, the stricter reading, so a
+    // parse failure never narrows recovery-phrase detection.
     return false;
   }
+}
+
+/**
+ * Fence each string literal of a JSON document that holds several words with
+ * `_` markers, so a phrase does not run out of it into the next key or value.
+ * Single-word strings still compose, so a mnemonic stored as a word array stays
+ * one run. The markers sit outside the literals, so the unescape passes keep
+ * them, and escaped content inside one literal (JSON-in-JSON) still composes.
+ */
+function fenceJsonStringUnits(text: string): string {
+  return text.replace(JSON_STRING_LITERAL, (literal) =>
+    literal.startsWith('"') && (literal.replace(/\\[ntr]/g, ' ').match(/[a-z]+/gi)?.length ?? 0) > 1
+      ? ` _ ${literal} _ `
+      : literal,
+  );
+}
+
+/**
+ * The raw text plus up to two unescape passes, so single- and double-JSON-
+ * escaped content (accidental JSON-in-JSON carriers) still matches. Deeper
+ * nesting is out of the cooperative-producer scope.
+ */
+function unescapeVariants(text: string): string[] {
+  const variants = [text];
+  let current = text;
+  for (let depth = 0; depth < 2; depth += 1) {
+    const next = unescapeOnce(current);
+    if (next === current) break;
+    variants.push(next);
+    current = next;
+  }
+  return variants;
 }
 
 /**
@@ -288,7 +312,6 @@ function hasValidMnemonicChecksum(words: readonly string[]): boolean {
  */
 export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] = []): FloorHit[] {
   const byFingerprint = new Map<string, FloorHit>();
-  const jsonDocument = isJsonDocument(text);
 
   // Farm patterns arrive from config: matchAll requires the global flag, so a
   // non-global pattern is re-created with /g instead of throwing mid-scan.
@@ -298,17 +321,12 @@ export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] 
       : { kind, pattern: new RegExp(pattern.source, `${pattern.flags}g`) },
   );
 
-  // Scan the raw text plus up to two unescape passes so single- and
-  // double-JSON-escaped content (accidental JSON-in-JSON carriers) still
-  // matches. Deeper nesting is out of the cooperative-producer scope.
-  const variants = [text];
-  let current = text;
-  for (let depth = 0; depth < 2; depth += 1) {
-    const next = unescapeOnce(current);
-    if (next === current) break;
-    variants.push(next);
-    current = next;
-  }
+  const variants = unescapeVariants(text);
+  // Recovery-phrase runs read the same passes over the fenced document, so no
+  // unescaped view lets a run cross from one JSON string into the next.
+  const mnemonicVariants = isJsonDocument(text)
+    ? unescapeVariants(fenceJsonStringUnits(text))
+    : variants;
 
   // First-wins on a fingerprint: when two rules match the SAME bytes (e.g. our
   // hand-authored `github-token` and gitleaks' `github-pat`), the earlier rule's
@@ -319,8 +337,10 @@ export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] 
     if (!byFingerprint.has(hit.fingerprint)) byFingerprint.set(hit.fingerprint, hit);
   };
 
+  for (const variant of mnemonicVariants) {
+    for (const hit of detectMnemonics(variant)) record(hit);
+  }
   for (const variant of variants) {
-    for (const hit of detectMnemonics(variant, jsonDocument && variant === text)) record(hit);
     for (const hit of detectCookies(variant)) record(hit);
     // Hand-authored floor + farm extras + the ported gitleaks vendor ruleset.
     // Gitleaks rules run through the SAME unescape variants and are UNION-only

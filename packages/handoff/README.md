@@ -85,8 +85,10 @@ Deliberate detection choices and known limits:
   and node ids, from reading as a phrase. A correctly written mnemonic always
   passes its checksum.
 - In a text that is one JSON document, a string holding several words is one
-  unit, so a run never crosses from one field into the next key or value.
-  Single-word strings still compose (a mnemonic stored as a word array blocks).
+  unit, so a run never crosses from one field into the next key or value, in
+  the raw text or in its unescaped views. Escaped content inside one string
+  still composes, and single-word strings still compose (a mnemonic stored as a
+  word array blocks).
   A phrase split across separate multi-word JSON values is not composed, the
   existing cross-field scope cap. Outside a JSON document quotes are ordinary
   separators, so quoted rows in Markdown, YAML, CSV or plain text still compose,

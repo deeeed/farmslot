@@ -156,7 +156,23 @@ test('recipe prose, keys and node ids that are all wordlist words are not a reco
       },
     },
   };
-  for (const text of [JSON.stringify(recipe, null, 2), JSON.stringify(recipe)]) {
+  // An escape anywhere in the document (a quoted UI label, a line break) adds
+  // unescaped views; strings stay units in those views too.
+  const escaped = {
+    ...recipe,
+    note: 'tap "Next" then wait',
+    nodes: {
+      ...recipe.nodes,
+      'gate-flag-off-ready': {
+        ...recipe.nodes['gate-flag-off-ready'],
+        intent: 'close order panel\nand check total balance again',
+      },
+    },
+  };
+  for (const text of [recipe, escaped].flatMap((value) => [
+    JSON.stringify(value, null, 2),
+    JSON.stringify(value),
+  ])) {
     assert.deepEqual(scanForFloorSecrets(text), []);
   }
   // A long plain-prose run of wordlist words with no checksum-valid window.
@@ -175,6 +191,8 @@ test('a checksum-valid mnemonic still blocks inside JSON, next to hyphens and la
   const [first, second] = [words.slice(0, 6).join(' '), words.slice(6).join(' ')];
   for (const text of [
     JSON.stringify({ intent: `restore wallet then ${VECTOR_12}` }),
+    JSON.stringify({ note: 'tap "Next" then wait', intent: `restore wallet then ${VECTOR_12}` }),
+    JSON.stringify({ log: JSON.stringify({ step: 'restore wallet', seed: VECTOR_12 }) }),
     JSON.stringify({ note: `--- ${MNEMONIC_24} ---` }),
     JSON.stringify(VECTOR_12.split(' ')),
     `-${VECTOR_12}-`,
@@ -198,8 +216,9 @@ test('a checksum-valid mnemonic still blocks inside JSON, next to hyphens and la
 });
 
 test('the recovery-phrase scan stays linear on unbalanced and escaped quotes', () => {
-  // An unclosed quote before many escaped quotes made the JSON string matcher
-  // rescan the line once per quote (minutes on a few hundred KB).
+  // Neither shape may slow the scan: an unclosed quote before many escaped
+  // quotes (not a JSON document, so quotes stay separators) and a JSON document
+  // of many short strings (each one fenced, in every unescaped view).
   const unclosed = `state="${'{\\"items\\":[1],'.repeat(20_000)}`;
   const document = JSON.stringify({ log: `${'"quoted" '.repeat(30_000)}` });
   for (const text of [unclosed, document]) {
