@@ -8,7 +8,7 @@ import { farmslotRoot } from '../fleet/state.js';
 import { deleteTestRunIfPresent } from '../run-engine/test-fixtures.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
-import { settleFinishedReviewFixContext } from './review-fix-settlement.js';
+import { settleFinishedReviewFixContext } from './fix-settlement.js';
 
 const ATTEMPT = 'bf04f28a-b448-4127-8c0d-a273712e91d0';
 const SIGNAL_FILE = 'temp/tasks/feat/tat-4145/REVIEW-FIX-SIGNAL.json';
@@ -94,4 +94,50 @@ test('a review-fix context stays working without a terminal signal of its own at
     assert.equal(await settleFinishedReviewFixContext(run.id), false);
     assert.equal(getRun(run.id)!.agentContexts?.[0]?.status, 'working');
   }
+});
+
+test('a review-fix context settles to failed or blocked as its own signal says', async (t) => {
+  for (const status of ['failed', 'blocked'] as const) {
+    const run = await runWithFixSignal(t, {
+      ...complete(ATTEMPT),
+      status,
+      outcome: status === 'failed' ? 'failure' : 'partial',
+      disposition: status === 'failed' ? undefined : 'blocked',
+      reason: 'could not finish the fix',
+    });
+    assert.equal(await settleFinishedReviewFixContext(run.id), true);
+    assert.equal(getRun(run.id)!.agentContexts?.[0]?.status, status);
+  }
+});
+
+test('an unreadable signal or a replaced attempt leaves the context as it is', async (t) => {
+  const run = await runWithFixSignal(t, null);
+  for (const readSignal of [
+    async () => '{"status":"comp',
+    async () => {
+      throw new Error('No node connected for machine macpro after 0ms');
+    },
+  ]) {
+    assert.equal(await settleFinishedReviewFixContext(run.id, { readSignal }), false);
+    assert.equal(getRun(run.id)!.agentContexts?.[0]?.status, 'working');
+  }
+  // A new delivery rebinds the context while the old attempt's signal is read.
+  const replaced = await settleFinishedReviewFixContext(run.id, {
+    readSignal: async () => {
+      const current = getRun(run.id)!.agentContexts![0]!;
+      updateRun(run.id, { agentContexts: [{ ...current, signalAttemptId: 'next-attempt' }] });
+      return JSON.stringify(complete(ATTEMPT));
+    },
+  });
+  assert.equal(replaced, false);
+  assert.equal(getRun(run.id)!.agentContexts?.[0]?.status, 'working');
+});
+
+test('a context a later resume still adopts is left for that resume', async (t) => {
+  const run = await runWithFixSignal(t, complete(ATTEMPT));
+  assert.equal(
+    await settleFinishedReviewFixContext(run.id, { adoptable: async () => true }),
+    false,
+  );
+  assert.equal(getRun(run.id)!.agentContexts?.[0]?.status, 'working');
 });

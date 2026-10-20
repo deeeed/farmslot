@@ -16,6 +16,7 @@ import {
   type Run,
   selectLatestReviewerContext,
   signalFileForTask,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 
 import {
@@ -484,6 +485,13 @@ export async function markAgentContextStatus(
     ...(completedAt ? { completedAt } : {}),
     ...patch,
   });
+}
+
+/** The status a fix context settles to on its worker's terminal signal. */
+export function fixContextStatusForSignal(
+  status: WorkerSignal['status'],
+): Extract<AgentContextStatus, 'complete' | 'failed' | 'blocked'> {
+  return status === 'blocked' ? 'blocked' : status === 'failed' ? 'failed' : 'complete';
 }
 
 async function findActiveRunForSlot(slotId: string): Promise<Run | null> {
