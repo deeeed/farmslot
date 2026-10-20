@@ -9,6 +9,7 @@ import {
 
 import { useConnectionStore } from '../store/connection';
 
+import { proveOfflineCacheCredentialRefusal } from './offline-client-cache-auth-proof';
 import type { FarmslotRecipeUiObserver } from './RecipeBridgeProvider';
 
 let cache: GatewayResourceCache | undefined;
@@ -23,6 +24,13 @@ export const observeOfflineClientCacheProof: FarmslotRecipeUiObserver = async (r
   const state = useConnectionStore.getState();
   const client = state.client;
   if (!client) throw new Error('Connect Companion before proving its resource cache');
+  if (refs[0] === 'offline-store-foundation:credential-refusal') {
+    return {
+      observations: {
+        offlineStoreFoundation: await proveOfflineCacheCredentialRefusal(client, state.gatewayUrl),
+      },
+    };
+  }
   if (refs[0] === 'offline-store-foundation:stop') {
     await cache?.dispose();
     cache = undefined;
@@ -30,6 +38,9 @@ export const observeOfflineClientCacheProof: FarmslotRecipeUiObserver = async (r
     reads = 0;
     const transport = createResourceCacheTransport(
       {
+        get resourceConnectionReason() {
+          return client.resourceConnectionReason;
+        },
         requestResource: (method, params, signal) => {
           reads++;
           return client.requestResource(method, params, signal);

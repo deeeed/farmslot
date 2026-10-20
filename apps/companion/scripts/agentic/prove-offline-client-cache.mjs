@@ -8,6 +8,7 @@ const [action, sourceId, ref] = process.argv.slice(2);
 const metro = process.env.METRO_PORT;
 assert(/^\d+$/.test(metro ?? ''), 'Select the isolated METRO_PORT');
 async function observe(action) {
+  const timeout = action === 'credential-refusal' ? 15000 : 3000;
   const response = await fetch(`http://127.0.0.1:${metro}/farmslot-recipe/command`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -15,9 +16,9 @@ async function observe(action) {
       command: 'observeUi',
       nodeId: 'offline-store-foundation',
       payload: { refs: [`offline-store-foundation:${action}`] },
-      timeout_ms: 3000,
+      timeout_ms: timeout,
     }),
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(timeout + 2000),
   });
   assert(response.ok, `Recipe relay HTTP ${response.status}`);
   const reply = await response.json();
@@ -39,6 +40,13 @@ function rpc(method, params) {
 }
 let before;
 let minimumRevision = 0;
+if (action === 'credential-refusal') {
+  const proof = await observe(action);
+  assert.equal(proof.result, 'PASS', JSON.stringify(proof));
+  assert.equal(proof.storeDeleted, true);
+  console.log(JSON.stringify(proof));
+  process.exit(0);
+}
 if (action === 'start') {
   await observe('stop');
   const device = process.env.IOS_SIMULATOR;

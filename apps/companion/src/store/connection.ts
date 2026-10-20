@@ -531,7 +531,12 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       livenessController?.reset();
     }
 
-    await state.client?.setConnection(url, auth, transition.changed);
+    await state.client?.setConnection(
+      url,
+      auth,
+      transition.changed,
+      state.activeProfileId !== (matchingProfileId ?? '') ? 'profile-change' : 'principal-change',
+    );
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -565,7 +570,12 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       livenessController?.reset();
     }
 
-    await state.client?.setConnection(profile.url, auth, transition.changed);
+    await state.client?.setConnection(
+      profile.url,
+      auth,
+      transition.changed,
+      state.activeProfileId !== profile.id ? 'profile-change' : 'principal-change',
+    );
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -694,7 +704,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       resetFarmState();
 
       set({ personSession: null });
-      await state.client?.setConnection('', {});
+      await state.client?.setConnection('', {}, false, 'profile-change');
       return;
     }
     await AsyncStorage.setItem(ACTIVE_GATEWAY_PROFILE_KEY, nextProfile.id);
@@ -722,7 +732,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       livenessController?.reset();
     }
 
-    await state.client?.setConnection(nextProfile.url, auth, transition.changed);
+    await state.client?.setConnection(nextProfile.url, auth, transition.changed, 'profile-change');
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -767,7 +777,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       resetFarmState();
 
       set({ personSession: null });
-      await state.client?.setConnection('', {});
+      await state.client?.setConnection('', {}, false, 'profile-change');
       return;
     }
 
@@ -796,7 +806,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       livenessController?.reset();
     }
 
-    await state.client?.setConnection(nextProfile.url, auth, transition.changed);
+    await state.client?.setConnection(nextProfile.url, auth, transition.changed, 'profile-change');
     if (transition.changed) void livenessController?.probeFresh();
   },
 

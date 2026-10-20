@@ -10,6 +10,7 @@ import type {
 } from './types.js';
 
 export interface ResourceClientConnection {
+  readonly resourceConnectionReason?: ResourceConnectionReason;
   requestResource<T>(
     method: ResourceReadMethod,
     params: unknown,
@@ -64,7 +65,9 @@ export function createResourceCacheTransport(
   return {
     getConnection,
     onConnectionChange: (listener) =>
-      client.onConnectionChange(() => listener(getConnection(), snapshot().reason)),
+      client.onConnectionChange(() =>
+        listener(getConnection(), snapshot().reason ?? client.resourceConnectionReason),
+      ),
     onResourceChanged: (listener) =>
       client.subscribe(Events.RESOURCE_CHANGED, (payload) =>
         listener(payload as import('../transport/events.js').ResourceChangedPayload),

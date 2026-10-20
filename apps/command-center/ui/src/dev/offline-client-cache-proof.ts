@@ -1,10 +1,12 @@
 import type { SourcesStatusResult } from '@farmslot/protocol';
 import {
   createGatewayResourceCache,
+  createMemoryResourceStore,
   createResourceCacheTransport,
   type GatewayResourceCache,
   resourceQuery,
   type ResourceQueryState,
+  type ResourceStore,
 } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../gateway-client.js';
@@ -12,6 +14,7 @@ import { gateway } from '../gateway-client.js';
 let cache: GatewayResourceCache | undefined;
 let latest: ResourceQueryState<SourcesStatusResult> | undefined;
 let reads = 0;
+let store: ResourceStore | undefined;
 
 interface DevelopmentImportMeta extends ImportMeta {
   env: { DEV: boolean };
@@ -28,6 +31,9 @@ export async function offlineClientCacheProof(action: 'start' | 'snapshot' | 're
     reads = 0;
     const transport = createResourceCacheTransport(
       {
+        get resourceConnectionReason() {
+          return gateway.resourceConnectionReason;
+        },
         requestResource: (method, params, signal) => {
           reads++;
           return gateway.requestResource(method, params, signal);
@@ -43,7 +49,8 @@ export async function offlineClientCacheProof(action: 'start' | 'snapshot' | 're
         authentication: gateway.authenticatedConnection,
       }),
     );
-    cache = createGatewayResourceCache({ transport });
+    store = createMemoryResourceStore();
+    cache = createGatewayResourceCache({ transport, store });
     cache.observe(resourceQuery<SourcesStatusResult>('sources.status'), (next) => {
       latest = next;
     });
@@ -56,5 +63,6 @@ export async function offlineClientCacheProof(action: 'start' | 'snapshot' | 're
     epoch: latest?.resourceState?.epoch,
     generation: gateway.authenticatedConnection?.principal?.generation,
     error: latest?.error,
+    storeDeleted: store?.deleted,
   };
 }

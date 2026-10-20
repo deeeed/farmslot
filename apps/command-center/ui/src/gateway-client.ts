@@ -18,7 +18,11 @@ import {
   signOutAccount,
   workspaceAccessFromAuth,
 } from '@farmslot/protocol';
-import type { ResourceReadMethod, ResourceReadResult } from '@farmslot/protocol/client-cache';
+import type {
+  ResourceConnectionReason,
+  ResourceReadMethod,
+  ResourceReadResult,
+} from '@farmslot/protocol/client-cache';
 
 import {
   getDesktopConnection,
@@ -207,6 +211,10 @@ function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: str
 }
 
 export class GatewayClient {
+  private resourceReason?: ResourceConnectionReason;
+  get resourceConnectionReason() {
+    return this.resourceReason;
+  }
   private lastAuthentication?: GatewayAuthConnectResult;
   get authenticatedConnection(): GatewayAuthConnectResult | undefined {
     return this.lastAuthentication;
@@ -394,7 +402,7 @@ export class GatewayClient {
     this.lastAuthError = null;
     this.rejectAllPending('Gateway credentials changed');
     this.teardownSocket();
-    this.setState('disconnected');
+    this.setState('disconnected', 'principal-change');
   }
 
   async signedInDevices(): Promise<PersonDeviceSession[]> {
@@ -432,7 +440,7 @@ export class GatewayClient {
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
         this.rejectAllPending('Signed out');
         this.teardownSocket();
-        this.setState('auth_required');
+        this.setState('auth_required', 'sign-out');
       },
     });
   }
@@ -440,7 +448,7 @@ export class GatewayClient {
   connect(): void {
     if (this.disposed) return;
     if (this.authBlocked) {
-      this.setState('auth_required');
+      this.setState('auth_required', this.resourceReason);
       return;
     }
     // No reachable candidate from this https origin — don't open a doomed socket or spin a
@@ -492,8 +500,18 @@ export class GatewayClient {
                 );
           this.authBlocked = true;
           this.lastAuthError = authError;
+          const reason: ResourceConnectionReason = hasAuthErrorCode(authError, 'AUTH_SESSION_ENDED')
+            ? 'session-ended'
+            : this.auth.token && hasAuthErrorCode(authError, 'AUTH_FAILED')
+              ? 'credential-refused'
+              : 'network';
+          if (reason !== 'network') {
+            this.lastAuthentication = undefined;
+            this.principal = null;
+            this.access = 'none';
+          }
           this.rejectAllPending(`Authentication failed: ${authError.message}`);
-          this.setState('auth_required');
+          this.setState('auth_required', reason);
           this.ws?.close();
         });
       },
@@ -507,7 +525,7 @@ export class GatewayClient {
         if (this.ws !== ws) return;
         this.rejectAllPending('Connection closed');
         if (this.authBlocked) {
-          this.setState('auth_required');
+          this.setState('auth_required', this.resourceReason);
           return;
         }
         this.setState('disconnected');
@@ -644,10 +662,18 @@ export class GatewayClient {
       hasAuthErrorCode(error, 'AUTH_SESSION_ENDED') ? 'AUTH_SESSION_ENDED' : 'AUTH_REFRESH_FAILED',
     );
     clearGatewayMemoryAuth();
-    if (hasAuthErrorCode(error, 'AUTH_SESSION_ENDED')) this.authBlocked = true;
+    if (hasAuthErrorCode(error, 'AUTH_SESSION_ENDED')) {
+      this.authBlocked = true;
+      this.lastAuthentication = undefined;
+      this.principal = null;
+      this.access = 'none';
+    }
     this.rejectAllPending(this.lastAuthError.message);
     this.teardownSocket();
-    this.setState(this.authBlocked ? 'auth_required' : 'disconnected');
+    this.setState(
+      this.authBlocked ? 'auth_required' : 'disconnected',
+      this.authBlocked ? 'session-ended' : 'network',
+    );
     if (!this.authBlocked) this.scheduleReconnect();
   }
 
@@ -691,8 +717,16 @@ export class GatewayClient {
     params?: unknown,
     timeoutOrOptions: number | GatewayRequestOptions = DEFAULT_TIMEOUT,
   ): Promise<T> {
-    if (this.person.session && !method.startsWith('auth.'))
-      return this.person.withAccess(() => this.rawRequest<T>(method, params, timeoutOrOptions));
+    if (this.person.session && !method.startsWith('auth.')) {
+      const person = this.person;
+      try {
+        return await person.withAccess(() => this.rawRequest<T>(method, params, timeoutOrOptions));
+      } catch (error) {
+        if (person === this.person && hasAuthErrorCode(error, 'AUTH_SESSION_ENDED'))
+          this.failPersonRefresh(error);
+        throw error;
+      }
+    }
     return this.rawRequest<T>(method, params, timeoutOrOptions);
   }
 
@@ -840,8 +874,9 @@ export class GatewayClient {
     }
   }
 
-  private setState(s: ConnectionState): void {
-    if (this.state === s) return;
+  private setState(s: ConnectionState, reason?: ResourceConnectionReason): void {
+    if (this.state === s && this.resourceReason === reason) return;
+    this.resourceReason = reason;
     this.state = s;
     for (const cb of this.connSubs) {
       try {

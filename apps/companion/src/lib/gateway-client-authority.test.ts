@@ -10,6 +10,12 @@ import {
   type ResponseFrame,
   SourceStatusController,
 } from '@farmslot/protocol';
+import {
+  createGatewayResourceCache,
+  createMemoryResourceStore,
+  createResourceCacheTransport,
+  resourceQuery,
+} from '@farmslot/protocol/client-cache';
 
 import { sourceStatusFixture } from '../../../../packages/protocol/test/fixtures/source-status';
 
@@ -82,6 +88,60 @@ function auth(
   };
 }
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+for (const code of ['TIMEOUT', 'AUTH_FAILED']) {
+  test(`native reconnect ${code} ${code === 'TIMEOUT' ? 'preserves' : 'deletes'} cached observations`, async () => {
+    const original = globalThis.WebSocket;
+    globalThis.WebSocket = Socket as unknown as typeof WebSocket;
+    const { GatewayClient } = await import('./gateway-client');
+    const client = new GatewayClient('ws://localhost:19777', { token: 'admin' });
+    const store = createMemoryResourceStore();
+    const cache = createGatewayResourceCache({
+      store,
+      transport: createResourceCacheTransport(client, () => ({
+        id: client.connectionGeneration,
+        connected: client.connectionState === 'connected',
+        gatewayUrl: 'ws://localhost:19777',
+        authentication: client.authenticatedConnection,
+      })),
+    });
+    try {
+      client.connect();
+      let socket = Socket.sockets.at(-1)!;
+      socket.open();
+      const result = auth('operator', 'farm');
+      result.principal!.generation = 0;
+      result.capabilities.resourceChanges = { version: 1, epoch: 'test', versionLists: false };
+      socket.response(socket.sent[0].id, result);
+      await settle();
+      const query = { ...resourceQuery<{ value: string }>('sources.status'), persisted: true };
+      const done = cache.retry(query);
+      await settle();
+      socket.response(
+        socket.sent.at(-1)!.id,
+        { value: 'cached' },
+        {
+          epoch: 'test',
+          dependencies: [{ key: { family: 'sources', scope: 'farm' }, revision: 0 }],
+        },
+      );
+      assert.equal((await done).status, 'ready');
+      client.reconnect();
+      socket = Socket.sockets.at(-1)!;
+      socket.open();
+      socket.failure(socket.sent.at(-1)!.id, { code, message: code });
+      await settle();
+      const state = await cache.retry(query);
+      assert.equal(store.deleted, code === 'AUTH_FAILED');
+      assert.equal(state.data?.value, code === 'TIMEOUT' ? 'cached' : undefined);
+      if (code === 'TIMEOUT') assert.equal(state.status, 'stale');
+    } finally {
+      await cache.dispose();
+      client.disconnect();
+      globalThis.WebSocket = original;
+    }
+  });
+}
 
 test('resource frames preserve stamps and cancellation covers connection waits and pending reads', async () => {
   const originalSocket = globalThis.WebSocket;
@@ -353,6 +413,74 @@ function personGrant() {
     accessExpiresAt: new Date(now + 3600_000).toISOString(),
   };
 }
+
+test('a native foreground read deletes cached data after its attempted refresh confirms session end', async () => {
+  const original = globalThis.WebSocket;
+  globalThis.WebSocket = Socket as unknown as typeof WebSocket;
+  const { GatewayClient } = await import('./gateway-client');
+  const grant = personGrant();
+  const client = new GatewayClient('ws://localhost:19777', {
+    sessionStorage: {
+      load: async () => ({ session: grant.session, refreshToken: grant.refreshToken }),
+      save: async () => {},
+    },
+    personSessionRequired: true,
+  });
+  const store = createMemoryResourceStore();
+  const cache = createGatewayResourceCache({
+    store,
+    transport: createResourceCacheTransport(client, () => ({
+      id: client.connectionGeneration,
+      connected: client.connectionState === 'connected',
+      gatewayUrl: 'ws://localhost:19777',
+      authentication: client.authenticatedConnection,
+    })),
+  });
+  try {
+    client.connect();
+    const socket = Socket.sockets.at(-1)!;
+    socket.open();
+    await settle();
+    socket.response(socket.sent.at(-1)!.id, grant);
+    await settle();
+    const result = auth('person-owner', 'farm', 'person');
+    result.principal!.generation = 0;
+    result.capabilities.resourceChanges = { version: 1, epoch: 'test', versionLists: false };
+    socket.response(socket.sent.at(-1)!.id, result);
+    await settle();
+    const query = { ...resourceQuery<{ private: string }>('sources.status'), persisted: true };
+    const first = cache.retry(query);
+    await settle();
+    socket.response(
+      socket.sent.at(-1)!.id,
+      { private: 'old principal' },
+      { epoch: 'test', dependencies: [{ key: { family: 'sources', scope: 'farm' }, revision: 0 }] },
+    );
+    assert.equal((await first).status, 'ready');
+    const refused = cache.retry(query);
+    await settle();
+    socket.failure(socket.sent.at(-1)!.id, {
+      code: 'AUTH_SESSION_ENDED',
+      message: 'Refresh required',
+    });
+    await settle();
+    assert.equal(socket.sent.at(-1)!.method, Methods.AUTH_SESSION_REFRESH);
+    socket.failure(socket.sent.at(-1)!.id, {
+      code: 'AUTH_SESSION_ENDED',
+      message: 'Session revoked',
+    });
+    await refused;
+    await cache.retry(query);
+    assert.equal(client.resourceConnectionReason, 'session-ended');
+    assert.equal(client.authenticatedConnection, undefined);
+    assert.equal(cache.read(query).data, undefined);
+    assert(store.deleted);
+  } finally {
+    await cache.dispose();
+    client.disconnect();
+    globalThis.WebSocket = original;
+  }
+});
 
 test('a saved person login renews through the gateway after app reload and reconnect', async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');

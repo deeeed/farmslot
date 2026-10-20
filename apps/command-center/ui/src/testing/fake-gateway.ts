@@ -10,9 +10,11 @@ export interface FakeGatewaySocket {
   readyState: number;
   readonly sent: Array<{ id: string; method: string }>;
   response(id: string, payload: unknown, resourceState?: unknown): void;
+  failure(id: string, error: { code: string; message: string }): void;
 }
 
 export interface FakeGateway {
+  authPayload?: unknown;
   /** Every socket the client opened, oldest first. */
   readonly sockets: FakeGatewaySocket[];
   /** Tokens presented to `auth.connect`, in order. */
@@ -76,7 +78,7 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
               type: 'res',
               id: request.id,
               ok: true,
-              payload: {
+              payload: fake.authPayload ?? {
                 ok: true,
                 capabilities: { workspaceAccess: 'farm' },
                 principal: {
@@ -104,6 +106,13 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
             payload,
             resourceState,
           }),
+        }),
+      );
+    }
+    failure(id: string, error: { code: string; message: string }) {
+      this.dispatchEvent(
+        new MessageEvent('message', {
+          data: JSON.stringify({ type: 'res', id, ok: false, error }),
         }),
       );
     }

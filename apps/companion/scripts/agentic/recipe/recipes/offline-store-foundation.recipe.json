@@ -87,7 +87,7 @@
         "match": "\"result\":\"PASS\"",
         "intent": "Require a new covered read after same-epoch reconnect.",
         "proves": ["foundation"],
-        "next": "stop"
+        "next": "credential-refusal"
       },
       "stop": {
         "action": "command",
@@ -95,7 +95,25 @@
         "intent": "Dispose the proof controller and its subscriptions.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "credential-refusal": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-client-cache.mjs credential-refusal",
+        "intent": "Revoke a disposable real native credential and require its shared cache to delete data after token refusal.",
+        "next": "credential-refusal-proof"
+      },
+      "credential-refusal-proof": {
+        "action": "assert_output",
+        "source": "credential-refusal",
+        "stream": "stdout",
+        "match": "\"storeDeleted\":true",
+        "intent": "Require an actual store deletion receipt from the native request adapter.",
+        "proves": ["foundation"],
+        "next": "stop"
+      }
     }
   }
 }
