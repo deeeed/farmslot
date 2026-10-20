@@ -22,6 +22,7 @@ import {
 
 import { gateway } from '../../gateway-client.js';
 import {
+  DECISION_RESOLVE_SLOW_MS,
   DECISION_RESOLVE_TIMEOUT_MS,
   GatewayRequestTimeoutError,
   transferBoundRequestOptions,
@@ -108,6 +109,31 @@ index 1111111..2222222 100644
 +  return locallyApproved && reviewFresh;
  }
 `;
+
+type DecisionOutcome =
+  | { kind: 'applied' }
+  | { kind: 'other'; action: string }
+  | { kind: 'pending' }
+  | { kind: 'unknown' };
+
+/** What the gateway recorded for a decision, read after its request did not end cleanly. */
+async function decisionOutcome(
+  runId: string,
+  decisionId: string | undefined,
+  actionId: string,
+): Promise<DecisionOutcome> {
+  try {
+    const { run } = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId });
+    const current = run.decisions.find((candidate) => candidate.id === decisionId);
+    if (!current?.resolvedAt) return { kind: 'pending' };
+    return current.resolvedAction === actionId
+      ? { kind: 'applied' }
+      : { kind: 'other', action: current.resolvedAction ?? 'another action' };
+  } catch {
+    // An unreadable run leaves the outcome unknown, and the person is told exactly that.
+    return { kind: 'unknown' };
+  }
+}
 
 interface RetainedReadyPayload {
   runId: string;
@@ -759,6 +785,17 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       ? 'Requesting review…'
       : readyDecisionSubmittingMessage(approving);
     this._actionTone = '';
+    // This view is reused across runs: a reply for a gate it no longer shows is not its to report.
+    const runId = this.runId;
+    const decisionId = this.decision?.id;
+    const stillShown = () => this.runId === runId && this.decision?.id === decisionId;
+    // The gateway checks the gate against its slot before it answers, which can be slow.
+    const slow = setTimeout(() => {
+      if (stillShown() && this._acting)
+        this._actionMessage =
+          'Still waiting for the gateway; it checks the gate before applying it.';
+    }, DECISION_RESOLVE_SLOW_MS);
+    let failure: unknown;
     try {
       await gateway.request(
         Methods.RUN_RESOLVE_DECISION,
@@ -776,40 +813,39 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         }),
         DECISION_RESOLVE_TIMEOUT_MS,
       );
+    } catch (err) {
+      console.error('[ready-workspace] resolve failed:', err);
+      failure = err;
+    } finally {
+      clearTimeout(slow);
+    }
+    // A failed request can still have been applied (a lost reply, or a second click whose
+    // first submission won): report what the gateway did, not how the request ended.
+    const outcome: DecisionOutcome =
+      failure === undefined
+        ? { kind: 'applied' }
+        : await decisionOutcome(runId, decisionId, actionId);
+    if (!stillShown()) return;
+    if (outcome.kind === 'applied') {
       this._actionMessage = requestingReview
         ? 'Review requested; preparing the reviewer.'
         : readyDecisionSuccessMessage(approving);
       this._actionTone = 'success';
-    } catch (err) {
-      console.error('[ready-workspace] resolve failed:', err);
-      // A late reply is not a refusal: report what the gateway actually did.
-      const timedOut = err instanceof GatewayRequestTimeoutError;
-      if (timedOut && (await this._decisionResolvedAs(actionId))) {
-        this._actionMessage = requestingReview
-          ? 'Review requested; preparing the reviewer.'
-          : readyDecisionSuccessMessage(approving);
-        this._actionTone = 'success';
-        return;
-      }
-      this._actionMessage = timedOut
-        ? 'The gateway has not confirmed this decision yet; it is still checking the gate. This view updates once it is applied.'
-        : `Failed to submit decision: ${err instanceof Error ? err.message : String(err)}`;
-      this._actionTone = timedOut ? '' : 'error';
-      this._acting = false;
+      return;
     }
-  }
-
-  /** Whether the gateway already resolved this decision with `actionId`. */
-  async _decisionResolvedAs(actionId: string): Promise<boolean> {
-    const decisionId = this.decision?.id;
-    try {
-      const { run } = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId: this.runId });
-      const current = run.decisions.find((candidate) => candidate.id === decisionId);
-      return Boolean(current?.resolvedAt) && current?.resolvedAction === actionId;
-    } catch {
-      // No answer either: the decision stays unconfirmed, which is what the person is told.
-      return false;
+    this._acting = false;
+    if (!(failure instanceof GatewayRequestTimeoutError)) {
+      this._actionMessage = `Failed to submit decision: ${failure instanceof Error ? failure.message : String(failure)}`;
+      this._actionTone = 'error';
+      return;
     }
+    this._actionTone = '';
+    this._actionMessage =
+      outcome.kind === 'other'
+        ? `The gateway did not reply; this decision was resolved as ${outcome.action} instead.`
+        : outcome.kind === 'pending'
+          ? 'The gateway did not reply and has not applied this decision. Check the run before submitting again.'
+          : 'The gateway did not reply and the run could not be read. Check the run before submitting again.';
   }
 
   async _refreshPublishPackage(payload: ReadyGatePayload) {

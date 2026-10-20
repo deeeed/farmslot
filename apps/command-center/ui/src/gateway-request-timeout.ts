@@ -21,9 +21,12 @@ export class GatewayRequestTimeoutError extends Error {
 
 /**
  * Resolving a decision revalidates the gate against its slot before the gateway
- * answers, and may restore a parked gate first: well past the default window.
+ * answers, and may restore a parked gate first. The client waits for that answer
+ * (a refusal included) rather than guessing, and says it is still waiting after
+ * `DECISION_RESOLVE_SLOW_MS`.
  */
-export const DECISION_RESOLVE_TIMEOUT_MS = 120_000;
+export const DECISION_RESOLVE_TIMEOUT_MS = 600_000;
+export const DECISION_RESOLVE_SLOW_MS = 15_000;
 
 export interface IdleRequestTimeoutHandle {
   clear(): void;
