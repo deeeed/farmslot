@@ -34,6 +34,7 @@ import {
   readRunBundleAvailability,
   reserveRunBundleMetadata,
   resolveRetainedRunBundleRef as localBundleRef,
+  runBundleRefs,
 } from '@farmslot/run-bundle';
 
 import { sha256File } from '../core/file-hash.js';
@@ -152,11 +153,7 @@ export function retainedRunBundleRef(
     : (run.artifactBundle ?? run.output?.artifactBundle);
   if (decisionId && !decision) throw new Error('The retained decision no longer exists.');
   if (digest) {
-    const known = [
-      run.artifactBundle,
-      run.output?.artifactBundle,
-      ...run.decisions.map(({ payload }) => decisionArtifactBundleRef(run, payload)),
-    ];
+    const known = runBundleRefs(run).map(({ ref }) => ref);
     const requested = known.find(
       (ref) =>
         ref && (ref.bundleDigest === digest || localBundleRef(run, ref).bundleDigest === digest),
