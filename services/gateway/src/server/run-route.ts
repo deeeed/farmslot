@@ -129,7 +129,7 @@ export interface RouteRunMethodContext {
   /** Caller-only emitter retained in the routing context; shared run mutations use broadcast. */
   emit: (event: string, payload: unknown) => void;
   broadcast: (frame: EventFrame) => void;
-  authorizeEvidenceAttestation?: () => EvidenceAttestationApprover;
+  authorizeEvidenceAttestation?: (action?: string) => EvidenceAttestationApprover;
   authorizeVisualClaimReview?: import('../methods/run/claim-reviews.js').VisualClaimReviewDependencies['authorizeVisualClaimReview'];
 }
 

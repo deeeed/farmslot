@@ -1,11 +1,11 @@
 {
-  "version": "0.28.0",
-  "date": "2026-10-19",
+  "version": "0.29.0",
+  "date": "2026-10-20",
   "items": [
-    "A reviewer attempt that ends without a verdict no longer spends a review round.",
-    "The publish gate offers Continue Fixing for round-limited code findings once a round is available.",
-    "Cleanup of a week-old cancelled run releases the slot its cancel kept.",
-    "Replaying the review step resumes a fix the worker blocked and later finished.",
-    "A gateway restart keeps a blocked run's own reason."
+    "Visual judgments apply to the proof the gate reads, and the retained bundle keeps every gate review's result",
+    "Spent review rounds read `Review rounds spent: N issues open` and point at Hold",
+    "After a restart, running reviewers are reattached, a run whose machine is offline stays held, and finished native sessions no longer fail the run",
+    "Findings from a blocked fix's re-review stay continuable, and the gate re-binds a slot still on the run's branch",
+    "Runner state no longer lives inside slot checkouts, and a reviewSequence's first row runs the pipeline review"
   ]
 }

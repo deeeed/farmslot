@@ -6,13 +6,16 @@ import { type RecordedEvidencePackageInput } from '@farmslot/adapter-sdk/evidenc
 import {
   acceptanceCriteriaMatch,
   type AcceptanceStatusLedger,
+  acceptReviewFindingsAvailable,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   digestRecipeDocument,
   effectiveRequiredReviewCount,
   EVIDENCE_ATTESTATION_ACTION,
   evidenceAttestationAvailable,
-  isEvidencePolicyReason,
+  gateActionsForReadiness,
+  gateReasonsForAction,
+  type GateReviewFinding,
   isPrerequisiteGatePayload,
   isRecord,
   isTerminalRunStatus,
@@ -27,7 +30,9 @@ import {
   type RunGatePrerequisiteReason,
   type RunGateReadiness,
 } from '@farmslot/protocol';
+import { reviewFindingEntries, reviewFixInProgress } from '@farmslot/review-dispatch';
 
+import { findingsDigest } from '../core/findings-digest.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { assertQaCompletion } from '../qa/completion.js';
@@ -83,7 +88,6 @@ import {
   buildEvidenceRefreshAction,
   buildUnavailableSnapshotAction,
   codeReviewCertifiesPackage,
-  isPublishApprovalAction,
   publicationReviewBlockingReason,
   publicationReviewMatchesPreparedPackage,
 } from './gate-policy.js';
@@ -396,6 +400,47 @@ export async function reviewsWithValidResults(
   return valid;
 }
 
+/**
+ * The head's open findings, when the required reviews returned valid results for the package,
+ * every entry the publication block counts at the head has its own valid structured result,
+ * and no fix or review runs (ADR-065 Amendment 8). The findings are exactly those results' issues.
+ */
+async function acceptableHeadFindings(
+  run: Run,
+  preparedPackage: ReadyGatePrPackage,
+  validInputs: ReviewStatus[],
+  required: number,
+  source: Pick<GatePrerequisiteReaders, 'reviewResult'>,
+): Promise<GateReviewFinding[] | undefined> {
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
+  if (
+    validInputs.filter((review) => publicationReviewMatchesPreparedPackage(review, preparedPackage))
+      .length < required ||
+    reviewFixInProgress(run) ||
+    reviews.some((review) => review.verdict === 'pending')
+  )
+    return undefined;
+  const findings: GateReviewFinding[] = [];
+  const seen = new Set<string>();
+  for (const { review, entry, findings: count, head } of reviewFindingEntries(reviews)) {
+    if (head !== preparedPackage.headSha) continue;
+    const artifact = reviewResultArtifactPath(
+      entry === review ? review : { artifactPaths: entry.artifactPaths },
+    );
+    const raw = artifact ? await source.reviewResult(run, artifact) : undefined;
+    const result = raw ? parseStructuredReviewFeedback(raw, artifact!) : undefined;
+    if (!result || result.incomplete || result.verdict !== 'issues' || result.issues.length < count)
+      return undefined;
+    for (const issue of result.issues) {
+      const key = JSON.stringify([review.id, issue.file, issue.line ?? null, issue.description]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      findings.push({ reviewId: review.id, ...issue });
+    }
+  }
+  return findings.length ? findings : undefined;
+}
+
 /** Compose owner validators; absent validation is a refusal, never a success. */
 export async function collectRunGateReadiness(
   ...params: Parameters<typeof collectRunGateAssessment>
@@ -446,17 +491,20 @@ export async function collectRunGateAssessment(
     !publicationFulfilled &&
     (preparedPackage || requiresPublicationApproval(run)) &&
     publicationReviewBlockingReason(run, preparedPackage);
+  let reviewFixReason: RunGatePrerequisiteReason | undefined;
   if (reviewBlock) {
     // With the review rounds spent no fix can run: say so, and point at Hold as the
     // budget-bound reasons below do.
     const spent = (await runReviewRoundBudget(run)).remaining === 0;
-    reasons.push({
+    reviewFixReason = {
       code: 'review-fix-required',
       prerequisite: 'review',
       message: spent ? reasonWithoutRemedy(reviewBlock, true) : reviewBlock,
       actionId: spent ? 'hold' : 'continue-review-fix',
-    });
+    };
+    reasons.push(reviewFixReason);
   }
+  let findings: GateReviewFinding[] | undefined;
   const artifactRun = preparedPackage?.artifactBundle
     ? { ...run, artifactBundle: preparedPackage.artifactBundle }
     : run;
@@ -625,12 +673,13 @@ export async function collectRunGateAssessment(
           ? budget.diagnosis!
           : `Review budget ${budget.used}/${budget.limit} is exhausted. Ask the lead for a scoped extension, then use farmslot run extend-review-budget ${run.id} and request current-head reviews.`;
     const allowedReviewOverrides: string[] = [];
-    if (
-      validInputs.filter((review) =>
-        publicationReviewMatchesPreparedPackage(review, preparedPackage),
-      ).length >= required
-    )
+    findings = reviewFixReason
+      ? await acceptableHeadFindings(run, preparedPackage, validInputs, required, source)
+      : undefined;
+    if (findings) {
+      reviewFixReason!.allowedReviewOverrides = [APPROVE_PUBLISH_UNRESOLVED_ACTION];
       allowedReviewOverrides.push(APPROVE_PUBLISH_UNRESOLVED_ACTION);
+    }
     if (buildEvidenceRefreshAction(validReviews, preparedPackage))
       allowedReviewOverrides.push(APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION);
     if (buildUnavailableSnapshotAction(validReviews, preparedPackage, policy))
@@ -723,49 +772,15 @@ export async function collectRunGateAssessment(
         packageHash: preparedPackage?.packageHash,
       },
       reasons,
+      ...(findings
+        ? {
+            findings,
+            findingsDigest: findingsDigest(findings),
+          }
+        : {}),
     },
     ...(projected ? { acceptance: projected } : {}),
   };
-}
-
-export function advancingGateAction(actionId: string): boolean {
-  return (
-    actionId === 'ready' ||
-    isPublishApprovalAction(actionId) ||
-    actionId === 'post' ||
-    actionId === 'accept-no-change'
-  );
-}
-
-export function gateActionsForReadiness<Action extends { id: string }>(
-  actions: Action[],
-  readiness: RunGateReadiness,
-): Action[] {
-  return actions.filter((action) =>
-    action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
-      ? evidenceAttestationAvailable(readiness)
-      : !advancingGateAction(action.id) || gateReasonsForAction(readiness, action.id).length === 0,
-  );
-}
-
-function gateReasonsForAction(
-  readiness: RunGateReadiness,
-  actionId?: string,
-): RunGatePrerequisiteReason[] {
-  const reviewOverride = [
-    APPROVE_PUBLISH_UNRESOLVED_ACTION,
-    APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
-    APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
-  ].some((id) => id === actionId);
-  return readiness.reasons.filter(
-    (reason) =>
-      !(
-        reviewOverride &&
-        reason.prerequisite === 'review' &&
-        reason.allowedReviewOverrides?.includes(actionId!)
-      ) &&
-      !(actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION && isEvidencePolicyReason(reason)),
-  );
 }
 
 /** Retain the action-filtered refusal so completion does not duplicate gate policy. */
@@ -812,10 +827,25 @@ export async function assertRunGateReady(
     reasons.length ||
     readiness.state === 'collecting' ||
     (actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
-      !evidenceAttestationAvailable(readiness))
+      !evidenceAttestationAvailable(readiness)) ||
+    (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION && !acceptReviewFindingsAvailable(readiness))
   )
     throw new RunGateNotReadyError(readiness, reasons);
   return readiness;
+}
+
+/** Accepted findings bind to the head's open findings at approval (ADR-065 Amendment 8). */
+export function assertAcceptedFindingsCurrent(
+  decision: Pick<RunDecision, 'resolvedAction' | 'publicationApproval'> | undefined,
+  readiness: RunGateReadiness | void,
+): void {
+  if (decision?.resolvedAction !== APPROVE_PUBLISH_UNRESOLVED_ACTION) return;
+  const accepted = decision.publicationApproval?.acceptedFindings;
+  if (!accepted || !readiness || readiness.findingsDigest !== accepted.digest)
+    throw new GatewayMethodError(
+      'RUN_GATE_NOT_READY',
+      'The accepted review findings no longer match the open findings at the package head.',
+    );
 }
 
 /** Assertions may omit a projection; attestation consumers require the checked identity. */

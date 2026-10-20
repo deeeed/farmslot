@@ -4,8 +4,11 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
-- The web-dapp HUD shows the current intent as a 16px main line with no RUN badge, whole in a 500px card that grows instead of clipping it, and the step that just finished as one muted `✓`/`✗` line. A finished run reads `Recipe passed` or `Recipe failed` in the outcome colour.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.17.0 - 2026-10-20
+
+- The web-dapp HUD shows the current intent as a 16px main line with no RUN badge, whole in a 500px card that grows instead of clipping it, and the step that just finished as one muted `✓`/`✗` line. A finished run reads `Recipe passed` or `Recipe failed` in the outcome colour.
 
 ## 0.16.0 - 2026-10-19
 

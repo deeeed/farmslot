@@ -1,5 +1,6 @@
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   buildRunDecisionActionRequest,
   type DecisionResolveParams,
   Methods,
@@ -7,6 +8,21 @@ import {
   type ResourcePostureGateChoice,
   type RunDecisionActionRequest,
 } from '@farmslot/protocol';
+
+/**
+ * The written reason a gate action sends: evidence attestation's, or accepting review
+ * findings' (ADR-065 Amendment 8). Every other action sends none.
+ */
+export function gateActionReasons(
+  actionId: string,
+  text: string,
+): { evidenceAttestationReason?: string; reason?: string } {
+  return actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
+    ? { evidenceAttestationReason: text }
+    : actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION
+      ? { reason: text }
+      : {};
+}
 
 export type DecisionResolveRequest =
   | RunDecisionActionRequest
@@ -26,12 +42,14 @@ export function decisionResolveRequest(
   resourcePosture?: ResourcePostureGateChoice | null,
   selectionData?: Record<string, unknown>,
   evidenceAttestationReason?: string,
-  /** Written reason for a result decision; `accept-result` requires one. */
+  /** Written reason for a result decision or for accepting review findings; both require one. */
   reason?: string,
 ): DecisionResolveRequest {
   if (!decision.runMeta) {
     if (actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION)
       throw new Error('Load the publish run before attesting evidence.');
+    if (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION)
+      throw new Error('Load the publish run before accepting review findings.');
     if (decision.payload?.kind === 'review' && actionId === 'post')
       throw new Error('Load the review run before posting selected findings.');
     return { method: Methods.DECISION_RESOLVE, params: { decisionId: decision.id, actionId } };

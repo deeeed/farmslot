@@ -5,6 +5,8 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  acceptReviewFindingsAvailable,
+  advancingGateAction,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   assertReviewCurationFresh,
   type AssessmentRecord,
@@ -21,6 +23,7 @@ import {
   failedRunCancelEffects,
   failureTriageCause,
   FLOW_STEPS,
+  type GateReviewFinding,
   INTERACTIVE_HANDOFF_EXTEND_ACTION,
   interactiveHandoffAllowsExtend,
   isAllowedRunDecisionAction,
@@ -131,11 +134,7 @@ import {
   publicationReviewBlockingReason,
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
-import {
-  advancingGateAction,
-  assertRunGateReady,
-  runGateDefinitionActions,
-} from '../run-engine/gate-prerequisites.js';
+import { assertRunGateReady, runGateDefinitionActions } from '../run-engine/gate-prerequisites.js';
 import {
   applyChainedRunEngineFlags,
   bumpRunGeneration,
@@ -1583,7 +1582,7 @@ type TriageAssessmentPrice = NonNullable<NonNullable<AssessmentRecord['reservati
 export interface RunResolveDecisionDependencies {
   assertGatePrerequisites?: import('../run-engine/gate-prerequisites.js').GatePrerequisiteAssertion;
   /** Supplied only by the authenticated ingress, never RPC parameters or background callers. */
-  authorizeEvidenceAttestation?: () => EvidenceAttestationApprover;
+  authorizeEvidenceAttestation?: (action?: string) => EvidenceAttestationApprover;
   triageSnapshot?: (
     runId: string,
     step: string,
@@ -1926,6 +1925,8 @@ export function continueResolvedRunDecision(
   return engineResumed;
 }
 
+const ACCEPTING_FINDINGS = 'Accepting review findings';
+
 export async function resolveRunDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
@@ -1934,7 +1935,13 @@ export async function resolveRunDecision(
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   assertNativeRunOwner(existing);
-  if (requiresPublicationApproval(existing) && isPublishApprovalAction(params.actionId)) {
+  // Accepting findings is the one approval the gate readiness decides with findings open.
+  const acceptingFindings = params.actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION;
+  if (
+    requiresPublicationApproval(existing) &&
+    isPublishApprovalAction(params.actionId) &&
+    !acceptingFindings
+  ) {
     const reviewBlock = publicationReviewBlockingReason(existing);
     if (reviewBlock) throw new GatewayMethodError('RUN_GATE_NOT_READY', reviewBlock);
   }
@@ -1951,8 +1958,13 @@ export async function resolveRunDecision(
   const publicationPrincipal = isPublishApprovalAction(params.actionId)
     ? currentSessionPrincipal()
     : undefined;
+  const acceptanceReason = acceptingFindings ? params.reason?.trim() : undefined;
+  if (acceptingFindings && (!acceptanceReason || !params.findingsDigest?.trim()))
+    throw new Error(
+      'Accepting review findings requires a written reason and the digest of the findings shown.',
+    );
   let attestationApprover: EvidenceAttestationApprover | undefined;
-  if (attestedApproval) {
+  if (attestedApproval || acceptingFindings) {
     if (
       decision.type !== 'engine_human_gate' ||
       decision.payload?.kind !== 'ready' ||
@@ -1961,10 +1973,17 @@ export async function resolveRunDecision(
     ) {
       throw new GatewayMethodError(
         'AUTH_FORBIDDEN',
-        'Evidence attestation requires an authenticated human publish gate.',
+        `${attestedApproval ? 'Evidence attestation' : ACCEPTING_FINDINGS} requires an authenticated human publish gate.`,
       );
     }
-    attestationApprover = dependencies.authorizeEvidenceAttestation();
+    attestationApprover = dependencies.authorizeEvidenceAttestation(
+      acceptingFindings ? ACCEPTING_FINDINGS : undefined,
+    );
+    if (acceptingFindings && !publicationPrincipal)
+      throw new GatewayMethodError(
+        'AUTH_FORBIDDEN',
+        `${ACCEPTING_FINDINGS} requires an authenticated human publish gate.`,
+      );
   }
   if (decision.payload?.kind === 'result-decision') {
     const { resolveResultDecision } = await import('../run-completion/result-decision.js');
@@ -2157,6 +2176,7 @@ export async function resolveRunDecision(
   }
   const consume = async (): Promise<RunResolveDecisionResult> => {
     let attestation: EvidencePolicyAttestation | undefined;
+    let acceptedFindings: { findings: GateReviewFinding[]; digest: string } | undefined;
     // The probes above await; a concurrent resolver (operator abort vs re-armed
     // auto-recovery) may have resolved this decision during that window. Re-read
     // from the store so the first resolution wins instead of being overwritten.
@@ -2214,6 +2234,26 @@ export async function resolveRunDecision(
           waivedReasons: readiness.reasons.filter(isEvidencePolicyReason),
         };
       }
+      if (acceptingFindings) {
+        const prepared = gatePayload.kind === 'ready' ? gatePayload.prPackage : undefined;
+        if (
+          !readiness ||
+          !prepared ||
+          !acceptReviewFindingsAvailable(readiness) ||
+          readiness.identity.runId !== existing.id ||
+          readiness.identity.generation !== gateGeneration ||
+          readiness.identity.packageHash !== prepared.packageHash
+        )
+          throw new Error(
+            'Accepting review findings requires the current checked publication package.',
+          );
+        if (readiness.findingsDigest !== params.findingsDigest)
+          throw new GatewayMethodError(
+            'RUN_GATE_NOT_READY',
+            'The open review findings changed since they were shown. Refresh the gate.',
+          );
+        acceptedFindings = { findings: readiness.findings!, digest: readiness.findingsDigest! };
+      }
       const current = getRun(params.runId);
       const currentDecision = current?.decisions.find((entry) => entry.id === params.decisionId);
       if (
@@ -2247,6 +2287,17 @@ export async function resolveRunDecision(
         );
       decision.evidenceAttestation = attestation;
     }
+    if (
+      acceptedFindings &&
+      !sameEvidenceAttestationApprover(
+        dependencies.authorizeEvidenceAttestation!(ACCEPTING_FINDINGS),
+        attestationApprover!,
+      )
+    )
+      throw new GatewayMethodError(
+        'AUTH_FORBIDDEN',
+        'The approver changed while the accepted findings were validated.',
+      );
     if (visualRepair) {
       // Re-check at the consumption point: a concurrent repair or completed identity refuses,
       // and an identical retry reuses its one reservation instead of charging again.
@@ -2296,6 +2347,14 @@ export async function resolveRunDecision(
           visualJudgmentReceiptIds: [...(readyPayload.prPackage.visualJudgmentReceiptIds ?? [])],
           claimOverrideReceiptIds: [...(readyPayload.prPackage.claimOverrideReceiptIds ?? [])],
           approvedAt: new Date().toISOString(),
+          ...(acceptedFindings
+            ? {
+                acceptedFindings,
+                reason: acceptanceReason!,
+                headSha: readyPayload.prPackage.headSha,
+                approver: attestationApprover!,
+              }
+            : {}),
         };
       }
     }

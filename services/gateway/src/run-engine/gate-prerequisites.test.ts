@@ -10,6 +10,7 @@ import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence'
 import {
   type AcceptanceStatusLedger,
   digestRecipeDocument,
+  gateActionsForReadiness,
   isEvidencePolicyReason,
   type RecipeClaimDeclaration,
   type RecipeClaimEvidence,
@@ -22,12 +23,8 @@ import {
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
 
 await import('../runtime/mock-pty.test-support.js');
-const {
-  collectRunGateAssessment,
-  collectRunGateReadiness,
-  gateActionsForReadiness,
-  refreshRunGateReadiness,
-} = await import('./gate-prerequisites.js');
+const { collectRunGateAssessment, collectRunGateReadiness, refreshRunGateReadiness } =
+  await import('./gate-prerequisites.js');
 const { makeRun, makeReadyGatePackage, deleteTestRunIfPresent } =
   await import('./test-fixtures.js');
 const { certifyingReview, openFindingAtHead, PASSING_REVIEW_RESULT, writeReviewClaimPackage } =
@@ -156,8 +153,19 @@ test('review overrides waive only their owning review policy, never checks or li
         allowedReviewOverrides: ['approve-publish-unresolved'],
       },
     ],
+    findings: [{ reviewId: 'review', file: 'src/example.ts', description: 'Open finding' }],
+    findingsDigest: 'sha256:findings',
   };
   assert.deepEqual(gateActionsForReadiness(actions, readiness), actions.slice(1));
+  // Accepting findings needs the head's checked findings, not only the override.
+  assert.deepEqual(
+    gateActionsForReadiness(actions, {
+      ...readiness,
+      findings: undefined,
+      findingsDigest: undefined,
+    }),
+    [{ id: 'hold' }],
+  );
   for (const prerequisite of ['deterministic', 'evidence', 'lifecycle'] as const) {
     assert.deepEqual(
       gateActionsForReadiness(actions, {
@@ -1308,17 +1316,21 @@ test('a different reviewer PASS cannot clear findings on the unchanged head at a
       },
     );
     assert.ok(readiness.reasons.some((reason) => reason.code === 'review-fix-required'));
+    // Only an explicit acceptance publishes the finding (ADR-065 Amendment 8).
     assert.deepEqual(
       gateActionsForReadiness(
         [{ id: 'approve-publish' }, { id: 'approve-publish-unresolved' }, { id: 'hold' }],
         readiness,
       ),
-      [{ id: 'hold' }],
+      [{ id: 'approve-publish-unresolved' }, { id: 'hold' }],
     );
+    assert.deepEqual(readiness.findings, [
+      { reviewId: 'review-a', file: 'icon.service.ts', description: 'Exponential parsing' },
+    ]);
   }
 });
 
-test('unresolved approval cannot waive findings, missing reviews or changed inputs', async () => {
+test('unresolved approval accepts valid head findings, never missing reviews or changed inputs', async () => {
   const prepared = makeReadyGatePackage({
     reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
   });
@@ -1359,7 +1371,10 @@ test('unresolved approval cannot waive findings, missing reviews or changed inpu
       prepared,
       inputs,
     );
-    assert.deepEqual(gateActionsForReadiness(actions, readiness), actions.slice(1));
+    assert.deepEqual(
+      gateActionsForReadiness(actions, readiness),
+      reviews[0] === review ? actions : actions.slice(1),
+    );
     assert.match(
       readiness.reasons.find((reason) => reason.prerequisite === 'review')!.message,
       reviews.length
@@ -1392,6 +1407,28 @@ test('unresolved approval cannot waive findings, missing reviews or changed inpu
     })),
     { message: 'Review rounds spent: 1 issue open', actionId: 'hold' },
   );
+  // The same gate offers accepting the finding, bound to its digest (ADR-065 Amendment 8).
+  const spent = await collectRunGateReadiness(
+    {
+      ...makeRun({ engineState: { publishGate: { reviews: [review] } } }),
+      reviewRoundAdmissions: ['one', 'two', 'three', 'four', 'five'],
+    },
+    prepared,
+    inputs,
+  );
+  assert.deepEqual(gateActionsForReadiness(actions, spent), actions);
+  assert.deepEqual(spent.findings, [
+    { reviewId: 'native-current', file: 'src/example.ts', description: 'Remaining finding' },
+  ]);
+  assert.match(spent.findingsDigest ?? '', /^sha256:[0-9a-f]{64}$/);
+  // A fix in progress, or an invalid result at the head, withholds it.
+  const fixing = await collectRunGateReadiness(
+    makeRun({ status: 'fixing', engineState: { publishGate: { reviews: [review] } } }),
+    prepared,
+    inputs,
+  );
+  assert.deepEqual(gateActionsForReadiness(actions, fixing), actions.slice(1));
+  assert.equal(fixing.findings, undefined);
   assert.deepEqual(
     await fixReason([]).then((reason) => ({
       message: reason?.message,
@@ -1429,6 +1466,119 @@ test('unresolved approval cannot waive findings, missing reviews or changed inpu
   });
   assert.ok(changed.reasons.some((reason) => reason.code === 'review-inputs-awaiting-review'));
   assert.deepEqual(gateActionsForReadiness(actions, changed), actions.slice(1));
+});
+
+test('accepting findings takes every finding the block counts at the head, each from its own valid result', async () => {
+  const { publicationGateDecisionActions } = await import('./gate-policy.js');
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+  });
+  const atHead = {
+    reviewedHeadSha: prepared.headSha,
+    reviewedReviewSubjectHash: prepared.reviewSubjectHash,
+    reviewSnapshot: prepared.reviewSnapshot,
+  };
+  const f1 = { file: 'src/a.ts', line: 3, description: 'Owner decision' };
+  const f2 = { file: 'src/b.ts', description: 'Second finding' };
+  const results: Record<string, unknown> = {
+    'artifacts/r1/loop-1/review-result.json': {
+      schemaVersion: 1,
+      verdict: 'issues',
+      issues: [f1, f2],
+    },
+    'artifacts/r1/loop-2/review-result.json': { schemaVersion: 1, verdict: 'issues', issues: [f1] },
+    'artifacts/r2/review-result.json': { schemaVersion: 1, verdict: 'pass', issues: [] },
+  };
+  const attempt = (loopNumber: number, issues: (typeof f1 | typeof f2)[]) => ({
+    mode: 'cold' as const,
+    loopNumber,
+    verdict: 'issues' as const,
+    unresolvedCount: issues.length,
+    issues,
+    reviewSnapshot: prepared.reviewSnapshot,
+    artifactPaths: [`artifacts/r1/loop-${loopNumber}/review-result.json`],
+  });
+  // A re-review on unchanged code narrowed F1+F2 to F1; the block still counts both.
+  const narrowed: ReviewStatus = {
+    id: 'r1',
+    source: 'pipeline',
+    mode: 'cold',
+    loopNumber: 2,
+    reviewerSessionId: 'session-1',
+    ...atHead,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    issues: [f1],
+    attempts: [attempt(1, [f1, f2]), attempt(2, [f1])],
+    artifactPaths: ['artifacts/r1/loop-2/review-result.json'],
+  };
+  const pass: ReviewStatus = {
+    id: 'r2',
+    source: 'human-gate',
+    mode: 'cold',
+    loopNumber: 1,
+    reviewerSessionId: 'session-2',
+    ...atHead,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    artifactPaths: ['artifacts/r2/review-result.json'],
+  };
+  const inputs = {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewedInputsAwaitingReview: async () => null,
+    reviewResult: async (_run: unknown, relative: string) =>
+      results[relative] ? JSON.stringify(results[relative]) : undefined,
+  };
+  const readiness = (reviews: ReviewStatus[]) =>
+    collectRunGateReadiness(
+      makeRun({ engineState: { publishGate: { reviews } } }),
+      prepared,
+      inputs,
+    );
+  const offered = await readiness([narrowed]);
+  assert.deepEqual(offered.findings, [
+    { reviewId: 'r1', ...f1 },
+    { reviewId: 'r1', ...f2 },
+  ]);
+  // Another reviewer passing the unchanged head keeps the finding open, and Accept defined.
+  const definitions = publicationGateDecisionActions({
+    reviewSatisfied: true,
+    preparedPackage: prepared,
+    reviews: [narrowed, pass],
+  });
+  const withPass = await readiness([narrowed, pass]);
+  assert.deepEqual(
+    gateActionsForReadiness(definitions, withPass)
+      .map((action) => action.id)
+      .filter((id) => id.startsWith('approve-publish')),
+    ['approve-publish-unresolved'],
+  );
+  // A worker that blocked after the first review leaves the row failed; its finding stays acceptable.
+  const blocked = { ...narrowed, verdict: 'failed' as const, attempts: [attempt(1, [f1, f2])] };
+  assert.equal((await readiness([blocked, pass])).findings?.length, 2);
+  // A review of another subject, a counted entry without its own valid result, or a review
+  // still running, withholds it.
+  assert.equal(
+    (await readiness([{ ...narrowed, reviewedReviewSubjectHash: 'other-subject' }])).findings,
+    undefined,
+  );
+  delete results['artifacts/r1/loop-1/review-result.json'];
+  assert.equal((await readiness([narrowed])).findings, undefined);
+  results['artifacts/r1/loop-1/review-result.json'] = {
+    schemaVersion: 1,
+    verdict: 'issues',
+    issues: [f1, f2],
+  };
+  const pending: ReviewStatus = {
+    ...pass,
+    id: 'r3',
+    reviewerSessionId: 'session-3',
+    verdict: 'pending',
+  };
+  assert.equal((await readiness([narrowed, pending])).findings, undefined);
 });
 
 test('zero-review publication policy still refuses changed reviewed inputs before approval', async () => {

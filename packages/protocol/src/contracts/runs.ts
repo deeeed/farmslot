@@ -25,7 +25,9 @@ import type { ResourcePostureWaitPolicy, RunResourcePostureState } from './resou
 import type { ResourceType } from './resources.js';
 import type { RunArtifactBundleRef, RunImportProvenance } from './run-bundles.js';
 import type {
+  EvidenceAttestationApprover,
   EvidencePolicyAttestation,
+  GateReviewFinding,
   RunGatePrerequisiteReason,
   RunGateReadiness,
 } from './run-gate-readiness.js';
@@ -1599,6 +1601,11 @@ export interface RunDecision {
     visualJudgmentReceiptIds: string[];
     claimOverrideReceiptIds: string[];
     approvedAt: string;
+    /** Accept Review Findings and Publish only (ADR-065 Amendment 8). */
+    acceptedFindings?: { findings: GateReviewFinding[]; digest: string };
+    reason?: string;
+    headSha?: string;
+    approver?: EvidenceAttestationApprover;
   };
   /** Completed failure-triage assessment consulted at resolution, without implied causation. */
   triageAssessmentId?: string;

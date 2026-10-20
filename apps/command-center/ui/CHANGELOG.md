@@ -4,9 +4,15 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- The publication gate offers Accept Review Findings and Publish under More actions when the gateway allows it: it lists the open findings and asks for the reason before publishing.
+- Active-development baseline; add user-facing changes here before release or package publication.
+- A gateway restart or network drop keeps the workspace on screen instead of returning to the setup screen; runs, run detail and the fleet show `Reconnecting… showing last snapshot`. The workspace still clears when the account or its credentials change.
+- Submitting a gate decision now waits for the gateway's answer, a refusal included, for up to 10 minutes. After 15 s it says it is still waiting, and the buttons stay disabled meanwhile. If no answer comes, or a request fails after the decision was already applied, Command Center reads the run and reports what the gateway recorded: applied, resolved with another action, not applied, or unknown. A reply for a gate the view no longer shows is dropped. Before, an approval the gateway applied after 15 s read 'Failed to submit decision: Request run.resolveDecision timed out after 15000ms' (TAT-4145 run bda11b1a, gate 5bc9ef11).
+
+## 0.28.0 - 2026-10-20
+
 - The ready workspace, its publication gate and the evidence view show the reason a person can act on, for example `Review rounds spent: 4 issues open`, instead of 'Fix and pass review' when fixing is not offered.
 - The runs list status badge shows `Needs your decision` for a run waiting at its open human gate, instead of `blocked`, and the Lifecycle column is wide enough for it. The run header shows the gate's readiness reason, and the pipeline's gate node keeps its waiting look with that reason as its tooltip.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.27.0 - 2026-10-19
 

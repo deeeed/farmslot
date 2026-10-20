@@ -2,8 +2,12 @@
 
 ## Unreleased
 
-- `humanGateBlockingReason(run)` words a run's blocking review findings by its open human gate's actionable reason; with no findings it is empty. `publicationGateView` takes an optional `gate` and shows that reason as its status. The publish guard still uses `publicationReviewBlockingReason`.
+- `publicationGateView` offers accepting the open review findings (`acceptFindings`, with `findings`) while they block every other publish approval, and asks for the reason when `acceptingFindings` is set. `reviewFixInProgress(run)` and `reviewFindingEntries(reviews)`, the review entries the publication block counts, are exported.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.8.0 - 2026-10-20
+
+- `humanGateBlockingReason(run)` words a run's blocking review findings by its open human gate's actionable reason; with no findings it is empty. `publicationGateView` takes an optional `gate` and shows that reason as its status. The publish guard still uses `publicationReviewBlockingReason`.
 
 ## 0.7.0 - 2026-10-19
 

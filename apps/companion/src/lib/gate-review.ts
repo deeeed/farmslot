@@ -5,6 +5,7 @@
  * withholds buttons; the gateway's own publish checks are unchanged.
  */
 import {
+  acceptReviewFindingsAvailable,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
@@ -268,7 +269,17 @@ export function gateReviewActions(
     )
       return { ...action, disabledReason: 'Evidence attestation is unavailable for this gate.' };
     if (!isPublishApprovalAction(action.id)) return { ...action, disabledReason: null };
-    if (reviewBlock) return { ...action, disabledReason: reviewBlock };
+    // Accepting findings is offered under the shared rule while they block (ADR-065 Amendment 8).
+    if (
+      action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION &&
+      !acceptReviewFindingsAvailable(readiness)
+    )
+      return {
+        ...action,
+        disabledReason: reviewBlock ?? 'Accepting review findings is unavailable for this gate.',
+      };
+    if (reviewBlock && action.id !== APPROVE_PUBLISH_UNRESOLVED_ACTION)
+      return { ...action, disabledReason: reviewBlock };
     const reasons = REVIEW_OVERRIDE_ACTIONS.has(action.id)
       ? guard.acceptanceReasons
       : [...guard.acceptanceReasons, ...guard.reviewReasons];

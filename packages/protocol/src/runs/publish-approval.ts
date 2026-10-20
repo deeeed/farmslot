@@ -38,6 +38,66 @@ export function evidenceAttestationAvailable(readiness?: RunGateReadiness): bool
   );
 }
 
+/** Accepting review findings needs the head's checked findings and no other blocking reason. */
+export function acceptReviewFindingsAvailable(readiness?: RunGateReadiness): boolean {
+  return (
+    !!readiness &&
+    readiness.state === 'not-ready' &&
+    !!readiness.findings?.length &&
+    !!readiness.findingsDigest &&
+    gateReasonsForAction(readiness, APPROVE_PUBLISH_UNRESOLVED_ACTION).length === 0
+  );
+}
+
+/** Actions that move the run past a gate and so require its prerequisites. */
+export function advancingGateAction(actionId: string): boolean {
+  return (
+    actionId === 'ready' ||
+    isPublishApprovalAction(actionId) ||
+    actionId === 'post' ||
+    actionId === 'accept-no-change'
+  );
+}
+
+/**
+ * The one availability rule for gate actions: the gateway lists and resolves with it, and
+ * clients list with it, so a listed action is one resolve accepts.
+ */
+export function gateActionsForReadiness<Action extends { id: string }>(
+  actions: Action[],
+  readiness: RunGateReadiness,
+): Action[] {
+  return actions.filter((action) =>
+    action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
+      ? evidenceAttestationAvailable(readiness)
+      : action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION
+        ? acceptReviewFindingsAvailable(readiness)
+        : !advancingGateAction(action.id) ||
+          gateReasonsForAction(readiness, action.id).length === 0,
+  );
+}
+
+/** The reasons that still block an action once its own overrides are applied. */
+export function gateReasonsForAction(
+  readiness: RunGateReadiness,
+  actionId?: string,
+): RunGatePrerequisiteReason[] {
+  const reviewOverride = [
+    APPROVE_PUBLISH_UNRESOLVED_ACTION,
+    APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+    APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+  ].some((id) => id === actionId);
+  return readiness.reasons.filter(
+    (reason) =>
+      !(
+        reviewOverride &&
+        reason.prerequisite === 'review' &&
+        reason.allowedReviewOverrides?.includes(actionId!)
+      ) &&
+      !(actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION && isEvidencePolicyReason(reason)),
+  );
+}
+
 export function evidenceAttestationReason(actionId: string, reason?: string): string | undefined {
   if (actionId !== APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION) {
     if (reason !== undefined)
