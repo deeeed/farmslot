@@ -1,6 +1,6 @@
 // @farmslot:serial — snapshots, overwrites, and restores the shared root `.farm-status.json`.
 import assert from 'node:assert/strict';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
@@ -17,9 +17,11 @@ import {
   addItem,
   claimQueueItem,
   getQueueSnapshot,
+  persistQueueNow,
   removeQueueItemInternal,
   stampQueueItemRunId,
 } from '../../backlog/dispatch-queue.js';
+import { isolatedTestPath } from '../../core/isolated-test-path.js';
 import { statusFile } from '../../core/state.js';
 import {
   createEngineDecision,
@@ -3590,6 +3592,53 @@ test('overlapping failed replays reopen the gate decision when the last of them 
   await assert.rejects(first, /first refresh failed/);
   assert.equal(getRun(run.id)?.status, 'blocked');
   assert.equal(decision()?.resolvedAt, undefined, 'the last failure reopens it');
+});
+
+test('a queue cleanup failure still retires the replay and reopens its gate decisions', async (t) => {
+  const run = await blockedGateRun(t, 'gate-queue-failure', [holdGate('pending-gate-queue')]);
+  updateRun(run.id, {
+    status: 'cancelled',
+    workGraphId: 'wg_gate_queue_failure',
+    workNodeId: 'wn_gate_queue_failure',
+  });
+  const queued = addItem(
+    {
+      project: run.project,
+      flowType: run.flowType,
+      ticketOrPr: run.ticketOrPr,
+      workGraphId: 'wg_gate_queue_failure',
+      workNodeId: 'wn_gate_queue_failure',
+    },
+    { kind: 'system' },
+  );
+  t.after(async () => {
+    removeQueueItemInternal(queued.id, 'test-cleanup');
+    await persistQueueNow();
+  });
+  const queueFile = isolatedTestPath('farmslot-test-dispatch-queue', '.json');
+  const savedQueue = `${queueFile}.saved`;
+  try {
+    await assert.rejects(
+      gateReplay(run.id, async () => {
+        await rename(queueFile, savedQueue);
+        await mkdir(queueFile);
+        throw new Error('refresh failed');
+      }),
+      /EISDIR/,
+    );
+  } finally {
+    await rm(queueFile, { recursive: true, force: true });
+    await rename(savedQueue, queueFile);
+  }
+  const decision = () => getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-queue');
+  assert.equal(decision()?.resolvedAt, undefined, 'queue failure cannot skip gate rollback');
+  await assert.rejects(
+    gateReplay(run.id, async () => {
+      throw new Error('next refresh failed');
+    }),
+    /next refresh failed/,
+  );
+  assert.equal(decision()?.resolvedAt, undefined, 'no phantom replay blocks the next rollback');
 });
 
 test('a replay refused for PR ownership leaves the discarded run untouched', async (t) => {

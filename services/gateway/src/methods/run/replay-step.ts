@@ -2233,16 +2233,19 @@ async function replayRunStep(
     await leaveGateReentry(false);
     return { run: getRun(params.runId)! };
   } catch (err) {
-    await releaseSoftLockIfHeld();
     try {
-      await rollBackReclaimedSlot(err);
+      await releaseSoftLockIfHeld();
     } finally {
-      // After the slot is back, and without replacing the replay's own error.
-      await leaveGateReentry(true).catch((reopenErr: unknown) =>
-        console.warn(
-          `[run] replay of ${params.runId.slice(0, 8)} could not reopen its gate decisions: ${(reopenErr as Error).message}`,
-        ),
-      );
+      try {
+        await rollBackReclaimedSlot(err);
+      } finally {
+        // Retire this replay even when queue persistence or slot rollback fails.
+        await leaveGateReentry(true).catch((reopenErr: unknown) =>
+          console.warn(
+            `[run] replay of ${params.runId.slice(0, 8)} could not reopen its gate decisions: ${(reopenErr as Error).message}`,
+          ),
+        );
+      }
     }
     throw err;
   }
