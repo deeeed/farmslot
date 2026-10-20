@@ -5,6 +5,7 @@ import type {
   ReadyGateInputSnapshot,
   ReadyGatePayload,
   RecipeRunArtifactGroup,
+  RunGetResult,
   RunRefreshPublishPackageResult,
 } from '@farmslot/protocol';
 import {
@@ -20,7 +21,11 @@ import {
 } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
-import { transferBoundRequestOptions } from '../../gateway-request-timeout.js';
+import {
+  DECISION_RESOLVE_TIMEOUT_MS,
+  GatewayRequestTimeoutError,
+  transferBoundRequestOptions,
+} from '../../gateway-request-timeout.js';
 import { rewriteMarkdownArtifactUrls } from '../../utils/artifact-markdown.js';
 import { diffSelectionHandOff, visibleDiffSelection } from '../../utils/diff-test-filter.js';
 import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
@@ -769,6 +774,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           selectedEvidenceKeys: payload ? this._selectedEvidenceKeysForSubmit(payload) : [],
           selectionData: extraSelectionData,
         }),
+        DECISION_RESOLVE_TIMEOUT_MS,
       );
       this._actionMessage = requestingReview
         ? 'Review requested; preparing the reviewer.'
@@ -776,9 +782,33 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._actionTone = 'success';
     } catch (err) {
       console.error('[ready-workspace] resolve failed:', err);
-      this._actionMessage = `Failed to submit decision: ${err instanceof Error ? err.message : String(err)}`;
-      this._actionTone = 'error';
+      // A late reply is not a refusal: report what the gateway actually did.
+      const timedOut = err instanceof GatewayRequestTimeoutError;
+      if (timedOut && (await this._decisionResolvedAs(actionId))) {
+        this._actionMessage = requestingReview
+          ? 'Review requested; preparing the reviewer.'
+          : readyDecisionSuccessMessage(approving);
+        this._actionTone = 'success';
+        return;
+      }
+      this._actionMessage = timedOut
+        ? 'The gateway has not confirmed this decision yet; it is still checking the gate. This view updates once it is applied.'
+        : `Failed to submit decision: ${err instanceof Error ? err.message : String(err)}`;
+      this._actionTone = timedOut ? '' : 'error';
       this._acting = false;
+    }
+  }
+
+  /** Whether the gateway already resolved this decision with `actionId`. */
+  async _decisionResolvedAs(actionId: string): Promise<boolean> {
+    const decisionId = this.decision?.id;
+    try {
+      const { run } = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId: this.runId });
+      const current = run.decisions.find((candidate) => candidate.id === decisionId);
+      return Boolean(current?.resolvedAt) && current?.resolvedAction === actionId;
+    } catch {
+      // No answer either: the decision stays unconfirmed, which is what the person is told.
+      return false;
     }
   }
 

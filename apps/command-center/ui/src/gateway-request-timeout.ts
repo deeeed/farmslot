@@ -11,6 +11,20 @@ export interface GatewayRequestOptions {
   extendWhen?: (payload: unknown) => boolean;
 }
 
+/** The gateway did not answer in time; the request may still have taken effect there. */
+export class GatewayRequestTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GatewayRequestTimeoutError';
+  }
+}
+
+/**
+ * Resolving a decision revalidates the gate against its slot before the gateway
+ * answers, and may restore a parked gate first: well past the default window.
+ */
+export const DECISION_RESOLVE_TIMEOUT_MS = 120_000;
+
 export interface IdleRequestTimeoutHandle {
   clear(): void;
   extend(): void;
