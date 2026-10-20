@@ -1,11 +1,30 @@
 /** Display limits apply after font layout, never by cutting authored copy. */
-export const HUD_INTENT_MAX_LINES = 2;
-export const HUD_INTENT_LINE_HEIGHT = 16;
+export const HUD_INTENT_FONT_SIZE = 16;
+export const HUD_INTENT_LINE_HEIGHT = 20;
+/** Nominal: a 120-character intent fits a card in 3 lines. Web never clamps the intent. */
+export const HUD_INTENT_MAX_LINES = 3;
+export const HUD_NATIVE_INTENT_FONT_SIZE = 13;
+export const HUD_NATIVE_INTENT_LINE_HEIGHT = 17;
+export const HUD_NATIVE_INTENT_MAX_LINES = 2;
+/** The discreet line for the step that just finished. */
+export const HUD_FINISHED_FONT_SIZE = 11;
+export const HUD_FINISHED_LINE_HEIGHT = 14;
+export const HUD_NATIVE_FINISHED_FONT_SIZE = 10;
+export const HUD_NATIVE_FINISHED_LINE_HEIGHT = 13;
+export const HUD_COLORS = {
+  muted: 'rgba(255,255,255,0.55)',
+  pass: '#48d17a',
+  fail: '#ff8a8a',
+} as const;
 export const RECIPE_INTENT_WARN_LENGTH = 80;
 export const RECIPE_INTENT_MAX_LENGTH = 120;
+/**
+ * Native bounds clip. Web heights are nominal (a card with 3 intent lines, the
+ * finished line and an error): web panels grow rather than hide intent text.
+ */
 export const HUD_PANEL_BOUNDS = {
   native: { maxWidth: 360, maxHeight: 88 },
-  card: { maxWidth: 360, maxHeight: 144 },
+  card: { maxWidth: 500, maxHeight: 144 },
   bar: { maxWidth: 960, maxHeight: 144 },
 } as const;
 
@@ -60,26 +79,78 @@ export function hudIntentDisplay(
       .trim(),
     panel: HUD_PANEL_BOUNDS[platform],
     nativeProps: {
-      numberOfLines: HUD_INTENT_MAX_LINES,
+      numberOfLines: HUD_NATIVE_INTENT_MAX_LINES,
       ellipsizeMode: 'tail' as const,
       allowFontScaling: false,
     },
     nativeStyle: {
-      lineHeight: HUD_INTENT_LINE_HEIGHT,
-      maxHeight: HUD_INTENT_LINE_HEIGHT * HUD_INTENT_MAX_LINES,
-      fontSize: 12,
+      lineHeight: HUD_NATIVE_INTENT_LINE_HEIGHT,
+      maxHeight: HUD_NATIVE_INTENT_LINE_HEIGHT * HUD_NATIVE_INTENT_MAX_LINES,
+      fontSize: HUD_NATIVE_INTENT_FONT_SIZE,
     },
+    // No clamp, ellipsis or max height: the panel grows to show the whole intent.
     webStyle: {
-      display: '-webkit-box',
-      WebkitBoxOrient: 'vertical',
-      WebkitLineClamp: String(HUD_INTENT_MAX_LINES),
       whiteSpace: 'normal',
       overflowWrap: 'anywhere',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
+      fontSize: `${HUD_INTENT_FONT_SIZE}px`,
       lineHeight: `${HUD_INTENT_LINE_HEIGHT}px`,
-      maxHeight: `${HUD_INTENT_LINE_HEIGHT * HUD_INTENT_MAX_LINES}px`,
+      fontWeight: '600',
     },
+  };
+}
+
+export interface HudFinishedStep {
+  nodeId: string;
+  intent: string;
+  status: string;
+}
+
+/**
+ * The discreet line for the step that just finished, unless that step is still
+ * the main line (a failing main line takes the fail colour instead).
+ */
+export function hudFinishedLine(
+  last: HudFinishedStep | null | undefined,
+  currentNodeId?: string,
+): { text: string; tone: 'pass' | 'fail' } | null {
+  if (!last || (last.status !== 'pass' && last.status !== 'fail')) return null;
+  if (last.nodeId === currentNodeId) return null;
+  const mark = last.status === 'pass' ? '✓' : '✗';
+  return { text: `${mark} ${hudIntentDisplay(last.intent).text}`, tone: last.status };
+}
+
+/** One step result as a step-numbered HUD (native) sees it. */
+export interface HudStepResult {
+  step?: number;
+  intent: string;
+  status: 'pass' | 'fail';
+}
+
+/**
+ * Folds one step-numbered HUD update into the step that just finished. A new
+ * run starts clean: a cleared or idle HUD, an earlier step, a running step that
+ * is not after the last result, or any numbered step after the run's step-less
+ * completion result. As on web, a failing step shows nothing below it, and the
+ * finished line never repeats the main line's text.
+ */
+export function nextHudFinishedStep(
+  last: HudStepResult | null,
+  next: { status: string; intent: string; currentStep?: number } | null,
+): { finished: HudStepResult | null; last: HudStepResult | null } {
+  if (!next || next.status === 'idle') return { finished: null, last: null };
+  // The runner's completion result carries no step number, so a numbered step after it is a new run.
+  const newRun =
+    last !== null &&
+    next.currentStep !== undefined &&
+    (last.step === undefined ||
+      next.currentStep < last.step ||
+      (next.status === 'running' && next.currentStep === last.step));
+  const previous = newRun ? null : last;
+  const finished = next.status === 'fail' || previous?.intent === next.intent ? null : previous;
+  if (next.status !== 'pass' && next.status !== 'fail') return { finished, last: previous };
+  return {
+    finished,
+    last: { step: next.currentStep, intent: next.intent, status: next.status },
   };
 }
 
