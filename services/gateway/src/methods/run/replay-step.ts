@@ -1296,6 +1296,40 @@ async function replayRunStep(
   const selectionGeneration = existing.engineState?.generation;
   let revived = false;
   let nativeReplayGeneration: number | undefined;
+  let supersededGate: { generation: number; decisionIds: Set<string> } | undefined;
+  // A replay that fails before it revives the run leaves the run as it found it, so
+  // the gate decisions it superseded open again. Otherwise a blocked run is left
+  // with nothing to resolve (TAT-4158 4237202e, 2026-10-20). A newer replay or a
+  // status change since means another action owns the run; that one stays.
+  const reopenSupersededGateDecisions = async (gate: NonNullable<typeof supersededGate>) => {
+    const current = getRun(params.runId);
+    if (
+      !current ||
+      current.status !== existing.status ||
+      current.engineState?.generation !== gate.generation
+    )
+      return;
+    let reopened = 0;
+    const decisions = current.decisions.map((decision) => {
+      if (
+        !gate.decisionIds.has(decision.id) ||
+        decision.resolvedAction !== 'superseded' ||
+        decision.context?.supersededBy !== 'gate-reentry'
+      )
+        return decision;
+      reopened += 1;
+      const { resolvedAt: _resolvedAt, resolvedAction: _resolvedAction, ...open } = decision;
+      const { supersededBy: _supersededBy, ...context } = decision.context;
+      return { ...open, context };
+    });
+    if (!reopened) return;
+    const run = updateRun(params.runId, { decisions });
+    await persistRunNow(run, 'replay-rollback-decisions');
+    emit(Events.RUN_UPDATED, { run });
+    console.log(
+      `[run] replay of ${params.runId.slice(0, 8)} failed; reopened ${reopened} superseded gate decision(s)`,
+    );
+  };
   try {
     const slotCapabilities = reselectsSlot
       ? await withRunSources(existing, () => replaySlotCapabilityRequirements(existing), {
@@ -1363,6 +1397,10 @@ async function replayRunStep(
         : [];
     if (supersedeStaleHumanGateDecisions(supersededGateAudit) > 0) {
       updateRun(params.runId, { decisions: existing.decisions });
+      supersededGate = {
+        generation: ownedGeneration,
+        decisionIds: new Set(supersededGateAudit.map((decision) => decision.id)),
+      };
     }
 
     // Test-only pause after sync supersession. Do not `await` a missing hook:
@@ -2102,6 +2140,7 @@ async function replayRunStep(
     return { run: getRun(params.runId)! };
   } catch (err) {
     await releaseSoftLockIfHeld();
+    if (supersededGate && !revived) await reopenSupersededGateDecisions(supersededGate);
     if (
       reclaimedSlotId &&
       !revived &&

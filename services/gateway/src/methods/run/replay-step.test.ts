@@ -2200,7 +2200,7 @@ test('runReplayStep supersedes a pending human-gate decision instead of deleting
   });
 });
 
-test('runReplayStep supersedes pending gate decisions before its first awaited operation', async (t) => {
+test('runReplayStep supersedes pending gate decisions before its first awaited operation and reopens them when it fails', async (t) => {
   const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
   const taskFile = '/tmp/farmslot-human-gate-race/TASK.md';
   const slotOwner = createRun({
@@ -2265,21 +2265,31 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
     }
   });
 
+  // The hook runs right after the synchronous supersession, before the slot re-claim
+  // (the replay's first awaited operation), so it sees what a resolver would see then.
+  let duringReplay: RunDecision | undefined;
   await assert.rejects(
     () =>
-      runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {}),
+      runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {}, {
+        afterGenerationBump: async () => {
+          duringReplay = structuredClone(
+            getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-race'),
+          );
+        },
+      }),
     /no longer safely reclaimable/,
   );
 
-  // Even though the replay died at its FIRST awaited operation, the pending
-  // gate decision was already superseded — an operator resolving it during
-  // the awaited window can no longer spawn a competing engine loop.
+  // An operator resolving it during the awaited window can no longer spawn a
+  // competing engine loop.
+  assert.equal(duringReplay?.resolvedAction, 'superseded');
+  assert.equal(duringReplay?.context?.supersededBy, 'gate-reentry');
+  // The replay died before reviving the run, so the blocked run gets it back.
   const after = getRun(run.id);
-  assert.ok(after);
-  const superseded = after.decisions.find((d) => d.id === 'pending-gate-race');
-  assert.ok(superseded);
-  assert.equal(superseded.resolvedAction, 'superseded');
-  assert.equal(superseded.context?.supersededBy, 'gate-reentry');
+  const reopened = after?.decisions.find((d) => d.id === 'pending-gate-race');
+  assert.equal(after?.status, 'blocked');
+  assert.equal(reopened?.resolvedAt, undefined);
+  assert.equal(reopened?.context?.supersededBy, undefined);
 });
 
 test('runReplayStep drops a stale monitor decision when replaying from prepare', async (t) => {
@@ -3393,6 +3403,91 @@ test('a human-gate replay whose slot machine is disconnected keeps the open deci
   assert.match(
     refusal.message,
     new RegExp(`machine replay-gate-offline-node for slot ${slotId} is not connected`),
+  );
+});
+
+// TAT-4158 4237202e, 2026-10-20: restart recovery replayed the blocked gate. The replay
+// superseded its open decision, then failed refreshing the worker's publication
+// evidence, and left the run blocked with nothing to resolve.
+test('a human-gate replay that fails after superseding the open decision reopens it', async (t) => {
+  const slotId = await disposablePoolSlot(t, 'gate-refresh');
+  const taskFile = '/tmp/farmslot-human-gate-refresh/TASK.md';
+  const created = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    slotId,
+  });
+  const pendingGate: RunDecision = {
+    id: 'pending-gate-refresh',
+    type: 'engine_human_gate',
+    title: 'Publication package is unavailable',
+    description: 'Open decision at restart',
+    actions: [{ id: 'hold', label: 'Hold', style: 'secondary' as const }],
+    createdAt: '2026-10-20T11:06:34.000Z',
+  };
+  const doneThroughComplete = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+    'complete',
+  ]);
+  const run = updateRun(created.id, {
+    status: 'blocked',
+    taskFile,
+    decisions: [pendingGate],
+    steps: created.steps.map((step) =>
+      doneThroughComplete.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'human-gate'
+          ? { ...step, status: 'running' }
+          : step,
+    ),
+  });
+  await holdOnlySlot(t, slotId, {
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: run.id,
+    slot_epoch: 4,
+  });
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { slotId: null });
+    await evictTestRun(run.id, 'failed');
+  });
+
+  let supersededDuringReplay: string | undefined;
+  await assert.rejects(
+    runReplayStep(
+      { runId: run.id, stepName: 'human-gate', triggeredBy: 'auto-recovery' },
+      () => {},
+      {
+        startEngine: async () => {},
+        afterGenerationBump: async () => {
+          supersededDuringReplay = getRun(run.id)?.decisions.find(
+            (d) => d.id === 'pending-gate-refresh',
+          )?.resolvedAction;
+          throw new Error('Publication declaration belongs to another recipe attempt');
+        },
+      },
+    ),
+    /another recipe attempt/,
+  );
+
+  assert.equal(supersededDuringReplay, 'superseded', 'the replay superseded it first');
+  const after = getRun(run.id);
+  const decision = after?.decisions.find((d) => d.id === 'pending-gate-refresh');
+  assert.equal(after?.status, 'blocked');
+  assert.equal(decision?.resolvedAt, undefined, 'the blocked run has its decision back');
+  assert.equal(decision?.resolvedAction, undefined);
+  assert.equal(decision?.context?.supersededBy, undefined);
+  assert.deepEqual(
+    decision?.actions.map((action) => action.id),
+    ['hold'],
   );
 });
 
