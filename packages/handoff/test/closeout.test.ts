@@ -217,7 +217,7 @@ test('closeout quarantines a floor secret and cannot share it', () => {
   const { taskDir, configPath } = scenario({
     destination,
     learnings:
-      '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+      '# Learnings\n\nletter advice cage absurd amount doctor acoustic avoid letter advice cage above\n',
   });
   const result = closeoutLearningPackage({
     taskDir,
@@ -250,7 +250,7 @@ test('closeout quarantines a floor secret and cannot share it', () => {
     })
     .map((entry) => readFileSync(entry, 'utf8'))
     .join('\n');
-  assert.doesNotMatch(taskText, /abandon ability able about above absent/u);
+  assert.doesNotMatch(taskText, /letter advice cage absurd amount doctor/u);
 });
 
 test('sharing requires a previously staged package', () => {

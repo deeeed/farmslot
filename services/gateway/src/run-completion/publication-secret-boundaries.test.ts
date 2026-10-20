@@ -20,7 +20,8 @@ mock.module('../integrations/github-client.js', {
 });
 const llm = await import('../llm/index.js');
 let llmCalls = 0;
-const phrase = Array<string>(12).fill('abandon').join(' ');
+// The published all-zero-entropy BIP-39 test vector: checksum-valid, never a wallet.
+const phrase = [...Array<string>(11).fill('abandon'), 'about'].join(' ');
 let generatedText = phrase;
 mock.module('../llm/index.js', {
   namedExports: {

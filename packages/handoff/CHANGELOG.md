@@ -6,6 +6,10 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.4.1 - 2026-10-20
+
+- Recovery-phrase detection blocks only a BIP-39 phrase whose checksum is valid. Every 12/15/18/21/24-word window inside a run of 12+ wordlist words is checked, contiguous and at strides of two and three, so a valid phrase next to or interleaved with wordlist labels still blocks. In a text that is one JSON document, a string holding several words is now one unit, so a run no longer crosses from one field into the next key or value, in the raw text or in its unescaped views; escaped content inside one string and a word array still compose, and quotes elsewhere stay ordinary separators. Before, any 12-word run of wordlist words blocked. That included recipe intent prose, the `next` key and node ids, which blocked a real publication. Configured secret patterns and every other floor check are unchanged.
+
 ## 0.4.0 - 2026-10-19
 
 - The default task template asks for one `learnings.md` bullet per failure in the run that is likely to recur and should change a template, reviewer or engine step, with `- None` as a valid answer (ADR-026 Amendment 1).

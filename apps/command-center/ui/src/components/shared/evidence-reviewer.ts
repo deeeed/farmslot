@@ -21,6 +21,7 @@ import {
 } from '../workspace/visual-claim-judgment.js';
 import { workspaceArtifactBasename } from '../workspace/workspace-artifacts.js';
 
+import { isForeignRecording, modelRecording } from './evidence-reviewer-recording.js';
 import type { EvidenceReviewerView } from './evidence-reviewer-url-state.js';
 import { gatewayMediaSrc } from './gateway-media-src.js';
 import type { MediaLightbox } from './media-lightbox.js';
@@ -65,7 +66,15 @@ export function evidenceReviewerSelection(input: {
   resolveUrl: (path: string) => string;
   opened?: LightboxItem;
 }): EvidenceReviewerSelection {
-  const { model, resolveUrl, opened } = input;
+  const { model, resolveUrl } = input;
+  // A video from another recipe run would carry that run's trace markers: open the
+  // model's own recording. Hosts rebuild the selection as the model loads.
+  const opened =
+    input.opened &&
+    isVideoLightboxItem(input.opened) &&
+    isForeignRecording(model, input.opened.path)
+      ? undefined
+      : input.opened;
   const timeline = model.recordings[0];
   const path = timeline ? model.artifactPath(timeline.videoPath) : null;
   const recording =
@@ -372,10 +381,7 @@ export class EvidenceReviewer extends LitElement {
     const model = this.model;
     const recording = this.selection?.recording;
     if (!model || !recording) return undefined;
-    return (
-      model.recordings.find((entry) => model.artifactPath(entry.videoPath) === recording.path) ??
-      model.recordings[0]
-    )?.videoPath;
+    return (modelRecording(model, recording.path) ?? model.recordings[0])?.videoPath;
   }
 
   /** The steps that prove the criterion, the same grouping the proof step list shows. */

@@ -1678,7 +1678,7 @@ test('a package publication would refuse for secret values is not ready for appr
   const run = makeRun();
   assert.equal((await collectRunGateReadiness(run, prepared, inputs)).state, 'ready');
 
-  const phrase = Array<string>(12).fill('abandon').join(' ');
+  const phrase = [...Array<string>(11).fill('abandon'), 'about'].join(' ');
   const refused = await collectRunGateReadiness(
     run,
     { ...prepared, draftBody: `${prepared.draftBody}\n\n${phrase}` },
@@ -1714,7 +1714,10 @@ test('an unreadable secret scan fails closed, a verdict holds for its content, a
   assert.equal(unscanned?.code, 'evidence-validation-unavailable');
   assert.equal(unreadable.state, 'not-ready');
 
-  const secret = { ...prepared, draftBody: Array<string>(12).fill('abandon').join(' ') };
+  const secret = {
+    ...prepared,
+    draftBody: [...Array<string>(11).fill('abandon'), 'about'].join(' '),
+  };
   const refused = await collectRunGateReadiness(makeRun(), secret, inputs);
   const reason = refused.reasons.find(({ code }) => code === 'publication-secret-values');
   assert.ok(reason);

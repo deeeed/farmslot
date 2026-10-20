@@ -160,6 +160,7 @@ import { RunDetailState } from './run-detail-state.js';
 import { runDetailStyles } from './run-detail-styles.js';
 import {
   artifactSelectionFromRunDetailHash,
+  GALLERY_ARTIFACT_VIEW,
   isRunDetailHashForRun,
   runDetailEvidenceArtifactHash,
   runDetailStepHash,
@@ -1034,8 +1035,18 @@ export class RunDetail extends RunDetailState {
   }
 
   /** The one way the evidence lightbox opens: the Evidence tab, an `artifact=` link or an AC row. */
-  private _openEvidenceLightbox(selection: EvidenceLightboxSelection, writeHash = true): void {
+  private _openEvidenceLightbox(
+    selection: EvidenceLightboxSelection,
+    options: {
+      /** False when the URL already names this file. */
+      writeHash?: boolean;
+      /** A criterion's file gallery, which stays in run detail rather than the gate's review. */
+      gallery?: boolean;
+    } = {},
+  ): void {
+    const { writeHash = true, gallery = false } = options;
     if (
+      !gallery &&
       selection.criterionId &&
       this._openInGateReview(selection.criterionId, selection.items[selection.index])
     )
@@ -1044,7 +1055,7 @@ export class RunDetail extends RunDetailState {
     this._evidenceLightboxIndex = selection.index;
     this._evidenceLightboxScope = selection.scope;
     this._evidenceLightboxCriterionId = selection.criterionId;
-    this._evidenceGallery = false;
+    this._evidenceGallery = gallery;
     this._evidenceArtifactUnavailable = null;
     this._evidenceLightboxOpen = true;
     if (writeHash) this._updateEvidenceArtifactHash(selection.items[selection.index] ?? null);
@@ -1111,7 +1122,10 @@ export class RunDetail extends RunDetailState {
       };
     }
     // The URL already names this artifact; rewriting it would drop the trace marker.
-    this._openEvidenceLightbox(selection, false);
+    this._openEvidenceLightbox(selection, {
+      writeHash: false,
+      gallery: artifactView === GALLERY_ARTIFACT_VIEW,
+    });
   }
 
   private _syncSelectedStepToHash() {
@@ -1279,27 +1293,30 @@ export class RunDetail extends RunDetailState {
    * An acceptance criterion's evidence file opens in the run's evidence lightbox,
    * stepping through that criterion's files, not a new browser window.
    */
-  private _openAcceptanceEvidence = ({
+  private _openAcceptanceEvidence = (open: AcceptanceEvidenceOpen) => {
+    const selection = this._acceptanceEvidenceSelection(open);
+    if (selection) this._openEvidenceLightbox(selection);
+  };
+
+  private _acceptanceEvidenceSelection({
     criterion,
     evidence,
     index,
     evidenceModel,
-  }: AcceptanceEvidenceOpen) => {
-    if (!this.run) return;
+  }: AcceptanceEvidenceOpen): EvidenceLightboxSelection | null {
+    if (!this.run) return null;
     const resolveArtifactUrl = this._captureEvidenceResolver();
-    this._openEvidenceLightbox(
-      acceptanceEvidenceSelection({
-        runId: this.runId,
-        familyId: this.run.familyId,
-        criterion,
-        evidence,
-        index,
-        runArtifacts: this._linkableRunArtifacts(this.run),
-        artifactUrl: (artifact) => resolveArtifactUrl(artifact.path),
-        evidenceModel,
-      }),
-    );
-  };
+    return acceptanceEvidenceSelection({
+      runId: this.runId,
+      familyId: this.run.familyId,
+      criterion,
+      evidence,
+      index,
+      runArtifacts: this._linkableRunArtifacts(this.run),
+      artifactUrl: (artifact) => resolveArtifactUrl(artifact.path),
+      evidenceModel,
+    });
+  }
 
   private async _recordVisualReview(claimId: string, verdict: 'confirmed' | 'rejected') {
     const model = this.evidenceModel;
@@ -1479,6 +1496,7 @@ export class RunDetail extends RunDetailState {
       item,
       location.hash,
       this._evidenceLightboxCriterionId,
+      this._evidenceGallery,
     );
     if (location.hash !== next) history.replaceState(null, '', next);
   }
@@ -1567,7 +1585,7 @@ export class RunDetail extends RunDetailState {
         scope: `${view.claimId} evidence`,
         criterionId: view.claimId,
       },
-      false,
+      { writeHash: false },
     );
     return true;
   }
@@ -1577,13 +1595,16 @@ export class RunDetail extends RunDetailState {
     const row = runAcceptanceCriterionEvidence(this).find((candidate) => candidate.id === claimId);
     const criterion = this.evidenceModel?.claims.find((claim) => claim.id === claimId);
     if (!row?.evidence.length || !criterion) return;
-    this._openAcceptanceEvidence({
+    const selection = this._acceptanceEvidenceSelection({
       criterion,
       evidence: row.evidence,
       index: 0,
       evidenceModel: this.evidenceModel ?? undefined,
     });
-    this._evidenceGallery = true;
+    if (!selection) return;
+    // The gallery, with its file, replaces the review in the link.
+    this._dropReviewLink();
+    this._openEvidenceLightbox(selection, { gallery: true });
   }
 
   /**
@@ -1600,13 +1621,18 @@ export class RunDetail extends RunDetailState {
     this._updateEvidenceArtifactHash(recording ?? null);
   }
 
-  private _closeEvidenceLightbox(): void {
-    // The gate's own review keeps its link.
+  /** Run detail's review leaves the link; the gate's own review keeps its link. */
+  private _dropReviewLink(): void {
     if (evidenceReviewerViewFromHash() && !(this.run && runMountsPublicationGate(this.run)))
       writeEvidenceReviewerHash(null);
     this._reviewLink = undefined;
     this._reviewLinkKey = '';
+  }
+
+  private _closeEvidenceLightbox(): void {
+    this._dropReviewLink();
     this._evidenceLightboxOpen = false;
+    this._evidenceGallery = false;
     this._evidenceArtifactUnavailable = null;
     this._updateEvidenceArtifactHash(null);
   }
@@ -1687,7 +1713,12 @@ export class RunDetail extends RunDetailState {
       showEvidenceGallery: (claimId) => this._openClaimFiles(claimId),
       reviewEvidence:
         this._evidenceLightboxCriterionId && this.evidenceModel
-          ? () => (this._evidenceGallery = false)
+          ? () => {
+              this._evidenceGallery = false;
+              this._updateEvidenceArtifactHash(
+                this._evidenceLightboxItems[this._evidenceLightboxIndex] ?? null,
+              );
+            }
           : undefined,
       selectEvidenceClaim: (claimId) => this._selectEvidenceClaim(claimId),
       navigateEvidenceLightbox: (index) => this._navigateEvidenceLightbox(index),

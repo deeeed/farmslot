@@ -43,6 +43,26 @@ test('an acceptance evidence link carries its criterion, and closing or a plain 
     false,
   );
   assert.equal(runDetailEvidenceArtifactHash('run-1', null, opened), '#run/run-1');
+  // The criterion's gallery is in the link, so a reload opens the gallery, not the review.
+  const gallery = runDetailEvidenceArtifactHash(
+    'run-1',
+    { path: 'artifacts/evidence-ac1.png' },
+    '#run/run-1',
+    'AC-1',
+    true,
+  );
+  assert.equal(artifactSelectionFromRunDetailHash(gallery).artifactView, 'gallery');
+  assert.equal(
+    artifactSelectionFromRunDetailHash(
+      runDetailEvidenceArtifactHash(
+        'run-1',
+        { path: 'artifacts/evidence-ac1.png' },
+        gallery,
+        'AC-1',
+      ),
+    ).artifactView,
+    null,
+  );
   assert.equal(runInventoryHashFromDetail(opened).includes('artifactAc'), false);
   assert.equal(
     runDetailStepHash(
