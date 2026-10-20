@@ -818,7 +818,10 @@ export class EvidenceReviewer extends LitElement {
               .expandLabel=${current?.evidence.length ? 'All files' : ''}
               @lightbox-expand=${() => this.showFiles()}
               @lightbox-moment=${(event: CustomEvent<{ ms: number }>) =>
-                this.announce({ atMs: event.detail.ms })}
+                this.announce({
+                  atMs: event.detail.ms,
+                  ...(this.checkStep !== null ? { check: this.checkStep } : {}),
+                })}
               @lightbox-close=${() => this.close()}
             ></media-lightbox>`
           : html`<div class="empty">No recording or screenshot for this criterion.</div>`}

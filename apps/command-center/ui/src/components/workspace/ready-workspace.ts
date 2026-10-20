@@ -226,6 +226,32 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     this._evidenceModel?.selectClaim(id);
     this._openReview(id, undefined);
   }
+
+  /**
+   * Opens a criterion's full-screen review from outside the gate (run detail's own
+   * criteria and pipeline), so the gate's review stays the one owner of review links.
+   * False until the gate's evidence knows the criterion.
+   */
+  openEvidenceReview(claimId: string, opened?: LightboxItem): boolean {
+    const model = this._evidenceModel;
+    if (!model?.claims.some((claim) => claim.id === claimId)) return false;
+    model.selectClaim(claimId, opened?.path);
+    this._openReview(
+      claimId,
+      opened
+        ? {
+            ...this._evidenceItem(opened.path),
+            ...(opened.initialTraceIndex !== undefined
+              ? {
+                  initialTraceIndex: opened.initialTraceIndex,
+                  initialTracePhase: opened.initialTracePhase,
+                }
+              : {}),
+          }
+        : undefined,
+    );
+    return true;
+  }
   private _visualReviewControls() {
     return {
       judgmentRows: this._evidenceModel?.judgmentRows(gateway.authenticatedPrincipal) ?? [],

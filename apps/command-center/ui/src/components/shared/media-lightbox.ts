@@ -509,7 +509,8 @@ export class MediaLightbox extends MediaLightboxState {
 
   /** Where a paused video rests (a pause, a scrub, a frame step), for a host's link. */
   private _reportMoment(video: HTMLVideoElement): void {
-    if (!video.paused) return;
+    // A video removed from the page (closed, or swapped for a screenshot) pauses too.
+    if (!video.paused || !video.isConnected) return;
     this.dispatchEvent(
       new CustomEvent('lightbox-moment', { detail: { ms: video.currentTime * 1000 } }),
     );

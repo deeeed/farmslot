@@ -9,6 +9,8 @@ import {
 import { loadProjectVars } from '../core/config.js';
 import { getRun, updateRun } from '../runs/store.js';
 
+import { loadProjectVarsOrNull } from './project-vars.js';
+
 // ─── External links ───
 type ProjectLinkConfig = {
   ci?: { repo?: string };
@@ -103,15 +105,7 @@ export async function backfillMissingRunLinks(runs: readonly Run[]): Promise<voi
   );
   // A project without config (deleted, or legacy) is checked and reported once, not per run.
   const missingProjects = new Set<string>();
-  for (const project of new Set(unlinked.map((run) => run.project))) {
-    try {
-      await loadProjectVars(project);
-    } catch (err) {
-      missingProjects.add(project);
-      console.warn(
-        `[run-engine] run links skipped for project ${project}: ${(err as Error).message.slice(0, 200)}`,
-      );
-    }
-  }
+  for (const project of new Set(unlinked.map((run) => run.project)))
+    if (!(await loadProjectVarsOrNull(project, 'run links backfill'))) missingProjects.add(project);
   for (const run of unlinked) if (!missingProjects.has(run.project)) await refreshRunLinks(run.id);
 }

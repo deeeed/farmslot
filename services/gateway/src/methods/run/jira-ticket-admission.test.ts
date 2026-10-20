@@ -286,7 +286,7 @@ test('a stored run of a project without config is skipped, reported once', async
   await backfillMissingRunLinks(runs.map((run) => getRun(run.id)!));
   for (const run of runs) assert.equal(getRun(run.id)?.links, undefined);
   assert.equal(
-    warn.mock.calls.filter((call) => String(call.arguments[0]).includes('run links skipped'))
+    warn.mock.calls.filter((call) => String(call.arguments[0]).includes('run links backfill'))
       .length,
     1,
   );

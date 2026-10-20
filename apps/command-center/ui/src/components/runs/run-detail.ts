@@ -1035,6 +1035,11 @@ export class RunDetail extends RunDetailState {
 
   /** The one way the evidence lightbox opens: the Evidence tab, an `artifact=` link or an AC row. */
   private _openEvidenceLightbox(selection: EvidenceLightboxSelection, writeHash = true): void {
+    if (
+      selection.criterionId &&
+      this._openInGateReview(selection.criterionId, selection.items[selection.index])
+    )
+      return;
     this._evidenceLightboxItems = selection.items;
     this._evidenceLightboxIndex = selection.index;
     this._evidenceLightboxScope = selection.scope;
@@ -1476,6 +1481,23 @@ export class RunDetail extends RunDetailState {
       this._evidenceLightboxCriterionId,
     );
     if (location.hash !== next) history.replaceState(null, '', next);
+  }
+
+  /**
+   * On a run showing its publication gate, a criterion's review opens in the gate's
+   * review, the one owner of review links; its link replaces this artifact link.
+   */
+  private _openInGateReview(claimId: string, opened: LightboxItem | undefined): boolean {
+    if (!this.run || !runMountsPublicationGate(this.run)) return false;
+    const gate = this.renderRoot.querySelector('ready-workspace');
+    if (!gate?.openEvidenceReview(claimId, opened)) return false;
+    // A saved gate sits in a collapsible section; its review shows only while it is open.
+    const section = gate.closest('details');
+    if (section) section.open = true;
+    this._evidenceLightboxOpen = false;
+    this._evidenceLightboxCriterionId = null;
+    this._updateEvidenceArtifactHash(null);
+    return true;
   }
 
   /** One criterion's evidence opens as the full-screen review, on the file the user chose. */
