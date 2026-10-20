@@ -183,6 +183,7 @@ import {
   persistRunNow,
   updateRun,
   updateRunStep,
+  withTaskAdmission,
 } from '../runs/store.js';
 import {
   assertNativeRunOwner,
@@ -417,12 +418,14 @@ export async function runCreate(
   options: RunCreateInternalOptions = {},
 ): Promise<RunCreateResult> {
   if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
-  return withSourceCreationPlan(params, options, (plan, seal, runId) =>
-    runCreateWithSources(
-      params,
-      emit,
-      { ...options, sourceCreationSeal: seal, sourceCreationRunId: runId },
-      plan,
+  return withTaskAdmission(params.taskFile, () =>
+    withSourceCreationPlan(params, options, (plan, seal, runId) =>
+      runCreateWithSources(
+        params,
+        emit,
+        { ...options, sourceCreationSeal: seal, sourceCreationRunId: runId },
+        plan,
+      ),
     ),
   );
 }

@@ -1628,8 +1628,8 @@ const ARCHIVE_DIR = path.join(RUNS_DIR, 'archive');
  * Archived runs leave the live map but stay durable on disk, so any projection
  * that claims historical lineage must read them too — archiving is exactly the
  * "outside the current page" case. Cached because roadmap delivery reads this per
- * request; only `archiveRun` invalidates it, since `deleteRun` unlinks from
- * `RUNS_DIR` and never touches the archive directory.
+ * request; `archiveRun` invalidates it and `deleteArchivedRun` drops its one record.
+ * `deleteRun` unlinks from `RUNS_DIR` and never touches the archive directory.
  */
 let archivedRunsCache: Run[] | null = null;
 /**
@@ -1989,6 +1989,32 @@ async function archiveRunBody(id: string): Promise<boolean> {
     if (code !== 'ENOENT') throw err;
   }
   return true;
+}
+
+const admittingTaskDirectories = new Map<string, number>();
+
+/**
+ * Hold a task directory while a run that names it is admitted, until it is registered
+ * or refused. Run retention leaves held directories in place (ADR-039 Amendment 2).
+ */
+export async function withTaskAdmission<T>(
+  taskFile: string | undefined,
+  admit: () => Promise<T>,
+): Promise<T> {
+  if (!taskFile) return admit();
+  const dir = path.resolve(path.dirname(taskFile));
+  admittingTaskDirectories.set(dir, (admittingTaskDirectories.get(dir) ?? 0) + 1);
+  try {
+    return await admit();
+  } finally {
+    const holds = admittingTaskDirectories.get(dir)! - 1;
+    if (holds) admittingTaskDirectories.set(dir, holds);
+    else admittingTaskDirectories.delete(dir);
+  }
+}
+
+export function isTaskDirectoryAdmitting(dir: string): boolean {
+  return admittingTaskDirectories.has(path.resolve(dir));
 }
 
 /** Every task directory a run names: its task, its active task and its agents' tasks. */

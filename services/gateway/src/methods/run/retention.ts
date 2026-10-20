@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, renameSync, rmSync } from 'node:fs';
-import { readdir, rm } from 'node:fs/promises';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Events, type Run } from '@farmslot/protocol';
@@ -36,6 +36,7 @@ import {
   getAllRunsWithArchived,
   getRun,
   getRunWithArchived,
+  isTaskDirectoryAdmitting,
   runsDirectory,
   runSessionArchiveDir,
 } from '../../runs/store.js';
@@ -95,35 +96,41 @@ const prRecordedSettled = (run: Run) =>
 
 /**
  * Each run's PR state for this pass. A PR the run records as merged or closed is settled.
- * Otherwise its repository's open PRs are read once; an unresolvable identity, an
- * unreadable repository or a possibly truncated list leaves the run `unknown`.
+ * Otherwise every identity it has (the review-session identity, and its own number in the
+ * project's repository) is checked against that repository's open PRs, read once. Any
+ * open PR keeps the run; so does an unresolvable identity, an unreadable repository or a
+ * possibly truncated list.
  */
 export async function retentionContext(
   runs: Run[],
   now = Date.now(),
   read: Pick<RunRetentionDeps, 'openPrs' | 'projectRepo'> = { openPrs: readOpenPrs, projectRepo },
 ): Promise<RunRetentionContext> {
-  const identities = new Map<string, { repo: string; number: number } | undefined>();
+  const identities = new Map<
+    string,
+    { prs: { repo: string; number: number }[]; unresolved: boolean }
+  >();
   const projectRepos = new Map<string, string | undefined>();
   for (const run of runs) {
     if (prRecordedSettled(run)) continue;
-    const pr = reviewPRIdentity(run);
-    if (pr) {
-      identities.set(run.id, { repo: pr.repository, number: pr.prNumber });
-      continue;
-    }
-    const linked = run.links?.some((link) => link.label.toLowerCase() === 'pr');
-    if (run.prNumber === undefined && !linked) continue;
-    let repo: string | undefined;
-    if (run.prNumber !== undefined && run.project) {
-      if (!projectRepos.has(run.project))
+    const prs: { repo: string; number: number }[] = [];
+    const review = reviewPRIdentity(run);
+    if (review) prs.push({ repo: review.repository, number: review.prNumber });
+    let unresolved =
+      !review && Boolean(run.links?.some((link) => link.label.toLowerCase() === 'pr'));
+    if (run.prNumber !== undefined) {
+      if (run.project && !projectRepos.has(run.project))
         projectRepos.set(run.project, await read.projectRepo(run.project));
-      repo = projectRepos.get(run.project);
+      const repo = run.project ? projectRepos.get(run.project) : undefined;
+      if (repo) prs.push({ repo, number: run.prNumber });
+      else if (!review) unresolved = true;
     }
-    identities.set(run.id, repo ? { repo, number: run.prNumber! } : undefined);
+    if (prs.length || unresolved) identities.set(run.id, { prs, unresolved });
   }
   const open = new Map<string, Set<number> | undefined>();
-  for (const repo of new Set([...identities.values()].flatMap((pr) => (pr ? [pr.repo] : [])))) {
+  for (const repo of new Set(
+    [...identities.values()].flatMap(({ prs }) => prs.map((pr) => pr.repo)),
+  )) {
     try {
       const numbers = await read.openPrs(repo);
       open.set(repo, numbers.length < OPEN_PR_PAGE ? new Set(numbers) : undefined);
@@ -136,11 +143,11 @@ export async function retentionContext(
     now,
     prState: (run): RunPrState => {
       if (prRecordedSettled(run)) return 'settled';
-      if (!identities.has(run.id)) return 'none';
-      const pr = identities.get(run.id);
-      const numbers = pr && open.get(pr.repo);
-      if (!pr || !numbers) return 'unknown';
-      return numbers.has(pr.number) ? 'open' : 'settled';
+      const identity = identities.get(run.id);
+      if (!identity) return 'none';
+      const lists = identity.prs.map((pr) => open.get(pr.repo)?.has(pr.number));
+      if (lists.includes(true)) return 'open';
+      return identity.unresolved || lists.includes(undefined) ? 'unknown' : 'settled';
     },
   };
 }
@@ -162,11 +169,14 @@ export interface RunRetentionDeps {
   holdsSlot: (run: Run) => Promise<boolean>;
   openPrs: (repo: string) => Promise<number[]>;
   projectRepo: (project: string) => Promise<string | undefined>;
+  /** Synchronous, so a recheck and the moves it allows happen in one step. */
+  move: (from: string, to: string) => void;
 }
 
 export const RUN_RETENTION_DEPS: RunRetentionDeps = {
   deleteRecord: deleteRunRecord,
-  // Deleting a settled run closes its backlog link; like archive, it must not requeue the item.
+  // Deleting a settled run closes its backlog link without requeueing the item, as archiving
+  // a blocked run does.
   // Loaded on use: admin's slot code configures tmux on import, which a dry run must not do.
   releaseBacklogLink: async (id) =>
     (await import('./admin.js')).reconcileDeletedRun(id, { keepNeedsAttention: true }),
@@ -174,42 +184,86 @@ export const RUN_RETENTION_DEPS: RunRetentionDeps = {
   holdsSlot: runHoldsSlot,
   openPrs: readOpenPrs,
   projectRepo,
+  move: renameSync,
 };
 
-/** Move a path into the trash in one synchronous step; across volumes, delete it in place. */
-function stage(file: string, trash: string): string | undefined {
+type StagedStore = (typeof STAGED_STORES)[number];
+interface TrashRecord {
+  runId: string;
+  store: StagedStore;
+  path: string;
+}
+
+/**
+ * Record where `file` came from, then move it into the trash. Across volumes it stays
+ * put: only a move can be undone if the record is not deleted.
+ */
+function stage(
+  trash: string,
+  record: TrashRecord,
+  move: RunRetentionDeps['move'],
+): string | 'absent' | 'cross-volume' {
   const target = path.join(trash, randomUUID());
+  writeFileSync(`${target}.json`, JSON.stringify(record));
   try {
-    renameSync(file, target);
+    move(record.path, target);
     return target;
   } catch (err) {
+    rmSync(`${target}.json`, { force: true });
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return undefined;
-    if (code !== 'EXDEV') throw err;
-    rmSync(file, { recursive: true, force: true });
-    return undefined;
+    if (code === 'ENOENT') return 'absent';
+    if (code === 'EXDEV') return 'cross-volume';
+    throw err;
   }
 }
 
-async function removeAll(files: string[]): Promise<number> {
+/** Put a staged directory back; one that cannot go back stays for the next pass to retry. */
+function unstage(entry: string, record: TrashRecord, move: RunRetentionDeps['move']): void {
+  try {
+    move(entry, record.path);
+    rmSync(`${entry}.json`, { force: true });
+  } catch (err) {
+    console.warn(`[run-retention] could not restore ${record.path}: ${(err as Error).message}`);
+  }
+}
+
+/** Remove trash entries and their records; returns the bytes freed. */
+async function purge(entries: string[]): Promise<number> {
   let bytes = 0;
-  for (const file of files)
+  for (const entry of entries)
     try {
-      const size = await diskBytes(file);
-      await rm(file, { recursive: true, force: true });
+      const size = await diskBytes(entry);
+      await rm(entry, { recursive: true, force: true });
+      await rm(`${entry}.json`, { force: true });
       bytes += size;
     } catch (err) {
-      console.warn(`[run-retention] could not remove ${file}: ${(err as Error).message}`);
+      console.warn(`[run-retention] could not remove ${entry}: ${(err as Error).message}`);
     }
   return bytes;
 }
 
-/** Empty the trash, including anything an interrupted pass left there. */
-async function emptyTrash(trash: string): Promise<void> {
+/**
+ * Finish what an interrupted pass left in the trash: a directory whose run still exists
+ * goes back, since that run was never deleted; one whose run is gone is purged.
+ */
+async function recoverTrash(trash: string, move: RunRetentionDeps['move']): Promise<void> {
+  let names: string[];
   try {
-    await removeAll((await readdir(trash)).map((name) => path.join(trash, name)));
+    names = await readdir(trash);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  for (const name of names.filter((n) => n.endsWith('.json'))) {
+    const entry = path.join(trash, name.slice(0, -'.json'.length));
+    try {
+      const record = JSON.parse(await readFile(`${entry}.json`, 'utf8')) as TrashRecord;
+      if (!existsSync(entry)) await rm(`${entry}.json`, { force: true });
+      else if (await getRunWithArchived(record.runId)) unstage(entry, record, move);
+      else await purge([entry]);
+    } catch (err) {
+      console.warn(`[run-retention] could not recover ${entry}: ${(err as Error).message}`);
+    }
   }
 }
 
@@ -223,7 +277,7 @@ export async function runRetentionPass(
 ): Promise<RunRetentionPlan> {
   const roots = options.roots ?? (await gatewayRetentionRoots());
   const trash = path.join(roots.runsDir, 'retention-trash');
-  if (options.apply) await emptyTrash(trash);
+  if (options.apply) await recoverTrash(trash, deps.move);
   const runs = await getAllRunsWithArchived();
   const context = await retentionContext(runs, options.now, deps);
   const { plan, removable } = await planRunRetention(runs, context, roots, deps.holdsSlot);
@@ -236,7 +290,7 @@ export async function runRetentionPass(
     stores[store] = { entries: 0, bytes: 0 };
     paths[store] = [];
   }
-  const staged: string[] = [];
+  const staged: { store: StagedStore; entry: string }[] = [];
   let ran = false;
   // Review-workspace admissions wait while this pass moves workspace directories.
   await reclaimReviewWorkspaceStorage(async () => {
@@ -253,30 +307,42 @@ export async function runRetentionPass(
         const sessionBytes = await diskBytes(roots.sessionArchive(candidate.id));
         if (await deps.holdsSlot(candidate)) continue;
         const run = await getRunWithArchived(candidate.id);
-        // No await from this recheck until the moves: a run created or archived since the
-        // plan is in one of these lists, so a directory it uses stays where it is.
+        // No await from this recheck until the moves: a run registered or archived since the
+        // plan is in one of these lists, and a run being admitted holds its task directory.
         if (!run || runRetentionHold(run, context)) continue;
         const others = [...runs, ...getAllRuns()].filter((r) => r.id !== run.id && !gone.has(r.id));
         const owned = runOwnedPaths([run], others, roots);
-        const moved = STAGED_STORES.flatMap((store) =>
-          owned[store].flatMap((file) => {
-            const to = stage(file, trash);
-            return to ? [{ store, file, to }] : [];
-          }),
-        );
-        let ok = false;
+        const moved: { store: StagedStore; entry: string; record: TrashRecord }[] = [];
+        let movable = true;
         try {
-          ok = await deps.deleteRecord(run.id);
-        } catch (err) {
-          console.warn(`[run-retention] kept ${run.id}: ${(err as Error).message}`);
-        }
-        if (!ok) {
-          for (const { file, to } of moved)
-            try {
-              renameSync(to, file);
-            } catch (err) {
-              console.warn(`[run-retention] could not restore ${file}: ${(err as Error).message}`);
+          const files = STAGED_STORES.flatMap((store) =>
+            owned[store]
+              .filter((file) => store !== 'task-dirs' || !isTaskDirectoryAdmitting(file))
+              .map((file) => ({ runId: run.id, store, path: file })),
+          );
+          for (const record of files) {
+            const entry = stage(trash, record, deps.move);
+            if (entry === 'cross-volume') {
+              movable = false;
+              break;
             }
+            if (entry !== 'absent') moved.push({ store: record.store, entry, record });
+          }
+        } catch (err) {
+          movable = false;
+          console.warn(
+            `[run-retention] could not move ${run.id}'s storage: ${(err as Error).message}`,
+          );
+        }
+        let ok = false;
+        if (movable)
+          try {
+            ok = await deps.deleteRecord(run.id);
+          } catch (err) {
+            console.warn(`[run-retention] kept ${run.id}: ${(err as Error).message}`);
+          }
+        if (!ok) {
+          for (const { entry, record } of moved) unstage(entry, record, deps.move);
           continue;
         }
         gone.add(run.id);
@@ -289,11 +355,9 @@ export async function runRetentionPass(
           stores['session-archives'].bytes += sessionBytes;
           paths['session-archives'].push(roots.sessionArchive(run.id));
         }
-        for (const { store, file, to } of moved) {
-          stores[store].entries++;
-          stores[store].bytes += await diskBytes(to);
-          paths[store].push(file);
-          staged.push(to);
+        for (const { store, entry, record } of moved) {
+          paths[store].push(record.path);
+          staged.push({ store, entry });
         }
         await deps.releaseBacklogLink(run.id);
         options.emit?.(Events.RUN_DELETED, { runId: run.id });
@@ -307,10 +371,22 @@ export async function runRetentionPass(
     console.log('[run-retention] review workspaces are in use; the next pass retries');
     return { ...plan, runs: [] };
   }
-  await removeAll(staged);
+  for (const { store, entry } of staged) {
+    stores[store].entries++;
+    stores[store].bytes += await purge([entry]);
+  }
   const pins = await retiredTaskPins(roots.taskPins, new Set(paths['task-dirs']), context.now);
-  stores['task-pins'] = { entries: pins.length, bytes: await removeAll(pins) };
-  paths['task-pins'] = pins;
+  for (const pin of pins) {
+    const bytes = await diskBytes(pin);
+    try {
+      await rm(pin, { recursive: true, force: true });
+      stores['task-pins'].entries++;
+      stores['task-pins'].bytes += bytes;
+      paths['task-pins'].push(pin);
+    } catch (err) {
+      console.warn(`[run-retention] could not remove ${pin}: ${(err as Error).message}`);
+    }
+  }
   // Bundles only the deleted runs referenced leave through the bundle store's collector.
   paths['run-bundles'] = runOwnedPaths(deleted, await getAllRunsWithArchived(), roots)[
     'run-bundles'

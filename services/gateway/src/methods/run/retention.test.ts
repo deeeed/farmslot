@@ -29,6 +29,7 @@ import {
   runsDirectory,
   runSessionArchiveDir,
   updateRun,
+  withTaskAdmission,
 } from '../../runs/store.js';
 
 import { retentionContext, RUN_RETENTION_DEPS, runRetentionPass } from './retention.js';
@@ -164,10 +165,12 @@ test('a PR keeps its run unless its repository was read and the PR is not open',
     run('bad-link', { links: [{ label: 'PR', url: 'not a url' }], ticketOrPr: 'PROJ-6' }),
     run('recorded', { prNumber: 7, prState: 'MERGED', ticketOrPr: 'PROJ-7' }),
     run('no-pr', { ticketOrPr: 'PROJ-8' }),
+    // An issue ticket resolves to a closed number, but the run's own PR is open.
+    run('issue-and-pr', { ticketOrPr: 'o/r#20', prNumber: 1, project: 'repo' }),
   ];
   const reads: string[] = [];
   const { prState } = await retentionContext(runs, NOW, {
-    projectRepo: async (project) => (project === 'big' ? 'o/big' : undefined),
+    projectRepo: async (project) => ({ big: 'o/big', repo: 'o/r' })[project],
     openPrs: async (repo) => {
       reads.push(repo);
       if (repo === 'o/down') throw new Error('rate limited');
@@ -183,6 +186,7 @@ test('a PR keeps its run unless its repository was read and the PR is not open',
     'bad-link': 'unknown',
     recorded: 'settled',
     'no-pr': 'none',
+    'issue-and-pr': 'open',
   });
   assert.deepEqual(reads.sort(), ['o/big', 'o/down', 'o/r'], 'one read per repository');
 });
@@ -270,15 +274,14 @@ test('a retention plan lists only storage that removable runs alone own on this 
 test('a retention pass deletes settled runs with their own storage and keeps what any run still uses', async (t) => {
   const roots = await retentionRoots(t, runsDirectory());
   const task = (name: string) => path.join(roots.taskRoots[0], 'feat', name);
-  const native = path.join(roots.nativeSessions, 'workers', 'owner', 'session-2');
+  const workers = path.join(roots.nativeSessions, 'workers', 'owner');
   const localWorkspace = path.join(roots.reviewWorkspaces, 'owner', 'runs', 'w3');
+  const names = ['own', 'shared', 'refused', 'late', 'archived', 'admitting', 'far'];
   for (const target of [
-    ...['own', 'shared', 'refused', 'late', 'archived'].map((name) =>
-      path.join(task(name), 'TASK.md'),
-    ),
-    path.join(native, 'state.json'),
+    ...names.map((name) => path.join(task(name), 'TASK.md')),
+    path.join(workers, 'session-2', 'state.json'),
+    path.join(workers, 'far', 'state.json'),
     path.join(localWorkspace, 'task', 'report.md'),
-    path.join(roots.runsDir, 'retention-trash', 'interrupted', 'left.txt'),
   ])
     await file(target);
   const retired = await pin(roots, 'retired', task('gone'), Date.now());
@@ -296,7 +299,7 @@ test('a retention pass deletes settled runs with their own storage and keeps wha
   // Processed first: while its record is deleted, a new run starts on `late`'s task.
   const racer = done('RETENTION-RACE', 'own');
   const removed = done('RETENTION-1', 'own', {
-    agentContexts: [nativeContext('removed', native)],
+    agentContexts: [nativeContext('removed', path.join(workers, 'session-2'))],
     reviewWorkspace: workspace(localWorkspace),
   });
   const sharer = done('RETENTION-2', 'shared');
@@ -305,53 +308,86 @@ test('a retention pass deletes settled runs with their own storage and keeps wha
   const late = done('RETENTION-5', 'late');
   const archived = done('RETENTION-6', 'archived');
   assert.equal(await archiveRun(archived), true);
+  // Run creation is admitting a new run on this task while the pass runs.
+  const admitting = done('RETENTION-8', 'admitting');
+  // Its native state is on another volume, so it cannot be moved reversibly.
+  const far = done('RETENTION-9', 'far', {
+    agentContexts: [nativeContext('far', path.join(workers, 'far'))],
+  });
+  // An interrupted pass left two staged directories: one of a run it never deleted,
+  // since tagged, and one of a run it did delete.
+  const trash = path.join(roots.runsDir, 'retention-trash');
+  const tagged = done('RETENTION-10', 'tagged', { tags: ['demo'] });
+  const interrupted = async (name: string, runId: string, original: string) => {
+    await file(path.join(trash, name, 'TASK.md'));
+    await writeFile(
+      path.join(trash, `${name}.json`),
+      JSON.stringify({ runId, store: 'task-dirs', path: original }),
+    );
+  };
+  await interrupted('never-deleted', tagged, task('tagged'));
+  await interrupted('deleted', 'a-deleted-run', task('deleted'));
   await file(path.join(runSessionArchiveDir(removed), 'session.jsonl'));
   t.after(() => rm(runSessionArchiveDir(kept), { recursive: true, force: true }));
 
   let restarted: string | undefined;
   const order: string[] = [];
-  const result = await runRetentionPass(
-    {
-      apply: true,
-      now: Date.now() + RUN_RETENTION_AGE_MS + 60_000,
-      roots,
-      emit: (event, payload) => order.push(`${event}:${(payload as { runId: string }).runId}`),
-    },
-    {
-      ...RUN_RETENTION_DEPS,
-      deleteRecord: async (id) => {
-        if (id === refused) return false;
-        if (id === racer) restarted = done('RETENTION-7', 'late', { status: 'monitoring' });
-        return RUN_RETENTION_DEPS.deleteRecord(id);
+  const result = await withTaskAdmission(path.join(task('admitting'), 'TASK.md'), () =>
+    runRetentionPass(
+      {
+        apply: true,
+        now: Date.now() + RUN_RETENTION_AGE_MS + 60_000,
+        roots,
+        emit: (event, payload) => order.push(`${event}:${(payload as { runId: string }).runId}`),
       },
-      releaseBacklogLink: async (id) => {
-        order.push(`release:${id}`);
+      {
+        ...RUN_RETENTION_DEPS,
+        deleteRecord: async (id) => {
+          if (id === refused) return false;
+          if (id === racer) restarted = done('RETENTION-7', 'late', { status: 'monitoring' });
+          return RUN_RETENTION_DEPS.deleteRecord(id);
+        },
+        releaseBacklogLink: async (id) => {
+          order.push(`release:${id}`);
+        },
+        collectGarbage: async () => {},
+        move: (from, to) => {
+          if (from === path.join(workers, 'far'))
+            throw Object.assign(new Error('cross-device link'), { code: 'EXDEV' });
+          RUN_RETENTION_DEPS.move(from, to);
+        },
       },
-      collectGarbage: async () => {},
-    },
+    ),
   );
 
   assert.deepEqual(
     result.runs.sort(),
-    [racer, removed, sharer, late, archived].sort(),
-    'the refused and the kept run stay',
+    [racer, removed, sharer, late, archived, admitting].sort(),
+    'the refused, kept, tagged and cross-volume runs stay',
   );
   const remaining = new Set((await getAllRunsWithArchived()).map((run) => run.id));
   for (const id of result.runs) assert.equal(remaining.has(id), false);
-  for (const id of [kept, refused, restarted!]) assert.ok(remaining.has(id));
+  for (const id of [kept, refused, restarted!, far, tagged]) assert.ok(remaining.has(id));
   assert.equal(existsSync(task('own')), false);
   assert.equal(existsSync(task('archived')), false);
   assert.ok(existsSync(task('shared')), 'the kept run still uses it');
   assert.ok(existsSync(task('refused')), 'a refused delete restores its directories');
-  assert.ok(existsSync(task('late')), 'a run created during the pass uses it');
-  assert.equal(existsSync(native), false);
+  assert.ok(existsSync(task('late')), 'a run registered during the pass uses it');
+  assert.ok(existsSync(task('admitting')), 'a run being admitted holds its task directory');
+  assert.ok(existsSync(task('far')), 'a run that cannot move reversibly keeps its directories');
+  assert.ok(existsSync(path.join(workers, 'far')));
+  assert.ok(existsSync(path.join(task('tagged'), 'TASK.md')), 'a never-deleted run gets it back');
+  assert.equal(existsSync(path.join(trash, 'deleted')), false, 'a deleted run leaves nothing');
+  assert.equal(existsSync(path.join(workers, 'session-2')), false);
   assert.equal(existsSync(localWorkspace), false);
   assert.equal(existsSync(retired), false);
   assert.equal(existsSync(runSessionArchiveDir(removed)), false);
-  assert.equal(existsSync(path.join(roots.runsDir, 'retention-trash', 'interrupted')), false);
   assert.equal(result.stores['session-archives'].entries, 1);
+  assert.ok(result.stores['task-dirs'].bytes > 0);
   // The backlog link is released (without requeueing) before each deletion is announced.
-  for (const id of result.runs)
+  for (const id of result.runs) {
+    assert.ok(order.includes(`release:${id}`));
     assert.ok(order.indexOf(`release:${id}`) < order.indexOf(`${Events.RUN_DELETED}:${id}`));
-  assert.equal(order.filter((entry) => entry.startsWith(Events.RUN_DELETED)).length, 5);
+  }
+  assert.equal(order.filter((entry) => entry.startsWith(Events.RUN_DELETED)).length, 6);
 });

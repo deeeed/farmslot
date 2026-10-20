@@ -196,15 +196,15 @@ starts and then every hour. A run is removable only when all of these hold:
 - it has no pending backlog reconciliation and no operator tags;
 - it has no PR, or its PR is merged or closed.
 
-A PR not recorded as merged or closed is identified by the review-session identity
-(adopted target, PR work, PR link or `owner/repo#N` ticket), else by the run's PR
-number in the project's `ci.repo`. It counts as merged or closed only when the pass
-read that repository's open PRs and it is not among them. An unresolvable identity,
-an unreadable repository or a possibly truncated list keeps the run.
+A PR not recorded as merged or closed is checked under every identity the run has:
+the review-session identity (adopted target, PR work, PR link or `owner/repo#N`
+ticket) and the run's PR number in the project's `ci.repo`. The pass reads each
+repository's open PRs once. Any open PR keeps the run, and so do an unresolvable
+identity, an unreadable repository or a possibly truncated list.
 
 The pass MUST recheck each run immediately before deleting it. In the same
 synchronous step it MUST move into the run store's retention trash the directories
-no other live or archived run references:
+no other live or archived run references, and no run being admitted holds:
 
 - the run's task directory under a farm task root (`projects/<project>/tasks`,
   `.runs/review-workspace-tasks`);
@@ -212,15 +212,23 @@ no other live or archived run references:
 - native worker state on the gateway's own node: its agents' sessions and its
   review workspace's own.
 
-It MUST NOT remove another node's storage or a slot checkout. It then deletes the
-record and session archive. If that is refused, it moves the directories back.
-After a deletion it releases the run's backlog link without requeueing the item,
-then announces `RUN_DELETED`. The pass holds review-workspace reclamation while it
-moves directories, and empties the trash, including what an interrupted pass left,
-before it plans. Bundles then follow GC above: deleting the run releases its
-history pin. Task pins whose task directory no longer exists are removed once their
-provenance is 48 hours old. A dry run reports the same selection, with entries and
-bytes per store, and changes nothing.
+Run creation holds a task directory from validation until the run is registered or
+refused. Each moved directory is recorded in the trash with its run and original
+path before it moves. A directory that cannot be moved reversibly (another volume)
+keeps the whole run for this pass. The pass MUST NOT remove another node's storage
+or a slot checkout.
+
+It then deletes the record and session archive. If that is refused, the directories
+move back. After a deletion it releases the run's backlog link without requeueing
+the item, then announces `RUN_DELETED`. The pass holds review-workspace reclamation
+while it moves directories, and purges them after. Before it plans, it finishes an
+interrupted pass: a recorded directory whose run still exists goes back; one whose
+run is gone is purged.
+
+Bundles then follow GC above: deleting the run releases its history pin. Task pins
+whose task directory no longer exists are removed once their provenance is 48
+hours old. A dry run reports the same selection, with entries and bytes per store,
+and changes nothing.
 
 ## Public surface and backfill
 

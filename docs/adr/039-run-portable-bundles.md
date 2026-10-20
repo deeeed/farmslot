@@ -379,23 +379,25 @@ hold:
 - it has no PR, or its PR is merged or closed.
 
 Live, gated, blocked and unarchived failed runs are never selected. A PR the run
-does not record as merged or closed is identified the way review sessions identify
-it: adopted target, PR work, PR link or `owner/repo#N` ticket, and otherwise its
-number in the project's repository. It then counts as open unless the pass read
-that repository's open PRs and it is not among them. An unresolvable identity, an
-unreadable repository or a possibly truncated list keeps the run.
+does not record as merged or closed is checked under every identity the run has:
+the review-session identity (adopted target, PR work, PR link or `owner/repo#N`
+ticket) and its number in the project's repository. It counts as settled only when
+the pass read those repositories' open PRs and none is among them. An
+unresolvable identity, an unreadable repository or a possibly truncated list keeps
+the run.
 
 Deleting the run releases its backlog link without requeueing the item, as
-archive does, and releases its history pin. The bundle store's collector then
-removes bundles no remaining run references. Just before deleting each run, the
-pass rechecks it and, in the same synchronous step, moves aside the directories
-no other run references: its task directory under a farm task root, and its
-review-workspace directory and native worker state on the gateway's own node. A
-run created meanwhile therefore never finds a half-deleted directory, a refused
-delete moves them back, and an interrupted pass leaves them in the trash, which
-the next pass empties. Task pins whose task directory no longer exists are removed
-48 hours after they were written. Other nodes' storage and slot checkouts are left
-to their owners.
+archiving a blocked run does, and releases its history pin. The bundle store's
+collector then removes bundles no remaining run references. Just before deleting
+each run, the pass rechecks it and, in the same synchronous step, moves aside the
+directories no other run references and no run being admitted holds: its task
+directory under a farm task root, and its review-workspace directory and native
+worker state on the gateway's own node. Each move is recorded first. A refused
+delete moves them back; an interrupted pass's directories go back if their run
+still exists and are purged once it is gone. A directory on another volume, which
+cannot move reversibly, keeps its run. Task pins whose task directory no longer
+exists are removed 48 hours after they were written. Other nodes' storage and slot
+checkouts are left to their owners.
 
 ### Rationale and consequences
 

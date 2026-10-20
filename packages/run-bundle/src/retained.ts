@@ -28,6 +28,7 @@ import {
   type RunArtifactBundleRef,
   type RunBundleManifest,
   type RunBundleRetentionPolicy,
+  type RunDecision,
 } from '@farmslot/protocol';
 import {
   listProjectTaskRoots,
@@ -377,12 +378,15 @@ async function reservedMetadataBytes(store: RunBundleStore, exceptRunId?: string
   return bytes;
 }
 
-/** Resolve target-owned imported bytes without rewriting the receipt's original identity. */
+export interface RunBundleReference {
+  ref: RunArtifactBundleRef;
+  /** The decision whose captured snapshot this is; absent for the run's own bundles. */
+  decision?: RunDecision;
+}
+
 /** Every bundle a run references, each decision's with the decision that captured it. */
-export function runBundleRefs(
-  run: Run,
-): { ref: RunArtifactBundleRef; decision?: Run['decisions'][number] }[] {
-  const refs: { ref: RunArtifactBundleRef; decision?: Run['decisions'][number] }[] = [];
+export function runBundleRefs(run: Run): RunBundleReference[] {
+  const refs: RunBundleReference[] = [];
   if (run.artifactBundle) refs.push({ ref: run.artifactBundle });
   if (run.output?.artifactBundle) refs.push({ ref: run.output.artifactBundle });
   for (const decision of run.decisions) {
@@ -392,6 +396,7 @@ export function runBundleRefs(
   return refs;
 }
 
+/** Resolve target-owned imported bytes without rewriting the receipt's original identity. */
 export function resolveRetainedRunBundleRef(
   run: Run,
   ref: RunArtifactBundleRef,
