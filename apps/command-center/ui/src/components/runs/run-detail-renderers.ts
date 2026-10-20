@@ -234,7 +234,8 @@ export interface RunEvidenceRenderContext {
   closeEvidenceLightbox: () => void;
   /** Set while one criterion's evidence is open in the full-screen review. */
   evidenceReviewer?: EvidenceReviewerSelection | null;
-  showEvidenceGallery?: () => void;
+  /** The files of the criterion the review shows, in the gallery. */
+  showEvidenceGallery?: (claimId: string) => void;
   /** Set when the open gallery is one criterion's files: its recording can switch to the review. */
   reviewEvidence?: () => void;
   selectEvidenceClaim?: (claimId: string) => void;
@@ -397,7 +398,8 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
       ? html`<evidence-reviewer
           .selection=${ctx.evidenceReviewer}
           @reviewer-close=${() => ctx.closeEvidenceLightbox()}
-          @reviewer-files=${() => ctx.showEvidenceGallery?.()}
+          @reviewer-files=${(event: CustomEvent<{ claimId: string }>) =>
+            ctx.showEvidenceGallery?.(event.detail.claimId)}
           @reviewer-claim=${(event: CustomEvent<{ claimId: string }>) =>
             ctx.selectEvidenceClaim?.(event.detail.claimId)}
         ></evidence-reviewer>`

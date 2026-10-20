@@ -474,6 +474,29 @@ export class EvidenceReviewer extends LitElement {
     else this.pendingSeekMs = ms;
   }
 
+  /** The criterion's files in the host gallery; an in-page review steps out of its way. */
+  private showFiles() {
+    if (this.inline) this.expanded = false;
+    this.dispatchEvent(new CustomEvent('reviewer-files', { detail: { claimId: this.claimId } }));
+  }
+
+  /** Escape still leaves when no player is shown to take it (a criterion without media). */
+  private onKey = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape' || this.player || (this.inline && !this.expanded)) return;
+    event.preventDefault();
+    this.close();
+  };
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener('keydown', this.onKey);
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.removeEventListener('keydown', this.onKey);
+  }
+
   private close() {
     if (this.inline) {
       this.expanded = false;
@@ -608,10 +631,7 @@ export class EvidenceReviewer extends LitElement {
               .items=${items}
               .selectedIndex=${0}
               expand-label="All files"
-              @lightbox-expand=${() =>
-                this.dispatchEvent(
-                  new CustomEvent('reviewer-files', { detail: { claimId: this.claimId } }),
-                )}
+              @lightbox-expand=${() => this.showFiles()}
               @lightbox-close=${() => this.close()}
             ></media-lightbox>`
           : html`<div class="empty">No recording or screenshot for this criterion.</div>`}

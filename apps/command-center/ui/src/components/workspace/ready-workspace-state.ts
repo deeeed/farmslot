@@ -13,6 +13,7 @@ import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
+import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 
 import {
   type RecipeRunnerUiOptions,
@@ -90,6 +91,8 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _artifactFilter: ArtifactFilter = 'all';
   @state() _artifactTypeFilter: ArtifactTypeFilter = 'all';
   @state() _lightboxOpen = false;
+  /** The criterion evidence review open over the gate. */
+  @state() _review: EvidenceReviewerSelection | null = null;
   @state() _lightboxIndex = 0;
   @state() _lightboxMode: 'single' | 'compare' = 'single';
   @state() _lightboxPairIndex = 0;
@@ -114,7 +117,8 @@ export abstract class ReadyWorkspaceState extends LitElement {
       this._reviewModalOpen ||
       this._reviewFlowModalOpen ||
       this._lightboxOpen ||
-      this._inputArtifactViewerOpen
+      this._inputArtifactViewerOpen ||
+      this._review !== null
     );
   }
 

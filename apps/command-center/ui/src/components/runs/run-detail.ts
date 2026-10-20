@@ -1368,6 +1368,23 @@ export class RunDetail extends RunDetailState {
         model.cueClip(index);
         open(true);
       },
+      openProofFile: (claimId, path) => {
+        model.selectClaim(claimId, path);
+        this._openEvidenceLightbox({
+          items: [
+            {
+              path,
+              purpose: 'evidence',
+              url: resolve(path),
+              evidenceModel: model,
+              resolveArtifactUrl: resolve,
+            },
+          ],
+          index: 0,
+          scope: `${claimId} evidence`,
+          criterionId: claimId,
+        });
+      },
     };
   }
 
@@ -1491,6 +1508,11 @@ export class RunDetail extends RunDetailState {
     const model = this.evidenceModel;
     const first = model?.claims[0];
     if (!model || !first) return null;
+    // Nothing to look at: no recording and no screenshot for any criterion.
+    const hasMedia =
+      model.recordings.length > 0 ||
+      model.claims.some((claim) => claim.evidence.some((file) => file.mediaType === 'image'));
+    if (!hasMedia) return null;
     return evidenceReviewerSelection({
       model,
       claimId: first.id,
@@ -1600,7 +1622,7 @@ export class RunDetail extends RunDetailState {
       onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
       closeEvidenceLightbox: () => this._closeEvidenceLightbox(),
       evidenceReviewer: this._evidenceReviewer(),
-      showEvidenceGallery: () => (this._evidenceGallery = true),
+      showEvidenceGallery: (claimId) => this._openClaimFiles(claimId),
       reviewEvidence:
         this._evidenceLightboxCriterionId && this.evidenceModel
           ? () => (this._evidenceGallery = false)

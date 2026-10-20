@@ -38,10 +38,7 @@ import { summarizeReviewCounts } from '../../utils/review-gate-display.js';
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import { renderAcceptancePanel } from '../progress-tracker/acceptance-panel.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
-import {
-  type EvidenceReviewerSelection,
-  evidenceReviewerSelection,
-} from '../shared/evidence-reviewer.js';
+import { evidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { ReadyWorkspaceActionPresenter } from './ready-workspace-action-presenter.js';
@@ -105,8 +102,6 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _evidenceLoading = true;
   @state() private _evidenceError = '';
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
-  /** The criterion evidence review open over the gate. */
-  @state() private _review: EvidenceReviewerSelection | null = null;
   private _evidenceRequest = 0;
   private _evidenceRead: Promise<void> | undefined;
   private _evidenceLoaded = false;
@@ -292,13 +287,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         openEvidence: ({ criterion, evidence, index }) => {
           this._lightboxRecipeRunId = this._evidenceRecipeRunId;
           model.selectClaim(criterion.id, evidence[index]);
-          this._evidenceItems = evidence.map((path) => ({
-            path,
-            purpose: 'evidence',
-            url: this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
-            evidenceModel: model,
-            resolveArtifactUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
-          }));
+          this._evidenceItems = evidence.map((path) => this._evidenceItem(path));
           this._lightboxIndex = index;
           this._lightboxMode = 'single';
           this._openReview(criterion.id, this._evidenceItems[index]);
@@ -387,12 +376,14 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       renderReview: () =>
         this._review
           ? html`<evidence-reviewer
-              .selection=${this._review}
-              @reviewer-close=${() => (this._review = null)}
-              @reviewer-files=${() => {
-                this._review = null;
-                this._lightboxOpen = true;
+              .selection=${{
+                ...this._review,
+                // A reloaded package replaces the model; the open review follows it.
+                model: this._evidenceModel ?? this._review.model,
               }}
+              @reviewer-close=${() => (this._review = null)}
+              @reviewer-files=${(event: CustomEvent<{ claimId: string }>) =>
+                this._openClaimGallery(event.detail.claimId)}
             ></evidence-reviewer>`
           : nothing,
       packagePending: this._packagePending,
@@ -808,16 +799,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
                 const model = this._evidenceModel!;
                 model.selectClaim(claimId, path);
                 this._lightboxRecipeRunId = this._evidenceRecipeRunId;
-                this._evidenceItems = [
-                  {
-                    path,
-                    purpose: 'evidence',
-                    url: this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
-                    evidenceModel: model,
-                    resolveArtifactUrl: (artifact) =>
-                      this._lightboxArtifactUrl({ path: artifact, purpose: 'evidence' }),
-                  },
-                ];
+                this._evidenceItems = [this._evidenceItem(path)];
                 this._lightboxIndex = 0;
                 this._lightboxMode = 'single';
                 this._openReview(claimId, this._evidenceItems[0]);
@@ -849,19 +831,42 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     this._lightboxRecipeRunId = this._evidenceRecipeRunId;
     this._evidenceItems = [
       {
-        path,
-        purpose: 'evidence',
+        ...this._evidenceItem(path),
         caption: model.selection.caption,
-        url: this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
-        evidenceModel: model,
         fullscreen: video,
         ...(video && clip ? { initialTraceIndex: clip.traceIndex } : {}),
-        resolveArtifactUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
       },
     ];
     this._lightboxIndex = 0;
     this._lightboxMode = 'single';
     this._openReview(model.selection.claimId, this._evidenceItems[0]);
+  }
+
+  /** One evidence file of the open package, served and reviewed through the gate's model. */
+  private _evidenceItem(path: string): LightboxItem {
+    return {
+      path,
+      purpose: 'evidence',
+      url: this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+      ...(this._evidenceModel ? { evidenceModel: this._evidenceModel } : {}),
+      resolveArtifactUrl: (artifact) =>
+        this._lightboxArtifactUrl({ path: artifact, purpose: 'evidence' }),
+    };
+  }
+
+  /** The gallery of the criterion the review shows, which may not be the one it opened on. */
+  private _openClaimGallery(claimId: string): void {
+    const claim = this._evidenceModel?.claims.find((candidate) => candidate.id === claimId);
+    this._review = null;
+    if (claim?.evidence.length) {
+      this._evidenceModel?.selectClaim(claimId);
+      this._evidenceItems = claim.evidence.map((artifact) =>
+        this._evidenceItem(artifact.artifactPath),
+      );
+      this._lightboxIndex = 0;
+      this._lightboxMode = 'single';
+    }
+    this._lightboxOpen = true;
   }
 
   /** One criterion's evidence opens in the shared review, on the chosen file. */
