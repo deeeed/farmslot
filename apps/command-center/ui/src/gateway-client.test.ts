@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
 import { initializeDesktopConnection } from './desktop-connection.js';
 import {
@@ -8,7 +8,8 @@ import {
   GATEWAY_TOKEN_STORAGE_KEY,
 } from './gateway-url.js';
 
-test('sign-out disconnects, rejects pending work, survives refresh and allows deliberate login', async (t) => {
+/** Browser globals and a socket whose gateway answers auth.connect only. */
+function installGatewayGlobals(t: TestContext) {
   const keys = ['window', 'localStorage', 'location', 'document', 'WebSocket'] as const;
   const descriptors = keys.map(
     (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
@@ -83,6 +84,11 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
       else Reflect.deleteProperty(globalThis, key);
     }
   });
+  return { Socket, store };
+}
+
+test('sign-out disconnects, rejects pending work, survives refresh and allows deliberate login', async (t) => {
+  const { Socket, store } = installGatewayGlobals(t);
   const { GatewayClient, gateway } = await import('./gateway-client.js');
   let client = new GatewayClient();
   t.after(() => {
@@ -271,4 +277,26 @@ test('one-use hosted invitations are distinct from stored bearer credentials', a
   assert.equal(hosted.code, 'one-use-code');
   assert.equal(hosted.token, undefined);
   assert.equal(hosted.password, undefined);
+});
+
+test('a request the gateway never answers rejects as a typed timeout', async (t) => {
+  installGatewayGlobals(t);
+  const { GatewayClient } = await import('./gateway-client.js');
+  const { GatewayRequestTimeoutError } = await import('./gateway-request-timeout.js');
+  const client = new GatewayClient();
+  t.after(() => client.disconnect());
+  const connected = new Promise<void>((resolve) =>
+    client.onConnectionChange((s) => {
+      if (s === 'connected') resolve();
+    }),
+  );
+  await client.setAuthCredentials({ token: 'timeout-device-secret' });
+  client.connect();
+  await connected;
+  await assert.rejects(
+    client.request('run.get', { runId: 'run-a' }, 20),
+    (error: unknown) =>
+      error instanceof GatewayRequestTimeoutError &&
+      error.message === 'Request run.get timed out after 20ms',
+  );
 });

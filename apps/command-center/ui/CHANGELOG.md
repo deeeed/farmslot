@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Submitting a gate decision now waits for the gateway's answer, a refusal included, for up to 10 minutes. After 15 s it says it is still waiting, and the buttons stay disabled meanwhile. If no answer comes, or a request fails after the decision was already applied, Command Center reads the run and reports what the gateway recorded: applied, resolved with another action, not applied, or unknown. A reply for a gate the view no longer shows is dropped. Before, an approval the gateway applied after 15 s read 'Failed to submit decision: Request run.resolveDecision timed out after 15000ms' (TAT-4145 run bda11b1a, gate 5bc9ef11).
 
 ## 0.28.0 - 2026-10-20
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import { type GitBranchDiffFile, Methods } from '@farmslot/protocol';
+import { type GitBranchDiffFile, Methods, type RunDecision } from '@farmslot/protocol';
 
 import { FakeControllerHost } from '../../testing/fake-controller-host.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
@@ -10,13 +10,31 @@ import { DiffTestFilterController } from '../shared/diff-test-filter-controller.
 // stale diff from another run is visible in the assertion.
 const branchFiles: Record<string, GitBranchDiffFile[]> = {};
 const fileDiffRequests: string[] = [];
+// Decision submission: the reply to run.resolveDecision, its requested window, and the run a
+// later run.get reads.
+let resolveReply: () => Promise<unknown> = async () => ({});
+const resolveWindows: unknown[] = [];
+let gatewayDecision: { id: string; resolvedAt?: string; resolvedAction?: string } = { id: 'gate' };
+let runReadable = true;
 mock.module('../../gateway-client.js', {
   namedExports: {
     gateway: {
       connectionState: 'connected',
       connectionEpoch: 1,
       onConnectionChange: () => () => undefined,
-      request: async (method: string, params: { slotId: string; path?: string }) => {
+      request: async (
+        method: string,
+        params: { slotId: string; path?: string },
+        window?: unknown,
+      ) => {
+        if (method === Methods.RUN_RESOLVE_DECISION) {
+          resolveWindows.push(window);
+          return resolveReply();
+        }
+        if (method === Methods.RUN_GET) {
+          if (!runReadable) throw new Error('Not connected');
+          return { run: { decisions: [gatewayDecision] } };
+        }
         if (method === Methods.GIT_BRANCH_DIFF) return { files: branchFiles[params.slotId] ?? [] };
         fileDiffRequests.push(`${params.slotId}:${params.path}`);
         return { diff: `diff from ${params.slotId}` };
@@ -32,6 +50,8 @@ Object.defineProperty(globalThis, 'location', {
 });
 
 const { ReadyWorkspaceActionPresenter } = await import('./ready-workspace-action-presenter.js');
+const { DECISION_RESOLVE_TIMEOUT_MS, GatewayRequestTimeoutError } =
+  await import('../../gateway-request-timeout.js');
 
 type Presenter = InstanceType<typeof ReadyWorkspaceActionPresenter>;
 
@@ -143,4 +163,103 @@ test('showing tests after a hidden reload fetches the new run diff for the same 
   assert.equal(view._selectedFile, testFile.path);
   assert.equal(view._fileDiff, 'diff from slot-b');
   assert.deepEqual(fileDiffRequests, [`slot-a:${testFile.path}`, `slot-b:${testFile.path}`]);
+});
+
+// TAT-4145 bda11b1a gate 5bc9ef11: the approval took longer than 15 s to validate, the gateway
+// applied it at 05:47:32Z, and the person was told it failed.
+function gateDecision(id = 'gate'): RunDecision {
+  return {
+    id,
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    actions: [],
+    createdAt: '2026-10-20T05:40:28.065Z',
+  };
+}
+function submittingPresenter(): Presenter {
+  runReadable = true;
+  return makePresenter({ runId: 'run-a', decision: gateDecision(), _recoveryPhase: 'live' });
+}
+const timedOut = async (): Promise<never> => {
+  throw new GatewayRequestTimeoutError('Request run.resolveDecision timed out after 600000ms');
+};
+
+test('a decision waits for the gateway answer over a long window', async () => {
+  resolveReply = async () => ({});
+  resolveWindows.length = 0;
+  await submittingPresenter()._resolve('hold');
+  assert.deepEqual(resolveWindows, [DECISION_RESOLVE_TIMEOUT_MS]);
+  assert.ok(DECISION_RESOLVE_TIMEOUT_MS >= 120_000);
+});
+
+test('a decision the gateway applied though its reply timed out reads as submitted', async () => {
+  resolveReply = timedOut;
+  gatewayDecision = { id: 'gate', resolvedAt: '2026-10-20T05:47:32.163Z', resolvedAction: 'hold' };
+  const view = submittingPresenter();
+  await view._resolve('hold');
+  assert.equal(view._actionTone, 'success');
+  assert.doesNotMatch(view._actionMessage, /Failed/);
+});
+
+test('a timed-out decision reports what the gateway recorded, never a failure', async () => {
+  resolveReply = timedOut;
+  const outcomes: Array<[() => void, RegExp]> = [
+    [() => (gatewayDecision = { id: 'gate' }), /has not applied this decision/],
+    [
+      () =>
+        (gatewayDecision = {
+          id: 'gate',
+          resolvedAt: '2026-10-20T05:48:00.000Z',
+          resolvedAction: 'abort',
+        }),
+      /resolved as abort instead/,
+    ],
+    [() => (gatewayDecision = { id: 'gate' }), /run could not be read/],
+  ];
+  for (const [index, [record, message]] of outcomes.entries()) {
+    record();
+    const view = submittingPresenter();
+    runReadable = index !== 2;
+    await view._resolve('hold');
+    assert.match(view._actionMessage, message);
+    assert.doesNotMatch(view._actionMessage, /Failed/);
+    assert.notEqual(view._actionTone, 'error');
+    assert.equal(view._acting, false);
+  }
+});
+
+test('a refusal reads as failed unless this decision was applied by an earlier click', async () => {
+  resolveReply = async () => {
+    throw new Error('Decision already resolved');
+  };
+  gatewayDecision = { id: 'gate' };
+  const refused = submittingPresenter();
+  await refused._resolve('hold');
+  assert.equal(refused._actionTone, 'error');
+  assert.equal(refused._actionMessage, 'Failed to submit decision: Decision already resolved');
+
+  gatewayDecision = { id: 'gate', resolvedAt: '2026-10-20T05:47:32.163Z', resolvedAction: 'hold' };
+  const raced = submittingPresenter();
+  await raced._resolve('hold');
+  assert.equal(raced._actionTone, 'success');
+});
+
+test('a reply for a gate the view no longer shows leaves the shown gate alone', async () => {
+  let reply!: () => void;
+  resolveReply = () => new Promise((resolve) => (reply = () => resolve({})));
+  const view = submittingPresenter();
+  const submitting = view._resolve('hold');
+  // The person opens another run at its own gate before the reply lands.
+  Object.assign(view, {
+    runId: 'run-b',
+    decision: gateDecision('gate-b'),
+    _actionMessage: '',
+    _actionTone: '',
+    _acting: false,
+  });
+  reply();
+  await submitting;
+  assert.equal(view._actionMessage, '');
+  assert.equal(view._actionTone, '');
 });
