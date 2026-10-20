@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A native reviewer's process stops once its result is recorded, with the MCP servers it started. Its session stays resumable, so a WARM re-review resumes the saved conversation on native and tmux runs alike. Before, a settled reviewer kept its process until another run took the slot: TAT-4006 run 7721a02b's reviewer, with seven MCP servers, was still running five hours after its result.
 - Published PRs show at most one representative still per criterion, with the full gallery and publication receipt in one collapsed section. Summary, validation and visual judgments remain visible, videos stay links, and the pre-review engine status list no longer contradicts the reviewed judgments.
 
 - A follow-up run's inherited artifacts (seeded from the parent's retained bundle) are now the run's own, owner-writable files, and output capture replaces a read-only destination instead of failing with EACCES. The retained bundle store stays read-only. Before, pr-complete run 4b1b02f3 edited its inherited `recipe.json`, which had kept the bundle's 0400 mode. Capture failed, so the run kept no artifact bundle and completion refused with acceptance-unreadable.
