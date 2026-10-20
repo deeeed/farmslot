@@ -59,15 +59,24 @@ export function openHumanGateDecision<D extends GateDecisionFields>(
   return null;
 }
 
+/** A blocked run whose latest human gate is open: it waits at the gate, not on a fault. */
+export function isBlockedAtOpenHumanGate(run: {
+  status: RunStatus;
+  decisions?: readonly GateDecisionFields[];
+}): boolean {
+  return run.status === 'blocked' && openHumanGateDecision(run) !== null;
+}
+
 /**
- * A blocked run whose human gate is open waits for a person's decision, not on a
- * fault: it reads as needing one, with the gate's first readiness reason.
+ * A run at its open human gate waits for a person's decision. The gateway marks it
+ * blocked while the gate is not ready, which is not a fault: it reads as needing a
+ * decision, with the gate's first readiness reason.
  */
 function gateDecisionWait(run: {
   status: RunStatus;
   decisions?: readonly GateDecisionFields[];
 }): { reason?: string } | undefined {
-  if (run.status !== 'blocked') return undefined;
+  if (run.status !== 'blocked' && run.status !== 'human-gating') return undefined;
   const decision = openHumanGateDecision(run);
   if (!decision) return undefined;
   const readiness = isRecord(decision.payload) ? decision.payload.gateReadiness : undefined;
@@ -75,7 +84,7 @@ function gateDecisionWait(run: {
   return reason ? { reason } : {};
 }
 
-/** A run's status as a badge shows it: a blocked run at its open human gate needs a decision. */
+/** A run's status as a badge shows it: a run at its open human gate needs a decision. */
 export function runDisplayStatus(run: {
   status: RunStatus;
   decisions?: readonly GateDecisionFields[];
@@ -115,7 +124,7 @@ export function deriveRunLifecycleView(input: {
   return {
     status: input.status,
     label: gateWait ? NEEDS_YOUR_DECISION : labels[input.status],
-    ...(gateWait
+    ...(gateWait && input.status === 'blocked'
       ? {
           activityLabel: gateWait.reason
             ? `${NEEDS_YOUR_DECISION}: ${gateWait.reason}`
@@ -171,7 +180,7 @@ export function runStepDisplayStatus(
 ): RunStepDisplayStatus {
   if (
     run.status === 'blocked' &&
-    !gateDecisionWait(run) &&
+    !isBlockedAtOpenHumanGate(run) &&
     step.name ===
       [...run.steps].reverse().find((s) => s.status !== 'pending' && s.status !== 'skipped')?.name
   )

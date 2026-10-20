@@ -1173,6 +1173,7 @@ export default function RunDetailScreen() {
               <RunPipelineFull
                 steps={run.steps}
                 runStatus={run.status}
+                decisions={run.decisions}
                 onStepPress={(_name, i) =>
                   setExpandedStep((current) => {
                     const key = `${run.steps[i].name}-${i}`;

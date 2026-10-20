@@ -141,17 +141,19 @@ export function RunPipelineMini({
 export function RunPipelineFull({
   steps,
   runStatus,
+  decisions,
   onStepPress,
 }: {
   steps: RunStep[];
   runStatus?: RunStatus;
+  decisions?: RunDecision[];
   onStepPress?: (stepName: string, index: number) => void;
 }) {
   const visible = steps.filter((s) => s.status !== 'skipped');
   if (visible.length === 0) return null;
 
   const eff = (s: RunStep) =>
-    runStatus ? runStepDisplayStatus({ status: runStatus, steps }, s) : s.status;
+    runStatus ? runStepDisplayStatus({ status: runStatus, steps, decisions }, s) : s.status;
 
   return (
     <ScrollView

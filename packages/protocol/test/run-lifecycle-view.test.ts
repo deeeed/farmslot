@@ -94,7 +94,10 @@ const blockedRun = {
 };
 
 const displayStatuses = (
-  run: Pick<Run, 'status'> & { steps: Pick<RunStep, 'name' | 'status'>[] },
+  run: Pick<Run, 'status'> & {
+    steps: Pick<RunStep, 'name' | 'status'>[];
+    decisions?: { type: string; resolvedAt?: string; payload?: unknown }[];
+  },
 ) => run.steps.map((step) => runStepDisplayStatus(run, step));
 
 test('a blocked run names its reason and the step it stopped at, not a finished pipeline', () => {
@@ -251,9 +254,11 @@ test('a blocked run with no open human gate still reads Blocked', () => {
   assert.equal(deriveRunLifecycleView(resolved).activityLabel, `Blocked: ${tat4006.error}`);
   assert.equal(runDisplayStatus(resolved), 'blocked');
   assert.equal(deriveRunLifecycleView(blockedRun).activityLabel, `Blocked: ${blockedRun.error}`);
-  assert.equal(runDisplayStatus({ ...tat4145, status: 'human-gating' }), 'human-gating');
-  assert.equal(
-    deriveRunLifecycleView({ ...tat4145, status: 'human-gating' }).label,
-    'Awaiting decision',
-  );
+  // A human-gating run reads the same at its open gate, and keeps its own label without one.
+  const gating = { ...tat4145, status: 'human-gating' as const };
+  assert.equal(runDisplayStatus(gating), 'Needs your decision');
+  assert.equal(deriveRunLifecycleView(gating).label, 'Needs your decision');
+  assert.equal(deriveRunLifecycleView(gating).activityLabel, undefined);
+  assert.equal(runDisplayStatus({ ...gating, decisions: [] }), 'human-gating');
+  assert.equal(deriveRunLifecycleView({ ...gating, decisions: [] }).label, 'Awaiting decision');
 });

@@ -22,7 +22,7 @@ export const RUN_INVENTORY_SORT_KEYS = [
 export type RunInventorySortKey = (typeof RUN_INVENTORY_SORT_KEYS)[number];
 
 export const RUN_INVENTORY_COLUMNS: WorkInventoryColumnDef<RunInventorySortKey>[] = [
-  { key: 'status', label: 'Lifecycle', width: '100px', testId: 'runs-sort-status' },
+  { key: 'status', label: 'Lifecycle', width: '140px', testId: 'runs-sort-status' },
   { key: 'flow', label: 'Flow', width: '58px', testId: 'runs-sort-flow' },
   { key: 'project', label: 'Project', width: 'minmax(100px, 140px)', testId: 'runs-sort-project' },
   { key: 'ref', label: 'Ref', width: '110px', testId: 'runs-sort-ref' },

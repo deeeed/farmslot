@@ -13,6 +13,7 @@ import { litText } from '../../testing/lit-text.js';
 
 import { computeLayout, type NodePos } from './run-pipeline-model.js';
 import {
+  renderHumanGatePipelineNode,
   renderMonitorPipelineNode,
   renderReviewPipelineNode,
   type RunPipelineSpecialNodeRenderContext,
@@ -149,4 +150,52 @@ test('a step held on a decision keeps pulsing; a settled block does not', () => 
   assert.match(held, /node-blocked-anim/);
   assert.match(held, /<title>CI failed<\/title>/);
   assert.doesNotMatch(render({ ...run, decisions: [] }), /node-blocked-anim/);
+});
+
+// Run 7721a02b (TAT-4006) as run.get returned it: blocked at the publish gate, its
+// human gate decision open with the gate's readiness reason.
+test('a run blocked at its open human gate shows the gate waiting with its readiness reason', () => {
+  const gateReason = 'Review found 4 issues. Fix and pass review before publishing.';
+  const run: Run = {
+    ...blockedRun,
+    id: '7721a02b-ceda-431a-a741-d743837c40b4',
+    ticketOrPr: 'TAT-4006',
+    error:
+      'Native host stopped. Verify the old process group is stopped, then explicitly resume the saved native identity.',
+    steps: blockedRun.steps.map((step) =>
+      step.name === 'human-gate'
+        ? { ...step, status: 'running', detail: 'Waiting for operator decision' }
+        : ['finalize', 'ci-watch'].includes(step.name)
+          ? { ...step, status: 'pending' }
+          : { ...step, status: 'done' },
+    ),
+    decisions: [
+      {
+        id: 'gate',
+        type: 'engine_human_gate',
+        title: 'TAT-4006 — human gate',
+        description: '',
+        createdAt: '2026-10-19T17:30:13.466Z',
+        actions: [],
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: 'MetaMask/core',
+          diffStat: { files: 7, additions: 507, deletions: 3 },
+          workerReport: '',
+          branch: 'TAT-4006-feat-add-environment-type-perps-eve',
+          gateReadiness: {
+            state: 'not-ready',
+            identity: { runId: '7721a02b-ceda-431a-a741-d743837c40b4', generation: 8 },
+            reasons: [{ code: 'review-fix-required', prerequisite: 'review', message: gateReason }],
+          },
+        },
+      },
+    ],
+  };
+  assert.equal(deriveRunLifecycleView(run).activityLabel, `Needs your decision: ${gateReason}`);
+  const gate = litText(renderHumanGatePipelineNode(nodeFor(run, 'human-gate'), context(run)));
+  assert.match(gate, /! waiting/);
+  assert.match(gate, /node-blocked-anim/);
+  assert.ok(gate.includes(`<title>${gateReason}</title>`));
 });
