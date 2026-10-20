@@ -102,6 +102,7 @@ import {
   assertPublicationEvidenceSelection,
   defaultSelectedEvidenceKeysForPublication,
 } from './publication-evidence-policy.js';
+import { assertPublicationBranchPushed, PUBLICATION_PUSH_TIMEOUT_MS } from './publication-push.js';
 import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
 import { publicationStatusForRun } from './publication-status.js';
 import {
@@ -1310,7 +1311,7 @@ export async function runCompletionPipeline(
   return flags;
 }
 
-export async function createPrFromApprovedPackage(
+async function createPrFromApprovedPackage(
   run: Run,
   ciRepo: string,
   prPackage: ReadyGatePrPackage,
@@ -1336,22 +1337,12 @@ export async function createPrFromApprovedPackage(
     }
   }
   if (!prPackage.branch?.trim()) throw new Error('approved package is missing a branch');
-  // The push runs the repository's pre-push hook: MetaMask/core's `yarn lint` takes ~3 minutes.
   const push = await execOnSlot(
     vars,
     `git -C ${shellQuote(vars.remoteRepo)} push -u origin ${shellQuote(prPackage.branch)}`,
-    { timeout: 600_000 },
+    { timeout: PUBLICATION_PUSH_TIMEOUT_MS },
   );
-  // A refused push (the repository's pre-push hook, or the remote) leaves no branch to open
-  // a PR from; GitHub would then report only a blank head.
-  if (push.exitCode !== 0) {
-    console.warn(
-      `[run-completion] run ${run.id.slice(0, 8)} — git push output: ${push.stdout.slice(-4000)}`,
-    );
-    throw new Error(
-      `git push of ${prPackage.branch} failed (exit ${push.exitCode}); a pre-push hook or the remote refused it: ${push.stderr.trim().slice(-1500) || 'no error output'}`,
-    );
-  }
+  assertPublicationBranchPushed(push, prPackage.branch, run.id);
 
   const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
   await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
