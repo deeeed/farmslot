@@ -1,8 +1,8 @@
 {
-  "version": "0.27.0",
-  "date": "2026-10-19",
+  "version": "0.28.0",
+  "date": "2026-10-20",
   "items": [
-    "Cleanup waits as long as a slot release for each cancelled run it archives.",
-    "The review-round line counts reviewer attempts that ended without a verdict, for example `Review rounds 4/5 · 1/3 no-verdict`."
+    "Gates show the reason you can act on, such as `Review rounds spent: 4 issues open`, instead of 'Fix and pass review'",
+    "A run waiting at its human gate shows `Needs your decision`, with the gate's reason in the run header"
   ]
 }
