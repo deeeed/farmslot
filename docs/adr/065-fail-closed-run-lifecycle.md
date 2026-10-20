@@ -586,13 +586,14 @@ accepted findings do not certify ADR-062 Amendment 18 `review`-mode criteria.
 The decision's publication approval records the reason, the package head, the
 approver as evidence attestation records it, and the accepted findings. For each
 finding it keeps the review id and the finding as the review recorded it (file,
-line, description), plus one digest of the accepted set. The request carries the
-digest of the findings the client showed, and resolve and the finalize recheck
-refuse when the head's open findings have a different digest. The acceptance
-binds to that head only. The published PR body discloses the accepted findings,
-the reason and the approver, as ADR-062 Amendment 3 does for waivers. Normal
-Approve Publish is unchanged: findings at the package head still block it
-(ADR-063 Amendment 4).
+line, description), plus one digest of the accepted set. The gate's readiness
+carries the open findings and their `findingsDigest`, as Amendment 7's result
+decision does. Clients show those findings and send that digest back, and
+resolve and the finalize recheck refuse when the head's open findings have a
+different digest. The acceptance binds to that head only. The published PR body
+discloses the accepted findings, the reason and the approver, as ADR-062
+Amendment 3 does for waivers. Normal Approve Publish is unchanged: findings at
+the package head still block it (ADR-063 Amendment 4).
 
 One shared protocol rule decides availability. The gateway applies it when it
 lists gate actions and when it resolves, and the CLI, Command Center and
@@ -603,7 +604,9 @@ A publishing run held at REVIEW under Amendment 7, before any gate exists, is
 out of scope. There, Amendment 7's Accept stays unavailable and its exits stay
 Send back and Close. Amendment 7's premise that `review-fix-required` has no
 override no longer holds at the gate, so its refusal stops saying the gate never
-publishes a head with open findings.
+publishes a head with open findings. It reads: "Accept settles without
+publishing; a publishing run publishes only at its gate. Send it back or close
+it."
 
 ### Rationale and consequences
 
@@ -621,14 +624,15 @@ still protect what a reviewer cannot judge.
 ### Public surface
 
 - No new action id or RPC. `run.resolveDecision` with `approve-publish-unresolved`
-  requires `reason` and the shown findings' digest, and refuses a request that
-  lacks either, as older clients' requests do. The CLI `--reason` help names this
+  requires `reason` and `findingsDigest`, and refuses a request that lacks
+  either, as older clients' requests do. The CLI `--reason` help names this
   action.
 - `@farmslot/protocol` exports the availability rule, moving the gateway's
   per-action readiness filter there. It also adds optional `acceptedFindings`
   (with their digest), `reason`, `headSha` and `approver`
-  (`EvidenceAttestationApprover`) fields on the decision's publication approval.
-- The shared publication gate view offers the action under that rule, where it
-  now drops every publish approval while a review blocks.
-- The CLI, Command Center and Companion list the action through that rule and
-  ask for the reason before submitting.
+  (`EvidenceAttestationApprover`) fields on the decision's publication approval,
+  and the open findings with their `findingsDigest` on the gate readiness.
+- The shared publication gate view offers the action under that rule; today it
+  drops every publish approval while a review blocks.
+- The CLI, Command Center and Companion list the action through that rule, show
+  the open findings and ask for the reason before submitting.
