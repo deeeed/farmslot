@@ -551,7 +551,7 @@ predicate.
 
 ## Amendment 8: accepting review findings at publication, 2026-10-20
 
-**Status:** Proposed.
+**Status:** Accepted (lead, 2026-10-20).
 **Related:** Amendments 2 and 7, [ADR-063](063-review-modes-warm-cold.md) Amendment 4, [ADR-062](062-recorded-run-evidence.md) Amendments 3 and 18.
 **Specification:** [Gate prerequisites](../reference/fail-closed-run-lifecycle.md#gate-prerequisites), updated to match on acceptance.
 
@@ -587,10 +587,10 @@ The decision's publication approval records the reason, the package head, the
 approver as evidence attestation records it, and the accepted findings. For each
 finding it keeps the review id and the finding as the review recorded it (file,
 line, description), plus one digest of the accepted set. The gate's readiness
-carries the open findings and their `findingsDigest`, as Amendment 7's result
-decision does. Clients show those findings and send that digest back, and
-resolve and the finalize recheck refuse when the head's open findings have a
-different digest. The acceptance binds to that head only. The published PR body
+carries the open findings as `findings` with their `findingsDigest`, as
+Amendment 7's result decision does. Clients show those findings and send that
+digest back, and resolve and the finalize recheck refuse when the head's open
+findings have a different digest. The acceptance binds to that head only. The published PR body
 discloses the accepted findings, the reason and the approver, as ADR-062
 Amendment 3 does for waivers. Normal Approve Publish is unchanged: findings at
 the package head still block it (ADR-063 Amendment 4).
@@ -631,7 +631,8 @@ still protect what a reviewer cannot judge.
   per-action readiness filter there. It also adds optional `acceptedFindings`
   (with their digest), `reason`, `headSha` and `approver`
   (`EvidenceAttestationApprover`) fields on the decision's publication approval,
-  and the open findings with their `findingsDigest` on the gate readiness.
+  and `findings` with their `findingsDigest` on the gate readiness
+  (`RunGateReadiness`).
 - The shared publication gate view offers the action under that rule; today it
   drops every publish approval while a review blocks.
 - The CLI, Command Center and Companion list the action through that rule, show
