@@ -124,21 +124,21 @@ export async function readNativeWorkerSnapshot(
   return snapshot;
 }
 
-/** A later native worker of the same role, runner and review accepted its task, taking over. */
-function workerContextSuperseded(run: Run, context: AgentContext): boolean {
+/** Later native workers of the same role that accepted their task. */
+function laterAcceptedWorkers(run: Run, context: AgentContext): AgentContext[] {
   const contexts = run.agentContexts ?? [];
   const index = contexts.indexOf(context);
-  return (
-    index >= 0 &&
-    contexts
-      .slice(index + 1)
-      .some(
-        (item) =>
-          item.nativeSession?.acceptedAt &&
-          item.role === context.role &&
-          item.runner === context.runner &&
-          item.reviewId === context.reviewId,
-      )
+  return index < 0
+    ? []
+    : contexts
+        .slice(index + 1)
+        .filter((item) => item.nativeSession?.acceptedAt && item.role === context.role);
+}
+
+/** A later native worker of the same role, runner and review accepted its task, taking over. */
+function workerContextSuperseded(run: Run, context: AgentContext): boolean {
+  return laterAcceptedWorkers(run, context).some(
+    (item) => item.runner === context.runner && item.reviewId === context.reviewId,
   );
 }
 
@@ -150,19 +150,18 @@ function workerFailureSettled(run: Run, context: AgentContext): boolean {
 /**
  * Clear a run.error that only settled native workers carry: a finished worker or reviewer whose
  * host stopped later, or one a running relaunch took over. A closed session's old failure does
- * not keep it. Any other run.error stays.
+ * not keep it once a later worker of its role accepted a task. Any other run.error stays.
  */
 export function clearSettledWorkerError(runId: string): void {
   const run = getRun(runId);
   const carriers = run?.error
     ? (run.agentContexts ?? []).filter((item) => item.nativeSession && item.error === run.error)
     : [];
-  if (
-    carriers.some((item) => workerFailureSettled(run!, item)) &&
-    carriers.every(
-      (item) => workerFailureSettled(run!, item) || !nativeWorkerBindingIsHeld(item.nativeSession!),
-    )
-  )
+  const settled = (item: AgentContext) =>
+    workerFailureSettled(run!, item) ||
+    (!nativeWorkerBindingIsHeld(item.nativeSession!) &&
+      laterAcceptedWorkers(run!, item).length > 0);
+  if (carriers.some((item) => workerFailureSettled(run!, item)) && carriers.every(settled))
     updateRun(runId, { error: undefined });
 }
 

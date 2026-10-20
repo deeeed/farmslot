@@ -210,6 +210,8 @@ test('a finished reviewer whose host stopped later no longer holds the run error
       }),
     ],
   };
+  // Startup recovery clears it first, then reconciliation reads every held session again.
+  clearSettledWorkerError(current.id);
   await reconcileNativeRunAgentRuntime(current);
   assert.equal(current.error, undefined);
   assert.ok(current.agentContexts?.[0]?.error, 'the context keeps its own failure');
@@ -257,6 +259,23 @@ test("a blocked run's stale host-stop error clears when only settled or closed r
     ...current,
     error: hostStopped,
     agentContexts: [...contexts, reviewer(failedSession, { status: 'failed', error: hostStopped })],
+  };
+  clearSettledWorkerError(current.id);
+  assert.equal(current.error, hostStopped);
+
+  // So does the latest reviewer that failed and closed before any later reviewer accepted.
+  current = {
+    ...current,
+    error: hostStopped,
+    agentContexts: [
+      ...contexts,
+      reviewer(failedSession, {
+        status: 'failed',
+        error: hostStopped,
+        reviewId: 'pipeline-review-latest',
+        nativeSession: { ...binding(failedSession), closedAt: '2026-10-20T02:00:00.000Z' },
+      }),
+    ],
   };
   clearSettledWorkerError(current.id);
   assert.equal(current.error, hostStopped);
