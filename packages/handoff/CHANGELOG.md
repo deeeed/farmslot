@@ -4,6 +4,7 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Recovery-phrase detection blocks only a BIP-39 phrase whose checksum is valid. Every 12/15/18/21/24-word window inside a run of 12+ wordlist words is checked, so a valid phrase next to wordlist labels still blocks. A JSON string holding several words is now one unit, so a run no longer crosses from one field into the next key or value; a word array still composes. Before, any 12-word run of wordlist words blocked. That included recipe intent prose, the `next` key and node ids, which blocked a real publication. Configured secret patterns and every other floor check are unchanged.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.4.0 - 2026-10-19

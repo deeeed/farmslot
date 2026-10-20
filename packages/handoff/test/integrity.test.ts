@@ -119,7 +119,7 @@ test('re-assembly starts from a fresh staging dir: stale files never survive', (
 
 test('quarantine contains ONLY manifest + scrub-report even when the dir was reused', () => {
   const { ctx, input } = scenario(
-    '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+    '# Learnings\n\nletter advice cage absurd amount doctor acoustic avoid letter advice cage above\n',
   );
   // Plant stale raw content where the quarantine will land.
   const staleQuarantine = path.join(ctx.stagingRoot, 'quarantine', input.runRecord.packageId);
@@ -187,8 +187,7 @@ test('a planted symlink inside a staged package refuses the write; nothing is co
 });
 
 test('metadata secrets block assembly and the quarantine manifest never carries them raw', () => {
-  const srp =
-    'abandon ability able about above absent absorb abstract absurd abuse access accident';
+  const srp = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
   const titleCase = scenario();
   titleCase.input.runRecord.task.title = `restore with ${srp}`;
   const blockedByTitle = assembleLearningPackage(titleCase.input, titleCase.ctx);
@@ -244,7 +243,7 @@ test('end-to-end: a punctuation-only ticket assembles and writes under the conte
 
 test('a symlinked quarantine root cannot redirect the destructive rm or the audit writes', () => {
   const { ctx, input } = scenario(
-    '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+    '# Learnings\n\nletter advice cage absurd amount doctor acoustic avoid letter advice cage above\n',
   );
   const outside = mkdtempSync(path.join(os.tmpdir(), 'handoff-outside-q-'));
   writeFileSync(path.join(outside, 'precious.md'), 'do not delete\n');
@@ -289,7 +288,7 @@ test('a rollback that cannot restore the destination throws a distinct partial-s
 
 test('caller strings that land in written files are floor-gated: filenames and attestations', () => {
   const srpPath =
-    'notes/abandon ability able about above absent absorb abstract absurd abuse access accident.md';
+    'notes/letter advice cage absurd amount doctor acoustic avoid letter advice cage above.md';
   const fileNameCase = scenario();
   const shotA = path.join(fileNameCase.ctx.workspace as string, 'a.png');
   writeFileSync(shotA, 'png-bytes');
@@ -309,7 +308,7 @@ test('caller strings that land in written files are floor-gated: filenames and a
   );
   // The quarantined report never echoes the secret-bearing path raw.
   const report = readFileSync(path.join(blockedByPath.quarantineDir, 'scrub-report.json'), 'utf8');
-  assert.equal(report.includes('abandon ability able'), false);
+  assert.equal(report.includes('letter advice cage'), false);
 
   const attestedCase = scenario();
   const shotB = path.join(attestedCase.ctx.workspace as string, 'b.png');
@@ -349,18 +348,18 @@ test('caller strings that land in written files are floor-gated: filenames and a
 test('quarantine redaction covers object KEYS and mnemonics split across array values', () => {
   const token = `ghp_${'b'.repeat(36)}`;
   const words = [
-    'abandon',
-    'ability',
-    'able',
-    'about',
-    'above',
-    'absent',
-    'absorb',
-    'abstract',
+    'letter',
+    'advice',
+    'cage',
     'absurd',
-    'abuse',
-    'access',
-    'accident',
+    'amount',
+    'doctor',
+    'acoustic',
+    'avoid',
+    'letter',
+    'advice',
+    'cage',
+    'above',
   ];
   const { ctx, input } = scenario();
   input.runRecord.extensions = { [token]: 'value-under-secret-key', mnemonicWords: words };
@@ -371,7 +370,7 @@ test('quarantine redaction covers object KEYS and mnemonics split across array v
   assert.equal(quarantined.includes(token), false, 'secret KEY survived quarantine redaction');
   // No 12-word run survives in any form (per-element values would evade
   // per-value scanning; the array is redacted wholesale).
-  assert.equal(quarantined.includes('"abandon"'), false);
+  assert.equal(quarantined.includes('"letter"'), false);
   assert.ok(quarantined.includes('[REDACTED:srp]'));
 });
 
@@ -470,11 +469,11 @@ test('quarantine audit never carries a mnemonic composed across separate metadat
   // extensions carry a mnemonic split six+six across two values - each value
   // alone is below the run threshold, so only the joined view shows it.
   const { ctx, input } = scenario(
-    '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+    '# Learnings\n\nletter advice cage absurd amount doctor acoustic avoid letter advice cage above\n',
   );
   input.runRecord.extensions = {
     firstHalf: 'legal winner thank year wave sausage',
-    secondHalf: 'worth useful legal winner thank year',
+    secondHalf: 'worth useful legal winner thank yellow',
   };
   const result = assembleLearningPackage(input, ctx);
   assert.equal(result.status, 'blocked');
@@ -486,7 +485,7 @@ test('quarantine audit never carries a mnemonic composed across separate metadat
 
 test('a token-shaped slug never becomes the quarantine directory name', () => {
   const { ctx, input } = scenario(
-    '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+    '# Learnings\n\nletter advice cage absurd amount doctor acoustic avoid letter advice cage above\n',
   );
   const token = `npm_${'a'.repeat(36)}`;
   input.runRecord.packageId = `run-${token}`;
@@ -529,7 +528,7 @@ test('a same-id pass package is removed when reassembly blocks (stale-pass barri
   // must not survive beside the quarantine as a publishable stale artifact.
   writeFileSync(
     path.join(input.artifacts.artifactsDir, 'learnings.md'),
-    '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+    '# Learnings\n\nletter advice cage absurd amount doctor acoustic avoid letter advice cage above\n',
   );
   const second = assembleLearningPackage(input, ctx);
   assert.equal(second.status, 'blocked');
@@ -551,13 +550,13 @@ test('quarantine scrub-report never carries a mnemonic split across separate rec
   input.media = [
     {
       absolutePath: half1,
-      packagePath: 'abandon ability able about above absent',
+      packagePath: 'letter advice cage absurd amount doctor',
       kind: 'screenshot',
       evidenceManifestSelected: false,
     },
     {
       absolutePath: half2,
-      packagePath: 'absorb abstract absurd abuse access accident',
+      packagePath: 'acoustic avoid letter advice cage above',
       kind: 'screenshot',
       evidenceManifestSelected: false,
     },
@@ -566,7 +565,7 @@ test('quarantine scrub-report never carries a mnemonic split across separate rec
   assert.equal(result.status, 'blocked');
   if (result.status !== 'blocked') return;
   const report = readFileSync(path.join(result.quarantineDir, 'scrub-report.json'), 'utf8');
-  const survivors = report.match(/abandon|ability|absorb|accident/g) ?? [];
+  const survivors = report.match(/letter|advice|doctor|acoustic/g) ?? [];
   assert.equal(survivors.length, 0, 'cross-record mnemonic survived in the quarantine report');
   // The audit structure itself survives: reasons/kinds remain enumerable.
   assert.ok(report.includes('[REDACTED:entry-'));
@@ -575,7 +574,7 @@ test('quarantine scrub-report never carries a mnemonic split across separate rec
   // result.scrubReport must never see the raw secret either.
   const returned = JSON.stringify(result.scrubReport);
   assert.equal(
-    (returned.match(/abandon|ability|absorb|accident/g) ?? []).length,
+    (returned.match(/letter|advice|doctor|acoustic/g) ?? []).length,
     0,
     'cross-record mnemonic exposed on the returned scrubReport',
   );
@@ -588,20 +587,20 @@ test('quarantine manifest never carries a mnemonic split across schema-valid fix
   // DETECTION at the gate stays scope-capped; the invariant under test is that
   // the QUARANTINE audit never carries the composed phrase.
   const { ctx, input } = scenario(
-    '# Learnings\n\nlegal winner thank year wave sausage worth useful legal winner thank year\n',
+    '# Learnings\n\nlegal winner thank year wave sausage worth useful legal winner thank yellow\n',
   );
-  // Twelve wordlist words spread across segment-valid identity fields - every
-  // value passes the path-segment guard, only the joined view shows the phrase.
-  input.runRecord.task.ticket = 'ACCESS-ACCIDENT'; // taskKey normalizes to access-accident
-  input.surface = 'abandon-ability-able';
-  input.runRecord.project = 'about-above-absent';
-  input.runRecord.domain = 'absorb-abstract';
-  input.runRecord.run.flow = 'absurd-abuse';
+  // A twelve-word phrase spread, in the manifest's field order, across the
+  // contiguous segment-valid identity fields (taskKey, surface, project, domain)
+  // - every value passes the path-segment guard, only the joined view shows it.
+  input.runRecord.task.ticket = 'LETTER-ADVICE'; // taskKey normalizes to letter-advice
+  input.surface = 'cage-absurd-amount-doctor';
+  input.runRecord.project = 'acoustic-avoid-letter-advice';
+  input.runRecord.domain = 'cage-above';
   const result = assembleLearningPackage(input, ctx);
   assert.equal(result.status, 'blocked');
   if (result.status !== 'blocked') return;
   const quarantined = readFileSync(path.join(result.quarantineDir, 'manifest.json'), 'utf8');
-  const survivors = quarantined.match(/abandon|ability|absorb|accident/g) ?? [];
+  const survivors = quarantined.match(/letter|advice|doctor|acoustic/g) ?? [];
   assert.equal(survivors.length, 0, 'fixed-field mnemonic survived in the quarantine manifest');
   // The audit stays structurally intact: timestamps/enums remain.
   assert.ok(quarantined.includes('2026-07-13T12:00:00Z'));
@@ -667,13 +666,12 @@ test('the fully-degraded quarantine manifest still validates against the manifes
   // Compose a mnemonic across schema-valid identity fields so the wholesale
   // fallback fires; block via a learnings SRP.
   const { ctx, input } = scenario(
-    '# Learnings\n\nlegal winner thank year wave sausage worth useful legal winner thank year\n',
+    '# Learnings\n\nlegal winner thank year wave sausage worth useful legal winner thank yellow\n',
   );
-  input.runRecord.task.ticket = 'ACCESS-ACCIDENT';
-  input.surface = 'abandon-ability-able';
-  input.runRecord.project = 'about-above-absent';
-  input.runRecord.domain = 'absorb-abstract';
-  input.runRecord.run.flow = 'absurd-abuse';
+  input.runRecord.task.ticket = 'LETTER-ADVICE';
+  input.surface = 'cage-absurd-amount-doctor';
+  input.runRecord.project = 'acoustic-avoid-letter-advice';
+  input.runRecord.domain = 'cage-above';
   const result = assembleLearningPackage(input, ctx);
   assert.equal(result.status, 'blocked');
   if (result.status !== 'blocked') return;
@@ -688,5 +686,5 @@ test('the fully-degraded quarantine manifest still validates against the manifes
   );
   // And no wordlist survivors, per the existing invariant.
   const raw = JSON.stringify(manifest);
-  assert.equal((raw.match(/abandon|absorb|accident|legal|winner/g) ?? []).length, 0);
+  assert.equal((raw.match(/letter|doctor|acoustic|legal|winner/g) ?? []).length, 0);
 });

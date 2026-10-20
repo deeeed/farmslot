@@ -17,12 +17,18 @@ export interface FloorPattern {
 }
 
 const BIP39_SET = new Set<string>(BIP39_ENGLISH);
+const BIP39_INDEX = new Map<string, number>(BIP39_ENGLISH.map((word, index) => [word, index]));
 
 /**
- * Standard BIP-39 mnemonic lengths. A run of consecutive wordlist words at one of
- * these lengths is a positive seed-recovery-phrase identification.
+ * Standard BIP-39 mnemonic lengths. A window of consecutive wordlist words at one
+ * of these lengths whose checksum is valid is a positive seed-recovery-phrase
+ * identification.
  */
-const MNEMONIC_MIN_LENGTH = 12;
+const MNEMONIC_LENGTHS = [12, 15, 18, 21, 24] as const;
+const MNEMONIC_MIN_LENGTH = MNEMONIC_LENGTHS[0];
+
+/** A JSON string literal on one line, escapes included. */
+const JSON_STRING_LITERAL = /"(?:[^"\\\n]|\\.)*"/g;
 
 function fingerprint(match: string): string {
   return `sha256:${createHash('sha256').update(match).digest('hex').slice(0, 12)}`;
@@ -155,25 +161,36 @@ function unescapeOnce(text: string): string {
 }
 
 /**
- * Detect BIP-39 recovery phrases: runs of >= 12 consecutive wordlist words.
- * DELIBERATE fail-closed trade: any run of 12+ blocks, not only the exact
- * 12/15/18/21/24 mnemonic lengths - wallet dumps carry adjacent wordlist words
- * (labels, prefixes) that would break exact-length matching, while 12+
- * consecutive BIP-39 words in genuine prose is practically nonexistent (the
- * clean-prose suite guards the false-positive side).
- * Preserve underscores inside identifiers so dictionary-word node IDs do not
- * compose a mnemonic across separate array entries. Other non-letter boundaries
- * catch common accidental separators —
- * newlines, commas, numbered list prefixes — since natural prose breaks such
- * runs with stopwords long before 12 words. Literal escape sequences (\n, \t,
- * \r) become separators first so a phrase inside a JSON-stringified blob (a
- * very common accidental carrier: embedded logs in summary.json) still tokenizes
- * as a word run instead of gluing the escape letter onto the next word.
+ * Detect BIP-39 recovery phrases. Within any run of >= 12 consecutive wordlist
+ * words, every window of a standard mnemonic length (12/15/18/21/24) whose
+ * BIP-39 checksum is valid blocks. Searching windows inside a longer run keeps
+ * the fail-closed case where a wallet dump carries adjacent wordlist words
+ * (labels, prefixes); requiring the checksum stops runs of ordinary words, such
+ * as recipe intent prose and node ids, from reading as a phrase. A correctly
+ * written mnemonic always passes its checksum.
+ * A JSON string holding several words is one unit, so a run never crosses from
+ * one field's prose into the next key or value; single-word strings (a mnemonic
+ * stored as a word array) still compose, and so does the space-joined view the
+ * quarantine audit scans. snake_case identifiers stay single tokens, so
+ * dictionary-word node IDs do not compose a mnemonic; kebab-case parts still
+ * split, because the quarantine audit must catch a phrase composed across
+ * kebab-case identity fields (a JSON key or value is already its own unit).
+ * Other non-letter boundaries catch common accidental separators: newlines,
+ * commas, numbered list prefixes. Literal escape sequences (\n, \t, \r) become
+ * separators first, so a phrase inside a JSON-stringified blob (a common
+ * accidental carrier: embedded logs in summary.json) still tokenizes as a word
+ * run instead of gluing the escape letter onto the next word.
  */
 function detectMnemonics(text: string): FloorHit[] {
   const tokens = text
     .toLowerCase()
     .replace(/\\[ntr]/g, ' ')
+    // A JSON string holding several words is one unit: a phrase does not run out
+    // of it into the next key or value. Single-word strings still compose, so a
+    // mnemonic stored as a word array stays one run.
+    .replace(JSON_STRING_LITERAL, (literal) =>
+      (literal.match(/[a-z]+/g)?.length ?? 0) > 1 ? ` _ ${literal} _ ` : literal,
+    )
     // Keep identifier runs separate before removing Markdown emphasis edges.
     .replace(/\b[a-z0-9]+(?:_[a-z0-9]+)+\b/g, '_')
     .split(/[^a-z_]+/)
@@ -186,12 +203,42 @@ function detectMnemonics(text: string): FloorHit[] {
       if (runStart === -1) runStart = i;
     } else {
       if (runStart !== -1 && i - runStart >= MNEMONIC_MIN_LENGTH) {
-        hits.push({ kind: 'srp', fingerprint: fingerprint(tokens.slice(runStart, i).join(' ')) });
+        const run = tokens.slice(runStart, i);
+        for (const length of MNEMONIC_LENGTHS) {
+          for (let start = 0; start + length <= run.length; start += 1) {
+            const window = run.slice(start, start + length);
+            if (hasValidMnemonicChecksum(window)) {
+              hits.push({ kind: 'srp', fingerprint: fingerprint(window.join(' ')) });
+            }
+          }
+        }
       }
       runStart = -1;
     }
   }
   return hits;
+}
+
+/**
+ * A BIP-39 mnemonic carries its own checksum: of its 11 bits per word, the last
+ * length/3 bits are the leading bits of SHA-256 over the rest (the entropy).
+ */
+function hasValidMnemonicChecksum(words: readonly string[]): boolean {
+  const bits = words
+    .map((word) => (BIP39_INDEX.get(word) ?? 0).toString(2).padStart(11, '0'))
+    .join('');
+  const checksumLength = words.length / 3;
+  const entropyBits = bits.slice(0, bits.length - checksumLength);
+  const entropy = Buffer.alloc(entropyBits.length / 8);
+  for (let byte = 0; byte < entropy.length; byte += 1) {
+    entropy[byte] = Number.parseInt(entropyBits.slice(byte * 8, byte * 8 + 8), 2);
+  }
+  const digest = createHash('sha256').update(entropy).digest();
+  const expected = [...digest]
+    .map((byte) => byte.toString(2).padStart(8, '0'))
+    .join('')
+    .slice(0, checksumLength);
+  return bits.slice(-checksumLength) === expected;
 }
 
 /**

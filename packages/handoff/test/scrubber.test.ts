@@ -9,16 +9,18 @@ function fixture(name: string): string {
   return fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 }
 
-// A realistic 24-word mnemonic built entirely from wordlist entries.
+// Published BIP-39 test vectors (the reference English vectors for 0x7f... and
+// 0x80... entropy). Public test data with valid checksums, never a wallet.
 const MNEMONIC_24 =
   'legal winner thank year wave sausage worth useful legal winner thank year ' +
   'wave sausage worth useful legal winner thank year wave sausage worth title';
+const VECTOR_12 = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
 
 const POSITIVE_SECRETS: { label: string; kind: string; text: string }[] = [
   {
     label: '12-word SRP',
     kind: 'srp',
-    text: 'abandon ability able about above absent absorb abstract absurd abuse access accident',
+    text: 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above',
   },
   { label: '24-word SRP', kind: 'srp', text: MNEMONIC_24 },
   {
@@ -84,7 +86,7 @@ const CLEAN_TEXTS: { label: string; text: string }[] = [
   { label: 'short hex ids', text: 'commit abc1234 and slug a1b2c3d4 are fine' },
   {
     label: 'eleven wordlist words (below mnemonic length)',
-    text: 'abandon ability able about above absent absorb abstract absurd abuse access',
+    text: 'letter advice cage absurd amount doctor absorb abstract absurd abuse access',
   },
   { label: 'git SHA (40 hex)', text: `commit: ${'a1b2c3d4'.repeat(5)}` },
   {
@@ -135,6 +137,52 @@ test('dirty fixtures across every carried file type block the package', () => {
   assert.ok(blockedFiles.has('harness/x/keys.json'));
   assert.ok(blockedFiles.has('harness/x/summary.json'));
   assert.ok(blockedFiles.has('report.md'));
+});
+
+test('recipe prose, keys and node ids that are all wordlist words are not a recovery phrase', () => {
+  // The shape that blocked a real publication: intent prose, the "next" key and
+  // hyphenated node ids form a 12+ word run across JSON fields, but no window of
+  // it is a checksum-valid mnemonic.
+  const recipe = {
+    id: 'cross-margin-gate',
+    nodes: {
+      'gate-flag-on-ready': {
+        intent: 'open market order panel wait until price stay',
+        next: 'gate-flag-off-ready',
+      },
+      'gate-flag-off-ready': {
+        intent: 'close order panel and check total balance again',
+        next: 'cross-margin-switch',
+      },
+    },
+  };
+  for (const text of [JSON.stringify(recipe, null, 2), JSON.stringify(recipe)]) {
+    assert.deepEqual(scanForFloorSecrets(text), []);
+  }
+  // A long plain-prose run of wordlist words with no checksum-valid window.
+  assert.deepEqual(
+    scanForFloorSecrets(
+      'open market order panel wait until price stay next gate flag off ready again',
+    ),
+    [],
+  );
+});
+
+test('a checksum-valid mnemonic still blocks inside JSON, next to hyphens and labels', () => {
+  const srp = (text: string) => scanForFloorSecrets(text).some(({ kind }) => kind === 'srp');
+  const hyphenated = VECTOR_12.split(' ').join('-');
+  for (const text of [
+    JSON.stringify({ intent: `restore wallet then ${VECTOR_12}` }),
+    JSON.stringify({ note: `--- ${MNEMONIC_24} ---` }),
+    JSON.stringify(VECTOR_12.split(' ')),
+    `-${VECTOR_12}-`,
+    `- ${VECTOR_12} -`,
+    `seed-phrase: ${hyphenated}`,
+    `wallet seed ${VECTOR_12} above`,
+    `recovery\n${VECTOR_12.split(' ').join('\\n')}`,
+  ]) {
+    assert.ok(srp(text), 'a valid mnemonic must block');
+  }
 });
 
 test('clean fixtures assemble to a pass with no block entries', () => {
@@ -195,18 +243,18 @@ test('file-type allowlist omits disallowed and unscannable inputs, never include
 
 test('accidental 1: SRP split across newlines is blocked and retainedText is empty', () => {
   const lines = [
-    'abandon',
-    'ability',
-    'able',
-    'about',
-    'above',
-    'absent',
-    'absorb',
-    'abstract',
+    'letter',
+    'advice',
+    'cage',
     'absurd',
-    'abuse',
-    'access',
-    'accident',
+    'amount',
+    'doctor',
+    'acoustic',
+    'avoid',
+    'letter',
+    'advice',
+    'cage',
+    'above',
   ];
   const outcome = scrubFiles([{ packagePath: 'notes.md', content: lines.join('\n') }]);
   assert.equal(outcome.status, 'blocked');

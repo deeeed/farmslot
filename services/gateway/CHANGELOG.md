@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publication's secret gate blocks a recovery phrase only when its BIP-39 checksum is valid, through `@farmslot/handoff`'s scrub floor. A run of wordlist words across recipe intent prose, keys and node ids no longer refuses publication as `srp`.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.29.0 - 2026-10-20

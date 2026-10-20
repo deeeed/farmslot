@@ -98,7 +98,8 @@ async function fixture(t: TestContext) {
 
 test('frozen indexed text is scanned without changing bytes or admitting historical packages', async (t) => {
   const { taskDir, root, run, artifacts, manifest } = await fixture(t);
-  const phrase = Array<string>(12).fill('abandon').join(' ');
+  // The published all-zero-entropy BIP-39 test vector: checksum-valid, never a wallet.
+  const phrase = [...Array<string>(11).fill('abandon'), 'about'].join(' ');
   const log = path.join(root, 'observed.log');
   await writeFile(log, JSON.stringify({ arbitrary: phrase }));
   await indexFixtureArtifact(root, 'observed.log', 'log');
