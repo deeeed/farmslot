@@ -124,7 +124,7 @@ test('assemble folds harness json and cleared media into artifacts/index and val
 test('a planted SRP blocks assembly: quarantine only, no packageDir, no raw artifacts', () => {
   const { ctx, input } = scenario({
     learnings:
-      '# Learnings\n\nseed was abandon ability able about above absent absorb abstract absurd abuse access accident\n',
+      '# Learnings\n\nseed was letter advice cage absurd amount doctor acoustic avoid letter advice cage above\n',
   });
   const result = assembleLearningPackage(input, ctx);
   assert.equal(result.status, 'blocked');
@@ -150,7 +150,7 @@ test('a planted SRP blocks assembly: quarantine only, no packageDir, no raw arti
 test('quarantine dir path is local staging, never a repo destination prefix', () => {
   const { ctx, input } = scenario({
     learnings:
-      '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+      '# Learnings\n\nletter advice cage absurd amount doctor acoustic avoid letter advice cage above\n',
   });
   const result = assembleLearningPackage(input, ctx);
   assert.equal(result.status, 'blocked');
@@ -175,7 +175,7 @@ test('farm scrub options apply during assembly: extra deny pattern blocks, floor
   // UNION-only: with the same options, a floor secret still blocks.
   const floor = scenario({
     learnings:
-      '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+      '# Learnings\n\nletter advice cage absurd amount doctor acoustic avoid letter advice cage above\n',
   });
   floor.input.scrub = input.scrub;
   const floorResult = assembleLearningPackage(floor.input, floor.ctx);

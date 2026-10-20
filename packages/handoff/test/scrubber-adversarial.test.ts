@@ -36,7 +36,7 @@ test('planted wallet fixture JSON (mnemonic + key) blocks the package', () => {
 
 test('SRP inside a JSON-stringified log blob (literal \\n separators) is still detected', () => {
   const embedded = JSON.stringify({
-    log: `restoring wallet:\n${'abandon\nability\nable\nabout\nabove\nabsent\nabsorb\nabstract\nabsurd\nabuse\naccess\naccident'}\ndone`,
+    log: `restoring wallet:\n${'letter\nadvice\ncage\nabsurd\namount\ndoctor\nacoustic\navoid\nletter\nadvice\ncage\nabove'}\ndone`,
   });
   // The file content carries literal backslash-n sequences, not newlines.
   assert.ok(embedded.includes('\\n'));
@@ -107,15 +107,12 @@ test('session identifiers still block in credential-bearing cookie and token con
     );
   }
   const words =
-    'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(
-      ' ',
-    );
+    'letter advice cage absurd amount doctor acoustic avoid letter advice cage above'.split(' ');
   assert.ok(scanForFloorSecrets(JSON.stringify(words)).some(({ kind }) => kind === 'srp'));
 });
 
 test('Markdown emphasis cannot hide a twelve-word recovery phrase', () => {
-  const phrase =
-    'abandon ability able about above absent absorb abstract absurd abuse access accident';
+  const phrase = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
   for (const marker of ['_', '__']) {
     assert.ok(
       scanForFloorSecrets(`${marker}${phrase}${marker}`).some(({ kind }) => kind === 'srp'),

@@ -77,11 +77,33 @@ to defeat adversarial obfuscation.
 
 Deliberate detection choices and known limits:
 
-- Recovery-phrase detection blocks ANY run of 12+ consecutive wordlist words,
-  not only exact mnemonic lengths — a fail-closed trade (wallet dumps carry
-  adjacent wordlist words; 12+ in genuine prose is practically nonexistent).
-  Underscore-bearing identifiers remain single tokens so separate recipe node
-  IDs cannot compose a recovery phrase.
+- Recovery-phrase detection looks inside every run of 12+ consecutive
+  wordlist words and blocks any window of a standard mnemonic length
+  (12/15/18/21/24) whose BIP-39 checksum is valid. Searching windows keeps the
+  fail-closed case of a wallet dump with adjacent wordlist words (labels,
+  prefixes); the checksum keeps ordinary word runs, such as recipe intent prose
+  and node ids, from reading as a phrase. A correctly written mnemonic always
+  passes its checksum.
+- In a text that is one JSON document, a string holding several words is one
+  unit, so a run never crosses from one field into the next key or value, in
+  the raw text or in its unescaped views. Escaped content inside one string
+  still composes, and single-word strings still compose (a mnemonic stored as a
+  word array blocks).
+  A phrase split across separate multi-word JSON values is not composed, the
+  existing cross-field scope cap. Outside a JSON document quotes are ordinary
+  separators, so quoted rows in Markdown, YAML, CSV or plain text still compose,
+  and the quarantine audit's space-joined views are unaffected.
+- Windows are taken contiguous and at strides of two and three, so a phrase
+  interleaved with wordlist labels (`Word 1: x`, `{index, word}` rows) still
+  blocks. Known misses: a phrase whose words are not contiguous or at those
+  strides (a column-major grid), one split across separate multi-word JSON
+  values, and a damaged phrase (a wrong or missing word) now block only when
+  some window happens to pass the checksum. A 4-bit checksum also lets about one
+  random 12-word window in 16 through, so long wordlist-only prose can still
+  block. Underscore-bearing identifiers remain
+  single tokens so separate recipe node IDs cannot compose a recovery phrase;
+  kebab-case parts still split, so a phrase across kebab-case identity fields
+  stays visible to the quarantine audit.
 - Opaque session IDs alone do not identify credentials. Session/auth-token
   labels and cookie contexts still block their values.
 - Structured cookie-jar detection matches the common `{"name":...,"value":...}`

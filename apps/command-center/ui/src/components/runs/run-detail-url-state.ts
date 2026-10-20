@@ -21,6 +21,8 @@ export const ARTIFACT_AC_PARAM = 'artifactAc';
  */
 export const ARTIFACT_VIEW_PARAM = 'artifactView';
 export const STEP_ARTIFACT_VIEW = 'step';
+/** A criterion's file gallery, opened from the review; it stays in run detail. */
+export const GALLERY_ARTIFACT_VIEW = 'gallery';
 
 export function isRunDetailHashForRun(runId: string, hash: string = location.hash): boolean {
   const { route, params } = parseHashRoute(hash);
@@ -78,6 +80,8 @@ export function runDetailEvidenceArtifactHash(
   hash: string = location.hash,
   /** Set when the lightbox steps through one acceptance criterion's evidence. */
   criterionId: string | null = null,
+  /** Run detail's gallery of the criterion's files, rather than its review. */
+  gallery = false,
 ): string {
   const { route, params } = parseHashRoute(hash);
   params.delete('artifactTrace');
@@ -92,7 +96,8 @@ export function runDetailEvidenceArtifactHash(
   if (item && criterionId) params.set(ARTIFACT_AC_PARAM, criterionId);
   else params.delete(ARTIFACT_AC_PARAM);
   // Run detail's own viewer: never inherit the step inspector's claim.
-  params.delete(ARTIFACT_VIEW_PARAM);
+  if (item && criterionId && gallery) params.set(ARTIFACT_VIEW_PARAM, GALLERY_ARTIFACT_VIEW);
+  else params.delete(ARTIFACT_VIEW_PARAM);
   if (!route.startsWith('runs')) params.delete('run');
   return buildHash(route.startsWith('runs') ? route : runDetailRoute(runId), params);
 }

@@ -4,7 +4,8 @@ import test from 'node:test';
 import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
 
 test('secret refusals expose fingerprints and recovery, never source values', () => {
-  const phrase = Array<string>(12).fill('abandon').join(' ');
+  // The published all-zero-entropy BIP-39 test vector: checksum-valid, never a wallet.
+  const phrase = [...Array<string>(11).fill('abandon'), 'about'].join(' ');
   const key = '1'.repeat(64);
   for (const text of [JSON.stringify({ arbitrary: phrase }), `private_key = ${key}`]) {
     assert.throws(

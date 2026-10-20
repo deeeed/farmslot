@@ -72,7 +72,7 @@ test('assemble stamps the derived taskKey into manifest.json', () => {
 
 test('a blocked assembly stamps taskKey into the quarantine manifest too', () => {
   const { ctx, input } = scenario(
-    'abandon ability able about above absent absorb abstract absurd abuse access accident',
+    'letter advice cage absurd amount doctor acoustic avoid letter advice cage above',
   );
   const result = assembleLearningPackage(input, ctx);
   assert.equal(result.status, 'blocked');
