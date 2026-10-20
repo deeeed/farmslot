@@ -379,6 +379,45 @@ test('a lineage before a PR exists is keyed by its run family and stays valid', 
   } as Pick<Run, 'familyId' | 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'>;
   const prePublish = { reviewId: 'pipeline-review-run-a', familyId: 'family-a' };
   assert.deepEqual(reviewLineagesForRun(run), [prePublish]);
+  // A refused request's row ran no session; its earlier validated attempt keeps the lineage.
+  const refused: ReviewSessionTrace = { mode: 'warm', continuity: 'refused', reviewId: 'rev-a' };
+  assert.deepEqual(
+    reviewLineagesForRun({
+      familyId: 'family-a',
+      decisions: [],
+      engineState: {
+        publishGate: {
+          reviews: [
+            {
+              id: 'pipeline-review-rev-a',
+              mode: 'warm',
+              session: refused,
+              loopNumber: 1,
+              verdict: 'failed',
+              unresolvedCount: 0,
+              attempts: [
+                {
+                  mode: 'cold',
+                  session: { ...trace, reviewId: 'rev-a' },
+                  loopNumber: 1,
+                  verdict: 'issues',
+                  unresolvedCount: 1,
+                },
+                {
+                  mode: 'warm',
+                  session: refused,
+                  loopNumber: 2,
+                  verdict: 'failed',
+                  unresolvedCount: 0,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    }),
+    [{ reviewId: 'rev-a', familyId: 'family-a' }],
+  );
   assert.deepEqual(
     reviewContextFromRequest({ ...warm, context: { reviewLineages: [prePublish] } }),
     { reviewLineages: [prePublish] },

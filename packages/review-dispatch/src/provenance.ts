@@ -43,7 +43,9 @@ export function reviewLineagesForRun(
   };
   add(run.reviewResult?.session);
   add(run.repeatReviewContext?.session);
-  for (const review of run.engineState?.publishGate?.reviews ?? []) add(review.session);
+  // A refused request's row runs no session; its earlier attempts keep the lineage's.
+  for (const review of run.engineState?.publishGate?.reviews ?? [])
+    for (const result of [...(review.attempts ?? []), review]) add(result.session);
   for (const decision of run.decisions) {
     if (decision.payload?.kind === 'review') add(decision.payload.session);
     if (decision.payload?.kind === 'ready')
