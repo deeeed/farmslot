@@ -1213,6 +1213,19 @@ async function replayRunStep(
         `machine ${vars.machine} is not connected`,
       );
   }
+  // A gate replay reads the worker's artifacts from its slot before the engine
+  // starts, outside the engine's wait for a reconnecting node. Refuse while that
+  // node is offline, before the open decision is superseded, so the run stays
+  // held and restart recovery retries the replay once the node reconnects.
+  if (replayStepName === PS.HUMAN_GATE && !hasActiveReviewFix(existing)) {
+    const gateSlotId = recoverReplaySlotId(existing, targetIdx, findSlotIdx, prepareIdx);
+    const { loadSlotVars } = await import('../../core/config.js');
+    const vars = gateSlotId ? await loadSlotVars(gateSlotId).catch(() => null) : null;
+    if (vars && !isLocal(vars.host, vars.machine) && !getNode(vars.machine))
+      throw new Error(
+        `Cannot replay ${PS.HUMAN_GATE} yet: machine ${vars.machine} for slot ${gateSlotId} is not connected. The open decision is kept; replay again once the node reconnects.`,
+      );
+  }
   const replaySnapshot = getRun(params.runId) ?? existing;
   const retainsCompletionSlot = isCompletionPrerequisiteFailure(replaySnapshot);
   if (retainsCompletionSlot) {
