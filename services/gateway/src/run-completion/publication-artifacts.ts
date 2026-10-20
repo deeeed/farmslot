@@ -1182,9 +1182,14 @@ export async function readEvidenceManifest(run: Run): Promise<EvidenceManifest |
     : null;
 }
 
-export function replaceMarkdownSection(body: string, heading: string, content: string): string {
+export function replaceMarkdownSection(
+  body: string,
+  heading: string,
+  content: string | null,
+): string {
   const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`(^${escapedHeading}\\s*\\n)([\\s\\S]*?)(?=^##\\s|$(?![\\s\\S]))`, 'm');
+  if (content === null) return body.replace(re, '');
   if (re.test(body)) {
     const replacement = `${content.trim()}\n\n`;
     return body.replace(re, (_match, headingMatch: string) => `${headingMatch}${replacement}`);
