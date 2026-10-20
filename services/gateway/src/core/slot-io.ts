@@ -460,11 +460,11 @@ export async function slotCopyFile(
   if (options.maxBytes !== undefined && sizeKnown && size > options.maxBytes)
     throw new Error('File copy exceeds its admitted byte capacity.');
   const useChunked = options.forceChunked || options.maxBytes !== undefined || size > threshold;
-  if (!options.resumeFromOffset) await replaceReadOnlyDestination(localPath);
   if (!useChunked) {
     const result = (await request('fs.readBase64', pathParams, {
       timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
     })) as { content: string };
+    await replaceReadOnlyDestination(localPath);
     await fsWriteFile(localPath, Buffer.from(result.content, 'base64'));
     return true;
   }
