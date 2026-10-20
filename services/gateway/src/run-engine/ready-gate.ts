@@ -56,6 +56,7 @@ import {
   inferReviewSourceKind,
   REQUESTED_REVIEW_SOURCE,
   REVIEW_SOURCES,
+  reviewSourceKindForId,
 } from '../quality/review-sources.js';
 import {
   type ReviewFixSignalReader,
@@ -73,6 +74,7 @@ import {
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import {
   assertLineageBelongsToRun,
+  latestReviewOfLineage,
   reReviewOfStatus,
   reviewLineageId,
 } from '../review/session-mode.js';
@@ -569,13 +571,10 @@ export async function executePublishGateReviewPlan(
     // lineage names the reviewer session; the row id names the gate row and its artifacts.
     const lineageId = continuation?.reviewId;
     const gateReviews = latestBeforeReview.engineState?.publishGate?.reviews ?? [];
-    const priorReview = lineageId
-      ? [...gateReviews].reverse().find((review) => reviewLineageId(review) === lineageId)
-      : undefined;
+    const priorReview = lineageId ? latestReviewOfLineage(gateReviews, lineageId) : undefined;
     const reviewId =
       priorReview?.id ??
-      (lineageId &&
-      Object.values(REVIEW_SOURCES).some(({ idPrefix }) => lineageId.startsWith(`${idPrefix}-`))
+      (lineageId && reviewSourceKindForId(lineageId)
         ? lineageId
         : REQUESTED_REVIEW_SOURCE.artifactRefs(gateReviews.length + 1, `${runId}-${randomUUID()}`)
             .id);

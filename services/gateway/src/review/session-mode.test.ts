@@ -7,6 +7,7 @@ import {
   claimWarmReviewerSession,
   invalidateWarmReviewerSessions,
   invalidateWarmReviewerSessionsForSlot,
+  latestReviewOfLineage,
   parseReviewMode,
   persistedWarmReviewerSession,
   registerWarmReviewerSession,
@@ -152,6 +153,23 @@ test('a failed review retires only its own lineage', () => {
     claimWarmReviewerSession({ ...scope, reviewId: 'review-b' })?.runnerSessionId,
     'session-b',
   );
+});
+
+test("a lineage's latest row is found by its lineage id, under any row id", () => {
+  const row = (id: string, reviewId?: string) => ({
+    id,
+    ...(reviewId
+      ? { session: { mode: 'cold' as const, continuity: 'fresh' as const, reviewId } }
+      : {}),
+  });
+  const reviews = [
+    row('pipeline-review-rev-a', 'rev-a'),
+    row('review-2'),
+    row('review-3', 'rev-a'),
+  ];
+  assert.equal(latestReviewOfLineage(reviews, 'rev-a')?.id, 'review-3');
+  assert.equal(latestReviewOfLineage(reviews, 'review-2')?.id, 'review-2');
+  assert.equal(latestReviewOfLineage(reviews, 'pipeline-review-rev-a'), undefined);
 });
 
 test('busy WARM and unsupported model/effort changes visibly refuse', () => {

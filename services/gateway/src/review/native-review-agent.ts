@@ -4,6 +4,7 @@ import {
   allocateReviewerContext,
   isTerminalRunStatus,
   type ReviewMode,
+  type ReviewSessionFallback,
   type ReviewValidationDepth,
 } from '@farmslot/protocol';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
@@ -295,7 +296,7 @@ async function runNativeReviewAttempt(
   let progress: { stop(): void | Promise<void> } | undefined;
   let activeTaskSet = false;
   let primaryFailure: unknown;
-  let comparedRanges: string[] | undefined;
+  let fallbackRecord: ReviewSessionFallback | undefined;
   try {
     const reviewSnapshot = await withNativeReviewMutation(async () => {
       admit();
@@ -323,7 +324,7 @@ async function runNativeReviewAttempt(
               baseRef,
             })
           : undefined;
-      comparedRanges = delta?.comparedRanges;
+      let comparedRanges = delta?.comparedRanges;
       const snapshot = recovering
         ? await readPersistedReviewSnapshot(vars, taskDir, loopNumber, artifactScope)
         : (delta ??
@@ -372,6 +373,9 @@ async function runNativeReviewAttempt(
         // The WARM range already captured is this lineage's delta.
         comparedRanges = [`${range.baseSha}..${range.headSha}`];
       }
+      fallbackRecord = fallback
+        ? { reason: fallback.reason, detail: fallback.detail, comparedRanges: comparedRanges ?? [] }
+        : undefined;
       await admitReviewRound(runId, roundId);
       if (retained) retained = claimWarmReviewerSession(scope, { consume: true });
       if (!recovering) {
@@ -388,15 +392,7 @@ async function runNativeReviewAttempt(
           reviewResultFile: resultRelPath,
           artifactScope: artifactScope ?? null,
           reviewLoopNumber: loopNumber,
-          ...(fallback
-            ? {
-                reviewFallback: {
-                  reason: fallback.reason,
-                  detail: fallback.detail,
-                  comparedRanges: comparedRanges ?? [],
-                },
-              }
-            : {}),
+          ...(fallbackRecord ? { reviewFallback: fallbackRecord } : {}),
           runner,
           model,
           ...(visualInput ? { pipelineVisualReviewInput: visualInput } : {}),
@@ -690,10 +686,8 @@ async function runNativeReviewAttempt(
       });
     const artifactPaths = [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths];
     // A fallback reattached after a restart reports the fallback its context recorded.
-    const fallbackRecord = fallback
-      ? { reason: fallback.reason, detail: fallback.detail, comparedRanges: comparedRanges ?? [] }
-      : context.reviewFallback;
-    const mode: ReviewMode = fallbackRecord ? 'cold' : input.mode;
+    const recordedFallback = fallbackRecord ?? context.reviewFallback;
+    const mode: ReviewMode = recordedFallback ? 'cold' : input.mode;
     return {
       ...feedback,
       validationDepth,
@@ -716,7 +710,7 @@ async function runNativeReviewAttempt(
         runner,
         model,
         effort: input.effort?.trim() || null,
-        ...(fallbackRecord ? { fallback: fallbackRecord } : {}),
+        ...(recordedFallback ? { fallback: recordedFallback } : {}),
       },
       reviewSnapshot: reviewSnapshot.snapshot,
       usage: unavailableRunnerSessionUsage({

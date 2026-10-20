@@ -126,6 +126,14 @@ export function reviewLineageId(review: Pick<ReviewStatus, 'id' | 'session'>): s
   return review.session?.reviewId ?? review.id;
 }
 
+/** A lineage's latest gate row. */
+export function latestReviewOfLineage<T extends Pick<ReviewStatus, 'id' | 'session'>>(
+  reviews: readonly T[],
+  lineageId: string,
+): T | undefined {
+  return [...reviews].reverse().find((review) => reviewLineageId(review) === lineageId);
+}
+
 /**
  * A review's lineage qualifies for a re-review with a validated verdict and a recorded reviewed
  * head (ADR-063 Amendment 5); its findings go to a fallback's fresh session.
