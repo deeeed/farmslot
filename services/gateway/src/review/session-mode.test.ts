@@ -18,6 +18,7 @@ import {
 
 const scope: WarmReviewerScope = {
   reviewId: 'review-a',
+  familyId: 'family-1',
   project: 'project',
   ownerPrincipalId: null,
   transport: 'tmux',
@@ -63,12 +64,76 @@ test('WARM retains repository/PR identity and last reviewed head across run and 
   assert.ok(claimWarmReviewerSession({ ...scope, repository: 'OWNER/REPO' }));
 });
 
-test('foreign PRs and runners never claim the retained reviewer', () => {
+test('foreign PRs, families and runners never claim the retained reviewer', () => {
   registerWarmReviewerSession(session);
-  assert.equal(claimWarmReviewerSession({ ...scope, repository: 'foreign/repo' }), null);
-  assert.equal(claimWarmReviewerSession({ ...scope, prNumber: 43 }), null);
+  assert.throws(
+    () => claimWarmReviewerSession({ ...scope, repository: 'foreign/repo' }),
+    /pr-mismatch/,
+  );
+  assert.throws(() => claimWarmReviewerSession({ ...scope, prNumber: 43 }), /pr-mismatch/);
   assert.throws(() => claimWarmReviewerSession({ ...scope, runner: 'claude' }), /runner-mismatch/);
   assert.equal(claimWarmReviewerSession({ ...scope, reviewId: 'another-review' }), null);
+  assert.equal(claimWarmReviewerSession({ ...scope, familyId: 'another-family' }), null);
+});
+
+test('a pre-publish run registers its validated reviewer and a WARM re-review continues it', () => {
+  const { repository: _repository, prNumber: _prNumber, ...prePublish } = scope;
+  registerWarmReviewerSession({
+    ...session,
+    ...prePublish,
+    repository: undefined,
+    prNumber: undefined,
+  });
+  assert.equal(claimWarmReviewerSession(prePublish)?.runnerSessionId, session.runnerSessionId);
+  // The lineage continues once the PR opens, and never in another run family.
+  assert.equal(claimWarmReviewerSession(scope)?.runnerSessionId, session.runnerSessionId);
+  assert.equal(claimWarmReviewerSession({ ...prePublish, familyId: 'family-2' }), null);
+  const run = makeRun({
+    id: 'prior-run',
+    project: 'project',
+    status: 'reviewing',
+    slotId: 'slot-a',
+    ticketOrPr: 'PROJ-1',
+  });
+  run.engineState = {
+    publishGate: {
+      reviews: [
+        {
+          id: 'review-a',
+          runner: scope.runner,
+          model: scope.model,
+          mode: 'cold',
+          verdict: 'issues',
+          loopNumber: 1,
+          unresolvedCount: 1,
+          reviewerSessionId: session.runnerSessionId,
+          reviewedHeadSha: session.lastReviewedHeadSha,
+        },
+      ],
+    },
+  };
+  run.agentContexts = [
+    {
+      id: session.contextId,
+      reviewId: scope.reviewId,
+      role: 'review',
+      label: 'Review',
+      runId: 'prior-run',
+      slotId: 'slot-a',
+      runner: scope.runner,
+      model: scope.model,
+      status: 'complete',
+      target: { session: 'tmux', window: session.windowName, target: 'tmux:review' },
+      runnerSessionId: session.runnerSessionId,
+      runnerSessionPath: session.runnerSessionPath,
+      runnerSessionCapturedAt: 'captured',
+      reviewResultValidatedAt: 'validated',
+      taskFile: 'tasks/old/REVIEW.md',
+    },
+  ];
+  resetWarmReviewerSessionsForTest();
+  assert.equal(persistedWarmReviewerSession(prePublish, run)?.lastReviewedHeadSha, '1111111');
+  assert.equal(persistedWarmReviewerSession({ ...prePublish, familyId: 'family-2' }, run), null);
 });
 
 test('busy WARM and unsupported model/effort changes visibly refuse', () => {

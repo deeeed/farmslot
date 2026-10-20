@@ -3,6 +3,7 @@ import {
   parseGitHubPullUrl,
   parseGitHubRef,
   prNumberFromRunInput,
+  type ReviewContinuationContext,
   type ReviewGatePayload,
   type ReviewMode,
   type ReviewSessionRefusalReason,
@@ -13,7 +14,7 @@ export class WarmReviewRefusal extends Error {
   override name = 'WarmReviewRefusal';
   constructor(
     readonly reason: ReviewSessionRefusalReason,
-    detail: string,
+    readonly detail: string,
   ) {
     super(`WARM review refused (${reason}): ${detail}. Wait or choose COLD.`);
   }
@@ -22,6 +23,8 @@ export class WarmReviewRefusal extends Error {
 export interface WarmReviewerScope {
   runId: string;
   reviewId: string;
+  /** A lineage never continues in a run of another family (ADR-063 Amendment 5). */
+  familyId: string;
   project: string;
   ownerPrincipalId: string | null;
   /** Creator generation for tmux continuity; omission means zero. Native sessions are id-only. */
@@ -32,8 +35,9 @@ export interface WarmReviewerScope {
   runner: string;
   model: string;
   effort: string | null;
-  repository: string;
-  prNumber: number;
+  /** Present once the run has a PR; checked only when both sides have one. */
+  repository?: string;
+  prNumber?: number;
 }
 
 export interface WarmReviewerSession extends WarmReviewerScope {
@@ -49,8 +53,21 @@ export interface WarmReviewerSession extends WarmReviewerScope {
 }
 
 const warmSessions = new Map<string, WarmReviewerSession>();
-const sessionKey = (scope: Pick<WarmReviewerScope, 'repository' | 'prNumber' | 'reviewId'>) =>
-  `${scope.repository.toLowerCase()}#${scope.prNumber}::${scope.reviewId}`;
+const sessionKey = (scope: Pick<WarmReviewerScope, 'familyId' | 'reviewId'>) =>
+  `${scope.familyId}::${scope.reviewId}`;
+
+/** A different PR refuses only when both the lineage and the run have one. */
+function prDiffers(
+  left: Pick<WarmReviewerScope, 'repository' | 'prNumber'>,
+  right: Pick<WarmReviewerScope, 'repository' | 'prNumber'>,
+): boolean {
+  return (
+    !!left.repository &&
+    !!right.repository &&
+    (left.repository.toLowerCase() !== right.repository.toLowerCase() ||
+      left.prNumber !== right.prNumber)
+  );
+}
 
 export function reviewPRIdentity(
   run:
@@ -79,19 +96,34 @@ export function reviewPRIdentity(
   return ref ? { repository: ref.repo, prNumber: ref.number } : null;
 }
 
+/** A lineage continues only in its run family, and in its own PR once both sides have one. */
+export function assertLineageBelongsToRun(
+  lineage: ReviewContinuationContext,
+  run: Pick<Run, 'familyId' | 'ticketOrPr' | 'links' | 'prWork'> &
+    Partial<Pick<Run, 'flowType' | 'prNumber' | 'engineState'>>,
+): void {
+  if (lineage.familyId && lineage.familyId !== run.familyId)
+    throw new WarmReviewRefusal('session-unavailable', 'the lineage belongs to another run family');
+  const identity = reviewPRIdentity(run);
+  if (identity && prDiffers(identity, lineage))
+    throw new WarmReviewRefusal('pr-mismatch', 'the lineage belongs to a different repository/PR');
+}
+
 export function registerWarmReviewerSession(
   session: Omit<WarmReviewerSession, 'forensicOnly' | 'busy'>,
 ): void {
   if (
     !session.reviewId.trim() ||
+    !session.familyId.trim() ||
     !session.runnerSessionId.trim() ||
     !session.lastReviewedHeadSha.trim() ||
-    !session.repository.trim() ||
-    !Number.isSafeInteger(session.prNumber) ||
-    session.prNumber < 1
+    (session.repository !== undefined &&
+      (!session.repository.trim() ||
+        !Number.isSafeInteger(session.prNumber) ||
+        (session.prNumber ?? 0) < 1))
   )
     throw new Error(
-      'Retained review requires repository/PR, session identity and last reviewed head',
+      'Retained review requires its run family, session identity and last reviewed head',
     );
   warmSessions.set(sessionKey(session), { ...session, forensicOnly: false, busy: false });
 }
@@ -112,6 +144,8 @@ export function claimWarmReviewerSession(
       'session-unavailable',
       'the retained reviewer has incompatible project, owner or transport',
     );
+  if (prDiffers(session, scope))
+    throw new WarmReviewRefusal('pr-mismatch', 'the retained reviewer belongs to another PR');
   if (session.runner !== scope.runner)
     throw new WarmReviewRefusal(
       'runner-mismatch',
@@ -156,10 +190,9 @@ export function resetWarmReviewerSessionsForTest(): void {
 
 type PrimaryReviewEvidence = Pick<ReviewGatePayload, 'session' | 'reviewSnapshot'> &
   Partial<Pick<ReviewGatePayload, 'repo' | 'prNumber'>>;
-type PrimaryReviewEvidenceScope = Pick<
-  WarmReviewerScope,
-  'reviewId' | 'repository' | 'prNumber'
-> & {
+type PrimaryReviewEvidenceScope = Pick<WarmReviewerScope, 'reviewId'> & {
+  repository: string;
+  prNumber: number;
   runnerSessionId: string;
 };
 
@@ -195,19 +228,14 @@ export function primaryReviewedHeadForSession(
   return matching?.reviewSnapshot?.headSha ?? null;
 }
 
-/** Recover only completed reviewer contexts with matching PR/head verdict provenance. */
+/** Recover only completed reviewer contexts of the run family with head verdict provenance. */
 export function persistedWarmReviewerSession(
   scope: WarmReviewerScope,
   run: Run,
 ): WarmReviewerSession | null {
   const identity = reviewPRIdentity(run);
-  if (run.project !== scope.project) return null;
-  if (
-    !identity ||
-    identity.repository.toLowerCase() !== scope.repository.toLowerCase() ||
-    identity.prNumber !== scope.prNumber
-  )
-    return null;
+  if (run.project !== scope.project || run.familyId !== scope.familyId) return null;
+  if (identity && prDiffers(identity, scope)) return null;
   const known = warmSessions.get(sessionKey(scope));
   if (known?.forensicOnly) return null;
   const reviews = run.engineState?.publishGate?.reviews ?? [];
@@ -239,8 +267,12 @@ export function persistedWarmReviewerSession(
       candidate.runnerSessionId &&
       (review
         ? candidate.runnerSessionId === review.reviewerSessionId
-        : primaryReviewedHeadForSession(run, {
-            ...scope,
+        : scope.repository &&
+          scope.prNumber &&
+          primaryReviewedHeadForSession(run, {
+            reviewId: scope.reviewId,
+            repository: scope.repository,
+            prNumber: scope.prNumber,
             runnerSessionId: candidate.runnerSessionId,
           })) &&
       ((candidate.runnerSessionPath && candidate.target?.window) ||
@@ -254,10 +286,14 @@ export function persistedWarmReviewerSession(
   if (!context) return null;
   const reviewedHeadSha =
     review?.reviewedHeadSha ??
-    primaryReviewedHeadForSession(run, {
-      ...scope,
-      runnerSessionId: context.runnerSessionId!,
-    });
+    (scope.repository && scope.prNumber
+      ? primaryReviewedHeadForSession(run, {
+          reviewId: scope.reviewId,
+          repository: scope.repository,
+          prNumber: scope.prNumber,
+          runnerSessionId: context.runnerSessionId!,
+        })
+      : null);
   if (!reviewedHeadSha) return null;
   return {
     ...scope,
@@ -303,22 +339,32 @@ export function resolveWarmReviewerSession(
     if (matches[0]) registerWarmReviewerSession(matches[0]);
     session = claimWarmReviewerSession(scope);
   }
-  if (
-    session &&
-    runs.some((run) =>
-      run.agentContexts?.some(
-        (context) =>
-          context.role === 'review' &&
-          context.runnerSessionId === session!.runnerSessionId &&
-          ['launching', 'working', 'waiting'].includes(context.status),
-      ),
-    )
-  )
+  const holder = session && activeReviewerHolding(session.runnerSessionId, runs);
+  // A busy turn of the same lineage is waited for; another lineage holding it is unavailable.
+  if (holder && holder.reviewId && holder.reviewId !== scope.reviewId)
+    throw new WarmReviewRefusal('session-unavailable', 'another review lineage holds the session');
+  if (holder)
     throw new WarmReviewRefusal(
       'session-busy',
       'the retained reviewer is owned by an active review',
     );
   return session;
+}
+
+/** The active review context running on a reviewer session, if any. */
+export function activeReviewerHolding(
+  runnerSessionId: string,
+  runs: readonly Run[],
+): NonNullable<Run['agentContexts']>[number] | undefined {
+  for (const run of runs)
+    for (const context of run.agentContexts ?? [])
+      if (
+        context.role === 'review' &&
+        context.runnerSessionId === runnerSessionId &&
+        ['launching', 'working', 'waiting'].includes(context.status)
+      )
+        return context;
+  return undefined;
 }
 
 export function shouldRetainCompletedReviewer(hasReusableResult: boolean): boolean {

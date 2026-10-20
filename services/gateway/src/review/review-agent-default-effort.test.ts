@@ -37,6 +37,7 @@ test('WARM runner-default effort agrees at gate preflight and reviewer delivery'
     ...execution,
     runId: run.id,
     reviewId: 'review-default',
+    familyId: run.familyId,
     project: run.project,
     ownerPrincipalId: run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
     transport: 'native',

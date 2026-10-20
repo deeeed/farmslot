@@ -26,6 +26,7 @@ import {
 } from '@farmslot/review-dispatch';
 
 import {
+  assertLineageBelongsToRun,
   resolveWarmReviewerSession,
   reviewPRIdentity,
   WarmReviewRefusal,
@@ -311,21 +312,19 @@ export function recoveryReviewPlanForActiveFix(run: Run): RecoveryReviewPlan | u
     effort: reviewerContextEffort(reviewer) ?? prior?.effort ?? null,
     mode: 'warm',
   };
-  const identity = reviewPRIdentity(run);
-  const context: ReviewRequestContext | undefined =
-    identity && prior ? { reviewLineages: [{ ...identity, reviewId: prior.id }] } : undefined;
-  try {
-    if (!context)
-      throw new WarmReviewRefusal('missing-session', 'no verified reviewId lineage context');
-    assertWarmReviewRequestAvailable(run, { ...selection, context }, [run]);
-    return { sequence: [selection], context };
-  } catch (error) {
-    if (!(error instanceof WarmReviewRefusal)) throw error;
+  // ADR-063 Amendment 5: the fix's re-review continues its lineage. An unavailable session
+  // runs the delta-scoped COLD fallback when the plan executes, never a full-diff COLD.
+  if (prior?.reviewedHeadSha && ['pass', 'issues'].includes(prior.verdict))
     return {
-      sequence: [{ ...selection, mode: 'cold' }],
-      note: `WARM recovery unavailable: ${error.message}. Using COLD review on the same run; prior reviews remain retained.`,
+      sequence: [selection],
+      context: {
+        reviewLineages: [{ ...reviewPRIdentity(run), reviewId: prior.id, familyId: run.familyId }],
+      },
     };
-  }
+  return {
+    sequence: [{ ...selection, mode: 'cold' }],
+    note: 'The active fix has no reviewed lineage to continue. Using a first-pass COLD review on the same run; prior reviews remain retained.',
+  };
 }
 
 /** Request refusal happens before a parked run is restored or a gate receipt consumed. */
@@ -346,25 +345,12 @@ export function assertWarmReviewRequestAvailable(
         'missing-session',
         'the requested row has no reviewId lineage context',
       );
-    if (
-      !identity ||
-      lineage.repository.toLowerCase() !== identity.repository.toLowerCase() ||
-      lineage.prNumber !== identity.prNumber
-    )
-      throw new WarmReviewRefusal(
-        'pr-mismatch',
-        'the requested lineage belongs to a different repository/PR',
-      );
+    assertLineageBelongsToRun(lineage, run);
     const nativeOwners = new Set(
       runs
-        .filter((candidate) => {
-          const source = reviewPRIdentity(candidate);
-          return (
-            candidate.project === run.project &&
-            source?.repository.toLowerCase() === identity.repository.toLowerCase() &&
-            source.prNumber === identity.prNumber
-          );
-        })
+        .filter(
+          (candidate) => candidate.project === run.project && candidate.familyId === run.familyId,
+        )
         .flatMap(
           (candidate) =>
             candidate.agentContexts?.flatMap((context) =>
@@ -393,6 +379,7 @@ export function assertWarmReviewRequestAvailable(
       {
         runId: run.id,
         reviewId: lineage.reviewId,
+        familyId: run.familyId,
         project: run.project,
         ownerPrincipalId:
           nativeOwner ?? run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
@@ -405,8 +392,7 @@ export function assertWarmReviewRequestAvailable(
         runner: execution.runner,
         model: execution.model,
         effort: execution.effort,
-        repository: identity.repository,
-        prNumber: identity.prNumber,
+        ...identity,
       },
       runs,
     );
@@ -444,6 +430,7 @@ export function assertPrimaryReviewContext(
     !pr ||
     bindings.some(
       (binding) =>
+        !binding.repository ||
         binding.repository.toLowerCase() !== pr.repo.toLowerCase() ||
         binding.prNumber !== pr.number,
     )

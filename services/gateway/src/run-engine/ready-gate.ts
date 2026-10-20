@@ -69,7 +69,7 @@ import {
   reviewNoVerdictCapReason,
 } from '../review/review-round-budget.js';
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
-import { reviewPRIdentity } from '../review/session-mode.js';
+import { assertLineageBelongsToRun } from '../review/session-mode.js';
 import { removeSlotFiles } from '../review/snapshots.js';
 import { resolveWorkerTaskDir } from '../review/templates.js';
 import { isTerminalReviewArtifactError } from '../review/terminal-result.js';
@@ -553,17 +553,8 @@ export async function executePublishGateReviewPlan(
     // ID + artifact paths flow through REQUESTED_REVIEW_SOURCE so this stream stays
     // namespace-isolated from the worker's review attempts (review-sources.ts).
     const continuation = reviewSequenceContext?.reviewLineages[boundedPlan.indexOf(planStep)];
-    const reviewIdentity = reviewPRIdentity(latestBeforeReview);
-    if (
-      planStep.mode === 'warm' &&
-      continuation &&
-      (!reviewIdentity ||
-        continuation.repository.toLowerCase() !== reviewIdentity.repository.toLowerCase() ||
-        continuation.prNumber !== reviewIdentity.prNumber)
-    )
-      throw new Error(
-        'WARM review unavailable: the lineage context belongs to a different repository/PR',
-      );
+    if (planStep.mode === 'warm' && continuation)
+      assertLineageBelongsToRun(continuation, latestBeforeReview);
     if (planStep.mode === 'warm' && !continuation?.reviewId)
       throw new Error(
         'WARM review unavailable: this request row has no reviewId lineage context. Choose a previous review or COLD.',

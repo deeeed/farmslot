@@ -12,10 +12,7 @@ import {
   reviewRequestFromSequence,
 } from '@farmslot/review-dispatch';
 
-import {
-  registerWarmReviewerSession,
-  resetWarmReviewerSessionsForTest,
-} from '../review/session-mode.js';
+import { resetWarmReviewerSessionsForTest } from '../review/session-mode.js';
 
 import {
   automaticPublicationReviewPlan,
@@ -89,11 +86,9 @@ test('complete replay repairs an unbound warm row from its original pair and cur
   assert.match(fallback?.note ?? '', /Using COLD/);
 });
 
-test('active fix recovery binds verified warm lineage, otherwise records a cold fallback', (t) => {
-  resetWarmReviewerSessionsForTest();
-  t.after(resetWarmReviewerSessionsForTest);
+test('active fix recovery continues its lineage WARM before a PR, never a full-diff COLD', () => {
   const run = makeRun({
-    ticketOrPr: 'example/recovery#42',
+    ticketOrPr: 'PROJ-RECOVERY',
     engineState: {
       publishGate: {
         reviews: [
@@ -128,34 +123,29 @@ test('active fix recovery binds verified warm lineage, otherwise records a cold 
       runnerSessionId: 'retained-session',
     },
   ];
-  assert.equal(recoveryReviewPlanForActiveFix(run)?.sequence[0].mode, 'cold');
-  assert.match(recoveryReviewPlanForActiveFix(run)?.note ?? '', /Using COLD/);
-  registerWarmReviewerSession({
-    runId: run.id,
-    reviewId: 'lineage',
-    project: run.project,
-    ownerPrincipalId: null,
-    transport: 'tmux',
-    taskDir: '',
-    artifactScope: 'lineage',
-    runner: 'codex',
-    model: 'gpt-6-astra',
-    effort: 'high',
-    repository: 'example/recovery',
-    prNumber: 42,
-    contextId: 'reviewer',
-    windowName: 'reviewer',
-    slotId: 'slot-1',
-    runnerSessionId: 'retained-session',
-    runnerSessionPath: '/tmp/retained-session.jsonl',
-    lastLoopNumber: 1,
-    lastReviewedHeadSha: 'head',
-  });
+  // No retained session is registered: an unavailable one runs the delta fallback at launch.
   const recovered = recoveryReviewPlanForActiveFix(run);
-  assert.equal(recovered?.sequence[0].mode, 'warm');
-  assert.deepEqual(recovered?.context, {
-    reviewLineages: [{ repository: 'example/recovery', prNumber: 42, reviewId: 'lineage' }],
+  assert.deepEqual(recovered, {
+    sequence: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'warm' }],
+    context: { reviewLineages: [{ reviewId: 'lineage', familyId: 'family-1' }] },
   });
+  assert.deepEqual(
+    recoveryReviewPlanForActiveFix({ ...run, ticketOrPr: 'example/recovery#42' })?.context,
+    {
+      reviewLineages: [
+        {
+          repository: 'example/recovery',
+          prNumber: 42,
+          reviewId: 'lineage',
+          familyId: 'family-1',
+        },
+      ],
+    },
+  );
+  // A review without a recorded reviewed head has no lineage to continue: a first pass.
+  delete run.engineState!.publishGate!.reviews![0].reviewedHeadSha;
+  assert.equal(recoveryReviewPlanForActiveFix(run)?.sequence[0].mode, 'cold');
+  assert.match(recoveryReviewPlanForActiveFix(run)?.note ?? '', /first-pass COLD/);
   run.engineState!.publishGate!.reviews![0].verdict = 'pass';
   assert.equal(
     recoveryReviewPlanForActiveFix(run),
