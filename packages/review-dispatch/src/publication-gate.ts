@@ -216,15 +216,22 @@ export function publicationReviewBlockingReason(
 }
 
 /**
- * What a run's open human gate waits on, as one line a person can act on: the gate's
- * reason whose action it offers (the lifecycle view's rule), else the review findings.
- * Presentation only; publish guards keep using publicationReviewBlockingReason.
+ * The review findings that block a run's publication, worded by its open human gate's
+ * actionable reason (the lifecycle view's rule). Presentation only; publish guards keep
+ * using publicationReviewBlockingReason.
  */
 export function humanGateBlockingReason(
   run: Pick<Run, 'status' | 'agentContexts' | 'engineState' | 'decisions'>,
 ): string | undefined {
-  const gate = openHumanGateDecision(run);
-  return (gate ? gateWaitReason(gate) : undefined) ?? publicationReviewBlockingReason(run);
+  return gateReviewBlockingReason(publicationReviewBlockingReason(run), openHumanGateDecision(run));
+}
+
+/** Review findings block publication; an open gate words them as the reason a person can act on. */
+function gateReviewBlockingReason(
+  reviewBlock: string | undefined,
+  gate: GateDecisionFields | null | undefined,
+): string | undefined {
+  return reviewBlock && ((gate ? gateWaitReason(gate) : undefined) ?? reviewBlock);
 }
 
 /** Presentation only: action availability and evidence judgments remain gateway-owned. */
@@ -284,7 +291,7 @@ export function publicationGateView(input: PublicationGateInput) {
   const blockedReason = input.resolved
     ? 'This decision is resolved.'
     : reviewBlock
-      ? ((input.gate ? gateWaitReason(input.gate) : undefined) ?? reviewBlock)
+      ? gateReviewBlockingReason(reviewBlock, input.gate)
       : refreshRequired
         ? 'Refresh package'
         : pending.size

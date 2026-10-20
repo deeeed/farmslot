@@ -1,6 +1,7 @@
 import {
   type ArtifactRef,
   classifyReviewFreshness,
+  type GateDecisionFields,
   type GateSummary,
   gateWaitReason,
   HUMAN_GATE_DECISION_TYPE,
@@ -101,7 +102,7 @@ export function compactHumanGateLabel(
 
 export function readyReviewBlockingDisplayReason(
   payload: ReadyGatePayload,
-  actions?: readonly { id: string }[],
+  actions?: GateDecisionFields['actions'],
 ): string {
   if (payload.gateReadiness && payload.gateReadiness.state !== 'ready') {
     // The reason a person can act on, by the lifecycle view's rule.

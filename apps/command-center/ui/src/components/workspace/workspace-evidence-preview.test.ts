@@ -272,3 +272,54 @@ test('pending visual judgment controls render while evidence loads and after a r
     assert.match(text, /check-1/);
   }
 });
+
+// Run 7721a02b (TAT-4006): the review rounds are spent, so the gate offers Hold and
+// Request Review only; the evidence view must not recommend fixing.
+test('the evidence view names the next action the gate offers', () => {
+  const model = createEvidenceReviewModel({
+    gateDecision: {
+      id: 'gate',
+      type: 'engine_human_gate',
+      title: 'TAT-4006 — human gate',
+      description: '',
+      createdAt: '2026-10-19T17:30:13.466Z',
+      actions: [
+        { id: 'hold', label: 'Hold', style: 'secondary' },
+        { id: 'request-review', label: 'Request Review', style: 'secondary' },
+      ],
+      payload: {
+        kind: 'ready',
+        prNumber: null,
+        repo: 'MetaMask/core',
+        diffStat: { files: 7, additions: 507, deletions: 3 },
+        workerReport: '',
+        branch: 'TAT-4006',
+        reviewRoundBudget: {
+          used: 7,
+          limit: 7,
+          remaining: 0,
+          label: 'Review rounds 7/7',
+          noVerdict: 0,
+          noVerdictLimit: 3,
+        },
+        gateReadiness: {
+          state: 'not-ready',
+          identity: { runId: 'run', generation: 8 },
+          reasons: [
+            {
+              code: 'review-fix-required',
+              prerequisite: 'review',
+              message: 'Review found 4 issues. Fix and pass review before publishing.',
+              actionId: 'continue-review-fix',
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert.equal(model.gateSnapshot?.nextAction, 'Review rounds spent: 4 issues open');
+  assert.deepEqual(
+    model.gateSnapshot?.requirements.map((reason) => reason.message),
+    ['Review rounds spent: 4 issues open'],
+  );
+});

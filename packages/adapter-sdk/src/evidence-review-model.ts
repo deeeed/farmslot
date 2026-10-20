@@ -11,6 +11,8 @@ import {
   type DeterministicChecklistCheck,
   EVIDENCE_PADDING_MS,
   type EvidenceMomentRef,
+  gateDisplayReasons,
+  gateWaitReason,
   isRecipeRepairScope,
   isRecord,
   isTerminalRunStatus,
@@ -944,10 +946,14 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         ci: gatePayload.prPackage?.deterministicChecks ?? [],
         ciChecks: gatePayload.ciChecks ?? [],
         ownReviewVerdict: gatePayload.reviewVerdict,
-        requirements: gatePayload.gateReadiness?.reasons ?? [],
+        requirements: input.gateDecision
+          ? gateDisplayReasons(input.gateDecision)
+          : (gatePayload.gateReadiness?.reasons ?? []),
         nextAction: input.gateDecision?.resolvedAt
           ? 'Read retained evidence (read-only)'
-          : (offeredNext?.label ?? nextReason?.message ?? 'Use the current gate action'),
+          : (offeredNext?.label ??
+            (input.gateDecision ? gateWaitReason(input.gateDecision) : undefined) ??
+            'Use the current gate action'),
       }
     : null;
   const markerSeekMs: EvidenceReviewModel['markerSeekMs'] = (

@@ -20,6 +20,7 @@ import {
 import { type PendingDecisionLike, presentDecision } from './decision-presentation';
 import {
   decisionPresentationFixtures,
+  readyGateDecisionFixture,
   retrospectiveDecisionFixture,
 } from './decision-presentation.fixtures';
 
@@ -561,6 +562,58 @@ for (const status of ['fixing', 'review-failed', 'reconciling']) {
     view.actions.map((action) => action.id),
     ['hold'],
   );
+}
+
+// Run 7721a02b (TAT-4006): the review rounds are spent, so its gate no longer offers
+// fixing; the prerequisites report the finding, not the fix.
+{
+  const view = presentDecision({
+    ...readyGateDecisionFixture,
+    type: 'engine_human_gate',
+    context: { runStatus: 'blocked' },
+    actions: [
+      { id: 'hold', label: 'Hold', style: 'secondary' },
+      { id: 'request-review', label: 'Request Review', style: 'secondary' },
+    ],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: 'MetaMask/core',
+      diffStat: { files: 7, additions: 507, deletions: 3 },
+      branch: 'TAT-4006',
+      workerReport: '',
+      reviewRoundBudget: {
+        used: 7,
+        limit: 7,
+        remaining: 0,
+        label: 'Review rounds 7/7',
+        noVerdict: 0,
+        noVerdictLimit: 3,
+      },
+      gateReadiness: {
+        state: 'not-ready',
+        identity: { runId: 'gate-run', generation: 8 },
+        reasons: [
+          {
+            code: 'review-fix-required',
+            prerequisite: 'review',
+            message: 'Review found 4 issues. Fix and pass review before publishing.',
+            actionId: 'continue-review-fix',
+          },
+          {
+            code: 'review-result-required',
+            prerequisite: 'review',
+            message: 'Required current-head reviews need valid structured result artifacts.',
+            actionId: 'hold',
+          },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(view.textSections[0], {
+    title: 'Prerequisites incomplete',
+    body: 'Review rounds spent: 4 issues open\nRequired current-head reviews need valid structured result artifacts.',
+  });
 }
 
 // A result decision reads as Needs decision with a warning tone.

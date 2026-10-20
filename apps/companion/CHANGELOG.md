@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Run detail and the gate review show the reason a person can act on, for example `Review rounds spent: 4 issues open`, instead of 'Fix and pass review' when fixing is not offered.
+- Run detail, the gate review, the decision workspace's prerequisites and the evidence view show the reason a person can act on, for example `Review rounds spent: 4 issues open`, instead of 'Fix and pass review' when fixing is not offered.
 - A run waiting at its open human gate shows `Needs your decision` with the gate's readiness reason in the runs list badge, the mini pipeline and the run header, and the run detail pipeline no longer marks its gate blocked.
 - The decision workspace and gate review show reviewer attempts that ended without a verdict next to the review rounds once there is one, for example `Review rounds 4/5 · 1/3 no-verdict`.
 
