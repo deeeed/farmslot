@@ -306,3 +306,13 @@ export function refinementChoiceValue(
 }
 
 export { CUSTOM_REFINEMENT_CHOICE, DEFAULT_REFINEMENT_CHOICE };
+
+/**
+ * A link that selects one backlog item. Pin the item's statuses: the panel's
+ * default filter hides done and archived items and would clear the selection.
+ */
+export function backlogItemHref(itemId: string, statuses?: readonly string[]): string {
+  return `#backlog?item=${encodeURIComponent(itemId)}${
+    statuses?.length ? `&backlogStatus=${encodeURIComponent(statuses.join(','))}` : ''
+  }`;
+}

@@ -11,31 +11,42 @@ import {
 import './media-lightbox.js';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
-import { proofStepGroups } from '../progress-tracker/proof-step-groups.js';
+import {
+  formatProofStepExpectation,
+  proofStepGroups,
+} from '../progress-tracker/proof-step-groups.js';
+import { workspaceArtifactBasename } from '../workspace/workspace-artifacts.js';
 
+import { gatewayMediaSrc } from './gateway-media-src.js';
 import type { MediaLightbox } from './media-lightbox.js';
 import type { LightboxItem } from './media-lightbox-types.js';
 
-/** What the reviewer opens on: one recording and the criterion to start from. */
+/** What the review opens on: a criterion, its run's evidence, and the file the user chose. */
 export interface EvidenceReviewerSelection {
   claimId: string;
-  recording: LightboxItem;
+  model: EvidenceReviewModel;
+  /** The run's recording, when the criterion has one. */
+  recording: LightboxItem | null;
+  /** Serves a criterion's evidence file. */
+  resolveUrl: (path: string) => string;
+  /** The file the review was opened from; a screenshot opens on itself. */
+  openedPath?: string;
 }
 
 /**
- * Full-screen review of one recording against the run's acceptance criteria:
- * the criteria as bookmarks on the left, the whole recording on the right.
- * Choosing a criterion jumps to its clips and marks them on the timeline;
- * choosing a step jumps to where it ran and shows what it checked.
+ * Full-screen review of a run's evidence against its acceptance criteria: the
+ * criteria on the left, each with its proof steps and screenshots; the chosen
+ * moment of the recording, or the chosen screenshot, in the main view.
  */
-@customElement('evidence-video-reviewer')
-export class EvidenceVideoReviewer extends LitElement {
-  /** The recording, carrying the run's evidence model. */
-  @property({ attribute: false }) recording: LightboxItem | null = null;
-  @property() claimId = '';
+@customElement('evidence-reviewer')
+export class EvidenceReviewer extends LitElement {
+  @property({ attribute: false }) selection: EvidenceReviewerSelection | null = null;
+  @state() private claimId = '';
   @state() private openStep: number | null = null;
   /** List criteria in the order the recording reaches them, or by id. */
   @state() private order: 'video' | 'criteria' = 'video';
+  /** The screenshot in the main view instead of the recording. */
+  @state() private still: LightboxItem | null = null;
   @query('media-lightbox') private player?: MediaLightbox;
 
   static styles = css`
@@ -176,6 +187,50 @@ export class EvidenceVideoReviewer extends LitElement {
       display: block;
       min-height: 0;
     }
+    .empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: ${unsafeCSS(colors.textMuted)};
+    }
+    .stills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 0 ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.lg)};
+    }
+    .still {
+      width: 72px;
+      height: 54px;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .still-video {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: ${unsafeCSS(colors.textSecondary)};
+      font: inherit;
+    }
+    .still[aria-pressed='true'] {
+      border-color: ${unsafeCSS(colors.accent)};
+    }
+    .still img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    @media (pointer: coarse) {
+      .btn,
+      .step,
+      .claim {
+        min-height: 44px;
+      }
+    }
     @media (max-width: 760px) {
       .body {
         grid-template-columns: minmax(0, 1fr);
@@ -190,13 +245,22 @@ export class EvidenceVideoReviewer extends LitElement {
   `;
 
   private get model(): EvidenceReviewModel | undefined {
-    return this.recording?.evidenceModel;
+    return this.selection?.model;
   }
 
-  /** The model's own path for this recording, which its timeline queries take. */
+  private get recording(): LightboxItem | null {
+    const selection = this.selection;
+    if (!selection?.recording) return null;
+    return {
+      ...selection.recording,
+      evidenceModel: selection.recording.evidenceModel ?? selection.model,
+    };
+  }
+
+  /** The model's own path for the recording, which its timeline queries take. */
   private get videoPath(): string | undefined {
     const model = this.model;
-    const recording = this.recording;
+    const recording = this.selection?.recording;
     if (!model || !recording) return undefined;
     return (
       model.recordings.find((entry) => model.artifactPath(entry.videoPath) === recording.path) ??
@@ -217,9 +281,17 @@ export class EvidenceVideoReviewer extends LitElement {
     return path ? (this.model?.markerSeekMs(path, step.traceIndex, 'start') ?? null) : null;
   }
 
-  protected willUpdate(changed: Map<string, unknown>): void {
-    if ((changed.has('claimId') || changed.has('recording')) && this.claimId)
-      this.model?.selectClaim(this.claimId, this.recording?.path);
+  /** The criterion's screenshots, served like the rest of its evidence. */
+  private stills(claim: EvidenceReviewClaim): LightboxItem[] {
+    const resolve = this.selection?.resolveUrl;
+    if (!resolve) return [];
+    return claim.evidence
+      .filter((artifact) => artifact.mediaType === 'image')
+      .map((artifact) => ({
+        url: resolve(artifact.artifactPath),
+        path: artifact.artifactPath,
+        purpose: 'screenshot',
+      }));
   }
 
   /** Where the criterion's first recorded step starts, or null when none is in the recording. */
@@ -229,6 +301,15 @@ export class EvidenceVideoReviewer extends LitElement {
         .map((step) => this.stepMs(step))
         .find((ms) => ms !== null) ?? null
     );
+  }
+
+  private claimStartMs(): number | null {
+    const claim = this.claim();
+    return claim ? this.startMs(claim) : null;
+  }
+
+  private claim(): EvidenceReviewClaim | undefined {
+    return this.model?.claims.find((candidate) => candidate.id === this.claimId);
   }
 
   /** Video order: by first recorded step, criteria the recording misses last. */
@@ -241,17 +322,95 @@ export class EvidenceVideoReviewer extends LitElement {
         );
   }
 
-  private chooseClaim(claim: EvidenceReviewClaim) {
+  /** The selection last applied; host re-renders that keep it change nothing. */
+  private applied?: EvidenceReviewerSelection;
+  private appliedClaim = '';
+  private appliedModel?: EvidenceReviewModel;
+  /** Where the recording should be once it shows: a criterion start, a step, or a resume point. */
+  private pendingSeekMs: number | null = null;
+  private resumeMs: number | null = null;
+
+  protected willUpdate(changed: Map<string, unknown>): void {
+    const selection = this.selection;
+    if (!selection) return;
+    const reopened =
+      changed.has('selection') &&
+      (selection.claimId !== this.applied?.claimId ||
+        selection.recording?.url !== this.applied?.recording?.url ||
+        selection.openedPath !== this.applied?.openedPath);
+    this.applied = selection;
+    if (reopened) this.claimId = selection.claimId;
+    const claimChanged = this.claimId !== this.appliedClaim;
+    if (!claimChanged && selection.model === this.appliedModel) return;
+    this.appliedClaim = this.claimId;
+    this.appliedModel = selection.model;
+    // A criterion whose own files do not list the recording still marks it by its steps;
+    // never leave the previous criterion's clips on the timeline.
+    const model = selection.model;
+    if (
+      this.claimId &&
+      !(selection.recording && model.selectClaim(this.claimId, selection.recording.path)) &&
+      !model.selectClaim(this.claimId)
+    )
+      model.clearSelection();
+    if (!claimChanged) return;
+    // A refreshed evidence model keeps what is on screen; a new criterion starts over.
+    const claim = this.claim();
+    const opened =
+      reopened && selection.openedPath
+        ? claim && this.stills(claim).find((item) => item.path === selection.openedPath)
+        : undefined;
     this.openStep = null;
+    this.resumeMs = null;
+    if (opened || !this.recording) {
+      this.still = opened ?? (claim ? (this.stills(claim)[0] ?? null) : null);
+      this.pendingSeekMs = null;
+    } else {
+      this.still = null;
+      this.pendingSeekMs = claim ? this.startMs(claim) : null;
+    }
+  }
+
+  protected updated(): void {
+    if (this.still || this.pendingSeekMs === null) return;
+    const ms = this.pendingSeekMs;
+    this.pendingSeekMs = null;
+    this.player?.seekToMs(ms);
+  }
+
+  private playerItems(): LightboxItem[] {
+    const item = this.still ?? this.recording;
+    if (!item) return [];
+    if (this.cachedItems?.[0]?.url !== item.url) this.cachedItems = [item];
+    return this.cachedItems;
+  }
+
+  private cachedItems?: LightboxItem[];
+
+  private chooseClaim(claim: EvidenceReviewClaim) {
     this.claimId = claim.id;
     this.dispatchEvent(new CustomEvent('reviewer-claim', { detail: { claimId: claim.id } }));
-    const start = this.startMs(claim);
-    if (start !== null) this.player?.seekToMs(start);
   }
 
   private chooseStep(step: EvidenceReviewOccurrence, ms: number) {
     this.openStep = this.openStep === step.traceIndex ? null : step.traceIndex;
-    this.player?.seekToMs(ms);
+    this.showVideo(ms);
+  }
+
+  private showStill(item: LightboxItem) {
+    if (!this.still) {
+      const video = this.player?.shadowRoot?.querySelector('video');
+      this.resumeMs = video ? video.currentTime * 1000 : null;
+    }
+    this.still = item;
+  }
+
+  /** Back to the recording: at the given moment, where it was, or at the criterion's start. */
+  private showVideo(ms: number | null = this.resumeMs ?? this.claimStartMs()) {
+    if (this.still) this.still = null;
+    if (ms === null) return;
+    if (this.player?.shadowRoot?.querySelector('video')) this.player.seekToMs(ms);
+    else this.pendingSeekMs = ms;
   }
 
   private close() {
@@ -285,12 +444,7 @@ export class EvidenceVideoReviewer extends LitElement {
           ${open
             ? html`<div class="detail">
                 ${step.nodeId}${step.expectation
-                  ? `\n${Object.entries(step.expectation)
-                      .map(
-                        ([key, value]) =>
-                          `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
-                      )
-                      .join('\n')}`
+                  ? `\n${formatProofStepExpectation(step.expectation)}`
                   : ''}
               </div>`
             : nothing}
@@ -299,10 +453,40 @@ export class EvidenceVideoReviewer extends LitElement {
     </ol>`;
   }
 
+  /** The recording and the criterion's screenshots, one tap each into the main view. */
+  private renderMedia(claim: EvidenceReviewClaim) {
+    const stills = this.stills(claim);
+    if (!stills.length) return nothing;
+    return html`<div class="stills" role="group" aria-label="Evidence">
+      ${this.recording
+        ? html`<button
+            class="still still-video"
+            aria-pressed=${!this.still}
+            title="Recording"
+            @click=${() => this.showVideo()}
+          >
+            Video
+          </button>`
+        : nothing}
+      ${stills.map(
+        (item) =>
+          html`<button
+            class="still"
+            aria-pressed=${this.still?.path === item.path}
+            title=${item.path}
+            @click=${() => this.showStill(item)}
+          >
+            <img src=${gatewayMediaSrc(item.url)} alt=${workspaceArtifactBasename(item.path)} />
+          </button>`,
+      )}
+    </div>`;
+  }
+
   render() {
     const model = this.model;
-    if (!model || !this.recording) return nothing;
-    const current = model.claims.find((claim) => claim.id === this.claimId);
+    if (!model || !this.selection) return nothing;
+    const current = this.claim();
+    const items = this.playerItems();
     return html`
       <header>
         <h2>Evidence review${current ? html` · ${current.id}` : nothing}</h2>
@@ -342,21 +526,23 @@ export class EvidenceVideoReviewer extends LitElement {
                     : formatEvidenceReviewVideoTime(start / 1000, false)}</span
                 >
               </button>
-              ${selected ? this.renderSteps(claim) : nothing}`;
+              ${selected ? html`${this.renderMedia(claim)}${this.renderSteps(claim)}` : nothing}`;
           })}
         </nav>
-        <media-lightbox
-          embedded
-          open
-          owns-keys
-          hide-timeline
-          .confine=${false}
-          .items=${[this.recording]}
-          .selectedIndex=${0}
-          expand-label="All files"
-          @lightbox-expand=${() => this.dispatchEvent(new CustomEvent('reviewer-files'))}
-          @lightbox-close=${() => this.close()}
-        ></media-lightbox>
+        ${items.length
+          ? html`<media-lightbox
+              embedded
+              open
+              owns-keys
+              hide-timeline
+              .confine=${false}
+              .items=${items}
+              .selectedIndex=${0}
+              expand-label="All files"
+              @lightbox-expand=${() => this.dispatchEvent(new CustomEvent('reviewer-files'))}
+              @lightbox-close=${() => this.close()}
+            ></media-lightbox>`
+          : html`<div class="empty">No recording or screenshot for this criterion.</div>`}
       </div>
     `;
   }
@@ -364,6 +550,6 @@ export class EvidenceVideoReviewer extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    'evidence-video-reviewer': EvidenceVideoReviewer;
+    'evidence-reviewer': EvidenceReviewer;
   }
 }

@@ -251,7 +251,7 @@ export class MediaLightbox extends MediaLightboxState {
   }
 
   private _onKeyDown = (e: KeyboardEvent) => {
-    if (!this.open || (this.embedded && !this.ownsKeys)) return;
+    if (!this.open || (this.embedded && !this.ownsKeys && !this._fullscreen)) return;
     if (
       e
         .composedPath()
@@ -329,6 +329,8 @@ export class MediaLightbox extends MediaLightboxState {
 
   /** Zooms toward the pointer, keeping the point under it in place. */
   private _onWheelZoom(e: WheelEvent) {
+    // A sideways trackpad swipe is not a zoom.
+    if (e.deltaY === 0) return;
     e.preventDefault();
     const stage = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const zoom = Math.max(1, Math.min(4, this._zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
@@ -484,7 +486,9 @@ export class MediaLightbox extends MediaLightboxState {
     );
   }
 
-  /** Seeks every synced video; before the media loads, the seek waits for it. */
+  /**
+   * Seeks every synced video; before the media loads, the seek waits for it.
+   */
   seekToMs(ms: number): void {
     const video = this._primaryVideo();
     if (!video || video.readyState < 1) {
@@ -734,6 +738,8 @@ export class MediaLightbox extends MediaLightboxState {
   private _appliedVideoMarker = '';
   private _appliedVideoModel?: EvidenceReviewModel;
   private _applyInitialVideoMarker(): void {
+    // An unconfined player is driven by its host's seeks; the clip cue would override them.
+    if (!this.confine) return;
     const item = this._activeVideoItem();
     const data = this._timelineState()?.data;
     const video = this._primaryVideo();
@@ -778,6 +784,12 @@ export class MediaLightbox extends MediaLightboxState {
     if (!marker) return;
     this._appliedVideoMarker = key;
     this._seekMarker(marker, item.initialTracePhase ?? 'end', true);
+  }
+
+  /** Playback and timeline failures still show when the host lists the steps itself. */
+  private _renderVideoProblems() {
+    const error = this._videoPlayError || this._timelineState()?.error;
+    return error ? html`<p class="ml-count">${error}</p>` : nothing;
   }
 
   private _renderVideoMarkers() {
@@ -1016,7 +1028,7 @@ export class MediaLightbox extends MediaLightboxState {
             ${formatEvidenceReviewVideoTime(time)} / ${formatEvidenceReviewVideoTime(duration)}
           </span>
         </div>
-        ${this.hideTimeline ? nothing : this._renderVideoMarkers()}
+        ${this.hideTimeline ? this._renderVideoProblems() : this._renderVideoMarkers()}
       </div>
     `;
   }
@@ -1147,11 +1159,23 @@ export class MediaLightbox extends MediaLightboxState {
               ${this.embedded
                 ? html`<button
                     class="ml-btn"
-                    @click=${() => this.dispatchEvent(new CustomEvent('lightbox-expand'))}
+                    @click=${() => {
+                      // The host's viewer opens under a fullscreen player otherwise.
+                      if (this._fullscreen) void document.exitFullscreen();
+                      this.dispatchEvent(new CustomEvent('lightbox-expand'));
+                    }}
                   >
                     ${this.expandLabel}
                   </button>`
-                : html`${this._renderMaximizeControl()}
+                : html`${this.reviewable
+                      ? html`<button
+                          class="ml-btn"
+                          data-testid="media-full-review"
+                          @click=${() => this.dispatchEvent(new CustomEvent('lightbox-review'))}
+                        >
+                          Full review
+                        </button>`
+                      : nothing}${this._renderMaximizeControl()}
                     <button class="ml-btn" @click=${() => this._close()}>Close</button>`}
             </div>
           </div>

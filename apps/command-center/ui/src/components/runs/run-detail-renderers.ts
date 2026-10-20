@@ -38,13 +38,13 @@ import '../slot-view/worker-session-history.js';
 import '../shared/workspace-pin.js';
 import '../shared/cancelled-run-slot-release.js';
 import '../shared/hydrating-placeholder.js';
-import '../shared/evidence-video-reviewer.js';
+import '../shared/evidence-reviewer.js';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
-import type { EvidenceReviewerSelection } from '../shared/evidence-video-reviewer.js';
+import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import type { LightboxItem, LightboxSelection } from '../shared/media-lightbox-types.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
@@ -231,9 +231,11 @@ export interface RunEvidenceRenderContext {
     event: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
   ) => void;
   closeEvidenceLightbox: () => void;
-  /** Set while one criterion's recording is under review in the full-screen reviewer. */
+  /** Set while one criterion's evidence is open in the full-screen review. */
   evidenceReviewer?: EvidenceReviewerSelection | null;
   showEvidenceGallery?: () => void;
+  /** Set when the open gallery is one criterion's files: its recording can switch to the review. */
+  reviewEvidence?: () => void;
   selectEvidenceClaim?: (claimId: string) => void;
   navigateEvidenceLightbox: (index: number) => void;
   replaceEvidenceLightbox: (selection: LightboxSelection) => void;
@@ -391,17 +393,18 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
           <button type="button" @click=${() => ctx.closeEvidenceLightbox()}>Dismiss</button>
         </div>`
       : nothing}${ctx.evidenceReviewer
-      ? html`<evidence-video-reviewer
-          .recording=${ctx.evidenceReviewer.recording}
-          claimId=${ctx.evidenceReviewer.claimId}
+      ? html`<evidence-reviewer
+          .selection=${ctx.evidenceReviewer}
           @reviewer-close=${() => ctx.closeEvidenceLightbox()}
           @reviewer-files=${() => ctx.showEvidenceGallery?.()}
           @reviewer-claim=${(event: CustomEvent<{ claimId: string }>) =>
             ctx.selectEvidenceClaim?.(event.detail.claimId)}
-        ></evidence-video-reviewer>`
+        ></evidence-reviewer>`
       : nothing}<media-lightbox
       .items=${ctx.evidenceLightboxItems}
       .open=${ctx.evidenceLightboxOpen && !ctx.evidenceReviewer}
+      .reviewable=${Boolean(ctx.reviewEvidence)}
+      @lightbox-review=${() => ctx.reviewEvidence?.()}
       .selectedIndex=${ctx.evidenceLightboxIndex}
       scopeLabel=${ctx.evidenceLightboxScope ?? RUN_OUTPUT_SCOPE}
       @lightbox-close=${() => ctx.closeEvidenceLightbox()}

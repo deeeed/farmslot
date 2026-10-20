@@ -1,5 +1,7 @@
 import type { FamilyObservabilityRunSummary, Run, RunLink } from '@farmslot/protocol';
-import { githubPullUrl, parseGitHubRef } from '@farmslot/protocol';
+import { BACKLOG_STATUSES, githubPullUrl, parseGitHubRef } from '@farmslot/protocol';
+
+import { backlogItemHref } from '../backlog/backlog-panel-model.js';
 
 type RunWithLinks = Pick<FamilyObservabilityRunSummary, 'links' | 'runId' | 'ticketOrPr'>;
 type RunWithPr = Pick<FamilyObservabilityRunSummary, 'links' | 'prNumber' | 'runId' | 'ticketOrPr'>;
@@ -95,7 +97,8 @@ export function runSourceLinks(
     sources.push({
       label: 'Backlog',
       text: run.backlogItemId.slice(0, 8),
-      url: `#backlog?item=${encodeURIComponent(run.backlogItemId)}`,
+      // The run does not know its item's status, which is often done by now.
+      url: backlogItemHref(run.backlogItemId, BACKLOG_STATUSES),
     });
   return sources;
 }

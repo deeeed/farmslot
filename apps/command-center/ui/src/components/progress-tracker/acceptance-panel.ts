@@ -36,7 +36,7 @@ import {
   acceptanceClaimListStyles,
   renderAcceptanceClaimList,
 } from './acceptance-claim-list.js';
-import { proofStepGroups } from './proof-step-groups.js';
+import { formatProofStepExpectation, proofStepGroups } from './proof-step-groups.js';
 
 export interface AcceptanceClaimOverrideEditor {
   claimId: string | null;
@@ -479,12 +479,7 @@ function renderRowDetails(
                   <code class="ac-check-node">${occurrence.nodeId}</code>
                   ${occurrence.expectation
                     ? html`<code class="ac-check-expect"
-                        >${Object.entries(occurrence.expectation)
-                          .map(
-                            ([key, value]) =>
-                              `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
-                          )
-                          .join('\n')}</code
+                        >${formatProofStepExpectation(occurrence.expectation)}</code
                       >`
                     : nothing}
                 </li>`,

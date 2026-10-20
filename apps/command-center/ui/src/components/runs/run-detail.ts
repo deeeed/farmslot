@@ -64,7 +64,7 @@ import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
 } from '../progress-tracker/acceptance-panel.js';
-import type { EvidenceReviewerSelection } from '../shared/evidence-video-reviewer.js';
+import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import { isVideoLightboxItem } from '../shared/media-lightbox-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
@@ -1459,20 +1459,37 @@ export class RunDetail extends RunDetailState {
     if (location.hash !== next) history.replaceState(null, '', next);
   }
 
-  /** One criterion's evidence with a recording opens as the full-screen recording review. */
+  /** One criterion's evidence opens as the full-screen review, on the file the user chose. */
   private _evidenceReviewer(): EvidenceReviewerSelection | null {
     const claimId = this._evidenceLightboxCriterionId;
     const model = this.evidenceModel;
     if (!this._evidenceLightboxOpen || this._evidenceGallery || !claimId || !model) return null;
-    const recording = this._evidenceLightboxItems.find(isVideoLightboxItem);
-    return recording
-      ? { claimId, recording: { ...recording, evidenceModel: recording.evidenceModel ?? model } }
-      : null;
+    const opened = this._evidenceLightboxItems[this._evidenceLightboxIndex];
+    const recording =
+      opened && isVideoLightboxItem(opened)
+        ? opened
+        : (this._evidenceLightboxItems.find(isVideoLightboxItem) ?? null);
+    return {
+      claimId,
+      model,
+      recording,
+      resolveUrl: this._captureEvidenceResolver(),
+      openedPath: opened?.path,
+    };
   }
 
+  /**
+   * A criterion chosen in the review becomes the link only when its own files list
+   * the recording: the link resolver reopens exactly that pair, and nothing else.
+   */
   private _selectEvidenceClaim(claimId: string): void {
+    const recording = this._evidenceLightboxItems[this._evidenceLightboxIndex];
+    const reopenable = runAcceptanceCriterionEvidence(this).some(
+      (row) => row.id === claimId && Boolean(recording && row.evidence.includes(recording.path)),
+    );
+    if (!reopenable) return;
     this._evidenceLightboxCriterionId = claimId;
-    this._updateEvidenceArtifactHash(this._evidenceLightboxItems.find(isVideoLightboxItem) ?? null);
+    this._updateEvidenceArtifactHash(recording ?? null);
   }
 
   private _closeEvidenceLightbox(): void {
@@ -1554,6 +1571,10 @@ export class RunDetail extends RunDetailState {
       closeEvidenceLightbox: () => this._closeEvidenceLightbox(),
       evidenceReviewer: this._evidenceReviewer(),
       showEvidenceGallery: () => (this._evidenceGallery = true),
+      reviewEvidence:
+        this._evidenceLightboxCriterionId && this.evidenceModel
+          ? () => (this._evidenceGallery = false)
+          : undefined,
       selectEvidenceClaim: (claimId) => this._selectEvidenceClaim(claimId),
       navigateEvidenceLightbox: (index) => this._navigateEvidenceLightbox(index),
       replaceEvidenceLightbox: ({ items, index }) => {

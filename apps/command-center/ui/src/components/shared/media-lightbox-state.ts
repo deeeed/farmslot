@@ -20,6 +20,8 @@ export abstract class MediaLightboxState extends LitElement {
   @property({ attribute: 'expand-label' }) expandLabel = 'Full view';
   /** The host lists the recording's steps itself, so the player omits its own step timeline. */
   @property({ type: Boolean, attribute: 'hide-timeline' }) hideTimeline = false;
+  /** The host can open the file in its full-screen criterion review (`lightbox-review`). */
+  @property({ type: Boolean }) reviewable = false;
   @property({ type: Number }) selectedIndex = 0;
   @property({ attribute: false }) items: LightboxItem[] = [];
   @property({ attribute: false }) pairs: LightboxPair[] = [];

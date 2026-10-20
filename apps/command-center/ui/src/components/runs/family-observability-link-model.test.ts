@@ -108,7 +108,9 @@ test('runSourceLinks names the Jira ticket and links it only once the gateway re
       {
         label: 'Backlog',
         text: 'bab0b56e',
-        url: '#backlog?item=bab0b56e-f019-46c3-96f1-0fa8fabdbc26',
+        url: `#backlog?item=bab0b56e-f019-46c3-96f1-0fa8fabdbc26&backlogStatus=${encodeURIComponent(
+          'candidate,ready,queued,dispatching,running,done,failed,needs-attention,archived',
+        )}`,
       },
     ],
   );

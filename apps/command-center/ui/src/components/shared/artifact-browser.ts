@@ -15,6 +15,7 @@ import {
 import {
   type ArtifactBrowserItem,
   artifactBrowserKeyAction,
+  type ArtifactBrowserKeyFile,
   artifactBrowserKeyFiles,
   artifactBrowserNodeKey,
   artifactBrowserQueryTerms,
@@ -28,7 +29,7 @@ import type { LightboxItem } from './media-lightbox-types.js';
 /** Below this many files the list needs no search or type filters. */
 const TOOLBAR_MIN_FILES = 9;
 /** From this width the selected file previews beside the tree instead of in the host viewer. */
-const SPLIT_MIN_WIDTH = 900;
+const SPLIT_MIN_WIDTH = 720;
 
 /**
  * Folder tree over a run's artifacts with search and type filters. Opening a
@@ -45,6 +46,8 @@ export class ArtifactBrowser extends LitElement {
   /** Folders and attempt groups the user opened or closed, by node key. */
   @state() private toggled = new Map<string, boolean>();
   @state() private wide = false;
+  /** Too narrow for a side pane: the chosen file previews in a panel over the list. */
+  @state() private overlay = false;
   /** Index of the file shown in the side preview; defaults to the first key file. */
   @state() private selected: number | null = null;
   /** Node key of the tree row that holds keyboard focus. */
@@ -58,9 +61,11 @@ export class ArtifactBrowser extends LitElement {
   static styles = css`
     :host {
       display: block;
-      container-type: inline-size;
       font-family: ${unsafeCSS(fonts.mono)};
       font-size: 12px;
+    }
+    .frame {
+      container-type: inline-size;
     }
     .toolbar {
       display: flex;
@@ -148,12 +153,17 @@ export class ArtifactBrowser extends LitElement {
     }
     .file {
       flex: 1;
+      align-self: stretch;
+      display: flex;
+      align-items: center;
       min-width: 0;
+      color: ${unsafeCSS(colors.accent)};
+      text-decoration: none;
+    }
+    .file-name {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      color: ${unsafeCSS(colors.accent)};
-      text-decoration: none;
     }
     .file:hover {
       text-decoration: underline;
@@ -182,7 +192,7 @@ export class ArtifactBrowser extends LitElement {
     }
     .split {
       display: grid;
-      grid-template-columns: minmax(280px, 36%) minmax(0, 1fr);
+      grid-template-columns: minmax(240px, 34%) minmax(0, 1fr);
       gap: 12px;
       height: min(78vh, 960px);
     }
@@ -193,6 +203,33 @@ export class ArtifactBrowser extends LitElement {
     .preview {
       display: block;
       min-height: 0;
+    }
+    .overlay-scrim {
+      position: fixed;
+      inset: 0;
+      z-index: 54;
+      background: rgba(0, 0, 0, 0.45);
+    }
+    .overlay {
+      position: fixed;
+      top: env(safe-area-inset-top, 0px);
+      right: 0;
+      bottom: 0;
+      z-index: 55;
+      display: flex;
+      flex-direction: column;
+      width: min(760px, 100vw);
+      background: ${unsafeCSS(colors.bgBase)};
+      border-left: 1px solid ${unsafeCSS(colors.bgCardHover)};
+      outline: none;
+    }
+    .overlay-bar {
+      display: flex;
+      justify-content: flex-end;
+      padding: 6px 8px;
+    }
+    .overlay .preview {
+      flex: 1;
     }
     @container (max-width: 480px) {
       .search {
@@ -245,11 +282,32 @@ export class ArtifactBrowser extends LitElement {
 
   private open(index: number, event?: Event) {
     event?.preventDefault();
-    if (this.wide) {
-      this.selected = index;
-      return;
-    }
-    this.openInHost(index);
+    this.selected = index;
+    if (!this.wide) this.overlay = true;
+  }
+
+  private async showOverlay() {
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLElement>('.overlay')?.focus();
+  }
+
+  protected updated(changed: Map<string, unknown>): void {
+    if (changed.has('overlay') && this.overlay) void this.showOverlay();
+    // Widening past the side-pane threshold hands the open file to the side pane.
+    if (changed.has('wide') && this.wide) this.overlay = false;
+  }
+
+  private renderPreview(selected: number) {
+    return html`<media-lightbox
+      class="preview"
+      embedded
+      open
+      .items=${this.lightboxItems()}
+      .selectedIndex=${selected}
+      @lightbox-expand=${() => this.openInHost(selected)}
+      @lightbox-navigate=${(event: CustomEvent<{ index: number }>) =>
+        (this.selected = event.detail.index)}
+    ></media-lightbox>`;
   }
 
   private openInHost(index: number) {
@@ -277,14 +335,14 @@ export class ArtifactBrowser extends LitElement {
   }
 
   private renderKeyFiles() {
-    const keyFiles = artifactBrowserKeyFiles(this.artifacts);
+    const keyFiles = this.keyFiles();
     if (!keyFiles.length) return nothing;
     return html`<div class="key-files" role="group" aria-label="Key files">
       ${keyFiles.map(
         (file) =>
           html`<button
             class="chip"
-            aria-pressed=${this.wide && this.currentSelection(keyFiles) === file.index}
+            aria-pressed=${this.wide && this.currentSelection() === file.index}
             title=${this.artifacts[file.index]?.path ?? ''}
             @click=${() => this.open(file.index)}
           >
@@ -294,10 +352,23 @@ export class ArtifactBrowser extends LitElement {
     </div>`;
   }
 
-  private currentSelection(
-    keyFiles: ReturnType<typeof artifactBrowserKeyFiles> = artifactBrowserKeyFiles(this.artifacts),
-  ): number {
-    return this.selected ?? keyFiles[0]?.index ?? 0;
+  private keyFileCache?: {
+    source: readonly ArtifactBrowserItem[];
+    files: ArtifactBrowserKeyFile[];
+  };
+
+  /** Computed once per artifact list: every row asks for the selection. */
+  private keyFiles(): ArtifactBrowserKeyFile[] {
+    if (this.keyFileCache?.source !== this.artifacts)
+      this.keyFileCache = {
+        source: this.artifacts,
+        files: artifactBrowserKeyFiles(this.artifacts),
+      };
+    return this.keyFileCache.files;
+  }
+
+  private currentSelection(): number {
+    return this.selected ?? this.keyFiles()[0]?.index ?? 0;
   }
 
   private highlight(name: string) {
@@ -390,7 +461,13 @@ export class ArtifactBrowser extends LitElement {
 
   private onHostKey = (event: KeyboardEvent) => {
     const path = event.composedPath();
-    if (event.key !== '/' || path.some((target) => target instanceof HTMLInputElement)) return;
+    const typing = path.some(
+      (target) =>
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable),
+    );
+    if (event.key !== '/' || typing) return;
     const search = this.renderRoot.querySelector<HTMLInputElement>('.search');
     if (!search) return;
     event.preventDefault();
@@ -423,7 +500,7 @@ export class ArtifactBrowser extends LitElement {
           href=${gatewayMediaSrc(url)}
           title=${artifact.path}
           @click=${(event: Event) => this.open(node.index, event)}
-          >${this.highlight(node.name)}</a
+          ><span class="file-name">${this.highlight(node.name)}</span></a
         >
         <span class="meta"
           >${artifact.purpose && artifact.purpose !== 'other'
@@ -468,19 +545,34 @@ export class ArtifactBrowser extends LitElement {
           </ul>`
         : html`<div class="empty">No files match.</div>`}
     `;
-    if (!this.wide) return browse;
     const selected = this.currentSelection();
-    return html`<div class="split">
-      <div class="browse">${browse}</div>
-      <media-lightbox
-        class="preview"
-        embedded
-        open
-        .items=${this.lightboxItems()}
-        .selectedIndex=${selected}
-        @lightbox-expand=${() => this.openInHost(selected)}
-      ></media-lightbox>
-    </div>`;
+    if (this.wide)
+      return html`<div class="frame">
+        <div class="split">
+          <div class="browse">${browse}</div>
+          ${this.renderPreview(selected)}
+        </div>
+      </div>`;
+    return html`<div class="frame">${browse}</div>
+      ${this.overlay
+        ? html`<div class="overlay-scrim" @click=${() => (this.overlay = false)}></div>
+            <aside
+              class="overlay"
+              role="dialog"
+              aria-label="File preview"
+              tabindex="-1"
+              @keydown=${(event: KeyboardEvent) => {
+                if (event.key !== 'Escape') return;
+                event.stopPropagation();
+                this.overlay = false;
+              }}
+            >
+              <div class="overlay-bar">
+                <button class="chip" @click=${() => (this.overlay = false)}>Close</button>
+              </div>
+              ${this.renderPreview(selected)}
+            </aside>`
+        : nothing}`;
   }
 }
 
