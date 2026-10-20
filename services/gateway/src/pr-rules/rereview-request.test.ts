@@ -79,12 +79,7 @@ test('one verified review lineage requests WARM on the recorded slot, runner and
     autoFinish: false,
     reviewContext: {
       reviewLineages: [
-        {
-          repository: 'MetaMask/metamask-mobile',
-          prNumber: 36169,
-          reviewId: 'lineage',
-          familyId: 'family-1',
-        },
+        { repository: 'MetaMask/metamask-mobile', prNumber: 36169, reviewId: 'lineage' },
       ],
     },
   });

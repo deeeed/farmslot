@@ -6,6 +6,7 @@ import {
   isQualifyingReview,
   parseGitHubRef,
   qualifyingPassingReviews,
+  type ReviewLineageOption,
   type ReviewPolicy,
   type ReviewRequestContext,
   type ReviewSelection,
@@ -29,6 +30,7 @@ import {
   assertLineageBelongsToRun,
   resolveWarmReviewerSession,
   reviewPRIdentity,
+  warmLineageScope,
   WarmReviewRefusal,
 } from '../review/session-mode.js';
 import { runnerSupportsSessionReload } from '../runners/launch-command.js';
@@ -318,7 +320,9 @@ export function recoveryReviewPlanForActiveFix(run: Run): RecoveryReviewPlan | u
     return {
       sequence: [selection],
       context: {
-        reviewLineages: [{ ...reviewPRIdentity(run), reviewId: prior.id, familyId: run.familyId }],
+        reviewLineages: [
+          { ...(reviewPRIdentity(run) ?? { familyId: run.familyId }), reviewId: prior.id },
+        ],
       },
     };
   return {
@@ -349,7 +353,9 @@ export function assertWarmReviewRequestAvailable(
     const nativeOwners = new Set(
       runs
         .filter(
-          (candidate) => candidate.project === run.project && candidate.familyId === run.familyId,
+          (candidate) =>
+            candidate.project === run.project &&
+            warmLineageScope(candidate) === warmLineageScope(run),
         )
         .flatMap(
           (candidate) =>
@@ -379,7 +385,7 @@ export function assertWarmReviewRequestAvailable(
       {
         runId: run.id,
         reviewId: lineage.reviewId,
-        familyId: run.familyId,
+        familyId: warmLineageScope(run),
         project: run.project,
         ownerPrincipalId:
           nativeOwner ?? run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
@@ -402,6 +408,60 @@ export function assertWarmReviewRequestAvailable(
         'the reviewId has no verified retained session and reviewed head',
       );
   }
+}
+
+/**
+ * The lineages a gate Request Review can continue, with their session's availability on this
+ * run (ADR-063 Amendment 5). The picker preselects WARM only for an available lineage.
+ */
+export async function reviewLineageOptionsForRun(
+  run: Run,
+  runs: readonly Run[],
+  headSha: string | undefined,
+  descends: (ancestor: string, head: string) => Promise<boolean>,
+): Promise<ReviewLineageOption[]> {
+  const latest = new Map<string, ReviewStatus>();
+  for (const review of run.engineState?.publishGate?.reviews ?? [])
+    latest.set(review.session?.reviewId ?? review.id, review);
+  const options: ReviewLineageOption[] = [];
+  for (const [reviewId, review] of latest) {
+    const reviewedHeadSha = review.reviewSnapshot?.headSha ?? review.reviewedHeadSha;
+    if (
+      !review.runner ||
+      !reviewedHeadSha ||
+      (review.verdict !== 'pass' && review.verdict !== 'issues') ||
+      !review.session?.sessionId ||
+      !['fresh', 'resumed'].includes(review.session.continuity)
+    )
+      continue;
+    const context = { ...(reviewPRIdentity(run) ?? { familyId: run.familyId }), reviewId };
+    const selection = {
+      runner: normalizeRunner(review.runner),
+      model: review.model ?? null,
+      effort: review.effort ?? null,
+    };
+    let unavailableReason: string | undefined;
+    try {
+      assertWarmReviewRequestAvailable(
+        run,
+        { ...selection, mode: 'warm', context: { reviewLineages: [context] } },
+        runs,
+      );
+      if (headSha && reviewedHeadSha !== headSha && !(await descends(reviewedHeadSha, headSha)))
+        unavailableReason = 'the current head no longer descends from the last reviewed head';
+    } catch (error) {
+      // Any reason this lineage can't be continued is shown to the person, never hidden.
+      if (!(error instanceof Error)) throw error;
+      unavailableReason = error instanceof WarmReviewRefusal ? error.detail : error.message;
+    }
+    options.push({
+      context,
+      ...selection,
+      reviewedAt: review.completedAt ?? review.startedAt ?? '',
+      ...(unavailableReason ? { unavailableReason } : {}),
+    });
+  }
+  return options;
 }
 
 export function assertPrimaryReviewContext(

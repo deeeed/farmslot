@@ -21,6 +21,7 @@ import {
   executeReadyGate,
   freedSlotGateResolutionBlocker,
   localVideoProofWarning,
+  type PublishGateReviewPlanDependencies,
   reconcileReviewLaunchRejectionForCurrentHead,
   resumeInterruptedPublicationReview,
 } from './ready-gate.js';
@@ -41,7 +42,7 @@ test('localVideoProofWarning flags screenshot packages without local video proof
   assert.equal(localVideoProofWarning([{ path: 'artifacts/report.md' }]), null);
 });
 
-test('resumeInterruptedPublicationReview continues the same issues review instead of launching another', async (t) => {
+test('resumeInterruptedPublicationReview continues the same issues review WARM in its lineage', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     mode: 'autonomous',
@@ -58,6 +59,12 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
           {
             reviewerSessionId: 'fixture-session-' + 'review-1',
             reviewedHeadSha: 'fixture-head',
+            reviewSnapshot: {
+              source: 'local-git',
+              baseSha: 'fixture-base',
+              headSha: 'fixture-head',
+              capturedAt: '2026-10-20T00:00:00Z',
+            },
             mode: 'cold' as const,
             id: 'review-1',
             source: 'dispatch',
@@ -93,11 +100,10 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
       executeReview: async (_runId, _slotId, options) => {
         executions += 1;
         assert.ok(options);
-        assert.equal(
-          options.mode,
-          'cold',
-          'an unpublished cold review must not require warm PR lineage',
-        );
+        // ADR-063 Amendment 5: an unpublished COLD first pass is re-reviewed WARM in its lineage.
+        assert.equal(options.mode, 'warm');
+        assert.equal(options.reviewId, 'review-1');
+        assert.equal(options.resumeFromResult?.reviewSnapshot?.headSha, 'fixture-head');
         assert.equal(options.artifactScope, 'review-1');
         assert.equal(options.effort, 'low');
         assert.equal(options.resumeFromResult?.verdict, 'issues');
@@ -629,6 +635,63 @@ test('WARM recheck updates its existing lineage and preserves attempt provenance
   assert.equal(reviews[0].loopNumber, 1);
   assert.equal(reviews[0].attempts?.length, 2);
   assert.equal(reviews[0].reviewedHeadSha, 'new');
+});
+
+test('an automatic WARM plan row continues a pre-PR lineage with its delta fallback; a person request does not', async (t) => {
+  const issues = [{ file: 'src/a.ts', line: 2, description: 'Bound the retry' }];
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-PREPUBLISH',
+    runner: 'codex',
+  });
+  updateRun(run.id, {
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: `pipeline-review-${run.id}`,
+            source: 'pipeline',
+            runner: 'codex',
+            mode: 'cold',
+            reviewerSessionId: 'retained',
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues,
+            reviewedHeadSha: 'reviewed',
+            reviewSnapshot: {
+              source: 'local-git',
+              capturedAt: '2026-10-20T00:00:00Z',
+              headSha: 'reviewed',
+            },
+          },
+        ],
+      },
+    },
+  });
+  t.after(async () => deleteTestRunIfPresent(run.id));
+  const launches: Array<
+    Parameters<NonNullable<PublishGateReviewPlanDependencies['executeReview']>>[2]
+  > = [];
+  const dependencies: PublishGateReviewPlanDependencies = {
+    assertLaunchAllowed: async () => {},
+    reviewSequenceContext: {
+      reviewLineages: [{ reviewId: `pipeline-review-${run.id}`, familyId: run.familyId }],
+    },
+    executeReview: async (_runId, _slotId, options = {}) => {
+      launches.push(options);
+      return { verdict: 'pass', issues: [], retryCount: 0 };
+    },
+  };
+  const plan = [{ runner: 'codex', model: null, effort: null, mode: 'warm' as const }];
+  await executePublishGateReviewPlan(run.id, 'slot-1', plan, 'dispatch', dependencies);
+  assert.equal(launches[0]?.reviewId, `pipeline-review-${run.id}`);
+  assert.deepEqual(launches[0]?.rereview, { lastReviewedHeadSha: 'reviewed', priorIssues: issues });
+  // A person's WARM request carries no fallback: an unavailable session refuses.
+  await executePublishGateReviewPlan(run.id, 'slot-1', plan, 'human-gate', dependencies);
+  assert.equal(launches[1]?.rereview, undefined);
+  assert.equal(launches[1]?.mode, 'warm');
 });
 
 function sourceGateFixture(t: TestContext) {

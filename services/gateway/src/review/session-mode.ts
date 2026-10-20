@@ -23,7 +23,7 @@ export class WarmReviewRefusal extends Error {
 export interface WarmReviewerScope {
   runId: string;
   reviewId: string;
-  /** A lineage never continues in a run of another family (ADR-063 Amendment 5). */
+  /** The lineage's binding scope, from {@link warmLineageScope}. */
   familyId: string;
   project: string;
   ownerPrincipalId: string | null;
@@ -94,6 +94,19 @@ export function reviewPRIdentity(
     return null;
   const ref = parseGitHubRef(source) ?? pull;
   return ref ? { repository: ref.repo, prNumber: ref.number } : null;
+}
+
+/**
+ * A lineage binds to its run family, so it works before a PR exists, and never continues in
+ * another family (ADR-063 Amendment 5). `run rereview` and PR-rule review-pr chains keep their
+ * own continuation rule: they bind to their PR.
+ */
+export function warmLineageScope(
+  run: Pick<Run, 'familyId' | 'ticketOrPr' | 'links' | 'prWork'> &
+    Partial<Pick<Run, 'flowType' | 'prNumber' | 'engineState'>>,
+): string {
+  const pr = run.flowType === 'review-pr' ? reviewPRIdentity(run) : null;
+  return pr ? `${pr.repository.toLowerCase()}#${pr.prNumber}` : run.familyId;
 }
 
 /** A lineage continues only in its run family, and in its own PR once both sides have one. */
@@ -234,7 +247,7 @@ export function persistedWarmReviewerSession(
   run: Run,
 ): WarmReviewerSession | null {
   const identity = reviewPRIdentity(run);
-  if (run.project !== scope.project || run.familyId !== scope.familyId) return null;
+  if (run.project !== scope.project || warmLineageScope(run) !== scope.familyId) return null;
   if (identity && prDiffers(identity, scope)) return null;
   const known = warmSessions.get(sessionKey(scope));
   if (known?.forensicOnly) return null;

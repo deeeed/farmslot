@@ -12,7 +12,10 @@ import {
   reviewRequestFromSequence,
 } from '@farmslot/review-dispatch';
 
-import { resetWarmReviewerSessionsForTest } from '../review/session-mode.js';
+import {
+  registerWarmReviewerSession,
+  resetWarmReviewerSessionsForTest,
+} from '../review/session-mode.js';
 
 import {
   automaticPublicationReviewPlan,
@@ -22,6 +25,7 @@ import {
   remainingExplicitReviewPlan,
   repairUnboundRecoveryReviewPlan,
   resolveHumanGateReviewExecutionPlan,
+  reviewLineageOptionsForRun,
   reviewPlanFromSelection,
 } from './review-plan.js';
 import { makeRun } from './test-fixtures.js';
@@ -132,14 +136,7 @@ test('active fix recovery continues its lineage WARM before a PR, never a full-d
   assert.deepEqual(
     recoveryReviewPlanForActiveFix({ ...run, ticketOrPr: 'example/recovery#42' })?.context,
     {
-      reviewLineages: [
-        {
-          repository: 'example/recovery',
-          prNumber: 42,
-          reviewId: 'lineage',
-          familyId: 'family-1',
-        },
-      ],
+      reviewLineages: [{ repository: 'example/recovery', prNumber: 42, reviewId: 'lineage' }],
     },
   );
   // A review without a recorded reviewed head has no lineage to continue: a first pass.
@@ -152,6 +149,82 @@ test('active fix recovery continues its lineage WARM before a PR, never a full-d
     undefined,
     'a stale active fix cannot replace remaining reviewers after PASS',
   );
+});
+
+test('gate lineage options mark which earlier reviews can continue WARM on this run', async (t) => {
+  resetWarmReviewerSessionsForTest();
+  t.after(resetWarmReviewerSessionsForTest);
+  const run = makeRun({
+    ticketOrPr: 'PROJ-GATE',
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            ...passing('lineage', 'retained-session'),
+            completedAt: '2026-10-20T01:00:00Z',
+            session: {
+              mode: 'cold',
+              continuity: 'fresh',
+              reviewId: 'lineage',
+              sessionId: 'retained-session',
+              lastReviewedHeadSha: 'head',
+            },
+          },
+          // Never validated: no lineage to continue.
+          { ...passing('failed-review', 'failed-session'), verdict: 'failed' },
+        ],
+      },
+    },
+  });
+  const compared: string[] = [];
+  const descends = async (ancestor: string, head: string) => {
+    compared.push(`${ancestor}..${head}`);
+    return head === 'descendant';
+  };
+  const expected = {
+    context: { reviewId: 'lineage', familyId: 'family-1' },
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    reviewedAt: '2026-10-20T01:00:00Z',
+  };
+  assert.deepEqual(await reviewLineageOptionsForRun(run, [run], 'head', descends), [
+    {
+      ...expected,
+      unavailableReason: 'the reviewId has no verified retained session and reviewed head',
+    },
+  ]);
+  registerWarmReviewerSession({
+    runId: run.id,
+    reviewId: 'lineage',
+    familyId: run.familyId,
+    project: run.project,
+    ownerPrincipalId: null,
+    transport: 'tmux',
+    taskDir: '',
+    artifactScope: 'lineage',
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    contextId: 'reviewer',
+    windowName: 'reviewer',
+    slotId: 'slot-1',
+    runnerSessionId: 'retained-session',
+    runnerSessionPath: '/tmp/retained-session.jsonl',
+    lastLoopNumber: 1,
+    lastReviewedHeadSha: 'head',
+  });
+  assert.deepEqual(await reviewLineageOptionsForRun(run, [run], 'head', descends), [expected]);
+  assert.deepEqual(await reviewLineageOptionsForRun(run, [run], 'descendant', descends), [
+    expected,
+  ]);
+  assert.deepEqual(await reviewLineageOptionsForRun(run, [run], 'rebased', descends), [
+    {
+      ...expected,
+      unavailableReason: 'the current head no longer descends from the last reviewed head',
+    },
+  ]);
+  assert.deepEqual(compared, ['head..descendant', 'head..rebased']);
 });
 
 const selection: ReviewSelection = {

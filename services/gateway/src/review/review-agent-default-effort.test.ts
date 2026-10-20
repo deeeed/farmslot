@@ -28,7 +28,7 @@ mock.module('./native-review-agent.js', {
 });
 const { runReviewAgent } = await import('./review-agent.js');
 const { assertWarmReviewRequestAvailable } = await import('../run-engine/review-plan.js');
-const { registerWarmReviewerSession, resetWarmReviewerSessionsForTest } =
+const { registerWarmReviewerSession, resetWarmReviewerSessionsForTest, warmLineageScope } =
   await import('./session-mode.js');
 
 test('WARM runner-default effort agrees at gate preflight and reviewer delivery', async () => {
@@ -37,7 +37,7 @@ test('WARM runner-default effort agrees at gate preflight and reviewer delivery'
     ...execution,
     runId: run.id,
     reviewId: 'review-default',
-    familyId: run.familyId,
+    familyId: warmLineageScope(run),
     project: run.project,
     ownerPrincipalId: run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
     transport: 'native',

@@ -261,3 +261,94 @@ test('a REVIEW re-entry with all rounds admitted reattaches to the running re-re
   assert.equal('maxRetriesExhausted' in result && result.maxRetriesExhausted, true);
   assert.match(result.reason ?? '', /The five review rounds are spent/);
 });
+
+test('a fix recovered after a restart is re-reviewed WARM in the pipeline lineage at its next loop', async (t) => {
+  // TAT-4145 bda11b1a: the recovered re-review ran loop 2 in a new lineage, so it reviewed
+  // the whole diff COLD. It continues the pipeline review that raised the findings instead.
+  const run = createRun({
+    project,
+    flowType: 'dev',
+    mode: 'interactive',
+    ticketOrPr: 'RECOVERED-FIX-LINEAGE',
+    runner: 'claude',
+    slotId: vars.slotId,
+  });
+  const slotRow = (rows: Record<string, unknown>[]) =>
+    rewriteStatusFile((current) => ({
+      ...current,
+      slots: [...(current?.slots ?? []).filter((entry) => entry.slot !== vars.slotId), ...rows],
+    }));
+  const inputs: NativeReviewInput[] = [];
+  t.after(async () => {
+    nativeReviewer = async () => ({ verdict: 'pass', issues: [] });
+    await slotRow([]);
+    await deleteTestRunIfPresent(run.id);
+  });
+  nativeReviewer = async (input) => {
+    inputs.push(input);
+    return { verdict: 'pass', issues: [] };
+  };
+  await slotRow([{ slot: vars.slotId, current_run_id: run.id }]);
+  const checklist = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist);
+  const signal = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal);
+  await mkdir(path.join(repo, taskDir), { recursive: true });
+  await writeFile(path.join(repo, checklist), '## Issues\n\n- **a.ts:1** — fix the finding\n');
+  await writeFile(
+    path.join(repo, signal),
+    JSON.stringify({
+      status: 'complete',
+      timestamp: new Date().toISOString(),
+      attemptId: 'fix-attempt',
+    }),
+  );
+  const pipeline = `pipeline-review-${run.id}`;
+  updateRun(run.id, {
+    status: 'reviewing',
+    taskFile: path.join(config.getOrchestratorTaskRoot(project, projectJson), 'review', 'TASK.md'),
+    agentContexts: [
+      {
+        id: 'pipeline-reviewer',
+        role: 'review',
+        label: 'Claude reviewer',
+        status: 'complete',
+        runId: run.id,
+        slotId: vars.slotId,
+        runner: 'claude',
+        artifactScope: null,
+        reviewLoopNumber: 3,
+        reviewId: pipeline,
+      },
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'Fix',
+        status: 'working',
+        runId: run.id,
+        slotId: vars.slotId,
+        runner: 'claude',
+        taskFile: checklist,
+        signalFile: signal,
+        artifactScope: null,
+        deliveryBaselineRef: 'reviewed-head',
+        signalAttemptId: 'fix-attempt',
+        attemptStartedAt: new Date(Date.now() - 60_000).toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  });
+
+  const result = await executeReview(run.id, vars.slotId, {
+    reviewRunner: 'claude',
+    validationDepth: 'static-code',
+  });
+
+  assert.equal(result.verdict, 'pass');
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0]!.loopNumber, 4);
+  assert.equal(inputs[0]!.mode, 'warm');
+  assert.equal(inputs[0]!.reviewId, pipeline);
+  assert.deepEqual(inputs[0]!.rereview, {
+    lastReviewedHeadSha: 'reviewed-head',
+    priorIssues: [{ file: 'a.ts', line: 1, description: 'fix the finding' }],
+  });
+});

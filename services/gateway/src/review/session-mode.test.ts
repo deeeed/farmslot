@@ -13,6 +13,7 @@ import {
   resetWarmReviewerSessionsForTest,
   reviewPRIdentity,
   shouldRetainCompletedReviewer,
+  warmLineageScope,
   type WarmReviewerScope,
 } from './session-mode.js';
 
@@ -274,4 +275,15 @@ test('canonical review identity accepts stored PR links and qualified references
     repository: 'owner/repo',
     prNumber: 42,
   });
+});
+
+test('a lineage binds to its run family; review-pr chains keep binding to their PR', () => {
+  assert.equal(
+    warmLineageScope(makeRun({ familyId: 'family-a', ticketOrPr: 'owner/repo#42' })),
+    'family-a',
+  );
+  const chain = (familyId: string) =>
+    makeRun({ familyId, flowType: 'review-pr', ticketOrPr: 'Owner/Repo#42' });
+  assert.equal(warmLineageScope(chain('family-a')), 'owner/repo#42');
+  assert.equal(warmLineageScope(chain('family-b')), warmLineageScope(chain('family-a')));
 });

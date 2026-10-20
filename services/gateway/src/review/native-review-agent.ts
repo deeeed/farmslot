@@ -87,6 +87,7 @@ import {
   registerWarmReviewerSession,
   resolveWarmReviewerSession,
   reviewPRIdentity,
+  warmLineageScope,
   type WarmReviewerScope,
   WarmReviewRefusal,
 } from './session-mode.js';
@@ -228,7 +229,7 @@ async function runNativeReviewAttempt(
     runner,
     model,
     effort: input.effort?.trim() || null,
-    familyId: original.familyId,
+    familyId: warmLineageScope(original),
     ...identity,
   };
   let retained = null as ReturnType<typeof claimWarmReviewerSession>;

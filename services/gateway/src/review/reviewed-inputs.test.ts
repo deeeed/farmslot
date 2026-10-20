@@ -341,6 +341,98 @@ test('the re-run reviews with the row the pipeline review ran, after the gate co
   assert.deepEqual(plans, [[row]]);
 });
 
+test('the re-run continues the lineage of the row the pipeline review ran, WARM', async (t) => {
+  // TAT-4145 bda11b1a: each re-run of changed inputs started a new COLD lineage on the full diff.
+  const { run, artifacts } = await slotWithTask(t);
+  const row: ReviewSelection = {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'xhigh',
+    mode: 'cold',
+  };
+  const pipelineReviewId = `pipeline-review-${run.id}`;
+  updateRun(run.id, {
+    steps: getRun(run.id)!.steps.map((step) =>
+      step.name === 'review'
+        ? {
+            ...step,
+            inputs: { ...step.inputs, reviewSelection: row },
+            outputs: {
+              verdict: 'pass',
+              session: { mode: 'cold', continuity: 'fresh', reviewId: pipelineReviewId },
+            },
+          }
+        : step,
+    ),
+    engineState: {
+      ...getRun(run.id)!.engineState,
+      publishGate: {
+        reviews: [
+          {
+            id: pipelineReviewId,
+            source: 'pipeline',
+            runner: 'codex',
+            model: 'gpt-6.1-sol',
+            effort: 'xhigh',
+            mode: 'cold',
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            reviewSnapshot: {
+              source: 'local-git',
+              headSha: 'reviewed-head',
+              capturedAt: '2026-10-20T00:00:00Z',
+            },
+          },
+        ],
+      },
+    },
+  });
+  await reviewPasses(run.id);
+  const launches: Array<{ plan: ReviewSelection[]; options?: Record<string, unknown> }> = [];
+  const context = {
+    executePublishGateReviewPlan: async (
+      _runId: string,
+      _slotId: string,
+      plan: ReviewSelection[],
+      _trigger: 'dispatch' | 'human-gate',
+      options?: Record<string, unknown>,
+    ) => {
+      launches.push({ plan, options });
+      return { reviewIds: [] };
+    },
+    getDiffStat: async () => ({ files: 1, additions: 1, deletions: 0 }),
+    prepareCompletionPackageForRun: async (): Promise<PrepareCompletionPackageResult> => ({
+      completion: {
+        prNumber: null,
+        ciRepo: null,
+        artifactsCopied: true,
+        prCommentPosted: false,
+        prTitleUpdated: false,
+        prMarkedReady: false,
+        retrospectiveCreated: false,
+        artifacts: [],
+      },
+      prPackage: makeReadyGatePackage(),
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+      reviews: [],
+    }),
+  };
+
+  await writeFile(path.join(artifacts, 'on-after.png'), 'png-v2');
+  await rerunReviewIfReviewedInputsChanged(run.id, context);
+  assert.deepEqual(launches, [
+    {
+      plan: [{ ...row, mode: 'warm' }],
+      options: {
+        reviewSequenceContext: {
+          reviewLineages: [{ reviewId: pipelineReviewId, familyId: run.familyId }],
+        },
+      },
+    },
+  ]);
+});
+
 test('a fingerprint recorded with the description in it still matches until evidence, HEAD or (once) the description changes', async (t) => {
   const { run, artifacts } = await slotWithTask(t);
   const current = await readReviewedInputs(getRun(run.id)!);

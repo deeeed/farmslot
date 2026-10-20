@@ -196,14 +196,14 @@ export interface ReReviewContinuation {
 
 /** A validated result with a recorded reviewed head makes the next review a re-review. */
 export function reReviewContinuation(
-  result: Pick<ReviewAgentResult, 'reviewId' | 'reviewSnapshot' | 'issues'>,
+  result: Pick<ReviewAgentResult, 'reviewId' | 'reviewSnapshot'> & { issues?: ReviewIssue[] },
 ): ReReviewContinuation | undefined {
   const head =
     result.reviewSnapshot?.source === 'unavailable'
       ? undefined
       : result.reviewSnapshot?.headSha?.trim();
   return result.reviewId && head
-    ? { lastReviewedHeadSha: head, priorIssues: result.issues }
+    ? { lastReviewedHeadSha: head, priorIssues: result.issues ?? [] }
     : undefined;
 }
 

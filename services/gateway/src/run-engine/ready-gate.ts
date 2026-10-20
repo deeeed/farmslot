@@ -43,6 +43,7 @@ import {
 import { getProjectField, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { shellQuote } from '../core/tmux.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import {
   invalidateArtifactTextCache,
@@ -62,8 +63,10 @@ import {
 } from '../review/fix-settlement.js';
 import {
   executeReview as executeReviewDefault,
+  reReviewMode,
   type ReviewResult,
 } from '../review/orchestrator.js';
+import { reReviewContinuation } from '../review/review-agent.js';
 import {
   assertReviewRoundAvailable,
   reviewNoVerdictCapReason,
@@ -86,7 +89,7 @@ import {
   readyGateCurrentDescription,
 } from '../run-completion/ready-gate-package.js';
 import { runnerDefaultModel } from '../runners/registry.js';
-import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
@@ -147,6 +150,7 @@ import {
 import {
   humanGateReviewPolicy,
   MAX_PUBLISH_GATE_REVIEW_LOOPS,
+  reviewLineageOptionsForRun,
   reviewPlanFromSelection,
 } from './review-plan.js';
 import { runSupersededSince } from './run-generation.js';
@@ -256,6 +260,7 @@ async function resumeInterruptedPublicationReviewOnce(
 
   const executeReview = dependencies.executeReview ?? executeReviewDefault;
   let result: ReviewResult;
+  const resumeFromResult = reviewResultFromInterruptedReview(interrupted);
   try {
     result = await executeReview(runId, slotId, {
       reviewRunner: interrupted.runner ?? null,
@@ -265,11 +270,10 @@ async function resumeInterruptedPublicationReviewOnce(
       validationDepth: interrupted.validationDepth ?? 'full-live',
       artifactScope: interrupted.id,
       reviewId: interrupted.id,
-      // Continue the recorded mode. A cold unpublished review has no PR-bound
-      // warm lineage, but its findings still need delivery and a cold recheck.
-      mode: interrupted.mode ?? 'cold',
+      // ADR-063 Amendment 5: the fix's re-review continues this review's lineage WARM.
+      mode: reReviewMode(resumeFromResult),
       publicationReview: true,
-      resumeFromResult: reviewResultFromInterruptedReview(interrupted),
+      resumeFromResult,
     });
   } catch (error) {
     if (isTerminalReviewArtifactError(error)) throw error;
@@ -361,7 +365,7 @@ async function resumeVisualRepairOnce(
       validationDepth: review.validationDepth ?? 'full-live',
       artifactScope: review.id,
       reviewId: review.id,
-      mode: review.mode ?? 'cold',
+      mode: reReviewMode(reviewResultFromInterruptedReview(review)),
       publicationReview: true,
       resumeFromResult: {
         ...reviewResultFromInterruptedReview(review),
@@ -525,15 +529,15 @@ export async function executePublishGateReviewPlan(
     dependencies.reviewSequenceContext ??
     getRun(runId)?.engineState?.publishGate?.reviewSequenceContext;
   if (reviewSequenceContext) parseReviewRequestContext(reviewSequenceContext, boundedPlan.length);
+  const automaticLaunch = dependencies.automaticLaunch ?? source !== 'human-gate';
   for (const planStep of boundedPlan) {
     const launchSnapshot = getRun(runId)!;
     try {
       await assertReviewRoundAvailable(launchSnapshot);
       // Only an operator request launches past the no-verdict cap.
-      const capReason =
-        (dependencies.automaticLaunch ?? source !== 'human-gate')
-          ? await reviewNoVerdictCapReason(launchSnapshot)
-          : undefined;
+      const capReason = automaticLaunch
+        ? await reviewNoVerdictCapReason(launchSnapshot)
+        : undefined;
       if (capReason)
         throw new GatewayMethodError(
           PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,
@@ -569,6 +573,18 @@ export async function executePublishGateReviewPlan(
     const priorReview = latestBeforeReview.engineState?.publishGate?.reviews?.find(
       (review) => review.id === reviewId,
     );
+    // ADR-063 Amendment 5: an automatic re-review never stops on an unavailable session;
+    // a person's WARM request still sees the refusal.
+    const rereview =
+      automaticLaunch &&
+      planStep.mode === 'warm' &&
+      (priorReview?.verdict === 'pass' || priorReview?.verdict === 'issues')
+        ? reReviewContinuation({
+            reviewId,
+            reviewSnapshot: priorReview.reviewSnapshot,
+            issues: priorReview.issues,
+          })
+        : undefined;
     const execution = executionModelFromSelection(planStep);
     const requestedRunner = execution.runner;
     updateRunStep(runId, S.HUMAN_GATE, {
@@ -590,6 +606,7 @@ export async function executePublishGateReviewPlan(
         priorAttempts: planStep.mode === 'warm' ? priorReview?.attempts : undefined,
         publicationReview: true,
         mode: planStep.mode,
+        ...(rereview ? { rereview } : {}),
         // Configured review steps are true review loops: findings are fed back
         // to the original worker, the worker fixes them, then the same reviewer
         // re-reviews before the next configured reviewer starts.
@@ -1316,6 +1333,23 @@ export async function executeReadyGate(
     ? await currentDescriptionForGate(current, preparedPackage)
     : undefined;
 
+  // ADR-063 Amendment 5: Request Review preselects the lineages it can continue.
+  const reviewLineageOptions = await reviewLineageOptionsForRun(
+    getRun(runId)!,
+    getAllRuns(),
+    preparedPackage?.headSha ?? headSha,
+    async (ancestor, head) => {
+      if (!current.slotId) throw new Error('the run has no slot to compare the reviewed head on');
+      const vars = await loadSlotVars(current.slotId);
+      const result = await execOnSlot(
+        vars,
+        `git merge-base --is-ancestor ${shellQuote(ancestor)} ${shellQuote(head)}`,
+        { timeout: 10_000 },
+      );
+      return result.exitCode === 0;
+    },
+  );
+
   // Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost).
   // Soft branch-freshness fields live on the typed ReadyGatePayload only
   // (not mirrored into the untyped gate-summary extras bag).
@@ -1351,6 +1385,7 @@ export async function executeReadyGate(
       reviewSummary,
       workerLearnings,
       reviewLaunchRejection,
+      reviewLineageOptions,
       ciChecks,
       acceptanceCriteria,
       acceptanceStatus,
