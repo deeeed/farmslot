@@ -16,6 +16,7 @@ import { GlobalFilterCoordinator } from '../components/GlobalFilterCoordinator';
 import { PRPushRegistration } from '../components/PRPushRegistration';
 import { WhatsNewMonitor } from '../components/WhatsNewMonitor';
 import { RecipeBridgeProvider } from '../farmslot';
+import { observeOfflineClientStoreBaseline } from '../farmslot/offline-client-store-baseline';
 import { initNotifications } from '../lib/notifications';
 import { isStoreScreenshotMode, seedStoreScreenshotMode } from '../lib/store-screenshot-mode';
 import { colors } from '../lib/theme';
@@ -220,7 +221,12 @@ export default function RootLayout() {
 
 function WorkspaceProviders({ farm, children }: { farm: boolean; children: React.ReactNode }) {
   return farm ? (
-    <RecipeBridgeProvider bridgeName="@farmslot/companion">{children}</RecipeBridgeProvider>
+    <RecipeBridgeProvider
+      bridgeName="@farmslot/companion"
+      observeUi={__DEV__ ? observeOfflineClientStoreBaseline : undefined}
+    >
+      {children}
+    </RecipeBridgeProvider>
   ) : (
     <>{children}</>
   );

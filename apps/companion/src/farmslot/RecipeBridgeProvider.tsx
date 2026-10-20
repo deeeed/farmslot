@@ -4,6 +4,8 @@ import { FullWindowOverlay } from 'react-native-screens';
 
 import { hudPlacement } from '@farmslot/protocol/recipe';
 
+import { resolveRecipeUiObservation } from '../lib/recipe-ui-observation';
+
 import { useRecipeBridgeRelay } from './recipe-bridge-relay';
 import { type FarmslotRecipeHudState, RecipeHud, useRecipeHudState } from './RecipeHud';
 
@@ -22,22 +24,20 @@ export interface FarmslotRecipeUiObservation {
   warnings?: Array<{ ref: string; message: string }>;
 }
 
+export type FarmslotRecipeUiObserver = (
+  refs: readonly string[],
+) => FarmslotRecipeUiObservation | undefined | Promise<FarmslotRecipeUiObservation | undefined>;
+
 export interface RecipeBridgeProviderOptions {
   bridgeName?: string;
   isEnabled?: () => boolean;
   renderHud?: (state: FarmslotRecipeHudState | null) => React.ReactNode;
-  observeUi?: (
-    refs: readonly string[],
-  ) => FarmslotRecipeUiObservation | Promise<FarmslotRecipeUiObservation>;
+  observeUi?: FarmslotRecipeUiObserver;
 }
 
 declare global {
   var __FARMSLOT_RECIPE_BRIDGE__: FarmslotRecipeBridgeApi | undefined;
-  var __FARMSLOT_RECIPE_OBSERVER__:
-    | ((
-        refs: readonly string[],
-      ) => FarmslotRecipeUiObservation | Promise<FarmslotRecipeUiObservation>)
-    | undefined;
+  var __FARMSLOT_RECIPE_OBSERVER__: FarmslotRecipeUiObserver | undefined;
 }
 
 export const FarmslotRecipeBridgeContext = createContext<FarmslotRecipeBridgeApi | null>(null);
@@ -80,10 +80,12 @@ export function RecipeBridgeProvider({
           const refs = Array.isArray(command.payload?.refs)
             ? command.payload.refs.filter((ref): ref is string => typeof ref === 'string')
             : [];
-          const observer = observeUi ?? globalThis.__FARMSLOT_RECIPE_OBSERVER__;
-          const observed = observer
-            ? await observer(refs)
-            : defaultObserveUi(refs, { bridgeName, hud: hudRef.current });
+          const observed = await resolveRecipeUiObservation(
+            refs,
+            observeUi,
+            globalThis.__FARMSLOT_RECIPE_OBSERVER__,
+            () => defaultObserveUi(refs, { bridgeName, hud: hudRef.current }),
+          );
           return { ok: true, ...observed };
         }
         return { ok: false, error: `Unsupported Farmslot bridge command: ${command.command}` };

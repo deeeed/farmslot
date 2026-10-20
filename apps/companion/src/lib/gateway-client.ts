@@ -21,6 +21,7 @@ import {
   type GatewayHttpAuthHeaders,
   gatewayHttpAuthHeaders,
 } from './gateway-http-auth';
+import { createOfflineClientStoreBaseline } from './offline-client-store-baseline';
 import {
   type WorkspaceAccess,
   workspaceAccessFromAuth,
@@ -47,6 +48,11 @@ interface PendingRequest {
 const DEFAULT_TIMEOUT = 15_000;
 const MAX_BACKOFF = 30_000;
 export class GatewayClient {
+  /** Measurement only; production builds do not allocate or run the byte counter. */
+  readonly offlineBaseline =
+    typeof __DEV__ !== 'undefined' && __DEV__
+      ? createOfflineClientStoreBaseline(() => this.ws?.close(1000, 'Reconnect measurement'))
+      : undefined;
   private ws: WebSocket | null = null;
   private state: ConnectionState = 'disconnected';
   private reqId = 0;
@@ -220,6 +226,7 @@ export class GatewayClient {
 
     socket.onclose = (event) => {
       if (this.ws !== socket) return;
+      this.offlineBaseline?.begin('reconnect');
       if (event.code === 1008) this.clearAuthority();
       this.ws = null;
       this.personSession?.stopRefresh();
@@ -240,6 +247,8 @@ export class GatewayClient {
       if (this.ws !== socket) return;
       try {
         const frame: Frame = JSON.parse(ev.data as string);
+        if (frame.type === 'res' || frame.type === 'event')
+          this.offlineBaseline?.received(ev.data as string, frame);
         if (frame.type === 'res') {
           this.handleResponse(frame as ResponseFrame);
         } else if (frame.type === 'event') {
@@ -378,6 +387,7 @@ export class GatewayClient {
         timer,
       });
 
+      this.offlineBaseline?.sent(frame);
       this.ws!.send(JSON.stringify(frame));
     });
     if (generation !== this.generation) throw new Error('Gateway identity changed during request');

@@ -17,6 +17,7 @@
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
 //   node scripts/cdp.mjs close <hash>                 Close a matching tab.
 //   node scripts/cdp.mjs gateway <method> [paramsJson] Send a JSON-RPC request to ws://localhost:7777.
+//   node scripts/cdp.mjs baseline <hash> <cold|reconnect|diff> [gate-route] Measure actual websocket reads.
 //
 // Env:
 //   FARMSLOT_CDP_PORT   CDP port (default 9323).
@@ -34,6 +35,8 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
+
+import { measureOfflineClientStore } from './offline-client-store-baseline.mjs';
 
 const CDP_PORT = process.env.FARMSLOT_CDP_PORT ?? '9323';
 // Must match debug-chrome.sh: it verifies which process owns CDP at this exact
@@ -473,37 +476,28 @@ async function loginInTab(hash) {
   const secret = GATEWAY_CREDENTIAL?.token ?? GATEWAY_CREDENTIAL?.password;
   const mode = GATEWAY_CREDENTIAL?.token ? 'token' : 'password';
   if (!secret) die('login requires an explicit FARMSLOT_GATEWAY_PROFILE', 2);
+  const form = await evalInTab(
+    hash,
+    `const deadline=Date.now()+5000;
+     while(!document.querySelector('.auth-card,#connection-form') && Date.now()<deadline)
+       await new Promise(resolve=>setTimeout(resolve,50));
+     return document.querySelector('#connection-form') ? 'desktop' : 'browser';`,
+  );
+  if (form === 'desktop') {
+    await inputInTab(hash, '#auth-mode', mode, true);
+    await inputInTab(hash, '#secret', secret);
+    await clickInTab(hash, '#connection-form button[type=submit]');
+  } else {
+    await clickInTab(hash, `.auth-mode:nth-child(${mode === 'token' ? 1 : 2})`);
+    await inputInTab(hash, '.auth-input', secret);
+    await clickInTab(hash, '.auth-card button[type=submit]');
+  }
   return evalInTab(
     hash,
-    `
-      const secret = ${JSON.stringify(secret)};
-      const mode = ${JSON.stringify(mode)};
-      const deadline = Date.now() + 5000;
-      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      while (!document.querySelector('.auth-card') && Date.now() < deadline) await sleep(50);
-      const activeMode = document.querySelector('.auth-mode.active')?.textContent?.trim()?.toLowerCase();
-      if (activeMode !== mode) {
-        const modeButton = Array.from(document.querySelectorAll('.auth-mode')).find(
-          (button) => button.textContent?.trim()?.toLowerCase() === mode,
-        );
-        if (!modeButton) throw new Error('auth mode button not found');
-        modeButton.click();
-        await sleep(50);
-      }
-      const input = document.querySelector('.auth-input');
-      if (!input) throw new Error('auth input not found');
-      input.focus();
-      input.value = secret;
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: secret }));
-      const form = document.querySelector('.auth-card');
-      if (!(form instanceof HTMLFormElement)) throw new Error('auth form not found');
-      form.requestSubmit();
-      while (document.querySelector('.auth-card') && Date.now() < deadline) await sleep(100);
-      return {
-        authenticated: !document.querySelector('.auth-card'),
-        bodyText: document.body.innerText.slice(0, 300),
-      };
-    `,
+    `const deadline=Date.now()+5000;
+     while(document.querySelector('farm-app')?.connection!=='connected' && Date.now()<deadline)
+       await new Promise(resolve=>setTimeout(resolve,50));
+     return {authenticated:document.querySelector('farm-app')?.connection==='connected'};`,
   );
 }
 
@@ -641,6 +635,25 @@ try {
     if (!hash || !outputPath) die('usage: cdp.mjs screenshot <hash|-|route> <output.png>');
     const result = await screenshotTab(hash, outputPath);
     console.log(JSON.stringify(result, null, 2));
+  } else if (cmd === 'baseline') {
+    const [hash, phase, route, matchJson] = rest;
+    if (!hash || !phase) die('usage: cdp.mjs baseline <hash> <cold|reconnect|diff> [gate-route]');
+    const tab = await findTab(hash);
+    if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+    console.log(
+      JSON.stringify(
+        await measureOfflineClientStore({
+          connect,
+          tab,
+          phase,
+          route,
+          gatewayUrl: process.env.FARMSLOT_GATEWAY,
+          match: matchJson ? JSON.parse(matchJson) : undefined,
+        }),
+        null,
+        2,
+      ),
+    );
   } else if (cmd === 'gateway') {
     const [method, paramsJson] = rest;
     if (!method) die('usage: cdp.mjs gateway <method> [paramsJson]');
