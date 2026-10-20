@@ -102,6 +102,7 @@ import {
   assertPublicationEvidenceSelection,
   defaultSelectedEvidenceKeysForPublication,
 } from './publication-evidence-policy.js';
+import { assertPublicationBranchPushed, PUBLICATION_PUSH_TIMEOUT_MS } from './publication-push.js';
 import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
 import { publicationStatusForRun } from './publication-status.js';
 import {
@@ -1336,11 +1337,12 @@ async function createPrFromApprovedPackage(
     }
   }
   if (!prPackage.branch?.trim()) throw new Error('approved package is missing a branch');
-  await execOnSlot(
+  const push = await execOnSlot(
     vars,
     `git -C ${shellQuote(vars.remoteRepo)} push -u origin ${shellQuote(prPackage.branch)}`,
-    { timeout: 120_000 },
+    { timeout: PUBLICATION_PUSH_TIMEOUT_MS },
   );
+  assertPublicationBranchPushed(push, prPackage.branch, run.id);
 
   const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
   await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
