@@ -50,6 +50,7 @@ import {
   evidenceReviewerViewKey,
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
+import { isVideoLightboxItem } from '../shared/media-lightbox-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { ReadyWorkspaceActionPresenter } from './ready-workspace-action-presenter.js';
@@ -236,6 +237,14 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   openEvidenceReview(claimId: string, opened?: LightboxItem): boolean {
     const model = this._evidenceModel;
     if (!model?.claims.some((claim) => claim.id === claimId)) return false;
+    // A recording from another recipe run than the gate's evidence has other trace
+    // markers: the review then opens on the gate's own recording.
+    const recordings = model.recordings.map((entry) => model.artifactPath(entry.videoPath));
+    const foreign =
+      opened && isVideoLightboxItem(opened) && recordings.length > 0
+        ? !recordings.includes(opened.path)
+        : false;
+    if (foreign) opened = undefined;
     model.selectClaim(claimId, opened?.path);
     this._openReview(
       claimId,

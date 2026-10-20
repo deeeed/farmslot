@@ -1034,8 +1034,14 @@ export class RunDetail extends RunDetailState {
   }
 
   /** The one way the evidence lightbox opens: the Evidence tab, an `artifact=` link or an AC row. */
-  private _openEvidenceLightbox(selection: EvidenceLightboxSelection, writeHash = true): void {
+  private _openEvidenceLightbox(
+    selection: EvidenceLightboxSelection,
+    writeHash = true,
+    /** False for a criterion's file gallery, which stays in run detail. */
+    toGateReview = true,
+  ): void {
     if (
+      toGateReview &&
       selection.criterionId &&
       this._openInGateReview(selection.criterionId, selection.items[selection.index])
     )
@@ -1279,27 +1285,30 @@ export class RunDetail extends RunDetailState {
    * An acceptance criterion's evidence file opens in the run's evidence lightbox,
    * stepping through that criterion's files, not a new browser window.
    */
-  private _openAcceptanceEvidence = ({
+  private _openAcceptanceEvidence = (open: AcceptanceEvidenceOpen) => {
+    const selection = this._acceptanceEvidenceSelection(open);
+    if (selection) this._openEvidenceLightbox(selection);
+  };
+
+  private _acceptanceEvidenceSelection({
     criterion,
     evidence,
     index,
     evidenceModel,
-  }: AcceptanceEvidenceOpen) => {
-    if (!this.run) return;
+  }: AcceptanceEvidenceOpen): EvidenceLightboxSelection | null {
+    if (!this.run) return null;
     const resolveArtifactUrl = this._captureEvidenceResolver();
-    this._openEvidenceLightbox(
-      acceptanceEvidenceSelection({
-        runId: this.runId,
-        familyId: this.run.familyId,
-        criterion,
-        evidence,
-        index,
-        runArtifacts: this._linkableRunArtifacts(this.run),
-        artifactUrl: (artifact) => resolveArtifactUrl(artifact.path),
-        evidenceModel,
-      }),
-    );
-  };
+    return acceptanceEvidenceSelection({
+      runId: this.runId,
+      familyId: this.run.familyId,
+      criterion,
+      evidence,
+      index,
+      runArtifacts: this._linkableRunArtifacts(this.run),
+      artifactUrl: (artifact) => resolveArtifactUrl(artifact.path),
+      evidenceModel,
+    });
+  }
 
   private async _recordVisualReview(claimId: string, verdict: 'confirmed' | 'rejected') {
     const model = this.evidenceModel;
@@ -1577,12 +1586,16 @@ export class RunDetail extends RunDetailState {
     const row = runAcceptanceCriterionEvidence(this).find((candidate) => candidate.id === claimId);
     const criterion = this.evidenceModel?.claims.find((claim) => claim.id === claimId);
     if (!row?.evidence.length || !criterion) return;
-    this._openAcceptanceEvidence({
+    const selection = this._acceptanceEvidenceSelection({
       criterion,
       evidence: row.evidence,
       index: 0,
       evidenceModel: this.evidenceModel ?? undefined,
     });
+    if (!selection) return;
+    // The gallery replaces the review in the link, so a reload opens the gallery.
+    this._dropReviewLink();
+    this._openEvidenceLightbox(selection, true, false);
     this._evidenceGallery = true;
   }
 
@@ -1600,12 +1613,16 @@ export class RunDetail extends RunDetailState {
     this._updateEvidenceArtifactHash(recording ?? null);
   }
 
-  private _closeEvidenceLightbox(): void {
-    // The gate's own review keeps its link.
+  /** Run detail's review leaves the link; the gate's own review keeps its link. */
+  private _dropReviewLink(): void {
     if (evidenceReviewerViewFromHash() && !(this.run && runMountsPublicationGate(this.run)))
       writeEvidenceReviewerHash(null);
     this._reviewLink = undefined;
     this._reviewLinkKey = '';
+  }
+
+  private _closeEvidenceLightbox(): void {
+    this._dropReviewLink();
     this._evidenceLightboxOpen = false;
     this._evidenceArtifactUnavailable = null;
     this._updateEvidenceArtifactHash(null);
