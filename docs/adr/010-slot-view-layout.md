@@ -55,6 +55,10 @@ UI: search input in the Search panel, results grouped by file, click result open
 
 **Not chosen:** Full-text index (ripgrep server, trigram index). Overkill for single-user read-only browsing. `git grep` handles Example Mobile App's 100k+ files in <500ms.
 
+The read-only browsing assumption is superseded by
+[ADR-009 Amendment 1](009-slot-workspace.md#amendment-1-2026-10-20-conditional-file-edits).
+The search choice stands.
+
 ### D. How should panels be resizable?
 
 **Chosen: Drag handles with mouse event tracking.** Thin (4px) invisible dividers between panels. On mousedown: track mousemove, update width/height state. On mouseup: persist to localStorage.

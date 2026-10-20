@@ -113,19 +113,19 @@ Reused as-is: code-viewer, diff-review, progress-tracker.
 
 New RPC methods:
 
-| Method               | Params                                                                                                                                         | Returns                                                               |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `fs.list`            | `slotId, path, depth`                                                                                                                          | `FileEntry[]` (name, type, path, size)                                |
-| `fs.read`            | `slotId, path`                                                                                                                                 | `{ content, language, hash }`. `hash` is the SHA-256 of the raw bytes |
-| `fs.write`           | `slotId, path, content, expectedHash?, runId?`                                                                                                 | `{ ok, hash? }`. `expectedHash: null` means the file must not exist   |
-| `fs.rename`          | `slotId, oldPath, newPath, expectedHash?, runId?`                                                                                              | `{ ok, hash? }`. With `expectedHash`, `newPath` must not exist        |
-| `fs.delete`          | `slotId, path, expectedHash?, runId?`                                                                                                          | `{ ok }`. A directory delete carries no hash                          |
-| `fs.mkdir`           | `slotId, path, runId?`                                                                                                                         | `{ ok }`                                                              |
-| `git.status`         | `slotId`                                                                                                                                       | `{ branch, ahead, behind, changes: GitChange[] }`                     |
-| `git.diff`           | `slotId, path?`                                                                                                                                | `{ diff: string }` (unified diff)                                     |
-| `git.log`            | `slotId, limit?`                                                                                                                               | `GitLogEntry[]` (hash, message, author, date)                         |
-| `git.show`           | `slotId \| runId, ref, path`, or the batched form in [Offline client store](../reference/gateway-change-notifications.md#offline-client-store) | `{ content, id }`. Text only; binary files use the batched form       |
-| `workspace.metroLog` | `slotId`                                                                                                                                       | subscription — streams `workspace.metro.data` events                  |
+| Method               | Params                                                                                                                                                          | Returns                                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `fs.list`            | `slotId, path, depth`                                                                                                                                           | `FileEntry[]` (name, type, path, size)                                |
+| `fs.read`            | `slotId, path`                                                                                                                                                  | `{ content, language, hash }`. `hash` is the SHA-256 of the raw bytes |
+| `fs.write`           | `slotId, path, content, expectedHash?, runId?`                                                                                                                  | `{ ok, hash? }`. `expectedHash: null` means the file must not exist   |
+| `fs.rename`          | `slotId, oldPath, newPath, expectedHash?, runId?`                                                                                                               | `{ ok, hash? }`. With `expectedHash`, `newPath` must not exist        |
+| `fs.delete`          | `slotId, path, expectedHash?, runId?`                                                                                                                           | `{ ok }`. A directory delete carries no hash                          |
+| `fs.mkdir`           | `slotId, path, runId?`                                                                                                                                          | `{ ok }`                                                              |
+| `git.status`         | `slotId`                                                                                                                                                        | `{ branch, ahead, behind, changes: GitChange[] }`                     |
+| `git.diff`           | `slotId, path?`                                                                                                                                                 | `{ diff: string }` (unified diff)                                     |
+| `git.log`            | `slotId, limit?`                                                                                                                                                | `GitLogEntry[]` (hash, message, author, date)                         |
+| `git.show`           | `slotId \| runId, ref, path`, or the batched form in [the gateway change notifications spec](../reference/gateway-change-notifications.md#offline-client-store) | `{ content, id }`. Text only; binary files use the batched form       |
+| `workspace.metroLog` | `slotId`                                                                                                                                                        | subscription — streams `workspace.metro.data` events                  |
 
 Conditional writes, per [Amendment 1](#amendment-1-2026-10-20-conditional-file-edits):
 
@@ -150,7 +150,9 @@ Conditional writes, per [Amendment 1](#amendment-1-2026-10-20-conditional-file-e
 - Reuses existing code-viewer and diff-review components — no new rendering libraries
 - Lazy file tree scales to 100k+ file repos
 - Same local/remote routing pattern as terminals — no new transport
-- Read-only eliminates conflict risk with running agents
+- Read-only eliminates conflict risk with running agents. Superseded by
+  [Amendment 1](#amendment-1-2026-10-20-conditional-file-edits), which uses
+  write preconditions instead.
 
 **Negative:**
 
