@@ -9,6 +9,7 @@ import type { ReviewStatus, Run, RunStack } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
+import type { RecordedEvidenceSource } from '../run-engine/recorded-evidence-sources.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 import { makeRun, manualTicketData } from './test-fixtures.js';
@@ -102,6 +103,44 @@ mock.module('./pr-template.js', {
     conformRunPrBodyToTemplate: async (_run: Run, body: string, base: string) => {
       templateBases.push(base);
       return { body, added: [], outOfOrder: [] };
+    },
+  },
+});
+// The package's evidence readers and its visual stamping, scripted only when a case sets them.
+const nativeEvidence = await import('../run-engine/recorded-evidence-sources.js');
+let scriptedEvidence: {
+  publication: RecordedEvidenceSource[];
+  selected: RecordedEvidenceSource[];
+  publicationKeys: (readonly string[] | undefined)[];
+} | null = null;
+mock.module('../run-engine/recorded-evidence-sources.js', {
+  namedExports: {
+    ...nativeEvidence,
+    readFrozenPublicationRecipeSources: async (
+      ...args: Parameters<typeof nativeEvidence.readFrozenPublicationRecipeSources>
+    ) => {
+      if (!scriptedEvidence) return nativeEvidence.readFrozenPublicationRecipeSources(...args);
+      scriptedEvidence.publicationKeys.push(args[2]);
+      return scriptedEvidence.publication;
+    },
+    readFrozenRecordedEvidenceSources: async (
+      ...args: Parameters<typeof nativeEvidence.readFrozenRecordedEvidenceSources>
+    ) =>
+      scriptedEvidence
+        ? scriptedEvidence.selected
+        : nativeEvidence.readFrozenRecordedEvidenceSources(...args),
+  },
+});
+const nativeVisual = await import('../review/pipeline-visual-review.js');
+const stampedSources: (readonly RecordedEvidenceSource[])[] = [];
+mock.module('../review/pipeline-visual-review.js', {
+  namedExports: {
+    ...nativeVisual,
+    stampPipelineVisualReviews: async (
+      ...args: Parameters<typeof nativeVisual.stampPipelineVisualReviews>
+    ) => {
+      if (!scriptedEvidence) return nativeVisual.stampPipelineVisualReviews(...args);
+      stampedSources.push(args[1]);
     },
   },
 });
@@ -394,4 +433,58 @@ test('a retargeted stack uses the default branch after its parent merges', async
   assert.equal(retargeted.reviewSnapshot?.baseSha, parentSha);
   assert.deepEqual(retargeted.reviewSnapshot?.diffStat, parentDiff);
   assert.equal(templateBases.at(-1), 'main');
+});
+
+test('package preparation stamps visual judgments on the selected proof, not on selected baseline captures', async (t) => {
+  // TAT-4145 bda11b1a: the package selected two baseline captures as before evidence. Stamping read
+  // only that attempt, so the gate review's confirmed judgments on proof-7ff8b575-1 never applied.
+  resetRun();
+  const publication: RecordedEvidenceSource[] = [];
+  const selected: RecordedEvidenceSource[] = [];
+  scriptedEvidence = { publication, selected, publicationKeys: [] };
+  stampedSources.length = 0;
+  t.after(() => {
+    scriptedEvidence = null;
+  });
+  run.agentContexts = [
+    {
+      id: 'rev-codex-native-112376dbd2de-de3ee3fa',
+      role: 'review',
+      label: 'rev-codex (gpt-6.1-sol)',
+      status: 'complete',
+      runId: run.id,
+      slotId: run.slotId,
+      runner: 'codex',
+      reviewResultValidatedAt: '2026-10-20T04:04:57.791Z',
+      pipelineVisualReviewResult: {
+        headSha,
+        binding: {
+          contextId: 'rev-codex-native-112376dbd2de-de3ee3fa',
+          executionNodeId: 'macpro',
+          ownerPrincipalId: 'farm-automation',
+          sessionId: 'session-112376dbd2de',
+          generation: 'generation-1',
+          leaseId: 'lease-1',
+          commandId: 'command-1',
+        },
+        result: {
+          schemaVersion: 1,
+          recipeRunId: 'a4308cd5-0731-4a89-9198-3a1f180f7181',
+          closureIdentity: 'sha256:2ffa57a61',
+          judgments: [],
+        },
+        completedAt: '2026-10-20T04:04:57.791Z',
+      },
+    },
+  ];
+
+  const { prPackage } = await prepareCompletionPackage(run.id, {
+    diffStat: fullDiff,
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+
+  assert.equal(stampedSources.length, 1);
+  assert.equal(stampedSources[0], publication, 'stamped against the gate publication sources');
+  assert.notEqual(stampedSources[0], selected);
+  assert.deepEqual(scriptedEvidence.publicationKeys, [prPackage.selectedEvidenceKeys]);
 });

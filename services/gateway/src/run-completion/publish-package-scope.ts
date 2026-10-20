@@ -40,12 +40,14 @@ import { shellQuote } from '../core/tmux.js';
 
 import { normalizeEvidenceManifestArtifactPath } from './evidence-manifest.js';
 
-/** Pipeline snapshots have no recipe package marker, but the gate reads their results. */
-export function pipelineReviewArtifactPaths(run: Run): string[] {
+/**
+ * Review result snapshots have no recipe package marker, but the gate reads them from the retained
+ * bundle. That holds for every publish-gate review, whether the pipeline, a dispatch or a human
+ * gate started it.
+ */
+export function gateReviewArtifactPaths(run: Run): string[] {
   const output = run.steps.find((step) => step.name === 'review')?.outputs;
-  const reviews = (run.engineState?.publishGate?.reviews ?? []).filter(
-    (review) => review.source === 'pipeline',
-  );
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
   const records = [output, ...reviews].flatMap((record) => [
     record,
     ...(isRecord(record) && Array.isArray(record.attempts) ? record.attempts : []),

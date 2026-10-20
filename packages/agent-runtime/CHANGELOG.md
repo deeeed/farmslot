@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.0 - 2026-10-20
+
+- Align with `@farmslot/protocol` 0.60.0 and `@farmslot/adapter-sdk` 0.25.0.
+
 ## 0.35.0 - 2026-10-19
 
 - A slow process census no longer stops the native host. The observer census waits up to 30 seconds for `ps` before failing closed; it waited 5 seconds before. On a loaded macwork (load 305, about 2000 processes), one slow `ps` had stopped the host and every native session it ran, five times between 10-15 and 10-19. Cleanup and startup-recovery reads keep their 5-second timeout (ADR-057 Amendment 3).

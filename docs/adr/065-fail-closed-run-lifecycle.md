@@ -548,3 +548,92 @@ predicate.
   has no label for it there. So the gateway, CLI, Command Center and Companion
   ship together, and Companion users must update. There is no persisted data
   migration beyond the restart re-projection.
+
+## Amendment 8: accepting review findings at publication, 2026-10-20
+
+**Status:** Accepted (lead, 2026-10-20).
+**Related:** Amendments 2 and 7, [ADR-063](063-review-modes-warm-cold.md) Amendment 4, [ADR-062](062-recorded-run-evidence.md) Amendments 3 and 18.
+**Specification:** [Gate prerequisites](../reference/fail-closed-run-lifecycle.md#gate-prerequisites), updated to match on acceptance.
+
+### Decision
+
+"Accept Review Findings and Publish" (`approve-publish-unresolved`) publishes the
+package head while review findings at that head remain open. Only a person with
+the human-attestation authority of ADR-062 Amendment 3 may take it, with a
+written reason (non-empty after trimming, the rule evidence attestation uses).
+Service, node and unauthenticated callers never can. The action has no
+principal restriction today.
+
+It yields exactly the review prerequisites `review-fix-required` and
+`review-result-required`. Every other prerequisite still blocks it, including
+`review-result-invalid`, `review-document-missing`, deterministic steps, the AC
+ledger, evidence and lifecycle. Post-publication CI is unchanged. It is
+available only when all of these hold:
+
+- the package's required number of reviews returned a valid structured result
+  (verdict `pass` or `issues`) for the prepared package, under the existing
+  session and freshness checks;
+- every review that reports an open finding at the head returned such a result,
+  and at least one finding is open; the open findings are exactly those
+  results' issues;
+- no fix or review is in progress.
+
+It is available whether or not a review round remains, alongside Continue
+Fixing. It does not combine with evidence attestation, so a run with an open
+finding and any evidence-policy gap has no publication route. One such case:
+accepted findings do not certify ADR-062 Amendment 18 `review`-mode criteria.
+
+The decision's publication approval records the reason, the package head, the
+approver as evidence attestation records it, and the accepted findings. For each
+finding it keeps the review id and the finding as the review recorded it (file,
+line, description), plus one digest of the accepted set. The gate's readiness
+carries the open findings as `findings` with their `findingsDigest`, as
+Amendment 7's result decision does. Clients show those findings and send that
+digest back, and resolve and the finalize recheck refuse when the head's open
+findings have a different digest. The acceptance binds to that head only. The published PR body
+discloses the accepted findings, the reason and the approver, as ADR-062
+Amendment 3 does for waivers. Normal Approve Publish is unchanged: findings at
+the package head still block it (ADR-063 Amendment 4).
+
+One shared protocol rule decides availability. The gateway applies it when it
+lists gate actions and when it resolves, and the CLI, Command Center and
+Companion apply it to their listings, so a listed action is one that resolve
+accepts.
+
+A publishing run held at REVIEW under Amendment 7, before any gate exists, is
+out of scope. There, Amendment 7's Accept stays unavailable and its exits stay
+Send back and Close. Amendment 7's premise that `review-fix-required` has no
+override no longer holds at the gate, so its refusal stops saying the gate never
+publishes a head with open findings. It reads: "Accept settles without
+publishing; a publishing run publishes only at its gate. Send it back or close
+it."
+
+### Rationale and consequences
+
+A review can end with findings a person decides not to act on, for example a
+design choice the owner accepts, when no code change answers them and the
+review budget is spent. The gate then offered Hold and Request Review. "Accept Review Findings and Publish" was listed among the gate's
+definitions but was always refused, because `review-fix-required` allowed no
+override. Adoption (Amendment 2) records an external publication and is not the
+publication workflow.
+
+Accepting findings becomes an explicit, attributed decision. The approval keeps
+what was accepted, by whom and why, and the PR shows it. The other prerequisites
+still protect what a reviewer cannot judge.
+
+### Public surface
+
+- No new action id or RPC. `run.resolveDecision` with `approve-publish-unresolved`
+  requires `reason` and `findingsDigest`, and refuses a request that lacks
+  either, as older clients' requests do. The CLI `--reason` help names this
+  action.
+- `@farmslot/protocol` exports the availability rule, moving the gateway's
+  per-action readiness filter there. It also adds optional `acceptedFindings`
+  (with their digest), `reason`, `headSha` and `approver`
+  (`EvidenceAttestationApprover`) fields on the decision's publication approval,
+  and `findings` with their `findingsDigest` on the gate readiness
+  (`RunGateReadiness`).
+- The shared publication gate view offers the action under that rule; today it
+  drops every publish approval while a review blocks.
+- The CLI, Command Center and Companion list the action through that rule, show
+  the open findings and ask for the reason before submitting.

@@ -716,6 +716,27 @@ export function getRuntimeCapabilityRegistry(): RuntimeCapabilityRegistry {
   return registry;
 }
 
+/**
+ * A node (re)connected: retry the provider cleanups that failed on its slots
+ * while it was away, so their leases stop refusing every acquire.
+ */
+export async function retryRuntimeCapabilityCleanupOnNode(machine: string): Promise<void> {
+  const fleet = await loadFleetStatus();
+  const slotIds = fleet.slots.filter((slot) => slot.machine === machine).map((slot) => slot.slot);
+  if (slotIds.length === 0) return;
+  const summary = await registry.retryFailedCleanup(slotIds);
+  for (const lease of summary.released) {
+    console.log(
+      `[runtime-capabilities] ${machine} reconnected: released '${lease.capabilityId}' on ${lease.slotId} after its cleanup had failed`,
+    );
+  }
+  for (const failure of summary.failures) {
+    console.warn(
+      `[runtime-capabilities] ${machine} reconnected: '${failure.capabilityId}' cleanup still failing: ${failure.reason}`,
+    );
+  }
+}
+
 export async function runtimeCapabilityList(
   params: RuntimeCapabilityListParams,
 ): Promise<RuntimeCapabilityListResult> {

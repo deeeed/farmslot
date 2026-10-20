@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/capabilities",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Machine-local capability primitives (fs-watch, screen capture) shared by the node (primary owner) and the gateway (local fallback when no node) — ADR-046.",
   "license": "MIT",
   "type": "module",

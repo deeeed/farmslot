@@ -49,8 +49,8 @@ independent copies of facts. Neither a successful screenshot nor a HUD caption
 is an executed expectation or a human visual judgment.
 
 Harnesses inherit the shared HUD, with no per-harness renderers. Its bounded
-panel preserves app visibility and displays the complete intent in at most two
-lines. Node intents are one concise sentence; lint warns above 80 characters
+panel preserves app visibility and displays the complete intent: whole on web,
+in at most two lines on native ([ADR-034 Amendment 7](034-recipe-protocol-v1.md#amendment-7-2026-10-20-hud-readability)). Node intents are one concise sentence; lint warns above 80 characters
 and fails above 120. The specification defines the rendering requirements.
 
 ### Lifecycle and evidence

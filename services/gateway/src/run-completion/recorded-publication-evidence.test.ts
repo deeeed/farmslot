@@ -464,6 +464,25 @@ test('same-run clean baseline freezes as before evidence without supplying head 
   assert.equal(sources.length, 1);
   assert.equal(sources[0]?.input.claims?.recipeRunId, f.head.claims.recipeRunId);
   assert.equal(sources[0]?.input.claims?.criteria[0]?.verdict, 'proven');
+  // TAT-4145 bda11b1a selected only baseline captures. The publication reader still reads the
+  // selected attempt's proof; the selected keys' own roots are only the baseline.
+  const baselineOnly = [`artifacts/${f.baselineRoot}/proof.png`];
+  const { readFrozenRecordedEvidenceSources } =
+    await import('../run-engine/recorded-evidence-sources.js');
+  await retainRunFixture(f.run);
+  assert.deepEqual(
+    (await readFrozenPublicationRecipeSources(f.run, inventory, baselineOnly)).map(
+      ({ input }) => input.claims?.recipeRunId,
+    ),
+    [f.head.claims.recipeRunId],
+  );
+  await retainRunFixture(f.run);
+  assert.deepEqual(
+    (await readFrozenRecordedEvidenceSources(f.run, inventory, baselineOnly)).map(
+      ({ input }) => input.claims?.recipeRunId,
+    ),
+    [f.baseline.claims.recipeRunId],
+  );
   await assert.rejects(
     readFrozenPublicationRecipeSources(f.run, inventory, [
       `artifacts/${f.baselineRoot}/trace.json`,

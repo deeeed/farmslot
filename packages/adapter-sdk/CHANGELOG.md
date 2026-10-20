@@ -4,8 +4,11 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- The evidence review model's gate snapshot takes its next action and requirements from the gate's actionable reasons (`gateWaitReason`, `gateDisplayReasons`), so it no longer recommends a fix the gate does not offer.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.25.0 - 2026-10-20
+
+- The evidence review model's gate snapshot takes its next action and requirements from the gate's actionable reasons (`gateWaitReason`, `gateDisplayReasons`), so it no longer recommends a fix the gate does not offer.
 
 ## 0.24.0 - 2026-10-19
 

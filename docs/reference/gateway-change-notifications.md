@@ -45,6 +45,10 @@ publish matching protocol exports and document compatible gateway/client
 versions before consumers cut over. Missing capabilities produce `unsupported`,
 with no silent fallback to panel polling.
 
+[ADR-071 Amendment 1](../adr/071-gateway-change-notifications.md#amendment-1-2026-10-20-persistent-client-store)
+adds persistence to this cache. Its exports, fields and rules are listed in
+[Offline client store](#offline-client-store).
+
 ## Notification and revision contract
 
 `ResourceChangedPayload` contains `epoch`, `changes` and `version: 1`.
@@ -225,3 +229,267 @@ must prove these scenarios with both real clients against the same gateway:
 Review must map every removed control/timer to a notification, a retained action
 or a declared external collector. The audit is a review artifact, not another
 maintained specification. Keep this spec as the single consistency contract.
+
+## Offline client store
+
+**Status:** Accepted with [ADR-071 Amendment 1](../adr/071-gateway-change-notifications.md#amendment-1-2026-10-20-persistent-client-store), 2026-10-20. Unimplemented.
+
+The shared cache persists query results and verified content on the device, for
+Command Center, its desktop app and Companion. The gateway stays the only
+source of truth. Notifications, revisions, authorization and commands work as
+the sections above describe.
+
+### Lifecycle
+
+When a client starts, it opens the store for its gateway and principal and
+renders every stored result as `stale` with its age. It then connects. If the
+connect reports a different scope, the client deletes the store and drops every
+result it rendered from it before applying any reply. Otherwise each active
+query refetches through its normal read and becomes `ready`. In the background,
+the client prefetches what pending gates and active runs need to open without
+waiting. Streams are never stored, and commands never pass through the store.
+
+| Kind         | Examples                                                              | How it stays current                                         |
+| ------------ | --------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Query result | Run list, run details, decisions, fleet, backlog, workspace snapshots | Stored whole, `stale` until a read on the current connection |
+| Content      | Package diffs, files at a commit, evidence images                     | Stored by identity, never stale                              |
+| Stream       | Terminal bytes, screen frames, chat tokens, task progress             | Not stored                                                   |
+
+### Exports and fields
+
+| Name                                                                                                                                          | Owner                                              | Consumers                                         |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------- |
+| `ResourceStore`: per-query entries `{ data, observedAt, bytes }` replaced atomically, content entries by identity, `deleteAll()`, byte totals | `@farmslot/protocol/client-cache`                  | The shared cache; implemented by the stores below |
+| `createMemoryResourceStore()`                                                                                                                 | `@farmslot/protocol/client-cache`                  | Both clients, as the fallback                     |
+| `createGatewayResourceCache({ store })`                                                                                                       | `@farmslot/protocol/client-cache`                  | Both clients                                      |
+| `createSqliteResourceStore()` with React Native and browser worker adapters, and the browser drafts store                                     | `@farmslot/local-store`, private workspace package | Companion; Command Center and its desktop app     |
+| Review-diff identity functions                                                                                                                | `@farmslot/protocol`                               | Gateway package preparation; client verification  |
+| `SelfPrincipalSummary.generation`                                                                                                             | `@farmslot/protocol/rpc/principal`                 | Store and draft keys                              |
+| `GitShowResult.id` and batched `git.show`                                                                                                     | `@farmslot/protocol/rpc/git`                       | Prefetch, file views                              |
+| `mergeBaseSha`, `headSha` on `GitDiffResult`, when `base` is set                                                                              | `@farmslot/protocol/rpc/git`                       | Prefetch                                          |
+| `git.diff` option `includeUntracked`, for `target: 'worktree'`                                                                                | `@farmslot/protocol/rpc/git`                       | Prefetch                                          |
+| `capabilities.batchedContent`, `capabilities.resourceChanges.versionLists`                                                                    | `@farmslot/protocol/rpc/auth`                      | The shared cache                                  |
+
+### Store
+
+1. Companion opens the store with `expo-sqlite` in the platform cache directory.
+   Command Center and its desktop app open it with SQLite WebAssembly on
+   `opfs-sahpool`, in a dedicated worker loaded after first paint. The desktop
+   content security policy allows `'wasm-unsafe-eval'`.
+2. If the persistent store cannot open, including on pages without a secure
+   context, the cache uses `createMemoryResourceStore()` and shows a one-line
+   notice that data will not survive a restart.
+3. In a browser, one tab owns the database and does all prefetching. Other
+   tabs use the memory store. A tab that takes over never loads a stored result
+   over newer `ready` data.
+4. The store key is the gateway connection profile id where the client has one,
+   the normalized gateway URL, the principal id and the principal generation.
+   Command Center in a browser has no profile id and uses the URL. With
+   `authMode: 'none'` the key is the profile id and URL alone. If authentication is on and the
+   connect reply has no principal or no generation, the cache uses the memory
+   store. A client keeps at most 5 stores (initial), deleting the least recently
+   used.
+5. Each store records the `roles`, compared as a set, and `workspaceAccess` it
+   was filled under. A connect that reports different values deletes it, as the
+   lifecycle above describes.
+6. Sign-out, principal change, `AUTH_SESSION_ENDED` after a refresh attempt,
+   and a rejected credential in token mode delete the store. An expired access
+   token, a network failure or a timeout does not.
+7. After any tab requests deletion, no tab reads that store again. Pending
+   writes to a deleted store are dropped, and a late response for it is
+   discarded.
+8. The store has a schema version. A mismatch deletes and rebuilds it. Drafts
+   are not in this store.
+9. The store never holds credentials.
+
+### Persisted queries
+
+1. Each registered query declares `persisted` and a byte bound. A result over its
+   bound stays in memory only. A failed store write keeps the in-memory result
+   and shows the notice from Store rule 2.
+2. A stored result loads as `stale` with `observedAt` from the read that produced
+   it. It becomes `ready` only from a read on the current connection.
+3. A read refused for authorization, or an authorized not-found, evicts the
+   stored result, as Notification and revision contract requires for details.
+   Other failures keep it as `stale`.
+
+| Query                                                                                                        | Bound (initial)                                                          |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Run list                                                                                                     | 20 MB. The rows each client reads today, until version lists are adopted |
+| Run details (`run.get`)                                                                                      | 50 most recent runs, 20 MB in total                                      |
+| Decisions with gate packages                                                                                 | 10 MB                                                                    |
+| Fleet, slots, nodes, backlog, dispatch queue, work graphs, roadmap, projects, sources, upstream observations | 2 MB each                                                                |
+| Chat history                                                                                                 | Last 200 messages per session, 10 sessions                               |
+| Workspace files and directories the user opened                                                              | 200 entries per slot and run, inside the content budget                  |
+
+Not persisted: previews, searches, diagnostics, analytics, doctor output and
+dispatch candidates.
+
+### Version lists
+
+Version lists start only after the baseline shows a run-list reread on reconnect
+above 2 s or 5 MB (initial). Until then this subsection is inactive.
+
+1. `run.list { versions: true }` returns `{ versions: [{ id, version }],
+totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
+   run the principal may read. It ignores filters and the default row limit, and
+   excludes archived runs.
+2. `version` is opaque to clients and stable across gateway restarts for an
+   unchanged row.
+3. Only the version reply decides which rows exist. Stored rows it does not list
+   are removed.
+4. The client reads changed and missing ids with `run.list { ids }`, in pages of
+   at most 2 MB (initial) that the gateway enforces. Ids it asked for but did not
+   receive are requested once more. Ids still missing after that wait for the
+   next version reply. The merged result takes the version reply's
+   `resourceState`. An empty store fills through the same pages.
+5. Totals for a filtered view are counted from stored rows, which then hold the
+   whole collection. Before version lists, totals come from the gateway reply.
+6. Before version lists start, decide how the run list stays under its byte
+   bound and how merges avoid rewriting the whole entry.
+
+### Content
+
+1. Identities:
+
+   | Content                                      | Identity                      | Verified with                                                                                           |
+   | -------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------- |
+   | Gate package diff                            | `diffHash`                    | The review-diff identity functions, which normalize index lines and include the untracked-file manifest |
+   | File at a commit                             | Git object id                 | Git blob hash of the raw bytes                                                                          |
+   | Retained artifact, including evidence images | The manifest entry's `sha256` | SHA-256 of the raw bytes                                                                                |
+
+   An artifact entry without `sha256` is a query result, not content.
+
+2. The client verifies bytes before storing them. On a mismatch it discards them
+   and loads the content when opened.
+3. Package preparation retains the exact diff and untracked-file manifest that it
+   fingerprints into `diffHash`.
+4. Repository files over 1 MB or binary, and diffs over 5 MB, are not prefetched
+   or cached (initial). They load when opened. Evidence images up to 2 MB each
+   are cached. Other retained artifacts follow the 1 MB file cap.
+5. Content and workspace snapshots share one byte budget: 500 MB on Companion,
+   2 GB on Command Center and the desktop app (initial). Eviction is least
+   recently used first.
+6. Prefetch may use at most half the budget. Content a user opened is never
+   evicted by prefetch. Active-run prefetch waits when it cannot fit without
+   evicting pending-gate content.
+
+### Prefetch
+
+1. Pending gates go first, then active runs by most recent update, at most 2 runs
+   at a time (initial). After an authorization refusal, prefetch stops for the
+   rest of the connection.
+2. For each run:
+   1. read `run.get`;
+   2. read the diff. For a gate, the package's retained diff. For an active run
+      on a slot, `git.diff { base, target: 'worktree', includeUntracked: true }`,
+      kept as a stale snapshot. For a run in a frozen review workspace,
+      `git.diff { runId, base, head }` at its frozen commits;
+   3. read the base side of every file the diff or the untracked manifest
+      touches, with batched `git.show` at the base commit the diff reply names.
+      Added files have no base and are not requested;
+   4. for a gate, read evidence images listed in the package manifest.
+3. A gate is fetched again when its package changes: on a `package` key change
+   the client rereads `run.get` and refetches if `publishGate.packageId`
+   differs. Content it already holds by identity is not transferred again. An active
+   run on a slot is fetched again when its head commit changes: on a `package` or
+   `workspace` key change the client reads `git.log { limit: 1 }`, coalesced to
+   the family's publish interval, and rereads the diff only if the head differs.
+   A frozen review workspace has a fixed head and needs no check. An open active
+   run's diff snapshot refreshes like any observed query. There is no timer.
+4. Rebuilding the new side:
+   - apply the diff to the base. A new file applies to an empty base, and a
+     deleted file has no new side;
+   - an entry that appears only in the untracked manifest is an empty file;
+   - check the result against the manifest `blobSha` when one exists.
+     A gate diff verified by `diffHash` and applied to verified bases needs no
+     further check when it does not;
+   - when the patch does not apply, or the check fails, read the file by path
+     once and accept it only if its blob hash matches the expected id.
+     Otherwise show the diff alone.
+5. Untracked files come from `git ls-files --others --exclude-standard`. Ignored
+   files, such as `.env`, are never listed, read or stored.
+6. Runs without a frozen review workspace prefetch with `slotId`. A warm review
+   snapshot whose base is not the merge-base, and a snapshot taken from a GitHub
+   pull request, load their base files when opened.
+
+### Batched `git.show`
+
+1. Request: `{ slotId | runId, ref, paths, have?, after?, maxBytes?,
+maxFileBytes? }`. `have` lists object ids the client holds. `maxBytes`
+   defaults to 4 MB and `maxFileBytes` to 1 MB (initial), both counted in raw
+   bytes.
+2. Reply: `{ entries: [{ path, status, id?, size?, content? }], cursor,
+hasMore }`, with `status` one of `ok`, `held`, `missing`, `not-blob` or
+   `too-large`. Only `ok` carries `content`. Every page returns at least one
+   entry.
+3. The command on the slot's host encodes content as base64 before it leaves
+   the process, so execution paths that decode text carry it unchanged. Nodes
+   need no change.
+4. A run-scoped read accepts the run's frozen head and the merge-base the gateway
+   derives from the frozen base and head, after today's owner and repository
+   checks. A slot-scoped read keeps today's `git.show` rules. Both follow
+   `git.show`'s current method authorization.
+5. `have` only suppresses transfers. It never authorizes a read.
+
+### Drafts
+
+1. Command Center keeps unsaved edits in IndexedDB, shared by all tabs, with its
+   own schema version and migrations.
+2. A draft records the store key fields, the slot, the run or none, the path,
+   the base content, the base hash and the edited content.
+3. A draft whose run is no longer the slot's current run is listed read-only,
+   with copy and discard.
+4. A draft for a slot the user can no longer read is hidden entirely. It comes
+   back if access returns.
+5. Either kind is deleted 30 days after it entered that state.
+6. Sign-out and principal change delete drafts after the editor shows how many
+   are unsaved. Drafts are never sent automatically.
+
+### Capabilities and compatibility
+
+1. `capabilities.batchedContent` is `true` when batched `git.show`, the diff
+   commit fields and the `git.diff` option are available. Without it the client
+   does not prefetch and loads content when opened.
+2. `capabilities.resourceChanges.versionLists` is `true` when the run list
+   supports version lists. Without it the client rereads the run list.
+3. No missing capability falls back to polling. These fields start
+   experimental.
+
+### Acceptance
+
+Before a slice removes a freshness mechanism or claims a speed-up, Command
+Center in a browser, the desktop app and Companion prove these scenarios against
+one gateway, alongside Migration acceptance above:
+
+- Cold start with no network: stored lists and opened runs render as stale with
+  their age. Actions are disabled.
+- Reconnect: previously cached data stays visible, then each result returns to
+  `ready`.
+- A role is revoked while the app is closed: on the next connect, the rendered
+  data disappears before any reply applies, and the store is deleted.
+- Principal change and credential refusal delete the store. Late responses are
+  discarded.
+- A deleted run: its stored details are evicted after the authorized not-found.
+- A pending gate whose prefetch completed opens offline with its details, diff,
+  both sides of every size-eligible touched file and its evidence images.
+- A fix loop produces a new package: only the new diff and base files not
+  already held are transferred. Record the bytes.
+- An active run with an untracked new file and an ignored `.env`: the new file is
+  prefetched, and `.env` is never listed, read or stored.
+- A base branch that moved after the branch point: base files at the merge-base
+  are read without refusal.
+- A second browser tab works on the memory store. The owner's database passes
+  `PRAGMA integrity_check`, and the second tab never opens it.
+- Command Center over plain HTTP from another machine runs on the memory store
+  and says so. The desktop app loads the WebAssembly module under its policy.
+- A schema version change rebuilds the store and keeps drafts.
+- Prefetch never evicts content the user opened, and active-run prefetch never
+  evicts pending-gate content.
+- An operator principal: prefetch stops after the first refusal, and stored
+  results never show data the operator cannot read.
+- Editing: a save conflict keeps the draft, a save after the slot moved to
+  another run is refused, a slot on an old node stays read-only, and a hidden
+  draft is deleted 30 days after it was hidden.
+- With version lists: versions stay the same across a gateway restart, and an
+  empty store fills in pages within Companion's request timeout.

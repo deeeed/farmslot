@@ -11,6 +11,8 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import vm from 'node:vm';
 
+import { RECIPE_INTENT_MAX_LENGTH } from '@farmslot/protocol/recipe';
+
 import { parseLaunchArgs } from '../src/web-dapp/launch.mjs';
 import {
   browserDisplayArgs,
@@ -349,7 +351,7 @@ describe('web-dapp HUD drawing', async () => {
     assert.ok(!page.text(page.document.body).includes('Submit the market order'));
   });
 
-  it('preserves full recipe text until two-line layout and draws it as inert text', async () => {
+  it('draws the full recipe text as inert text on the main line, without a badge or clamp', async () => {
     const intent = `<img src=x onerror="alert(1)"> ${'a'.repeat(400)}`;
     const capped = nextHudState(
       null,
@@ -363,16 +365,94 @@ describe('web-dapp HUD drawing', async () => {
     await draw(expression, page);
     const host = page.html.querySelector(HUD_ELEMENT);
     assert.equal(host.shadowMode, 'closed');
-    const [head, line] = host.shadow.children.find((child) => child.className === 'hud').children;
+    const [head, renderedIntent, ...rest] = host.shadow.children.find(
+      (child) => child.className === 'hud',
+    ).children;
     assert.equal(head.children.find((child) => child.className === 'step').textContent, 'step 2/5');
-    const [badge, renderedIntent] = line.children;
-    assert.deepEqual([badge.className, badge.textContent], ['badge running', 'RUN']);
-    assert.equal(line.textContent, ' ');
+    assert.deepEqual(rest, []);
+    assert.equal(renderedIntent.className, 'intent');
+    assert.deepEqual(renderedIntent.children, []);
     assert.equal(renderedIntent.attributes['data-farmslot-hud-intent'], '');
     assert.equal(renderedIntent.textContent, capped.current.intent);
-    assert.equal(line.style.WebkitLineClamp, '2');
-    assert.equal(line.style.whiteSpace, 'normal');
-    assert.equal(line.style.overflowWrap, 'anywhere');
+    assert.deepEqual(renderedIntent.style, {
+      whiteSpace: 'normal',
+      overflowWrap: 'anywhere',
+      fontSize: '16px',
+      lineHeight: '20px',
+      fontWeight: '600',
+    });
+    assert.ok(!page.text(host.shadow).includes('RUN'));
+  });
+
+  it('sizes a 500px card that grows with the intent instead of clipping it', async () => {
+    const intent =
+      'Confirm the market order summary shows the expected size, entry price, fee and liquidation price before it is submitted.';
+    assert.equal(intent.length, RECIPE_INTENT_MAX_LENGTH);
+    const page = fakeDocument('http://localhost:9341');
+    await draw(
+      hudRenderExpression(
+        nextHudState(null, { status: 'running', intent }, 'review'),
+        page.location.origin,
+      ),
+      page,
+    );
+    const shadow = page.html.querySelector(HUD_ELEMENT).shadow;
+    const css = shadow.children.find((child) => child.tagName === 'STYLE').textContent;
+    assert.match(css, /\.hud \{[^}]*width: 500px; max-width: calc\(100vw - 24px\);/u);
+    assert.doesNotMatch(
+      css,
+      /\.(hud|intent) \{[^}]*(max-height|overflow|line-clamp|text-overflow)/u,
+    );
+    const line = shadow.children
+      .find((child) => child.className === 'hud')
+      .children.find((child) => child.attributes['data-farmslot-hud-intent'] === '');
+    assert.equal(line.textContent, intent);
+  });
+
+  it('shows the step that just finished as one discreet line, a failing step and a finished run as the main line', async () => {
+    const origin = 'http://localhost:9341';
+    const page = fakeDocument(origin);
+    const lines = async (state) => {
+      await draw(hudRenderExpression(state, origin), page);
+      const box = page.html
+        .querySelector(HUD_ELEMENT)
+        .shadow.children.find((child) => child.className === 'hud');
+      return box.children.slice(1).map((child) => [child.className, child.textContent]);
+    };
+    const progress = { current: 1, total: 2 };
+    let state = nextHudState(
+      null,
+      { status: 'running', intent: 'Open the market', progress },
+      'open',
+    );
+    assert.deepEqual(await lines(state), [['intent', 'Open the market']]);
+    state = nextHudState(state, { status: 'pass', intent: 'Open the market', progress }, 'open');
+    assert.deepEqual(await lines(state), [['intent', 'Open the market']]);
+    state = nextHudState(
+      state,
+      { status: 'running', intent: 'Close the position', progress: { current: 2, total: 2 } },
+      'close',
+    );
+    assert.deepEqual(await lines(state), [
+      ['intent', 'Close the position'],
+      ['last pass', '✓ Open the market'],
+    ]);
+    state = nextHudState(
+      state,
+      { status: 'fail', intent: 'Close the position', error: 'Selector not found' },
+      'close',
+    );
+    // A failing step stays the main line, in the fail colour, rather than repeating below.
+    assert.deepEqual(await lines(state), [
+      ['intent fail', 'Close the position'],
+      ['error', 'Selector not found'],
+    ]);
+    const done = (status) =>
+      nextHudState(state, { status, progress: { complete: true } }, 'recipe-complete');
+    assert.deepEqual(await lines(done('fail')), [['intent fail', 'Recipe failed']]);
+    // Both outcomes share a seq; clear so the second one draws.
+    await draw(hudRenderExpression(null, origin), page);
+    assert.deepEqual(await lines(done('pass')), [['intent pass', 'Recipe passed']]);
   });
 
   it('honors both HUD edges, preserves placement on updates and resets for a new run', async () => {
