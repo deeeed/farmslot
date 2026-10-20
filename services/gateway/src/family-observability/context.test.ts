@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -209,6 +209,11 @@ test('materializeInheritedContext falls back parent -> root -> sibling and seeds
   assert.equal(report, 'parent report');
   assert.equal(recipe, '{"source":"root"}');
   assert.match(recipeQuality, /"verdict":"pass"/);
+  // Seeds come from read-only retained bundles; the child's copies are its own to edit
+  // (pr-complete run 4b1b02f3 failed capture after editing a 0400 recipe.json).
+  for (const seeded of ['artifacts/recipe.json', 'inputs/inherited/report.md'])
+    assert.equal((await stat(path.join(currentTaskDir, seeded))).mode & 0o600, 0o600, seeded);
+  await writeFile(path.join(currentTaskDir, 'artifacts/recipe.json'), '{"edited":true}');
   assert.equal(
     manifest?.inheritedArtifacts.find((entry) => entry.artifact === 'report')?.resolutionTier,
     'parent-run-artifact',

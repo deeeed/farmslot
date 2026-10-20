@@ -365,6 +365,29 @@ test('slotCopyDir skips escaping local symlinks instead of copying them into art
   assert.equal(await readFile(path.join(externalDir, 'outside.txt'), 'utf-8'), 'outside');
 });
 
+test('capture replaces a read-only destination, as an inherited bundle copy is', async (t) => {
+  // pr-complete run 4b1b02f3: the child's recipe.json was seeded 0400 from the parent's
+  // retained bundle, the worker edited it, and capture failed with EACCES copyfile.
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-io-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sourceDir = path.join(root, 'slot', 'artifacts');
+  const destDir = path.join(root, 'orchestrator', 'artifacts');
+  await mkdir(sourceDir, { recursive: true });
+  await mkdir(destDir, { recursive: true });
+  await writeFile(path.join(sourceDir, 'recipe.json'), '{"edited":true}', 'utf-8');
+  await writeFile(path.join(destDir, 'recipe.json'), '{"inherited":true}', 'utf-8');
+  await chmod(path.join(destDir, 'recipe.json'), 0o400);
+
+  const copied = await slotCopyDir(
+    { host: 'localhost', machine: 'test-machine', sshTarget: 'localhost' },
+    sourceDir,
+    destDir,
+  );
+
+  assert.equal(copied, 1);
+  assert.equal(await readFile(path.join(destDir, 'recipe.json'), 'utf-8'), '{"edited":true}');
+});
+
 test('slotCopyDir can skip excluded top-level files and directories', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-io-exclude-'));
   t.after(() => rm(root, { recursive: true, force: true }));
