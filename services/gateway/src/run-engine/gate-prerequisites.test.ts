@@ -1371,6 +1371,36 @@ test('unresolved approval cannot waive findings, missing reviews or changed inpu
     exhausted.reasons.find((reason) => reason.prerequisite === 'review')!.message,
     /Review budget 5\/5.*extend-review-budget/,
   );
+  // TAT-4006 7721a02b: open findings with every round spent. No fix can run, so the
+  // review-fix reason says so and points at Hold instead of "Fix and pass review".
+  const fixReason = async (reviewRoundAdmissions: string[]) =>
+    (
+      await collectRunGateReadiness(
+        {
+          ...makeRun({ engineState: { publishGate: { reviews: [review] } } }),
+          reviewRoundAdmissions,
+        },
+        prepared,
+        inputs,
+      )
+    ).reasons.find((reason) => reason.code === 'review-fix-required');
+  assert.deepEqual(
+    await fixReason(['one', 'two', 'three', 'four', 'five']).then((reason) => ({
+      message: reason?.message,
+      actionId: reason?.actionId,
+    })),
+    { message: 'Review rounds spent: 1 issue open', actionId: 'hold' },
+  );
+  assert.deepEqual(
+    await fixReason([]).then((reason) => ({
+      message: reason?.message,
+      actionId: reason?.actionId,
+    })),
+    {
+      message: 'Review found 1 issue. Fix and pass review before publishing.',
+      actionId: 'continue-review-fix',
+    },
+  );
   assert.deepEqual(gateActionsForReadiness(actions, exhausted), actions.slice(1));
   // A published run cannot be extended, so its gate says so instead of naming the command.
   const published = await collectRunGateReadiness(
