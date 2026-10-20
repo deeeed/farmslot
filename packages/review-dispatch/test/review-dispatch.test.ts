@@ -346,17 +346,138 @@ test('only verified session/head traces seed exact PR provenance, without select
   };
   const run = (session: ReviewSessionTrace) =>
     ({
+      familyId: 'family-a',
       decisions: [],
       reviewResult: { session, recommendation: 'pass', reviewMd: '', lineComments: [] },
-    }) as Pick<Run, 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'>;
-  assert.deepEqual(reviewLineagesForRun(run(trace)), [lineage]);
+    }) as Pick<
+      Run,
+      'familyId' | 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'
+    >;
+  const familyLineage = { ...lineage, familyId: 'family-a' };
+  assert.deepEqual(reviewLineagesForRun(run(trace)), [familyLineage]);
   assert.deepEqual(reviewLineagesForRun(run({ ...trace, lastReviewedHeadSha: undefined })), []);
   assert.deepEqual(reviewLineagesForRun(run({ ...trace, continuity: 'refused' })), []);
   const runs = [run(trace), run({ ...trace, reviewId: 'lineage-b', runner: 'claude' })];
   const pr = { host: 'github.com', repo: 'owner/repo', number: 1 };
   assert.equal(reviewRequestContextForPR(runs, pr), undefined);
-  assert.deepEqual(reviewRequestContextForPR(runs, pr, 'lineage-a'), { reviewLineages: [lineage] });
+  assert.deepEqual(reviewRequestContextForPR(runs, pr, 'lineage-a'), {
+    reviewLineages: [familyLineage],
+  });
   assert.equal(reviewRequestContextForPR(runs, { ...pr, number: 2 }), undefined);
+});
+
+test('a lineage before a PR exists is keyed by its run family and stays valid', () => {
+  const trace: ReviewSessionTrace = {
+    mode: 'cold',
+    continuity: 'fresh',
+    reviewId: 'pipeline-review-run-a',
+    sessionId: 'session-a',
+    lastReviewedHeadSha: 'head-a',
+    runner: 'codex',
+  };
+  const run = {
+    familyId: 'family-a',
+    decisions: [],
+    reviewResult: { session: trace, recommendation: 'pass', reviewMd: '', lineComments: [] },
+  } as Pick<Run, 'familyId' | 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'>;
+  const prePublish = { reviewId: 'pipeline-review-run-a', familyId: 'family-a' };
+  assert.deepEqual(reviewLineagesForRun(run), [prePublish]);
+  assert.deepEqual(
+    reviewContextFromRequest({ ...warm, context: { reviewLineages: [prePublish] } }),
+    { reviewLineages: [prePublish] },
+  );
+  assert.throws(
+    () => assertReviewRequestPayload({ ...warm, context: { reviewLineages: [{ reviewId: 'x' }] } }),
+    /run family or repository\/PR/,
+  );
+  assert.throws(
+    () =>
+      assertReviewRequestPayload({
+        ...warm,
+        context: { reviewLineages: [{ ...prePublish, repository: 'owner/repo' }] },
+      }),
+    /PR number/,
+  );
+});
+
+test('a gate request preselects each row runner latest available lineage in WARM, once', () => {
+  const option = (reviewId: string, runner: string, reviewedAt: string, extra = {}) => ({
+    context: { reviewId, familyId: 'family-a' },
+    runner,
+    model: `${runner}-model-${reviewId}`,
+    effort: runner === 'codex' ? 'high' : null,
+    reviewedAt,
+    ...extra,
+  });
+  const lineageOptions = [
+    option('older-codex', 'codex', '2026-10-20T10:00:00Z'),
+    option('latest-codex', 'codex', '2026-10-20T12:00:00Z'),
+    option('claude', 'claude', '2026-10-20T11:00:00Z', {
+      unavailableReason: 'the retained reviewer belongs to a different slot',
+    }),
+  ];
+  const vm = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['request-review'],
+      allowSequence: true,
+      lineageOptions,
+      defaults: { runner: 'codex' },
+    },
+  });
+  assert.deepEqual(vm.rows[0].selection, {
+    runner: 'codex',
+    model: 'codex-model-latest-codex',
+    effort: 'high',
+    mode: 'warm',
+  });
+  assert.deepEqual(vm.rows[0].context, { reviewId: 'latest-codex', familyId: 'family-a' });
+  // A later row with the same runner takes that runner's next most recent lineage.
+  vm.addRow({ runner: 'codex' });
+  assert.equal(vm.rows[1].selection.mode, 'warm');
+  assert.equal(vm.rows[1].context?.reviewId, 'older-codex');
+  // No lineage left for the runner: a new review, COLD by default.
+  vm.addRow({ runner: 'codex' });
+  assert.equal(vm.rows[2].selection.mode, 'cold');
+  assert.equal(vm.rows[2].context, null);
+  assert.equal(vm.rows[2].note, undefined);
+  // An unavailable session preselects COLD and says why; a person may still ask for WARM.
+  vm.setRunner(vm.rows[2].id, 'claude');
+  assert.equal(vm.rows[2].selection.mode, 'cold');
+  assert.match(vm.rows[2].note ?? '', /different slot/);
+  assert.deepEqual(vm.toRequestPayload().context, {
+    reviewLineages: [
+      { reviewId: 'latest-codex', familyId: 'family-a' },
+      { reviewId: 'older-codex', familyId: 'family-a' },
+      null,
+    ],
+  });
+  vm.setMode(vm.rows[2].id, 'warm');
+  assert.equal(vm.toRequestPayload().context?.reviewLineages[2]?.reviewId, 'claude');
+});
+
+test('gate lineages arriving after the picker was built preselect its default rows', () => {
+  const vm = new ReviewDispatchViewModel({
+    context: { allowedActions: ['request-review'], allowSequence: true },
+  });
+  assert.equal(vm.rows[0].selection.mode, 'cold');
+  vm.setContext({
+    ...vm.context,
+    lineageOptions: [
+      {
+        context: { reviewId: 'pipeline-review-run-a', familyId: 'family-a' },
+        runner: vm.rows[0].selection.runner,
+        model: null,
+        effort: null,
+        reviewedAt: '2026-10-20T12:00:00Z',
+      },
+    ],
+  });
+  assert.equal(vm.rows[0].selection.mode, 'warm');
+  vm.setMode(vm.rows[0].id, 'cold');
+  // A later refresh keeps the person's choice.
+  vm.setContext({ ...vm.context });
+  assert.equal(vm.rows[0].selection.mode, 'cold');
+  assert.equal(vm.rows[0].context?.reviewId, 'pipeline-review-run-a');
 });
 
 test('execution alternatives may continue one lineage while counted reviews cannot duplicate it', () => {

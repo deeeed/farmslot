@@ -8,10 +8,17 @@ import type {
 
 import type { ReviewDispatchSequenceRole } from './types.js';
 
-/** Only retained exact-PR session/head evidence can seed WARM context. */
+/** A lineage is its run family plus `reviewId`; contexts without a family keep their PR key. */
+export function reviewLineageKey(context: ReviewContinuationContext): string {
+  return context.familyId
+    ? `${context.familyId}::${context.reviewId}`
+    : `${context.repository?.toLowerCase()}#${context.prNumber}::${context.reviewId}`;
+}
+
+/** Only retained session/head evidence can seed WARM context; a PR is recorded once present. */
 export function reviewLineagesForRun(
   run:
-    | Pick<Run, 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'>
+    | Pick<Run, 'familyId' | 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'>
     | null
     | undefined,
 ): ReviewContinuationContext[] {
@@ -20,22 +27,19 @@ export function reviewLineagesForRun(
   const add = (trace: ReviewSessionTrace | undefined) => {
     if (
       !trace?.reviewId ||
-      !trace.repository ||
-      !trace.prNumber ||
       !trace.sessionId ||
       !trace.lastReviewedHeadSha ||
       !['fresh', 'resumed'].includes(trace.continuity)
     )
       return;
-    const context = {
-      repository: trace.repository,
-      prNumber: trace.prNumber,
+    const context: ReviewContinuationContext = {
+      ...(trace.repository && trace.prNumber
+        ? { repository: trace.repository, prNumber: trace.prNumber }
+        : {}),
       reviewId: trace.reviewId,
+      familyId: run.familyId,
     };
-    lineages.set(
-      `${context.repository.toLowerCase()}#${context.prNumber}:${context.reviewId}`,
-      context,
-    );
+    lineages.set(reviewLineageKey(context), context);
   };
   add(run.reviewResult?.session);
   add(run.repeatReviewContext?.session);
@@ -70,9 +74,9 @@ export function assertWarmReviewContext(
     const lineage = context?.reviewLineages[index];
     if (!lineage)
       throw new Error(
-        `WARM review row ${index + 1} requires an unambiguous repository/PR and reviewId lineage. Choose COLD or open a specific review recheck.`,
+        `WARM review row ${index + 1} requires an unambiguous run family or repository/PR and reviewId lineage. Choose COLD or open a specific review recheck.`,
       );
-    const key = `${lineage.repository.toLowerCase()}#${lineage.prNumber}:${lineage.reviewId}`;
+    const key = reviewLineageKey(lineage);
     if (sequenceRole === 'reviews' && used.has(key))
       throw new Error('A WARM sequence cannot count the same review lineage twice');
     used.add(key);
@@ -88,14 +92,15 @@ export function reviewLineagesForPR(
   const lineages = new Map<string, ReviewContinuationContext>();
   for (const run of runs)
     for (const context of reviewLineagesForRun(run)) {
-      const capturedRepository = context.repository.toLowerCase();
+      const capturedRepository = context.repository?.toLowerCase();
       if (
+        !capturedRepository ||
         context.prNumber !== pr.number ||
         (capturedRepository !== qualified &&
           !(pr.host.toLowerCase() === 'github.com' && capturedRepository === repository))
       )
         continue;
-      lineages.set(`${capturedRepository}#${context.prNumber}:${context.reviewId}`, context);
+      lineages.set(reviewLineageKey(context), context);
     }
   return [...lineages.values()];
 }

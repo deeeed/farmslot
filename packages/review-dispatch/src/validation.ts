@@ -152,9 +152,20 @@ export function assertReviewContinuationContext(
   value: unknown,
 ): asserts value is ReviewContinuationContext {
   record(value, 'Review continuation context');
-  exactKeys(value, ['repository', 'prNumber', 'reviewId'], 'Review continuation context');
-  identifier(value.repository, 'Review repository');
+  exactKeys(
+    value,
+    ['repository', 'prNumber', 'reviewId', 'familyId'],
+    'Review continuation context',
+  );
   identifier(value.reviewId, 'Review lineage ID');
+  if (value.familyId !== undefined) identifier(value.familyId, 'Review run family');
+  // Before a PR exists a lineage is keyed by its run family; a PR is checked once present.
+  if (value.repository === undefined && value.prNumber === undefined) {
+    if (value.familyId === undefined)
+      throw new Error('Review lineage requires its run family or repository/PR');
+    return;
+  }
+  identifier(value.repository, 'Review repository');
   if (
     typeof value.prNumber !== 'number' ||
     !Number.isSafeInteger(value.prNumber) ||

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Lineages before a PR are valid, keyed by run family (`reviewLineageKey`); a PR is still checked once present. The gate picker's `lineageOptions` preselect each row runner's most recent available lineage in WARM with its model and effort, once per lineage, and a row whose earlier lineage can't continue stays COLD with a `note` saying why (ADR-063 Amendment 5).
 - `publicationGateView` offers accepting the open review findings (`acceptFindings`, with `findings`) while they block every other publish approval, and asks for the reason when `acceptingFindings` is set. `reviewFixInProgress(run)` and `reviewFindingEntries(reviews)`, the review entries the publication block counts, are exported.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
