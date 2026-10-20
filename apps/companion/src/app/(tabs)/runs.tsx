@@ -9,6 +9,7 @@ import {
   groupRunsByFamily,
   normalizeRunTags,
   type Run,
+  runDisplayStatus,
   type RunFamilyGroup,
   selectRecentRunFamilyGroups,
   selectRunList,
@@ -212,7 +213,7 @@ function RunCard({
             ) : null}
           </View>
           <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>
-            <Text style={[styles.badgeText, { color: statusColor }]}>{run.status}</Text>
+            <Text style={[styles.badgeText, { color: statusColor }]}>{runDisplayStatus(run)}</Text>
           </View>
         </View>
         <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
@@ -238,6 +239,7 @@ function RunCard({
             runStatus={run.status}
             waitingForOperator={run.waitingForOperator}
             error={run.error}
+            decisions={run.decisions}
           />
         )}
         {primaryVisualPair ? (

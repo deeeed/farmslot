@@ -20,6 +20,7 @@ import {
   Methods,
   normalizeRunTags,
   resolveRunSlotId,
+  runDisplayStatus,
   type RunFamilyGroup,
   slotMachineMap,
   summarizeRunEvidence,
@@ -831,8 +832,8 @@ export class RunList extends RunListState {
         class="badge status-badge"
         data-testid="runs-lifecycle"
         style="--status-color:${sc}"
-        title=${run.status}
-        >${run.status}</span
+        title=${runDisplayStatus(run)}
+        >${runDisplayStatus(run)}</span
       >`,
       html`<span data-testid="runs-flow"
         >${renderFlowBadge(run.flowType, {

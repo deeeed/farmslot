@@ -30,7 +30,7 @@ import { colors } from '@farmslot/theme';
 
 import type { AcceptanceLedgerView } from './task-progress-view';
 
-export const HUMAN_GATE_DECISION_TYPE = 'engine_human_gate';
+export { HUMAN_GATE_DECISION_TYPE, openHumanGateDecision } from '@farmslot/protocol';
 
 /**
  * Publish approvals the gateway offers precisely because the reviews are failing,
@@ -103,18 +103,6 @@ export interface ApprovePublishGuardInput {
 export interface GateReviewAction extends DecisionAction {
   /** Why the action is withheld; null when it can be sent. */
   disabledReason: string | null;
-}
-
-/** The run's latest unresolved human gate, if any. */
-export function openHumanGateDecision(
-  run: Pick<Run, 'decisions'> | null | undefined,
-): RunDecision | null {
-  const decisions = run?.decisions ?? [];
-  for (let index = decisions.length - 1; index >= 0; index -= 1) {
-    const decision = decisions[index];
-    if (decision.type === HUMAN_GATE_DECISION_TYPE && !decision.resolvedAt) return decision;
-  }
-  return null;
 }
 
 export function gateReviewHref(runId: string, decisionId: string) {

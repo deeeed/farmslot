@@ -1,4 +1,10 @@
-import type { FlowType, Run, RunStep, TaskProgressStructured } from '@farmslot/protocol';
+import {
+  type FlowType,
+  isBlockedAtOpenHumanGate,
+  type Run,
+  type RunStep,
+  type TaskProgressStructured,
+} from '@farmslot/protocol';
 
 import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
 import {
@@ -101,10 +107,7 @@ function isReviewerChecklistFile(basename: string): boolean {
 
 export function isPublicationReviewProgressActive(run: Run | undefined): boolean {
   if (!run) return false;
-  if (
-    run.status === 'blocked' &&
-    run.decisions.some((decision) => decision.type === 'engine_human_gate' && !decision.resolvedAt)
-  ) {
+  if (isBlockedAtOpenHumanGate(run)) {
     return false;
   }
   const humanGate = run.steps.find((step) => step.name === 'human-gate');
@@ -121,10 +124,7 @@ export function isPublicationReviewProgressActive(run: Run | undefined): boolean
 /** Canvas node that is actually blocking right now (not merely hash-selected). */
 export function currentPipelineNodeId(run: Run | undefined): string | null {
   if (!run) return null;
-  if (
-    run.status === 'blocked' &&
-    run.decisions.some((decision) => decision.type === 'engine_human_gate' && !decision.resolvedAt)
-  ) {
+  if (isBlockedAtOpenHumanGate(run)) {
     return 'human-gate';
   }
   if (isPublicationReviewProgressActive(run)) {

@@ -6,7 +6,7 @@ import type {
   RunStepDisplayStatus,
   TaskProgressStructured,
 } from '@farmslot/protocol';
-import { runStepDisplayDetail } from '@farmslot/protocol';
+import { isBlockedAtOpenHumanGate, runStepDisplayDetail } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 import {
@@ -471,7 +471,8 @@ export function renderHumanGatePipelineNode(n: NodePos, ctx: RunPipelineSpecialN
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
-  const isBlocked = vis === 'blocked';
+  // A run blocked at its open gate keeps the gate running; the node still shows it waiting.
+  const isBlocked = vis === 'blocked' || (isRunning && isBlockedAtOpenHumanGate(ctx.run));
   const awaitingDecision = isBlocked && ctx.run.decisions.some((d) => !d.resolvedAt);
 
   // Human-gate always has a distinct amber border to show where intervention is expected
