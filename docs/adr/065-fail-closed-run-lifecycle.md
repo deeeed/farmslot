@@ -552,52 +552,74 @@ predicate.
 ## Amendment 8: accepting review findings at publication, 2026-10-20
 
 **Status:** Proposed.
-**Related:** Amendment 2, [ADR-063](063-review-modes-warm-cold.md) Amendment 4, [ADR-062](062-recorded-run-evidence.md).
+**Related:** Amendments 2 and 7, [ADR-063](063-review-modes-warm-cold.md) Amendment 4, [ADR-062](062-recorded-run-evidence.md) Amendments 3 and 18.
+**Specification:** [Gate prerequisites](../reference/fail-closed-run-lifecycle.md#gate-prerequisites).
 
 ### Decision
 
 "Accept Review Findings and Publish" (`approve-publish-unresolved`) publishes the
-package head while review findings at that head remain open. A credential-backed
-person with the existing human-attestation authority takes it with a written
-reason. A service principal never can.
+package head while review findings at that head remain open. Only a person with
+the human-attestation authority of ADR-062 Amendment 3 may take it, with a
+written reason (non-empty after trimming, the rule evidence attestation uses).
+Service, node and unauthenticated callers never can. This narrows the action:
+today any principal may use it where it applies.
 
-The action yields only the review prerequisites, `review-fix-required` and
-`review-result-required`. Declared deterministic steps, CI, the AC ledger,
-evidence, lifecycle and every other prerequisite still block it, and it is
-refused while any of them is unmet. It is available only once the package's
-required reviews have run at the package head, whatever their verdict, so it
-accepts findings a review reported and never stands in for a review that did not
-run.
+It yields exactly the review prerequisites `review-fix-required` and
+`review-result-required`. Every other prerequisite still blocks it, including
+`review-result-invalid`, `review-document-missing`, deterministic steps, the AC
+ledger, evidence and lifecycle. Post-publication CI is unchanged. It is
+available only when all of these hold:
 
-The publication receipt records the reason, the package head, the principal and
-the accepted findings: each finding's id and text from the head's review
-results. Normal Approve Publish is unchanged, and findings at the package head
-still block it (ADR-063 Amendment 4).
+- the package's required number of reviews returned a valid structured result
+  (verdict `pass` or `issues`) for the prepared package, under the existing
+  session and freshness checks;
+- at least one finding is open at the package head;
+- no fix or review is in progress.
 
-One shared protocol rule decides when the action is available. The gateway
-applies it both when it lists gate actions and when it resolves the decision,
-and the CLI, Command Center and Companion apply it to their listings, so a
-listed action is one resolve accepts.
+It is available whether or not a review round remains, alongside Continue
+Fixing, and it does not combine with evidence attestation. Accepted findings do
+not certify ADR-062 Amendment 18 `review`-mode criteria, so a run with such a
+criterion and an open finding stays refused.
+
+The decision's publication approval records the reason, the package head, the
+approver as evidence attestation records it, and the accepted findings. For each
+finding it keeps the review id and the finding as the review recorded it (file,
+line, description), plus one digest of the accepted set. Resolve refuses when the
+findings at the head differ from that set. The acceptance binds to that head
+only. The published PR body discloses the accepted findings and the reason, as
+ADR-062 Amendment 3 does for waivers. Normal Approve Publish is unchanged:
+findings at the package head still block it (ADR-063 Amendment 4).
+
+One shared protocol rule decides availability. The gateway applies it when it
+lists gate actions and when it resolves, and the CLI, Command Center and
+Companion apply it to their listings, so a listed action is one that resolve
+accepts.
+
+A publishing run held at REVIEW under Amendment 7, before any gate exists, is
+out of scope. Accept stays unavailable there.
 
 ### Rationale and consequences
 
-On TAT-4006 run 7721a02b, the eighth review's only finding was an owner decision
-about the deposit clause. It needed no code change, and the review budget was
-spent. The gate offered Hold and Request Review. "Accept Review Findings and
-Publish" was listed in the gate's definitions but always refused, because
-`review-fix-required` allowed no override. The only route left was adoption
-(Amendment 2), which records an external publication and is not the publication
-workflow.
+A review can end with findings a person decides not to act on, for example an
+owner's decision to descope part of a criterion, when no code change answers
+them and the review budget is spent. The gate then offered Hold and Request
+Review. "Accept Review Findings and Publish" was listed among the gate's
+definitions but was always refused, because `review-fix-required` allowed no
+override. Adoption (Amendment 2) records an external publication and is not the
+publication workflow.
 
-Accepting findings is an explicit, attributed decision. The receipt keeps what
-was accepted, by whom and why, so the published PR and later reviews can show it.
-The other prerequisites still protect what the reviewer cannot judge.
+Accepting findings becomes an explicit, attributed decision. The approval keeps
+what was accepted, by whom and why, and the PR shows it. The other prerequisites
+still protect what a reviewer cannot judge.
 
 ### Public surface
 
 - No new action id or RPC. `run.resolveDecision` with `approve-publish-unresolved`
-  requires the written reason.
-- `@farmslot/protocol` owns the availability rule and the additive receipt fields
-  (accepted findings and reason) on the decision's publication approval.
+  requires `reason`. Older clients that send no reason are refused. The CLI
+  `--reason` help names this action.
+- `@farmslot/protocol` exports the availability rule, moving the gateway's
+  per-action readiness filter there. It also adds optional `acceptedFindings`
+  (with their digest), `reason` and `headSha` fields on the decision's
+  publication approval.
 - The CLI, Command Center and Companion list the action through that rule and
   ask for the reason before submitting.
