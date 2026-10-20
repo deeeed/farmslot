@@ -108,6 +108,8 @@ import { recordReviewedInputs } from './reviewed-inputs.js';
 import {
   invalidateWarmReviewerSessions,
   invalidateWarmReviewerSessionsForSlot,
+  reReviewOfStatus,
+  reviewLineageId,
   shouldRetainCompletedReviewer,
 } from './session-mode.js';
 import {
@@ -1876,7 +1878,7 @@ async function recoverReviewFixPass({
     const ownerReview = latestRun?.engineState?.publishGate?.reviews?.find(
       (review) => review.id === (fixContext.artifactScope ?? findingsArtifactScope),
     );
-    const lineage = ownerReview?.id ?? reviewId ?? undefined;
+    const lineage = (ownerReview && reviewLineageId(ownerReview)) ?? reviewId ?? undefined;
     // The fix follows the review that raised its findings: re-review at the next loop.
     const reviewedLoop =
       [...(latestRun?.agentContexts ?? [])]
@@ -2208,8 +2210,7 @@ async function recoverReviewFixPass({
     updateRun(runId, { status: 'reviewing' });
     // ADR-063 Amendment 5: the recovered re-review continues the lineage that raised the
     // findings; the fix's delivery base is the head that lineage reviewed.
-    const reviewedHeadSha =
-      ownerReview?.reviewSnapshot?.headSha ?? ownerReview?.reviewedHeadSha ?? fixBaseSha;
+    const reviewedHeadSha = reReviewOfStatus(ownerReview)?.lastReviewedHeadSha ?? fixBaseSha;
     const rereview =
       lineage && reviewedHeadSha
         ? { lastReviewedHeadSha: reviewedHeadSha, priorIssues: issues }

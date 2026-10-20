@@ -350,7 +350,8 @@ test('the re-run continues the lineage of the row the pipeline review ran, WARM'
     effort: 'xhigh',
     mode: 'cold',
   };
-  const pipelineReviewId = `pipeline-review-${run.id}`;
+  // As recorded on bda11b1a: the pipeline row wraps its lineage in its own id.
+  const pipelineReviewId = 'rev-claude-native-9e436a666c45-bc5247b7';
   updateRun(run.id, {
     steps: getRun(run.id)!.steps.map((step) =>
       step.name === 'review'
@@ -369,7 +370,8 @@ test('the re-run continues the lineage of the row the pipeline review ran, WARM'
       publishGate: {
         reviews: [
           {
-            id: pipelineReviewId,
+            id: `pipeline-review-${pipelineReviewId}`,
+            session: { mode: 'cold', continuity: 'fresh', reviewId: pipelineReviewId },
             source: 'pipeline',
             runner: 'codex',
             model: 'gpt-6.1-sol',

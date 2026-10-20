@@ -71,7 +71,11 @@ import {
   reviewNoVerdictCapReason,
 } from '../review/review-round-budget.js';
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
-import { assertLineageBelongsToRun } from '../review/session-mode.js';
+import {
+  assertLineageBelongsToRun,
+  reReviewOfStatus,
+  reviewLineageId,
+} from '../review/session-mode.js';
 import { removeSlotFiles } from '../review/snapshots.js';
 import { resolveWorkerTaskDir } from '../review/templates.js';
 import { isTerminalReviewArtifactError } from '../review/terminal-result.js';
@@ -149,7 +153,6 @@ import {
 import {
   humanGateReviewPolicy,
   MAX_PUBLISH_GATE_REVIEW_LOOPS,
-  reReviewOfStatus,
   reviewLineageOptionsForRun,
   reviewPlanFromSelection,
 } from './review-plan.js';
@@ -204,7 +207,7 @@ function reviewResultFromInterruptedReview(review: ReviewStatus): ReviewResult {
   return {
     verdict: 'issues',
     mode: review.mode,
-    reviewId: review.id,
+    reviewId: reviewLineageId(review),
     reviewerSessionId: review.reviewerSessionId ?? undefined,
     session: review.session,
     issues: review.issues ?? [],
@@ -269,7 +272,7 @@ async function resumeInterruptedPublicationReviewOnce(
       // Reviews recorded before depth existed ran the live contract; resume them as recorded.
       validationDepth: interrupted.validationDepth ?? 'full-live',
       artifactScope: interrupted.id,
-      reviewId: interrupted.id,
+      reviewId: reviewLineageId(interrupted),
       // ADR-063 Amendment 5: the fix's re-review continues this review's lineage WARM.
       mode: reReviewMode(resumeFromResult, 'cold'),
       publicationReview: true,
@@ -364,7 +367,7 @@ async function resumeVisualRepairOnce(
       effort: review.effort ?? null,
       validationDepth: review.validationDepth ?? 'full-live',
       artifactScope: review.id,
-      reviewId: review.id,
+      reviewId: reviewLineageId(review),
       mode: reReviewMode(reviewResultFromInterruptedReview(review), 'cold'),
       publicationReview: true,
       resumeFromResult: {
@@ -557,22 +560,25 @@ export async function executePublishGateReviewPlan(
     // ID + artifact paths flow through REQUESTED_REVIEW_SOURCE so this stream stays
     // namespace-isolated from the worker's review attempts (review-sources.ts).
     const continuation = reviewSequenceContext?.reviewLineages[boundedPlan.indexOf(planStep)];
-    if (planStep.mode === 'warm' && continuation)
-      assertLineageBelongsToRun(continuation, latestBeforeReview);
+    if (continuation) assertLineageBelongsToRun(continuation, latestBeforeReview);
     if (planStep.mode === 'warm' && !continuation?.reviewId)
       throw new Error(
         'WARM review unavailable: this request row has no reviewId lineage context. Choose a previous review or COLD.',
       );
+    // ADR-063 Amendment 5: a re-review stays in its lineage, WARM or a person's COLD. The
+    // lineage names the reviewer session; the row id names the gate row and its artifacts.
+    const lineageId = continuation?.reviewId;
+    const gateReviews = latestBeforeReview.engineState?.publishGate?.reviews ?? [];
+    const priorReview = lineageId
+      ? [...gateReviews].reverse().find((review) => reviewLineageId(review) === lineageId)
+      : undefined;
     const reviewId =
-      planStep.mode === 'warm'
-        ? continuation!.reviewId
-        : REQUESTED_REVIEW_SOURCE.artifactRefs(
-            (latestBeforeReview.engineState?.publishGate?.reviews ?? []).length + 1,
-            `${runId}-${randomUUID()}`,
-          ).id;
-    const priorReview = latestBeforeReview.engineState?.publishGate?.reviews?.find(
-      (review) => review.id === reviewId,
-    );
+      priorReview?.id ??
+      (lineageId &&
+      Object.values(REVIEW_SOURCES).some(({ idPrefix }) => lineageId.startsWith(`${idPrefix}-`))
+        ? lineageId
+        : REQUESTED_REVIEW_SOURCE.artifactRefs(gateReviews.length + 1, `${runId}-${randomUUID()}`)
+            .id);
     // ADR-063 Amendment 5: an automatic re-review never stops on an unavailable session;
     // a person's WARM request still sees the refusal.
     const rereview =
@@ -594,8 +600,8 @@ export async function executePublishGateReviewPlan(
         effort: execution.effort,
         validationDepth,
         artifactScope: reviewId,
-        reviewId,
-        priorAttempts: planStep.mode === 'warm' ? priorReview?.attempts : undefined,
+        reviewId: lineageId ?? reviewId,
+        priorAttempts: priorReview?.attempts,
         publicationReview: true,
         mode: planStep.mode,
         ...(rereview ? { rereview } : {}),
@@ -617,7 +623,7 @@ export async function executePublishGateReviewPlan(
       );
       reviewResult = {
         mode: planStep.mode,
-        reviewId,
+        reviewId: lineageId ?? reviewId,
         runner: requestedRunner,
         model: planStep.model ?? undefined,
         effort: planStep.effort,

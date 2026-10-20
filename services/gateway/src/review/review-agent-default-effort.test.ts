@@ -13,9 +13,35 @@ const run = {
     project: 'default-effort',
     flowType: 'review-pr',
     ticketOrPr: 'owner/repo#42',
+    slotId: 'review-slot',
   }),
   transport: 'native' as const,
+  nativeOwnerPrincipalId: 'native-owner',
 };
+// The retained reviewer's own native context, which launch and the gate check alike.
+run.agentContexts = [
+  {
+    id: 'review-context',
+    role: 'review',
+    label: 'Review',
+    status: 'complete',
+    runId: run.id,
+    slotId: 'review-slot',
+    reviewId: 'review-default',
+    runner: execution.runner,
+    model: execution.model,
+    runnerSessionId: 'retained-session',
+    nativeSession: {
+      sessionId: 'session',
+      generation: 'generation',
+      leaseId: 'lease',
+      commandId: 'command',
+      executionNodeId: 'local',
+      ownerPrincipalId: 'native-owner',
+      acceptedAt: '2026-10-16T00:00:00Z',
+    },
+  },
+];
 let deliveredEffort: string | null | undefined;
 mock.module('../runs/store.js', { namedExports: { ...store, getRun: () => run } });
 mock.module('./native-review-agent.js', {
@@ -39,7 +65,7 @@ test('WARM runner-default effort agrees at gate preflight and reviewer delivery'
     reviewId: 'review-default',
     familyId: warmLineageScope(run),
     project: run.project,
-    ownerPrincipalId: run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
+    ownerPrincipalId: run.nativeOwnerPrincipalId,
     transport: 'native',
     taskDir: '/tmp/review',
     artifactScope: 'review-default',

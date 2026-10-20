@@ -13,7 +13,6 @@ import {
   resetWarmReviewerSessionsForTest,
   reviewPRIdentity,
   shouldRetainCompletedReviewer,
-  warmLineageScope,
   type WarmReviewerScope,
 } from './session-mode.js';
 
@@ -135,6 +134,24 @@ test('a pre-publish run registers its validated reviewer and a WARM re-review co
   resetWarmReviewerSessionsForTest();
   assert.equal(persistedWarmReviewerSession(prePublish, run)?.lastReviewedHeadSha, '1111111');
   assert.equal(persistedWarmReviewerSession({ ...prePublish, familyId: 'family-2' }, run), null);
+  // A pipeline row wraps the lineage in its own id; the rebuild matches by lineage.
+  run.engineState.publishGate!.reviews = run.engineState.publishGate!.reviews!.map((review) => ({
+    ...review,
+    id: `pipeline-review-${review.id}`,
+    session: { mode: 'cold' as const, continuity: 'fresh' as const, reviewId: scope.reviewId },
+  }));
+  assert.equal(persistedWarmReviewerSession(prePublish, run)?.lastReviewedHeadSha, '1111111');
+});
+
+test('a failed review retires only its own lineage', () => {
+  registerWarmReviewerSession(session);
+  registerWarmReviewerSession({ ...session, reviewId: 'review-b', runnerSessionId: 'session-b' });
+  assert.equal(invalidateWarmReviewerSessions('run-a', 'codex', 'review-a'), 1);
+  assert.equal(claimWarmReviewerSession(scope), null);
+  assert.equal(
+    claimWarmReviewerSession({ ...scope, reviewId: 'review-b' })?.runnerSessionId,
+    'session-b',
+  );
 });
 
 test('busy WARM and unsupported model/effort changes visibly refuse', () => {
@@ -277,7 +294,8 @@ test('canonical review identity accepts stored PR links and qualified references
   });
 });
 
-test('a lineage binds to its run family; review-pr chains keep binding to their PR', () => {
+test('a lineage binds to its run family; review-pr chains keep binding to their PR', async () => {
+  const { warmLineageScope } = await import('./session-mode.js');
   assert.equal(
     warmLineageScope(makeRun({ familyId: 'family-a', ticketOrPr: 'owner/repo#42' })),
     'family-a',

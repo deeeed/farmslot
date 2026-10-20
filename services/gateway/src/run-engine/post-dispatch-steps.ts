@@ -43,7 +43,7 @@ import {
   markReviewedInputsRerun,
   reviewedInputsAwaitingReview,
 } from '../review/reviewed-inputs.js';
-import { reviewPRIdentity } from '../review/session-mode.js';
+import { lineageContextForRun, reReviewOfStatus, reviewLineageId } from '../review/session-mode.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
   isArtifactOnlyRun,
@@ -109,7 +109,6 @@ import {
   pipelineReviewSatisfiesFirstRow,
   remainingExplicitReviewPlan,
   repairUnboundRecoveryReviewPlan,
-  reReviewOfStatus,
   resolveHumanGateReviewExecutionPlan,
 } from './review-plan.js';
 import { recordArtifactOnlyReviewResult } from './review-result.js';
@@ -933,15 +932,13 @@ export async function rerunReviewIfReviewedInputsChanged(
   const session = reviewStep?.outputs?.session;
   const pipelineReviewId =
     session && typeof session === 'object' && 'reviewId' in session ? session.reviewId : undefined;
-  const pipelineReview = latest.engineState?.publishGate?.reviews?.find(
-    (review) => review.id === pipelineReviewId,
-  );
+  // The pipeline row wraps the lineage in its own id (pipeline-review-<lineage>).
+  const pipelineReview = [...(latest.engineState?.publishGate?.reviews ?? [])]
+    .reverse()
+    .find((review) => reviewLineageId(review) === pipelineReviewId);
   const lineage =
     typeof pipelineReviewId === 'string' && reReviewOfStatus(pipelineReview)
-      ? {
-          ...(reviewPRIdentity(latest) ?? { familyId: latest.familyId }),
-          reviewId: pipelineReviewId,
-        }
+      ? lineageContextForRun(latest, pipelineReviewId)
       : undefined;
   const mode = lineage ? 'warm' : resolveReviewMode();
   const plan: ReviewSelection[] = [

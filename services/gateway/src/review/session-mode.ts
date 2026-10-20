@@ -1,5 +1,6 @@
 import {
   adoptedPublicationTarget,
+  type AgentContext,
   parseGitHubPullUrl,
   parseGitHubRef,
   prNumberFromRunInput,
@@ -7,8 +8,11 @@ import {
   type ReviewGatePayload,
   type ReviewMode,
   type ReviewSessionRefusalReason,
+  type ReviewStatus,
   type Run,
 } from '@farmslot/protocol';
+
+import type { ReReviewContinuation } from './review-agent.js';
 
 export class WarmReviewRefusal extends Error {
   override name = 'WarmReviewRefusal';
@@ -101,19 +105,47 @@ export function reviewPRIdentity(
  * another family (ADR-063 Amendment 5). `run rereview` and PR-rule review-pr chains keep their
  * own continuation rule: they bind to their PR.
  */
-export function warmLineageScope(
-  run: Pick<Run, 'familyId' | 'ticketOrPr' | 'links' | 'prWork'> &
-    Partial<Pick<Run, 'flowType' | 'prNumber' | 'engineState'>>,
-): string {
+export function warmLineageScope(run: LineageRun): string {
   const pr = run.flowType === 'review-pr' ? reviewPRIdentity(run) : null;
   return pr ? `${pr.repository.toLowerCase()}#${pr.prNumber}` : run.familyId;
+}
+
+type LineageRun = Pick<Run, 'familyId' | 'ticketOrPr' | 'links' | 'prWork'> &
+  Partial<Pick<Run, 'flowType' | 'prNumber' | 'engineState'>>;
+
+/** The context naming a lineage of this run: its PR once there is one, else its run family. */
+export function lineageContextForRun(run: LineageRun, reviewId: string): ReviewContinuationContext {
+  return { ...(reviewPRIdentity(run) ?? { familyId: run.familyId }), reviewId };
+}
+
+/**
+ * A review status's lineage, which names its reviewer session. A gate row's id names the row and
+ * its artifacts; a pipeline row wraps the lineage in its own id.
+ */
+export function reviewLineageId(review: Pick<ReviewStatus, 'id' | 'session'>): string {
+  return review.session?.reviewId ?? review.id;
+}
+
+/**
+ * A review's lineage qualifies for a re-review with a validated verdict and a recorded reviewed
+ * head (ADR-063 Amendment 5); its findings go to a fallback's fresh session.
+ */
+export function reReviewOfStatus(
+  review: ReviewStatus | undefined,
+): ReReviewContinuation | undefined {
+  const head =
+    review?.reviewSnapshot?.source === 'unavailable'
+      ? undefined
+      : (review?.reviewSnapshot?.headSha ?? review?.reviewedHeadSha);
+  return head && (review?.verdict === 'pass' || review?.verdict === 'issues')
+    ? { lastReviewedHeadSha: head, priorIssues: review.issues ?? [] }
+    : undefined;
 }
 
 /** A lineage continues only in its run family, and in its own PR once both sides have one. */
 export function assertLineageBelongsToRun(
   lineage: ReviewContinuationContext,
-  run: Pick<Run, 'familyId' | 'ticketOrPr' | 'links' | 'prWork'> &
-    Partial<Pick<Run, 'flowType' | 'prNumber' | 'engineState'>>,
+  run: LineageRun,
 ): void {
   if (lineage.familyId && lineage.familyId !== run.familyId)
     throw new WarmReviewRefusal('session-unavailable', 'the lineage belongs to another run family');
@@ -143,7 +175,7 @@ export function registerWarmReviewerSession(
 
 export function claimWarmReviewerSession(
   scope: WarmReviewerScope,
-  options: { consume?: boolean } = {},
+  options: { consume?: boolean; allowBusy?: boolean } = {},
 ): WarmReviewerSession | null {
   const session = warmSessions.get(sessionKey(scope));
   if (!session || session.forensicOnly) return null;
@@ -164,7 +196,8 @@ export function claimWarmReviewerSession(
       'runner-mismatch',
       'the selected runner cannot continue this review lineage',
     );
-  if (session.busy) throw new WarmReviewRefusal('session-busy', 'the retained reviewer is running');
+  if (session.busy && !options.allowBusy)
+    throw new WarmReviewRefusal('session-busy', 'the retained reviewer is running');
   if (session.model !== scope.model)
     throw new WarmReviewRefusal('model-mismatch', 'the retained reviewer cannot change model');
   if (session.effort !== scope.effort)
@@ -174,11 +207,23 @@ export function claimWarmReviewerSession(
   return session;
 }
 
-/** Invalid execution retires this binding; successful completion remains reusable across run IDs. */
-export function invalidateWarmReviewerSessions(runId: string, runner?: string): number {
+/**
+ * Invalid execution retires this binding; successful completion remains reusable across run IDs.
+ * A failed review retires only its own lineage's session.
+ */
+export function invalidateWarmReviewerSessions(
+  runId: string,
+  runner?: string,
+  reviewId?: string,
+): number {
   let count = 0;
   for (const [key, session] of warmSessions) {
-    if (session.runId !== runId || session.forensicOnly || (runner && runner !== session.runner))
+    if (
+      session.runId !== runId ||
+      session.forensicOnly ||
+      (runner && runner !== session.runner) ||
+      (reviewId && reviewId !== session.reviewId)
+    )
       continue;
     warmSessions.set(key, { ...session, forensicOnly: true, busy: false });
     count++;
@@ -256,7 +301,7 @@ export function persistedWarmReviewerSession(
     .reverse()
     .find(
       (candidate) =>
-        candidate.id === scope.reviewId &&
+        reviewLineageId(candidate) === scope.reviewId &&
         candidate.runner === scope.runner &&
         ['pass', 'issues'].includes(candidate.verdict) &&
         candidate.reviewedHeadSha &&
@@ -327,12 +372,16 @@ export function persistedWarmReviewerSession(
   };
 }
 
-/** Resolve one explicit lineage through retained facts; workflow callers never select a session by runner. */
+/**
+ * Resolve one explicit lineage through retained facts; workflow callers never select a session by
+ * runner. Callers check it with {@link usableRetainedReviewer}.
+ */
 export function resolveWarmReviewerSession(
   scope: WarmReviewerScope,
   runs: readonly Run[],
+  options: { allowBusy?: boolean } = {},
 ): WarmReviewerSession | null {
-  let session = claimWarmReviewerSession(scope);
+  let session = claimWarmReviewerSession(scope, options);
   if (!session) {
     const matches = runs
       .map((run) => persistedWarmReviewerSession(scope, run))
@@ -350,18 +399,51 @@ export function resolveWarmReviewerSession(
       );
     });
     if (matches[0]) registerWarmReviewerSession(matches[0]);
-    session = claimWarmReviewerSession(scope);
+    session = claimWarmReviewerSession(scope, options);
   }
-  const holder = session && activeReviewerHolding(session.runnerSessionId, runs);
-  // A busy turn of the same lineage is waited for; another lineage holding it is unavailable.
-  if (holder && holder.reviewId && holder.reviewId !== scope.reviewId)
-    throw new WarmReviewRefusal('session-unavailable', 'another review lineage holds the session');
-  if (holder)
-    throw new WarmReviewRefusal(
-      'session-busy',
-      'the retained reviewer is owned by an active review',
-    );
   return session;
+}
+
+/**
+ * The checks launch and the gate share before a retained reviewer continues its lineage
+ * (ADR-063 Amendment 5): an owned, reusable native session on this slot that no other lineage
+ * holds. A turn of the same lineage is busy, not unavailable. Returns the native context.
+ */
+export function usableRetainedReviewer(
+  session: WarmReviewerSession,
+  expected: {
+    ownerPrincipalId: string | null;
+    slotId: string | null | undefined;
+    allowBusy?: boolean;
+  },
+  runs: readonly Run[],
+): AgentContext | undefined {
+  const context = runs
+    .find((run) => run.id === session.runId)
+    ?.agentContexts?.find((candidate) => candidate.id === session.contextId);
+  if (
+    session.transport === 'native' &&
+    (!context?.nativeSession ||
+      context.role !== 'review' ||
+      context.nativeSession.ownerPrincipalId !== expected.ownerPrincipalId ||
+      context.nativeSession.releasedAt ||
+      context.nativeSession.recovery)
+  )
+    throw new WarmReviewRefusal(
+      'session-unavailable',
+      'the retained native reviewer has no owned reusable session',
+    );
+  if (session.slotId !== expected.slotId)
+    throw new WarmReviewRefusal(
+      'slot-mismatch',
+      'the retained reviewer belongs to a different slot',
+    );
+  const holder = activeReviewerHolding(session.runnerSessionId, runs);
+  if (holder && holder.reviewId !== session.reviewId)
+    throw new WarmReviewRefusal('session-unavailable', 'another review lineage holds the session');
+  if (holder && !expected.allowBusy)
+    throw new WarmReviewRefusal('session-busy', 'the retained reviewer is active');
+  return context;
 }
 
 /** The active review context running on a reviewer session, if any. */

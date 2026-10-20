@@ -25,7 +25,6 @@ import {
   remainingExplicitReviewPlan,
   repairUnboundRecoveryReviewPlan,
   resolveHumanGateReviewExecutionPlan,
-  reviewLineageOptionsForRun,
   reviewPlanFromSelection,
 } from './review-plan.js';
 import { makeRun } from './test-fixtures.js';
@@ -152,6 +151,7 @@ test('active fix recovery continues its lineage WARM before a PR, never a full-d
 });
 
 test('gate lineage options mark which earlier reviews can continue WARM on this run', async (t) => {
+  const { reviewLineageOptionsForRun } = await import('./review-plan.js');
   resetWarmReviewerSessionsForTest();
   t.after(resetWarmReviewerSessionsForTest);
   const run = makeRun({
@@ -160,7 +160,8 @@ test('gate lineage options mark which earlier reviews can continue WARM on this 
       publishGate: {
         reviews: [
           {
-            ...passing('lineage', 'retained-session'),
+            // A pipeline row wraps its lineage in its own id; the option names the lineage.
+            ...passing('pipeline-review-lineage', 'retained-session'),
             completedAt: '2026-10-20T01:00:00Z',
             session: {
               mode: 'cold',
@@ -225,6 +226,11 @@ test('gate lineage options mark which earlier reviews can continue WARM on this 
     },
   ]);
   assert.deepEqual(compared, ['head..descendant', 'head..rebased']);
+  // A run rebound to another slot can't continue its reviewer: launch refuses it, so does the gate.
+  assert.deepEqual(
+    await reviewLineageOptionsForRun({ ...run, slotId: 'slot-2' }, [run], 'head', descends),
+    [{ ...expected, unavailableReason: 'the retained reviewer belongs to a different slot' }],
+  );
 });
 
 const selection: ReviewSelection = {
@@ -537,8 +543,14 @@ test('WARM preflight continues a tmux reviewer only for its creator generation',
     ];
     return run;
   };
+  // A tmux reviewer continues only on its own slot.
   const current = (generation?: number) => ({
-    ...makeRun({ id: 'current', project: 'project', ticketOrPr: 'owner/repo#42' }),
+    ...makeRun({
+      id: 'current',
+      project: 'project',
+      ticketOrPr: 'owner/repo#42',
+      slotId: 'slot-a',
+    }),
     createdByPrincipalId: 'owner',
     createdByPrincipalGeneration: generation,
   });

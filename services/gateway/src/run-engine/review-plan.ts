@@ -26,11 +26,14 @@ import {
   reviewSequenceFromRequest,
 } from '@farmslot/review-dispatch';
 
-import type { ReReviewContinuation } from '../review/review-agent.js';
 import {
   assertLineageBelongsToRun,
+  lineageContextForRun,
+  reReviewOfStatus,
   resolveWarmReviewerSession,
+  reviewLineageId,
   reviewPRIdentity,
+  usableRetainedReviewer,
   warmLineageScope,
   WarmReviewRefusal,
 } from '../review/session-mode.js';
@@ -280,22 +283,6 @@ export function repairUnboundRecoveryReviewPlan(
   };
 }
 
-/**
- * A gate review's lineage qualifies for a re-review with a validated verdict and a recorded
- * reviewed head (ADR-063 Amendment 5); its findings go to a fallback's fresh session.
- */
-export function reReviewOfStatus(
-  review: ReviewStatus | undefined,
-): ReReviewContinuation | undefined {
-  const head =
-    review?.reviewSnapshot?.source === 'unavailable'
-      ? undefined
-      : (review?.reviewSnapshot?.headSha ?? review?.reviewedHeadSha);
-  return head && (review?.verdict === 'pass' || review?.verdict === 'issues')
-    ? { lastReviewedHeadSha: head, priorIssues: review.issues ?? [] }
-    : undefined;
-}
-
 export function recoveryReviewPlanForActiveFix(run: Run): RecoveryReviewPlan | undefined {
   const contexts = run.agentContexts ?? [];
   if (
@@ -337,9 +324,7 @@ export function recoveryReviewPlanForActiveFix(run: Run): RecoveryReviewPlan | u
     return {
       sequence: [selection],
       context: {
-        reviewLineages: [
-          { ...(reviewPRIdentity(run) ?? { familyId: run.familyId }), reviewId: prior.id },
-        ],
+        reviewLineages: [lineageContextForRun(run, reviewLineageId(prior))],
       },
     };
   return {
@@ -398,14 +383,16 @@ export function assertWarmReviewRequestAvailable(
         'the selected runner cannot reload a reviewer',
       );
     const execution = executionModelFromSelection(row);
+    const ownerPrincipalId =
+      nativeOwner ?? run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null;
+    // A busy reviewer is not unavailable: the launch waits for its turn (ADR-063 Amendment 5).
     const retained = resolveWarmReviewerSession(
       {
         runId: run.id,
         reviewId: lineage.reviewId,
         familyId: warmLineageScope(run),
         project: run.project,
-        ownerPrincipalId:
-          nativeOwner ?? run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
+        ownerPrincipalId,
         ...(transport === 'tmux'
           ? { ownerPrincipalGeneration: run.createdByPrincipalGeneration }
           : {}),
@@ -418,12 +405,19 @@ export function assertWarmReviewRequestAvailable(
         ...identity,
       },
       runs,
+      { allowBusy: true },
     );
     if (!retained)
       throw new WarmReviewRefusal(
         'missing-session',
         'the reviewId has no verified retained session and reviewed head',
       );
+    // The gate and the request refuse what launch would: the same reviewer checks.
+    usableRetainedReviewer(
+      retained,
+      { ownerPrincipalId, slotId: run.slotId, allowBusy: true },
+      runs,
+    );
   }
 }
 
@@ -439,7 +433,7 @@ export async function reviewLineageOptionsForRun(
 ): Promise<ReviewLineageOption[]> {
   const latest = new Map<string, ReviewStatus>();
   for (const review of run.engineState?.publishGate?.reviews ?? [])
-    latest.set(review.session?.reviewId ?? review.id, review);
+    latest.set(reviewLineageId(review), review);
   const options: ReviewLineageOption[] = [];
   for (const [reviewId, review] of latest) {
     const reviewedHeadSha = reReviewOfStatus(review)?.lastReviewedHeadSha;
@@ -450,7 +444,7 @@ export async function reviewLineageOptionsForRun(
       !['fresh', 'resumed'].includes(review.session.continuity)
     )
       continue;
-    const context = { ...(reviewPRIdentity(run) ?? { familyId: run.familyId }), reviewId };
+    const context = lineageContextForRun(run, reviewId);
     const selection = {
       runner: normalizeRunner(review.runner),
       model: review.model ?? null,
