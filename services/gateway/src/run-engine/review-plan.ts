@@ -26,6 +26,7 @@ import {
   reviewSequenceFromRequest,
 } from '@farmslot/review-dispatch';
 
+import type { ReReviewContinuation } from '../review/review-agent.js';
 import {
   assertLineageBelongsToRun,
   resolveWarmReviewerSession,
@@ -279,6 +280,22 @@ export function repairUnboundRecoveryReviewPlan(
   };
 }
 
+/**
+ * A gate review's lineage qualifies for a re-review with a validated verdict and a recorded
+ * reviewed head (ADR-063 Amendment 5); its findings go to a fallback's fresh session.
+ */
+export function reReviewOfStatus(
+  review: ReviewStatus | undefined,
+): ReReviewContinuation | undefined {
+  const head =
+    review?.reviewSnapshot?.source === 'unavailable'
+      ? undefined
+      : (review?.reviewSnapshot?.headSha ?? review?.reviewedHeadSha);
+  return head && (review?.verdict === 'pass' || review?.verdict === 'issues')
+    ? { lastReviewedHeadSha: head, priorIssues: review.issues ?? [] }
+    : undefined;
+}
+
 export function recoveryReviewPlanForActiveFix(run: Run): RecoveryReviewPlan | undefined {
   const contexts = run.agentContexts ?? [];
   if (
@@ -316,7 +333,7 @@ export function recoveryReviewPlanForActiveFix(run: Run): RecoveryReviewPlan | u
   };
   // ADR-063 Amendment 5: the fix's re-review continues its lineage. An unavailable session
   // runs the delta-scoped COLD fallback when the plan executes, never a full-diff COLD.
-  if (prior?.reviewedHeadSha && ['pass', 'issues'].includes(prior.verdict))
+  if (prior && reReviewOfStatus(prior))
     return {
       sequence: [selection],
       context: {
@@ -425,11 +442,10 @@ export async function reviewLineageOptionsForRun(
     latest.set(review.session?.reviewId ?? review.id, review);
   const options: ReviewLineageOption[] = [];
   for (const [reviewId, review] of latest) {
-    const reviewedHeadSha = review.reviewSnapshot?.headSha ?? review.reviewedHeadSha;
+    const reviewedHeadSha = reReviewOfStatus(review)?.lastReviewedHeadSha;
     if (
       !review.runner ||
       !reviewedHeadSha ||
-      (review.verdict !== 'pass' && review.verdict !== 'issues') ||
       !review.session?.sessionId ||
       !['fresh', 'resumed'].includes(review.session.continuity)
     )

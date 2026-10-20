@@ -66,7 +66,6 @@ import {
   reReviewMode,
   type ReviewResult,
 } from '../review/orchestrator.js';
-import { reReviewContinuation } from '../review/review-agent.js';
 import {
   assertReviewRoundAvailable,
   reviewNoVerdictCapReason,
@@ -150,6 +149,7 @@ import {
 import {
   humanGateReviewPolicy,
   MAX_PUBLISH_GATE_REVIEW_LOOPS,
+  reReviewOfStatus,
   reviewLineageOptionsForRun,
   reviewPlanFromSelection,
 } from './review-plan.js';
@@ -576,15 +576,7 @@ export async function executePublishGateReviewPlan(
     // ADR-063 Amendment 5: an automatic re-review never stops on an unavailable session;
     // a person's WARM request still sees the refusal.
     const rereview =
-      automaticLaunch &&
-      planStep.mode === 'warm' &&
-      (priorReview?.verdict === 'pass' || priorReview?.verdict === 'issues')
-        ? reReviewContinuation({
-            reviewId,
-            reviewSnapshot: priorReview.reviewSnapshot,
-            issues: priorReview.issues,
-          })
-        : undefined;
+      automaticLaunch && planStep.mode === 'warm' ? reReviewOfStatus(priorReview) : undefined;
     const execution = executionModelFromSelection(planStep);
     const requestedRunner = execution.runner;
     updateRunStep(runId, S.HUMAN_GATE, {

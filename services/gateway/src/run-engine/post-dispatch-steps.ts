@@ -39,7 +39,6 @@ import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { executeReview, reReviewMode } from '../review/orchestrator.js';
-import { reReviewContinuation } from '../review/review-agent.js';
 import {
   markReviewedInputsRerun,
   reviewedInputsAwaitingReview,
@@ -110,6 +109,7 @@ import {
   pipelineReviewSatisfiesFirstRow,
   remainingExplicitReviewPlan,
   repairUnboundRecoveryReviewPlan,
+  reReviewOfStatus,
   resolveHumanGateReviewExecutionPlan,
 } from './review-plan.js';
 import { recordArtifactOnlyReviewResult } from './review-result.js';
@@ -937,12 +937,7 @@ export async function rerunReviewIfReviewedInputsChanged(
     (review) => review.id === pipelineReviewId,
   );
   const lineage =
-    typeof pipelineReviewId === 'string' &&
-    (pipelineReview?.verdict === 'pass' || pipelineReview?.verdict === 'issues') &&
-    reReviewContinuation({
-      reviewId: pipelineReviewId,
-      reviewSnapshot: pipelineReview.reviewSnapshot,
-    })
+    typeof pipelineReviewId === 'string' && reReviewOfStatus(pipelineReview)
       ? {
           ...(reviewPRIdentity(latest) ?? { familyId: latest.familyId }),
           reviewId: pipelineReviewId,
