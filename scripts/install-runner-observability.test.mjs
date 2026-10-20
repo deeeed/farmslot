@@ -121,12 +121,17 @@ for (const runner of ['claude', 'pi']) {
     fs.writeFileSync(path.join(repo, 'source.js'), 'const source = 1;\n');
     const env = { HOME: home, GROK_HOME: path.join(home, '.grok'), TMPDIR: temporary };
     installToTempDir(runner, repo, env);
-    assert.ok(fs.lstatSync(obsDir).isSymbolicLink());
-    assert.ok(!fs.realpathSync(binDir).startsWith(repo + path.sep));
-    assert.equal(fs.readFileSync(path.join(obsDir, 'session.json'), 'utf8'), '{"retained":true}\n');
-    assert.ok(fs.existsSync(path.join(binDir, 'retained.mjs')));
-    assert.equal(fs.existsSync(legacyExtension), false);
-    assert.ok(fs.existsSync(path.join(binDir, 'pi-farmslot-task.mjs')));
+    // The state moves out and no link is left at the old path (ADR-032 Amendment 1).
+    assert.equal(fs.lstatSync(obsDir, { throwIfNoEntry: false }), undefined);
+    const externalObs = path.join(runnerRuntimeDir(repo), '.observability');
+    const externalBin = path.join(externalObs, 'bin');
+    assert.equal(
+      fs.readFileSync(path.join(externalObs, 'session.json'), 'utf8'),
+      '{"retained":true}\n',
+    );
+    assert.ok(fs.existsSync(path.join(externalBin, 'retained.mjs')));
+    assert.equal(fs.existsSync(path.join(externalObs, 'pi-farmslot-task.mjs')), false);
+    assert.ok(fs.existsSync(path.join(externalBin, 'pi-farmslot-task.mjs')));
     installToTempDir(runner, repo, env);
     const otherTemporary = path.join(scratch, 'other-temporary');
     fs.mkdirSync(otherTemporary);
@@ -295,7 +300,7 @@ test('claude install relocates a legacy backup after Farmslot settings were remo
   );
 });
 
-test('claude install replaces a stale compatibility symlink and remains idempotent', () => {
+test('claude install removes a stale compatibility symlink and remains idempotent', () => {
   const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-stale-link-'));
   const compat = path.join(repo, '.observability');
   fs.symlinkSync(path.join(repo, '.agent', '.observability'), compat, 'dir');
@@ -320,11 +325,76 @@ test('claude install replaces a stale compatibility symlink and remains idempote
 
   const expected = path.join(runnerRuntimeDir(repo, 'temp/recipe/runtime'), '.observability');
   runtimeRoots.add(runnerRuntimeDir(repo, 'temp/recipe/runtime'));
-  assert.equal(path.resolve(repo, fs.readlinkSync(compat)), expected);
+  assert.equal(fs.lstatSync(compat, { throwIfNoEntry: false }), undefined);
   assert.ok(fs.existsSync(path.join(expected, 'bin', 'farmslot-observability-hook.mjs')));
   const settings = fs.readFileSync(path.join(expected, 'claude-settings.json'), 'utf8');
   assert.match(settings, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'u'));
   assert.doesNotMatch(settings, /\.agent\/\.observability/u);
+});
+
+test('install removes the old-path links an earlier install left in the checkout', () => {
+  // A gate reviewer's plugin cache reached the product's typecheck through
+  // <checkout>/<runtime_dir>/codex-home, a link the 10-16 migration left behind.
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-old-links-'));
+  const runtimeDir = 'temp/farmslot';
+  const external = runnerRuntimeDir(repo, runtimeDir);
+  runtimeRoots.add(external);
+  const legacy = path.join(repo, runtimeDir);
+  fs.mkdirSync(path.join(external, 'codex-home', 'plugins', 'cache'), { recursive: true });
+  fs.writeFileSync(path.join(external, 'codex-home', 'plugins', 'cache', 'template.ts'), '');
+  fs.mkdirSync(path.join(external, '.observability'), { recursive: true });
+  fs.mkdirSync(legacy, { recursive: true });
+  fs.symlinkSync(path.join(external, 'codex-home'), path.join(legacy, 'codex-home'), 'dir');
+  fs.symlinkSync(path.join(external, '.observability'), path.join(legacy, '.observability'), 'dir');
+
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'claude',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      runtimeDir,
+      '--slot-id',
+      'install-test-old-links',
+    ],
+    { stdio: 'pipe' },
+  );
+
+  for (const name of ['codex-home', '.observability'])
+    assert.equal(fs.lstatSync(path.join(legacy, name), { throwIfNoEntry: false }), undefined);
+  assert.ok(fs.existsSync(path.join(external, 'codex-home', 'plugins', 'cache', 'template.ts')));
+  assert.ok(fs.existsSync(path.join(external, '.observability', 'claude-settings.json')));
+});
+
+test('install keeps a link at the old path that points somewhere other than the runner state', () => {
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-foreign-link-'));
+  const runtimeDir = 'temp/farmslot';
+  runtimeRoots.add(runnerRuntimeDir(repo, runtimeDir));
+  const legacy = path.join(repo, runtimeDir);
+  fs.mkdirSync(legacy, { recursive: true });
+  const foreign = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-foreign-'));
+  fs.symlinkSync(foreign, path.join(legacy, 'codex-home'), 'dir');
+
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'claude',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      runtimeDir,
+      '--slot-id',
+      'install-test-foreign-link',
+    ],
+    { stdio: 'pipe' },
+  );
+
+  assert.equal(fs.readlinkSync(path.join(legacy, 'codex-home')), foreign);
 });
 
 test('claude install preserves a non-symlink compatibility directory', () => {
@@ -1676,7 +1746,7 @@ test('installer expands an explicit home runtime on the execution host without c
   assert.ok(settings.hooks.UserPromptSubmit[0].hooks[0].command.includes(obs));
 });
 
-test('private native runtime install preserves the primary checkout observation alias', () => {
+test('private native runtime install leaves the primary checkout observations alone', () => {
   const scratch = temporaryDirectory(path.join(os.tmpdir(), 'obs-native-isolation-'));
   const repo = path.join(scratch, 'product');
   const primary = path.join(repo, '.agent/.observability');
@@ -1684,7 +1754,10 @@ test('private native runtime install preserves the primary checkout observation 
   fs.writeFileSync(path.join(primary, 'hooks.jsonl'), 'primary');
   fs.symlinkSync(primary, path.join(repo, '.observability'));
   installToTempDir('claude', repo);
-  const before = fs.readlinkSync(path.join(repo, '.observability'));
+  // The primary install moves the observations out and leaves no link (ADR-032 Amendment 1).
+  const compat = path.join(repo, '.observability');
+  assert.equal(fs.lstatSync(compat, { throwIfNoEntry: false }), undefined);
+  const primaryExternal = path.join(runnerRuntimeDir(repo), '.observability');
   const native = path.join(scratch, 'private-native');
   execFileSync(
     process.execPath,
@@ -1701,7 +1774,7 @@ test('private native runtime install preserves the primary checkout observation 
     ],
     { stdio: 'pipe' },
   );
-  assert.equal(fs.readlinkSync(path.join(repo, '.observability')), before);
-  assert.equal(fs.readFileSync(path.join(repo, '.observability/hooks.jsonl'), 'utf8'), 'primary');
+  assert.equal(fs.lstatSync(compat, { throwIfNoEntry: false }), undefined);
+  assert.equal(fs.readFileSync(path.join(primaryExternal, 'hooks.jsonl'), 'utf8'), 'primary');
   assert.ok(fs.existsSync(path.join(native, '.observability/claude-settings.json')));
 });

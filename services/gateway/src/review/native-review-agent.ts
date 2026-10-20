@@ -68,6 +68,7 @@ import {
   reviewerChecklistBasename,
   reviewerFeedbackRelPath,
   reviewerResultRelPath,
+  reviewerScratchRule,
   scopeReviewFeedbackPath,
 } from './review-agent.js';
 import {
@@ -345,8 +346,10 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
         await writeTextFileOnSlot(
           vars,
           taskMdPath,
-          prependReviewerExecutionContract(template, mark) +
-            (visualInput ? pipelineVisualReviewPrompt(visualInput, taskDir) : ''),
+          prependReviewerExecutionContract(
+            template,
+            `${mark}\n\n${reviewerScratchRule(contextId)}`,
+          ) + (visualInput ? pipelineVisualReviewPrompt(visualInput, taskDir) : ''),
         );
       }
       admit();

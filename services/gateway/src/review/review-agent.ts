@@ -137,6 +137,19 @@ export function reviewChecklistMarkPrompt(
   );
 }
 
+/**
+ * Where a slot reviewer puts probe tests and other scratch: the node's temporary directory,
+ * which a sandboxed reviewer can write, never the checkout (ADR-032 Amendment 1).
+ */
+export function reviewerScratchRule(contextId: string): string {
+  return (
+    `Apart from the review files named above and the evidence your checklist asks for, write ` +
+    `nothing in the checkout. Put probe tests and ` +
+    `other scratch files under \`\${TMPDIR:-/tmp}/farmslot-review/${contextId}\` (create it with ` +
+    `\`mkdir -p\`). If a probe must sit in the checkout to run, delete it before you write your result.`
+  );
+}
+
 export function prependReviewerExecutionContract(
   checklist: string,
   executionContract: string,
