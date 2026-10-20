@@ -186,7 +186,7 @@ test(
         leaseId: context.nativeSession.leaseId,
       };
       const target = { sessionId, worker };
-      trackSession(target);
+      if (!context.nativeSession.closedAt) trackSession(target);
       return target;
     };
 
@@ -204,7 +204,8 @@ test(
       firstHistory.commands.some((command) => command.accepted),
       'Native protocol confirms acceptance',
     );
-    await client.call(Methods.NATIVE_SESSION_CLOSE, firstTarget);
+    if (!firstHistory.session.processStopped)
+      await client.call(Methods.NATIVE_SESSION_CLOSE, firstTarget);
 
     await write('repo/message.txt', 'hello\nsecond revision\n');
     commit('test: revise native review fixture');
