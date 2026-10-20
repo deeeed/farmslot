@@ -185,7 +185,7 @@ test('index rows append across packages, never overwrite', () => {
 
 test('a hand-built blocked package dir is refused at the pre-write assertion', () => {
   const { result, ctx } = assembled(
-    '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+    '# Learnings\n\nletter advice cage absurd amount doctor acoustic avoid letter advice cage above\n',
   );
   assert.equal(result.status, 'blocked');
   if (result.status !== 'blocked') return;
@@ -496,7 +496,7 @@ test('a tampered JSON file whose secret only surfaces after JSON-unescape is ref
   // write-side floor rescan can catch it. Manifest hash updated, status pass.
   const sourcePath = path.join(result.packageDir, 'source.json');
   const source = JSON.parse(readFileSync(sourcePath, 'utf8')) as Record<string, unknown>;
-  source.description = `restoring wallet:\n${'abandon\nability\nable\nabout\nabove\nabsent\nabsorb\nabstract\nabsurd\nabuse\naccess\naccident'}\ndone`;
+  source.description = `restoring wallet:\n${'letter\nadvice\ncage\nabsurd\namount\ndoctor\nacoustic\navoid\nletter\nadvice\ncage\nabove'}\ndone`;
   const tampered = `${JSON.stringify(source, null, 2)}\n`;
   assert.ok(tampered.includes('\\n'), 'fixture must carry escaped separators, not raw newlines');
   writeFileSync(sourcePath, tampered);

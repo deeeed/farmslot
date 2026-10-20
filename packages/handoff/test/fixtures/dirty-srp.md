@@ -2,6 +2,6 @@
 
 The wallet was restored from this phrase during setup:
 
-abandon ability able about above absent absorb abstract absurd abuse access accident
+letter advice cage absurd amount doctor acoustic avoid letter advice cage above
 
 Then the flow continued.

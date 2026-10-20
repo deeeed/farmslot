@@ -129,7 +129,7 @@ test('the scrub gate applies to grade.json like any package file', () => {
   const dirty = scenario({
     ...GRADE,
     reasoning:
-      'graded after restoring abandon ability able about above absent absorb abstract absurd abuse access accident',
+      'graded after restoring letter advice cage absurd amount doctor acoustic avoid letter advice cage above',
   });
   const blocked = assembleLearningPackage(dirty.input, dirty.ctx);
   assert.equal(blocked.status, 'blocked');
