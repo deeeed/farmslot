@@ -454,6 +454,10 @@ observed `running`. Reacquiring a warm healthy provider reuses it through the
 existing health contract; an unhealthy one is cleaned up first. A provider is
 reported `stopped` only when the Gateway observed it stop — a failed cleanup
 leaves it `unhealthy` or `unknown` with a reason attached, never `stopped`.
+The lease stays in `error` and refuses every acquire on its slot until a
+cleanup succeeds. An operator release retries it, and so does the Gateway when
+the slot's node reconnects, because a cleanup that ran while the node was away
+never reached the provider.
 
 ### Runner sessions are not runtime capabilities
 

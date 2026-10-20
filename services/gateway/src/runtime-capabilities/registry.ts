@@ -3128,6 +3128,25 @@ export class RuntimeCapabilityRegistry {
     );
   }
 
+  /**
+   * Retry the provider cleanup that left a lease in `error` on these slots.
+   *
+   * A failed cleanup is durable and blocks every acquire, the owner's included,
+   * but nothing else retries it once the owner is no longer fenced. Called when
+   * a slot's node reconnects: a gateway restart reconciles leases before remote
+   * nodes are back, so their release action throws "Resource node … is
+   * disconnected" (TAT-4145 run bda11b1a on macpro-mmt-1). The warm sweep keeps
+   * its guards: a provider another holder or a dependent still needs is left
+   * alone, and one whose provenance changed is still refused.
+   */
+  async retryFailedCleanup(slotIds: string[]): Promise<WarmSweepSummary> {
+    const wanted = new Set(slotIds);
+    return this.sweepWarmProviders(
+      (lease) =>
+        wanted.has(lease.slotId) && lease.state === 'error' && Boolean(lease.cleanupFailure),
+    );
+  }
+
   async cleanupExpiredWarmProviders(slotIds?: string[]): Promise<WarmSweepSummary> {
     const nowMs = this.now().getTime();
     return this.sweepWarmProviders(

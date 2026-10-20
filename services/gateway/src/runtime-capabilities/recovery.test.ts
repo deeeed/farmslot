@@ -6,6 +6,8 @@ import test, { type TestContext } from 'node:test';
 
 import { recordingTargetClaimKey, type RuntimeCapabilityCatalogEntry } from '@farmslot/protocol';
 
+import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
+
 import { reconcileRuntimeCapabilityLeases } from './recovery.js';
 import { RuntimeCapabilityRegistry } from './registry.js';
 import { RuntimeCapabilityStore } from './store.js';
@@ -807,4 +809,105 @@ test('recording claim and waiter snapshots survive restart and complete under th
   assert.equal(completed.ok, true);
   if (completed.ok) assert.equal(completed.lease.claims?.[0].id, originalClaim);
   assert.equal(actions.filter((action) => action === 'browser.acquire').length, 1);
+});
+
+// TAT-4145 run bda11b1a on macpro-mmt-1, 10-19. Every gateway restart
+// reconciled before macpro reconnected, so the fenced owner's terminal-browser
+// release threw "Resource node macpro is disconnected" and left the lease in
+// `error`. Once a replay lifted the fence, no restart retried it, and the run's
+// own acquire was refused until someone released the lease by hand.
+test('a cleanup that failed while its node was away is retried when the node reconnects', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-reconnect-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new RuntimeCapabilityStore(path.join(directory, 'leases.json'));
+  const terminalBrowser: RuntimeCapabilityCatalogEntry = {
+    ...browser(),
+    id: 'terminal-browser',
+    actions: {
+      acquire: { kind: 'slot-action', actionId: 'terminal-browser-health' },
+      health: { kind: 'slot-action', actionId: 'terminal-browser-health' },
+      release: { kind: 'slot-action', actionId: 'terminal-browser-retain' },
+    },
+    releaseEffects: ['Release the browser reservation; preserve the running browser'],
+  };
+  const owner = 'bda11b1a-e1ba-4b8d-9880-dcff987afff0';
+  const proofRequirement = {
+    capabilityId: 'terminal-browser',
+    reason: 'TAT-4145 recorded proof',
+    mode: 'visual' as const,
+  };
+  let nodeConnected = true;
+  let fenced = false;
+  const actions: string[] = [];
+  const registryAfterRestart = () =>
+    new RuntimeCapabilityRegistry({
+      store,
+      catalogForSlot: async (slotId) => ({
+        slotId,
+        project: 'test-project',
+        capabilities: [terminalBrowser],
+      }),
+      runAction: async (_slot, action) => {
+        if (!nodeConnected)
+          throw new ResourceCommandUnavailableError('Resource node macpro is disconnected');
+        actions.push(action.kind === 'slot-action' ? action.actionId : action.action);
+        return { ok: true };
+      },
+      isTerminalOwner: () => fenced,
+      recoveryStartedAtForRun: () => Date.now(),
+    });
+
+  const acquired = await registryAfterRestart().acquire({
+    slotId: 'macpro-mmt-1',
+    capabilityId: 'terminal-browser',
+    ownerRunId: owner,
+    proofRequirement,
+  });
+  assert.equal(acquired.ok, true);
+
+  // Restart while the run is fenced and macpro has not reconnected yet.
+  fenced = true;
+  nodeConnected = false;
+  await reconcileRuntimeCapabilityLeases(registryAfterRestart());
+  const failure = 'Provider action threw: Resource node macpro is disconnected';
+  assert.equal(store.snapshot().leases[0]?.state, 'error');
+  assert.equal(store.snapshot().leases[0]?.cleanupFailure, failure);
+
+  // A replay lifts the fence; a later restart with macpro back still skips the lease.
+  fenced = false;
+  nodeConnected = true;
+  const registry = registryAfterRestart();
+  await reconcileRuntimeCapabilityLeases(registry);
+  assert.equal(store.snapshot().leases[0]?.state, 'error');
+  const refused = await registry.acquire({
+    slotId: 'macpro-mmt-1',
+    capabilityId: 'terminal-browser',
+    ownerRunId: owner,
+    proofRequirement,
+  });
+  assert.equal(refused.ok, false);
+  if (refused.ok) return;
+  assert.match(refused.conflict.reason, /has unresolved cleanup owned by bda11b1a/);
+
+  // Another machine reconnecting leaves this slot's lease alone.
+  await registry.retryFailedCleanup(['macwork-mmt-1']);
+  assert.equal(store.snapshot().leases[0]?.state, 'error');
+
+  // macpro reconnects: the retained-browser release runs and the lease is released.
+  const summary = await registry.retryFailedCleanup(['macpro-mmt-1']);
+  assert.deepEqual(
+    summary.released.map((lease) => lease.capabilityId),
+    ['terminal-browser'],
+  );
+  assert.ok(actions.includes('terminal-browser-retain'));
+  const lease = store.snapshot().leases[0];
+  assert.equal(lease?.state, 'released');
+  assert.equal(lease?.cleanupFailure, undefined);
+  const reacquired = await registry.acquire({
+    slotId: 'macpro-mmt-1',
+    capabilityId: 'terminal-browser',
+    ownerRunId: owner,
+    proofRequirement,
+  });
+  assert.equal(reacquired.ok, true);
 });
