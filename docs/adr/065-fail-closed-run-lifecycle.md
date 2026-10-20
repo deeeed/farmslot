@@ -666,15 +666,16 @@ package refreshed). A scan that cannot read the frozen evidence is
 `evidence-validation-unavailable`, because an unscanned package is not known to
 be clean. Evidence attestation cannot waive either reason. Publication keeps
 its own scans unchanged, including those of text it generates or adds only at
-publication: an operator comment, rewritten prose and the opt-in worker-report
-comment.
+publication: an operator comment, rewritten prose, provenance and the opt-in
+worker-report comment.
 
 ### Rationale and consequences
 
 A person is no longer asked to approve a package whose own inputs publication
 will refuse. Each check is the code publication runs, so the gate and
-publication cannot disagree about what counts as a secret. A detector false positive now shows at
-the gate instead of at finalize. The fix for that belongs in the detector.
+publication cannot disagree about what counts as a secret. A detector false
+positive now shows at the gate instead of at finalize. The fix for that belongs
+in the detector.
 
 ### Public surface
 

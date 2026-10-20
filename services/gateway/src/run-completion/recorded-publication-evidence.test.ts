@@ -131,17 +131,19 @@ test('frozen indexed text is scanned without changing bytes or admitting histori
   ]);
 });
 
+// Gate readers that leave only the publication secret scan live.
+const gateReaders = {
+  deterministic: async () => {},
+  acceptance: async () => ({ criteria: [], ledger: null, issues: [] }),
+  progress: async () => ({ kind: 'idle' as const }),
+  selectedEvidence: async () => {},
+  reviewResult: async () => undefined,
+};
+
 // TAT-4145 bda11b1a: the selected recording's frozen recipe text carried a secret-shaped
 // value, the gate read ready, and publication refused at finalize.
 test('the publication gate refuses the frozen evidence text publication would refuse', async (t) => {
   const { collectRunGateReadiness } = await import('../run-engine/gate-prerequisites.js');
-  const readers = {
-    deterministic: async () => {},
-    acceptance: async () => ({ criteria: [], ledger: null, issues: [] }),
-    progress: async () => ({ kind: 'idle' as const }),
-    selectedEvidence: async () => {},
-    reviewResult: async () => undefined,
-  };
   const { taskDir, root, run, artifacts, manifest } = await fixture(t);
   await writeFile(
     path.join(root, 'observed.log'),
@@ -158,31 +160,34 @@ test('the publication gate refuses the frozen evidence text publication would re
       selectedEvidenceKeys: ['artifacts/recipe-run/proof.png'],
       reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
     }),
-    readers,
+    gateReaders,
   );
   assert.equal(readiness.state, 'not-ready');
   const reason = readiness.reasons.find(({ code }) => code === 'publication-secret-values');
   assert.match(reason?.message ?? '', /Publication blocked by secret values: srp sha256:/);
+});
 
-  // The same package without the secret-shaped text carries no secret reason.
-  const clean = await fixture(t);
-  await retainRunFixture(clean.run);
-  const cleanReadiness = await collectRunGateReadiness(
-    clean.run,
+test('the publication gate reads clean frozen evidence text as clean', async (t) => {
+  const { collectRunGateReadiness } = await import('../run-engine/gate-prerequisites.js');
+  const { taskDir, run, artifacts, manifest } = await fixture(t);
+  const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
+  await retainRunFixture(run);
+  const readiness = await collectRunGateReadiness(
+    run,
     makeReadyGatePackage({
-      evidenceManifest: await buildPackageEvidenceManifest(
-        clean.taskDir,
-        clean.artifacts,
-        clean.manifest,
-      ),
+      evidenceManifest: inventory,
       selectedEvidenceKeys: ['artifacts/recipe-run/proof.png'],
       reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
     }),
-    readers,
+    gateReaders,
   );
-  assert.equal(
-    cleanReadiness.reasons.some(({ code }) => code === 'publication-secret-values'),
-    false,
+  assert.deepEqual(
+    readiness.reasons.filter(
+      ({ code, message }) =>
+        code === 'publication-secret-values' ||
+        message.startsWith('The publication secret scan could not read'),
+    ),
+    [],
   );
 });
 
@@ -607,13 +612,7 @@ test('the gate scans the pair half publication adds to an after-only selection',
       selectedEvidenceKeys: [`artifacts/${f.headRoot}/proof.png`],
       reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
     }),
-    {
-      deterministic: async () => {},
-      acceptance: async () => ({ criteria: [], ledger: null, issues: [] }),
-      progress: async () => ({ kind: 'idle' as const }),
-      selectedEvidence: async () => {},
-      reviewResult: async () => undefined,
-    },
+    gateReaders,
   );
   assert.equal(readiness.state, 'not-ready');
   const reason = readiness.reasons.find(({ code }) => code === 'publication-secret-values');
