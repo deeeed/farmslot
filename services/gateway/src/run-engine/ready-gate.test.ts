@@ -810,6 +810,89 @@ test(
   },
 );
 
+// TAT-4145 bda11b1a: a restart mid Continue Fixing dropped the loop that waited for the fix.
+// The worker signalled complete (attempt bf04f28a), the recovered gate moved on, and the
+// review-fix context stayed 'working': the gate read a fix in progress and offered Continue
+// Fixing for findings the worker had already fixed.
+test(
+  'a gate settles a review-fix context whose own attempt already signalled complete',
+  { timeout: 4000 },
+  async (t) => {
+    const { run, next } = sourceGateFixture(t);
+    const fixContext = {
+      id: 'review-fix',
+      role: 'review-fix' as const,
+      label: 'Review fix',
+      status: 'working' as const,
+      runner: 'claude',
+      model: 'opus',
+      taskFile: 'temp/tasks/feat/tat-4145/REVIEW-FIX.md',
+      signalFile: 'temp/tasks/feat/tat-4145/REVIEW-FIX-SIGNAL.json',
+      signalAttemptId: 'bf04f28a-b448-4127-8c0d-a273712e91d0',
+      runId: run.id,
+      slotId: 'stale-fix-slot',
+      updatedAt: '2026-10-20T03:47:35.650Z',
+    };
+    updateRun(run.id, {
+      slotId: 'stale-fix-slot',
+      agentContexts: [fixContext],
+      engineState: {
+        publishGate: {
+          reviews: [
+            {
+              id: 'review-fixed',
+              source: 'human-gate',
+              loopNumber: 7,
+              mode: 'cold',
+              verdict: 'issues',
+              unresolvedCount: 1,
+              issues: [{ file: 'margin.ts', description: 'Drop the pick on a network change' }],
+              feedbackSent: true,
+            },
+          ],
+        },
+      },
+    });
+    const signal = (attemptId: string) =>
+      JSON.stringify({
+        attemptId,
+        step: '8. Signal',
+        timestamp: '2026-10-20T03:47:43.386Z',
+        status: 'complete',
+        outcome: 'success',
+        disposition: 'fixed',
+      });
+    const present = (attemptId: string) =>
+      executeReadyGate(run.id, {
+        rebindSlot: async () => false,
+        ensurePackage: async () => {
+          throw new Error('Wait for the owned worker to be idle before refreshing its package');
+        },
+        readReviewFixSignal: async () => signal(attemptId),
+      });
+
+    // Another attempt's signal is not this context's to settle.
+    let card = await next(present('another-attempt'));
+    assert.equal(getRun(run.id)!.agentContexts?.[0]?.status, 'working');
+    assert.deepEqual(
+      card.actions.map(({ id }) => id),
+      ['continue-review-fix', 'hold'],
+    );
+    assert.equal(resolveEngineDecision(card.id, 'abort'), true);
+
+    card = await next(present(fixContext.signalAttemptId));
+    const settled = getRun(run.id)!.agentContexts?.[0];
+    assert.equal(settled?.status, 'complete');
+    assert.equal(settled?.lastSignalAt, '2026-10-20T03:47:43.386Z');
+    assert.ok(settled?.completedAt);
+    assert.deepEqual(
+      card.actions.map(({ id }) => id),
+      ['hold'],
+      'no Continue Fixing for findings the worker already fixed',
+    );
+  },
+);
+
 test(
   'a gate re-binds an unowned slot before its package refresh reads the source',
   { timeout: 4000 },

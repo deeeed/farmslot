@@ -40,6 +40,10 @@ import {
   reviewContextFromRequest,
 } from '@farmslot/review-dispatch';
 
+import {
+  type ReviewFixSignalReader,
+  settleFinishedReviewFixContext,
+} from '../agents/review-fix-settlement.js';
 import { getProjectField, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
@@ -898,6 +902,7 @@ interface ReadyGatePackageDependencies {
   ensurePackage?: typeof ensureCurrentPublishPackage;
   createDecision?: typeof createEngineDecision;
   rebindSlot?: typeof rebindUnownedPublicationSlot;
+  readReviewFixSignal?: ReviewFixSignalReader;
 }
 
 export async function executeReadyGate(
@@ -912,6 +917,10 @@ export async function executeReadyGate(
     await assertAdoptedPublicationContinuation(current);
     return 'superseded-by-publication-adoption';
   }
+  // The gate moves on from a finished fix, so its retained context must not read as
+  // working; nor may a stale one offer Continue Fixing for findings already fixed.
+  if (await settleFinishedReviewFixContext(runId, dependencies.readReviewFixSignal))
+    current = getRun(runId)!;
   const artifactOnly = isArtifactOnlyRun(current);
 
   // Find PR + CI repo
