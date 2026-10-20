@@ -27,6 +27,7 @@ import {
 import {
   createIdleRequestTimeout,
   type GatewayRequestOptions,
+  GatewayRequestTimeoutError,
   normalizeGatewayRequestOptions,
 } from './gateway-request-timeout.js';
 import {
@@ -718,7 +719,11 @@ export class GatewayClient {
             const suffix = options.extendOnEvent
               ? ` without a matching ${options.extendOnEvent} event`
               : '';
-            reject(new Error(`Request ${method} timed out after ${timeout}ms${suffix}`));
+            reject(
+              new GatewayRequestTimeoutError(
+                `Request ${method} timed out after ${timeout}ms${suffix}`,
+              ),
+            );
           });
         },
       });

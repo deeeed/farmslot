@@ -464,6 +464,7 @@ import {
   runnerVisibleModelsSet,
 } from '../methods/runner-models.js';
 import {
+  retryRuntimeCapabilityCleanupOnNode,
   runtimeCapabilityAcquire,
   runtimeCapabilityList,
   runtimeCapabilityRelease,
@@ -1317,6 +1318,14 @@ async function routeAuthorizedMethod(
           );
         });
       }
+      // A capability cleanup that failed while this node was away stays an
+      // `error` lease that refuses every acquire; a gateway restart reconciles
+      // leases before remote nodes reconnect. Retry it now the node is back.
+      retryRuntimeCapabilityCleanupOnNode(machine).catch((err) => {
+        console.log(
+          `[server] failed to retry capability cleanup for ${machine}: ${(err as Error).message}`,
+        );
+      });
       // Task watches on this node's slots: a node that registers after startup
       // has none, and a reconnecting one lost those of its last connection.
       startWatchingActiveSlots({ machine }).catch((err) => {
