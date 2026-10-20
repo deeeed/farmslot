@@ -306,3 +306,42 @@ runtime catalog applies the rule for every provider that uses it; a provider
 that resolves its own catalog applies the same rule. Discovery listings still
 show every declaration. The [normative rule](../reference/recipe-protocol-v1.md#amendment-6-library-action-declarations)
 defines the refusals and the task root.
+
+## Amendment 7 (2026-10-20): HUD readability
+
+**Status:** Accepted, approved 2026-10-20 (lead, for Arthur). **Shipping PR:** Pending.
+**Specification:** [Intent and HUD policy](../reference/recipe-protocol-v1.md#intent).
+
+### Decision
+
+The current intent is the HUD's main line, with no status badge. Web and CDP
+renderers draw it at 16px on a 20px line, weight 600, in a 500px card bounded by
+the viewport. A 120-character intent fits in three lines. Web renderers never
+clamp, ellipsize or clip the intent; the panel grows instead. A finished run's
+main line reads `Recipe passed` or `Recipe failed` in the outcome colour.
+
+Below it, one muted 11px line shows the step that just finished: `✓ intent`, or
+`✗ intent` in red for a failure. A passed step that is still the main line is
+not repeated. Only this line may ellipsize. Progress becomes small muted `N/M`
+text; error and detail lines stay small and clamp at two lines.
+
+Native panels keep their 360 by 88 bounds and the two-line intent limit. The
+intent takes the full width at 13px on a 17px line. The finished line (10px) and
+`N/M` share one row, drawn only while padding, two intent lines, that row and an
+error line fit 88 points. A caller-supplied badge still renders.
+
+### Rationale and consequences
+
+In a TAT-4145 Terminal recording at step 53/62, the HUD text was small, the RUN
+and PASS rows had equal weight, and the intent was cut with an ellipsis. A
+reviewer needs the current intent first and whole; the previous step is context.
+Mobile screens have little room, so native gains hierarchy, not size. Web panel
+heights become nominal, not clips.
+
+### Public surface
+
+`@farmslot/protocol/recipe` adds the HUD font, line-height and colour constants
+and `hudFinishedLine`. `HUD_INTENT_MAX_LINES` becomes a nominal 3 for web, and
+`HUD_NATIVE_INTENT_MAX_LINES` keeps native at 2. The web-dapp HUD, the CDP
+`app.hud` renderer and `@farmslot/adapter-rn/recipe-hud` follow the rule. No
+action, flag or recipe schema changes.

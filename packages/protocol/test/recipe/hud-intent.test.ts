@@ -3,7 +3,24 @@ import test from 'node:test';
 
 import { RECIPE_PROTOCOL_SCHEMA_URL } from '../../src/recipe/common.js';
 import { validateRecipeDocument } from '../../src/recipe/document.js';
-import { hudIntentDisplay, hudPlacement, waitForHudPaint } from '../../src/recipe/hud-intent.js';
+import {
+  HUD_FINISHED_FONT_SIZE,
+  HUD_FINISHED_LINE_HEIGHT,
+  HUD_INTENT_FONT_SIZE,
+  HUD_INTENT_LINE_HEIGHT,
+  HUD_INTENT_MAX_LINES,
+  HUD_NATIVE_FINISHED_FONT_SIZE,
+  HUD_NATIVE_FINISHED_LINE_HEIGHT,
+  HUD_NATIVE_INTENT_FONT_SIZE,
+  HUD_NATIVE_INTENT_LINE_HEIGHT,
+  HUD_NATIVE_INTENT_MAX_LINES,
+  hudFinishedLine,
+  hudIntentDisplay,
+  hudPlacement,
+  RECIPE_INTENT_MAX_LENGTH,
+  RECIPE_INTENT_WARN_LENGTH,
+  waitForHudPaint,
+} from '../../src/recipe/hud-intent.js';
 
 test('HUD acknowledgement waits for a paint without a fixed timer', async () => {
   const frames: (() => void)[] = [];
@@ -67,7 +84,21 @@ function recipe(intent: string) {
   };
 }
 
-test('intent survives transport intact, with wrapping and trailing ellipsis deferred to layout', () => {
+test('HUD readability constants: a larger web intent, an unchanged native panel', () => {
+  assert.deepEqual(
+    [HUD_INTENT_FONT_SIZE, HUD_INTENT_LINE_HEIGHT, HUD_INTENT_MAX_LINES],
+    [16, 20, 3],
+  );
+  assert.deepEqual(
+    [HUD_NATIVE_INTENT_FONT_SIZE, HUD_NATIVE_INTENT_LINE_HEIGHT, HUD_NATIVE_INTENT_MAX_LINES],
+    [13, 17, 2],
+  );
+  assert.deepEqual([HUD_FINISHED_FONT_SIZE, HUD_FINISHED_LINE_HEIGHT], [11, 14]);
+  assert.deepEqual([HUD_NATIVE_FINISHED_FONT_SIZE, HUD_NATIVE_FINISHED_LINE_HEIGHT], [10, 13]);
+  assert.deepEqual([RECIPE_INTENT_WARN_LENGTH, RECIPE_INTENT_MAX_LENGTH], [80, 120]);
+});
+
+test('intent survives transport intact; web never clamps it and native keeps two lines', () => {
   const authored = `Show ${'the full measured proof 🧪 '.repeat(15)}without cutting the end.`;
   const native = hudIntentDisplay(authored, 'native');
   const dom = hudIntentDisplay(authored);
@@ -78,14 +109,35 @@ test('intent survives transport intact, with wrapping and trailing ellipsis defe
     ellipsizeMode: 'tail',
     allowFontScaling: false,
   });
-  assert.equal(dom.webStyle.WebkitLineClamp, '2');
-  assert.equal(dom.webStyle.whiteSpace, 'normal');
-  assert.equal(dom.webStyle.overflowWrap, 'anywhere');
-  assert.equal(dom.webStyle.textOverflow, 'ellipsis');
-  assert.equal(dom.webStyle.maxHeight, '32px');
+  assert.deepEqual(native.nativeStyle, { lineHeight: 17, maxHeight: 34, fontSize: 13 });
+  assert.deepEqual(dom.webStyle, {
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    fontSize: '16px',
+    lineHeight: '20px',
+    fontWeight: '600',
+  });
+  for (const platform of ['card', 'bar'] as const) {
+    const style: Record<string, string> = hudIntentDisplay(authored, platform).webStyle;
+    for (const clip of ['WebkitLineClamp', 'textOverflow', 'maxHeight', 'overflow', 'display'])
+      assert.equal(style[clip], undefined, `${platform} webStyle sets ${clip}`);
+  }
   assert.deepEqual(native.panel, { maxWidth: 360, maxHeight: 88 });
-  assert.deepEqual(dom.panel, { maxWidth: 360, maxHeight: 144 });
+  assert.deepEqual(dom.panel, { maxWidth: 500, maxHeight: 144 });
   assert.deepEqual(hudIntentDisplay(authored, 'bar').panel, { maxWidth: 960, maxHeight: 144 });
+});
+
+test('the finished line shows a failure always and a pass only once it left the main line', () => {
+  const pass = { nodeId: 'open', intent: ' Open  the market ', status: 'pass' };
+  const fail = { nodeId: 'close', intent: 'Close the position', status: 'fail' };
+  assert.equal(hudFinishedLine(null, 'open'), null);
+  assert.equal(hudFinishedLine(undefined), null);
+  assert.equal(hudFinishedLine(pass, 'open'), null);
+  assert.deepEqual(hudFinishedLine(pass, 'close'), { text: '✓ Open the market', tone: 'pass' });
+  assert.deepEqual(hudFinishedLine(pass), { text: '✓ Open the market', tone: 'pass' });
+  assert.deepEqual(hudFinishedLine(fail, 'close'), { text: '✗ Close the position', tone: 'fail' });
+  assert.deepEqual(hudFinishedLine(fail, 'next'), { text: '✗ Close the position', tone: 'fail' });
+  assert.equal(hudFinishedLine({ ...pass, status: 'running' }, 'other'), null);
 });
 
 test('display normalizes whitespace without a character cut or broken Unicode', () => {

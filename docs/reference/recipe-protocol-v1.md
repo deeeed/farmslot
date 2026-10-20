@@ -79,13 +79,23 @@ keep their existing v1 behavior, so old recorded evidence remains readable.
 One plain sentence is authoring guidance, not a new grammar parser. Existing intent checks also reject action names,
 selectors and other implementation-only copy.
 
-HUDs preserve the full intent until platform layout wraps it, show at most two
-lines, and use a trailing ellipsis only when more than two lines would be needed.
-The shared intent display policy limits native panels to 360 by 88 logical pixels
-and DOM cards to 360 by 144 CSS pixels, further bounded by the viewport.
-CDP bottom-bar and docked-bottom modes have fixed maximums of 960 by 144 CSS
-pixels while retaining their existing position/space-reservation behavior. Auxiliary
-HUD copy cannot enlarge the panel across the application.
+The current intent is the HUD's main line; there is no status badge. Web and CDP
+HUDs show it whole at 16px, wrapping to up to three lines, and MUST NOT clamp,
+ellipsize or clip it: the panel grows instead. Native HUDs show at most two lines
+at 13px and use a trailing ellipsis only when more than two lines would be needed
+([ADR-034 Amendment 7](../adr/034-recipe-protocol-v1.md#amendment-7-2026-10-20-hud-readability)).
+Below the intent, the default HUD shows one discreet muted line for the step that
+just finished, `✓ intent` or `✗ intent` in red (`hudFinishedLine`). It is omitted
+while a passed step is still the main line, and only it may ellipsize. Progress
+is small muted `N/M` text. A finished web-dapp run reads `Recipe passed` or
+`Recipe failed` in the outcome colour.
+The shared intent display policy limits native panels to 360 by 88 logical pixels;
+the finished line shows only when it fits. DOM cards are 500 CSS pixels wide,
+further bounded by the viewport. CDP bottom-bar and docked-bottom modes are at
+most 960 CSS pixels wide while retaining their existing position/space-reservation
+behavior. Web panel heights (144 CSS pixels) are nominal, never clips. Error and
+detail lines stay small and clamp at two lines, so auxiliary HUD copy cannot
+enlarge the panel across the application.
 
 Display whitespace MUST be normalized without shortening the authored intent.
 Renderers MUST NOT slice it by character count. Native HUD text has fixed font
@@ -147,7 +157,8 @@ consumers.
 
 Framework examples and validation recipes adopt the 120-character authoring
 limit; farm recipes MUST NOT be rewritten by this correction. Verification covers
-full intent preservation, Unicode/whitespace, two-line ellipsis, panel bounds and
+full intent preservation, Unicode/whitespace, the uncut web intent, native two-line
+ellipsis, the finished line, panel bounds and
 80/81/120/121 boundaries, plus real native/web screenshots with the app visible and
 existing HUD isolation/lifecycle checks. This bounded policy alone does not
 establish complete [recorded-evidence conformance](recorded-run-evidence.md#hud-requirements).

@@ -11,6 +11,14 @@ import {
 import { initialWindowMetrics, SafeAreaInsetsContext } from 'react-native-safe-area-context';
 
 import {
+  HUD_COLORS,
+  HUD_NATIVE_FINISHED_FONT_SIZE,
+  HUD_NATIVE_FINISHED_LINE_HEIGHT,
+  HUD_NATIVE_INTENT_LINE_HEIGHT,
+  HUD_NATIVE_INTENT_MAX_LINES,
+  HUD_PANEL_BOUNDS,
+  hudFinishedLine,
+  type HudFinishedStep,
   hudIntentDisplay,
   type RecipeHudPlacement,
   waitForHudPaint,
@@ -108,6 +116,17 @@ export interface RecipeHudProps extends RecipeHudOptions {
   state: FarmslotRecipeHudState | null;
 }
 
+const PADDING_VERTICAL = 3;
+const ERROR_LINE_HEIGHT = 16;
+// The native panel never grows: the finished row shows only while two intent
+// lines, that row and an error line still fit its height.
+const FINISHED_ROW_FITS =
+  PADDING_VERTICAL * 2 +
+    HUD_NATIVE_INTENT_LINE_HEIGHT * HUD_NATIVE_INTENT_MAX_LINES +
+    HUD_NATIVE_FINISHED_LINE_HEIGHT +
+    ERROR_LINE_HEIGHT <=
+  HUD_PANEL_BOUNDS.native.maxHeight;
+
 export function RecipeHud({
   state,
   styles: customStyles,
@@ -116,11 +135,21 @@ export function RecipeHud({
   onLayout,
 }: Readonly<RecipeHudProps>): React.ReactElement | null {
   const insets = useContext(SafeAreaInsetsContext) ?? initialWindowMetrics?.insets;
-  if (!state || state.status === 'idle') return null;
-  const badge = text?.badge?.(state) ?? formatBadge(state);
+  const lastFinished = useRef<HudFinishedStep | null>(null);
+  if (!state || state.status === 'idle') {
+    lastFinished.current = null;
+    return null;
+  }
+  const badge = text?.badge?.(state);
   const intent = hudIntentDisplay(text?.intent?.(state) ?? state.intent, 'native');
   const error = text?.error?.(state) ?? state.error;
   const badgeTone = badgeToneForStatus(state.status);
+  // The HUD state has no node id: a step is its number and intent.
+  const step = `${state.currentStep ?? ''}:${intent.text}`;
+  if (state.status === 'pass' || state.status === 'fail')
+    lastFinished.current = { nodeId: step, intent: intent.text, status: state.status };
+  const finished = FINISHED_ROW_FITS ? hudFinishedLine(lastFinished.current, step) : null;
+  const progress = FINISHED_ROW_FITS ? formatProgress(state.currentStep, state.totalSteps) : '';
   const overlay = (
     <View
       onLayout={onLayout}
@@ -141,27 +170,29 @@ export function RecipeHud({
         { overflow: 'hidden', flexDirection: 'row' },
       ]}
     >
-      <Text
-        numberOfLines={1}
-        allowFontScaling={false}
-        style={[
-          styles.badgeText,
-          badgeTone === 'fail'
-            ? styles.badgeTextFail
-            : badgeTone === 'pass'
-              ? styles.badgeTextPass
-              : styles.badgeTextRunning,
-          customStyles?.badgeText,
-          badgeTone === 'fail'
-            ? customStyles?.badgeTextFail
-            : badgeTone === 'pass'
-              ? customStyles?.badgeTextPass
-              : customStyles?.badgeTextRunning,
-          { maxWidth: 80, marginRight: 8 },
-        ]}
-      >
-        {badge}
-      </Text>
+      {badge ? (
+        <Text
+          numberOfLines={1}
+          allowFontScaling={false}
+          style={[
+            styles.badgeText,
+            badgeTone === 'fail'
+              ? styles.badgeTextFail
+              : badgeTone === 'pass'
+                ? styles.badgeTextPass
+                : styles.badgeTextRunning,
+            customStyles?.badgeText,
+            badgeTone === 'fail'
+              ? customStyles?.badgeTextFail
+              : badgeTone === 'pass'
+                ? customStyles?.badgeTextPass
+                : customStyles?.badgeTextRunning,
+            { maxWidth: 80, marginRight: 8 },
+          ]}
+        >
+          {badge}
+        </Text>
+      ) : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text
           {...intent.nativeProps}
@@ -169,11 +200,31 @@ export function RecipeHud({
         >
           {intent.text}
         </Text>
+        {finished || progress ? (
+          <View style={styles.finishedRow}>
+            <Text
+              numberOfLines={1}
+              allowFontScaling={false}
+              style={[styles.finished, finished?.tone === 'fail' ? styles.failed : undefined]}
+            >
+              {finished?.text}
+            </Text>
+            {progress ? (
+              <Text numberOfLines={1} allowFontScaling={false} style={styles.progress}>
+                {progress}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
         {error ? (
           <Text
             numberOfLines={1}
             allowFontScaling={false}
-            style={[styles.error, customStyles?.error, { lineHeight: 16, maxHeight: 16 }]}
+            style={[
+              styles.error,
+              customStyles?.error,
+              { lineHeight: ERROR_LINE_HEIGHT, maxHeight: ERROR_LINE_HEIGHT },
+            ]}
           >
             {error}
           </Text>
@@ -186,12 +237,6 @@ export function RecipeHud({
   ) : (
     overlay
   );
-}
-
-function formatBadge(state: FarmslotRecipeHudState): string {
-  const status = state.status === 'running' ? 'run' : state.status;
-  const progress = formatProgress(state.currentStep, state.totalSteps);
-  return [status, progress].filter(Boolean).join(' ').toUpperCase();
 }
 
 function formatProgress(currentStep?: number, totalSteps?: number): string {
@@ -214,7 +259,7 @@ const styles = StyleSheet.create({
     zIndex: 9999,
     backgroundColor: 'rgba(0, 0, 0, 0.58)',
     paddingHorizontal: 10,
-    paddingVertical: 3,
+    paddingVertical: PADDING_VERTICAL,
   },
   line: {
     color: '#ffffff',
@@ -234,6 +279,24 @@ const styles = StyleSheet.create({
   },
   badgeTextFail: {
     color: '#ff4d4f',
+  },
+  finishedRow: {
+    flexDirection: 'row',
+  },
+  finished: {
+    flex: 1,
+    color: HUD_COLORS.muted,
+    fontSize: HUD_NATIVE_FINISHED_FONT_SIZE,
+    lineHeight: HUD_NATIVE_FINISHED_LINE_HEIGHT,
+  },
+  failed: {
+    color: HUD_COLORS.fail,
+  },
+  progress: {
+    marginLeft: 6,
+    color: HUD_COLORS.muted,
+    fontSize: HUD_NATIVE_FINISHED_FONT_SIZE,
+    lineHeight: HUD_NATIVE_FINISHED_LINE_HEIGHT,
   },
   error: {
     color: '#e6e6e6',

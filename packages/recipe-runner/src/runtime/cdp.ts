@@ -5,7 +5,12 @@ import WebSocket from 'ws';
 
 import type { RecipeArtifactManifestEntry, UiObserverRef } from '@farmslot/protocol';
 import {
+  HUD_COLORS,
+  HUD_FINISHED_FONT_SIZE,
+  HUD_FINISHED_LINE_HEIGHT,
   HUD_PANEL_BOUNDS,
+  hudFinishedLine,
+  type HudFinishedStep,
   hudIntentDisplay,
   hudSecondaryText,
   validateRecipeActionRelationships,
@@ -1220,6 +1225,8 @@ export interface CreateCdpWebUiTransportOptions {
 export function createCdpWebUiTransport(
   options: CreateCdpWebUiTransportOptions,
 ): UiActionTransport {
+  // getPage connects a new page per action, so the HUD's finished step lives here.
+  const hud: CdpHudState = {};
   return {
     async execute(action, node, context) {
       if (action === 'ui.wait_for') {
@@ -1350,7 +1357,7 @@ export function createCdpWebUiTransport(
           case 'app.lifecycle':
             return runCdpLifecycle(page, node);
           case 'app.hud':
-            return renderCdpHud(page, node, context);
+            return renderCdpHud(page, node, context, hud);
           case 'app.trace':
             return page.evaluate(
               '(() => ({ entries: performance.getEntries().slice(-20).map((entry) => ({ name: entry.name, type: entry.entryType, startTime: entry.startTime, duration: entry.duration })) }))()',
@@ -1749,12 +1756,18 @@ async function runCdpLifecycle(page: CdpWebPage, node: Record<string, unknown>):
   throw new Error(`Unsupported CDP lifecycle command: ${command}.`);
 }
 
+interface CdpHudState {
+  last?: HudFinishedStep;
+}
+
 async function renderCdpHud(
   page: CdpWebPage,
   node: Record<string, unknown>,
   context: ActionExecutionContext,
+  hud: CdpHudState,
 ): Promise<unknown> {
   if (node.clear === true) {
+    delete hud.last;
     return page.evaluate(
       "(() => { document.getElementById('farmslot-recipe-hud')?.remove(); document.getElementById('farmslot-recipe-hud-reserved-space')?.remove(); document.documentElement.style.removeProperty('--farmslot-recipe-hud-height'); document.body?.style.removeProperty('padding-bottom'); return { hud: false, cleared: true }; })()",
     );
@@ -1780,14 +1793,23 @@ async function renderCdpHud(
   const showTitle = display.showTitle === true;
   const showDebug = display.showDebug === true;
   const showDetail = display.showDetail === true;
-  const width = asOptionalString(display.width, 'app.hud.display.width') ?? '360px';
+  const width =
+    asOptionalString(display.width, 'app.hud.display.width') ??
+    `${HUD_PANEL_BOUNDS.card.maxWidth}px`;
   const maxDetailLines = typeof display.maxDetailLines === 'number' ? display.maxDetailLines : 2;
   const progress = isRecord(node.progress) ? node.progress : {};
   const current = typeof progress.current === 'number' ? progress.current : undefined;
   const total = typeof progress.total === 'number' ? progress.total : undefined;
+  // A completed run shows its outcome on the main line and leaves the next run a clean HUD.
+  const complete = progress.complete === true;
+  if (complete) delete hud.last;
+  else if (status === 'pass' || status === 'fail') hud.last = { nodeId, intent: text, status };
+  const finished = hudFinishedLine(hud.last, nodeId);
+  const intentColor =
+    complete && (status === 'pass' || status === 'fail') ? HUD_COLORS[status] : '#fff';
   return page.evaluate(
     `(() => {
-      const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines, intentStyle: intent.webStyle, bounds: HUD_PANEL_BOUNDS })};
+      const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines, intentStyle: intent.webStyle, intentColor, finished, colors: HUD_COLORS, bounds: HUD_PANEL_BOUNDS })};
       const id = 'farmslot-recipe-hud';
       // The recipe text lives in a closed shadow root, so the page's text and
       // selector queries (ui.wait_for, text-target presses) never see it and a
@@ -1827,13 +1849,11 @@ async function renderCdpHud(
         bottom: '',
         width: '',
         maxWidth: '',
-        maxHeight: payload.bounds.card.maxHeight + 'px',
-        overflow: 'hidden',
         boxSizing: 'border-box',
         borderRadius: isDocked ? '0' : '9px',
       });
       if (isCard) {
-        el.style.width = payload.width || '360px';
+        el.style.width = payload.width;
         el.style.maxWidth = 'min(' + payload.bounds.card.maxWidth + 'px, calc(100vw - 16px))';
         if (payload.position.includes('top')) el.style.top = '8px';
         else el.style.bottom = '8px';
@@ -1846,36 +1866,49 @@ async function renderCdpHud(
         el.style.right = isDocked ? '0' : '8px';
         el.style.maxWidth = payload.bounds.bar.maxWidth + 'px';
       }
-      const accent = payload.status === 'fail' ? '#ff5c5c' : payload.status === 'pass' ? '#48d17a' : '#8ab4ff';
       const progressText = Number.isFinite(payload.current) && Number.isFinite(payload.total)
         ? payload.current + '/' + payload.total
         : '';
       const row = document.createElement('div');
       Object.assign(row.style, { display: 'flex', gap: '7px', alignItems: 'flex-start' });
-      const badge = document.createElement('div');
-      Object.assign(badge.style, {
-        color: accent,
-        border: '1px solid rgba(255,255,255,0.16)',
-        borderRadius: '7px',
-        padding: '1px 5px',
-        fontWeight: '800',
-        textTransform: 'uppercase',
-        fontSize: '9px',
-        lineHeight: '14px',
+      const progress = document.createElement('div');
+      Object.assign(progress.style, {
+        color: payload.colors.muted,
+        fontSize: '${HUD_FINISHED_FONT_SIZE}px',
+        lineHeight: payload.intentStyle.lineHeight,
         whiteSpace: 'nowrap',
+        fontVariantNumeric: 'tabular-nums',
       });
-      badge.textContent = [payload.status === 'fail' ? 'FAIL' : payload.status === 'pass' ? 'OK' : 'RUN', progressText].filter(Boolean).join(' ');
+      progress.textContent = progressText;
       const body = document.createElement('div');
       Object.assign(body.style, { minWidth: '0', flex: '1' });
+      // The intent grows the panel: no clamp, ellipsis or max height.
       const line1 = document.createElement('div');
-      Object.assign(line1.style, payload.intentStyle, { color: '#fff', fontWeight: '750' });
+      Object.assign(line1.style, payload.intentStyle, { color: payload.intentColor });
       line1.setAttribute('data-farmslot-hud-intent', '');
       line1.textContent = payload.text || payload.nodeId;
+      const finished = document.createElement('div');
+      if (payload.finished) {
+        Object.assign(finished.style, {
+          color: payload.finished.tone === 'fail' ? payload.colors.fail : payload.colors.muted,
+          fontSize: '${HUD_FINISHED_FONT_SIZE}px',
+          lineHeight: '${HUD_FINISHED_LINE_HEIGHT}px',
+          marginTop: '2px',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        });
+        finished.textContent = payload.finished.text;
+      }
       const line2 = document.createElement('div');
       Object.assign(line2.style, {
         color: '#d6d9df',
         lineHeight: '1.25',
         whiteSpace: 'normal',
+        display: '-webkit-box',
+        WebkitBoxOrient: 'vertical',
+        WebkitLineClamp: String(payload.maxDetailLines),
+        overflow: 'hidden',
       });
       const secondaryParts = [];
       if (payload.showDetail && payload.detail) secondaryParts.push(payload.detail);
@@ -1891,9 +1924,11 @@ async function renderCdpHud(
         body.append(title);
       }
       body.append(line1);
+      if (finished.textContent) body.append(finished);
       if (line2.textContent) body.append(line2);
       if (payload.showDebug) body.append(line3);
-      row.append(badge, body);
+      row.append(body);
+      if (progressText) row.append(progress);
       root.append(row);
       if (payload.error) {
         line2.style.color = '#ffb3b3';

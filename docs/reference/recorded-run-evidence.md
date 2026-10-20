@@ -181,9 +181,13 @@ stills stay valid (ADR-062 Amendment 17).
 
 ## HUD requirements
 
-The HUD MUST display the complete node intent, wrapping to at most two lines,
-without ellipsis, clipping or truncation mid-sentence. Its bounded panel MUST
-preserve app visibility and MUST NOT obscure the app content being checked.
+The HUD MUST display the complete node intent as its main line. Web HUDs wrap it
+to up to three lines without ellipsis, clipping or truncation mid-sentence,
+growing the panel instead; native HUDs keep two lines inside their fixed panel.
+The default HUD adds only one discreet line for the step that just finished
+([ADR-034 Amendment 7](../adr/034-recipe-protocol-v1.md#amendment-7-2026-10-20-hud-readability)).
+Its bounded panel MUST preserve app visibility and MUST NOT obscure the app
+content being checked.
 Each node intent MUST be one concise sentence. Intent lint MUST warn above
 80 characters and fail above 120 characters. Harnesses MUST inherit the shared
 framework HUD; per-harness HUD renderers are forbidden.
@@ -388,7 +392,7 @@ successful test results:
 - **P8 QA/occurrences:** A 10+ case suite covers failed-then-passed retry, failed independent iteration, skipped required check, composed calls and sibling attempt isolation. Continuous cross-segment proof opens ordered clips; restart/held-frame gaps remain outside recording. Both output-review reports jump to each case/check against the same report identity.
 - **Frozen refresh:** Replace approved media bytes or request an unapproved artifact and observe refusal; valid approved refresh preserves selection, dependencies, approval and PR identity, and renders hosted media with HTTP 200.
 - **Clean cutover:** One normal ledger writer, no replaced recorder/linking/mapper copies or shim imports; unrecorded headless control and explicitly untimed legacy viewing remain honest.
-- **HUD:** Intent lint accepts 80 characters without a length warning, warns at 81–120 and fails at 121; multi-sentence intents fail. Across supported viewports the shared HUD displays the complete sentence in at most two lines inside its bounded panel, without hiding the checked app content. A harness inherits that HUD without supplying a renderer.
+- **HUD:** Intent lint accepts 80 characters without a length warning, warns at 81–120 and fails at 121; multi-sentence intents fail. Across supported viewports the shared web HUD displays the complete sentence in up to three lines, never cut, and the native HUD keeps two lines inside its fixed panel, without hiding the checked app content. A harness inherits that HUD without supplying a renderer.
 
 ### Review implementation interfaces
 
