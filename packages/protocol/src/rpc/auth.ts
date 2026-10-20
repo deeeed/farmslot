@@ -15,6 +15,13 @@ export type GatewayAuthClientKind = 'ui' | 'companion' | 'node';
 export type GatewayAuthMode = 'none' | 'token' | 'password';
 export type GatewayWorkspaceAccess = 'farm' | 'native' | 'none';
 
+/** Experimental ADR-071 notification capability, present on every new gateway connect reply. */
+export interface GatewayResourceChangesCapability {
+  version: 1;
+  epoch: string;
+  versionLists: boolean;
+}
+
 export interface GatewayAuthConnectParams {
   clientKind: GatewayAuthClientKind;
   token?: string;
@@ -36,6 +43,9 @@ export interface GatewayAuthConnectResult {
     personSessions?: boolean;
     /** Client shell selection; every RPC still checks current server authority. */
     workspaceAccess?: GatewayWorkspaceAccess;
+    /** Absent only on gateways predating ADR-071. */
+    resourceChanges?: GatewayResourceChangesCapability;
+    batchedContent?: boolean;
   };
   /** Optional only for compatibility with older gateways. */
   principal?: SelfPrincipalSummary;

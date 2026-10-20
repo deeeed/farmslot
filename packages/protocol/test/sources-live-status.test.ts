@@ -15,11 +15,9 @@ import { sourceStatusFixture } from './fixtures/source-status.js';
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const changes = (revision: number, epoch = 'epoch-1') => ({
-  resourceChanges: {
-    version: 1,
-    epoch,
-    changes: [{ key: { family: 'sources', scope: 'farm' }, revision, kind: 'updated' }],
-  },
+  version: 1,
+  epoch,
+  changes: [{ key: { family: 'sources', scope: 'farm' }, revision, kind: 'updated' }],
 });
 
 /** A farm panel whose reads return whatever `next` holds when each read starts. */
@@ -48,7 +46,7 @@ function harness() {
 
 test('a pin changed by another client reaches an open panel without user action', async () => {
   const panel = harness();
-  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(4) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(4) });
   await panel.controller.refresh();
   assert.equal(panel.reads(), 1);
   assert.equal(panel.controller.getSnapshot().view?.line, 'pack experiment');
@@ -59,24 +57,24 @@ test('a pin changed by another client reaches an open panel without user action'
     status.effectiveSelections![0].effectiveRef = 'main';
     return status;
   });
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(5) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(5) });
   await settle();
   assert.equal(panel.reads(), 2);
   assert.equal(panel.controller.getSnapshot().view?.line, 'pack main');
 
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(5) });
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(4) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(5) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(4) });
   await settle();
   assert.equal(panel.reads(), 2, 'duplicate and older revisions are ignored');
 
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(1, 'epoch-2') });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(1, 'epoch-2') });
   await settle();
   assert.equal(panel.reads(), 3, 'a new gateway epoch rereads even with a lower revision');
 });
 
 test('a change during an in-flight read schedules exactly one more read', async () => {
   const panel = harness();
-  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(1) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(1) });
   await panel.controller.refresh();
   let release!: () => void;
   panel.respond(
@@ -85,11 +83,11 @@ test('a change during an in-flight read schedules exactly one more read', async 
         release = () => resolve(sourceStatusFixture());
       }),
   );
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(2) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(2) });
   await settle();
   assert.equal(panel.reads(), 2);
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(3) });
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(4) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(3) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(4) });
   await settle();
   assert.equal(panel.reads(), 2, 'the in-flight read is not abandoned');
   panel.respond(async () => sourceStatusFixture());
@@ -106,10 +104,10 @@ test('a change during the first read, or the first read after a context change, 
     new Promise<SourcesStatusResult>((resolve) => {
       release = () => resolve(sourceStatusFixture());
     });
-  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(1) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(1) });
   panel.respond(held);
   const first = panel.controller.refresh();
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(2) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(2) });
   panel.respond(async () => sourceStatusFixture());
   release();
   await first;
@@ -122,7 +120,7 @@ test('a change during the first read, or the first read after a context change, 
   const abandoned = release;
   panel.respond(held);
   const next = panel.controller.refresh();
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(3) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(3) });
   panel.respond(async () => sourceStatusFixture());
   abandoned();
   release();
@@ -133,7 +131,7 @@ test('a change during the first read, or the first read after a context change, 
 
 test('a change while a failed read is shown rereads, and denied reads hide the panel', async () => {
   const panel = harness();
-  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(1) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(1) });
   panel.respond(async () => {
     throw new Error('Execution node is disconnected');
   });
@@ -141,7 +139,7 @@ test('a change while a failed read is shown rereads, and denied reads hide the p
   assert.equal(panel.controller.getSnapshot().error, 'Execution node is disconnected');
   assert.equal(panel.controller.getSnapshot().hidden, false);
   panel.respond(async () => sourceStatusFixture());
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(2) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(2) });
   await settle();
   assert.equal(panel.controller.getSnapshot().error, undefined);
   assert(panel.controller.getSnapshot().view);
@@ -164,7 +162,7 @@ test('an empty context is hidden and a gateway that does not announce is unsuppo
     locks: [],
     effectiveSelections: [],
   }));
-  panel.feed.receive(Events.HELLO, { fleet: null });
+  panel.feed.connected(undefined);
   assert.equal(panel.controller.getSnapshot().hidden, true, 'nothing to show before facts');
   await panel.controller.refresh();
   assert.equal(panel.controller.getSnapshot().hidden, true);
@@ -188,31 +186,32 @@ test('an empty context is hidden and a gateway that does not announce is unsuppo
 
 test('reconnect starts a new announcement; the host reread then sees live status again', async () => {
   const panel = harness();
-  panel.feed.receive(Events.HELLO, { fleet: null });
+  panel.feed.connected(undefined);
   await panel.controller.refresh();
   assert.equal(panel.controller.getSnapshot().unsupported, true);
   panel.feed.disconnected();
   assert.equal(panel.feed.getState().announced, undefined);
-  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(7) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(7) });
   // Hosts reread on every new connection; that read covers revision 7.
   await panel.controller.refresh();
   assert.equal(panel.controller.getSnapshot().unsupported, false);
   const before = panel.reads();
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(7) });
+  panel.feed.receive(Events.RESOURCE_CHANGED, { ...changes(7) });
   await settle();
   assert.equal(panel.reads(), before);
 });
 
-test('the carrier decoder reads only hello and fleet.updated with a valid payload', () => {
+test('the carrier decoder accepts only the negotiated resource.changed payload', () => {
   assert.equal(sourceResourceChanges(Events.RUN_UPDATED, changes(1)), undefined);
   assert.equal(sourceResourceChanges(Events.FLEET_UPDATED, { fleet: {} }), undefined);
   assert.equal(
-    sourceResourceChanges(Events.FLEET_UPDATED, {
-      resourceChanges: { version: 2, epoch: 'e', changes: [] },
-    }),
+    sourceResourceChanges(Events.RESOURCE_CHANGED, { version: 2, epoch: 'e', changes: [] }),
     undefined,
   );
-  assert.deepEqual(sourceResourceChanges(Events.HELLO, changes(3))?.changes[0].revision, 3);
+  assert.deepEqual(
+    sourceResourceChanges(Events.RESOURCE_CHANGED, changes(3))?.changes[0].revision,
+    3,
+  );
 });
 
 test('one helper wires a host connection: carrier events feed it, a lost connection resets it', () => {
@@ -223,8 +222,8 @@ test('one helper wires a host connection: carrier events feed it, a lost connect
     subscribe: (event, handler) => handlers.set(event, handler),
     onConnectionChange: (listener) => (connection = listener),
   });
-  assert.deepEqual([...handlers.keys()].sort(), [Events.FLEET_UPDATED, Events.HELLO].sort());
-  handlers.get(Events.HELLO)!({ fleet: null, ...changes(2) });
+  assert.deepEqual([...handlers.keys()].sort(), [Events.RESOURCE_CHANGED]);
+  handlers.get(Events.RESOURCE_CHANGED)!(changes(2));
   assert.deepEqual(feed.getState(), { announced: true, latest: { epoch: 'epoch-1', revision: 2 } });
   connection('disconnected');
   assert.deepEqual(feed.getState(), {});

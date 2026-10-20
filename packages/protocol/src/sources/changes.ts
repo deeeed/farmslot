@@ -1,3 +1,4 @@
+import type { GatewayResourceChangesCapability } from '../rpc/auth.js';
 import { Events, type ResourceChangedPayload } from '../transport/events.js';
 
 /** The source revision a controller compares; revisions never compare across epochs. */
@@ -6,11 +7,7 @@ export interface SourceRevisionMark {
   revision: number;
 }
 
-/**
- * The carrier (ADR-069 Amendment 1). Until `resource.changed` exists the payload rides on
- * `hello` and `fleet.updated`; adopting ADR-071 changes only these events and the decoder.
- */
-const SOURCE_CHANGE_EVENTS: readonly string[] = [Events.HELLO, Events.FLEET_UPDATED];
+const SOURCE_CHANGE_EVENTS: readonly string[] = [Events.RESOURCE_CHANGED];
 
 /** The one carrier decoder. */
 export function sourceResourceChanges(
@@ -18,7 +15,7 @@ export function sourceResourceChanges(
   payload: unknown,
 ): ResourceChangedPayload | undefined {
   if (!SOURCE_CHANGE_EVENTS.includes(event)) return undefined;
-  const changes = (payload as { resourceChanges?: unknown } | null)?.resourceChanges;
+  const changes = payload;
   if (!changes || typeof changes !== 'object') return undefined;
   const candidate = changes as Partial<ResourceChangedPayload>;
   if (
@@ -51,14 +48,14 @@ export function isNewerSourceRevision(
 }
 
 export interface SourceChangeFeedState {
-  /** Undefined until this connection's `hello` arrives. */
+  /** Undefined until this connection negotiates notification support. */
   announced?: boolean;
   latest?: SourceRevisionMark;
 }
 
 /**
  * One feed per gateway connection, fed with every received event. It remembers
- * whether `hello` announced the signal so panels mounted later can tell.
+ * whether authentication announced the signal so panels mounted later can tell.
  */
 export class SourceChangeFeed {
   private state: SourceChangeFeedState = {};
@@ -74,10 +71,21 @@ export class SourceChangeFeed {
   receive(event: string, payload: unknown): void {
     const changes = sourceResourceChanges(event, payload);
     const mark = changes ? sourceMark(changes) : undefined;
-    const announced = event === Events.HELLO ? Boolean(mark) : this.state.announced;
+    const announced = mark ? true : this.state.announced;
     const latest =
       mark && isNewerSourceRevision(mark, this.state.latest) ? mark : this.state.latest;
     if (announced === this.state.announced && latest === this.state.latest) return;
+    this.state = { announced, latest };
+    for (const listener of this.listeners) listener();
+  }
+
+  connected(capability: GatewayResourceChangesCapability | undefined): void {
+    const announced = capability?.version === 1;
+    const latest = announced
+      ? this.state.latest?.epoch === capability.epoch
+        ? this.state.latest
+        : { epoch: capability.epoch, revision: 0 }
+      : undefined;
     this.state = { announced, latest };
     for (const listener of this.listeners) listener();
   }
@@ -96,6 +104,8 @@ export function createSourceChangeFeed(): SourceChangeFeed {
 
 /** The part of a host's gateway client that feeds source changes. */
 export interface SourceChangeConnection {
+  readonly resourceChanges?: GatewayResourceChangesCapability;
+  readonly connectionState?: string;
   subscribe(event: string, handler: (payload: unknown) => void): unknown;
   onConnectionChange(listener: (state: string) => void): unknown;
 }
@@ -108,6 +118,8 @@ export function connectSourceChangeFeed(
   for (const event of SOURCE_CHANGE_EVENTS)
     connection.subscribe(event, (payload) => feed.receive(event, payload));
   connection.onConnectionChange((state) => {
-    if (state !== 'connected') feed.disconnected();
+    if (state === 'connected') feed.connected(connection.resourceChanges);
+    else feed.disconnected();
   });
+  if (connection.connectionState === 'connected') feed.connected(connection.resourceChanges);
 }

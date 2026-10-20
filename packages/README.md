@@ -17,7 +17,7 @@
 ## Maintenance rules
 
 1. **Packages are reusable.** Keep app/service-specific state and runtime orchestration outside `packages/`.
-2. **Protocol is the contract.** Types shared across Gateway, Node, CLI, apps, and recipe tooling belong in `@farmslot/protocol`; implementations do not.
+2. **Protocol is the contract.** Types shared across Gateway, Node, CLI, apps, and recipe tooling belong in `@farmslot/protocol`. Portable client controllers and the ADR-071 resource cache are explicit exceptions to keeping implementations outside protocol. They open no sockets and import no platform storage or framework state libraries.
 3. **Runner is generic.** Project-specific recipe actions belong in project runners or adapters, not in `recipe-runner`.
 4. **Every package has a README.** Each README must include `## Source layout`, `## Maintenance rules`, and `## Local quality` sections that explain ownership, source layout, quality commands, and what does not belong there.
    Every package must also expose `typecheck` and `quality` scripts.

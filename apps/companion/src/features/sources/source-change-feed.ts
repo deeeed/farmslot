@@ -10,7 +10,7 @@ const feeds = new WeakMap<GatewayClient, SourceChangeFeed>();
 
 /**
  * Live source status for one gateway client (ADR-069 Amendment 1). The connection
- * store calls this when it creates the client, so `hello` is seen before panels mount.
+ * store calls this when it creates the client, before resource notices or panels arrive.
  */
 export function sourceChangeFeedFor(client: GatewayClient): SourceChangeFeed {
   const existing = feeds.get(client);

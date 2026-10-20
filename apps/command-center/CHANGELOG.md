@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- Add reproducible client-store startup, reconnect and gate-diff measurements to the browser debug helper.
+- Add reproducible client-store startup, reconnect and gate-diff measurements, plus live shared-cache validation over the browser's authenticated connection.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

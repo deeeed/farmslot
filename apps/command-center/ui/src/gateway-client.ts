@@ -18,6 +18,7 @@ import {
   signOutAccount,
   workspaceAccessFromAuth,
 } from '@farmslot/protocol';
+import type { ResourceReadMethod, ResourceReadResult } from '@farmslot/protocol/client-cache';
 
 import {
   getDesktopConnection,
@@ -73,6 +74,7 @@ interface BrowserGatewayConnection {
 interface PendingRequest {
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
+  includeResourceState?: boolean;
 }
 
 export class GatewayRequestError extends Error {
@@ -205,6 +207,13 @@ function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: str
 }
 
 export class GatewayClient {
+  private lastAuthentication?: GatewayAuthConnectResult;
+  get authenticatedConnection(): GatewayAuthConnectResult | undefined {
+    return this.lastAuthentication;
+  }
+  get resourceChanges() {
+    return this.lastAuthentication?.capabilities.resourceChanges;
+  }
   private ws: WebSocket | null = null;
   private wsAbort: AbortController | null = null;
   private state: ConnectionState = 'disconnected';
@@ -417,6 +426,7 @@ export class GatewayClient {
         this.lastAuthError = null;
         this.epoch += 1;
         this.principal = null;
+        this.lastAuthentication = undefined;
         this.adminRole = false;
         this.access = 'none';
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -642,6 +652,7 @@ export class GatewayClient {
   }
 
   private acceptAuthentication(result: GatewayAuthConnectResult): void {
+    this.lastAuthentication = result;
     this.principal = result.principal ?? null;
     this.adminRole =
       result.principal?.roles.some(
@@ -685,6 +696,17 @@ export class GatewayClient {
     return this.rawRequest<T>(method, params, timeoutOrOptions);
   }
 
+  requestResource<T>(
+    method: ResourceReadMethod,
+    params: unknown,
+    signal?: AbortSignal,
+  ): Promise<ResourceReadResult<T>> {
+    return this.request<ResourceReadResult<T>>(method, params, {
+      includeResourceState: true,
+      signal,
+    });
+  }
+
   private async rawRequest<T = unknown>(
     method: string,
     params?: unknown,
@@ -695,6 +717,7 @@ export class GatewayClient {
     }
 
     const options = normalizeGatewayRequestOptions(timeoutOrOptions, DEFAULT_TIMEOUT);
+    if (options.signal?.aborted) throw new Error('Resource read aborted');
     const timeout = options.timeout;
     const id = String(++this.reqId);
     const frame: RequestFrame = { type: 'req', id, method, params };
@@ -704,11 +727,13 @@ export class GatewayClient {
       let settled = false;
       let unsub: (() => void) | undefined;
       let idle: ReturnType<typeof createIdleRequestTimeout>;
+      const abort = () => finish(() => reject(new Error('Resource read aborted')));
       const finish = (next: () => void) => {
         if (settled) return;
         settled = true;
         idle.clear();
         unsub?.();
+        options.signal?.removeEventListener('abort', abort);
         this.pending.delete(id);
         next();
       };
@@ -729,6 +754,7 @@ export class GatewayClient {
       });
 
       this.pending.set(id, {
+        includeResourceState: options.includeResourceState,
         resolve: (v: unknown) => {
           finish(() => {
             const dt = performance.now() - t0;
@@ -739,6 +765,7 @@ export class GatewayClient {
         },
         reject: (err: Error) => finish(() => reject(err)),
       });
+      options.signal?.addEventListener('abort', abort, { once: true });
 
       if (options.extendOnEvent) {
         unsub = this.subscribe(options.extendOnEvent, (payload) => {
@@ -786,7 +813,11 @@ export class GatewayClient {
     if (!req) return;
 
     if (frame.ok) {
-      req.resolve(frame.payload);
+      req.resolve(
+        req.includeResourceState
+          ? { data: frame.payload, resourceState: frame.resourceState }
+          : frame.payload,
+      );
     } else {
       req.reject(
         new GatewayRequestError(

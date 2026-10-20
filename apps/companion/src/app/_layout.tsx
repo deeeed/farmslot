@@ -16,6 +16,7 @@ import { GlobalFilterCoordinator } from '../components/GlobalFilterCoordinator';
 import { PRPushRegistration } from '../components/PRPushRegistration';
 import { WhatsNewMonitor } from '../components/WhatsNewMonitor';
 import { RecipeBridgeProvider } from '../farmslot';
+import { observeOfflineClientCacheProof } from '../farmslot/offline-client-cache-proof';
 import { observeOfflineClientStoreBaseline } from '../farmslot/offline-client-store-baseline';
 import { initNotifications } from '../lib/notifications';
 import { isStoreScreenshotMode, seedStoreScreenshotMode } from '../lib/store-screenshot-mode';
@@ -223,7 +224,13 @@ function WorkspaceProviders({ farm, children }: { farm: boolean; children: React
   return farm ? (
     <RecipeBridgeProvider
       bridgeName="@farmslot/companion"
-      observeUi={__DEV__ ? observeOfflineClientStoreBaseline : undefined}
+      observeUi={
+        __DEV__
+          ? async (refs) =>
+              (await observeOfflineClientCacheProof(refs)) ??
+              observeOfflineClientStoreBaseline(refs)
+          : undefined
+      }
     >
       {children}
     </RecipeBridgeProvider>

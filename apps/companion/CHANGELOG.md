@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Preserve resource revision metadata for the shared client cache and consume negotiated Sources change notifications.
+
 - Add reproducible client-store baseline recipes with a dev-only native startup and websocket byte counter.
 
 - The gate review offers Accept Review Findings and Publish when the gateway allows it: it lists the open findings and asks for the reason before sending.

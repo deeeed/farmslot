@@ -19,6 +19,10 @@ import {
   type ResponseFrame,
   ReviewQaConfigurationError,
 } from '@farmslot/protocol';
+import {
+  resourceDependenciesForRead,
+  type ResourceReadStamp,
+} from '@farmslot/protocol/client-cache';
 import { SlotConfigError } from '@farmslot/slot-config';
 
 import { handleBranchFsChanged } from './automation/branch-watcher.js';
@@ -43,6 +47,8 @@ import { unsubscribeWorkerTerminalPty } from './methods/terminal-worker.js';
 import { buildTmuxWorkerUpdateFromNodeSnapshot } from './methods/tmux-workers.js';
 import { metroUnsubscribeAll } from './methods/workspace.js';
 import { initThumbnailCache, unsubscribeThumbnails } from './observability/thumbnail-cache.js';
+import { canReadResourceKey } from './resources/authorization.js';
+import { readWithResourceState, resourceRevisions } from './resources/revisions.js';
 import { handleReviewFsChanged } from './review/orchestrator.js';
 import { onPtyExit, unsubscribeAllPty } from './runtime/pty-stream.js';
 import {
@@ -74,11 +80,7 @@ import { personSessionMethods, routePersonSessionMethod } from './security/perso
 import { principalOwnerGeneration } from './security/work-originator.js';
 import type { ClientState } from './server/client-state.js';
 import { routeMethod } from './server/route-method.js';
-import {
-  currentSourceResourceChanges,
-  noteRunEvent,
-  setSourceChangePublisher,
-} from './sources/change-signal.js';
+import { currentSourceResourceChanges, noteRunEvent } from './sources/change-signal.js';
 import { handleAgentFsChanged } from './tasks/watcher.js';
 
 let eventSeq = 0;
@@ -481,14 +483,7 @@ export function initServerGlobals(): void {
 
   // Init thumbnail cache (demand-driven — only polls when clients subscribe)
   initThumbnailCache(broadcastEvent);
-  setSourceChangePublisher(() => {
-    loadFleetStatus()
-      .then((fleet) => broadcastEvent(Events.FLEET_UPDATED, { fleet }))
-      .catch((err) => {
-        // Revisions only grow, so the next fleet.updated or hello carries this change.
-        console.warn(`[server] source change broadcast failed: ${(err as Error).message}`);
-      });
-  });
+  resourceRevisions.setPublisher((payload) => broadcastEvent(Events.RESOURCE_CHANGED, payload));
 
   // Watch for fleet state changes and broadcast
   const publishFleetChange = (fleet: FleetStatus) => {
@@ -539,19 +534,13 @@ function handleNodeBinaryFrame(raw: Buffer): void {
   ingestNodeFrame(decoded.slotId, decoded.payload, decoded.keyFrame, decoded.width, decoded.height);
 }
 
-/** Live source status rides on hello and fleet.updated until resource.changed exists. */
-function withSourceChanges<T extends object>(payload: T): T {
-  const resourceChanges = currentSourceResourceChanges();
-  return resourceChanges ? { ...payload, resourceChanges } : payload;
-}
-
 async function sendHello(ws: WebSocket): Promise<void> {
   try {
     const fleet = await loadFleetStatus();
-    sendEvent(ws, Events.HELLO, withSourceChanges({ fleet }));
+    sendEvent(ws, Events.HELLO, { fleet });
   } catch (err) {
     console.warn(`[server] sendHello fleet load failed: ${(err as Error).message}`);
-    sendEvent(ws, Events.HELLO, withSourceChanges({ fleet: null }));
+    sendEvent(ws, Events.HELLO, { fleet: null });
   }
 }
 
@@ -701,6 +690,8 @@ async function handleMessage(
         personSessions: true,
         voiceInstructionFormatting: true,
         gatewayPing,
+        resourceChanges: { version: 1, epoch: resourceRevisions.epoch, versionLists: false },
+        batchedContent: false,
         workspaceAccess: gatewayWorkspaceAccess(
           result.principal,
           authRuntime.store.snapshot().principals,
@@ -709,12 +700,15 @@ async function handleMessage(
       principal: result.principal
         ? {
             id: result.principal.id,
+            generation: result.principal.generation ?? 0,
             displayName: result.principal.subject.displayName,
             subjectKind: result.principal.subject.type,
             roles: result.principal.roles,
           }
         : undefined,
     });
+    const changes = currentSourceResourceChanges();
+    if (changes) broadcastResourceChanges(changes, state.ws);
     if (canReceiveBroadcast(authRuntime, state, Events.HELLO)) await sendHello(state.ws);
     return;
   }
@@ -777,16 +771,28 @@ async function handleMessage(
       requestAllowsWorkers = nativeOwnerCanUseWorkers(
         authorizeGatewayMethod(authRuntime, state, frame.method),
       );
-    const result = await routeMethod(frame.method, frame.params, {
-      authRuntime,
-      broadcast,
-      emit,
-      isActiveClient,
-      nextEventSeq,
-      state,
-    });
+    const read = () =>
+      routeMethod(frame.method, frame.params, {
+        authRuntime,
+        broadcast,
+        emit,
+        isActiveClient,
+        nextEventSeq,
+        state,
+      });
+    const dependencies = resourceDependenciesForRead(frame.method, frame.params);
+    const result = dependencies
+      ? await readWithResourceState(dependencies, read)
+      : { payload: await read(), resourceState: undefined };
     const refusal = nativeResponseRefusal();
-    sendResponse(state.ws, frame.id, !refusal, refusal ? undefined : result, refusal);
+    sendResponse(
+      state.ws,
+      frame.id,
+      !refusal,
+      refusal ? undefined : result.payload,
+      refusal,
+      result.resourceState,
+    );
   } catch (err) {
     const refusal = nativeResponseRefusal();
     if (refusal) {
@@ -836,11 +842,14 @@ function sendResponse(
   ok: boolean,
   payload?: unknown,
   error?: NonNullable<ResponseFrame['error']>,
+  resourceState?: ResourceReadStamp,
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   const frame: ResponseFrame = { type: 'res', id, ok };
-  if (ok) frame.payload = payload;
-  else frame.error = error;
+  if (ok) {
+    frame.payload = payload;
+    if (resourceState) frame.resourceState = resourceState;
+  } else frame.error = error;
   ws.send(JSON.stringify(frame));
 }
 
@@ -855,15 +864,45 @@ function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
   ws.send(JSON.stringify(frame));
 }
 
+function broadcastResourceChanges(
+  payload: import('@farmslot/protocol').ResourceChangedPayload,
+  only?: WebSocket,
+): void {
+  if (!activeAuthRuntime) return;
+  for (const [ws, state] of clients) {
+    if ((only && ws !== only) || ws.readyState !== WebSocket.OPEN) continue;
+    try {
+      const changes = payload.changes.filter(({ key }) =>
+        canReadResourceKey(activeAuthRuntime!, state, key),
+      );
+      if (!changes.length) continue;
+      const frame: EventFrame = {
+        type: 'event',
+        event: Events.RESOURCE_CHANGED,
+        payload: { ...payload, changes },
+        seq: ++eventSeq,
+      };
+      ws.send(JSON.stringify(frame), (error) => {
+        // A failed notice cannot leave a live socket silently out of sync.
+        if (error) ws.terminate();
+      });
+    } catch (error) {
+      console.error(
+        `[server] resource authorization failed for ${state.id}: ${(error as Error).message}`,
+      );
+      ws.close(1011, 'Resource synchronization requires reconnect');
+    }
+  }
+}
+
 export function broadcast(frame: EventFrame, ownerId?: string, ownerGeneration?: number): void {
+  if (frame.event === Events.RESOURCE_CHANGED) {
+    broadcastResourceChanges(frame.payload as import('@farmslot/protocol').ResourceChangedPayload);
+    return;
+  }
   const payload: unknown = frame.payload;
   noteRunEvent(frame.event, payload);
-  // fleet.updated reaches only principals that may read sources.status.
-  const outgoing =
-    frame.event === Events.FLEET_UPDATED && payload && typeof payload === 'object'
-      ? { ...frame, payload: withSourceChanges(payload) }
-      : frame;
-  const msg = JSON.stringify(outgoing);
+  const msg = JSON.stringify(frame);
   let authorizationFaultLogged = false;
   for (const [ws, state] of clients) {
     if (ws.readyState !== WebSocket.OPEN || activeAuthRuntime === null) continue;

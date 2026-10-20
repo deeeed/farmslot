@@ -9,6 +9,47 @@ import {
   GATEWAY_TOKEN_STORAGE_KEY,
 } from './gateway-url.js';
 
+test('resource reads retain frame stamps, ordinary reads retain payloads and abort drops late replies', async (t) => {
+  const fake = installFakeGateway(t);
+  const { GatewayClient, gateway } = await import('./gateway-client.js');
+  const client = new GatewayClient();
+  t.after(() => {
+    client.disconnect();
+    gateway.disconnect();
+  });
+  await client.setAuthCredentials({ token: 'resource-test' });
+  const connected = new Promise<void>((resolve) =>
+    client.onConnectionChange((state) => {
+      if (state === 'connected') resolve();
+    }),
+  );
+  client.connect();
+  await connected;
+  const socket = fake.sockets.at(-1)!;
+  const stamp = {
+    epoch: 'test',
+    dependencies: [{ key: { family: 'sources', scope: 'farm' }, revision: 2 }],
+  };
+  const resource = client.requestResource('sources.status', {});
+  socket.response(socket.sent.at(-1)!.id, { revision: 2 }, stamp);
+  assert.deepEqual(await resource, { data: { revision: 2 }, resourceState: stamp });
+  const ordinary = client.request('sources.status');
+  socket.response(socket.sent.at(-1)!.id, { revision: 2 }, stamp);
+  assert.deepEqual(await ordinary, { revision: 2 });
+  const controller = new AbortController();
+  const pending = assert.rejects(
+    client.requestResource('sources.status', {}, controller.signal),
+    /aborted/,
+  );
+  const id = socket.sent.at(-1)!.id;
+  controller.abort();
+  socket.response(id, { revision: 1 }, stamp);
+  await pending;
+  const before = socket.sent.length;
+  await assert.rejects(client.requestResource('sources.status', {}, controller.signal), /aborted/);
+  assert.equal(socket.sent.length, before);
+});
+
 test('sign-out disconnects, rejects pending work, survives refresh and allows deliberate login', async (t) => {
   const fakeGateway = installFakeGateway(t, 'operator');
   const { store } = fakeGateway;

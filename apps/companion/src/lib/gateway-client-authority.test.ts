@@ -49,8 +49,10 @@ class Socket {
     this.readyState = 3;
     this.onclose?.({ code });
   }
-  response(id: string, payload: unknown) {
-    this.onmessage?.({ data: JSON.stringify({ type: 'res', id, ok: true, payload }) });
+  response(id: string, payload: unknown, resourceState?: ResponseFrame['resourceState']) {
+    this.onmessage?.({
+      data: JSON.stringify({ type: 'res', id, ok: true, payload, resourceState }),
+    });
   }
   failure(id: string, error: NonNullable<ResponseFrame['error']>) {
     this.onmessage?.({ data: JSON.stringify({ type: 'res', id, ok: false, error }) });
@@ -80,6 +82,56 @@ function auth(
   };
 }
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test('resource frames preserve stamps and cancellation covers connection waits and pending reads', async () => {
+  const originalSocket = globalThis.WebSocket;
+  globalThis.WebSocket = Socket as unknown as typeof WebSocket;
+  const { GatewayClient } = await import('./gateway-client');
+  const client = new GatewayClient('ws://localhost:19777', { token: 'admin' });
+  try {
+    const preAborted = new AbortController();
+    preAborted.abort();
+    const before = Socket.sockets.length;
+    await assert.rejects(
+      client.requestResource('sources.status', {}, preAborted.signal),
+      /aborted/,
+    );
+    assert.equal(Socket.sockets.length, before);
+    const waiting = new AbortController();
+    const cancelledWait = assert.rejects(
+      client.requestResource('sources.status', {}, waiting.signal),
+      /aborted/,
+    );
+    waiting.abort();
+    await cancelledWait;
+    const socket = Socket.sockets.at(-1)!;
+    socket.open();
+    socket.response(socket.sent[0].id, auth('admin', 'farm'));
+    await settle();
+    const stamp = {
+      epoch: 'test',
+      dependencies: [{ key: { family: 'sources' as const, scope: 'farm' as const }, revision: 2 }],
+    };
+    const resource = client.requestResource('sources.status', {});
+    socket.response(socket.sent.at(-1)!.id, { revision: 2 }, stamp);
+    assert.deepEqual(await resource, { data: { revision: 2 }, resourceState: stamp });
+    const ordinary = client.request('sources.status');
+    socket.response(socket.sent.at(-1)!.id, { revision: 2 }, stamp);
+    assert.deepEqual(await ordinary, { revision: 2 });
+    const controller = new AbortController();
+    const pending = assert.rejects(
+      client.requestResource('sources.status', {}, controller.signal),
+      /aborted/,
+    );
+    const id = socket.sent.at(-1)!.id;
+    controller.abort();
+    socket.response(id, { revision: 1 }, stamp);
+    await pending;
+  } finally {
+    client.disconnect();
+    globalThis.WebSocket = originalSocket;
+  }
+});
 
 test('native authentication is published before listeners and never sends a farm bootstrap request', async () => {
   const originalSocket = globalThis.WebSocket;

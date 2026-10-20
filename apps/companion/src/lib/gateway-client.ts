@@ -2,6 +2,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import {
   type EventFrame,
+  Events,
   type Frame,
   type GatewayAuthConnectResult,
   hasAuthErrorCode,
@@ -13,6 +14,11 @@ import {
   type ResponseFrame,
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
+import type {
+  ResourceReadMethod,
+  ResourceReadOptions,
+  ResourceReadResult,
+} from '@farmslot/protocol/client-cache';
 
 import { gatewaySupportsPing } from './gateway-connection-test';
 import { connectionWaitTerminalError } from './gateway-connection-wait';
@@ -43,11 +49,20 @@ interface PendingRequest {
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  includeResourceState?: boolean;
+  cleanup?: () => void;
 }
 
 const DEFAULT_TIMEOUT = 15_000;
 const MAX_BACKOFF = 30_000;
 export class GatewayClient {
+  private lastAuthentication?: GatewayAuthConnectResult;
+  get authenticatedConnection(): GatewayAuthConnectResult | undefined {
+    return this.lastAuthentication;
+  }
+  get resourceChanges() {
+    return this.lastAuthentication?.capabilities.resourceChanges;
+  }
   /** Measurement only; production builds do not allocate or run the byte counter. */
   readonly offlineBaseline =
     typeof __DEV__ !== 'undefined' && __DEV__
@@ -105,6 +120,7 @@ export class GatewayClient {
       clientKind: 'companion',
       token,
     });
+    this.lastAuthentication = result;
     this.auth.token = token;
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
@@ -312,6 +328,7 @@ export class GatewayClient {
       }
     }
     if (this.ws !== socket || this.generation !== generation) return;
+    this.lastAuthentication = result;
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
@@ -345,26 +362,42 @@ export class GatewayClient {
     method: string,
     params?: unknown,
     timeout = DEFAULT_TIMEOUT,
+    options?: ResourceReadOptions,
   ): Promise<T> {
+    if (options?.signal?.aborted) throw new Error('Resource read aborted');
     if (this.personSession?.session && !isAuthenticationEntry(method))
       return this.personSession.withAccess(async (token) => {
         if (this.auth.token !== token) await this.acceptAccess(token);
-        return this.requestRaw<T>(method, params, timeout);
+        return this.requestRaw<T>(method, params, timeout, options);
       });
-    return this.requestRaw<T>(method, params, timeout);
+    return this.requestRaw<T>(method, params, timeout, options);
+  }
+
+  requestResource<T>(
+    method: ResourceReadMethod,
+    params: unknown,
+    signal?: AbortSignal,
+  ): Promise<ResourceReadResult<T>> {
+    return this.request<ResourceReadResult<T>>(method, params, DEFAULT_TIMEOUT, {
+      includeResourceState: true,
+      signal,
+    });
   }
 
   private async requestRaw<T = unknown>(
     method: string,
     params?: unknown,
     timeout = DEFAULT_TIMEOUT,
+    options?: ResourceReadOptions,
   ): Promise<T> {
+    if (options?.signal?.aborted) throw new Error('Resource read aborted');
     const generation = this.generation;
     if (!isAuthenticationEntry(method) && this.state !== 'connected') {
-      await this.waitForConnected(timeout);
+      await this.waitForConnected(timeout, options?.signal);
     }
 
     if (generation !== this.generation) throw new Error('Gateway identity changed before request');
+    if (options?.signal?.aborted) throw new Error('Resource read aborted');
     if (!workspaceAllowsMethod(this.access, method, params))
       throw new Error('This account cannot access farm controls');
 
@@ -376,8 +409,16 @@ export class GatewayClient {
     const frame: RequestFrame = { type: 'req', id, method, params };
 
     const result = await new Promise<T>((resolve, reject) => {
+      const cleanup = () => options?.signal?.removeEventListener('abort', abort);
+      const abort = () => {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        cleanup();
+        reject(new Error('Resource read aborted'));
+      };
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        cleanup();
         reject(new Error(`Request ${method} timed out after ${timeout}ms`));
       }, timeout);
 
@@ -385,7 +426,10 @@ export class GatewayClient {
         resolve: resolve as (v: unknown) => void,
         reject,
         timer,
+        includeResourceState: options?.includeResourceState,
+        cleanup,
       });
+      options?.signal?.addEventListener('abort', abort, { once: true });
 
       this.offlineBaseline?.sent(frame);
       this.ws!.send(JSON.stringify(frame));
@@ -415,7 +459,8 @@ export class GatewayClient {
     };
   }
 
-  private waitForConnected(timeout: number): Promise<void> {
+  private waitForConnected(timeout: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(new Error('Resource read aborted'));
     if (this.disposed) return Promise.reject(new Error('Client disconnected'));
     if (this.pausedForBackground) {
       return Promise.reject(new Error('Gateway paused while app is in the background'));
@@ -434,6 +479,7 @@ export class GatewayClient {
         settled = true;
         clearTimeout(timer);
         unsubscribe?.();
+        signal?.removeEventListener('abort', abort);
         if (error) {
           reject(error);
           return;
@@ -444,6 +490,8 @@ export class GatewayClient {
         const detail = this.lastConnectionError ? ` Last error: ${this.lastConnectionError}` : '';
         finish(new Error(`Gateway did not connect within ${timeout}ms.${detail}`));
       }, timeout);
+      const abort = () => finish(new Error('Resource read aborted'));
+      signal?.addEventListener('abort', abort, { once: true });
 
       unsubscribe = this.onConnectionChange((state) => {
         if (state === 'connected') finish();
@@ -465,16 +513,25 @@ export class GatewayClient {
     if (!req) return;
     this.pending.delete(frame.id);
     clearTimeout(req.timer);
+    req.cleanup?.();
 
     if (frame.ok) {
-      req.resolve(frame.payload);
+      req.resolve(
+        req.includeResourceState
+          ? { data: frame.payload, resourceState: frame.resourceState }
+          : frame.payload,
+      );
     } else {
       req.reject(Object.assign(new Error(frame.error?.message ?? 'Unknown error'), frame.error));
     }
   }
 
   private handleEvent(frame: EventFrame): void {
-    if (this.access !== 'farm' || this.state !== 'connected') return;
+    if (
+      this.state !== 'connected' ||
+      (this.access !== 'farm' && frame.event !== Events.RESOURCE_CHANGED)
+    )
+      return;
     const subs = this.eventSubs.get(frame.event);
     if (!subs) return;
     for (const cb of subs) {
@@ -511,6 +568,7 @@ export class GatewayClient {
   private rejectAllPending(reason: string): void {
     for (const req of this.pending.values()) {
       clearTimeout(req.timer);
+      req.cleanup?.();
       req.reject(new Error(reason));
     }
     this.pending.clear();
@@ -541,6 +599,7 @@ export class GatewayClient {
   }
 
   private clearAuthority(): void {
+    this.lastAuthentication = undefined;
     this.principal = null;
     this.access = 'none';
   }

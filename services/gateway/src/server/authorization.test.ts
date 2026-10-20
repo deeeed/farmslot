@@ -28,6 +28,7 @@ const { pairingCreate } = await import('../fleet/pairing.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import('../security/auth.js');
 const { broadcastEvent, createWebSocketServer } = await import('../server.js');
 const { resolveWebhookWorkOriginator } = await import('../webhook.js');
+const { resourceRevisions } = await import('../resources/revisions.js');
 
 test('only an authenticated node can advertise exec cancellation', { timeout: 4000 }, async () => {
   const runtime = isolatedRuntime();
@@ -73,6 +74,7 @@ test('authorization denial survives the response frame with a teaching Next acti
     assert.equal(auth.ok, true);
     assert.deepEqual((auth.payload as { principal?: unknown }).principal, {
       id: principal.id,
+      generation: 0,
       displayName: 'sam',
       subjectKind: 'person',
       roles: [{ role: 'operator', scope: { kind: 'global' } }],
@@ -830,6 +832,161 @@ function personAccess(runtime: ReturnType<typeof isolatedRuntime>, credential: s
     deviceKind: 'cli',
   }).accessToken;
 }
+
+test('resource capabilities and principal generations reach farm, node and native-only connections', async () => {
+  const runtime = isolatedRuntime();
+  const admin = runtime.writer.createPrincipal(
+    { type: 'service', displayName: 'capability-admin' },
+    [{ role: 'admin', scope: { kind: 'global' } }],
+  );
+  const owner = runtime.writer.createPrincipal(
+    { type: 'service', displayName: 'capability-owner' },
+    [],
+  );
+  const node = runtime.writer.createPrincipal(
+    {
+      type: 'node',
+      displayName: 'capability-node',
+      machine: 'capability-node',
+      nativeOwnerPrincipalId: owner.id,
+    },
+    [],
+  );
+  const subjects = [
+    { principal: admin, clientKind: 'ui', access: 'farm' },
+    { principal: owner, clientKind: 'companion', access: 'native' },
+    { principal: node, clientKind: 'node', access: 'none' },
+  ];
+  const issued = subjects.map((subject) => ({
+    ...subject,
+    credential: runtime.writer.issueCredential(subject.principal.id, 'capability-proof'),
+  }));
+  const harness = await startServer(runtime);
+  try {
+    for (const subject of issued) {
+      const ws = await connect(harness.url);
+      const events: EventFrame[] = [];
+      ws.on('message', (raw) => {
+        const frame = JSON.parse(raw.toString()) as EventFrame;
+        if (frame.type === 'event') events.push(frame);
+      });
+      const response = await request(ws, Methods.AUTH_CONNECT, {
+        clientKind: subject.clientKind,
+        token: subject.credential.secret,
+      });
+      assert.equal(response.ok, true);
+      const auth = response.payload as GatewayAuthConnectResult;
+      assert.equal(auth.principal?.generation, 0);
+      assert.equal(auth.capabilities.workspaceAccess, subject.access);
+      assert.deepEqual(auth.capabilities.resourceChanges, {
+        version: 1,
+        epoch: resourceRevisions.epoch,
+        versionLists: false,
+      });
+      assert.equal(auth.capabilities.batchedContent, false);
+      if (subject.access === 'native') {
+        await request(ws, Methods.SOURCES_STATUS, {});
+        assert(!events.some((event) => event.event === Events.HELLO));
+      }
+      ws.close();
+      await onceClose(ws);
+    }
+  } finally {
+    await harness.close();
+  }
+});
+
+test('resource.changed uses the key read authorization and read replies carry revision metadata', async () => {
+  const runtime = isolatedRuntime();
+  const admin = runtime.writer.createPrincipal({ type: 'service', displayName: 'resource-admin' }, [
+    { role: 'admin', scope: { kind: 'global' } },
+  ]);
+  const operator = runtime.writer.createPrincipal(
+    { type: 'service', displayName: 'resource-operator' },
+    [{ role: 'operator', scope: { kind: 'global' } }],
+  );
+  const adminCredential = runtime.writer.issueCredential(admin.id, 'admin-resource-proof');
+  const operatorCredential = runtime.writer.issueCredential(operator.id, 'operator-resource-proof');
+  const harness = await startServer(runtime);
+  try {
+    const allowed = await connect(harness.url);
+    const denied = await connect(harness.url);
+    await request(allowed, Methods.AUTH_CONNECT, {
+      clientKind: 'ui',
+      token: adminCredential.secret,
+    });
+    await request(denied, Methods.AUTH_CONNECT, {
+      clientKind: 'ui',
+      token: operatorCredential.secret,
+    });
+    const snapshot = await request(allowed, Methods.SOURCES_STATUS, {});
+    assert.equal(snapshot.ok, true);
+    assert.equal(snapshot.resourceState?.epoch, resourceRevisions.epoch);
+    assert.deepEqual(snapshot.resourceState?.dependencies, [
+      {
+        key: { family: 'sources', scope: 'farm' },
+        revision: resourceRevisions.revision({ family: 'sources', scope: 'farm' }),
+      },
+    ]);
+    const deniedNotices: EventFrame[] = [];
+    denied.on('message', (raw) => {
+      const frame = JSON.parse(raw.toString()) as EventFrame;
+      if (frame.event === Events.RESOURCE_CHANGED) deniedNotices.push(frame);
+    });
+    const received = new Promise<EventFrame>((resolve) =>
+      allowed.on('message', (raw) => {
+        const frame = JSON.parse(raw.toString()) as EventFrame;
+        if (frame.event === Events.RESOURCE_CHANGED) resolve(frame);
+      }),
+    );
+    broadcastEvent(Events.RESOURCE_CHANGED, {
+      version: 1,
+      epoch: resourceRevisions.epoch,
+      changes: [
+        { key: { family: 'sources', scope: 'farm' }, revision: 999, kind: 'updated' },
+        { key: { family: 'run', runId: 'not-yet-migrated' }, revision: 1, kind: 'updated' },
+      ],
+    });
+    const frame = await received;
+    assert.deepEqual((frame.payload as { changes: unknown[] }).changes, [
+      { key: { family: 'sources', scope: 'farm' }, revision: 999, kind: 'updated' },
+    ]);
+    // This response is a websocket ordering barrier, rather than a fixed absence wait.
+    const refusal = await request(denied, Methods.SOURCES_STATUS, {});
+    assert.equal(refusal.error?.code, 'AUTH_FORBIDDEN');
+    assert.equal(deniedNotices.length, 0);
+    allowed.close();
+    denied.close();
+    await Promise.all([onceClose(allowed), onceClose(denied)]);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('a resource authorization fault forces receiver resynchronization', async () => {
+  const runtime = isolatedRuntime();
+  const harness = await startServer(runtime);
+  const original = runtime.resolver.resolveSessionPrincipal;
+  try {
+    const ws = await connect(harness.url);
+    await request(ws, Methods.AUTH_CONNECT, { clientKind: 'ui' });
+    runtime.resolver.resolveSessionPrincipal = () => {
+      throw new Error('resource authorization fault proof');
+    };
+    const closed = onceClose(ws);
+    broadcastEvent(Events.RESOURCE_CHANGED, {
+      version: 1,
+      epoch: resourceRevisions.epoch,
+      changes: [{ key: { family: 'sources', scope: 'farm' }, revision: 1, kind: 'updated' }],
+    });
+    const outcome = await closed;
+    assert.equal(outcome.code, 1011);
+    assert.equal(outcome.reason, 'Resource synchronization requires reconnect');
+  } finally {
+    runtime.resolver.resolveSessionPrincipal = original;
+    await harness.close();
+  }
+});
 
 function isolatedRuntime() {
   const runtime = createGatewayAuthRuntime({

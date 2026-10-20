@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add the experimental ADR-071 resource query cache and store seam, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases.
+
 - `gateActionsForReadiness`, `gateReasonsForAction`, `advancingGateAction` and `acceptReviewFindingsAvailable` are exported: the one gate action availability rule the gateway and clients share. `RunGateReadiness` adds `findings` and `findingsDigest`; the publication approval adds `acceptedFindings`, `reason`, `headSha` and `approver`; `run.resolveDecision` takes `findingsDigest`, which `buildRunResolveDecisionParams` fills in for `approve-publish-unresolved` (ADR-065 Amendment 8).
 - `RuntimeCapabilityLease.cleanupUnreachable` holds the `cleanupFailure` of a release action that could not reach the slot's node. The gateway retries that cleanup when the node reconnects.
 - Active-development baseline; add user-facing changes here before release or package publication.

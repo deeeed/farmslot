@@ -8,6 +8,8 @@ import type { TestContext } from 'node:test';
 
 export interface FakeGatewaySocket {
   readyState: number;
+  readonly sent: Array<{ id: string; method: string }>;
+  response(id: string, payload: unknown, resourceState?: unknown): void;
 }
 
 export interface FakeGateway {
@@ -52,6 +54,7 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
     static OPEN = 1;
     static CONNECTING = 0;
     readyState = 0;
+    readonly sent: Array<{ id: string; method: string }> = [];
     constructor() {
       super();
       sockets.push(this);
@@ -62,6 +65,7 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
     }
     send(text: string) {
       const request = JSON.parse(text);
+      this.sent.push(request);
       if (request.method !== 'auth.connect') return;
       fake.tokens.push(request.params?.token);
       if (fake.holdAuth) return;
@@ -89,6 +93,19 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
     }
     close() {
       this.readyState = 3;
+    }
+    response(id: string, payload: unknown, resourceState?: unknown) {
+      this.dispatchEvent(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'res',
+            id,
+            ok: true,
+            payload,
+            resourceState,
+          }),
+        }),
+      );
     }
     gatewayRestart() {
       this.readyState = 3;
