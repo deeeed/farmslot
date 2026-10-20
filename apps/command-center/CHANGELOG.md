@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add reproducible client-store startup, reconnect and gate-diff measurements to the browser debug helper.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.15.0 - 2026-10-19
