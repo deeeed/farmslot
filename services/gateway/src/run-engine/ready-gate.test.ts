@@ -686,6 +686,36 @@ function sourceGateFixture(t: TestContext) {
   };
 }
 
+for (const action of ['abort', 'hold']) {
+  test(`a superseded publication gate stops before applying ${action} effects`, async (t) => {
+    const { run } = sourceGateFixture(t);
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    let afterReplay: Run | undefined;
+    assert.equal(
+      await executeReadyGate(run.id, {
+        ensurePackage: async () => prepared,
+        createDecision: async () => {
+          const latest = getRun(run.id)!;
+          afterReplay = structuredClone(
+            updateRun(run.id, {
+              status: 'blocked',
+              engineState: {
+                ...latest.engineState,
+                generation: (latest.engineState?.generation ?? 0) + 1,
+              },
+            }),
+          );
+          return action;
+        },
+      }),
+      'abort',
+    );
+    assert.deepEqual(getRun(run.id), afterReplay, 'the stale gate cannot mutate replay state');
+  });
+}
+
 for (const action of ['approve-publish', 'approve-publish-unresolved']) {
   test(`accepted ${action} resumes its exact package without issuing another decision`, async (t) => {
     const { run } = sourceGateFixture(t);
