@@ -993,6 +993,30 @@ test('recovery holds a human-gating run while its reviewer is still in flight', 
   assert.equal(calls.broadcasted, 0);
 });
 
+test('recovery clears a settled native run error before holding a gate whose reviewer is in flight', async () => {
+  // TAT-4160 4f0ff296: the publication-review branch skips runtime reconciliation, so the
+  // stale host-stop error from finished reviewers must clear before it.
+  const run = withRecoverableReviewer(
+    minimalActiveRun({
+      ticketOrPr: 'RECOVERY-STALE-NATIVE-ERROR',
+      familyRootTicketOrPr: 'RECOVERY-STALE-NATIVE-ERROR',
+      taskFile: '/tmp/farmslot-recovery-stale-native-error/TASK.md',
+      status: 'human-gating',
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [],
+    }),
+  );
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+  const cleared: string[] = [];
+  deps.clearSettledWorkerError = (runId) => cleared.push(runId);
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(cleared, [run.id]);
+  assert.deepEqual(calls.rearmed, [{ runId: run.id, replayPending: false }]);
+  assert.equal(calls.reconciled, 0);
+});
+
 test('recovery restores and replays a review plan for an active fix pass', async () => {
   const run = minimalActiveRun({
     ticketOrPr: 'RECOVERY-REVIEW-FIX',
