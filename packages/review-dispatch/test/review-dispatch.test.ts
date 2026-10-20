@@ -353,16 +353,13 @@ test('only verified session/head traces seed exact PR provenance, without select
       Run,
       'familyId' | 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'
     >;
-  const familyLineage = { ...lineage, familyId: 'family-a' };
-  assert.deepEqual(reviewLineagesForRun(run(trace)), [familyLineage]);
+  assert.deepEqual(reviewLineagesForRun(run(trace)), [lineage]);
   assert.deepEqual(reviewLineagesForRun(run({ ...trace, lastReviewedHeadSha: undefined })), []);
   assert.deepEqual(reviewLineagesForRun(run({ ...trace, continuity: 'refused' })), []);
   const runs = [run(trace), run({ ...trace, reviewId: 'lineage-b', runner: 'claude' })];
   const pr = { host: 'github.com', repo: 'owner/repo', number: 1 };
   assert.equal(reviewRequestContextForPR(runs, pr), undefined);
-  assert.deepEqual(reviewRequestContextForPR(runs, pr, 'lineage-a'), {
-    reviewLineages: [familyLineage],
-  });
+  assert.deepEqual(reviewRequestContextForPR(runs, pr, 'lineage-a'), { reviewLineages: [lineage] });
   assert.equal(reviewRequestContextForPR(runs, { ...pr, number: 2 }), undefined);
 });
 

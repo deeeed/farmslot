@@ -8,11 +8,11 @@ import type {
 
 import type { ReviewDispatchSequenceRole } from './types.js';
 
-/** A lineage is its run family plus `reviewId`; contexts without a family keep their PR key. */
+/** A lineage is keyed by its PR once there is one, else by its run family, plus `reviewId`. */
 export function reviewLineageKey(context: ReviewContinuationContext): string {
-  return context.familyId
-    ? `${context.familyId}::${context.reviewId}`
-    : `${context.repository?.toLowerCase()}#${context.prNumber}::${context.reviewId}`;
+  return context.repository
+    ? `${context.repository.toLowerCase()}#${context.prNumber}::${context.reviewId}`
+    : `${context.familyId}::${context.reviewId}`;
 }
 
 /** Only retained session/head evidence can seed WARM context; a PR is recorded once present. */
@@ -32,12 +32,12 @@ export function reviewLineagesForRun(
       !['fresh', 'resumed'].includes(trace.continuity)
     )
       return;
+    // A lineage names its PR once there is one; before that, its run family.
     const context: ReviewContinuationContext = {
       ...(trace.repository && trace.prNumber
         ? { repository: trace.repository, prNumber: trace.prNumber }
-        : {}),
+        : { familyId: run.familyId }),
       reviewId: trace.reviewId,
-      familyId: run.familyId,
     };
     lineages.set(reviewLineageKey(context), context);
   };
