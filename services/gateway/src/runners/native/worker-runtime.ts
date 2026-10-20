@@ -2,11 +2,13 @@ import { nativeWorkerBindingIsHeld, type Run } from '@farmslot/protocol';
 
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 
-import { readNativeWorkerSnapshot } from './worker-control.js';
+import { clearSettledWorkerError, readNativeWorkerSnapshot } from './worker-control.js';
 
 /** Native runtime state lives in the host. Process death does not finish the task. */
 export async function reconcileNativeRunAgentRuntime(run: Run): Promise<void> {
   assertNativeRunOwner(run);
+  // From recorded state, so it holds even while the execution node is still reconnecting.
+  clearSettledWorkerError(run.id);
   for (const context of run.agentContexts ?? []) {
     const binding = context.nativeSession;
     // Dispatch and resume own their durable in-flight intents. Subtasks share

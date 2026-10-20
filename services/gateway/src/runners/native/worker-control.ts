@@ -9,6 +9,7 @@ import {
   type NativeSessionInfo,
   type NativeSessionReadResult,
   type NativeSessionSendResult,
+  nativeWorkerBindingIsHeld,
   type NativeWorkerSessionBinding,
   type Run,
 } from '@farmslot/protocol';
@@ -106,8 +107,9 @@ export async function readNativeWorkerSnapshot(
       item.nativeSession?.sessionId === latest.sessionId &&
       item.nativeSession.generation === latest.generation;
     const own = current.agentContexts?.find(observed);
-    // A failure a relaunch has taken over stays on its own context, not on the run.
-    const runError = own && workerContextSuperseded(current, own) ? current.error : message;
+    // A failure a relaunch has taken over, or one after its context finished, stays on its own
+    // context, not on the run.
+    const runError = own && workerFailureSettled(current, own) ? current.error : message;
     if (
       current.error !== runError ||
       current.agentContexts?.some((item) => observed(item) && item.error !== message)
@@ -140,20 +142,25 @@ function workerContextSuperseded(run: Run, context: AgentContext): boolean {
   );
 }
 
+/** The context finished, or a relaunch took it over: its later failure is not the run's. */
+function workerFailureSettled(run: Run, context: AgentContext): boolean {
+  return context.status === 'complete' || workerContextSuperseded(run, context);
+}
+
 /**
- * Once a relaunched native worker is running, the failure its predecessor wrote to run.error no
- * longer describes the run. Any other run.error stays.
+ * Clear a run.error that only settled native workers carry: a finished worker or reviewer whose
+ * host stopped later, or one a running relaunch took over. A closed session's old failure does
+ * not keep it. Any other run.error stays.
  */
-export function clearSupersededWorkerError(runId: string): void {
+export function clearSettledWorkerError(runId: string): void {
   const run = getRun(runId);
+  const carriers = run?.error
+    ? (run.agentContexts ?? []).filter((item) => item.nativeSession && item.error === run.error)
+    : [];
   if (
-    run?.error &&
-    run.agentContexts?.some(
-      (item) =>
-        item.status === 'failed' &&
-        item.nativeSession &&
-        item.error === run.error &&
-        workerContextSuperseded(run, item),
+    carriers.some((item) => workerFailureSettled(run!, item)) &&
+    carriers.every(
+      (item) => workerFailureSettled(run!, item) || !nativeWorkerBindingIsHeld(item.nativeSession!),
     )
   )
     updateRun(runId, { error: undefined });
