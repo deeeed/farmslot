@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A capability cleanup whose release action could not reach its node is retried when the node reconnects. A cleanup that recovery refused (unreadable catalog, changed provenance) still waits for an operator. Before, the lease stayed in `error` and refused every acquire, its own run's included, until someone released it by hand: each gateway restart reconciled before macpro reconnected, so TAT-4145 run bda11b1a's terminal-browser cleanup on macpro-mmt-1 failed with "Resource node macpro is disconnected" and blocked the run's proof recording.
 - Publication's secret gate blocks a recovery phrase only when its BIP-39 checksum is valid, through `@farmslot/handoff`'s scrub floor. A run of wordlist words across recipe intent prose, keys and node ids no longer refuses publication as `srp` unless some window of it happens to be checksum-valid.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

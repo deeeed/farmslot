@@ -1,7 +1,7 @@
 # Architecture Decision Records
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-10-13
+**Last updated:** 2026-10-20
 **Stale by:** 2026-11-13
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
@@ -82,6 +82,13 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [068](068-project-recipe-binding-and-conformance.md)     | Project recipe binding and conformance                                  | Accepted |
 | [069](069-declared-pinned-sources.md)                    | Declared and pinned farm sources                                        | Accepted |
 | [071](071-gateway-change-notifications.md)               | Gateway change notifications and shared client cache                    | Accepted |
+
+ADR-071 has an Accepted [persistent client store amendment](071-gateway-change-notifications.md#amendment-1-2026-10-20-persistent-client-store).
+Its specification gains an [Offline client store](../reference/gateway-change-notifications.md#offline-client-store)
+section, which describes offline data on Command Center, its desktop app and
+Companion end to end. ADR-009 has an Accepted
+[conditional file edits amendment](009-slot-workspace.md#amendment-1-2026-10-20-conditional-file-edits)
+that replaces its read-only decision.
 
 ADR-039 has an Accepted [gateway-retained artifact amendment](039-run-portable-bundles.md#amendment-1-2026-10-15-gateway-retained-run-artifacts) and [normative retention specification](../reference/retained-run-artifacts.md). The lead accepted the amendment on 2026-10-15 at `978e2e27`; implementation remains pending.
 

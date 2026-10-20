@@ -252,6 +252,20 @@ function blocksAcquisition(lease: RuntimeCapabilityLease): boolean {
   );
 }
 
+/**
+ * Record a provider cleanup that ran and failed. A failure to reach the slot's
+ * node is also kept in `cleanupUnreachable`, so the node's reconnect retries it.
+ */
+function recordCleanupFailure(
+  lease: RuntimeCapabilityLease,
+  result: RuntimeCapabilityActionResult,
+  fallback: string,
+): string {
+  lease.cleanupFailure = result.detail ?? fallback;
+  lease.cleanupUnreachable = result.unavailable ? lease.cleanupFailure : undefined;
+  return lease.cleanupFailure;
+}
+
 function holdsProvider(lease: RuntimeCapabilityLease): boolean {
   return ACTIVE_STATES.has(lease.state) && lease.state !== 'queued';
 }
@@ -1343,21 +1357,25 @@ export class RuntimeCapabilityRegistry {
         sameOwner.updatedAt = this.timestamp();
         if (!cleanup.ok) {
           sameOwner.state = 'error';
-          sameOwner.cleanupFailure = cleanup.detail ?? 'unhealthy provider cleanup failed';
+          const failure = recordCleanupFailure(
+            sameOwner,
+            cleanup,
+            'unhealthy provider cleanup failed',
+          );
           this.recordEvent(snapshot, {
             kind: 'cleanup-failed',
             slotId: params.slotId,
             capabilityId: entry.id,
             leaseId: sameOwner.id,
             owner: sameOwner.owner,
-            detail: sameOwner.cleanupFailure,
+            detail: failure,
           });
           return {
             ok: false,
             conflict: {
               kind: 'unavailable',
               capabilityId: entry.id,
-              reason: sameOwner.cleanupFailure,
+              reason: failure,
             },
           };
         }
@@ -1672,7 +1690,7 @@ export class RuntimeCapabilityRegistry {
         warmLease.keepWarmUntil = undefined;
         if (!cleanup.ok) {
           warmLease.state = 'error';
-          warmLease.cleanupFailure = cleanup.detail ?? 'warm-provider cleanup failed';
+          const failure = recordCleanupFailure(warmLease, cleanup, 'warm-provider cleanup failed');
           warmLease.updatedAt = this.timestamp();
           await this.rollbackLeases(
             snapshot,
@@ -1686,7 +1704,7 @@ export class RuntimeCapabilityRegistry {
             conflict: {
               kind: 'unavailable',
               capabilityId: entry.id,
-              reason: warmLease.cleanupFailure,
+              reason: failure,
             },
           };
         }
@@ -2620,7 +2638,7 @@ export class RuntimeCapabilityRegistry {
       lease.updatedAt = this.timestamp();
       if (!cleanup.ok) {
         lease.state = 'error';
-        lease.cleanupFailure = cleanup.detail ?? 'acquisition rollback failed';
+        recordCleanupFailure(lease, cleanup, 'acquisition rollback failed');
         stillHolding.add(lease.id);
         this.recordEvent(snapshot, {
           kind: 'cleanup-failed',
@@ -2713,6 +2731,7 @@ export class RuntimeCapabilityRegistry {
           ? undefined
           : 'Workspace has unowned occupants';
         lease.cleanupFailure = undefined;
+        lease.cleanupUnreachable = undefined;
         lease.health = {
           state: 'unknown',
           checkedAt: lease.releasedAt,
@@ -3046,12 +3065,16 @@ export class RuntimeCapabilityRegistry {
         }
         if (!actionResult.ok) {
           lease.state = 'error';
-          lease.cleanupFailure = actionResult.detail ?? 'provider release action failed';
+          const failure = recordCleanupFailure(
+            lease,
+            actionResult,
+            'provider release action failed',
+          );
           lease.updatedAt = this.timestamp();
           failures.push({
             leaseId: lease.id,
             capabilityId: lease.capabilityId,
-            reason: lease.cleanupFailure,
+            reason: failure,
           });
           stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
@@ -3066,6 +3089,7 @@ export class RuntimeCapabilityRegistry {
         }
         lease.state = 'released';
         lease.cleanupFailure = undefined;
+        lease.cleanupUnreachable = undefined;
         if (releaseActionRan) lease.providerCleanupDeferred = undefined;
         lease.releasedAt = this.timestamp();
         lease.updatedAt = lease.releasedAt;
@@ -3125,6 +3149,31 @@ export class RuntimeCapabilityRegistry {
           lease.providerCleanupDeferred !== undefined ||
           (lease.state === 'error' && Boolean(lease.cleanupFailure))) &&
         (!wanted || wanted.has(lease.capabilityId)),
+    );
+  }
+
+  /**
+   * Retry, on these slots, the cleanups whose release action could not reach
+   * the slot's node.
+   *
+   * A failed cleanup is durable and blocks every acquire, the owner's included,
+   * but nothing else retries it once the owner is no longer fenced. Called when
+   * a slot's node reconnects: a gateway restart reconciles leases before remote
+   * nodes are back, so their release action throws "Resource node … is
+   * disconnected" (TAT-4145 run bda11b1a on macpro-mmt-1). Only such failures
+   * are retried. A lease that recovery refused to clean up (catalog unreadable,
+   * provenance changed, ambiguous ownership) may belong to a live run, and
+   * stays for an operator. The warm sweep keeps its guards: a provider another
+   * holder or a dependent still needs is left alone.
+   */
+  async retryFailedCleanup(slotIds: string[]): Promise<WarmSweepSummary> {
+    const wanted = new Set(slotIds);
+    return this.sweepWarmProviders(
+      (lease) =>
+        wanted.has(lease.slotId) &&
+        lease.state === 'error' &&
+        lease.cleanupFailure !== undefined &&
+        lease.cleanupFailure === lease.cleanupUnreachable,
     );
   }
 
@@ -3211,11 +3260,16 @@ export class RuntimeCapabilityRegistry {
           summary.deferred.push(...retiring.map((lease) => structuredClone(lease)));
           continue;
         }
-        const fail = (reason: string, kind: 'recovery-rejected' | 'cleanup-failed') => {
+        const fail = (
+          reason: string,
+          kind: 'recovery-rejected' | 'cleanup-failed',
+          unreachable = false,
+        ) => {
           for (const lease of retiring) {
             lease.keepWarmUntil = undefined;
             lease.state = 'error';
             lease.cleanupFailure = reason;
+            lease.cleanupUnreachable = unreachable ? reason : undefined;
             lease.updatedAt = this.timestamp();
             summary.failures.push({ leaseId: lease.id, capabilityId: lease.capabilityId, reason });
             this.recordEvent(snapshot, {
@@ -3250,12 +3304,17 @@ export class RuntimeCapabilityRegistry {
         }
         const cleanup = await this.releaseProvider(node, entry);
         if (!cleanup.ok) {
-          fail(cleanup.detail ?? 'expired keep-warm cleanup failed', 'cleanup-failed');
+          fail(
+            cleanup.detail ?? 'expired keep-warm cleanup failed',
+            'cleanup-failed',
+            cleanup.unavailable === true,
+          );
           continue;
         }
         for (const lease of retiring) {
           lease.state = 'released';
           lease.cleanupFailure = undefined;
+          lease.cleanupUnreachable = undefined;
           lease.releasedAt = this.timestamp();
           lease.referenceCount = 0;
           lease.wait = undefined;
@@ -3497,6 +3556,7 @@ export class RuntimeCapabilityRegistry {
               lease.releasedAt = lease.updatedAt;
               lease.referenceCount = 0;
               lease.cleanupFailure = undefined;
+              lease.cleanupUnreachable = undefined;
               reclaimed.push(lease);
               this.recordEvent(snapshot, {
                 kind: 'released',
@@ -3508,7 +3568,7 @@ export class RuntimeCapabilityRegistry {
               });
             } else {
               lease.state = 'error';
-              lease.cleanupFailure = cleanup.detail ?? 'restart release cleanup failed';
+              recordCleanupFailure(lease, cleanup, 'restart release cleanup failed');
               this.recordEvent(snapshot, {
                 kind: 'cleanup-failed',
                 slotId,
@@ -3546,14 +3606,18 @@ export class RuntimeCapabilityRegistry {
             let outcome: string;
             if (!cleanup.ok) {
               lease.state = 'error';
-              lease.cleanupFailure =
-                cleanup.detail ?? 'restart cleanup failed after terminal capability cleanup';
+              recordCleanupFailure(
+                lease,
+                cleanup,
+                'restart cleanup failed after terminal capability cleanup',
+              );
               outcome = `provider stop FAILED (${lease.cleanupFailure})`;
             } else {
               lease.state = 'released';
               lease.releasedAt = lease.updatedAt;
               lease.referenceCount = 0;
               lease.cleanupFailure = undefined;
+              lease.cleanupUnreachable = undefined;
               lease.providerCleanupDeferred = undefined;
               lease.keepWarmUntil = undefined;
               reclaimed.push(lease);
@@ -3625,7 +3689,7 @@ export class RuntimeCapabilityRegistry {
             });
           } else {
             lease.state = 'error';
-            lease.cleanupFailure = cleanup.detail ?? 'restart cleanup failed';
+            recordCleanupFailure(lease, cleanup, 'restart cleanup failed');
             this.recordEvent(snapshot, {
               kind: 'cleanup-failed',
               slotId,
