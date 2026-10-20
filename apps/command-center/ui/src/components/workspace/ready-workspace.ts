@@ -26,6 +26,7 @@ import {
 
 import '../diff-viewer/diff-review.js';
 import '../recipe-graph/recipe-graph.js';
+import '../shared/evidence-reviewer.js';
 import '../shared/media-lightbox.js';
 import '../shared/diff-viewer-modal.js';
 import '../reviews/review-loop-timeline.js';
@@ -37,6 +38,11 @@ import { summarizeReviewCounts } from '../../utils/review-gate-display.js';
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import { renderAcceptancePanel } from '../progress-tracker/acceptance-panel.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
+import {
+  type EvidenceReviewerSelection,
+  evidenceReviewerSelection,
+} from '../shared/evidence-reviewer.js';
+import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { ReadyWorkspaceActionPresenter } from './ready-workspace-action-presenter.js';
 import {
@@ -99,6 +105,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _evidenceLoading = true;
   @state() private _evidenceError = '';
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
+  /** The criterion evidence review open over the gate. */
+  @state() private _review: EvidenceReviewerSelection | null = null;
   private _evidenceRequest = 0;
   private _evidenceRead: Promise<void> | undefined;
   private _evidenceLoaded = false;
@@ -293,7 +301,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
           }));
           this._lightboxIndex = index;
           this._lightboxMode = 'single';
-          this._lightboxOpen = true;
+          this._openReview(criterion.id, this._evidenceItems[index]);
         },
       },
     );
@@ -376,6 +384,17 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     if (!payload) return renderReadyWorkspaceEmpty();
     return renderReadyWorkspaceFrame({
       payload,
+      renderReview: () =>
+        this._review
+          ? html`<evidence-reviewer
+              .selection=${this._review}
+              @reviewer-close=${() => (this._review = null)}
+              @reviewer-files=${() => {
+                this._review = null;
+                this._lightboxOpen = true;
+              }}
+            ></evidence-reviewer>`
+          : nothing,
       packagePending: this._packagePending,
       splitPct: this._splitPct,
       recovering: this._isRecovering,
@@ -785,6 +804,24 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
                 if (clipIndex !== undefined) model.cueClip(clipIndex);
                 this._openComparisonSelection(clipIndex !== undefined, media.artifactPath);
               },
+              openProofFile: (claimId, path) => {
+                const model = this._evidenceModel!;
+                model.selectClaim(claimId, path);
+                this._lightboxRecipeRunId = this._evidenceRecipeRunId;
+                this._evidenceItems = [
+                  {
+                    path,
+                    purpose: 'evidence',
+                    url: this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+                    evidenceModel: model,
+                    resolveArtifactUrl: (artifact) =>
+                      this._lightboxArtifactUrl({ path: artifact, purpose: 'evidence' }),
+                  },
+                ];
+                this._lightboxIndex = 0;
+                this._lightboxMode = 'single';
+                this._openReview(claimId, this._evidenceItems[0]);
+              },
               openMoment: (claimId, index) => {
                 this._evidenceModel!.selectClaim(claimId);
                 this._evidenceModel!.cueClip(index);
@@ -824,7 +861,22 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     ];
     this._lightboxIndex = 0;
     this._lightboxMode = 'single';
-    this._lightboxOpen = true;
+    this._openReview(model.selection.claimId, this._evidenceItems[0]);
+  }
+
+  /** One criterion's evidence opens in the shared review, on the chosen file. */
+  private _openReview(claimId: string | undefined, opened: LightboxItem | undefined): void {
+    const model = this._evidenceModel;
+    if (!model || !claimId) {
+      this._lightboxOpen = true;
+      return;
+    }
+    this._review = evidenceReviewerSelection({
+      model,
+      claimId,
+      resolveUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+      opened,
+    });
   }
 
   override _lightboxItems(payload: ReadyGatePayload) {

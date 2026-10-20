@@ -1,4 +1,4 @@
-import { html } from 'lit';
+import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import {
@@ -46,6 +46,7 @@ import './step-inspector.js';
 import './blocked-run-recovery.js';
 import './run-pipeline-mini.js';
 import './run-tag-editor.js';
+import '../shared/evidence-reviewer.js';
 import '../shared/media-lightbox.js';
 import '../shared/step-artifacts.js';
 import '../workspace/review-workspace.js';
@@ -64,7 +65,10 @@ import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
 } from '../progress-tracker/acceptance-panel.js';
-import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
+import {
+  type EvidenceReviewerSelection,
+  evidenceReviewerSelection,
+} from '../shared/evidence-reviewer.js';
 import { isVideoLightboxItem } from '../shared/media-lightbox-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
@@ -1474,7 +1478,7 @@ export class RunDetail extends RunDetailState {
       model,
       recording,
       resolveUrl: this._captureEvidenceResolver(),
-      openedPath: opened?.path,
+      opened,
     };
   }
 
@@ -1482,6 +1486,32 @@ export class RunDetail extends RunDetailState {
    * A criterion chosen in the review becomes the link only when its own files list
    * the recording: the link resolver reopens exactly that pair, and nothing else.
    */
+  /** The run's evidence review shown in the page: every criterion, the first one open. */
+  private _inlineEvidence(): EvidenceReviewerSelection | null {
+    const model = this.evidenceModel;
+    const first = model?.claims[0];
+    if (!model || !first) return null;
+    return evidenceReviewerSelection({
+      model,
+      claimId: first.id,
+      resolveUrl: this._captureEvidenceResolver(),
+    });
+  }
+
+  /** A criterion's files in the gallery, from the in-page review. */
+  private _openClaimFiles(claimId: string): void {
+    const row = runAcceptanceCriterionEvidence(this).find((candidate) => candidate.id === claimId);
+    const criterion = this.evidenceModel?.claims.find((claim) => claim.id === claimId);
+    if (!row?.evidence.length || !criterion) return;
+    this._openAcceptanceEvidence({
+      criterion,
+      evidence: row.evidence,
+      index: 0,
+      evidenceModel: this.evidenceModel ?? undefined,
+    });
+    this._evidenceGallery = true;
+  }
+
   private _selectEvidenceClaim(claimId: string): void {
     const recording = this._evidenceLightboxItems[this._evidenceLightboxIndex];
     const reopenable = runAcceptanceCriterionEvidence(this).some(
@@ -1699,6 +1729,17 @@ export class RunDetail extends RunDetailState {
           now: this._now,
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
+      _renderInlineEvidence: () => {
+        const selection = this._inlineEvidence();
+        return selection
+          ? html`<evidence-reviewer
+              inline
+              .selection=${selection}
+              @reviewer-files=${(event: CustomEvent<{ claimId: string }>) =>
+                this._openClaimFiles(event.detail.claimId)}
+            ></evidence-reviewer>`
+          : nothing;
+      },
       // The gate disappears when the decision resolves, so the correlated result
       // and the pending notice live on the persistent summary instead.
       _renderPosture: (run) =>

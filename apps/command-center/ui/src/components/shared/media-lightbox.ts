@@ -258,6 +258,7 @@ export class MediaLightbox extends MediaLightboxState {
         .some(
           (target) =>
             target instanceof HTMLTextAreaElement ||
+            (target instanceof HTMLElement && target.isContentEditable) ||
             (target instanceof HTMLInputElement && target.type !== 'range'),
         )
     )
@@ -484,6 +485,12 @@ export class MediaLightbox extends MediaLightboxState {
     return [this._primaryVideo(), this._secondaryVideo()].filter(
       (video): video is HTMLVideoElement => Boolean(video),
     );
+  }
+
+  /** Where the shown recording is, or null when no video is shown. */
+  currentTimeMs(): number | null {
+    const video = this._primaryVideo();
+    return video ? video.currentTime * 1000 : null;
   }
 
   /**

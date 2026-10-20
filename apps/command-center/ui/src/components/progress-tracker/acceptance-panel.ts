@@ -285,7 +285,7 @@ export interface AcceptanceEvidenceOpen {
 }
 
 /** A plain left click; modified and middle clicks keep the browser's own new-tab behaviour. */
-function isPlainClick(event: MouseEvent): boolean {
+export function isPlainClick(event: MouseEvent): boolean {
   return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
 

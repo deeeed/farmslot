@@ -286,6 +286,13 @@ export class ArtifactBrowser extends LitElement {
     if (!this.wide) this.overlay = true;
   }
 
+  /** Closing hands focus back to the file it previewed. */
+  private async closeOverlay() {
+    this.overlay = false;
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLElement>('.row[tabindex="0"]')?.focus();
+  }
+
   private async showOverlay() {
     await this.updateComplete;
     this.renderRoot.querySelector<HTMLElement>('.overlay')?.focus();
@@ -311,6 +318,8 @@ export class ArtifactBrowser extends LitElement {
   }
 
   private openInHost(index: number) {
+    // The host's viewer sits under this panel otherwise.
+    this.overlay = false;
     this.dispatchEvent(
       new CustomEvent('artifact-open', {
         detail: { index },
@@ -467,7 +476,7 @@ export class ArtifactBrowser extends LitElement {
         target instanceof HTMLTextAreaElement ||
         (target instanceof HTMLElement && target.isContentEditable),
     );
-    if (event.key !== '/' || typing) return;
+    if (event.key !== '/' || typing || this.overlay) return;
     const search = this.renderRoot.querySelector<HTMLInputElement>('.search');
     if (!search) return;
     event.preventDefault();
@@ -555,7 +564,7 @@ export class ArtifactBrowser extends LitElement {
       </div>`;
     return html`<div class="frame">${browse}</div>
       ${this.overlay
-        ? html`<div class="overlay-scrim" @click=${() => (this.overlay = false)}></div>
+        ? html`<div class="overlay-scrim" @click=${() => this.closeOverlay()}></div>
             <aside
               class="overlay"
               role="dialog"
@@ -564,11 +573,11 @@ export class ArtifactBrowser extends LitElement {
               @keydown=${(event: KeyboardEvent) => {
                 if (event.key !== 'Escape') return;
                 event.stopPropagation();
-                this.overlay = false;
+                this.closeOverlay();
               }}
             >
               <div class="overlay-bar">
-                <button class="chip" @click=${() => (this.overlay = false)}>Close</button>
+                <button class="chip" @click=${() => this.closeOverlay()}>Close</button>
               </div>
               ${this.renderPreview(selected)}
             </aside>`

@@ -19,6 +19,7 @@ import { workspaceArtifactBasename } from '../workspace/workspace-artifacts.js';
 
 import { gatewayMediaSrc } from './gateway-media-src.js';
 import type { MediaLightbox } from './media-lightbox.js';
+import { isVideoLightboxItem } from './media-lightbox-model.js';
 import type { LightboxItem } from './media-lightbox-types.js';
 
 /** What the review opens on: a criterion, its run's evidence, and the file the user chose. */
@@ -29,8 +30,36 @@ export interface EvidenceReviewerSelection {
   recording: LightboxItem | null;
   /** Serves a criterion's evidence file. */
   resolveUrl: (path: string) => string;
-  /** The file the review was opened from; a screenshot opens on itself. */
-  openedPath?: string;
+  /** The file the review was opened from: anything but the recording opens on itself. */
+  opened?: LightboxItem;
+}
+
+/**
+ * The review for one criterion of a run: its recording (the opened one, else the
+ * run's first) and the file the user chose. Every host opens the review through this.
+ */
+export function evidenceReviewerSelection(input: {
+  model: EvidenceReviewModel;
+  claimId: string;
+  resolveUrl: (path: string) => string;
+  opened?: LightboxItem;
+}): EvidenceReviewerSelection {
+  const { model, resolveUrl, opened } = input;
+  const timeline = model.recordings[0];
+  const path = timeline ? model.artifactPath(timeline.videoPath) : null;
+  const recording =
+    opened && isVideoLightboxItem(opened)
+      ? opened
+      : path
+        ? {
+            url: resolveUrl(path),
+            path,
+            purpose: 'recording',
+            evidenceModel: model,
+            resolveArtifactUrl: resolveUrl,
+          }
+        : null;
+  return { claimId: input.claimId, model, recording, resolveUrl, opened };
 }
 
 /**
@@ -41,6 +70,9 @@ export interface EvidenceReviewerSelection {
 @customElement('evidence-reviewer')
 export class EvidenceReviewer extends LitElement {
   @property({ attribute: false }) selection: EvidenceReviewerSelection | null = null;
+  /** Shown in the page instead of over it; Full screen lifts it over the page. */
+  @property({ type: Boolean, reflect: true }) inline = false;
+  @property({ type: Boolean, reflect: true }) expanded = false;
   @state() private claimId = '';
   @state() private openStep: number | null = null;
   /** List criteria in the order the recording reaches them, or by id. */
@@ -50,6 +82,16 @@ export class EvidenceReviewer extends LitElement {
   @query('media-lightbox') private player?: MediaLightbox;
 
   static styles = css`
+    :host([inline]:not([expanded])) {
+      position: relative;
+      inset: auto;
+      z-index: auto;
+      height: min(78vh, 900px);
+      margin: ${unsafeCSS(spacing.sm)} 0;
+      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+      border-radius: 6px;
+      overflow: hidden;
+    }
     :host {
       position: fixed;
       inset: 0;
@@ -253,7 +295,8 @@ export class EvidenceReviewer extends LitElement {
     if (!selection?.recording) return null;
     return {
       ...selection.recording,
-      evidenceModel: selection.recording.evidenceModel ?? selection.model,
+      // The host's current model: a live run replaces it, and the item may carry an older one.
+      evidenceModel: selection.model,
     };
   }
 
@@ -337,7 +380,7 @@ export class EvidenceReviewer extends LitElement {
       changed.has('selection') &&
       (selection.claimId !== this.applied?.claimId ||
         selection.recording?.url !== this.applied?.recording?.url ||
-        selection.openedPath !== this.applied?.openedPath);
+        selection.opened?.path !== this.applied?.opened?.path);
     this.applied = selection;
     if (reopened) this.claimId = selection.claimId;
     const claimChanged = this.claimId !== this.appliedClaim;
@@ -353,22 +396,39 @@ export class EvidenceReviewer extends LitElement {
       !model.selectClaim(this.claimId)
     )
       model.clearSelection();
-    if (!claimChanged) return;
-    // A refreshed evidence model keeps what is on screen; a new criterion starts over.
+    if (!claimChanged && !reopened) return;
+    // A refreshed evidence model keeps what is on screen; a new criterion or file starts over.
     const claim = this.claim();
     const opened =
-      reopened && selection.openedPath
-        ? claim && this.stills(claim).find((item) => item.path === selection.openedPath)
+      reopened && selection.opened && !isVideoLightboxItem(selection.opened)
+        ? selection.opened
         : undefined;
     this.openStep = null;
     this.resumeMs = null;
-    if (opened || !this.recording) {
+    const start = claim ? this.startMs(claim) : null;
+    // Choosing a criterion shows its proof: the recording at its first step, or its
+    // first screenshot when the recording does not cover it.
+    if (opened || !this.recording || (start === null && claim && this.stills(claim).length)) {
       this.still = opened ?? (claim ? (this.stills(claim)[0] ?? null) : null);
       this.pendingSeekMs = null;
     } else {
       this.still = null;
-      this.pendingSeekMs = claim ? this.startMs(claim) : null;
+      this.pendingSeekMs = this.openedMomentMs(reopened) ?? start;
     }
+  }
+
+  /** A recording opened at a step (a moment link) starts there, not at the criterion start. */
+  private openedMomentMs(reopened: boolean): number | null {
+    const opened = this.selection?.opened;
+    const path = this.videoPath;
+    if (!reopened || !opened || opened.initialTraceIndex === undefined || !path) return null;
+    return (
+      this.model?.markerSeekMs(
+        path,
+        opened.initialTraceIndex,
+        opened.initialTracePhase ?? 'start',
+      ) ?? null
+    );
   }
 
   protected updated(): void {
@@ -381,11 +441,15 @@ export class EvidenceReviewer extends LitElement {
   private playerItems(): LightboxItem[] {
     const item = this.still ?? this.recording;
     if (!item) return [];
-    if (this.cachedItems?.[0]?.url !== item.url) this.cachedItems = [item];
+    // Same file and model, same array: the player keeps its video element and timeline.
+    if (this.cachedItems?.[0]?.url !== item.url || this.cachedModel !== this.model)
+      this.cachedItems = [item];
+    this.cachedModel = this.model;
     return this.cachedItems;
   }
 
   private cachedItems?: LightboxItem[];
+  private cachedModel?: EvidenceReviewModel;
 
   private chooseClaim(claim: EvidenceReviewClaim) {
     this.claimId = claim.id;
@@ -398,10 +462,7 @@ export class EvidenceReviewer extends LitElement {
   }
 
   private showStill(item: LightboxItem) {
-    if (!this.still) {
-      const video = this.player?.shadowRoot?.querySelector('video');
-      this.resumeMs = video ? video.currentTime * 1000 : null;
-    }
+    if (!this.still) this.resumeMs = this.player?.currentTimeMs() ?? null;
     this.still = item;
   }
 
@@ -409,11 +470,15 @@ export class EvidenceReviewer extends LitElement {
   private showVideo(ms: number | null = this.resumeMs ?? this.claimStartMs()) {
     if (this.still) this.still = null;
     if (ms === null) return;
-    if (this.player?.shadowRoot?.querySelector('video')) this.player.seekToMs(ms);
+    if (this.player?.currentTimeMs() != null) this.player.seekToMs(ms);
     else this.pendingSeekMs = ms;
   }
 
   private close() {
+    if (this.inline) {
+      this.expanded = false;
+      return;
+    }
     this.dispatchEvent(new CustomEvent('reviewer-close'));
   }
 
@@ -490,7 +555,11 @@ export class EvidenceReviewer extends LitElement {
     return html`
       <header>
         <h2>Evidence review${current ? html` · ${current.id}` : nothing}</h2>
-        <button class="btn" @click=${() => this.close()}>Close</button>
+        ${this.inline && !this.expanded
+          ? html`<button class="btn" @click=${() => (this.expanded = true)}>Full screen</button>`
+          : html`<button class="btn" @click=${() => this.close()}>
+              ${this.inline ? 'Exit full screen' : 'Close'}
+            </button>`}
       </header>
       <div class="body">
         <nav aria-label="Acceptance criteria">
@@ -533,13 +602,16 @@ export class EvidenceReviewer extends LitElement {
           ? html`<media-lightbox
               embedded
               open
-              owns-keys
+              ?owns-keys=${!this.inline || this.expanded}
               hide-timeline
               .confine=${false}
               .items=${items}
               .selectedIndex=${0}
               expand-label="All files"
-              @lightbox-expand=${() => this.dispatchEvent(new CustomEvent('reviewer-files'))}
+              @lightbox-expand=${() =>
+                this.dispatchEvent(
+                  new CustomEvent('reviewer-files', { detail: { claimId: this.claimId } }),
+                )}
               @lightbox-close=${() => this.close()}
             ></media-lightbox>`
           : html`<div class="empty">No recording or screenshot for this criterion.</div>`}

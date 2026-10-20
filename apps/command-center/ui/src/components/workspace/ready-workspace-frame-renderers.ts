@@ -37,6 +37,8 @@ export interface ReadyWorkspaceFrameInput {
   renderInputArtifactViewer: () => unknown;
   renderReviewRequestModal: () => unknown;
   renderReviewFlowModal: () => unknown;
+  /** The criterion evidence review, over the gate while open. */
+  renderReview: () => unknown;
   beginRecovery: () => void;
   onResizeStart: (event: MouseEvent) => void;
   lightbox: {
@@ -107,7 +109,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
         ${reviewContent}
       </div>
     </div>
-    ${input.renderTopBar()}
+    ${input.renderTopBar()} ${input.renderReview()}
     <media-lightbox
       .items=${input.lightbox.items}
       .pairs=${input.lightbox.pairs}

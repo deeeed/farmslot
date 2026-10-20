@@ -38,7 +38,6 @@ import '../slot-view/worker-session-history.js';
 import '../shared/workspace-pin.js';
 import '../shared/cancelled-run-slot-release.js';
 import '../shared/hydrating-placeholder.js';
-import '../shared/evidence-reviewer.js';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
@@ -143,6 +142,8 @@ export interface RunDetailViewContext {
   _shouldShowCiStatus: (run: Run) => boolean;
   _renderCiStatus: (run: Run) => unknown;
   _renderRunEvidence: (run: Run) => unknown;
+  /** The run's evidence review in the page: every criterion beside its recording or screenshots. */
+  _renderInlineEvidence: () => unknown;
   /**
    * ADR-054 resource posture, rendered beside the pipeline phase. It takes no
    * run: the panel renders the posture status already fetched for the bound run.
@@ -802,6 +803,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             : nothing}
         </div>`
       : nothing}
+    ${ctx._renderInlineEvidence()}
     ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
       ? ctx._renderRunEvidence(r)
       : nothing}
