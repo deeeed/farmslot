@@ -61,7 +61,7 @@ import {
 } from './publication-artifacts.js';
 import {
   assertPublishPackageWithinCaps,
-  pipelineReviewArtifactPaths,
+  gateReviewArtifactPaths,
   prBodyCitedArtifactPaths,
   promotedSnapshotLinkEntries,
   scanPublishPackage,
@@ -434,7 +434,7 @@ export async function refreshArtifactMirror(
     ...referencedRecipeRunRoots(manifestPaths),
     ...citedPaths,
     ...outputPaths,
-    ...pipelineReviewArtifactPaths(run),
+    ...gateReviewArtifactPaths(run),
   ];
   const snapshotRoot = promotedPointer?.relativeArtifactRoot ?? null;
   const scan = workerArtifactsExist
