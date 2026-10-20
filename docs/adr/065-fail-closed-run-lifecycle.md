@@ -548,3 +548,56 @@ predicate.
   has no label for it there. So the gateway, CLI, Command Center and Companion
   ship together, and Companion users must update. There is no persisted data
   migration beyond the restart re-projection.
+
+## Amendment 8: accepting review findings at publication, 2026-10-20
+
+**Status:** Proposed.
+**Related:** Amendment 2, [ADR-063](063-review-modes-warm-cold.md) Amendment 4, [ADR-062](062-recorded-run-evidence.md).
+
+### Decision
+
+"Accept Review Findings and Publish" (`approve-publish-unresolved`) publishes the
+package head while review findings at that head remain open. A credential-backed
+person with the existing human-attestation authority takes it with a written
+reason. A service principal never can.
+
+The action yields only the review prerequisites, `review-fix-required` and
+`review-result-required`. Declared deterministic steps, CI, the AC ledger,
+evidence, lifecycle and every other prerequisite still block it, and it is
+refused while any of them is unmet. It is available only once the package's
+required reviews have run at the package head, whatever their verdict, so it
+accepts findings a review reported and never stands in for a review that did not
+run.
+
+The publication receipt records the reason, the package head, the principal and
+the accepted findings: each finding's id and text from the head's review
+results. Normal Approve Publish is unchanged, and findings at the package head
+still block it (ADR-063 Amendment 4).
+
+One shared protocol rule decides when the action is available. The gateway
+applies it both when it lists gate actions and when it resolves the decision,
+and the CLI, Command Center and Companion apply it to their listings, so a
+listed action is one resolve accepts.
+
+### Rationale and consequences
+
+On TAT-4006 run 7721a02b, the eighth review's only finding was an owner decision
+about the deposit clause. It needed no code change, and the review budget was
+spent. The gate offered Hold and Request Review. "Accept Review Findings and
+Publish" was listed in the gate's definitions but always refused, because
+`review-fix-required` allowed no override. The only route left was adoption
+(Amendment 2), which records an external publication and is not the publication
+workflow.
+
+Accepting findings is an explicit, attributed decision. The receipt keeps what
+was accepted, by whom and why, so the published PR and later reviews can show it.
+The other prerequisites still protect what the reviewer cannot judge.
+
+### Public surface
+
+- No new action id or RPC. `run.resolveDecision` with `approve-publish-unresolved`
+  requires the written reason.
+- `@farmslot/protocol` owns the availability rule and the additive receipt fields
+  (accepted findings and reason) on the decision's publication approval.
+- The CLI, Command Center and Companion list the action through that rule and
+  ask for the reason before submitting.
