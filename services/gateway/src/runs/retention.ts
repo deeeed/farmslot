@@ -1,10 +1,12 @@
 import { lstat, readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { decisionArtifactBundleRef, type Run, type RunArtifactBundleRef } from '@farmslot/protocol';
-import { resolveRetainedRunBundleRef } from '@farmslot/run-bundle';
+import type { Run } from '@farmslot/protocol';
+import { resolveRetainedRunBundleRef, runBundleRefs } from '@farmslot/run-bundle';
 
 import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
+
+import { runTaskDirectories } from './store.js';
 
 /** A settled run keeps its storage this long (ADR-039 Amendment 2). */
 export const RUN_RETENTION_AGE_MS = 48 * 60 * 60 * 1000;
@@ -40,34 +42,29 @@ export interface RunRetentionPlan {
   stores: Record<RunRetentionStore, { entries: number; bytes: number }>;
 }
 
+/** `none`: no PR. `settled`: merged or closed. `unknown`: its state could not be read. */
+export type RunPrState = 'none' | 'settled' | 'open' | 'unknown';
+
 export interface RunRetentionContext {
   now: number;
-  /** Whether the run's PR is open now; undefined when that could not be read. */
-  prOpen: (run: Run) => boolean | undefined;
+  prState: (run: Run) => RunPrState;
 }
 
 const time = (value: string | undefined) => (value ? Date.parse(value) || 0 : 0);
 
-/** A PR the run record does not already show merged or closed. */
-export function runPrUnsettled(run: Run): boolean {
-  const hasPr = run.prNumber !== undefined || run.links?.some((link) => link.label === 'PR');
-  return Boolean(hasPr) && !run.mergedAt && run.prState !== 'MERGED' && run.prState !== 'CLOSED';
-}
-
 /** Why a run keeps its storage, or undefined when retention may remove it. */
 export function runRetentionHold(
   run: Run,
-  { now, prOpen }: RunRetentionContext,
+  { now, prState }: RunRetentionContext,
 ): string | undefined {
   if (!run.archivedAt && run.status !== 'done' && run.status !== 'cancelled')
     return 'not done, cancelled or archived';
   if (run.tags?.length) return 'operator-tagged';
   if (runNeedsExecutionStorage(run)) return 'still needs its execution storage';
   if (run.backlogReconcilePending) return 'backlog reconciliation pending';
-  if (runPrUnsettled(run)) {
-    const open = prOpen(run);
-    if (open !== false) return open ? 'PR open' : 'PR state unknown';
-  }
+  const pr = prState(run);
+  if (pr === 'open') return 'PR open';
+  if (pr === 'unknown') return 'PR state unknown';
   const settledAt = Math.max(time(run.updatedAt), time(run.completedAt), time(run.archivedAt));
   if (now - settledAt < RUN_RETENTION_AGE_MS) return 'settled less than 48 h ago';
   return undefined;
@@ -78,36 +75,34 @@ function inside(root: string, file: string): boolean {
   return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
-const taskDirs = (run: Run) =>
-  [run.taskFile, run.activeTaskFile, ...(run.agentContexts ?? []).map((c) => c.taskFile)]
-    .filter((file): file is string => typeof file === 'string')
-    .map((file) => path.resolve(path.dirname(file)));
+/** This node's review-workspace directory, at `<root>/<owner>/runs/<workspace>`. */
+const reviewWorkspaceDirs = (run: Run) =>
+  run.reviewWorkspace?.executionNodeId === 'local'
+    ? [path.resolve(path.dirname(run.reviewWorkspace.checkoutPath))]
+    : [];
 
-const nativeDirs = (run: Run) =>
-  (run.agentContexts ?? [])
+/** Native worker state on this node: its agents' sessions and its review workspace's own. */
+function nativeDirs(run: Run, nativeRoot: string): string[] {
+  const sessions = (run.agentContexts ?? [])
     .flatMap((context) => [context.nativeSession, ...(context.nativeSessionHistory ?? [])])
     .flatMap((session) =>
       session?.executionNodeId === 'local' && session.stateDirectory
         ? [path.resolve(session.stateDirectory)]
         : [],
     );
-
-const reviewWorkspaceDirs = (run: Run) =>
-  run.reviewWorkspace?.executionNodeId === 'local'
-    ? [path.resolve(path.dirname(run.reviewWorkspace.checkoutPath))]
-    : [];
-
-function bundleDigests(run: Run, storeId: string): string[] {
-  const refs: (RunArtifactBundleRef | undefined)[] = [
-    run.artifactBundle,
-    run.output?.artifactBundle,
-    ...run.decisions.map((decision) => decisionArtifactBundleRef(run, decision.payload)),
-  ];
-  return refs.flatMap((ref) => {
-    const resolved = ref && resolveRetainedRunBundleRef(run, ref);
-    return resolved?.storeId === storeId ? [resolved.bundleDigest] : [];
-  });
+  const workspace = reviewWorkspaceDirs(run)[0];
+  if (workspace) {
+    const owner = path.basename(path.dirname(path.dirname(workspace)));
+    sessions.push(path.join(nativeRoot, 'workers', owner, path.basename(workspace)));
+  }
+  return sessions;
 }
+
+const bundleDigests = (run: Run, storeId: string) =>
+  runBundleRefs(run).flatMap(({ ref }) => {
+    const resolved = resolveRetainedRunBundleRef(run, ref);
+    return resolved.storeId === storeId ? [resolved.bundleDigest] : [];
+  });
 
 /** The run-owned paths of `removed` runs that no `kept` run references. */
 export function runOwnedPaths(
@@ -126,10 +121,13 @@ export function runOwnedPaths(
       path.join(roots.runsDir, 'archive', `${run.id}.json`),
     ]),
     'session-archives': removed.map((run) => roots.sessionArchive(run.id)),
-    'task-dirs': owned(taskDirs, (dir) => roots.taskRoots.some((root) => inside(root, dir))),
+    'task-dirs': owned(runTaskDirectories, (dir) =>
+      roots.taskRoots.some((root) => inside(root, dir)),
+    ),
     'review-workspaces': owned(reviewWorkspaceDirs, (dir) => inside(roots.reviewWorkspaces, dir)),
-    'native-sessions': owned(nativeDirs, (dir) =>
-      inside(path.join(roots.nativeSessions, 'workers'), dir),
+    'native-sessions': owned(
+      (run) => nativeDirs(run, roots.nativeSessions),
+      (dir) => inside(path.join(roots.nativeSessions, 'workers'), dir),
     ),
     'run-bundles': bundles
       ? owned(
@@ -200,33 +198,6 @@ export async function diskBytes(file: string): Promise<number> {
   return bytes;
 }
 
-/** Split runs into removable and held, then list the existing storage only removable runs own. */
-export async function planRunRetention(
-  runs: Run[],
-  context: RunRetentionContext,
-  roots: RunRetentionRoots,
-  holdsSlot: (run: Run) => Promise<boolean>,
-): Promise<{ plan: RunRetentionPlan; removable: Run[] }> {
-  const { now } = context;
-  const held: Record<string, number> = {};
-  const removable: Run[] = [];
-  const kept: Run[] = [];
-  for (const run of runs) {
-    const reason =
-      runRetentionHold(run, context) ?? ((await holdsSlot(run)) ? 'holds its slot' : '');
-    if (reason) {
-      held[reason] = (held[reason] ?? 0) + 1;
-      kept.push(run);
-    } else removable.push(run);
-  }
-  const owned = runOwnedPaths(removable, kept, roots);
-  const candidates: RunRetentionPaths = {
-    ...owned,
-    'task-pins': await retiredTaskPins(roots.taskPins, new Set(owned['task-dirs']), now),
-  };
-  return { plan: await measureRetention(removable, held, candidates), removable };
-}
-
 /** Keep the paths that exist and count their entries and bytes per store. */
 export async function measureRetention(
   runs: Run[],
@@ -247,4 +218,30 @@ export async function measureRetention(
     stores[store] = { entries: store === 'run-records' ? runs.length : present.length, bytes };
   }
   return { runs: runs.map((run) => run.id), held, paths, stores };
+}
+
+/** Split runs into removable and held, then list the existing storage only removable runs own. */
+export async function planRunRetention(
+  runs: Run[],
+  context: RunRetentionContext,
+  roots: RunRetentionRoots,
+  holdsSlot: (run: Run) => Promise<boolean>,
+): Promise<{ plan: RunRetentionPlan; removable: Run[] }> {
+  const held: Record<string, number> = {};
+  const removable: Run[] = [];
+  const kept: Run[] = [];
+  for (const run of runs) {
+    const reason =
+      runRetentionHold(run, context) ?? ((await holdsSlot(run)) ? 'holds its slot' : '');
+    if (reason) {
+      held[reason] = (held[reason] ?? 0) + 1;
+      kept.push(run);
+    } else removable.push(run);
+  }
+  const owned = runOwnedPaths(removable, kept, roots);
+  const candidates: RunRetentionPaths = {
+    ...owned,
+    'task-pins': await retiredTaskPins(roots.taskPins, new Set(owned['task-dirs']), context.now),
+  };
+  return { plan: await measureRetention(removable, held, candidates), removable };
 }

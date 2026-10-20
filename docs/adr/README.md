@@ -90,7 +90,7 @@ Companion end to end. ADR-009 has an Accepted
 [conditional file edits amendment](009-slot-workspace.md#amendment-1-2026-10-20-conditional-file-edits)
 that replaces its read-only decision.
 
-ADR-039 has a Proposed [settled-run retention amendment](039-run-portable-bundles.md#amendment-2-2026-10-20-settled-run-retention): an hourly gateway pass deletes done, cancelled and archived runs 48 hours after they settle, with the storage only they own.
+ADR-039 has an Accepted [settled-run retention amendment](039-run-portable-bundles.md#amendment-2-2026-10-20-settled-run-retention): an hourly gateway pass deletes done, cancelled and archived runs 48 hours after they settle, with the storage only they own.
 
 ADR-039 has an Accepted [gateway-retained artifact amendment](039-run-portable-bundles.md#amendment-1-2026-10-15-gateway-retained-run-artifacts) and [normative retention specification](../reference/retained-run-artifacts.md). The lead accepted the amendment on 2026-10-15 at `978e2e27`; implementation remains pending.
 

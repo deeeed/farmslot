@@ -185,28 +185,41 @@ server-owned limits or release history/pins through existing lifecycle operation
 
 ### Settled-run retention
 
-ADR-039 Amendment 2. The gateway MUST run a retention pass every hour. A run is
-removable only when all of these hold:
+ADR-039 Amendment 2. The gateway MUST run a retention pass 10 minutes after it
+starts and then every hour. A run is removable only when all of these hold:
 
 - it is `done` or `cancelled`, or archived;
 - its latest update, completion or archive time is at least 48 hours old;
-- it has no open decision, an uncleaned review workspace, pending closeout or a
-  held native worker, and holds no slot;
+- it has no open decision, uncleaned review workspace, pending closeout or held
+  native worker, and holds no slot;
 - it has no pending backlog reconciliation and no operator tags;
-- it has no PR, or its PR is merged or closed. A PR not recorded as merged or
-  closed counts as merged or closed only when the pass read its repository's open
-  PRs and it is not among them. An unreadable or possibly truncated list keeps it.
+- it has no PR, or its PR is merged or closed.
 
-The pass MUST recheck a run immediately before deleting it, then delete its record
-and session archive. It MUST then remove, when no remaining run references them,
-the run's task directory under a farm task root (`projects/<project>/tasks`,
-`.runs/review-workspace-tasks`), and its review-workspace directory and native
-worker state on the gateway's own node, while it holds review-workspace
-reclamation. It MUST NOT remove another node's storage or a slot checkout. Bundles
-then follow GC above: deleting the run releases its history pin. Task pins whose
-task directory no longer exists are removed once their provenance is 48 hours old.
-A dry run reports the same selection, with entries and bytes per store, and
-changes nothing.
+A PR not recorded as merged or closed is identified by the review-session identity
+(adopted target, PR work, PR link or `owner/repo#N` ticket), else by the run's PR
+number in the project's `ci.repo`. It counts as merged or closed only when the pass
+read that repository's open PRs and it is not among them. An unresolvable identity,
+an unreadable repository or a possibly truncated list keeps the run.
+
+The pass MUST recheck each run immediately before deleting it. In the same
+synchronous step it MUST move into the run store's retention trash the directories
+no other live or archived run references:
+
+- the run's task directory under a farm task root (`projects/<project>/tasks`,
+  `.runs/review-workspace-tasks`);
+- its review-workspace directory on the gateway's own node;
+- native worker state on the gateway's own node: its agents' sessions and its
+  review workspace's own.
+
+It MUST NOT remove another node's storage or a slot checkout. It then deletes the
+record and session archive. If that is refused, it moves the directories back.
+After a deletion it releases the run's backlog link without requeueing the item,
+then announces `RUN_DELETED`. The pass holds review-workspace reclamation while it
+moves directories, and empties the trash, including what an interrupted pass left,
+before it plans. Bundles then follow GC above: deleting the run releases its
+history pin. Task pins whose task directory no longer exists are removed once their
+provenance is 48 hours old. A dry run reports the same selection, with entries and
+bytes per store, and changes nothing.
 
 ## Public surface and backfill
 

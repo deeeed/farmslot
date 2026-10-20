@@ -1991,6 +1991,13 @@ async function archiveRunBody(id: string): Promise<boolean> {
   return true;
 }
 
+/** Every task directory a run names: its task, its active task and its agents' tasks. */
+export function runTaskDirectories(run: Run): string[] {
+  return [run.taskFile, run.activeTaskFile, ...(run.agentContexts ?? []).map((c) => c.taskFile)]
+    .filter((file): file is string => typeof file === 'string')
+    .map((file) => path.resolve(path.dirname(file)));
+}
+
 /** Run retention removes an archived record and its session archive (ADR-039 Amendment 2). */
 export async function deleteArchivedRun(id: string): Promise<boolean> {
   try {
@@ -1999,7 +2006,11 @@ export async function deleteArchivedRun(id: string): Promise<boolean> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw err;
   }
-  invalidateArchivedRunsCache();
+  // Drop the one record rather than rescanning the whole archive on the next read.
+  if (archivedRunsCache) {
+    archivedRunsCache = archivedRunsCache.filter((run) => run.id !== id);
+    archivedRunsGeneration++;
+  } else invalidateArchivedRunsCache();
   await rm(runSessionArchiveDir(id), { recursive: true, force: true });
   return true;
 }
@@ -2033,15 +2044,7 @@ export async function cleanupRuns(
   // Snapshot ownership before archiving evicts failed/cancelled runs from the
   // live map. Dry-run and real cleanup must evaluate the same task directories.
   const cleanupRunSnapshot = [...runs.values()].filter((run) => !isRunStoreLeak(run));
-  const taskDirectories = (run: Run) =>
-    [
-      run.taskFile,
-      run.activeTaskFile,
-      ...(run.agentContexts ?? []).map((context) => context.taskFile),
-    ]
-      .filter((file): file is string => typeof file === 'string')
-      .map((file) => path.dirname(file));
-  const archivedTaskDirectories = new Set((await getArchivedRuns()).flatMap(taskDirectories));
+  const archivedTaskDirectories = new Set((await getArchivedRuns()).flatMap(runTaskDirectories));
 
   // Scan for failed/cancelled runs older than 7 days → archive.
   // Active, held, gated, and CI-watching runs never enter this branch.
@@ -2083,7 +2086,9 @@ export async function cleanupRuns(
       if (archivedTaskDirectories.has(taskPath)) continue;
 
       // Check if any run references this task dir
-      const matchingRuns = cleanupRunSnapshot.filter((r) => taskDirectories(r).includes(taskPath));
+      const matchingRuns = cleanupRunSnapshot.filter((r) =>
+        runTaskDirectories(r).includes(taskPath),
+      );
       if (
         matchingRuns.length &&
         matchingRuns.every(

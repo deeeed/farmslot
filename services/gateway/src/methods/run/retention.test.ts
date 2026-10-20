@@ -17,24 +17,29 @@ import {
 import {
   planRunRetention,
   RUN_RETENTION_AGE_MS,
+  type RunPrState,
   type RunRetentionContext,
   runRetentionHold,
   type RunRetentionRoots,
 } from '../../runs/retention.js';
 import {
+  archiveRun,
   createRun,
-  getRun,
+  getAllRunsWithArchived,
   runsDirectory,
   runSessionArchiveDir,
   updateRun,
 } from '../../runs/store.js';
 
-import { runRetentionPass } from './retention.js';
+import { retentionContext, RUN_RETENTION_DEPS, runRetentionPass } from './retention.js';
 import { makeRun } from './test-fixtures.js';
 
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
 const settled = new Date(NOW - RUN_RETENTION_AGE_MS - 60_000).toISOString();
-const context = (prOpen?: boolean): RunRetentionContext => ({ now: NOW, prOpen: () => prOpen });
+const context = (pr: RunPrState = 'none'): RunRetentionContext => ({
+  now: NOW,
+  prState: () => pr,
+});
 
 const openDecision: RunDecision = {
   id: 'decision-1',
@@ -45,7 +50,7 @@ const openDecision: RunDecision = {
   createdAt: settled,
 };
 
-function nativeContext(runId: string, stateDirectory: string): AgentContext {
+function nativeContext(runId: string, stateDirectory: string, node = 'local'): AgentContext {
   return {
     id: 'fix-bug',
     role: 'fix-bug',
@@ -55,7 +60,7 @@ function nativeContext(runId: string, stateDirectory: string): AgentContext {
     runId,
     nativeSession: {
       sessionId: path.basename(stateDirectory),
-      executionNodeId: 'local',
+      executionNodeId: node,
       ownerPrincipalId: 'owner',
       leaseId: 'lease',
       commandId: 'command',
@@ -138,12 +143,43 @@ test('retention removes a done, cancelled or archived run only once it settled 4
     'still needs its execution storage',
   );
   assert.equal(runRetentionHold({ ...done, tags: ['demo'] }, context()), 'operator-tagged');
+  assert.equal(runRetentionHold(done, context('open')), 'PR open');
+  assert.equal(runRetentionHold(done, context('unknown')), 'PR state unknown');
+  assert.equal(runRetentionHold(done, context('settled')), undefined);
+});
 
-  const withPr: Run = { ...done, prNumber: 42 };
-  assert.equal(runRetentionHold(withPr, context(true)), 'PR open');
-  assert.equal(runRetentionHold(withPr, context(undefined)), 'PR state unknown');
-  assert.equal(runRetentionHold(withPr, context(false)), undefined);
-  assert.equal(runRetentionHold({ ...withPr, prState: 'MERGED' }, context(true)), undefined);
+test('a PR keeps its run unless its repository was read and the PR is not open', async () => {
+  const run = (id: string, overrides: Partial<Run>): Run => ({ ...makeRun({ id }), ...overrides });
+  const runs = [
+    run('link-open', { links: [{ label: 'PR', url: 'https://github.com/o/r/pull/1' }] }),
+    run('ticket-merged', { ticketOrPr: 'o/r#2' }),
+    run('no-repo', { prNumber: 3, project: 'no-ci-repo', ticketOrPr: 'PROJ-3' }),
+    run('full-page', { prNumber: 4, project: 'big', ticketOrPr: 'PROJ-4' }),
+    run('unreadable', { links: [{ label: 'PR', url: 'https://github.com/o/down/pull/5' }] }),
+    run('bad-link', { links: [{ label: 'PR', url: 'not a url' }], ticketOrPr: 'PROJ-6' }),
+    run('recorded', { prNumber: 7, prState: 'MERGED', ticketOrPr: 'PROJ-7' }),
+    run('no-pr', { ticketOrPr: 'PROJ-8' }),
+  ];
+  const reads: string[] = [];
+  const { prState } = await retentionContext(runs, NOW, {
+    projectRepo: async (project) => (project === 'big' ? 'o/big' : undefined),
+    openPrs: async (repo) => {
+      reads.push(repo);
+      if (repo === 'o/down') throw new Error('rate limited');
+      return repo === 'o/big' ? Array.from({ length: 1000 }, (_, i) => i + 10) : [1];
+    },
+  });
+  assert.deepEqual(Object.fromEntries(runs.map((r) => [r.id, prState(r)])), {
+    'link-open': 'open',
+    'ticket-merged': 'settled',
+    'no-repo': 'unknown',
+    'full-page': 'unknown',
+    unreadable: 'unknown',
+    'bad-link': 'unknown',
+    recorded: 'settled',
+    'no-pr': 'none',
+  });
+  assert.deepEqual(reads.sort(), ['o/big', 'o/down', 'o/r'], 'one read per repository');
 });
 
 test('a retention plan lists only storage that removable runs alone own on this node', async (t) => {
@@ -152,7 +188,9 @@ test('a retention plan lists only storage that removable runs alone own on this 
   const shared = path.join(roots.taskRoots[0], 'feat', 'shared');
   const slotCopy = path.join(path.dirname(roots.taskPins), 'slot', 'temp', 'tasks', 'feat', 'own');
   const native = path.join(roots.nativeSessions, 'workers', 'owner', 'session-1');
+  const remoteNative = path.join(roots.nativeSessions, 'workers', 'owner', 'session-remote');
   const localWorkspace = path.join(roots.reviewWorkspaces, 'owner', 'runs', 'w1');
+  const workspaceNative = path.join(roots.nativeSessions, 'workers', 'owner', 'w1');
   const remoteWorkspace = path.join(roots.reviewWorkspaces, 'owner', 'runs', 'w2');
   const bundleRoot = roots.bundles!.root;
   for (const target of [
@@ -160,6 +198,8 @@ test('a retention plan lists only storage that removable runs alone own on this 
     path.join(shared, 'TASK.md'),
     path.join(slotCopy, 'TASK.md'),
     path.join(native, 'state.json'),
+    path.join(remoteNative, 'state.json'),
+    path.join(workspaceNative, 'state.json'),
     path.join(localWorkspace, 'task', 'report.md'),
     path.join(remoteWorkspace, 'task', 'report.md'),
     path.join(bundleRoot, 'sha256', 'own', 'manifest.json'),
@@ -183,8 +223,14 @@ test('a retention plan lists only storage that removable runs alone own on this 
     reviewWorkspace: workspace(localWorkspace),
     artifactBundle: bundle('own'),
   };
+  // Another node's paths look identical to this node's; they are not this pass's to remove.
   const remote: Run = {
-    ...makeRun({ id: 'remote', status: 'done', taskFile: path.join(shared, 'TASK.md') }),
+    ...makeRun({
+      id: 'remote',
+      status: 'done',
+      taskFile: path.join(shared, 'TASK.md'),
+      agentContexts: [nativeContext('remote', remoteNative, 'macpro')],
+    }),
     updatedAt: settled,
     reviewWorkspace: workspace(remoteWorkspace, 'macpro'),
     artifactBundle: bundle('shared'),
@@ -207,74 +253,100 @@ test('a retention plan lists only storage that removable runs alone own on this 
 
   assert.deepEqual(plan.runs, ['removable', 'remote']);
   assert.deepEqual(plan.held, { 'not done, cancelled or archived': 1, 'holds its slot': 1 });
-  // The slot checkout's copy and another node's workspace are not this pass's to remove.
-  assert.deepEqual(plan.paths['task-dirs'], [own]);
+  assert.deepEqual(plan.paths['task-dirs'], [own], 'not the shared one or the slot copy');
   assert.deepEqual(plan.paths['review-workspaces'], [localWorkspace]);
-  assert.deepEqual(plan.paths['native-sessions'], [native]);
+  assert.deepEqual(plan.paths['native-sessions'].sort(), [native, workspaceNative].sort());
   assert.deepEqual(plan.paths['run-bundles'], [path.join(bundleRoot, 'sha256', 'own')]);
   assert.deepEqual(plan.paths['task-pins'], [retired]);
   assert.equal(plan.stores['task-dirs'].entries, 1);
   assert.ok(plan.stores['task-dirs'].bytes >= 4096);
 });
 
-test('a retention pass deletes settled runs and their own storage, and keeps what a remaining run uses', async (t) => {
+test('a retention pass deletes settled runs with their own storage and keeps what any run still uses', async (t) => {
   const roots = await retentionRoots(t, runsDirectory());
-  const own = path.join(roots.taskRoots[0], 'feat', 'own');
-  const shared = path.join(roots.taskRoots[0], 'feat', 'shared');
+  const task = (name: string) => path.join(roots.taskRoots[0], 'feat', name);
   const native = path.join(roots.nativeSessions, 'workers', 'owner', 'session-2');
   const localWorkspace = path.join(roots.reviewWorkspaces, 'owner', 'runs', 'w3');
   for (const target of [
-    path.join(own, 'TASK.md'),
-    path.join(shared, 'TASK.md'),
+    ...['own', 'shared', 'refused', 'late', 'archived'].map((name) =>
+      path.join(task(name), 'TASK.md'),
+    ),
     path.join(native, 'state.json'),
     path.join(localWorkspace, 'task', 'report.md'),
+    path.join(roots.runsDir, 'retention-trash', 'interrupted', 'left.txt'),
   ])
     await file(target);
-  const retired = await pin(roots, 'retired', path.join(roots.taskRoots[0], 'gone'), Date.now());
+  const retired = await pin(roots, 'retired', task('gone'), Date.now());
 
-  const params = { flowType: 'fix-bug', project: 'farmslot-farm', mode: 'autonomous' } as const;
-  const removed = createRun({ ...params, ticketOrPr: 'RETENTION-1' });
-  updateRun(removed.id, {
-    status: 'done',
-    taskFile: path.join(own, 'TASK.md'),
-    agentContexts: [nativeContext(removed.id, native)],
+  const done = (ticket: string, name: string, extra: Partial<Run> = {}) => {
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: ticket,
+    });
+    updateRun(run.id, { status: 'done', taskFile: path.join(task(name), 'TASK.md'), ...extra });
+    return run.id;
+  };
+  // Processed first: while its record is deleted, a new run starts on `late`'s task.
+  const racer = done('RETENTION-RACE', 'own');
+  const removed = done('RETENTION-1', 'own', {
+    agentContexts: [nativeContext('removed', native)],
     reviewWorkspace: workspace(localWorkspace),
   });
-  const sharer = createRun({ ...params, ticketOrPr: 'RETENTION-2' });
-  updateRun(sharer.id, { status: 'done', taskFile: path.join(shared, 'TASK.md') });
-  const kept = createRun({ ...params, ticketOrPr: 'RETENTION-3' });
-  updateRun(kept.id, {
-    status: 'done',
-    taskFile: path.join(shared, 'TASK.md'),
-    decisions: [openDecision],
-  });
-  await file(path.join(runSessionArchiveDir(removed.id), 'session.jsonl'));
-  t.after(() => rm(runSessionArchiveDir(kept.id), { recursive: true, force: true }));
+  const sharer = done('RETENTION-2', 'shared');
+  const kept = done('RETENTION-3', 'shared', { decisions: [openDecision] });
+  const refused = done('RETENTION-4', 'refused');
+  const late = done('RETENTION-5', 'late');
+  const archived = done('RETENTION-6', 'archived');
+  assert.equal(await archiveRun(archived), true);
+  await file(path.join(runSessionArchiveDir(removed), 'session.jsonl'));
+  t.after(() => rm(runSessionArchiveDir(kept), { recursive: true, force: true }));
 
-  const events: [string, unknown][] = [];
-  const result = await runRetentionPass({
-    apply: true,
-    now: Date.now() + RUN_RETENTION_AGE_MS + 60_000,
-    roots,
-    emit: (event, payload) => events.push([event, payload]),
-  });
+  let restarted: string | undefined;
+  const order: string[] = [];
+  const result = await runRetentionPass(
+    {
+      apply: true,
+      now: Date.now() + RUN_RETENTION_AGE_MS + 60_000,
+      roots,
+      emit: (event, payload) => order.push(`${event}:${(payload as { runId: string }).runId}`),
+    },
+    {
+      ...RUN_RETENTION_DEPS,
+      deleteRecord: async (id) => {
+        if (id === refused) return false;
+        if (id === racer) restarted = done('RETENTION-7', 'late', { status: 'monitoring' });
+        return RUN_RETENTION_DEPS.deleteRecord(id);
+      },
+      releaseBacklogLink: async (id) => {
+        order.push(`release:${id}`);
+      },
+      collectGarbage: async () => {},
+    },
+  );
 
-  assert.deepEqual(result.runs.sort(), [removed.id, sharer.id].sort());
-  assert.equal(getRun(removed.id), undefined);
-  assert.equal(getRun(sharer.id), undefined);
-  assert.ok(getRun(kept.id), 'a run with an open decision keeps its record');
-  assert.equal(existsSync(own), false);
-  assert.equal(existsSync(shared), true, 'the kept run still uses the shared task directory');
+  assert.deepEqual(
+    result.runs.sort(),
+    [racer, removed, sharer, late, archived].sort(),
+    'the refused and the kept run stay',
+  );
+  const remaining = new Set((await getAllRunsWithArchived()).map((run) => run.id));
+  for (const id of result.runs) assert.equal(remaining.has(id), false);
+  for (const id of [kept, refused, restarted!]) assert.ok(remaining.has(id));
+  assert.equal(existsSync(task('own')), false);
+  assert.equal(existsSync(task('archived')), false);
+  assert.ok(existsSync(task('shared')), 'the kept run still uses it');
+  assert.ok(existsSync(task('refused')), 'a refused delete restores its directories');
+  assert.ok(existsSync(task('late')), 'a run created during the pass uses it');
   assert.equal(existsSync(native), false);
   assert.equal(existsSync(localWorkspace), false);
   assert.equal(existsSync(retired), false);
-  assert.equal(existsSync(runSessionArchiveDir(removed.id)), false);
+  assert.equal(existsSync(runSessionArchiveDir(removed)), false);
+  assert.equal(existsSync(path.join(roots.runsDir, 'retention-trash', 'interrupted')), false);
   assert.equal(result.stores['session-archives'].entries, 1);
-  assert.deepEqual(
-    events.map(([event, payload]) => [event, (payload as { runId: string }).runId]).sort(),
-    [
-      [Events.RUN_DELETED, removed.id],
-      [Events.RUN_DELETED, sharer.id],
-    ].sort(),
-  );
+  // The backlog link is released (without requeueing) before each deletion is announced.
+  for (const id of result.runs)
+    assert.ok(order.indexOf(`release:${id}`) < order.indexOf(`${Events.RUN_DELETED}:${id}`));
+  assert.equal(order.filter((entry) => entry.startsWith(Events.RUN_DELETED)).length, 5);
 });
