@@ -235,7 +235,7 @@ export function renderReadyReviewFlow(ctx: ReadyReviewFlowContext) {
               })}
             </nav>`
           : nothing}
-        <main class="rdy-review-flow-detail">
+        <div class="rdy-review-flow-detail">
           <review-loop-timeline
             .reviews=${selectedReviews}
             .artifactUrl=${ctx.artifactUrl}
@@ -250,7 +250,7 @@ export function renderReadyReviewFlow(ctx: ReadyReviewFlowContext) {
                 <p>${ctx.reviewSummary}</p>
               </section>`
             : nothing}
-        </main>
+        </div>
       </div>
     </section>
   `;

@@ -43,6 +43,8 @@ export interface EvidenceReviewerSelection {
   atMs?: number;
   /** The step whose check a shared link left open, by trace index. */
   check?: number;
+  /** Bumped each time the host applies a link: the review then shows that link's view. */
+  link?: number;
 }
 
 /** The gate's verdicts on criteria, recorded from the review. */
@@ -441,15 +443,18 @@ export class EvidenceReviewer extends LitElement {
   protected willUpdate(changed: Map<string, unknown>): void {
     const selection = this.selection;
     if (!selection) return;
+    // A link's moment and step check apply once, when the host applies that link.
+    const newLink = changed.has('selection') && selection.link !== this.applied?.link;
     const reopened =
-      changed.has('selection') &&
-      (selection.claimId !== this.applied?.claimId ||
-        selection.recording?.url !== this.applied?.recording?.url ||
-        selection.opened?.path !== this.applied?.opened?.path);
+      newLink ||
+      (changed.has('selection') &&
+        (selection.claimId !== this.applied?.claimId ||
+          selection.recording?.url !== this.applied?.recording?.url ||
+          selection.opened?.path !== this.applied?.opened?.path));
     this.applied = selection;
     if (reopened) this.claimId = selection.claimId;
     const claimChanged = this.claimId !== this.appliedClaim;
-    if (!claimChanged && selection.model === this.appliedModel) return;
+    if (!claimChanged && !reopened && selection.model === this.appliedModel) return;
     this.appliedClaim = this.claimId;
     this.appliedModel = selection.model;
     // A criterion whose own files do not list the recording still marks it by its steps;
@@ -471,9 +476,9 @@ export class EvidenceReviewer extends LitElement {
     this.activeStep = null;
     this.resumeMs = null;
     const start = claim ? this.startMs(claim) : null;
-    const linkedAt = reopened ? selection.atMs : undefined;
+    const linkedAt = newLink ? selection.atMs : undefined;
     const linkedCheck =
-      reopened && claim && this.steps(claim).some((step) => step.traceIndex === selection.check)
+      newLink && claim && this.steps(claim).some((step) => step.traceIndex === selection.check)
         ? selection.check
         : undefined;
     this.checkStep = linkedCheck ?? null;
@@ -810,8 +815,10 @@ export class EvidenceReviewer extends LitElement {
               .confine=${false}
               .items=${items}
               .selectedIndex=${0}
-              expand-label="All files"
+              .expandLabel=${current?.evidence.length ? 'All files' : ''}
               @lightbox-expand=${() => this.showFiles()}
+              @lightbox-moment=${(event: CustomEvent<{ ms: number }>) =>
+                this.announce({ atMs: event.detail.ms })}
               @lightbox-close=${() => this.close()}
             ></media-lightbox>`
           : html`<div class="empty">No recording or screenshot for this criterion.</div>`}

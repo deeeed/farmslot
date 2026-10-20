@@ -42,6 +42,13 @@ export class ProofStepDetails extends LitElement {
       color: ${unsafeCSS(colors.textPrimary)};
       border-color: ${unsafeCSS(colors.accent)};
     }
+    @media (pointer: coarse) {
+      .open,
+      .close {
+        min-height: 44px;
+        min-width: 44px;
+      }
+    }
     dialog {
       width: min(640px, calc(100vw - 32px));
       max-height: min(80vh, 720px);

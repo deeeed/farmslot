@@ -507,6 +507,14 @@ export class MediaLightbox extends MediaLightboxState {
     this._syncVideoState(video);
   }
 
+  /** Where a paused video rests (a pause, a scrub, a frame step), for a host's link. */
+  private _reportMoment(video: HTMLVideoElement): void {
+    if (!video.paused) return;
+    this.dispatchEvent(
+      new CustomEvent('lightbox-moment', { detail: { ms: video.currentTime * 1000 } }),
+    );
+  }
+
   private _syncVideoState(video: HTMLVideoElement | null = this._primaryVideo()): void {
     if (!video || !this._videoSet().includes(video)) return;
     if (this._pendingSeekMs !== null && video.readyState >= 1) {
@@ -1164,16 +1172,18 @@ export class MediaLightbox extends MediaLightboxState {
                   `
                 : nothing}
               ${this.embedded
-                ? html`<button
-                    class="ml-btn"
-                    @click=${() => {
-                      // The host's viewer opens under a fullscreen player otherwise.
-                      if (this._fullscreen) void document.exitFullscreen();
-                      this.dispatchEvent(new CustomEvent('lightbox-expand'));
-                    }}
-                  >
-                    ${this.expandLabel}
-                  </button>`
+                ? this.expandLabel
+                  ? html`<button
+                      class="ml-btn"
+                      @click=${() => {
+                        // The host's viewer opens under a fullscreen player otherwise.
+                        if (this._fullscreen) void document.exitFullscreen();
+                        this.dispatchEvent(new CustomEvent('lightbox-expand'));
+                      }}
+                    >
+                      ${this.expandLabel}
+                    </button>`
+                  : nothing
                 : html`${this.reviewable
                       ? html`<button
                           class="ml-btn"
@@ -1235,12 +1245,16 @@ export class MediaLightbox extends MediaLightboxState {
                                 this._syncVideoState(event.currentTarget as HTMLVideoElement)}
                               @play=${(event: Event) =>
                                 this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-                              @pause=${(event: Event) =>
-                                this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                              @pause=${(event: Event) => {
+                                this._syncVideoState(event.currentTarget as HTMLVideoElement);
+                                this._reportMoment(event.currentTarget as HTMLVideoElement);
+                              }}
                               @ratechange=${(event: Event) =>
                                 this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-                              @seeked=${(event: Event) =>
-                                this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                              @seeked=${(event: Event) => {
+                                this._syncVideoState(event.currentTarget as HTMLVideoElement);
+                                this._reportMoment(event.currentTarget as HTMLVideoElement);
+                              }}
                               @ended=${(event: Event) =>
                                 this._finishEvidencePlayback(
                                   event.currentTarget as HTMLVideoElement,

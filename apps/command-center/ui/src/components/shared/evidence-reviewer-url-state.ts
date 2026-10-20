@@ -56,6 +56,11 @@ export function evidenceReviewerHash(
   return buildHash(route, params);
 }
 
+/** One string per view as the link records it (times to a tenth of a second). */
+export function evidenceReviewerViewKey(view: EvidenceReviewerView | null): string {
+  return view ? evidenceReviewerHash(view, '#') : '';
+}
+
 export function writeEvidenceReviewerHash(view: EvidenceReviewerView | null): void {
   const next = evidenceReviewerHash(view);
   if (location.hash !== next) history.replaceState(null, '', next);

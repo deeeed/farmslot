@@ -265,3 +265,29 @@ test('a stored run without links gets its Jira link at startup (4237202e)', asyn
     { label: 'PR', url: 'https://github.com/o/r/pull/9' },
   ]);
 });
+
+test('a stored run of a project without config is skipped, reported once', async (t) => {
+  const missing = `.jira-admission-missing-${process.pid}`;
+  const runs = [1, 2].map((n) =>
+    createRun({
+      project: missing,
+      flowType: 'dev',
+      ticketOrPr: `TAT-${4300 + n}`,
+      ticketData: jiraTicketData(`TAT-${4300 + n}`, 'Gone project'),
+    }),
+  );
+  const warn = t.mock.method(console, 'warn', () => {});
+  t.after(async () => {
+    for (const run of runs) {
+      updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  await backfillMissingRunLinks(runs.map((run) => getRun(run.id)!));
+  for (const run of runs) assert.equal(getRun(run.id)?.links, undefined);
+  assert.equal(
+    warn.mock.calls.filter((call) => String(call.arguments[0]).includes('run links skipped'))
+      .length,
+    1,
+  );
+});

@@ -883,13 +883,3 @@ export function locateStepArtifact(
     },
   };
 }
-
-/** The publication gate is on screen: it owns the run's evidence review and its link. */
-export function runHasPublicationGate(run: Pick<Run, 'decisions'>): boolean {
-  return run.decisions.some(
-    (decision) =>
-      !decision.resolvedAt &&
-      decision.type === 'engine_human_gate' &&
-      decision.payload?.kind === 'ready',
-  );
-}

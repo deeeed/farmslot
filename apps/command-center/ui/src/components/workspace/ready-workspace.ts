@@ -47,6 +47,7 @@ import {
 import {
   type EvidenceReviewerView,
   evidenceReviewerViewFromHash,
+  evidenceReviewerViewKey,
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
@@ -332,19 +333,22 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._acting = false;
     }
   }
-  /** A review link opens the review once the package's evidence has loaded. */
-  private _restoredReview = '';
+  /** The view the hash holds as applied or reported, so only a new link reapplies. */
+  private _reviewLinkKey = '';
+  private _reviewLinkCount = 0;
 
+  /**
+   * A review link opens the review once the package's evidence has loaded, and a
+   * new link (pasted, or back and forward) moves a review already open to its view.
+   */
   private _restoreReviewFromHash(): void {
     const model = this._evidenceModel;
     const view = evidenceReviewerViewFromHash();
-    // Once the link leaves the hash (the review closed), the same link opens it again.
-    if (!view) this._restoredReview = '';
-    if (!model || this._review || !view) return;
-    const key = JSON.stringify(view);
-    if (key === this._restoredReview || !model.claims.some((claim) => claim.id === view.claimId))
-      return;
-    this._restoredReview = key;
+    const key = evidenceReviewerViewKey(view);
+    if (!view) this._reviewLinkKey = '';
+    if (!model || !view || key === this._reviewLinkKey) return;
+    if (!model.claims.some((claim) => claim.id === view.claimId)) return;
+    this._reviewLinkKey = key;
     model.selectClaim(view.claimId);
     this._review = {
       ...evidenceReviewerSelection({
@@ -355,7 +359,14 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       }),
       atMs: view.atMs,
       check: view.check,
+      link: ++this._reviewLinkCount,
     };
+  }
+
+  /** The review reports its view; the link follows it. */
+  private _onReviewerView(view: EvidenceReviewerView): void {
+    this._reviewLinkKey = evidenceReviewerViewKey(view);
+    writeEvidenceReviewerHash(view);
   }
 
   override updated(changed: Map<string, unknown>): void {
@@ -411,7 +422,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
                 writeEvidenceReviewerHash(null);
               }}
               @reviewer-view=${(event: CustomEvent<EvidenceReviewerView>) =>
-                writeEvidenceReviewerHash(event.detail)}
+                this._onReviewerView(event.detail)}
               @reviewer-files=${(event: CustomEvent<{ claimId: string }>) =>
                 this._openClaimGallery(event.detail.claimId)}
             ></evidence-reviewer>`
@@ -838,16 +849,16 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   /** The gallery of the criterion the review shows, which may not be the one it opened on. */
   private _openClaimGallery(claimId: string): void {
     const claim = this._evidenceModel?.claims.find((candidate) => candidate.id === claimId);
+    // The review offers All files only for a criterion with files; never show another's.
+    if (!claim?.evidence.length) return;
     this._review = null;
     writeEvidenceReviewerHash(null);
-    if (claim?.evidence.length) {
-      this._evidenceModel?.selectClaim(claimId);
-      this._evidenceItems = claim.evidence.map((artifact) =>
-        this._evidenceItem(artifact.artifactPath),
-      );
-      this._lightboxIndex = 0;
-      this._lightboxMode = 'single';
-    }
+    this._evidenceModel?.selectClaim(claimId);
+    this._evidenceItems = claim.evidence.map((artifact) =>
+      this._evidenceItem(artifact.artifactPath),
+    );
+    this._lightboxIndex = 0;
+    this._lightboxMode = 'single';
     this._lightboxOpen = true;
   }
 
@@ -868,6 +879,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       }),
       atMs: review.atMs,
       check: review.check,
+      link: review.link,
       judgments: this._reviewJudgments(),
     };
   }

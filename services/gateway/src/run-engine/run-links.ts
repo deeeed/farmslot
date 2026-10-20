@@ -94,12 +94,24 @@ export async function refreshRunLinks(runId: string): Promise<void> {
  * no link. Compute links once for every run that names a ticket and has none.
  */
 export async function backfillMissingRunLinks(runs: readonly Run[]): Promise<void> {
-  for (const run of runs) {
-    if (run.links?.length) continue;
-    const namesTicket =
-      run.ticketData?.jiraKey ||
-      run.ticketData?.githubIssue ||
-      /^[A-Z]+-\d+$/i.test(run.ticketOrPr);
-    if (namesTicket) await refreshRunLinks(run.id);
+  const unlinked = runs.filter(
+    (run) =>
+      !run.links?.length &&
+      (run.ticketData?.jiraKey ||
+        run.ticketData?.githubIssue ||
+        /^[A-Z]+-\d+$/i.test(run.ticketOrPr)),
+  );
+  // A project without config (deleted, or legacy) is checked and reported once, not per run.
+  const missingProjects = new Set<string>();
+  for (const project of new Set(unlinked.map((run) => run.project))) {
+    try {
+      await loadProjectVars(project);
+    } catch (err) {
+      missingProjects.add(project);
+      console.warn(
+        `[run-engine] run links skipped for project ${project}: ${(err as Error).message.slice(0, 200)}`,
+      );
+    }
   }
+  for (const run of unlinked) if (!missingProjects.has(run.project)) await refreshRunLinks(run.id);
 }

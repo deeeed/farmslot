@@ -70,7 +70,9 @@ import {
   evidenceReviewerSelection,
 } from '../shared/evidence-reviewer.js';
 import {
+  type EvidenceReviewerView,
   evidenceReviewerViewFromHash,
+  evidenceReviewerViewKey,
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
@@ -92,7 +94,7 @@ import {
   resumeStoppedNativeWorker,
 } from './run-detail-actions.js';
 import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
-import { renderRunGateSection } from './run-detail-decision-renderers.js';
+import { renderRunGateSection, runMountsPublicationGate } from './run-detail-decision-renderers.js';
 import {
   acceptanceEvidenceSelection,
   buildRerunAlongsideHref,
@@ -112,7 +114,6 @@ import {
   runDetailDesiredRecipeRunId,
   runEvidenceSettled,
   runFamilyPrStatus,
-  runHasPublicationGate,
   runHasTrimmedDetail,
   runOutputEvidenceSelection,
   shouldAcceptTaskProgressUpdate,
@@ -1376,15 +1377,7 @@ export class RunDetail extends RunDetailState {
       openProofFile: (claimId, path) => {
         model.selectClaim(claimId, path);
         this._openEvidenceLightbox({
-          items: [
-            {
-              path,
-              purpose: 'evidence',
-              url: resolve(path),
-              evidenceModel: model,
-              resolveArtifactUrl: resolve,
-            },
-          ],
+          items: [this._evidenceFileItem(path, model)],
           index: 0,
           scope: `${claimId} evidence`,
           criterionId: claimId,
@@ -1501,36 +1494,53 @@ export class RunDetail extends RunDetailState {
     };
   }
 
-  /** Where a review link left the recording, and the step check it left open. */
-  private _reviewLink?: Pick<EvidenceReviewerSelection, 'atMs' | 'check'>;
+  /** One evidence file of the run, served and reviewed through its evidence model. */
+  private _evidenceFileItem(path: string, model: EvidenceReviewModel): LightboxItem {
+    const resolve = this._captureEvidenceResolver();
+    return {
+      path,
+      purpose: 'evidence',
+      url: resolve(path),
+      evidenceModel: model,
+      resolveArtifactUrl: resolve,
+    };
+  }
+
+  /** The link the review last applied: where it left the recording and the open step check. */
+  private _reviewLink?: Pick<EvidenceReviewerSelection, 'atMs' | 'check' | 'link'>;
+  /** The view the hash holds as applied or reported, so only a new link reapplies. */
+  private _reviewLinkKey = '';
+
+  /** The review reports its view; the link follows unless the gate owns review links. */
+  private _onReviewerView(view: EvidenceReviewerView): void {
+    if (this.run && runMountsPublicationGate(this.run)) return;
+    this._reviewLinkKey = evidenceReviewerViewKey(view);
+    writeEvidenceReviewerHash(view);
+  }
 
   /**
-   * A review link reopens the review on its criterion, file and moment. The
-   * publication gate owns that link when it is on screen.
+   * A review link opens the review on its criterion, file, moment and step check,
+   * also over a review already open. The publication gate owns review links
+   * whenever run detail mounts it.
    */
   private _applyReviewFromHash(): boolean {
     const run = this.run;
     const model = this.evidenceModel;
     const view = evidenceReviewerViewFromHash();
-    if (!run || !model || !view || runHasPublicationGate(run)) return false;
+    if (!view) this._reviewLinkKey = '';
+    if (!run || !model || !view || runMountsPublicationGate(run)) return false;
     if (!model.claims.some((claim) => claim.id === view.claimId)) return false;
-    if (this._evidenceLightboxOpen && this._evidenceLightboxCriterionId === view.claimId)
-      return true;
-    const resolve = this._captureEvidenceResolver();
-    this._reviewLink = { atMs: view.atMs, check: view.check };
+    const key = evidenceReviewerViewKey(view);
+    if (this._evidenceLightboxOpen && key === this._reviewLinkKey) return true;
+    this._reviewLinkKey = key;
+    this._reviewLink = {
+      atMs: view.atMs,
+      check: view.check,
+      link: (this._reviewLink?.link ?? 0) + 1,
+    };
     this._openEvidenceLightbox(
       {
-        items: view.path
-          ? [
-              {
-                path: view.path,
-                purpose: 'evidence',
-                url: resolve(view.path),
-                evidenceModel: model,
-                resolveArtifactUrl: resolve,
-              },
-            ]
-          : [],
+        items: view.path ? [this._evidenceFileItem(view.path, model)] : [],
         index: 0,
         scope: `${view.claimId} evidence`,
         criterionId: view.claimId,
@@ -1540,10 +1550,6 @@ export class RunDetail extends RunDetailState {
     return true;
   }
 
-  /**
-   * A criterion chosen in the review becomes the link only when its own files list
-   * the recording: the link resolver reopens exactly that pair, and nothing else.
-   */
   /** A criterion's files in the gallery, from the review. */
   private _openClaimFiles(claimId: string): void {
     const row = runAcceptanceCriterionEvidence(this).find((candidate) => candidate.id === claimId);
@@ -1558,6 +1564,10 @@ export class RunDetail extends RunDetailState {
     this._evidenceGallery = true;
   }
 
+  /**
+   * A criterion chosen in the review becomes the link only when its own files list
+   * the recording: the link resolver reopens exactly that pair, and nothing else.
+   */
   private _selectEvidenceClaim(claimId: string): void {
     const recording = this._evidenceLightboxItems[this._evidenceLightboxIndex];
     const reopenable = runAcceptanceCriterionEvidence(this).some(
@@ -1569,8 +1579,11 @@ export class RunDetail extends RunDetailState {
   }
 
   private _closeEvidenceLightbox(): void {
-    if (evidenceReviewerViewFromHash()) writeEvidenceReviewerHash(null);
+    // The gate's own review keeps its link.
+    if (evidenceReviewerViewFromHash() && !(this.run && runMountsPublicationGate(this.run)))
+      writeEvidenceReviewerHash(null);
     this._reviewLink = undefined;
+    this._reviewLinkKey = '';
     this._evidenceLightboxOpen = false;
     this._evidenceArtifactUnavailable = null;
     this._updateEvidenceArtifactHash(null);
@@ -1647,6 +1660,7 @@ export class RunDetail extends RunDetailState {
       artifactUrl: this._artifactUrl,
       onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
       closeEvidenceLightbox: () => this._closeEvidenceLightbox(),
+      reviewerView: (view) => this._onReviewerView(view),
       evidenceReviewer: this._evidenceReviewer(),
       showEvidenceGallery: (claimId) => this._openClaimFiles(claimId),
       reviewEvidence:

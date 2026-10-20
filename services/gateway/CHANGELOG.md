@@ -6,7 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - A capability cleanup whose release action could not reach its node is retried when the node reconnects. A cleanup that recovery refused (unreadable catalog, changed provenance) still waits for an operator. Before, the lease stayed in `error` and refused every acquire, its own run's included, until someone released it by hand: each gateway restart reconciled before macpro reconnected, so TAT-4145 run bda11b1a's terminal-browser cleanup on macpro-mmt-1 failed with "Resource node macpro is disconnected" and blocked the run's proof recording.
 - Active-development baseline; add user-facing changes here before release or package publication.
-- A run created with its ticket already attached now gets its Jira and GitHub links at creation. Before, links were only computed when the gateway itself read or changed the ticket, so a run dispatched with its Jira data (TAT-4006 run 7721a02b) had no Jira link until it finished. At startup the gateway computes links once for stored runs that name a ticket and have none.
+- A run created with its ticket already attached now gets its Jira and GitHub links at creation. Before, links were only computed when the gateway itself read or changed the ticket, so a run dispatched with its Jira data (TAT-4006 run 7721a02b) had no Jira link until it finished. At startup the gateway computes links once for stored runs that name a ticket and have none; a project with no config is skipped with one warning.
 
 ## 0.29.0 - 2026-10-20
 

@@ -44,10 +44,7 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
-import {
-  type EvidenceReviewerView,
-  writeEvidenceReviewerHash,
-} from '../shared/evidence-reviewer-url-state.js';
+import type { EvidenceReviewerView } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem, LightboxSelection } from '../shared/media-lightbox-types.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
@@ -236,6 +233,8 @@ export interface RunEvidenceRenderContext {
   closeEvidenceLightbox: () => void;
   /** Set while one criterion's evidence is open in the full-screen review. */
   evidenceReviewer?: EvidenceReviewerSelection | null;
+  /** The view the open review reports, for the link. */
+  reviewerView?: (view: EvidenceReviewerView) => void;
   /** The files of the criterion the review shows, in the gallery. */
   showEvidenceGallery?: (claimId: string) => void;
   /** Set when the open gallery is one criterion's files: its recording can switch to the review. */
@@ -403,7 +402,7 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
           @reviewer-files=${(event: CustomEvent<{ claimId: string }>) =>
             ctx.showEvidenceGallery?.(event.detail.claimId)}
           @reviewer-view=${(event: CustomEvent<EvidenceReviewerView>) =>
-            writeEvidenceReviewerHash(event.detail)}
+            ctx.reviewerView?.(event.detail)}
           @reviewer-claim=${(event: CustomEvent<{ claimId: string }>) =>
             ctx.selectEvidenceClaim?.(event.detail.claimId)}
         ></evidence-reviewer>`
