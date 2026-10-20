@@ -167,10 +167,8 @@ export interface ReviewResult {
 export function reReviewMode(
   result: Pick<ReviewResult, 'reviewId' | 'reviewSnapshot' | 'issues' | 'mode'>,
   firstPassMode?: ReviewMode | null,
-): ReviewMode {
-  return reReviewContinuation(result)
-    ? 'warm'
-    : resolveReviewMode({ explicitMode: result.mode ?? firstPassMode });
+): ReviewMode | undefined {
+  return reReviewContinuation(result) ? 'warm' : (result.mode ?? firstPassMode ?? undefined);
 }
 
 /** The fix checklist exists, but the retained worker did not accept its prompt. */

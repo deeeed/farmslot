@@ -271,7 +271,7 @@ async function resumeInterruptedPublicationReviewOnce(
       artifactScope: interrupted.id,
       reviewId: interrupted.id,
       // ADR-063 Amendment 5: the fix's re-review continues this review's lineage WARM.
-      mode: reReviewMode(resumeFromResult),
+      mode: reReviewMode(resumeFromResult, 'cold'),
       publicationReview: true,
       resumeFromResult,
     });
@@ -365,7 +365,7 @@ async function resumeVisualRepairOnce(
       validationDepth: review.validationDepth ?? 'full-live',
       artifactScope: review.id,
       reviewId: review.id,
-      mode: reReviewMode(reviewResultFromInterruptedReview(review)),
+      mode: reReviewMode(reviewResultFromInterruptedReview(review), 'cold'),
       publicationReview: true,
       resumeFromResult: {
         ...reviewResultFromInterruptedReview(review),

@@ -816,7 +816,7 @@ export async function executeReviewStep(
       const retryResult = await executeReviewForRun(runId, current.slotId, {
         ...reviewer,
         validationDepth,
-        mode: reReviewMode(result),
+        mode: reReviewMode(result, 'cold'),
         reviewId: result.reviewId,
         resumeFromResult: result,
       });
