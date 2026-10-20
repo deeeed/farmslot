@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `reasonWithoutRemedy(message, spent)` is exported: the wording a gate reason keeps when its remedy is not offered, shared by clients and the gateway.
 - `gateWaitReason(decision)`, `gateDisplayReasons(decision)` and their `GateDecisionFields` input are exported, so every screen derives an open gate's actionable reason from one rule. A listed reason whose remedy the gate does not offer keeps its finding, not the instruction.
 - A blocked run whose human gate decision is open reads `Needs your decision` with the gate's first readiness reason whose action the gate offers (`Review rounds spent: N issues open` when fixing is no longer offered) (`deriveRunLifecycleView`, `runStepDisplayStatus`/`Detail`, new `runDisplayStatus`), instead of Blocked; its gate step is not marked blocked. A `human-gating` run at its open gate gets the same label and badge. A blocked run with no open gate still reads Blocked. `openHumanGateDecision`, `HUMAN_GATE_DECISION_TYPE` and `isBlockedAtOpenHumanGate` are shared here (Companion and CC reuse them).
 - Active-development baseline; add user-facing changes here before release or package publication.
