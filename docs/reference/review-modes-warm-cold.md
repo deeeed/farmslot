@@ -161,8 +161,10 @@ cap.
   Once a native reviewer's result is recorded, the Gateway MUST stop its
   process and the MCP servers it started, keeping the session, lease and
   conversation for WARM. A WARM re-review transfers the stopped session and
-  resumes its saved conversation. An idle settled reviewer MUST NOT hold a live
-  process.
+  resumes its saved conversation, on native and tmux runs alike. An idle
+  settled reviewer MUST NOT hold a live process. A stop the host does not
+  confirm is logged and leaves the binding held, so the next reuse of the slot
+  stops it.
 
 ## Mode resolution
 

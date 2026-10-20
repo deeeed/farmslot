@@ -131,7 +131,8 @@ const REFUSED_APPROVALS =
  * and resumes it (dispatchNativeWorker's handoff). A live idle reviewer only held
  * its process and MCP servers until the slot changed hands (TAT-4006 run 7721a02b's
  * reviewer outlived its result by five hours). The verdict is already recorded, so
- * an unconfirmed stop is reported, not raised.
+ * an unconfirmed stop is reported, not raised: its binding stays held, and the next
+ * reuse of the slot stops it (retireNativeWorkersForSlot).
  */
 async function stopSettledReviewer(runId: string, contextId: string): Promise<void> {
   const context = getRun(runId)?.agentContexts?.find((candidate) => candidate.id === contextId);

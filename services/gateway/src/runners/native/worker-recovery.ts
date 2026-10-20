@@ -64,9 +64,20 @@ async function resumeNativeWorkerExclusive(
   options?.assertCurrent?.();
   // Store writes mutate the run in place; recovery must retain its admission identity.
   const run = structuredClone(getRun(runId));
+  // A tmux or default run owns no native worker except its native reviewer, which a
+  // review relaunch or a WARM handoff of a stopped reviewer resumes (worker-control.ts
+  // applies the same rule by role).
+  const resumesReviewer =
+    options !== undefined &&
+    'contextId' in options &&
+    Boolean(
+      run?.agentContexts?.some(
+        (context) => context.id === options.contextId && context.role === 'review',
+      ),
+    );
   if (
     !run ||
-    (run.transport !== 'native' && options?.purpose !== 'review') ||
+    (run.transport !== 'native' && options?.purpose !== 'review' && !resumesReviewer) ||
     isTerminalRunStatus(run.status) ||
     (!options && run.status !== 'paused') ||
     (options?.purpose === 'blocked-worker' && run.status !== 'blocked') ||
