@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import type { FlowType, Run, RunCreateParams } from '@farmslot/protocol';
 
+import { makeOwnerWritable, replaceReadOnlyDestination } from '../core/owned-copy.js';
 import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
@@ -197,11 +198,14 @@ async function copyArtifactSource(
 ): Promise<void> {
   if (kind === 'file') {
     await mkdir(path.dirname(destPath), { recursive: true });
+    await replaceReadOnlyDestination(destPath);
     await copyFile(sourcePath, destPath);
-    return;
+  } else {
+    await mkdir(destPath, { recursive: true });
+    await cp(sourcePath, destPath, { recursive: true, force: true });
   }
-  await mkdir(destPath, { recursive: true });
-  await cp(sourcePath, destPath, { recursive: true, force: true });
+  // A seed from a retained bundle keeps the bundle's read-only mode unless made the run's own.
+  await makeOwnerWritable(destPath);
 }
 
 function normalizePackageRelativePath(value: string): string | null {

@@ -365,6 +365,81 @@ test('slotCopyDir skips escaping local symlinks instead of copying them into art
   assert.equal(await readFile(path.join(externalDir, 'outside.txt'), 'utf-8'), 'outside');
 });
 
+test('capture replaces a read-only destination, as an inherited bundle copy is', async (t) => {
+  // pr-complete run 4b1b02f3: the child's recipe.json was seeded 0400 from the parent's
+  // retained bundle, the worker edited it, and capture failed with EACCES copyfile.
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-io-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sourceDir = path.join(root, 'slot', 'artifacts');
+  const destDir = path.join(root, 'orchestrator', 'artifacts');
+  await mkdir(sourceDir, { recursive: true });
+  await mkdir(destDir, { recursive: true });
+  await writeFile(path.join(sourceDir, 'recipe.json'), '{"edited":true}', 'utf-8');
+  await writeFile(path.join(destDir, 'recipe.json'), '{"inherited":true}', 'utf-8');
+  await chmod(path.join(destDir, 'recipe.json'), 0o400);
+
+  const copied = await slotCopyDir(
+    { host: 'localhost', machine: 'test-machine', sshTarget: 'localhost' },
+    sourceDir,
+    destDir,
+  );
+
+  assert.equal(copied, 1);
+  assert.equal(await readFile(path.join(destDir, 'recipe.json'), 'utf-8'), '{"edited":true}');
+});
+
+test('remote capture preserves a read-only destination until replacement bytes are verified', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'slot-copy-readonly-remote-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const content = Buffer.from('{"edited":true}');
+  for (const forceChunked of [false, true]) {
+    const destination = path.join(root, forceChunked ? 'chunked.json' : 'oneshot.json');
+    await writeFile(destination, '{"inherited":true}');
+    await chmod(destination, 0o400);
+    let failRead = true;
+    let failHash = forceChunked;
+    const ctx = {
+      host: 'remote.invalid',
+      machine: 'readonly-capture',
+      sshTarget: '',
+      nodeRequest: async (method: string) => {
+        if (method === 'fs.stat') return { size: content.length, isFile: true };
+        if (method === 'fs.hash')
+          return {
+            sha256: failHash ? 'mismatch' : createHash('sha256').update(content).digest('hex'),
+          };
+        if (failRead) throw new Error('Source disappeared during capture');
+        if (method === 'fs.readBase64') return { content: content.toString('base64') };
+        if (method === 'fs.readChunk')
+          return {
+            content: content.toString('base64'),
+            size: content.length,
+            offset: 0,
+            bytesRead: content.length,
+            eof: true,
+          };
+        throw new Error(`Unexpected RPC ${method}`);
+      },
+    };
+    await assert.rejects(
+      slotCopyFile(ctx, '/task/recipe.json', destination, { forceChunked }),
+      /Source disappeared during capture/,
+    );
+    assert.equal(await readFile(destination, 'utf8'), '{"inherited":true}');
+    failRead = false;
+    if (forceChunked) {
+      await assert.rejects(
+        slotCopyFile(ctx, '/task/recipe.json', destination, { forceChunked }),
+        /Assembled sha256 .* !== remote/,
+      );
+      assert.equal(await readFile(destination, 'utf8'), '{"inherited":true}');
+    }
+    failHash = false;
+    assert.equal(await slotCopyFile(ctx, '/task/recipe.json', destination, { forceChunked }), true);
+    assert.deepEqual(await readFile(destination), content);
+  }
+});
+
 test('slotCopyDir can skip excluded top-level files and directories', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-io-exclude-'));
   t.after(() => rm(root, { recursive: true, force: true }));
