@@ -11,6 +11,7 @@ import {
   type AcceptanceStatusLedger,
   digestRecipeDocument,
   gateActionsForReadiness,
+  isEvidencePolicyReason,
   type RecipeClaimDeclaration,
   type RecipeClaimEvidence,
   type RecipeClaimLedger,
@@ -1659,4 +1660,71 @@ test('a review claim is satisfied only by the gate review prerequisite at the pa
     claimVerdictBlocked((await gate([pass, openFindingAtHead(prepared)])).readiness),
     'an open finding at the head',
   );
+});
+
+// TAT-4145 bda11b1a gate 5bc9ef11 read ready with no reasons; publication then refused the
+// package for secret values. The gate runs the same scan, so approval is never offered.
+test('a package publication would refuse for secret values is not ready for approval', async () => {
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  const inputs = {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewResult: async () => undefined,
+  };
+  const run = makeRun();
+  assert.equal((await collectRunGateReadiness(run, prepared, inputs)).state, 'ready');
+
+  const phrase = Array<string>(12).fill('abandon').join(' ');
+  const refused = await collectRunGateReadiness(
+    run,
+    { ...prepared, draftBody: `${prepared.draftBody}\n\n${phrase}` },
+    inputs,
+  );
+  assert.equal(refused.state, 'not-ready');
+  const reason = refused.reasons.find(({ code }) => code === 'publication-secret-values');
+  assert.equal(reason?.prerequisite, 'evidence');
+  assert.match(reason?.message ?? '', /Publication blocked by secret values: srp sha256:/);
+  assert.doesNotMatch(reason?.message ?? '', /abandon/, 'fingerprints only, never the value');
+});
+
+test('an unreadable secret scan fails closed, a verdict holds for its content, and attestation waives neither', async () => {
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  const inputs = {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewResult: async () => undefined,
+  };
+  const unreadable = await collectRunGateReadiness(makeRun(), prepared, {
+    ...inputs,
+    publicationSecrets: async () => {
+      throw new Error('Retained artifact is missing, pruned or changed: artifacts/x/recipe.json');
+    },
+  });
+  const unscanned = unreadable.reasons.find(({ message }) =>
+    message.startsWith('The publication secret scan could not read the frozen evidence'),
+  );
+  assert.equal(unscanned?.code, 'evidence-validation-unavailable');
+  assert.equal(unreadable.state, 'not-ready');
+
+  const secret = { ...prepared, draftBody: Array<string>(12).fill('abandon').join(' ') };
+  const refused = await collectRunGateReadiness(makeRun(), secret, inputs);
+  const reason = refused.reasons.find(({ code }) => code === 'publication-secret-values');
+  assert.ok(reason);
+  assert.equal(isEvidencePolicyReason(reason), false, 'attestation cannot waive it');
+  for (const found of refused.reasons) assert.equal(isEvidencePolicyReason(found), false);
+
+  // A verdict is kept for the package's content: the same content keeps it, other content
+  // gets its own scan.
+  const again = await collectRunGateReadiness(makeRun(), secret, inputs);
+  assert.ok(again.reasons.some(({ code }) => code === 'publication-secret-values'));
+  const clean = await collectRunGateReadiness(makeRun(), prepared, inputs);
+  assert.ok(!clean.reasons.some(({ code }) => code === 'publication-secret-values'));
 });

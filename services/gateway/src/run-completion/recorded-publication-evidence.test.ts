@@ -131,6 +131,66 @@ test('frozen indexed text is scanned without changing bytes or admitting histori
   ]);
 });
 
+// Gate readers that leave only the publication secret scan live.
+const gateReaders = {
+  deterministic: async () => {},
+  acceptance: async () => ({ criteria: [], ledger: null, issues: [] }),
+  progress: async () => ({ kind: 'idle' as const }),
+  selectedEvidence: async () => {},
+  reviewResult: async () => undefined,
+};
+
+// TAT-4145 bda11b1a: the selected recording's frozen recipe text carried a secret-shaped
+// value, the gate read ready, and publication refused at finalize.
+test('the publication gate refuses the frozen evidence text publication would refuse', async (t) => {
+  const { collectRunGateReadiness } = await import('../run-engine/gate-prerequisites.js');
+  const { taskDir, root, run, artifacts, manifest } = await fixture(t);
+  await writeFile(
+    path.join(root, 'observed.log'),
+    JSON.stringify({ arbitrary: Array<string>(12).fill('abandon').join(' ') }),
+  );
+  await indexFixtureArtifact(root, 'observed.log', 'log');
+  artifacts.push({ path: 'artifacts/recipe-run/observed.log', purpose: 'other' });
+  const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
+  await retainRunFixture(run);
+  const readiness = await collectRunGateReadiness(
+    run,
+    makeReadyGatePackage({
+      evidenceManifest: inventory,
+      selectedEvidenceKeys: ['artifacts/recipe-run/proof.png'],
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    }),
+    gateReaders,
+  );
+  assert.equal(readiness.state, 'not-ready');
+  const reason = readiness.reasons.find(({ code }) => code === 'publication-secret-values');
+  assert.match(reason?.message ?? '', /Publication blocked by secret values: srp sha256:/);
+});
+
+test('the publication gate reads clean frozen evidence text as clean', async (t) => {
+  const { collectRunGateReadiness } = await import('../run-engine/gate-prerequisites.js');
+  const { taskDir, run, artifacts, manifest } = await fixture(t);
+  const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
+  await retainRunFixture(run);
+  const readiness = await collectRunGateReadiness(
+    run,
+    makeReadyGatePackage({
+      evidenceManifest: inventory,
+      selectedEvidenceKeys: ['artifacts/recipe-run/proof.png'],
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    }),
+    gateReaders,
+  );
+  assert.deepEqual(
+    readiness.reasons.filter(
+      ({ code, message }) =>
+        code === 'publication-secret-values' ||
+        message.startsWith('The publication secret scan could not read'),
+    ),
+    [],
+  );
+});
+
 test('a declared empty diagnostic log remains valid publication evidence', async (t) => {
   const { taskDir, root, run, artifacts, manifest } = await fixture(t);
   await writeFile(path.join(root, 'diagnostics-app-log.txt'), '');
@@ -529,6 +589,34 @@ test('selected baseline text is scanned without promoting baseline verdicts', as
     ),
     value,
   );
+});
+
+test('the gate scans the pair half publication adds to an after-only selection', async (t) => {
+  const { collectRunGateReadiness } = await import('../run-engine/gate-prerequisites.js');
+  const f = await baselineFixture(t, `private_key = ${'1'.repeat(64)}`);
+  await retainRunFixture(f.run);
+  const effective = await readEvidenceManifest(f.run);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    effective,
+    1,
+    publicationBaselineContext(f.run),
+  );
+  await retainRunFixture(f.run);
+  // Only the head capture is selected; publication uploads its paired baseline too.
+  const readiness = await collectRunGateReadiness(
+    f.run,
+    makeReadyGatePackage({
+      evidenceManifest: inventory,
+      selectedEvidenceKeys: [`artifacts/${f.headRoot}/proof.png`],
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    }),
+    gateReaders,
+  );
+  assert.equal(readiness.state, 'not-ready');
+  const reason = readiness.reasons.find(({ code }) => code === 'publication-secret-values');
+  assert.match(reason?.message ?? '', /Publication blocked by secret values: private-key sha256:/);
 });
 
 test('baseline declarations refuse other roles, source changes and incomplete captured closures', async (t) => {

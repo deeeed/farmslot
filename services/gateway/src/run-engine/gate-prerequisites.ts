@@ -48,6 +48,11 @@ import type { InheritedAcceptanceCandidate } from '../run-completion/inherited-a
 import { isArtifactOnlyRun } from '../run-completion/orchestrator.js';
 import { verifyRunOutputReview } from '../run-completion/output.js';
 import {
+  assertPublicationTextSafe,
+  PublicationSecretError,
+} from '../run-completion/publication-secrets.js';
+import {
+  computeReadyGatePackageHash,
   readReadyGatePreparedPackage,
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
@@ -114,6 +119,8 @@ export interface GatePrerequisiteReaders {
   ) => Promise<RecordedEvidencePackageInput[]>;
   reviewResult(run: Run, relativePath: string): Promise<string | undefined>;
   selectedEvidence(run: Run, preparedPackage: ReadyGatePrPackage): Promise<void>;
+  /** Publication's secret scan over the package's text and frozen evidence (ADR-065 Amendment 9). */
+  publicationSecrets(run: Run, preparedPackage: ReadyGatePrPackage): Promise<void>;
   reviewDocument(run: Run): Promise<boolean>;
   reviewedInputsAwaitingReview: typeof reviewedInputsAwaitingReview;
 }
@@ -313,7 +320,66 @@ const readers: GatePrerequisiteReaders = {
       preparedPackage,
       preparedPackage.selectedEvidenceKeys ?? [],
     ),
+  publicationSecrets: async (run, preparedPackage) => {
+    // Keyed by the package's content, not its stored hash field.
+    const identity = computeReadyGatePackageHash(preparedPackage);
+    const known = publicationSecretVerdicts.get(identity);
+    if (known) throw known;
+    if (known === null) return;
+    try {
+      await scanPackageForPublicationSecrets(run, preparedPackage);
+      rememberPublicationSecretVerdict(identity, null);
+    } catch (error) {
+      if (error instanceof PublicationSecretError)
+        rememberPublicationSecretVerdict(identity, error);
+      throw error;
+    }
+  },
 };
+
+// The scan is synchronous detector work on the gateway's event loop, and readiness is
+// evaluated on every presentation and resolve. The package content (its draft, evidence
+// digests, selection and bundle) covers every scanned input, so a verdict, a refusal
+// included, holds for that content.
+const publicationSecretVerdicts = new Map<string, PublicationSecretError | null>();
+const MAX_PUBLICATION_SECRET_VERDICTS = 128;
+
+function rememberPublicationSecretVerdict(
+  identity: string,
+  verdict: PublicationSecretError | null,
+): void {
+  publicationSecretVerdicts.set(identity, verdict);
+  if (publicationSecretVerdicts.size <= MAX_PUBLICATION_SECRET_VERDICTS) return;
+  const oldest = publicationSecretVerdicts.keys().next();
+  if (!oldest.done) publicationSecretVerdicts.delete(oldest.value);
+}
+
+/** Publication's own scans of what this package publishes, its completed pairs included. */
+async function scanPackageForPublicationSecrets(
+  run: Run,
+  preparedPackage: ReadyGatePrPackage,
+): Promise<void> {
+  assertPublicationTextSafe(preparedPackage.draftTitle, preparedPackage.draftBody);
+  const inventory = preparedPackage.evidenceManifest ?? [];
+  const selected = preparedPackage.selectedEvidenceKeys ?? [];
+  if (!inventory.length && !selected.length) return;
+  const { readFrozenPublicationManifest, scanFrozenPublicationEvidence } =
+    await import('../run-completion/recorded-publication-evidence.js');
+  const { expandEvidenceSelectionForManifest } =
+    await import('../run-completion/publication-artifacts.js');
+  // Publication uploads both halves of a half-selected before/after or video pair.
+  const manifest = await readFrozenPublicationManifest(
+    run,
+    inventory,
+    preparedPackage.artifactBundle,
+  );
+  await scanFrozenPublicationEvidence(
+    run,
+    inventory,
+    expandEvidenceSelectionForManifest(manifest, selected) ?? selected,
+    preparedPackage.artifactBundle,
+  );
+}
 
 /** Completed reviews whose structured result artifact records the same verdict. */
 export async function reviewsWithValidResults(
@@ -563,6 +629,27 @@ export async function collectRunGateAssessment(
         message: 'The selected evidence bytes no longer match this gate package.',
         actionId: 'hold',
       });
+    }
+    // Publication refuses a package carrying secret values, so the gate must not
+    // offer to approve one. The message names fingerprints only.
+    try {
+      await source.publicationSecrets(run, preparedPackage);
+    } catch (error) {
+      reasons.push(
+        error instanceof PublicationSecretError
+          ? {
+              code: 'publication-secret-values',
+              prerequisite: 'evidence',
+              message: error.message,
+              actionId: 'hold',
+            }
+          : {
+              code: 'evidence-validation-unavailable',
+              prerequisite: 'evidence',
+              message: `The publication secret scan could not read the frozen evidence: ${error instanceof Error ? error.message : String(error)}`,
+              actionId: 'hold',
+            },
+      );
     }
 
     let recordedPolicySatisfied = false;
