@@ -16,7 +16,10 @@ test('a review view round-trips through the hash, other params kept', () => {
 });
 
 test('closing the review drops only its params', () => {
-  const hash = evidenceReviewerHash(null, '#runs?run=r1&review=AC-2&reviewAt=3.0&reviewCheck=4');
+  const hash = evidenceReviewerHash(
+    null,
+    '#runs?run=r1&review=AC-2&reviewFile=a.webp&reviewAt=3.0&reviewCheck=4',
+  );
   assert.equal(hash, '#runs?run=r1');
   assert.equal(evidenceReviewerViewFromHash(hash), null);
 });

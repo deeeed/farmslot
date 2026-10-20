@@ -160,6 +160,7 @@ import { RunDetailState } from './run-detail-state.js';
 import { runDetailStyles } from './run-detail-styles.js';
 import {
   artifactSelectionFromRunDetailHash,
+  GALLERY_ARTIFACT_VIEW,
   isRunDetailHashForRun,
   runDetailEvidenceArtifactHash,
   runDetailStepHash,
@@ -1036,12 +1037,16 @@ export class RunDetail extends RunDetailState {
   /** The one way the evidence lightbox opens: the Evidence tab, an `artifact=` link or an AC row. */
   private _openEvidenceLightbox(
     selection: EvidenceLightboxSelection,
-    writeHash = true,
-    /** False for a criterion's file gallery, which stays in run detail. */
-    toGateReview = true,
+    options: {
+      /** False when the URL already names this file. */
+      writeHash?: boolean;
+      /** A criterion's file gallery, which stays in run detail rather than the gate's review. */
+      gallery?: boolean;
+    } = {},
   ): void {
+    const { writeHash = true, gallery = false } = options;
     if (
-      toGateReview &&
+      !gallery &&
       selection.criterionId &&
       this._openInGateReview(selection.criterionId, selection.items[selection.index])
     )
@@ -1050,7 +1055,7 @@ export class RunDetail extends RunDetailState {
     this._evidenceLightboxIndex = selection.index;
     this._evidenceLightboxScope = selection.scope;
     this._evidenceLightboxCriterionId = selection.criterionId;
-    this._evidenceGallery = false;
+    this._evidenceGallery = gallery;
     this._evidenceArtifactUnavailable = null;
     this._evidenceLightboxOpen = true;
     if (writeHash) this._updateEvidenceArtifactHash(selection.items[selection.index] ?? null);
@@ -1117,7 +1122,10 @@ export class RunDetail extends RunDetailState {
       };
     }
     // The URL already names this artifact; rewriting it would drop the trace marker.
-    this._openEvidenceLightbox(selection, false);
+    this._openEvidenceLightbox(selection, {
+      writeHash: false,
+      gallery: artifactView === GALLERY_ARTIFACT_VIEW,
+    });
   }
 
   private _syncSelectedStepToHash() {
@@ -1488,6 +1496,7 @@ export class RunDetail extends RunDetailState {
       item,
       location.hash,
       this._evidenceLightboxCriterionId,
+      this._evidenceGallery,
     );
     if (location.hash !== next) history.replaceState(null, '', next);
   }
@@ -1576,7 +1585,7 @@ export class RunDetail extends RunDetailState {
         scope: `${view.claimId} evidence`,
         criterionId: view.claimId,
       },
-      false,
+      { writeHash: false },
     );
     return true;
   }
@@ -1593,10 +1602,9 @@ export class RunDetail extends RunDetailState {
       evidenceModel: this.evidenceModel ?? undefined,
     });
     if (!selection) return;
-    // The gallery replaces the review in the link, so a reload opens the gallery.
+    // The gallery, with its file, replaces the review in the link.
     this._dropReviewLink();
-    this._openEvidenceLightbox(selection, true, false);
-    this._evidenceGallery = true;
+    this._openEvidenceLightbox(selection, { gallery: true });
   }
 
   /**
@@ -1624,6 +1632,7 @@ export class RunDetail extends RunDetailState {
   private _closeEvidenceLightbox(): void {
     this._dropReviewLink();
     this._evidenceLightboxOpen = false;
+    this._evidenceGallery = false;
     this._evidenceArtifactUnavailable = null;
     this._updateEvidenceArtifactHash(null);
   }
@@ -1704,7 +1713,12 @@ export class RunDetail extends RunDetailState {
       showEvidenceGallery: (claimId) => this._openClaimFiles(claimId),
       reviewEvidence:
         this._evidenceLightboxCriterionId && this.evidenceModel
-          ? () => (this._evidenceGallery = false)
+          ? () => {
+              this._evidenceGallery = false;
+              this._updateEvidenceArtifactHash(
+                this._evidenceLightboxItems[this._evidenceLightboxIndex] ?? null,
+              );
+            }
           : undefined,
       selectEvidenceClaim: (claimId) => this._selectEvidenceClaim(claimId),
       navigateEvidenceLightbox: (index) => this._navigateEvidenceLightbox(index),
