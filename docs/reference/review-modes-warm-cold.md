@@ -143,18 +143,43 @@ cap.
 
 ## Session and range
 
-- COLD MUST create a fresh review session and review the complete PR diff at
-  captured base/head SHAs. A reset of an existing session is insufficient.
-- WARM MUST reuse that PR's verified previous review session and review only
-  `lastReviewedHead..currentHead`. The binding is to repository/PR and review
-  provenance, not the worker's runner or a run ID alone. The exact binding key
-  is repository/PR plus durable `reviewId` lineage. Request/sequence context
-  identifies the lineage being continued; a recheck updates that same result.
-  Missing or ambiguous lineage MUST be refused. Lineage is provenance, not a
-  fifth selection dimension or a runner-relative default.
-- Missing, foreign, busy or incompatible WARM bindings MUST produce a visible
-  refusal or wait state. They MUST NOT silently launch COLD. A model/effort
-  change is allowed only when the session adapter supports it.
+**Amended** by ADR-063 Amendment 5 (2026-10-20).
+
+- A review's first pass, and a COLD a person asks for, MUST create a fresh
+  review session and review the whole diff at captured base/head SHAs. A reset
+  of an existing session is insufficient. That session becomes the lineage's
+  retained session.
+- A re-review MUST continue the retained session of the lineage whose work it
+  checks, with the same runner, and review only `lastReviewedHead..currentHead`
+  with the earlier findings in view. A lineage qualifies only with a validated
+  earlier result and a recorded reviewed head; otherwise its next review is a
+  first pass.
+- The binding key is the run family plus the durable `reviewId` lineage. Once
+  the run has a PR, the PR MUST match too, so a lineage started before the PR
+  continues after it opens. A lineage MUST NOT continue in a run of another
+  family. Request/sequence context identifies the lineage being continued; a
+  recheck updates that same result. Missing or ambiguous lineage in a request
+  MUST be refused. Lineage is provenance, not a fifth selection dimension or a
+  runner-relative default.
+- A retained session whose process ended MUST be resumed from its saved runner
+  session. A busy session is waited for. A retained session is unavailable only
+  when its record is missing or can't resume on this slot under the same result
+  contract, the requested model or effort differs from its recorded one, another
+  lineage holds it, or the current head no longer descends from the lineage's
+  last reviewed head.
+- An automatic re-review whose session is unavailable, or whose resume fails to
+  start, MUST run COLD in a fresh session in the same attempt and under its
+  admitted receipt, scoped to the lineage's delta, with the earlier findings in
+  its prompt. That session becomes the lineage's retained session. The review's
+  session trace records the reason and the compared ranges (`fallback`), and the
+  gate shows both with that review.
+- The delta is `lastReviewedHead..currentHead` while the current head descends
+  from the reviewed head. After a rebase it compares the branch's own change at
+  both heads with `git range-diff`: the reviewed head against its merge-base
+  with the base branch, and the current head against its current merge-base.
+  Changes that came only from the base branch are left out.
+- A person's explicit WARM request whose session is unavailable MUST show the
+  reason and offer COLD.
 - Passing review eligibility requires its separate session, current reviewed
   head and verdict evidence. Choosing a different runner proves nothing.
 
@@ -165,12 +190,31 @@ is an explicit selection, `Run.reviewMode`, `Run.prWork.review.options.mode`,
 the retained `Run.repeatReviewContext.mode`, a supplied project default, then
 COLD. An explicit COLD selection MUST override a configured WARM default.
 Admission, continuity, task instructions and recorded review snapshots MUST use
-this precedence. Run creation MUST use the same shared default. The resolver does not verify lineage or authorize session reuse;
-an unavailable selected WARM mode MUST still be refused.
+this precedence. Run creation MUST use the same shared default. The resolver does not verify lineage or authorize session reuse.
+
+Under ADR-063 Amendment 5 this precedence selects only a review's first pass. A
+re-review defaults to WARM in its lineage: the re-review after a worker fix,
+including after a restart; Continue Fixing and Send back; a gate Request Review
+that continues a lineage; and the gate's re-review of changed inputs, which
+continues the lineage of the row the pipeline review ran, named by the pipeline
+result's `session.reviewId`. A re-review runs COLD only when a person selects
+COLD for it, in the gate's Request Review picker or with `--review-mode cold` on
+the gate request. A sequence row's stored mode, `Run.reviewMode`, PR options and
+the project `review.mode` select only first passes.
+
+For each requested row, the gate's Request Review preselects the run family's
+most recent lineage reviewed by that row's runner, in WARM, with that lineage's
+model and effort, when its session is available for this run, and only for one
+row per lineage. A later row with the same runner takes that runner's next most
+recent lineage, or is new and defaults to COLD. A row whose lineage is
+unavailable preselects COLD and shows why. The gateway lists the gate's lineages
+and their availability in `ReadyGatePayload.reviewLineageOptions`.
 
 Automatic reviews that create a separate new lineage select the shared COLD
-default. Eligibility filtering for authorized alternatives remains separate
-from mode selection and cannot downgrade an explicit WARM request.
+default. An automatic re-review whose session is unavailable runs the
+delta-scoped COLD fallback above; a person's WARM request is refused. Eligibility
+filtering for authorized alternatives remains separate from mode selection and
+cannot downgrade an explicit WARM request.
 
 ## Shared picker
 
@@ -223,13 +267,16 @@ The duplicate units listed in ADR-063 MUST be removed after their callers move.
 ## Required evidence
 
 Tests and live receipts MUST prove fresh COLD identity/full range, retained WARM
-identity/delta range, unavailable-WARM refusal, runner-choice-independent
-eligibility, effort preservation and sequence round trips. Web/mobile proof
+identity/delta range (including before a PR exists), the delta-scoped COLD
+fallback of an automatic re-review with its recorded reason and compared ranges
+(including a rebased delta), refusal of a person's unavailable WARM request,
+runner-choice-independent eligibility, effort preservation and sequence round
+trips. Web/mobile proof
 MUST exercise the shared picker through user input, not injected UI state.
 
 ## Diff scope
 
-The shared minimal-diff policy is owned by `@farmslot/agent-runtime/scripts/review-diff-scope.cjs`. Worker task documents, independent review prompts and the cross-review orchestrator consume that definition. Every verdict includes its `Diff scope` table. Warm review narrows correctness review to the saved delta; its scope inventory still covers the whole contribution against the publication base.
+The shared minimal-diff policy is owned by `@farmslot/agent-runtime/scripts/review-diff-scope.cjs`. Worker task documents, independent review prompts and the cross-review orchestrator consume that definition. Every verdict includes its `Diff scope` table. Warm review, and the delta-scoped COLD fallback of a re-review whose session can't continue, narrow correctness review to the saved delta; their scope inventory still covers the whole contribution against the publication base.
 
 The public read-only script prints the policy with `instructions`, or the policy plus changed paths and sensitive-path candidates with `packet <repository> <publication-base> <head>`. Candidates require review against the frozen ticket; the scanner neither grants an exception nor detects semantic refactors or formatting churn. It does not change source, review results or publication authority.
 Grant-time head records provenance. Later fix heads on the same owned branch use current-head review rules and the recorded scope. An extension survives retirement of its granting run within the same PR scope. The command requires `--request-id` and accepts `--expected-limit` for a compare-and-set grant.
