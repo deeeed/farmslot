@@ -1310,7 +1310,7 @@ export async function runCompletionPipeline(
   return flags;
 }
 
-async function createPrFromApprovedPackage(
+export async function createPrFromApprovedPackage(
   run: Run,
   ciRepo: string,
   prPackage: ReadyGatePrPackage,
@@ -1336,11 +1336,22 @@ async function createPrFromApprovedPackage(
     }
   }
   if (!prPackage.branch?.trim()) throw new Error('approved package is missing a branch');
-  await execOnSlot(
+  // The push runs the repository's pre-push hook: MetaMask/core's `yarn lint` takes ~3 minutes.
+  const push = await execOnSlot(
     vars,
     `git -C ${shellQuote(vars.remoteRepo)} push -u origin ${shellQuote(prPackage.branch)}`,
-    { timeout: 120_000 },
+    { timeout: 600_000 },
   );
+  // A refused push (the repository's pre-push hook, or the remote) leaves no branch to open
+  // a PR from; GitHub would then report only a blank head.
+  if (push.exitCode !== 0) {
+    console.warn(
+      `[run-completion] run ${run.id.slice(0, 8)} — git push output: ${push.stdout.slice(-4000)}`,
+    );
+    throw new Error(
+      `git push of ${prPackage.branch} failed (exit ${push.exitCode}); a pre-push hook or the remote refused it: ${push.stderr.trim().slice(-1500) || 'no error output'}`,
+    );
+  }
 
   const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
   await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
