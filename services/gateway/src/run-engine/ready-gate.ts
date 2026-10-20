@@ -57,6 +57,10 @@ import {
   REVIEW_SOURCES,
 } from '../quality/review-sources.js';
 import {
+  type ReviewFixSignalReader,
+  settleFinishedReviewFixContext,
+} from '../review/fix-settlement.js';
+import {
   executeReview as executeReviewDefault,
   type ReviewResult,
 } from '../review/orchestrator.js';
@@ -898,6 +902,7 @@ interface ReadyGatePackageDependencies {
   ensurePackage?: typeof ensureCurrentPublishPackage;
   createDecision?: typeof createEngineDecision;
   rebindSlot?: typeof rebindUnownedPublicationSlot;
+  readReviewFixSignal?: ReviewFixSignalReader;
 }
 
 export async function executeReadyGate(
@@ -925,6 +930,21 @@ export async function executeReadyGate(
   let recoveredAction: string | undefined;
   if (publicationApprovalGate) {
     for (;;) {
+      // A finished fix that no resume will adopt must not read as in progress: the
+      // gate's readiness would refuse the package. Settled on each pass, as Retry
+      // Gate may follow the worker's finish.
+      if (
+        await settleFinishedReviewFixContext(runId, {
+          readSignal: dependencies.readReviewFixSignal,
+          adoptable: async (context) => {
+            const resumable = await interruptedPublicationReview(getRun(runId)!);
+            return Boolean(
+              resumable && (!context.artifactScope || context.artifactScope === resumable.id),
+            );
+          },
+        })
+      )
+        current = getRun(runId)!;
       try {
         // A slot can lose its owner while the run keeps the checkout (a reconcile during a
         // replay); re-bind it before the package refresh reads the publication source.

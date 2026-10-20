@@ -25,6 +25,7 @@ import {
 import { executionModelFromSelection, resolveReviewMode } from '@farmslot/review-dispatch';
 
 import {
+  fixContextStatusForSignal,
   markAgentContextStatus,
   resolveAgentTarget,
   selectAgentContext,
@@ -1106,11 +1107,7 @@ export async function runReviewRetryLoop({
       await deps.markAgentContextStatus(
         runId,
         'review-fix',
-        fixSignal.status === 'blocked'
-          ? 'blocked'
-          : fixSignal.status === 'failed'
-            ? 'failed'
-            : 'complete',
+        fixContextStatusForSignal(fixSignal.status),
         { lastSignalAt: new Date().toISOString() },
       );
       await deps.unwatchContext(slotId, 'review-fix');
@@ -2067,11 +2064,7 @@ async function recoverReviewFixPass({
         : null;
     if (
       !(await settleRecoveredFixContext(
-        fixSignal.status === 'blocked'
-          ? 'blocked'
-          : fixSignal.status === 'failed'
-            ? 'failed'
-            : 'complete',
+        fixContextStatusForSignal(fixSignal.status),
         terminalAttemptId,
         { lastSignalAt: new Date().toISOString() },
       ))
