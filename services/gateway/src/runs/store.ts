@@ -1991,6 +1991,8 @@ async function archiveRunBody(id: string): Promise<boolean> {
   return true;
 }
 
+const taskDirectoryOf = (taskFile: string) => path.resolve(path.dirname(taskFile));
+
 const admittingTaskDirectories = new Map<string, number>();
 
 /**
@@ -2002,7 +2004,7 @@ export async function withTaskAdmission<T>(
   admit: () => Promise<T>,
 ): Promise<T> {
   if (!taskFile) return admit();
-  const dir = path.resolve(path.dirname(taskFile));
+  const dir = taskDirectoryOf(taskFile);
   admittingTaskDirectories.set(dir, (admittingTaskDirectories.get(dir) ?? 0) + 1);
   try {
     return await admit();
@@ -2021,7 +2023,7 @@ export function isTaskDirectoryAdmitting(dir: string): boolean {
 export function runTaskDirectories(run: Run): string[] {
   return [run.taskFile, run.activeTaskFile, ...(run.agentContexts ?? []).map((c) => c.taskFile)]
     .filter((file): file is string => typeof file === 'string')
-    .map((file) => path.resolve(path.dirname(file)));
+    .map(taskDirectoryOf);
 }
 
 /** Run retention removes an archived record and its session archive (ADR-039 Amendment 2). */

@@ -26,6 +26,7 @@ import {
   archiveRun,
   createRun,
   getAllRunsWithArchived,
+  getRun,
   runsDirectory,
   runSessionArchiveDir,
   updateRun,
@@ -390,4 +391,56 @@ test('a retention pass deletes settled runs with their own storage and keeps wha
     assert.ok(order.indexOf(`release:${id}`) < order.indexOf(`${Events.RUN_DELETED}:${id}`));
   }
   assert.equal(order.filter((entry) => entry.startsWith(Events.RUN_DELETED)).length, 6);
+});
+
+test('a staged task whose restore failed keeps its pin and comes back on the next pass', async (t) => {
+  const roots = await retentionRoots(t, runsDirectory());
+  const stuck = path.join(roots.taskRoots[0], 'feat', 'stuck');
+  await file(path.join(stuck, 'TASK.md'));
+  const pinned = await pin(roots, 'stuck-pin', stuck, Date.now());
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'RETENTION-STUCK',
+  });
+  updateRun(run.id, { status: 'done', taskFile: path.join(stuck, 'TASK.md') });
+  const trash = path.join(roots.runsDir, 'retention-trash');
+  await mkdir(trash, { recursive: true });
+  await writeFile(
+    path.join(trash, 'entry-gone.json'),
+    JSON.stringify({ runId: run.id, store: 'task-dirs', path: stuck }),
+  );
+  await file(path.join(trash, 'unrecorded', 'left.txt'));
+
+  const pass = (restore: boolean) =>
+    runRetentionPass(
+      { apply: true, now: Date.now() + RUN_RETENTION_AGE_MS + 60_000, roots },
+      {
+        ...RUN_RETENTION_DEPS,
+        deleteRecord: async () => false,
+        releaseBacklogLink: async () => {},
+        collectGarbage: async () => {},
+        move: (from, to) => {
+          if (!restore && to === stuck) throw new Error('restore failed');
+          RUN_RETENTION_DEPS.move(from, to);
+        },
+      },
+    );
+
+  await pass(false);
+  assert.ok(getRun(run.id), 'a refused delete keeps the run');
+  assert.equal(existsSync(stuck), false, 'its directory could not be put back');
+  assert.ok(existsSync(pinned), 'its pin stays while the directory is recorded in the trash');
+  assert.equal(
+    existsSync(path.join(trash, 'entry-gone.json')),
+    false,
+    'a record without entry goes',
+  );
+  assert.ok(existsSync(path.join(trash, 'unrecorded')), 'an entry without record stays');
+
+  await pass(true);
+  assert.ok(existsSync(path.join(stuck, 'TASK.md')), 'the next pass restores it');
+  assert.ok(existsSync(pinned));
+  assert.ok(getRun(run.id));
 });

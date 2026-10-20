@@ -30,7 +30,14 @@ import { computeReadyGatePackageHash } from '../run-completion/ready-gate-packag
 import { jiraTicketData, manualTicketData } from '../run-completion/test-fixtures.js';
 import { overwriteRetainedFixture, retainRunFixture } from '../run-engine/test-fixtures.js';
 import type { VisualRepairAdmission } from '../run-engine/visual-repair.js';
-import { createRun, deleteRun, getAllRuns, getRun, updateRun } from '../runs/store.js';
+import {
+  createRun,
+  deleteRun,
+  getAllRuns,
+  getRun,
+  isTaskDirectoryAdmitting,
+  updateRun,
+} from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import { makeRun } from './run/test-fixtures.js';
@@ -61,6 +68,35 @@ const acceptorAuthority = {
     personSessionId: 'acceptor-session',
   }),
 };
+test('run creation holds its task directory against retention until it registers or refuses', async (t) => {
+  const taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-admission-'));
+  t.after(() => rmSync(taskDir, { recursive: true, force: true }));
+  writeFileSync(path.join(taskDir, 'TASK.md'), 'task', 'utf-8');
+  const tatKey = `TAT-${Date.now()}`;
+  let heldAtRegistration = false;
+  await assert.rejects(
+    runCreate(
+      {
+        flowType: 'dev',
+        project: 'farmslot-farm',
+        ticketOrPr: tatKey,
+        ticketData: jiraTicketData(tatKey),
+        taskFile: path.join(taskDir, 'TASK.md'),
+      },
+      () => {},
+      {
+        beforeCreate: () => {
+          heldAtRegistration = isTaskDirectoryAdmitting(taskDir);
+          throw new Error('refused at registration');
+        },
+      },
+    ),
+    /refused at registration/,
+  );
+  assert.equal(heldAtRegistration, true);
+  assert.equal(isTaskDirectoryAdmitting(taskDir), false, 'a refused admission releases it');
+});
+
 test('planning resolves the same dispatch defaults without creating a run or consuming a queue claim', async () => {
   const before = getAllRuns().map((run) => run.id);
   let claimed = true;

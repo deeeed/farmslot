@@ -147,6 +147,7 @@ export async function retiredTaskPins(
   pinRoot: string,
   removedTaskDirs: ReadonlySet<string>,
   now: number,
+  pendingTaskDirs: ReadonlySet<string> = new Set(),
 ): Promise<string[]> {
   let names: string[];
   try {
@@ -169,6 +170,7 @@ export async function retiredTaskPins(
     }
     if (typeof taskDir !== 'string' || now - writtenAt < RUN_RETENTION_AGE_MS) continue;
     const resolved = path.resolve(taskDir);
+    if (pendingTaskDirs.has(resolved)) continue;
     if (removedTaskDirs.has(resolved) || !(await exists(resolved))) retired.push(pin);
   }
   return retired;

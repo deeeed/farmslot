@@ -123,7 +123,7 @@ export async function retentionContext(
         projectRepos.set(run.project, await read.projectRepo(run.project));
       const repo = run.project ? projectRepos.get(run.project) : undefined;
       if (repo) prs.push({ repo, number: run.prNumber });
-      else if (!review) unresolved = true;
+      else if (review?.prNumber !== run.prNumber) unresolved = true;
     }
     if (prs.length || unresolved) identities.set(run.id, { prs, unresolved });
   }
@@ -204,7 +204,12 @@ function stage(
   move: RunRetentionDeps['move'],
 ): string | 'absent' | 'cross-volume' {
   const target = path.join(trash, randomUUID());
-  writeFileSync(`${target}.json`, JSON.stringify(record));
+  try {
+    writeFileSync(`${target}.json`, JSON.stringify(record));
+  } catch (err) {
+    rmSync(`${target}.json`, { force: true });
+    throw err;
+  }
   try {
     move(record.path, target);
     return target;
@@ -242,22 +247,39 @@ async function purge(entries: string[]): Promise<number> {
   return bytes;
 }
 
+/** The trash's recorded entries; an entry with no record is left alone and reported. */
+async function trashRecords(trash: string): Promise<{ entry: string; record?: TrashRecord }[]> {
+  let names: string[];
+  try {
+    names = await readdir(trash);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
+  for (const name of names)
+    if (!name.endsWith('.json') && !names.includes(`${name}.json`))
+      console.warn(`[run-retention] ${path.join(trash, name)} has no record; left in place`);
+  const records: { entry: string; record?: TrashRecord }[] = [];
+  for (const name of names.filter((n) => n.endsWith('.json'))) {
+    const entry = path.join(trash, name.slice(0, -'.json'.length));
+    try {
+      records.push({ entry, record: JSON.parse(await readFile(`${entry}.json`, 'utf8')) });
+    } catch (err) {
+      console.warn(`[run-retention] unreadable record for ${entry}: ${(err as Error).message}`);
+      records.push({ entry });
+    }
+  }
+  return records;
+}
+
 /**
  * Finish what an interrupted pass left in the trash: a directory whose run still exists
  * goes back, since that run was never deleted; one whose run is gone is purged.
  */
 async function recoverTrash(trash: string, move: RunRetentionDeps['move']): Promise<void> {
-  let names: string[];
-  try {
-    names = await readdir(trash);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw err;
-  }
-  for (const name of names.filter((n) => n.endsWith('.json'))) {
-    const entry = path.join(trash, name.slice(0, -'.json'.length));
+  for (const { entry, record } of await trashRecords(trash)) {
+    if (!record) continue;
     try {
-      const record = JSON.parse(await readFile(`${entry}.json`, 'utf8')) as TrashRecord;
       if (!existsSync(entry)) await rm(`${entry}.json`, { force: true });
       else if (await getRunWithArchived(record.runId)) unstage(entry, record, move);
       else await purge([entry]);
@@ -375,7 +397,16 @@ export async function runRetentionPass(
     stores[store].entries++;
     stores[store].bytes += await purge([entry]);
   }
-  const pins = await retiredTaskPins(roots.taskPins, new Set(paths['task-dirs']), context.now);
+  // A task directory still recorded in the trash (a restore that failed) is not gone.
+  const pending = (await trashRecords(trash)).flatMap(({ record }) =>
+    record?.store === 'task-dirs' ? [record.path] : [],
+  );
+  const pins = await retiredTaskPins(
+    roots.taskPins,
+    new Set(paths['task-dirs']),
+    context.now,
+    new Set(pending),
+  );
   for (const pin of pins) {
     const bytes = await diskBytes(pin);
     try {
