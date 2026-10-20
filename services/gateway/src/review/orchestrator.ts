@@ -1884,6 +1884,7 @@ async function recoverReviewFixPass({
         .find(
           (context) =>
             context.role === 'review' &&
+            !!lineage &&
             context.reviewId === lineage &&
             typeof context.reviewLoopNumber === 'number',
         )?.reviewLoopNumber ??
@@ -2207,7 +2208,8 @@ async function recoverReviewFixPass({
     updateRun(runId, { status: 'reviewing' });
     // ADR-063 Amendment 5: the recovered re-review continues the lineage that raised the
     // findings; the fix's delivery base is the head that lineage reviewed.
-    const reviewedHeadSha = ownerReview?.reviewedHeadSha ?? fixBaseSha;
+    const reviewedHeadSha =
+      ownerReview?.reviewSnapshot?.headSha ?? ownerReview?.reviewedHeadSha ?? fixBaseSha;
     const rereview =
       lineage && reviewedHeadSha
         ? { lastReviewedHeadSha: reviewedHeadSha, priorIssues: issues }
