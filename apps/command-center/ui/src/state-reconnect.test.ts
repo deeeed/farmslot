@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
+import { installFakeGateway } from './testing/fake-gateway.js';
+
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {
     id: 'run-1',
@@ -26,80 +28,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
 }
 
 test('the workspace survives a gateway restart and clears only for another account', async (t) => {
-  const keys = ['window', 'localStorage', 'location', 'document', 'history', 'WebSocket'] as const;
-  const descriptors = keys.map(
-    (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
-  );
-  const store = new Map<string, string>();
-  class Socket extends EventTarget {
-    static OPEN = 1;
-    static CONNECTING = 0;
-    static instances: Socket[] = [];
-    static holdAuth = false;
-    static principalId = 'operator-a';
-    readyState = 0;
-    constructor() {
-      super();
-      Socket.instances.push(this);
-      queueMicrotask(() => {
-        this.readyState = 1;
-        this.dispatchEvent(new Event('open'));
-      });
-    }
-    send(text: string) {
-      const request = JSON.parse(text);
-      // Bootstrap reads stay unanswered, so the test observes the workspace before a refetch.
-      if (request.method !== 'auth.connect' || Socket.holdAuth) return;
-      queueMicrotask(() =>
-        this.dispatchEvent(
-          new MessageEvent('message', {
-            data: JSON.stringify({
-              type: 'res',
-              id: request.id,
-              ok: true,
-              payload: {
-                ok: true,
-                capabilities: { workspaceAccess: 'farm' },
-                principal: {
-                  id: Socket.principalId,
-                  subjectKind: 'service',
-                  displayName: Socket.principalId,
-                  roles: [{ role: 'admin', scope: { kind: 'global' } }],
-                },
-              },
-            }),
-          }),
-        ),
-      );
-    }
-    close() {
-      this.readyState = 3;
-    }
-    gatewayRestart() {
-      this.readyState = 3;
-      this.dispatchEvent(new Event('close'));
-    }
-  }
-  const values = {
-    window: { addEventListener: () => {}, removeEventListener: () => {} },
-    localStorage: {
-      getItem: (key: string) => store.get(key) ?? null,
-      setItem: (key: string, value: string) => store.set(key, value),
-      removeItem: (key: string) => store.delete(key),
-    },
-    location: { protocol: 'http:', host: 'localhost:1234', hash: '', hostname: 'localhost' },
-    document: { cookie: '' },
-    history: { replaceState: () => {} },
-    WebSocket: Socket,
-  };
-  for (const key of keys)
-    Object.defineProperty(globalThis, key, { configurable: true, value: values[key] });
-  t.after(() => {
-    for (const [key, descriptor] of descriptors) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else Reflect.deleteProperty(globalThis, key);
-    }
-  });
+  const fakeGateway = installFakeGateway(t, 'operator-a');
 
   const { gateway } = await import('./gateway-client.js');
   const { getState, initState, isHydrating, onWorkspaceOwnerChange, updateRuns } =
@@ -117,12 +46,11 @@ test('the workspace survives a gateway restart and clears only for another accou
   updateRuns([makeRun()]);
   assert.equal(getState().runs.length, 1);
   let ownerChanges = 0;
-  t.after(onWorkspaceOwnerChange(() => (ownerChanges += 1)));
 
   await t.test('a reconnect with the same principal keeps runs', async () => {
     // A gateway restart or network blip keeps the runs on screen, marked as stale.
-    Socket.holdAuth = true;
-    Socket.instances.at(-1)!.gatewayRestart();
+    fakeGateway.holdAuth = true;
+    fakeGateway.restart();
     await flush();
     assert.notEqual(gateway.connectionState, 'connected');
     assert.deepEqual(
@@ -131,9 +59,10 @@ test('the workspace survives a gateway restart and clears only for another accou
     );
     assert.equal(getState().workspaceAccess, 'farm');
     assert.equal(isHydrating(getState(), 'runs'), true);
+    t.after(onWorkspaceOwnerChange(() => (ownerChanges += 1)));
 
     // Reconnecting as the same principal keeps them until the bootstrap replaces them.
-    Socket.holdAuth = false;
+    fakeGateway.holdAuth = false;
     gateway.reconnect();
     await flush();
     assert.equal(gateway.connectionState, 'connected');
@@ -148,8 +77,8 @@ test('the workspace survives a gateway restart and clears only for another accou
 
   await t.test('a reconnect as a different principal clears', async () => {
     // Reconnecting as a different principal clears the previous account's workspace.
-    Socket.principalId = 'operator-b';
-    Socket.instances.at(-1)!.gatewayRestart();
+    fakeGateway.principalId = 'operator-b';
+    fakeGateway.restart();
     gateway.reconnect();
     await flush();
     assert.equal(gateway.connectionState, 'connected');
@@ -165,5 +94,17 @@ test('the workspace survives a gateway restart and clears only for another accou
     assert.deepEqual(getState().runs, []);
     assert.equal(getState().workspaceAccess, 'none');
     assert.equal(ownerChanges, 2);
+  });
+
+  await t.test('sign-out clears', async () => {
+    gateway.connect();
+    await flush();
+    assert.equal(gateway.connectionState, 'connected');
+    updateRuns([makeRun({ id: 'run-3' })]);
+    await gateway.signOut();
+    assert.equal(gateway.connectionState, 'auth_required');
+    assert.deepEqual(getState().runs, []);
+    assert.equal(getState().workspaceAccess, 'none');
+    assert.equal(ownerChanges, 4);
   });
 });

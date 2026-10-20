@@ -5,7 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- A gateway restart or network drop keeps runs, PRs, decisions and the fleet on screen, marked `Reconnecting… showing last snapshot`, instead of returning to the setup screen. The workspace still clears when the account or its credentials change.
+- A gateway restart or network drop keeps the workspace on screen instead of returning to the setup screen; runs, run detail and the fleet show `Reconnecting… showing last snapshot`. The workspace still clears when the account or its credentials change.
 
 ## 0.28.0 - 2026-10-20
 
