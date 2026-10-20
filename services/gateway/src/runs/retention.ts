@@ -65,7 +65,8 @@ export function runRetentionHold(
   const pr = prState(run);
   if (pr === 'open') return 'PR open';
   if (pr === 'unknown') return 'PR state unknown';
-  const settledAt = Math.max(time(run.updatedAt), time(run.completedAt), time(run.archivedAt));
+  // Periodic bookkeeping (e.g. resource posture) keeps touching settled runs' updatedAt.
+  const settledAt = Math.max(time(run.completedAt), time(run.archivedAt)) || time(run.updatedAt);
   if (now - settledAt < RUN_RETENTION_AGE_MS) return 'settled less than 48 h ago';
   return undefined;
 }

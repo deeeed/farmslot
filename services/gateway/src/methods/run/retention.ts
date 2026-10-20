@@ -40,8 +40,6 @@ import {
   runSessionArchiveDir,
 } from '../../runs/store.js';
 
-import { reconcileDeletedRun } from './admin.js';
-
 type Emit = (event: string, payload: unknown) => void;
 
 const RUN_RETENTION_FIRST_PASS_MS = 10 * 60 * 1000;
@@ -169,7 +167,9 @@ export interface RunRetentionDeps {
 export const RUN_RETENTION_DEPS: RunRetentionDeps = {
   deleteRecord: deleteRunRecord,
   // Deleting a settled run closes its backlog link; like archive, it must not requeue the item.
-  releaseBacklogLink: (id) => reconcileDeletedRun(id, { keepNeedsAttention: true }),
+  // Loaded on use: admin's slot code configures tmux on import, which a dry run must not do.
+  releaseBacklogLink: async (id) =>
+    (await import('./admin.js')).reconcileDeletedRun(id, { keepNeedsAttention: true }),
   collectGarbage: collectRunArtifactGarbage,
   holdsSlot: runHoldsSlot,
   openPrs: readOpenPrs,

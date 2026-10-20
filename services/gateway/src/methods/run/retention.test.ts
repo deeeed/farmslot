@@ -138,6 +138,11 @@ test('retention removes a done, cancelled or archived run only once it settled 4
     runRetentionHold({ ...done, completedAt: recent }, context()),
     'settled less than 48 h ago',
   );
+  // Bookkeeping that touches a long-completed run does not restart its 48 h.
+  assert.equal(
+    runRetentionHold({ ...done, completedAt: settled, updatedAt: recent }, context()),
+    undefined,
+  );
   assert.equal(
     runRetentionHold({ ...done, decisions: [openDecision] }, context()),
     'still needs its execution storage',

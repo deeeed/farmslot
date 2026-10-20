@@ -189,7 +189,8 @@ ADR-039 Amendment 2. The gateway MUST run a retention pass 10 minutes after it
 starts and then every hour. A run is removable only when all of these hold:
 
 - it is `done` or `cancelled`, or archived;
-- its latest update, completion or archive time is at least 48 hours old;
+- its completion or archive time, or its last update when it has neither, is at
+  least 48 hours old;
 - it has no open decision, uncleaned review workspace, pending closeout or held
   native worker, and holds no slot;
 - it has no pending backlog reconciliation and no operator tags;
