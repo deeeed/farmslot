@@ -114,3 +114,39 @@ test('retained ISSUES and active fixing keep a status without a pending decision
   run.status = 'fixing';
   assert.equal(readyReviewRequestProgress(run), 'Review found 1 issue, fix in progress.');
 });
+
+test('an open gate not ready on evidence alone leaves the review progress line empty', () => {
+  const run: NonNullable<Parameters<typeof readyReviewRequestProgress>[0]> = {
+    status: 'blocked',
+    decisions: [
+      {
+        id: 'gate',
+        type: 'engine_human_gate',
+        title: 'Publication',
+        description: '',
+        actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+        createdAt: '2026-10-20T00:00:00.000Z',
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          diffStat: { files: 1, additions: 1, deletions: 0 },
+          workerReport: '',
+          branch: 'feature',
+          gateReadiness: {
+            state: 'not-ready',
+            identity: { runId: 'run', generation: 1 },
+            reasons: [
+              {
+                code: 'evidence-policy-unsatisfied',
+                prerequisite: 'evidence',
+                message: 'Evidence policy needs attestation.',
+              },
+            ],
+          },
+        },
+      },
+    ],
+  };
+  assert.equal(readyReviewRequestProgress(run), '');
+});

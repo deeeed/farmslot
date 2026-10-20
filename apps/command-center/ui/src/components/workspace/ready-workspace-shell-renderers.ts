@@ -66,6 +66,7 @@ export function renderReadyTopBar(input: {
   return html`
     ${renderPublicationGatePanel({
       run: input.run,
+      gate: input.decision,
       actions,
       showClaims: input.showClaims,
       feedback: input.feedback,
@@ -81,7 +82,7 @@ export function renderReadyTopBar(input: {
       pendingVisualClaimIds: input.pendingVisualClaimIds,
       readiness: input.payload.gateReadiness,
       reviewSummary: input.payload.gateSummary?.review,
-      blockedReason: readyReviewBlockingReason(input.payload),
+      blockedReason: readyReviewBlockingReason(input.payload, input.decision?.actions),
       attestationReason: input.attestationReason,
       attesting: input.attesting,
       chooseAttestation: () => input.chooseAttestation?.(),

@@ -27,8 +27,8 @@ import {
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
+  humanGateBlockingReason,
   pendingOutputReview,
-  publicationReviewBlockingReason,
   runResultsSummary,
 } from '@farmslot/review-dispatch';
 
@@ -659,7 +659,7 @@ export default function RunDetailScreen() {
     (decision) => workspaceDecisionKind(decision) === 'retrospective',
   );
 
-  const reviewStatus = publicationReviewBlockingReason(run);
+  const reviewStatus = humanGateBlockingReason(run);
 
   return (
     <View style={baseStyles.container}>

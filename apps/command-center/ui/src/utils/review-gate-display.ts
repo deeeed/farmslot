@@ -1,7 +1,10 @@
 import {
   type ArtifactRef,
   classifyReviewFreshness,
+  type GateDecisionFields,
   type GateSummary,
+  gateWaitReason,
+  HUMAN_GATE_DECISION_TYPE,
   latestExhaustedReview,
   type ReadyGatePayload,
   type ReviewAttempt,
@@ -97,10 +100,14 @@ export function compactHumanGateLabel(
   return 'operator gate';
 }
 
-export function readyReviewBlockingDisplayReason(payload: ReadyGatePayload): string {
+export function readyReviewBlockingDisplayReason(
+  payload: ReadyGatePayload,
+  actions?: GateDecisionFields['actions'],
+): string {
   if (payload.gateReadiness && payload.gateReadiness.state !== 'ready') {
+    // The reason a person can act on, by the lifecycle view's rule.
     return (
-      payload.gateReadiness.reasons.map((reason) => reason.message).join(' ') ||
+      gateWaitReason({ type: HUMAN_GATE_DECISION_TYPE, payload, actions }) ??
       'Gate prerequisites are still being collected.'
     );
   }

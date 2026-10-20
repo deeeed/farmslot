@@ -45,7 +45,7 @@ export const HUMAN_GATE_DECISION_TYPE = 'engine_human_gate';
 const NEEDS_YOUR_DECISION = 'Needs your decision';
 
 /** The fields of a run decision the lifecycle view reads. */
-type GateDecisionFields = {
+export type GateDecisionFields = {
   type: string;
   resolvedAt?: string;
   payload?: unknown;
@@ -88,26 +88,54 @@ function gateDecisionWait(run: {
   return reason ? { reason } : {};
 }
 
+/** A decision's readiness reasons, which of them the gate offers a remedy for, and its review budget. */
+function gateReasons(decision: GateDecisionFields) {
+  const payload = isRecord(decision.payload) ? decision.payload : undefined;
+  const readiness = payload?.gateReadiness;
+  const offered = new Set(decision.actions?.map((action) => action.id));
+  const budget = isRecord(payload?.reviewRoundBudget) ? payload.reviewRoundBudget : undefined;
+  return {
+    reasons: isGateReadiness(readiness) ? readiness.reasons : [],
+    actionable: (reason: RunGatePrerequisiteReason) =>
+      !reason.actionId || offered.has(reason.actionId),
+    spent: budget?.remaining === 0,
+  };
+}
+
+/**
+ * A reason whose remedy the gate does not offer keeps its finding, not the instruction:
+ * with the review rounds spent it reads `Review rounds spent: N issues open`, otherwise
+ * its first sentence.
+ */
+function unofferedReasonText(message: string, spent: boolean): string {
+  if (spent) {
+    const issues = /\d+ issues?/.exec(message)?.[0];
+    return issues ? `Review rounds spent: ${issues} open` : 'Review rounds spent';
+  }
+  return message.split(/(?<=\.)\s/)[0] ?? message;
+}
+
 /**
  * The gate's reason a person can act on: the first readiness reason whose action the
  * gate offers. When that first reason's own remedy is not offered because the review
  * rounds are spent, it says so with the open issue count instead.
  */
-function gateWaitReason(decision: GateDecisionFields): string | undefined {
-  const payload = isRecord(decision.payload) ? decision.payload : undefined;
-  const readiness = payload?.gateReadiness;
-  const reasons = isGateReadiness(readiness) ? readiness.reasons : [];
-  const offered = new Set(decision.actions?.map((action) => action.id));
-  const actionable = (reason: RunGatePrerequisiteReason) =>
-    !reason.actionId || offered.has(reason.actionId);
+export function gateWaitReason(decision: GateDecisionFields): string | undefined {
+  const { reasons, actionable, spent } = gateReasons(decision);
   const [first] = reasons;
   if (!first || actionable(first)) return first?.message;
-  const budget = isRecord(payload?.reviewRoundBudget) ? payload.reviewRoundBudget : undefined;
-  if (budget?.remaining === 0) {
-    const issues = /\d+ issues?/.exec(first.message)?.[0];
-    return issues ? `Review rounds spent: ${issues} open` : 'Review rounds spent';
-  }
-  return reasons.find(actionable)?.message ?? first.message;
+  if (spent) return unofferedReasonText(first.message, true);
+  return reasons.find(actionable)?.message ?? unofferedReasonText(first.message, false);
+}
+
+/** The gate's readiness reasons as screens list them, by the same rule as gateWaitReason. */
+export function gateDisplayReasons(decision: GateDecisionFields): RunGatePrerequisiteReason[] {
+  const { reasons, actionable, spent } = gateReasons(decision);
+  return reasons.map((reason) =>
+    actionable(reason)
+      ? reason
+      : { ...reason, message: unofferedReasonText(reason.message, spent) },
+  );
 }
 
 /** A run's status as a badge shows it: a run at its open human gate needs a decision. */
