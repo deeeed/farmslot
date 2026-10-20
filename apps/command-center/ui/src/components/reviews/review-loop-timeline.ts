@@ -11,7 +11,7 @@ import {
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
-import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { colors, fonts, radii, runnerColor, spacing } from '../../styles/theme-tokens.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import {
   fixDeltaAbsenceReason,
@@ -128,6 +128,8 @@ export class ReviewLoopTimeline extends LitElement {
   @property({ attribute: false }) artifactUrl?: (artifact: ArtifactRef) => string;
 
   @state() private _legacyIssueVersion = 0;
+  /** The round each check shows, by review id; the latest round until one is chosen. */
+  @state() private _shownRound = new Map<string, number>();
   private _legacyIssues = new Map<string, LegacyIssueLoad>();
 
   static styles = css`
@@ -144,36 +146,65 @@ export class ReviewLoopTimeline extends LitElement {
     .review-group {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: ${unsafeCSS(spacing.sm)};
+      padding: ${unsafeCSS(spacing.sm)} 0 ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+      border-left: 3px solid var(--runner, ${unsafeCSS(colors.accent)});
     }
     .reviewer-head {
       display: flex;
-      align-items: baseline;
-      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
       gap: ${unsafeCSS(spacing.sm)};
       color: ${unsafeCSS(colors.textSecondary)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
     }
-    .reviewer-head strong {
+    .runner-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       color: ${unsafeCSS(colors.textPrimary)};
       font-size: ${unsafeCSS(fonts.sizeSm)};
+      font-weight: 600;
+    }
+    .runner-chip::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--runner, ${unsafeCSS(colors.accent)});
+    }
+    .reviewer-head .check {
+      flex: 1;
     }
     .phase-strip {
       display: flex;
+      flex-wrap: wrap;
       align-items: stretch;
       gap: 4px;
-      overflow-x: auto;
       padding: 1px;
     }
     .phase {
       min-width: 112px;
-      flex: 1 0 auto;
+      flex: 0 1 auto;
       border: 1px solid ${unsafeCSS(colors.textMuted)}44;
       border-radius: ${unsafeCSS(radii.sm)};
       padding: 5px 7px;
       background: ${unsafeCSS(colors.bgCard)};
       color: ${unsafeCSS(colors.textSecondary)};
+      font: inherit;
       font-size: ${unsafeCSS(fonts.sizeXs)};
+      text-align: left;
+    }
+    button.phase {
+      cursor: pointer;
+    }
+    button.phase:hover {
+      border-color: var(--runner, ${unsafeCSS(colors.accent)});
+    }
+    button.phase[aria-pressed='true'] {
+      border-color: var(--runner, ${unsafeCSS(colors.accent)});
+      background: color-mix(in srgb, var(--runner, ${unsafeCSS(colors.accent)}) 16%, transparent);
+      color: ${unsafeCSS(colors.textPrimary)};
     }
     .phase::after {
       content: '\\2192';
@@ -259,17 +290,35 @@ export class ReviewLoopTimeline extends LitElement {
       color: ${unsafeCSS(colors.textMuted)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
     }
-    .issues {
-      margin: 0;
-      padding-left: 18px;
+    .facts {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 12px;
       color: ${unsafeCSS(colors.textSecondary)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    .issues {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: ${unsafeCSS(colors.textSecondary)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      line-height: 1.55;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: ${unsafeCSS(spacing.sm)};
+    }
+    .issues li {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding-left: ${unsafeCSS(spacing.sm)};
+      border-left: 2px solid ${unsafeCSS(colors.statusWarn)}66;
     }
     .issue-file {
       color: ${unsafeCSS(colors.statusWarn)};
+      overflow-wrap: anywhere;
     }
     .section-label {
       color: ${unsafeCSS(colors.textSecondary)};
@@ -334,25 +383,36 @@ export class ReviewLoopTimeline extends LitElement {
     `;
   }
 
+  private _roundShown(review: ReviewStatus, attempts: ReviewAttempt[]): number {
+    const chosen = this._shownRound.get(review.id);
+    return chosen !== undefined && chosen < attempts.length ? chosen : attempts.length - 1;
+  }
+
+  private _showRound(review: ReviewStatus, index: number) {
+    this._shownRound = new Map(this._shownRound).set(review.id, index);
+  }
+
   private _renderReviewRows(review: ReviewStatus, reviewIndex: number) {
     const attempts = review.attempts ?? [];
+    const shown = this._roundShown(review, attempts);
+    const color = runnerColor(review.runner);
     return html`
-      <div class="review-group">
+      <section class="review-group" style=${color ? `--runner:${color}` : ''}>
         <div class="reviewer-head">
-          <strong>${review.runner ?? 'Unknown runner'} / ${review.model ?? 'default'}</strong>
-          <span>Check ${reviewIndex + 1} · ${reviewDisplayLabel(review)}</span>
+          <span class="runner-chip"
+            >${review.runner ?? 'Unknown runner'} / ${review.model ?? 'default'}</span
+          >
+          <span class="check">Check ${reviewIndex + 1} · ${reviewDisplayLabel(review)}</span>
         </div>
-        ${this._renderPhaseStrip(review, attempts)}
-        ${attempts.length > 1
-          ? attempts.map((attempt, index) =>
-              this._renderReview(review, attempt, index, attempts.length),
-            )
-          : this._renderReview(review, attempts[0], 0, Math.max(1, attempts.length))}
-      </div>
+        ${this._renderPhaseStrip(review, attempts, shown)}
+        ${attempts.length
+          ? this._renderReview(review, attempts[shown], shown, attempts.length)
+          : this._renderReview(review, undefined, 0, 1)}
+      </section>
     `;
   }
 
-  private _renderPhaseStrip(review: ReviewStatus, attempts: ReviewAttempt[]) {
+  private _renderPhaseStrip(review: ReviewStatus, attempts: ReviewAttempt[], shown: number) {
     if (!attempts.length) return nothing;
     const phases = attempts.flatMap((attempt, index) => {
       const pass = attempt.verdict === 'pass' && attempt.unresolvedCount === 0;
@@ -360,29 +420,40 @@ export class ReviewLoopTimeline extends LitElement {
         attempt.unresolvedCount > 0 || attempt.verdict === 'issues' || attempt.verdict === 'failed';
       const reviewRound = index + 1;
       const reviewPhase = html`
-        <div class="phase ${pass ? 'pass' : warn ? 'warn' : ''}">
+        <button
+          class="phase ${pass ? 'pass' : warn ? 'warn' : ''}"
+          aria-pressed=${shown === index}
+          title="Show review round ${reviewRound}"
+          @click=${() => this._showRound(review, index)}
+        >
           <span class="phase-title">Review round ${reviewRound}</span>
           ${pass
             ? 'passed'
             : attempt.verdict === 'failed'
               ? 'did not run'
               : warn
-                ? `${attempt.unresolvedCount} finding(s)`
+                ? `${attempt.unresolvedCount} finding${attempt.unresolvedCount === 1 ? '' : 's'}`
                 : attempt.verdict}
-        </div>
+        </button>
       `;
       if (index === 0) return [reviewPhase];
       const delta = attempt.fixDelta;
       const meaningful = hasMeaningfulReviewFixDelta(delta);
       const deltaStat = formatFixDeltaStat(delta);
       const { base, head } = fixDeltaRange(delta);
+      // The fix that preceded a round shows on that round's card.
       const fixPhase = html`
-        <div class="phase ${meaningful ? '' : 'no-change'}">
+        <button
+          class="phase ${meaningful ? '' : 'no-change'}"
+          aria-pressed=${shown === index}
+          title="Show the fix and review round ${reviewRound}"
+          @click=${() => this._showRound(review, index)}
+        >
           <span class="phase-title">Fix after review round ${index}</span>
           ${meaningful
             ? `${deltaStat ? `${deltaStat} · ` : ''}${shortSha(base)}..${shortSha(head)}`
             : 'no tracked change'}
-        </div>
+        </button>
       `;
       return [fixPhase, reviewPhase];
     });
@@ -461,7 +532,6 @@ export class ReviewLoopTimeline extends LitElement {
       unresolvedCount,
     });
     const visibleArtifacts = this.compact ? artifacts.slice(0, 4) : artifacts;
-    const label = reviewDisplayLabel(review);
     const heading = reviewAttemptHeading(review, attemptIndex, attemptCount);
     return html`
       <section class="card ${pass ? 'pass' : warn ? 'warn' : ''}">
@@ -469,20 +539,12 @@ export class ReviewLoopTimeline extends LitElement {
           <strong>${heading}</strong>
           <span class="pill ${pass ? 'pass' : warn ? 'warn' : ''}">${verdict}</span>
         </div>
-        <div class="meta-row">
-          <span class="meta"
-            >${review.runner ?? 'reviewer'} / ${review.model ?? 'model unknown'}</span
+        <div class="facts">
+          <span>${unresolvedCount} unresolved</span>
+          <span title=${rowSnapshot?.headSha ?? ''}
+            >reviewed ${shortSha(rowSnapshot?.headSha)}</span
           >
-          <span class="meta">${label}</span>
-          <span class="meta">review round ${attemptIndex + 1}</span>
-          <span class="meta">${validationDepth ?? 'legacy/full-live'}</span>
-          <span class="meta">${unresolvedCount} unresolved</span>
-          <span class="meta" title=${rowUsage?.runnerSessionId ?? review.reviewerSessionId ?? ''}
-            >${formatRunnerUsage(rowUsage)}</span
-          >
-          <span class="meta">${artifacts.length} artifacts</span>
-          <span class="meta">reviewed ${shortSha(rowSnapshot?.headSha)}</span>
-          ${totalDuration ? html`<span class="meta">${totalDuration} total</span>` : nothing}
+          ${totalDuration ? html`<span>${totalDuration}</span>` : nothing}
           ${diffArtifact
             ? html`<button
                 class="link"
@@ -492,6 +554,21 @@ export class ReviewLoopTimeline extends LitElement {
               </button>`
             : nothing}
         </div>
+        <div class="meta-row">
+          <span class="meta" title=${rowUsage?.runnerSessionId ?? review.reviewerSessionId ?? ''}
+            >${formatRunnerUsage(rowUsage)}</span
+          >
+          <span class="meta">${validationDepth ?? 'legacy/full-live'}</span>
+          <span class="meta">${artifacts.length} artifacts</span>
+        </div>
+        ${this._renderFix(
+          review,
+          rowFixDelta,
+          fixDeltaArtifact,
+          artifacts,
+          loopNumber,
+          fixDeltaMissingReason,
+        )}
         ${checklistSteps.length
           ? html`
               <details class="timing">
@@ -518,7 +595,7 @@ export class ReviewLoopTimeline extends LitElement {
                       <span class="issue-file"
                         >${issue.file}${issue.line ? `:${issue.line}` : ''}</span
                       >
-                      — ${issue.description}
+                      <span>${issue.description}</span>
                     </li>
                   `,
                 )}
@@ -538,7 +615,7 @@ export class ReviewLoopTimeline extends LitElement {
                           <span class="issue-file"
                             >${issue.file}${issue.line ? `:${issue.line}` : ''}</span
                           >
-                          — ${issue.description}
+                          <span>${issue.description}</span>
                         </li>
                       `,
                     ),
@@ -569,27 +646,6 @@ export class ReviewLoopTimeline extends LitElement {
               </div>
             `
           : nothing}
-        ${rowFixDelta && hasFixDeltaRange
-          ? html`
-              <div class="fix">
-                <span class="section-label">Worker fix</span>
-                ${shortSha(rowFixDelta.fixBaseSha ?? rowFixDelta.baseSha)}..${shortSha(
-                  rowFixDelta.fixHeadSha ?? rowFixDelta.headSha,
-                )}
-                ${fixDeltaArtifact
-                  ? html`<button
-                      class="link"
-                      @click=${() =>
-                        this._emitDiff(fixDeltaArtifact, review, artifacts, loopNumber)}
-                    >
-                      open fix diff
-                    </button>`
-                  : nothing}
-              </div>
-            `
-          : fixDeltaMissingReason
-            ? html`<div class="meta">${fixDeltaMissingReason}</div>`
-            : nothing}
         ${visibleArtifacts.length
           ? html`
               <div class="artifact-row">
@@ -614,6 +670,33 @@ export class ReviewLoopTimeline extends LitElement {
           : nothing}
       </section>
     `;
+  }
+
+  /** The worker fix that preceded this round, first on its card. */
+  private _renderFix(
+    review: ReviewStatus,
+    delta: ReviewFixDeltaSnapshot | undefined,
+    diff: ArtifactRef | null,
+    artifacts: ArtifactRef[],
+    loopNumber: number,
+    missingReason: string,
+  ) {
+    if (!delta || !hasMeaningfulReviewFixDelta(delta))
+      return missingReason ? html`<div class="meta">${missingReason}</div>` : nothing;
+    const { base, head } = fixDeltaRange(delta);
+    const stat = formatFixDeltaStat(delta);
+    return html`<div class="fix">
+      <span class="section-label">Worker fix</span>
+      ${stat ? `${stat} · ` : ''}${shortSha(base)}..${shortSha(head)}
+      ${diff
+        ? html`<button
+            class="link"
+            @click=${() => this._emitDiff(diff, review, artifacts, loopNumber)}
+          >
+            open fix diff
+          </button>`
+        : nothing}
+    </div>`;
   }
 
   private _legacyIssueLoad(
@@ -670,7 +753,7 @@ export class ReviewLoopTimeline extends LitElement {
           (issue) => html`
             <li>
               <span class="issue-file">${issue.file}${issue.line ? `:${issue.line}` : ''}</span>
-              — ${issue.description}
+              <span>${issue.description}</span>
             </li>
           `,
         )}

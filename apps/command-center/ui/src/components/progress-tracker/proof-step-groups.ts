@@ -28,12 +28,3 @@ export function proofStepGroups(
     )
     .map(([label, steps]) => ({ label, steps, failed: steps.filter((step) => !step.ok).length }));
 }
-
-/** A step's checked expectation, one `key: value` line per field. */
-export function formatProofStepExpectation(
-  expectation: NonNullable<EvidenceReviewOccurrence['expectation']>,
-): string {
-  return Object.entries(expectation)
-    .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`)
-    .join('\n');
-}

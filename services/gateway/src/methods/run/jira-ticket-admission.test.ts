@@ -14,8 +14,9 @@ const temporary = await mkdtemp(path.join(os.tmpdir(), 'jira-ticket-admission-')
 process.env.FARMSLOT_RUNS_DIR = path.join(temporary, 'runs');
 
 const { farmslotRoot } = await import('../../fleet/state.js');
-const { deleteRun, getAllRuns, getRun, updateRun } = await import('../../runs/store.js');
+const { createRun, deleteRun, getAllRuns, getRun, updateRun } = await import('../../runs/store.js');
 const { fetchTicketData } = await import('../../run-engine/ticket-data.js');
+const { backfillMissingRunLinks } = await import('../../run-engine/run-links.js');
 const { runCreate } = await import('../run.js');
 const { jiraTicketDataForCreate } = await import('./ticket-policy.js');
 
@@ -236,5 +237,31 @@ test('a caller-supplied Jira ticket gets its Jira link at creation (TAT-4006 / 7
   assert.deepEqual(requested, []);
   assert.deepEqual(getRun(runId)?.links, [
     { label: 'Jira', url: 'https://jira.example.invalid/browse/TAT-4006' },
+  ]);
+});
+
+test('a stored run without links gets its Jira link at startup (4237202e)', async (t) => {
+  const unlinked = createRun({
+    project,
+    flowType: 'dev',
+    ticketOrPr: 'TAT-4158',
+    ticketData: jiraTicketData('TAT-4158', 'Order book depth'),
+  });
+  const linked = createRun({ project, flowType: 'dev', ticketOrPr: 'TAT-4159' });
+  updateRun(linked.id, { links: [{ label: 'PR', url: 'https://github.com/o/r/pull/9' }] });
+  t.after(async () => {
+    for (const run of [unlinked, linked]) {
+      updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  assert.equal(getRun(unlinked.id)?.links, undefined);
+  await backfillMissingRunLinks([getRun(unlinked.id)!, getRun(linked.id)!]);
+  assert.deepEqual(getRun(unlinked.id)?.links, [
+    { label: 'Jira', url: 'https://jira.example.invalid/browse/TAT-4158' },
+  ]);
+  // A run that already has links keeps them.
+  assert.deepEqual(getRun(linked.id)?.links, [
+    { label: 'PR', url: 'https://github.com/o/r/pull/9' },
   ]);
 });

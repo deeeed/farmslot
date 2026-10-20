@@ -7,16 +7,21 @@ import {
   type EvidenceReviewOccurrence,
   formatEvidenceReviewVideoTime,
 } from '@farmslot/adapter-sdk/evidence';
+import { type AcceptanceClaimRow } from '@farmslot/review-dispatch';
 
 import './media-lightbox.js';
+import './proof-step-details.js';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import type { AcceptanceClaimListActions } from '../progress-tracker/acceptance-claim-list.js';
+import { proofStepGroups } from '../progress-tracker/proof-step-groups.js';
 import {
-  formatProofStepExpectation,
-  proofStepGroups,
-} from '../progress-tracker/proof-step-groups.js';
+  renderVisualClaimJudgment,
+  visualClaimJudgmentStyles,
+} from '../workspace/visual-claim-judgment.js';
 import { workspaceArtifactBasename } from '../workspace/workspace-artifacts.js';
 
+import type { EvidenceReviewerView } from './evidence-reviewer-url-state.js';
 import { gatewayMediaSrc } from './gateway-media-src.js';
 import type { MediaLightbox } from './media-lightbox.js';
 import { isVideoLightboxItem } from './media-lightbox-model.js';
@@ -32,6 +37,20 @@ export interface EvidenceReviewerSelection {
   resolveUrl: (path: string) => string;
   /** The file the review was opened from: anything but the recording opens on itself. */
   opened?: LightboxItem;
+  /** Each criterion's state and, where a person must look, Looks right / Issue. */
+  judgments?: EvidenceReviewerJudgments;
+  /** Where a shared link left the recording. */
+  atMs?: number;
+  /** The step whose check a shared link left open, by trace index. */
+  check?: number;
+}
+
+/** The gate's verdicts on criteria, recorded from the review. */
+export interface EvidenceReviewerJudgments extends Pick<
+  AcceptanceClaimListActions,
+  'busy' | 'feedback' | 'reviewReason' | 'changeReviewReason' | 'recordReview'
+> {
+  rows: readonly AcceptanceClaimRow[];
 }
 
 /**
@@ -62,6 +81,15 @@ export function evidenceReviewerSelection(input: {
   return { claimId: input.claimId, model, recording, resolveUrl, opened };
 }
 
+const NAV_WIDTH_KEY = 'farmslot:evidence-review-nav-width';
+const DEFAULT_NAV_WIDTH = 340;
+
+/** The criteria pane's width: 240-720px; CSS also keeps it under 60% of the review. */
+export function clampReviewNavWidth(width: number): number {
+  if (!Number.isFinite(width) || width <= 0) return DEFAULT_NAV_WIDTH;
+  return Math.max(240, Math.min(720, Math.round(width)));
+}
+
 /**
  * Full-screen review of a run's evidence against its acceptance criteria: the
  * criteria on the left, each with its proof steps and screenshots; the chosen
@@ -70,27 +98,42 @@ export function evidenceReviewerSelection(input: {
 @customElement('evidence-reviewer')
 export class EvidenceReviewer extends LitElement {
   @property({ attribute: false }) selection: EvidenceReviewerSelection | null = null;
-  /** Shown in the page instead of over it; Full screen lifts it over the page. */
-  @property({ type: Boolean, reflect: true }) inline = false;
-  @property({ type: Boolean, reflect: true }) expanded = false;
   @state() private claimId = '';
-  @state() private openStep: number | null = null;
+  /** The step last chosen, highlighted in the list. */
+  @state() private activeStep: number | null = null;
+  /** The step whose check the dialog shows. */
+  @state() private checkStep: number | null = null;
+  @state() private navWidth = clampReviewNavWidth(Number(localStorage.getItem(NAV_WIDTH_KEY)));
   /** List criteria in the order the recording reaches them, or by id. */
   @state() private order: 'video' | 'criteria' = 'video';
   /** The screenshot in the main view instead of the recording. */
   @state() private still: LightboxItem | null = null;
   @query('media-lightbox') private player?: MediaLightbox;
+  @query('nav') private nav?: HTMLElement;
 
   static styles = css`
-    :host([inline]:not([expanded])) {
-      position: relative;
-      inset: auto;
-      z-index: auto;
-      height: min(78vh, 900px);
-      margin: ${unsafeCSS(spacing.sm)} 0;
-      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
-      border-radius: 6px;
-      overflow: hidden;
+    ${unsafeCSS(visualClaimJudgmentStyles())}
+    .verdict {
+      padding: 0 ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.lg)};
+    }
+    .state {
+      grid-column: 2 / -1;
+      justify-self: start;
+      padding: 0 6px;
+      font-size: 11px;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+    }
+    .state[data-tone='pending'] {
+      color: ${unsafeCSS(colors.statusWarn)};
+    }
+    .state[data-tone='proven'],
+    .state[data-tone='verified'],
+    .state[data-tone='checked'] {
+      color: ${unsafeCSS(colors.statusOk)};
+    }
+    .state[data-tone='issue'] {
+      color: ${unsafeCSS(colors.statusFail)};
     }
     :host {
       position: fixed;
@@ -130,7 +173,20 @@ export class EvidenceReviewer extends LitElement {
       flex: 1;
       min-height: 0;
       display: grid;
-      grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+      grid-template-columns: min(var(--nav-width), 60%) 6px minmax(0, 1fr);
+    }
+    .resize {
+      cursor: col-resize;
+      touch-action: none;
+      background: ${unsafeCSS(colors.bgCardHover)};
+      background-clip: content-box;
+      padding: 0 2px;
+    }
+    .resize:hover,
+    .resize:focus-visible {
+      background: ${unsafeCSS(colors.accent)};
+      padding: 0 1px;
+      outline: none;
     }
     .order {
       display: flex;
@@ -149,7 +205,6 @@ export class EvidenceReviewer extends LitElement {
     }
     nav {
       overflow: auto;
-      border-right: 1px solid ${unsafeCSS(colors.bgCardHover)};
     }
     .claim {
       display: grid;
@@ -182,6 +237,10 @@ export class EvidenceReviewer extends LitElement {
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
     }
+    .claim[aria-current='true'] .claim-text {
+      max-height: none;
+      display: block;
+    }
     .muted {
       color: ${unsafeCSS(colors.textMuted)};
     }
@@ -190,11 +249,18 @@ export class EvidenceReviewer extends LitElement {
       margin: 0;
       padding: 0 0 ${unsafeCSS(spacing.sm)};
     }
+    .step-row {
+      display: flex;
+      align-items: center;
+      gap: ${unsafeCSS(spacing.sm)};
+      padding-right: ${unsafeCSS(spacing.sm)};
+    }
     .step {
+      flex: 1;
+      min-width: 0;
       display: grid;
       grid-template-columns: 4.5em 3em minmax(0, 1fr);
       gap: ${unsafeCSS(spacing.sm)};
-      width: 100%;
       min-height: 36px;
       padding: 4px ${unsafeCSS(spacing.md)} 4px ${unsafeCSS(spacing.lg)};
       font: inherit;
@@ -205,12 +271,8 @@ export class EvidenceReviewer extends LitElement {
       cursor: pointer;
     }
     .step:hover:not(:disabled),
-    .step[aria-expanded='true'] {
+    .step[aria-current='true'] {
       background: ${unsafeCSS(colors.bgCardHover)};
-    }
-    .step:disabled {
-      cursor: default;
-      opacity: 0.6;
     }
     .ok {
       color: ${unsafeCSS(colors.statusOk)};
@@ -221,8 +283,6 @@ export class EvidenceReviewer extends LitElement {
     .detail {
       margin: 0 ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.sm)}
         calc(${unsafeCSS(spacing.lg)} + 4.5em);
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
       color: ${unsafeCSS(colors.textMuted)};
     }
     media-lightbox {
@@ -261,6 +321,9 @@ export class EvidenceReviewer extends LitElement {
     .still[aria-pressed='true'] {
       border-color: ${unsafeCSS(colors.accent)};
     }
+    .still img:not([src]) {
+      color: transparent;
+    }
     .still img {
       width: 100%;
       height: 100%;
@@ -280,8 +343,10 @@ export class EvidenceReviewer extends LitElement {
       }
       nav {
         order: 2;
-        border-right: 0;
         border-top: 1px solid ${unsafeCSS(colors.bgCardHover)};
+      }
+      .resize {
+        display: none;
       }
     }
   `;
@@ -403,9 +468,15 @@ export class EvidenceReviewer extends LitElement {
       reopened && selection.opened && !isVideoLightboxItem(selection.opened)
         ? selection.opened
         : undefined;
-    this.openStep = null;
+    this.activeStep = null;
     this.resumeMs = null;
     const start = claim ? this.startMs(claim) : null;
+    const linkedAt = reopened ? selection.atMs : undefined;
+    const linkedCheck =
+      reopened && claim && this.steps(claim).some((step) => step.traceIndex === selection.check)
+        ? selection.check
+        : undefined;
+    this.checkStep = linkedCheck ?? null;
     // Choosing a criterion shows its proof: the recording at its first step, or its
     // first screenshot when the recording does not cover it.
     if (opened || !this.recording || (start === null && claim && this.stills(claim).length)) {
@@ -413,8 +484,16 @@ export class EvidenceReviewer extends LitElement {
       this.pendingSeekMs = null;
     } else {
       this.still = null;
-      this.pendingSeekMs = this.openedMomentMs(reopened) ?? start;
+      this.pendingSeekMs = linkedAt ?? this.openedMomentMs(reopened) ?? start;
     }
+    this.announce({
+      ...(this.still
+        ? { path: this.still.path }
+        : linkedAt !== undefined
+          ? { atMs: linkedAt }
+          : {}),
+      ...(linkedCheck !== undefined ? { check: linkedCheck } : {}),
+    });
   }
 
   /** A recording opened at a step (a moment link) starts there, not at the criterion start. */
@@ -431,7 +510,24 @@ export class EvidenceReviewer extends LitElement {
     );
   }
 
+  /** The view to report once this update lands, so the host can put it in the link. */
+  private announced: EvidenceReviewerView | null = null;
+  /** The view last reported, which opening or closing a step's check keeps. */
+  private shown: Omit<EvidenceReviewerView, 'claimId'> = {};
+
+  private announce(view: Omit<EvidenceReviewerView, 'claimId'> = {}) {
+    if (!this.claimId) return;
+    this.shown = view;
+    this.announced = { claimId: this.claimId, ...view };
+    this.requestUpdate();
+  }
+
   protected updated(): void {
+    if (this.announced) {
+      const view = this.announced;
+      this.announced = null;
+      this.dispatchEvent(new CustomEvent('reviewer-view', { detail: view }));
+    }
     if (this.still || this.pendingSeekMs === null) return;
     const ms = this.pendingSeekMs;
     this.pendingSeekMs = null;
@@ -457,13 +553,59 @@ export class EvidenceReviewer extends LitElement {
   }
 
   private chooseStep(step: EvidenceReviewOccurrence, ms: number) {
-    this.openStep = this.openStep === step.traceIndex ? null : step.traceIndex;
+    this.activeStep = step.traceIndex;
     this.showVideo(ms);
+    this.announce({ atMs: ms });
+  }
+
+  private showCheck(step: EvidenceReviewOccurrence) {
+    this.checkStep = step.traceIndex;
+    this.announce({ ...this.shown, check: step.traceIndex });
+  }
+
+  /** The step's check closed (Close, Escape): the link drops it. */
+  private onCheckClosed() {
+    if (this.checkStep === null) return;
+    this.checkStep = null;
+    const { check: _closed, ...view } = this.shown;
+    this.announce(view);
+  }
+
+  /** Where a drag on the pane edge started, while it lasts. */
+  private dragFrom: { x: number; width: number } | null = null;
+
+  private startResize(event: PointerEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    this.dragFrom = { x: event.clientX, width: this.nav?.offsetWidth ?? this.navWidth };
+  }
+
+  private moveResize(event: PointerEvent) {
+    if (!this.dragFrom) return;
+    this.navWidth = clampReviewNavWidth(this.dragFrom.width + event.clientX - this.dragFrom.x);
+  }
+
+  private endResize() {
+    if (!this.dragFrom) return;
+    this.dragFrom = null;
+    localStorage.setItem(NAV_WIDTH_KEY, String(this.navWidth));
+  }
+
+  /** Arrow keys on the pane edge resize it; the player must not take them. */
+  private keyResize(event: KeyboardEvent) {
+    const delta = event.key === 'ArrowLeft' ? -24 : event.key === 'ArrowRight' ? 24 : 0;
+    if (!delta) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.navWidth = clampReviewNavWidth((this.nav?.offsetWidth ?? this.navWidth) + delta);
+    localStorage.setItem(NAV_WIDTH_KEY, String(this.navWidth));
   }
 
   private showStill(item: LightboxItem) {
     if (!this.still) this.resumeMs = this.player?.currentTimeMs() ?? null;
     this.still = item;
+    this.announce({ path: item.path });
   }
 
   /** Back to the recording: at the given moment, where it was, or at the criterion's start. */
@@ -474,15 +616,14 @@ export class EvidenceReviewer extends LitElement {
     else this.pendingSeekMs = ms;
   }
 
-  /** The criterion's files in the host gallery; an in-page review steps out of its way. */
+  /** The criterion's files in the host gallery. */
   private showFiles() {
-    if (this.inline) this.expanded = false;
     this.dispatchEvent(new CustomEvent('reviewer-files', { detail: { claimId: this.claimId } }));
   }
 
   /** Escape still leaves when no player is shown to take it (a criterion without media). */
   private onKey = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape' || this.player || (this.inline && !this.expanded)) return;
+    if (event.key !== 'Escape' || this.player) return;
     event.preventDefault();
     this.close();
   };
@@ -498,11 +639,28 @@ export class EvidenceReviewer extends LitElement {
   }
 
   private close() {
-    if (this.inline) {
-      this.expanded = false;
-      return;
-    }
     this.dispatchEvent(new CustomEvent('reviewer-close'));
+  }
+
+  private row(claim: EvidenceReviewClaim): AcceptanceClaimRow | undefined {
+    return this.selection?.judgments?.rows.find((row) => row.id === claim.id);
+  }
+
+  /** Looks right / Issue for the criterion on screen, where a person must judge it. */
+  private renderVerdict(claim: EvidenceReviewClaim) {
+    const judgments = this.selection?.judgments;
+    const judgment = this.row(claim)?.judgment;
+    if (!judgments || !judgment || judgment.claim.status?.proofMode === 'state') return nothing;
+    return html`<div class="verdict">
+      ${renderVisualClaimJudgment({
+        row: judgment,
+        busy: judgments.busy || !judgments.recordReview,
+        feedback: judgments.feedback,
+        reason: judgments.reviewReason?.(claim.id) ?? '',
+        changeReason: (reason) => judgments.changeReviewReason?.(claim.id, reason),
+        record: (verdict) => judgments.recordReview?.(claim.id, verdict),
+      })}
+    </div>`;
   }
 
   private renderSteps(claim: EvidenceReviewClaim) {
@@ -514,11 +672,10 @@ export class EvidenceReviewer extends LitElement {
     return html`<ol>
       ${steps.map((step) => {
         const ms = this.stepMs(step);
-        const open = this.openStep === step.traceIndex;
-        return html`<li>
+        return html`<li class="step-row">
           <button
             class="step"
-            aria-expanded=${open}
+            aria-current=${this.activeStep === step.traceIndex}
             ?disabled=${ms === null}
             title=${ms === null ? 'Not in the recording' : ''}
             @click=${() => ms !== null && this.chooseStep(step, ms)}
@@ -529,13 +686,13 @@ export class EvidenceReviewer extends LitElement {
             <span class=${step.ok ? 'ok' : 'fail'}>${step.ok ? 'pass' : 'fail'}</span>
             <span>${step.intent}</span>
           </button>
-          ${open
-            ? html`<div class="detail">
-                ${step.nodeId}${step.expectation
-                  ? `\n${formatProofStepExpectation(step.expectation)}`
-                  : ''}
-              </div>`
-            : nothing}
+          <proof-step-details
+            .step=${step}
+            heading=${`${claim.id} · step ${ms === null ? 'not in the recording' : formatEvidenceReviewVideoTime(ms / 1000, false)}`}
+            .open=${this.checkStep === step.traceIndex}
+            @proof-step-details-toggle=${(event: CustomEvent<{ open: boolean }>) =>
+              event.detail.open ? this.showCheck(step) : this.onCheckClosed()}
+          ></proof-step-details>
         </li>`;
       })}
     </ol>`;
@@ -551,7 +708,10 @@ export class EvidenceReviewer extends LitElement {
             class="still still-video"
             aria-pressed=${!this.still}
             title="Recording"
-            @click=${() => this.showVideo()}
+            @click=${() => {
+              this.showVideo();
+              this.announce();
+            }}
           >
             Video
           </button>`
@@ -578,13 +738,9 @@ export class EvidenceReviewer extends LitElement {
     return html`
       <header>
         <h2>Evidence review${current ? html` · ${current.id}` : nothing}</h2>
-        ${this.inline && !this.expanded
-          ? html`<button class="btn" @click=${() => (this.expanded = true)}>Full screen</button>`
-          : html`<button class="btn" @click=${() => this.close()}>
-              ${this.inline ? 'Exit full screen' : 'Close'}
-            </button>`}
+        <button class="btn" @click=${() => this.close()}>Close</button>
       </header>
-      <div class="body">
+      <div class="body" style="--nav-width:${this.navWidth}px">
         <nav aria-label="Acceptance criteria">
           <div class="order" role="group" aria-label="Order">
             ${(
@@ -612,20 +768,44 @@ export class EvidenceReviewer extends LitElement {
               >
                 <span class="claim-id">${claim.id}</span>
                 <span class="claim-text">${claim.text}</span>
+                ${this.row(claim)
+                  ? html`<span class="state" data-tone=${this.row(claim)!.tone}
+                      >${this.row(claim)!.state}</span
+                    >`
+                  : nothing}
                 <span class="muted"
                   >${start === null
                     ? 'not recorded'
                     : formatEvidenceReviewVideoTime(start / 1000, false)}</span
                 >
               </button>
-              ${selected ? html`${this.renderMedia(claim)}${this.renderSteps(claim)}` : nothing}`;
+              ${selected
+                ? html`${this.renderVerdict(claim)}${this.renderMedia(claim)}${this.renderSteps(
+                    claim,
+                  )}`
+                : nothing}`;
           })}
         </nav>
+        <div
+          class="resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize criteria list"
+          aria-valuemin="240"
+          aria-valuemax="720"
+          aria-valuenow=${this.navWidth}
+          tabindex="0"
+          @pointerdown=${(event: PointerEvent) => this.startResize(event)}
+          @pointermove=${(event: PointerEvent) => this.moveResize(event)}
+          @pointerup=${() => this.endResize()}
+          @pointercancel=${() => this.endResize()}
+          @keydown=${(event: KeyboardEvent) => this.keyResize(event)}
+        ></div>
         ${items.length
           ? html`<media-lightbox
               embedded
               open
-              ?owns-keys=${!this.inline || this.expanded}
+              owns-keys
               hide-timeline
               .confine=${false}
               .items=${items}

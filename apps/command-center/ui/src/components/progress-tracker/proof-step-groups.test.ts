@@ -3,11 +3,7 @@ import test from 'node:test';
 
 import type { EvidenceReviewOccurrence } from '@farmslot/adapter-sdk/evidence';
 
-import {
-  formatProofStepExpectation,
-  OTHER_PROOF_STEPS,
-  proofStepGroups,
-} from './proof-step-groups.js';
+import { OTHER_PROOF_STEPS, proofStepGroups } from './proof-step-groups.js';
 
 function step(traceIndex: number, proves: string[], ok = true): EvidenceReviewOccurrence {
   return {
@@ -36,12 +32,5 @@ test('proofStepGroups gathers each criterion in id order and leaves unproving st
       ['AC-10', [1, 2], 1],
       [OTHER_PROOF_STEPS, [0, 3], 0],
     ],
-  );
-});
-
-test('formatProofStepExpectation writes one key: value line per field, JSON for non-strings', () => {
-  assert.equal(
-    formatProofStepExpectation({ contains: 'PROOF trade present', expected: { rows: 20 } }),
-    'contains: PROOF trade present\nexpected: {"rows":20}',
   );
 });

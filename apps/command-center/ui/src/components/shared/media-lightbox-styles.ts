@@ -337,6 +337,16 @@ export const mediaLightboxStyles = css`
     transform-origin: center center;
     user-select: none;
   }
+  /* Until the authenticated download lands: a calm block, not alt text that reads as broken. */
+  .ml-expanded:not([src]),
+  .ml-film-thumb:not([src]) {
+    color: transparent;
+    background: ${unsafeCSS(colors.bgSurface)};
+  }
+  img.ml-expanded:not([src]) {
+    width: min(100%, 640px);
+    aspect-ratio: 16 / 10;
+  }
   .ml-image-shell {
     width: 100%;
     display: flex;

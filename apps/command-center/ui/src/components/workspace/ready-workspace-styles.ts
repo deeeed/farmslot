@@ -145,26 +145,6 @@ export function readyWorkspaceLightStyles(): string {
         font-weight: 600;
         padding: 5px 9px;
       }
-      ready-workspace .rdy-review-flow-button {
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
-        border: 1px solid ${colors.accent};
-        border-radius: ${radii.sm};
-        background: ${colors.accent}18;
-        color: ${colors.accent};
-        font-family: ${fonts.mono};
-        font-weight: 700;
-        padding: 6px 10px;
-        cursor: pointer;
-      }
-      ready-workspace .rdy-review-flow-button span {
-        border-left: 1px solid ${colors.accent}55;
-        padding-left: 7px;
-        color: ${colors.textSecondary};
-        font-size: 10px;
-        font-weight: 500;
-      }
       ready-workspace .rdy-refresh-package:hover:not(:disabled) {
         background: ${colors.accent}33;
       }
@@ -459,7 +439,8 @@ export function readyWorkspaceLightStyles(): string {
         flex: 1; color: ${colors.textMuted}; font-size: 12px; min-height: 100px;
       }
 
-      ready-workspace .rdy-evidence-tab {
+      ready-workspace .rdy-evidence-tab,
+      ready-workspace .rdy-checks-tab {
         display: flex;
         flex: 1;
         flex-direction: column;
@@ -949,6 +930,10 @@ export function readyWorkspaceLightStyles(): string {
         width: 100%; max-height: 200px; object-fit: contain;
         border-radius: ${radii.sm}; margin-bottom: ${spacing.sm};
         background: #000;
+      }
+      /* Until the authenticated download lands: a calm block, not alt text that reads as broken. */
+      ready-workspace img.rdy-media-preview:not([src]) {
+        min-height: 120px; color: transparent; background: ${colors.bgSurface};
       }
       ready-workspace .rdy-artifact-card.compact .rdy-media-preview {
         max-height: 80px;

@@ -74,7 +74,6 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _refreshingPackage = false;
   @state() _publicationTarget: PublicationTarget = 'ready';
   @state() _reviewModalOpen = false;
-  @state() _reviewFlowModalOpen = false;
   @state() _reviewFlowSelection: 'overall' | string = 'overall';
   @state() _reviewFlowView: 'chronological' | 'reviewer' = 'chronological';
   _reviewPicker = new ReviewDispatchViewModel({
@@ -104,7 +103,6 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _diffModalText = '';
   @state() _diffModalUrl = '';
   @state() _diffModalArtifactPath = '';
-  @state() _returnToReviewFlowAfterDiff = false;
   readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
     setPendingConfirm: (pending) => {
@@ -115,7 +113,6 @@ export abstract class ReadyWorkspaceState extends LitElement {
     return (
       this._diffModalOpen ||
       this._reviewModalOpen ||
-      this._reviewFlowModalOpen ||
       this._lightboxOpen ||
       this._inputArtifactViewerOpen ||
       this._review !== null
@@ -130,9 +127,6 @@ export abstract class ReadyWorkspaceState extends LitElement {
     } else if (this._reviewModalOpen) {
       event.preventDefault();
       this._closeReviewRequestModal();
-    } else if (this._reviewFlowModalOpen) {
-      event.preventDefault();
-      this._reviewFlowModalOpen = false;
     }
   };
 
@@ -171,5 +165,9 @@ export abstract class ReadyWorkspaceState extends LitElement {
   _decisionActionStateKey = '';
   _hashTabRequested = false;
   _suppressHashSync = false;
-  _boundHashChange = () => this._readViewStateFromHash();
+  // A pasted review link changes no tab state; the update still restores it.
+  _boundHashChange = () => {
+    this._readViewStateFromHash();
+    this.requestUpdate();
+  };
 }

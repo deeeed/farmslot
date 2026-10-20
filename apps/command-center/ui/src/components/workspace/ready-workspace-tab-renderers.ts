@@ -134,6 +134,8 @@ export function renderReadyRecipeTab(input: {
 export function renderReadyEvidenceTab(input: {
   payload: ReadyGatePayload;
   artifacts: ArtifactRef[];
+  /** The acceptance criteria with their verdicts; Review evidence opens the full-screen review. */
+  criteria?: unknown;
   selectionToolbar: TemplateResult | typeof nothing;
   artifactGroups: TemplateResult | typeof nothing;
   loading?: boolean;
@@ -146,7 +148,8 @@ export function renderReadyEvidenceTab(input: {
   if (input.artifacts.length === 0) return html`<div class="rdy-tab-empty">No evidence</div>`;
   return html`
     <div class="rdy-evidence-tab">
-      ${input.payload.prPackage ? input.selectionToolbar : nothing} ${input.artifactGroups}
+      ${input.criteria ?? nothing} ${input.payload.prPackage ? input.selectionToolbar : nothing}
+      ${input.artifactGroups}
     </div>
   `;
 }

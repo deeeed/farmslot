@@ -88,3 +88,18 @@ export async function refreshRunLinks(runId: string): Promise<void> {
     updateRun(runId, { links });
   }
 }
+
+/**
+ * Runs created before links were computed at creation show their ticket with
+ * no link. Compute links once for every run that names a ticket and has none.
+ */
+export async function backfillMissingRunLinks(runs: readonly Run[]): Promise<void> {
+  for (const run of runs) {
+    if (run.links?.length) continue;
+    const namesTicket =
+      run.ticketData?.jiraKey ||
+      run.ticketData?.githubIssue ||
+      /^[A-Z]+-\d+$/i.test(run.ticketOrPr);
+    if (namesTicket) await refreshRunLinks(run.id);
+  }
+}

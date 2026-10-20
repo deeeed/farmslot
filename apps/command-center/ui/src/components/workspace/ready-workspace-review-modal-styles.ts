@@ -12,24 +12,24 @@ export function readyWorkspaceReviewModalStyles(): string {
         display: grid;
         gap: ${spacing.md};
       }
-      ready-workspace .rdy-review-flow-modal {
-        width: min(1180px, calc(100vw - 48px));
-        max-height: min(86vh, 900px);
-        overflow: hidden;
-        background: ${colors.bgBase};
-        border: 1px solid #2a2a44;
-        border-radius: ${radii.lg};
-        box-shadow: 0 24px 80px rgba(0,0,0,0.5);
-        padding: ${spacing.lg};
+      ready-workspace .rdy-review-flow {
+        border-top: 1px solid #2a2a44;
+        padding: ${spacing.lg} 0;
         display: grid;
-        grid-template-rows: auto auto auto minmax(0, 1fr);
         gap: ${spacing.md};
       }
-      ready-workspace .rdy-review-flow-modal h3 {
-        margin: 3px 0 0;
-        font-size: 18px;
+      ready-workspace .rdy-review-flow-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: ${spacing.md};
+        flex-wrap: wrap;
       }
-      ready-workspace .rdy-review-flow-modal p {
+      ready-workspace .rdy-review-flow h3 {
+        margin: 0;
+        font-size: 15px;
+      }
+      ready-workspace .rdy-review-flow p {
         margin: 6px 0 0;
         color: ${colors.textMuted};
         font-size: 11px;
@@ -103,6 +103,15 @@ export function readyWorkspaceReviewModalStyles(): string {
       ready-workspace .rdy-review-flow-nav button.active {
         border-color: ${colors.accent};
         background: ${colors.accent}12;
+      }
+      ready-workspace .rdy-review-flow-nav button strong::before {
+        content: '';
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        margin-right: 6px;
+        border-radius: 50%;
+        background: var(--runner, ${colors.accent});
       }
       ready-workspace .rdy-review-flow-nav button span {
         color: ${colors.textMuted};

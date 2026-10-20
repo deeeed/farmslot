@@ -36,7 +36,6 @@ export interface ReadyWorkspaceFrameInput {
   renderTabContent: () => unknown;
   renderInputArtifactViewer: () => unknown;
   renderReviewRequestModal: () => unknown;
-  renderReviewFlowModal: () => unknown;
   /** The criterion evidence review, over the gate while open. */
   renderReview: () => unknown;
   beginRecovery: () => void;
@@ -140,7 +139,6 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
       @diff-modal-close=${input.diffModal.close}
     ></diff-viewer-modal>
     ${input.renderInputArtifactViewer()} ${input.renderReviewRequestModal()}
-    ${input.renderReviewFlowModal()}
   `;
 }
 

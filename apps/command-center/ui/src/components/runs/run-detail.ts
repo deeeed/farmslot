@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit';
+import { html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import {
@@ -69,7 +69,10 @@ import {
   type EvidenceReviewerSelection,
   evidenceReviewerSelection,
 } from '../shared/evidence-reviewer.js';
-import { isVideoLightboxItem } from '../shared/media-lightbox-model.js';
+import {
+  evidenceReviewerViewFromHash,
+  writeEvidenceReviewerHash,
+} from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
@@ -109,6 +112,7 @@ import {
   runDetailDesiredRecipeRunId,
   runEvidenceSettled,
   runFamilyPrStatus,
+  runHasPublicationGate,
   runHasTrimmedDetail,
   runOutputEvidenceSelection,
   shouldAcceptTaskProgressUpdate,
@@ -1042,6 +1046,7 @@ export class RunDetail extends RunDetailState {
 
   private _applyEvidenceArtifactFromHash(preserveCurrent = false): void {
     if (!this.run) return;
+    if (this._applyReviewFromHash()) return;
     const { artifactRun, artifact, artifactView, artifactAc } =
       artifactSelectionFromRunDetailHash();
     if (!artifact || (artifactView === STEP_ARTIFACT_VIEW && this.selectedStep)) {
@@ -1485,42 +1490,61 @@ export class RunDetail extends RunDetailState {
     const claimId = this._evidenceLightboxCriterionId;
     const model = this.evidenceModel;
     if (!this._evidenceLightboxOpen || this._evidenceGallery || !claimId || !model) return null;
-    const opened = this._evidenceLightboxItems[this._evidenceLightboxIndex];
-    const recording =
-      opened && isVideoLightboxItem(opened)
-        ? opened
-        : (this._evidenceLightboxItems.find(isVideoLightboxItem) ?? null);
     return {
-      claimId,
-      model,
-      recording,
-      resolveUrl: this._captureEvidenceResolver(),
-      opened,
+      ...evidenceReviewerSelection({
+        model,
+        claimId,
+        resolveUrl: this._captureEvidenceResolver(),
+        opened: this._evidenceLightboxItems[this._evidenceLightboxIndex],
+      }),
+      ...this._reviewLink,
     };
+  }
+
+  /** Where a review link left the recording, and the step check it left open. */
+  private _reviewLink?: Pick<EvidenceReviewerSelection, 'atMs' | 'check'>;
+
+  /**
+   * A review link reopens the review on its criterion, file and moment. The
+   * publication gate owns that link when it is on screen.
+   */
+  private _applyReviewFromHash(): boolean {
+    const run = this.run;
+    const model = this.evidenceModel;
+    const view = evidenceReviewerViewFromHash();
+    if (!run || !model || !view || runHasPublicationGate(run)) return false;
+    if (!model.claims.some((claim) => claim.id === view.claimId)) return false;
+    if (this._evidenceLightboxOpen && this._evidenceLightboxCriterionId === view.claimId)
+      return true;
+    const resolve = this._captureEvidenceResolver();
+    this._reviewLink = { atMs: view.atMs, check: view.check };
+    this._openEvidenceLightbox(
+      {
+        items: view.path
+          ? [
+              {
+                path: view.path,
+                purpose: 'evidence',
+                url: resolve(view.path),
+                evidenceModel: model,
+                resolveArtifactUrl: resolve,
+              },
+            ]
+          : [],
+        index: 0,
+        scope: `${view.claimId} evidence`,
+        criterionId: view.claimId,
+      },
+      false,
+    );
+    return true;
   }
 
   /**
    * A criterion chosen in the review becomes the link only when its own files list
    * the recording: the link resolver reopens exactly that pair, and nothing else.
    */
-  /** The run's evidence review shown in the page: every criterion, the first one open. */
-  private _inlineEvidence(): EvidenceReviewerSelection | null {
-    const model = this.evidenceModel;
-    const first = model?.claims[0];
-    if (!model || !first) return null;
-    // Nothing to look at: no recording and no screenshot for any criterion.
-    const hasMedia =
-      model.recordings.length > 0 ||
-      model.claims.some((claim) => claim.evidence.some((file) => file.mediaType === 'image'));
-    if (!hasMedia) return null;
-    return evidenceReviewerSelection({
-      model,
-      claimId: first.id,
-      resolveUrl: this._captureEvidenceResolver(),
-    });
-  }
-
-  /** A criterion's files in the gallery, from the in-page review. */
+  /** A criterion's files in the gallery, from the review. */
   private _openClaimFiles(claimId: string): void {
     const row = runAcceptanceCriterionEvidence(this).find((candidate) => candidate.id === claimId);
     const criterion = this.evidenceModel?.claims.find((claim) => claim.id === claimId);
@@ -1545,6 +1569,8 @@ export class RunDetail extends RunDetailState {
   }
 
   private _closeEvidenceLightbox(): void {
+    if (evidenceReviewerViewFromHash()) writeEvidenceReviewerHash(null);
+    this._reviewLink = undefined;
     this._evidenceLightboxOpen = false;
     this._evidenceArtifactUnavailable = null;
     this._updateEvidenceArtifactHash(null);
@@ -1751,17 +1777,6 @@ export class RunDetail extends RunDetailState {
           now: this._now,
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
-      _renderInlineEvidence: () => {
-        const selection = this._inlineEvidence();
-        return selection
-          ? html`<evidence-reviewer
-              inline
-              .selection=${selection}
-              @reviewer-files=${(event: CustomEvent<{ claimId: string }>) =>
-                this._openClaimFiles(event.detail.claimId)}
-            ></evidence-reviewer>`
-          : nothing;
-      },
       // The gate disappears when the decision resolves, so the correlated result
       // and the pending notice live on the persistent summary instead.
       _renderPosture: (run) =>

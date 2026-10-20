@@ -44,6 +44,10 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
+import {
+  type EvidenceReviewerView,
+  writeEvidenceReviewerHash,
+} from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem, LightboxSelection } from '../shared/media-lightbox-types.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
@@ -142,8 +146,6 @@ export interface RunDetailViewContext {
   _shouldShowCiStatus: (run: Run) => boolean;
   _renderCiStatus: (run: Run) => unknown;
   _renderRunEvidence: (run: Run) => unknown;
-  /** The run's evidence review in the page: every criterion beside its recording or screenshots. */
-  _renderInlineEvidence: () => unknown;
   /**
    * ADR-054 resource posture, rendered beside the pipeline phase. It takes no
    * run: the panel renders the posture status already fetched for the bound run.
@@ -400,6 +402,8 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
           @reviewer-close=${() => ctx.closeEvidenceLightbox()}
           @reviewer-files=${(event: CustomEvent<{ claimId: string }>) =>
             ctx.showEvidenceGallery?.(event.detail.claimId)}
+          @reviewer-view=${(event: CustomEvent<EvidenceReviewerView>) =>
+            writeEvidenceReviewerHash(event.detail)}
           @reviewer-claim=${(event: CustomEvent<{ claimId: string }>) =>
             ctx.selectEvidenceClaim?.(event.detail.claimId)}
         ></evidence-reviewer>`
@@ -805,18 +809,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             : nothing}
         </div>`
       : nothing}
-    ${ctx._renderInlineEvidence()}
-    ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
-      ? ctx._renderRunEvidence(r)
-      : nothing}
-    ${r.output ? ctx.renderGateSection(r) : nothing}
-    ${renderRunReviewResult(
-      r,
-      () => void ctx._onReplayStep('human-gate'),
-      actionsBlocked || ctx._rereviewInFlight,
-      () => void ctx._rereviewLatestHead(r),
-    )}
-    ${r.reviewWorkspace && !r.output ? ctx.renderGateSection(r) : nothing}
     ${r.qa
       ? html`<p data-testid="run-qa-profile">
           QA profile: <strong>${r.qa.profile.title}</strong> <code>${r.qa.profile.id}</code>
@@ -1154,6 +1146,17 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           `
         : nothing}
     </div>
+    ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
+      ? ctx._renderRunEvidence(r)
+      : nothing}
+    ${r.output ? ctx.renderGateSection(r) : nothing}
+    ${renderRunReviewResult(
+      r,
+      () => void ctx._onReplayStep('human-gate'),
+      actionsBlocked || ctx._rereviewInFlight,
+      () => void ctx._rereviewLatestHead(r),
+    )}
+    ${r.reviewWorkspace && !r.output ? ctx.renderGateSection(r) : nothing}
     ${ctx._renderAgentSessions(r)} ${renderReviewChain(r)}
     ${ctx.siblings.length
       ? html`

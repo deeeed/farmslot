@@ -154,7 +154,7 @@ export function renderReadyTabBar(input: {
       ] satisfies (ReadyGateTab | false)[]
     ).filter((tab) => tab !== false);
     return html` <div class="rdy-tab-bar" role="tablist" aria-label="Publication gate">
-      ${PUBLICATION_GATE_TABS.map(gateTab)}
+      ${PUBLICATION_GATE_TABS.filter((tab) => tab.id !== 'criteria').map(gateTab)}
       <span class="gate-tab-divider" aria-hidden="true"></span>
       ${extraTabs.map(gateTab)}
     </div>`;

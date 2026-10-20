@@ -29,6 +29,8 @@ import type {
 } from '@farmslot/protocol';
 import { acceptanceClaimRows, acceptancePanelPresentation } from '@farmslot/review-dispatch';
 
+import '../shared/proof-step-details.js';
+
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 import {
@@ -36,7 +38,7 @@ import {
   acceptanceClaimListStyles,
   renderAcceptanceClaimList,
 } from './acceptance-claim-list.js';
-import { formatProofStepExpectation, proofStepGroups } from './proof-step-groups.js';
+import { proofStepGroups } from './proof-step-groups.js';
 
 export interface AcceptanceClaimOverrideEditor {
   claimId: string | null;
@@ -268,12 +270,6 @@ export const acceptancePanelStyles = css`
   button.ac-proof-step:hover .ac-check-intent {
     color: ${unsafeCSS(colors.accent)};
   }
-  .ac-check-expect {
-    grid-column: 2 / -1;
-    color: ${unsafeCSS(colors.textMuted)};
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
 `;
 
 /** A click on one of a criterion's evidence files: which criterion, its files in order, and which one. */
@@ -476,12 +472,10 @@ function renderRowDetails(
                     >${occurrence.ok ? 'pass' : 'fail'}</span
                   >
                   <span class="ac-check-intent">${occurrence.intent}</span>
-                  <code class="ac-check-node">${occurrence.nodeId}</code>
-                  ${occurrence.expectation
-                    ? html`<code class="ac-check-expect"
-                        >${formatProofStepExpectation(occurrence.expectation)}</code
-                      >`
-                    : nothing}
+                  <proof-step-details
+                    .step=${occurrence}
+                    heading=${`${view.id} · ${occurrence.nodeId}`}
+                  ></proof-step-details>
                 </li>`,
             )}
             ${recipeNodes
