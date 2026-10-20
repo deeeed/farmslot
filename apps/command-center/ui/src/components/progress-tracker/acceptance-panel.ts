@@ -36,6 +36,7 @@ import {
   acceptanceClaimListStyles,
   renderAcceptanceClaimList,
 } from './acceptance-claim-list.js';
+import { proofStepGroups } from './proof-step-groups.js';
 
 export interface AcceptanceClaimOverrideEditor {
   claimId: string | null;
@@ -147,9 +148,6 @@ export const acceptancePanelStyles = css`
     text-align: left;
     font-size: inherit;
   }
-  .ac-proof-step {
-    display: block;
-  }
   .ac-evidence:hover {
     text-decoration: underline;
   }
@@ -193,6 +191,88 @@ export const acceptancePanelStyles = css`
   .ac-note {
     padding-left: 3.2em;
     color: ${unsafeCSS(colors.textSecondary)};
+  }
+
+  .ac-more-actions {
+    padding-left: 3.2em;
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  .ac-more-actions > summary {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+  }
+  .ac-more-actions > .ac-meta,
+  .ac-more-actions > .ac-note {
+    padding-left: 0;
+  }
+  .ac-checks {
+    list-style: none;
+    margin: 0 0 ${unsafeCSS(spacing.sm)};
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: ${unsafeCSS(spacing.sm)};
+  }
+  .ac-check {
+    display: grid;
+    grid-template-columns: 4.5em minmax(0, 1fr) auto;
+    column-gap: ${unsafeCSS(spacing.sm)};
+    align-items: baseline;
+  }
+  .ac-check-status {
+    font-family: ${unsafeCSS(fonts.mono)};
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  .ac-check-status[data-ok='true'] {
+    color: ${unsafeCSS(colors.statusOk)};
+  }
+  .ac-check-status[data-ok='false'] {
+    color: ${unsafeCSS(colors.statusFail)};
+  }
+  .ac-check-intent {
+    color: ${unsafeCSS(colors.textSecondary)};
+  }
+  .ac-check-node {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  .ac-step-groups {
+    display: flex;
+    flex-direction: column;
+    padding-left: 3.2em;
+  }
+  .ac-step-group > summary {
+    display: flex;
+    align-items: center;
+    gap: ${unsafeCSS(spacing.sm)};
+    min-height: 44px;
+    cursor: pointer;
+  }
+  .ac-step-group-label {
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-weight: 600;
+  }
+  .ac-step-group-count {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  button.ac-proof-step {
+    width: 100%;
+    padding: 4px 0;
+    font: inherit;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+  }
+  button.ac-proof-step:hover .ac-check-intent {
+    color: ${unsafeCSS(colors.accent)};
+  }
+  .ac-check-expect {
+    grid-column: 2 / -1;
+    color: ${unsafeCSS(colors.textMuted)};
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 `;
 
@@ -359,7 +439,7 @@ function renderRowDetails(
       )}
     </div>`;
   return html`
-    <details class="ac-meta ac-more-actions">
+    <details class="ac-more-actions">
       <summary>More</summary>
       ${display.clip && !model?.errors.length && openEvidence
         ? html`<button
@@ -388,19 +468,37 @@ function renderRowDetails(
           </details>`
         : nothing}
       ${recipeNodes.length || view.occurrences.length
-        ? html`<details class="ac-meta" data-testid="acceptance-check-details">
-            <summary>Check details</summary>
-            ${recipeNodes.map((node) => html`<span>${node}</span>`)}
+        ? html`<ul class="ac-checks" data-testid="acceptance-check-details">
             ${view.occurrences.map(
               (occurrence) =>
-                html`<div class="ac-meta">
-                  <span>${occurrence.intent}</span>
+                html`<li class="ac-check">
+                  <span class="ac-check-status" data-ok=${String(occurrence.ok)}
+                    >${occurrence.ok ? 'pass' : 'fail'}</span
+                  >
+                  <span class="ac-check-intent">${occurrence.intent}</span>
+                  <code class="ac-check-node">${occurrence.nodeId}</code>
                   ${occurrence.expectation
-                    ? html`<code>${JSON.stringify(occurrence.expectation)}</code>`
+                    ? html`<code class="ac-check-expect"
+                        >${Object.entries(occurrence.expectation)
+                          .map(
+                            ([key, value]) =>
+                              `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+                          )
+                          .join('\n')}</code
+                      >`
                     : nothing}
-                </div>`,
+                </li>`,
             )}
-          </details>`
+            ${recipeNodes
+              .filter((node) => !view.occurrences.some((occurrence) => occurrence.nodeId === node))
+              .map(
+                (node) =>
+                  html`<li class="ac-check">
+                    <span class="ac-check-status">not run</span>
+                    <code class="ac-check-node">${node}</code>
+                  </li>`,
+              )}
+          </ul>`
         : nothing}
       ${view.timing && view.timing !== 'measured'
         ? html`<div class="ac-note">${view.timing}</div>`
@@ -614,18 +712,40 @@ export function renderAcceptancePanel(
               ${model.displayWarnings.map((warning) => html`<p>${warning}</p>`)}
             </details>`
           : nothing}
-        ${options.showOccurrences
-          ? model?.occurrences.map(
-              (occurrence) =>
-                html`<button
-                  class="ac-evidence ac-proof-step"
-                  data-testid="recipe-proof-step"
-                  data-trace-index=${occurrence.traceIndex}
-                  @click=${() => options.openOccurrence?.(occurrence.traceIndex)}
-                >
-                  ${occurrence.nodeId}: ${occurrence.intent} · ${occurrence.ok ? 'pass' : 'fail'}
-                </button>`,
-            )
+        ${options.showOccurrences && model?.occurrences.length
+          ? html`<div class="ac-step-groups" data-testid="recipe-proof-steps">
+              ${proofStepGroups(model.occurrences).map(
+                (group) =>
+                  html`<details class="ac-step-group" ?open=${group.failed > 0}>
+                    <summary>
+                      <span class="ac-step-group-label">${group.label}</span>
+                      <span class="ac-step-group-count">${group.steps.length} steps</span>
+                      <span class="ac-check-status" data-ok=${String(group.failed === 0)}
+                        >${group.failed ? `${group.failed} failed` : 'pass'}</span
+                      >
+                    </summary>
+                    <ul class="ac-checks">
+                      ${group.steps.map(
+                        (occurrence) =>
+                          html`<li>
+                            <button
+                              class="ac-check ac-proof-step"
+                              data-testid="recipe-proof-step"
+                              data-trace-index=${occurrence.traceIndex}
+                              @click=${() => options.openOccurrence?.(occurrence.traceIndex)}
+                            >
+                              <span class="ac-check-status" data-ok=${String(occurrence.ok)}
+                                >${occurrence.ok ? 'pass' : 'fail'}</span
+                              >
+                              <span class="ac-check-intent">${occurrence.intent}</span>
+                              <code class="ac-check-node">${occurrence.nodeId}</code>
+                            </button>
+                          </li>`,
+                      )}
+                    </ul>
+                  </details>`,
+              )}
+            </div>`
           : nothing}
       </div>
     </details>

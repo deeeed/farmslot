@@ -108,6 +108,8 @@ export abstract class RunDetailState extends LitElement {
   _acceptanceFetchQueued = false;
   /** The criterion whose evidence the open lightbox steps through, if any. */
   _evidenceLightboxCriterionId: string | null = null;
+  /** The criterion's files were asked for as a gallery instead of the recording review. */
+  @state() _evidenceGallery = false;
   @state() _evidenceLightboxIndex = 0;
   /** An artifact link that could not be opened, and why. Never a silent no-op. */
   @state() _evidenceArtifactUnavailable: { path: string; reason: string } | null = null;

@@ -7,6 +7,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - The ready workspace, its publication gate and the evidence view show the reason a person can act on, for example `Review rounds spent: 4 issues open`, instead of 'Fix and pass review' when fixing is not offered.
 - The runs list status badge shows `Needs your decision` for a run waiting at its open human gate, instead of `blocked`, and the Lifecycle column is wide enough for it. The run header shows the gate's readiness reason, and the pipeline's gate node keeps its waiting look with that reason as its tooltip.
 - Active-development baseline; add user-facing changes here before release or package publication.
+- The publication gate shows one tab bar, with Diff, Input, Recipe and Learnings beside the main tabs instead of under "More views", and its tab content fills the panel instead of stopping at 640px (the docked panel no longer cuts off the bottom). Acceptance criteria open with one toggle, and each check is its own row: result, intent, node and the expected value. Recipe proof steps are grouped by the criterion they prove, with the remaining steps in one group, instead of one flat list (410 steps on TAT-4145).
+- Run files open in a file browser: folder tree, search, type filters (with a new Logs type), repeated check attempts grouped into one row, pinned Report, Review, Learnings and Diff, and a side preview when the list is at least 900px wide. It works from the keyboard and at phone width.
+- "Review evidence" on a criterion with a recording opens a full-screen review: the criteria on the left in video or criterion order, each with its proof steps and their times; the whole recording on the right with the criterion's clips marked on the timeline; a step jumps to its moment and shows what it checked. The viewer fills embedded panes and Maximize (video was capped at 68% of the window height), and screenshots and video gain Fullscreen (`f`), zoom and pan, including scroll-to-zoom at the pointer.
+- Run detail shows where the work came from (Jira ticket, GitHub issue or backlog item), linked once the gateway has resolved the link.
 
 ## 0.27.0 - 2026-10-19
 

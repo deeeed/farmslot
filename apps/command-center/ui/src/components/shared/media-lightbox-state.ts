@@ -10,6 +10,16 @@ export const MD_CACHE_LIMIT = 50;
 
 export abstract class MediaLightboxState extends LitElement {
   @property({ type: Boolean }) open = false;
+  /** Render in place inside a host pane: no overlay, filmstrip, close or global keys. */
+  @property({ type: Boolean, reflect: true }) embedded = false;
+  /** Keep playback and seeking inside the selected criterion's clips; off plays the whole recording. */
+  @property({ type: Boolean }) confine = true;
+  /** An embedded viewer that fills the screen still answers the player keys. */
+  @property({ type: Boolean, attribute: 'owns-keys' }) ownsKeys = false;
+  /** Label of the embedded viewer's button that hands the file back to the host. */
+  @property({ attribute: 'expand-label' }) expandLabel = 'Full view';
+  /** The host lists the recording's steps itself, so the player omits its own step timeline. */
+  @property({ type: Boolean, attribute: 'hide-timeline' }) hideTimeline = false;
   @property({ type: Number }) selectedIndex = 0;
   @property({ attribute: false }) items: LightboxItem[] = [];
   @property({ attribute: false }) pairs: LightboxPair[] = [];
@@ -39,6 +49,10 @@ export abstract class MediaLightboxState extends LitElement {
   protected _panning = false;
   protected _panStartX = 0;
   protected _panStartY = 0;
+  /** The pointer moved while panning, so the release is a drag rather than a click. */
+  protected _panMoved = false;
+  /** The viewer itself is the browser's fullscreen element. */
+  @state() protected _fullscreen = false;
   protected _draggingDivider = false;
   protected _videoSyncing = false;
 }

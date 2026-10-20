@@ -12,12 +12,33 @@ import { artifactKind } from '../../utils/artifact-kind.js';
 import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
 export type ArtifactGroup = 'before' | 'after' | 'review' | 'other';
 export type ArtifactFilter = 'all' | ArtifactGroup;
-export type ArtifactTypeFilter = 'all' | 'image' | 'video' | 'markdown' | 'json' | 'diff' | 'other';
+export type ArtifactTypeFilter =
+  | 'all'
+  | 'image'
+  | 'video'
+  | 'markdown'
+  | 'json'
+  | 'diff'
+  | 'log'
+  | 'other';
+export type ArtifactType = Exclude<ArtifactTypeFilter, 'all'>;
+
+/** Display order of the artifact type filters. */
+export const ARTIFACT_TYPES: readonly ArtifactType[] = [
+  'image',
+  'video',
+  'markdown',
+  'json',
+  'diff',
+  'log',
+  'other',
+];
 
 export const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
 export const DIFF_EXTS = /(?:^|\/)(?:diff\.txt|.*\.diff)$/i;
 export const MARKDOWN_EXTS = /\.(md|markdown)$/i;
 export const JSON_EXTS = /\.json$/i;
+export const LOG_EXTS = /\.(log|txt)$/i;
 
 export function workspaceArtifactBasename(path: string, fallback = path): string {
   return path.split('/').pop() ?? fallback;
@@ -100,13 +121,32 @@ export function workspaceArtifactGroupLabel(group: ArtifactGroup): string {
 
 export function workspaceArtifactType(
   artifact: Pick<ArtifactRef, 'path' | 'purpose'>,
-): ArtifactTypeFilter {
+): ArtifactType {
   if (isRunArtifactImagePath(artifact.path)) return 'image';
   if (VIDEO_EXTS.test(artifact.path)) return 'video';
   if (MARKDOWN_EXTS.test(artifact.path)) return 'markdown';
   if (JSON_EXTS.test(artifact.path)) return 'json';
   if (isWorkspaceDiffArtifact(artifact)) return 'diff';
+  if (LOG_EXTS.test(artifact.path)) return 'log';
   return 'other';
+}
+
+/** How many artifacts fall under each type filter, `all` included. */
+export function workspaceArtifactTypeCounts(
+  artifacts: readonly Pick<ArtifactRef, 'path' | 'purpose'>[],
+): Record<ArtifactTypeFilter, number> {
+  const counts: Record<ArtifactTypeFilter, number> = {
+    all: artifacts.length,
+    image: 0,
+    video: 0,
+    markdown: 0,
+    json: 0,
+    diff: 0,
+    log: 0,
+    other: 0,
+  };
+  for (const artifact of artifacts) counts[workspaceArtifactType(artifact)] += 1;
+  return counts;
 }
 
 export function workspaceArtifactTypeLabel(type: ArtifactTypeFilter): string {
@@ -123,6 +163,8 @@ export function workspaceArtifactTypeLabel(type: ArtifactTypeFilter): string {
       return 'JSON';
     case 'diff':
       return 'Diffs';
+    case 'log':
+      return 'Logs';
     case 'other':
       return 'Other files';
   }
@@ -140,6 +182,8 @@ export function workspaceArtifactTypeBadge(type: ArtifactTypeFilter): string {
       return 'JSON';
     case 'diff':
       return 'DIFF';
+    case 'log':
+      return 'LOG';
     case 'other':
       return 'FILE';
     case 'all':

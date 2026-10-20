@@ -64,6 +64,8 @@ import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
 } from '../progress-tracker/acceptance-panel.js';
+import type { EvidenceReviewerSelection } from '../shared/evidence-video-reviewer.js';
+import { isVideoLightboxItem } from '../shared/media-lightbox-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
@@ -1028,6 +1030,7 @@ export class RunDetail extends RunDetailState {
     this._evidenceLightboxIndex = selection.index;
     this._evidenceLightboxScope = selection.scope;
     this._evidenceLightboxCriterionId = selection.criterionId;
+    this._evidenceGallery = false;
     this._evidenceArtifactUnavailable = null;
     this._evidenceLightboxOpen = true;
     if (writeHash) this._updateEvidenceArtifactHash(selection.items[selection.index] ?? null);
@@ -1456,6 +1459,22 @@ export class RunDetail extends RunDetailState {
     if (location.hash !== next) history.replaceState(null, '', next);
   }
 
+  /** One criterion's evidence with a recording opens as the full-screen recording review. */
+  private _evidenceReviewer(): EvidenceReviewerSelection | null {
+    const claimId = this._evidenceLightboxCriterionId;
+    const model = this.evidenceModel;
+    if (!this._evidenceLightboxOpen || this._evidenceGallery || !claimId || !model) return null;
+    const recording = this._evidenceLightboxItems.find(isVideoLightboxItem);
+    return recording
+      ? { claimId, recording: { ...recording, evidenceModel: recording.evidenceModel ?? model } }
+      : null;
+  }
+
+  private _selectEvidenceClaim(claimId: string): void {
+    this._evidenceLightboxCriterionId = claimId;
+    this._updateEvidenceArtifactHash(this._evidenceLightboxItems.find(isVideoLightboxItem) ?? null);
+  }
+
   private _closeEvidenceLightbox(): void {
     this._evidenceLightboxOpen = false;
     this._evidenceArtifactUnavailable = null;
@@ -1533,6 +1552,9 @@ export class RunDetail extends RunDetailState {
       artifactUrl: this._artifactUrl,
       onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
       closeEvidenceLightbox: () => this._closeEvidenceLightbox(),
+      evidenceReviewer: this._evidenceReviewer(),
+      showEvidenceGallery: () => (this._evidenceGallery = true),
+      selectEvidenceClaim: (claimId) => this._selectEvidenceClaim(claimId),
       navigateEvidenceLightbox: (index) => this._navigateEvidenceLightbox(index),
       replaceEvidenceLightbox: ({ items, index }) => {
         this._evidenceLightboxItems = items;

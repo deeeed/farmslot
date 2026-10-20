@@ -72,3 +72,30 @@ export function familyPrUrl(run: RunWithPr, runs: readonly RunWithLinks[]): stri
   if (siblingMatch) return githubPullUrl({ repo: siblingMatch.repo, number: run.prNumber });
   return null;
 }
+
+/** Where a run's work came from: its Jira ticket, GitHub issue or backlog item. */
+export interface RunSourceLink {
+  label: 'Jira' | 'Issue' | 'Backlog';
+  text: string;
+  /** Null until the gateway has resolved the link; the key still shows. */
+  url: string | null;
+}
+
+export function runSourceLinks(
+  run: Pick<Run, 'ticketOrPr' | 'ticketData' | 'links' | 'backlogItemId'>,
+): RunSourceLink[] {
+  const linked = (label: RunSourceLink['label']) =>
+    run.links?.find((link) => link.label === label)?.url ?? null;
+  const sources: RunSourceLink[] = [];
+  if (run.ticketData?.jiraKey)
+    sources.push({ label: 'Jira', text: run.ticketData.jiraKey, url: linked('Jira') });
+  if (run.ticketData?.githubIssue)
+    sources.push({ label: 'Issue', text: run.ticketData.githubIssue, url: linked('Issue') });
+  if (run.backlogItemId)
+    sources.push({
+      label: 'Backlog',
+      text: run.backlogItemId.slice(0, 8),
+      url: `#backlog?item=${encodeURIComponent(run.backlogItemId)}`,
+    });
+  return sources;
+}

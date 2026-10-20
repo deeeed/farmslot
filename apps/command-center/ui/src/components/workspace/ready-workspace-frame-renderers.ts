@@ -74,7 +74,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
   const reviewContent = html`${input.renderTabBar()}
     <div
       class="rdy-tab-pane-host"
-      style=${packageGate ? 'height:min(65vh,640px);flex:none' : nothing}
+      style=${packageGate ? 'flex:1 1 min(65vh,640px);min-height:0' : nothing}
     >
       ${input.renderTabContent()}
     </div>`;

@@ -198,10 +198,10 @@ export function publicationGatePanelStyles(scope = 'ready-workspace') {
     ready-workspace .rdy-gate-details, ready-workspace .rdy-review-content { padding: ${spacing.md} ${spacing.lg}; }
     ready-workspace .rdy-gate-details > summary, ready-workspace .rdy-review-content > summary, ready-workspace .rdy-package-details > summary { cursor: pointer; padding: ${spacing.md}; min-height: 44px; display: flex; align-items: center; }
     ready-workspace .gate-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-    ready-workspace .rdy-tab-bar[role="tablist"] { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; gap: 4px; background: var(--gate-background); }
-    ready-workspace .rdy-tab-bar[role="tablist"] .rdy-tab { min-height: 44px; min-width: 44px; padding: 8px; font-size: ${fonts.sizeSm}; color: var(--gate-text); }
-    ready-workspace .gate-extra-tabs > summary { min-height: 44px; padding: 8px; display: flex; align-items: center; cursor: pointer; }
-    @media (max-width: 720px) { ready-workspace .rdy-tab-bar[role="tablist"] { grid-template-columns: repeat(4, minmax(0, 1fr)); } ready-workspace .gate-extra-tabs { grid-column: 1 / -1; } }
+    ready-workspace .rdy-tab-bar[role="tablist"] { display: flex; align-items: stretch; gap: 4px; overflow-x: auto; scrollbar-width: none; background: var(--gate-background); }
+    ready-workspace .rdy-tab-bar[role="tablist"] .rdy-tab { flex: 1 0 auto; min-height: 44px; min-width: 44px; padding: 8px ${spacing.md}; white-space: nowrap; font-size: ${fonts.sizeSm}; color: var(--gate-text); border-radius: 0; border-bottom: 2px solid transparent; }
+    ready-workspace .rdy-tab-bar[role="tablist"] .rdy-tab.active { border-bottom-color: var(--gate-accent); }
+    ready-workspace .gate-tab-divider { flex: none; width: 1px; margin: 10px 4px; background: var(--gate-border); }
     @media (max-width: 720px) { ready-workspace .gate-attestation { grid-template-columns: 1fr; } }
   `.replaceAll('ready-workspace', scope);
 }
