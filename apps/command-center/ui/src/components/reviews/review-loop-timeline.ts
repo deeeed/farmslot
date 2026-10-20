@@ -10,6 +10,7 @@ import {
   type ReviewStatus,
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
+import { reviewFallbackLine } from '@farmslot/review-dispatch';
 
 import { colors, fonts, radii, runnerColor, spacing } from '../../styles/theme-tokens.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
@@ -155,6 +156,10 @@ export class ReviewLoopTimeline extends LitElement {
       align-items: center;
       flex-wrap: wrap;
       gap: ${unsafeCSS(spacing.sm)};
+      color: ${unsafeCSS(colors.textSecondary)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    .review-fallback {
       color: ${unsafeCSS(colors.textSecondary)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
     }
@@ -404,6 +409,11 @@ export class ReviewLoopTimeline extends LitElement {
           >
           <span class="check">Check ${reviewIndex + 1} · ${reviewDisplayLabel(review)}</span>
         </div>
+        ${reviewFallbackLine(review)
+          ? html`<div class="review-fallback" data-testid="review-fallback">
+              ${reviewFallbackLine(review)}
+            </div>`
+          : nothing}
         ${this._renderPhaseStrip(review, attempts, shown)}
         ${attempts.length
           ? this._renderReview(review, attempts[shown], shown, attempts.length)

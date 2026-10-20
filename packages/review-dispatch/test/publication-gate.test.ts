@@ -15,11 +15,13 @@ import {
 
 import {
   acceptanceClaimRows,
+  gateReviewLineageOptions,
   humanGateBlockingReason,
   type PublicationGateClaim,
   publicationGateCriteria,
   publicationGateView,
   publicationReviewBlockingReason,
+  reviewFallbackLine,
 } from '../src/publication-gate.js';
 
 const evidenceOnly: RunGateReadiness = {
@@ -678,4 +680,70 @@ test('an open gate shows the reason a person can act on, not a fix it does not o
     publicationGateView({ run, readiness, actions: gate.actions }).status,
     /Fix and pass/,
   );
+});
+
+test('the gate shows why a review ran a delta-scoped COLD and what it compared', () => {
+  const last = 'a'.repeat(40);
+  const head = 'b'.repeat(40);
+  const fallback = {
+    reason: 'reviewed-head-not-ancestor' as const,
+    detail: 'the current head no longer descends from the last reviewed head',
+    comparedRanges: [`${'c'.repeat(40)}..${last}`, `${'d'.repeat(40)}..${head}`],
+  };
+  const review: Pick<ReviewStatus, 'session' | 'attempts'> = {
+    session: { mode: 'cold', continuity: 'fresh', reviewId: 'lineage', fallback },
+  };
+  assert.equal(
+    reviewFallbackLine(review),
+    `Ran COLD in a fresh session: ${fallback.detail}. Compared cccccccccccc..aaaaaaaaaaaa with dddddddddddd..bbbbbbbbbbbb.`,
+  );
+  // A later WARM round continued the fresh session; the round that fell back still shows.
+  assert.match(
+    reviewFallbackLine({
+      session: { mode: 'warm', continuity: 'resumed' },
+      attempts: [
+        {
+          mode: 'cold',
+          loopNumber: 2,
+          verdict: 'issues',
+          unresolvedCount: 1,
+          session: review.session,
+        },
+        { mode: 'warm', loopNumber: 3, verdict: 'pass', unresolvedCount: 0 },
+      ],
+    }) ?? '',
+    /^Round 2 Ran COLD in a fresh session/,
+  );
+  assert.equal(reviewFallbackLine({ session: { mode: 'warm', continuity: 'resumed' } }), null);
+});
+
+test('a Request Review reads the lineages its ready gate listed', () => {
+  const option = {
+    context: { reviewId: 'lineage', familyId: 'family' },
+    runner: 'codex',
+    model: null,
+    effort: null,
+    reviewedAt: '2026-10-20T00:00:00Z',
+  };
+  const ready: RunDecision = {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'Ready',
+    description: '',
+    createdAt: '2026-10-20T00:00:00Z',
+    actions: [],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+      workerReport: '',
+      branch: 'feature',
+      reviewLineageOptions: [option],
+    },
+  };
+  assert.deepEqual(gateReviewLineageOptions({ decisions: [ready] }), [option]);
+  assert.deepEqual(gateReviewLineageOptions({ decisions: [ready] }, 'gate'), [option]);
+  assert.equal(gateReviewLineageOptions({ decisions: [ready] }, 'other'), undefined);
+  assert.equal(gateReviewLineageOptions(null), undefined);
 });

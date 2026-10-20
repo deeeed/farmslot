@@ -283,6 +283,58 @@ test('run gate WARM requires and preserves retained lineage', () => {
   assert.throws(() => buildRunGateParams(run, decision, 'hold', selection), /request-review/);
 });
 
+test('run gate Request Review continues the runner latest available lineage WARM by default', () => {
+  const option = {
+    context: { reviewId: 'pipeline-review-run', familyId: 'family-1' },
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'high',
+    reviewedAt: '2026-10-20T00:00:00Z',
+  };
+  const gate = (unavailableReason?: string): Run['decisions'][number] => ({
+    id: 'gate-1',
+    type: 'engine_human_gate',
+    title: 'Ready',
+    description: '',
+    createdAt: '2026-10-20T00:00:00Z',
+    actions: [],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+      workerReport: '',
+      branch: 'feature',
+      reviewLineageOptions: [{ ...option, ...(unavailableReason ? { unavailableReason } : {}) }],
+    },
+  });
+  const run = repeatReviewRun();
+  assert.deepEqual(
+    buildRunGateParams(run, gate(), 'request-review', { runner: 'codex' }).selectionData
+      ?.reviewRequest,
+    {
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'high',
+      mode: 'warm',
+      context: { reviewLineages: [option.context] },
+    },
+  );
+  // Unavailable: COLD; and a person's --review-mode cold always wins.
+  for (const [decision, opts] of [
+    [gate('the retained reviewer belongs to a different slot'), { runner: 'codex' }],
+    [gate(), { runner: 'codex', reviewMode: 'cold' }],
+  ] as const)
+    assert.equal(
+      (
+        buildRunGateParams(run, decision, 'request-review', opts).selectionData?.reviewRequest as {
+          mode: string;
+        }
+      ).mode,
+      'cold',
+    );
+});
+
 test('run create builds params from a GitHub/Jira ticket source', () => {
   assert.deepEqual(
     buildRunCreateParams({
