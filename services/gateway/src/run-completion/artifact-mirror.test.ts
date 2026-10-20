@@ -18,6 +18,8 @@ import { tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { ReviewStatus } from '@farmslot/protocol';
+
 import { farmslotRoot } from '../fleet/state.js';
 
 import {
@@ -798,6 +800,38 @@ test('refreshArtifactMirror keeps a worker package under a review-like name and 
   }
   assert.equal(has('repro/before-broken-timeline.json'), true);
   assert.equal(has('review-1'), false, "a numbered review directory is the gateway's");
+});
+
+test('refreshArtifactMirror retains every gate review result, whatever started the review', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-gate-reviews');
+  const result = JSON.stringify({ schemaVersion: 1, verdict: 'pass', issues: [] });
+  const sources = ['dispatch', 'human-gate', 'pipeline'] as const;
+  const paths = sources.map(
+    (source) => `artifacts/review-${run.id}-${source}/review-loop-1/review-result.json`,
+  );
+  for (const artifactPath of paths) await put(artifactPath.slice('artifacts/'.length), result);
+  const reviews: ReviewStatus[] = sources.map((source, index) => ({
+    id: `${source}-review`,
+    source,
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    attempts: [
+      {
+        mode: 'cold',
+        loopNumber: 1,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        artifactPaths: [paths[index]!],
+      },
+    ],
+  }));
+
+  await refreshArtifactMirror({ ...run, engineState: { publishGate: { reviews } } });
+
+  for (const artifactPath of paths)
+    assert.equal(await readFile(path.join(taskDir, artifactPath), 'utf8'), result, artifactPath);
 });
 
 test('refreshArtifactMirror fails when a snapshot link cannot be resolved for a reason other than dangling', async (t) => {
