@@ -1,6 +1,7 @@
 import {
   dedupeRunArtifacts,
   deriveRunLifecycleView,
+  gateDisplayReasons,
   type PendingDecision,
   runArtifactPathsToManifest,
   type RunStatus,
@@ -65,7 +66,7 @@ export function presentDecision(decision: PendingDecisionLike): DecisionPresenta
   const kind = payloadKind(payload) ?? String(decision.type);
   const diffStat = diffStatForPayload(payload);
   const artifactManifest = artifactsForPayload(payload, decision.context);
-  const textSections = textSectionsForPayload(payload, decision.context);
+  const textSections = textSectionsForPayload(payload, decision);
   const criteria = criteriaForPayload(payload);
   const slotId = decision.slotId ?? readySlotId(payload) ?? stringFromContext(decision, 'slotId');
   const runId = decision.runMeta?.runId ?? stringFromContext(decision, 'runId');
@@ -273,12 +274,12 @@ function criteriaForPayload(payload: PayloadRecord | undefined): string[] {
 
 function textSectionsForPayload(
   payload: PayloadRecord | undefined,
-  context?: PendingDecisionLike['context'],
+  decision: Pick<PendingDecisionLike, 'type' | 'actions' | 'context'>,
 ): Array<{ title: string; body: string }> {
   const kind = payloadKind(payload);
   if (!payload || !kind) return [];
   const sections: Array<{ title: string; body: string | undefined }> = [];
-  const status = context?.runStatus;
+  const status = decision.context?.runStatus;
   const lifecycle = deriveRunLifecycleView({
     status: typeof status === 'string' ? (status as RunStatus) : 'human-gating',
     gateReadiness: payload.gateReadiness,
@@ -286,7 +287,9 @@ function textSectionsForPayload(
   if (lifecycle.reasons.length)
     sections.push({
       title: lifecycle.gateLabel ?? 'Prerequisites',
-      body: lifecycle.reasons.map((reason) => reason.message).join('\n'),
+      body: gateDisplayReasons({ type: decision.type, actions: decision.actions, payload })
+        .map((reason) => reason.message)
+        .join('\n'),
     });
   if (kind === 'ready') {
     sections.push(

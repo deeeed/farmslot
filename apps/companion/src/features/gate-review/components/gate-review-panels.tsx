@@ -201,6 +201,7 @@ export function GateActions({
   }
   const view = publicationGateView({
     run,
+    gate: decision,
     actions,
     claims,
     judgmentRows,

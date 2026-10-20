@@ -10,9 +10,12 @@ import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   evidenceAttestationAvailable,
+  type GateDecisionFields,
+  gateWaitReason,
   isPublishApprovalAction,
   isValidEvidenceAttestationReason,
   latestReview,
+  openHumanGateDecision,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   type ReviewSummary,
@@ -34,6 +37,8 @@ export interface PublicationGateClaim extends AcceptanceCriterionView {
 
 export interface PublicationGateInput {
   run?: Pick<Run, 'status' | 'agentContexts' | 'engineState'> | null;
+  /** The open human gate: its actionable reason is what the view shows as blocking. */
+  gate?: GateDecisionFields | null;
 
   actions: readonly PublicationGateAction[];
   claims?: readonly PublicationGateClaim[];
@@ -210,6 +215,25 @@ export function publicationReviewBlockingReason(
   return undefined;
 }
 
+/**
+ * The review findings that block a run's publication, worded by its open human gate's
+ * actionable reason (the lifecycle view's rule). Presentation only; publish guards keep
+ * using publicationReviewBlockingReason.
+ */
+export function humanGateBlockingReason(
+  run: Pick<Run, 'status' | 'agentContexts' | 'engineState' | 'decisions'>,
+): string | undefined {
+  return gateReviewBlockingReason(publicationReviewBlockingReason(run), openHumanGateDecision(run));
+}
+
+/** Review findings block publication; an open gate words them as the reason a person can act on. */
+function gateReviewBlockingReason(
+  reviewBlock: string | undefined,
+  gate: GateDecisionFields | null | undefined,
+): string | undefined {
+  return reviewBlock && ((gate ? gateWaitReason(gate) : undefined) ?? reviewBlock);
+}
+
 /** Presentation only: action availability and evidence judgments remain gateway-owned. */
 export function publicationGateView(input: PublicationGateInput) {
   const pending = new Set(input.pendingVisualClaimIds ?? []);
@@ -267,7 +291,7 @@ export function publicationGateView(input: PublicationGateInput) {
   const blockedReason = input.resolved
     ? 'This decision is resolved.'
     : reviewBlock
-      ? reviewBlock
+      ? gateReviewBlockingReason(reviewBlock, input.gate)
       : refreshRequired
         ? 'Refresh package'
         : pending.size

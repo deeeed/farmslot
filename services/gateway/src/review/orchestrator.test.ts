@@ -4,7 +4,9 @@ import test from 'node:test';
 import type { AgentContext, ReviewIssue, WorkerSignal } from '@farmslot/protocol';
 
 import {
+  buildPublishGateReviewStatus,
   CONTINUE_REVIEW_FIX_ACTION,
+  gateReviewContinuation,
   pendingReviewContinuation,
   publicationGateDecisionActions,
 } from '../run-engine/gate-policy.js';
@@ -1898,6 +1900,41 @@ test('runReviewRetryLoop: re-reviews partial changes before preserving a worker 
     result.attempts?.[1]?.timeline?.map((segment) => segment.kind),
     ['worker-fix', 're-review'],
   );
+});
+
+test('runReviewRetryLoop: findings from the re-review of a blocked fix stay continuable', async () => {
+  // TAT-4145 bda11b1a round 7: the worker committed a4595cb3, then blocked on its recorded
+  // proof, and the codex re-review returned issues. Stamped FAILED, the gate couldn't offer
+  // Continue Fixing, and its automatic re-review spent round 8 on the same head.
+  const reason =
+    "Recorded proof on a4595cb3 cannot run: capability acquire refused: Capability 'terminal-browser' has unresolved cleanup";
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['issues'],
+    fixSignals: [{ status: 'blocked', reason, timestamp: new Date().toISOString() }],
+  });
+
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 2,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+
+  assert.equal(calls.reviewAgent, 1);
+  assert.equal(result.verdict, 'blocked');
+  assert.equal(result.recoveryContinuationPending, true);
+  assert.equal(result.feedbackSent, false);
+  assert.equal(result.attempts?.[1]?.verdict, 'issues');
+  assert.equal(result.attempts?.[1]?.reason, reason);
+  const gateReview = buildPublishGateReviewStatus({
+    source: 'human-gate',
+    priorReviewCount: 2,
+    reviewResult: result,
+    requestedRunner: 'codex',
+  });
+  assert.equal(gateReview.verdict, 'issues');
+  assert.equal(gateReviewContinuation([gateReview], { roundAvailable: true }), gateReview);
 });
 
 test('runReviewRetryLoop: an unreadable fix delta still forces the re-review', async () => {

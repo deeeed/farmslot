@@ -1,13 +1,13 @@
 import type { Run } from '@farmslot/protocol';
 import { isTerminalRunStatus } from '@farmslot/protocol';
-import { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
+import { humanGateBlockingReason } from '@farmslot/review-dispatch';
 
 /** Publication review progress comes from accepted requests and current agent attempts. */
 export function readyReviewRequestProgress(
   run: Pick<Run, 'status' | 'decisions' | 'agentContexts' | 'engineState'> | null | undefined,
 ): string {
   if (!run || isTerminalRunStatus(run.status)) return '';
-  const reviewBlock = publicationReviewBlockingReason(run);
+  const reviewBlock = humanGateBlockingReason(run);
   if (reviewBlock) return reviewBlock;
   const request = [...run.decisions]
     .reverse()

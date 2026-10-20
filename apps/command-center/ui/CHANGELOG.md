@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- The ready workspace, its publication gate and the evidence view show the reason a person can act on, for example `Review rounds spent: 4 issues open`, instead of 'Fix and pass review' when fixing is not offered.
 - The runs list status badge shows `Needs your decision` for a run waiting at its open human gate, instead of `blocked`, and the Lifecycle column is wide enough for it. The run header shows the gate's readiness reason, and the pipeline's gate node keeps its waiting look with that reason as its tooltip.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

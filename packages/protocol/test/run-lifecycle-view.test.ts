@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   blockedRunReason,
   deriveRunLifecycleView,
+  gateDisplayReasons,
   openHumanGateDecision,
   type Run,
   runDisplayStatus,
@@ -327,5 +328,40 @@ test('the gate detail is the first reason whose action the gate offers', () => {
       ]),
     ),
     `Needs your decision: ${requestReviews}`,
+  );
+});
+
+test('listed gate reasons keep a finding but drop a fix the gate does not offer', () => {
+  const reasonsOf = (decision: ReturnType<typeof offeredGate>) =>
+    gateDisplayReasons(decision).map((reason) => reason.message);
+  // 7721a02b: rounds spent, fixing not offered.
+  assert.deepEqual(
+    reasonsOf(
+      offeredGate(['hold', 'request-review'], 0, [
+        ['continue-review-fix', fixFour],
+        ['request-review', requestReviews],
+      ]),
+    ),
+    ['Review rounds spent: 4 issues open', requestReviews],
+  );
+  // 4f0ff296: a round remains but fixing is not offered: the finding without the fix.
+  assert.deepEqual(
+    reasonsOf(
+      offeredGate(['hold', 'request-review'], 1, [
+        ['continue-review-fix', fixTwo],
+        ['request-review', requestReviews],
+      ]),
+    ),
+    ['Review found 2 issues.', requestReviews],
+  );
+  // bda11b1a: fixing offered, nothing changes.
+  assert.deepEqual(
+    reasonsOf(
+      offeredGate(['continue-review-fix', 'hold', 'request-review'], 1, [
+        ['continue-review-fix', fixTwo],
+        ['request-review', requestReviews],
+      ]),
+    ),
+    [fixTwo, requestReviews],
   );
 });
