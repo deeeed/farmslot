@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The shared Diff scope rule keeps correctness checks on the delta for the delta-scoped COLD review that runs when a warm reviewer session can't continue.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.36.0 - 2026-10-20
