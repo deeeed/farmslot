@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `RuntimeCapabilityLease.cleanupUnreachable` holds the `cleanupFailure` of a release action that could not reach the slot's node. The gateway retries that cleanup when the node reconnects.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.60.0 - 2026-10-20

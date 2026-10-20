@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A capability cleanup whose release action could not reach its node is retried when the node reconnects. A cleanup that recovery refused (unreadable catalog, changed provenance) still waits for an operator. Before, the lease stayed in `error` and refused every acquire, its own run's included, until someone released it by hand: each gateway restart reconciled before macpro reconnected, so TAT-4145 run bda11b1a's terminal-browser cleanup on macpro-mmt-1 failed with "Resource node macpro is disconnected" and blocked the run's proof recording.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.29.0 - 2026-10-20
