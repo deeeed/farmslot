@@ -203,3 +203,38 @@ test('overlapping creates for one Jira key store one run', async (t) => {
     ),
   );
 });
+
+test('a caller-supplied Jira ticket gets its Jira link at creation (TAT-4006 / 7721a02b)', async (t) => {
+  const previous = {
+    NODE_TEST_CONTEXT: process.env.NODE_TEST_CONTEXT,
+    FARMSLOT_DISABLE_RUN_ENGINE_START: process.env.FARMSLOT_DISABLE_RUN_ENGINE_START,
+  };
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  const requested = withJira(t, () => json({}, 500));
+  let runId = '';
+  t.after(async () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    if (!runId) return;
+    updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(runId);
+  });
+  const result = await runCreate(
+    {
+      project,
+      flowType: 'dev',
+      mode: 'autonomous',
+      ticketOrPr: 'TAT-4006',
+      ticketData: jiraTicketData('TAT-4006', 'Add environment_type to perps events'),
+    },
+    () => {},
+  );
+  runId = result.run.id;
+  assert.deepEqual(requested, []);
+  assert.deepEqual(getRun(runId)?.links, [
+    { label: 'Jira', url: 'https://jira.example.invalid/browse/TAT-4006' },
+  ]);
+});

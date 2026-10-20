@@ -948,11 +948,10 @@ async function runCreateWithSources(
       }
     }
   }
-  if (ticketData !== plan.params.ticketData) {
-    // The pipeline refreshes links only when it fetches the ticket itself.
-    await refreshRunLinks(run.id);
-    run = getRun(run.id) ?? run;
-  }
+  // The pipeline refreshes links only when it fetches the ticket itself, so a
+  // ticket the caller supplied would otherwise show no link until completion.
+  await refreshRunLinks(run.id);
+  run = getRun(run.id) ?? run;
   // Set runtime flags (not persisted)
   if (params.skipPrepare) {
     setRunFlags(run.id, { skipPrepare: true });
