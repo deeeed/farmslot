@@ -18,8 +18,9 @@ import {
   HUD_NATIVE_INTENT_MAX_LINES,
   HUD_PANEL_BOUNDS,
   hudFinishedLine,
-  type HudFinishedStep,
   hudIntentDisplay,
+  type HudStepResult,
+  nextHudFinishedStep,
   type RecipeHudPlacement,
   waitForHudPaint,
 } from '@farmslot/protocol/recipe';
@@ -33,6 +34,8 @@ export interface FarmslotRecipeHudState {
   totalSteps?: number;
   error?: string;
   position?: RecipeHudPlacement;
+  /** The step that just finished; useRecipeHudState keeps it across updates. */
+  finished?: Pick<HudStepResult, 'intent' | 'status'>;
 }
 
 export type RecipeHudStateController = readonly [
@@ -45,18 +48,28 @@ interface HudAcknowledgement {
   reject(error: unknown): void;
 }
 
-/** Bridge acknowledgement follows the committed HUD rather than the state setter. */
+/**
+ * Bridge acknowledgement follows the committed HUD rather than the state setter.
+ * Updates carry the step that just finished, reset at each new run.
+ */
 export function useRecipeHudState(): RecipeHudStateController {
   const [state, setState] = useState<FarmslotRecipeHudState | null>(null);
-  const current = useRef(state);
-  current.current = state;
+  const received = useRef<FarmslotRecipeHudState | null>(null);
+  const lastResult = useRef<HudStepResult | null>(null);
   const pending = useRef<HudAcknowledgement[]>([]);
   const lifecycle = useRef<AbortController | null>(null);
   const update = useCallback((next: FarmslotRecipeHudState | null) => {
-    if (next === current.current) return Promise.resolve();
+    if (next === received.current) return Promise.resolve();
+    received.current = next;
+    const step = nextHudFinishedStep(lastResult.current, next);
+    lastResult.current = step.last;
+    const shown =
+      next && next.finished === undefined && step.finished
+        ? { ...next, finished: { intent: step.finished.intent, status: step.finished.status } }
+        : next;
     return new Promise<void>((resolve, reject) => {
       pending.current.push({ resolve, reject });
-      setState(next);
+      setState(shown);
     });
   }, []);
   useEffect(() => {
@@ -135,20 +148,15 @@ export function RecipeHud({
   onLayout,
 }: Readonly<RecipeHudProps>): React.ReactElement | null {
   const insets = useContext(SafeAreaInsetsContext) ?? initialWindowMetrics?.insets;
-  const lastFinished = useRef<HudFinishedStep | null>(null);
-  if (!state || state.status === 'idle') {
-    lastFinished.current = null;
-    return null;
-  }
+  if (!state || state.status === 'idle') return null;
   const badge = text?.badge?.(state);
   const intent = hudIntentDisplay(text?.intent?.(state) ?? state.intent, 'native');
   const error = text?.error?.(state) ?? state.error;
   const badgeTone = badgeToneForStatus(state.status);
-  // The HUD state has no node id: a step is its number and intent.
-  const step = `${state.currentStep ?? ''}:${intent.text}`;
-  if (state.status === 'pass' || state.status === 'fail')
-    lastFinished.current = { nodeId: step, intent: intent.text, status: state.status };
-  const finished = FINISHED_ROW_FITS ? hudFinishedLine(lastFinished.current, step) : null;
+  const finished =
+    FINISHED_ROW_FITS && state.finished
+      ? hudFinishedLine({ nodeId: 'finished', ...state.finished })
+      : null;
   const progress = FINISHED_ROW_FITS ? formatProgress(state.currentStep, state.totalSteps) : '';
   const overlay = (
     <View
@@ -196,7 +204,13 @@ export function RecipeHud({
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text
           {...intent.nativeProps}
-          style={[styles.line, customStyles?.line, customStyles?.intent, intent.nativeStyle]}
+          style={[
+            styles.line,
+            state.status === 'fail' ? styles.failed : undefined,
+            customStyles?.line,
+            customStyles?.intent,
+            intent.nativeStyle,
+          ]}
         >
           {intent.text}
         </Text>

@@ -409,7 +409,7 @@ describe('web-dapp HUD drawing', async () => {
     assert.equal(line.textContent, intent);
   });
 
-  it('shows the step that just finished as one discreet line, and a finished run as the main line', async () => {
+  it('shows the step that just finished as one discreet line, a failing step and a finished run as the main line', async () => {
     const origin = 'http://localhost:9341';
     const page = fakeDocument(origin);
     const lines = async (state) => {
@@ -442,9 +442,9 @@ describe('web-dapp HUD drawing', async () => {
       { status: 'fail', intent: 'Close the position', error: 'Selector not found' },
       'close',
     );
+    // A failing step stays the main line, in the fail colour, rather than repeating below.
     assert.deepEqual(await lines(state), [
-      ['intent', 'Close the position'],
-      ['last fail', '✗ Close the position'],
+      ['intent fail', 'Close the position'],
       ['error', 'Selector not found'],
     ]);
     const done = (status) =>

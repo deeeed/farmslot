@@ -317,18 +317,23 @@ defines the refusals and the task root.
 The current intent is the HUD's main line, with no status badge. Web and CDP
 renderers draw it at 16px on a 20px line, weight 600, in a 500px card bounded by
 the viewport. A 120-character intent fits in three lines. Web renderers never
-clamp, ellipsize or clip the intent; the panel grows instead. A finished run's
-main line reads `Recipe passed` or `Recipe failed` in the outcome colour.
+clamp, ellipsize or clip the intent; the panel grows instead. A failing step
+stays the main line in the fail colour. At the end of a run the main line shows
+the outcome in its colour: `Recipe passed` or `Recipe failed` in the web-dapp
+HUD, the end node's text (`Recipe completed`) in the CDP HUD.
 
 Below it, one muted 11px line shows the step that just finished: `✓ intent`, or
-`✗ intent` in red for a failure. A passed step that is still the main line is
-not repeated. Only this line may ellipsize. Progress becomes small muted `N/M`
-text; error and detail lines stay small and clamp at two lines.
+`✗ intent` in red for a failure. A step that is still the main line is not
+repeated. The intent never ellipsizes; this line, the title and error lines may.
+Progress becomes small muted text (`step N/M` in the web-dapp header, `N/M` in
+the CDP card); error and detail lines stay small and clamp at two lines.
 
 Native panels keep their 360 by 88 bounds and the two-line intent limit. The
 intent takes the full width at 13px on a 17px line. The finished line (10px) and
 `N/M` share one row, drawn only while padding, two intent lines, that row and an
-error line fit 88 points. A caller-supplied badge still renders.
+error line fit 88 points. `useRecipeHudState` keeps the finished step and starts
+clean at each new run; a failing step turns the intent red. A caller-supplied
+badge still renders.
 
 ### Rationale and consequences
 

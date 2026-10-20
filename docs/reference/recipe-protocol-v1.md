@@ -86,9 +86,11 @@ at 13px and use a trailing ellipsis only when more than two lines would be neede
 ([ADR-034 Amendment 7](../adr/034-recipe-protocol-v1.md#amendment-7-2026-10-20-hud-readability)).
 Below the intent, the default HUD shows one discreet muted line for the step that
 just finished, `✓ intent` or `✗ intent` in red (`hudFinishedLine`). It is omitted
-while a passed step is still the main line, and only it may ellipsize. Progress
-is small muted `N/M` text. A finished web-dapp run reads `Recipe passed` or
-`Recipe failed` in the outcome colour.
+while that step is still the main line; a failing main line takes the fail colour
+instead. The intent never ellipsizes; the finished line, title and error lines
+may. Progress is small muted text. A finished run shows its outcome on the main
+line in the outcome colour. Native updates through `useRecipeHudState` keep the
+finished step and start clean at each new run (`nextHudFinishedStep`).
 The shared intent display policy limits native panels to 360 by 88 logical pixels;
 the finished line shows only when it fits. DOM cards are 500 CSS pixels wide,
 further bounded by the viewport. CDP bottom-bar and docked-bottom modes are at

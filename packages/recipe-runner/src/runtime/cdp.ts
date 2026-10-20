@@ -1805,8 +1805,9 @@ async function renderCdpHud(
   if (complete) delete hud.last;
   else if (status === 'pass' || status === 'fail') hud.last = { nodeId, intent: text, status };
   const finished = hudFinishedLine(hud.last, nodeId);
+  // A failing step stays the main line in the fail colour; a completed run shows its outcome.
   const intentColor =
-    complete && (status === 'pass' || status === 'fail') ? HUD_COLORS[status] : '#fff';
+    status === 'fail' ? HUD_COLORS.fail : complete && status === 'pass' ? HUD_COLORS.pass : '#fff';
   return page.evaluate(
     `(() => {
       const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines, intentStyle: intent.webStyle, intentColor, finished, colors: HUD_COLORS, bounds: HUD_PANEL_BOUNDS })};

@@ -168,7 +168,10 @@ export function hudRenderExpression(state, appOrigin, { layout = 'card' } = {}) 
     if (progress) head.append(el('span', 'step', 'step ' + progress.current + '/' + progress.total));
     box.append(head);
     if (state.current) {
-      const intent = el('div', state.finished ? 'intent ' + state.finished : 'intent', state.current.intent);
+      // A failing step stays the main line, in the fail colour, rather than repeating below.
+      const failing = state.last && state.last.status === 'fail' && state.last.nodeId === state.current.nodeId;
+      const tone = state.finished || (failing ? 'fail' : '');
+      const intent = el('div', tone ? 'intent ' + tone : 'intent', state.current.intent);
       Object.assign(intent.style, intentStyle);
       intent.setAttribute('data-farmslot-hud-intent', '');
       box.append(intent);

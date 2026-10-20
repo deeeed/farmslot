@@ -84,6 +84,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'mergeRecipeValidationResults',
     'nativeResultJsonSchema',
     'nativeStructuredResult',
+    'nextHudFinishedStep',
     'normalizeRecipeClaimId',
     'normalizeRecipeRef',
     'officialRecipeActionCapabilities',

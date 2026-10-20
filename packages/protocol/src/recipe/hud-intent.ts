@@ -106,17 +106,49 @@ export interface HudFinishedStep {
 }
 
 /**
- * The discreet line for the step that just finished: always shown for a
- * failure, and for a pass unless that step is still the main line.
+ * The discreet line for the step that just finished, unless that step is still
+ * the main line (a failing main line takes the fail colour instead).
  */
 export function hudFinishedLine(
   last: HudFinishedStep | null | undefined,
   currentNodeId?: string,
 ): { text: string; tone: 'pass' | 'fail' } | null {
   if (!last || (last.status !== 'pass' && last.status !== 'fail')) return null;
-  if (last.status === 'pass' && last.nodeId === currentNodeId) return null;
+  if (last.nodeId === currentNodeId) return null;
   const mark = last.status === 'pass' ? '✓' : '✗';
   return { text: `${mark} ${hudIntentDisplay(last.intent).text}`, tone: last.status };
+}
+
+/** One step result as a step-numbered HUD (native) sees it. */
+export interface HudStepResult {
+  step?: number;
+  intent: string;
+  status: 'pass' | 'fail';
+}
+
+/**
+ * Folds one step-numbered HUD update into the step that just finished. A new
+ * run starts clean: a cleared or idle HUD, an earlier step, or a running step
+ * that is not after the last result.
+ */
+export function nextHudFinishedStep(
+  last: HudStepResult | null,
+  next: { status: string; intent: string; currentStep?: number } | null,
+): { finished: HudStepResult | null; last: HudStepResult | null } {
+  if (!next || next.status === 'idle') return { finished: null, last: null };
+  const newRun =
+    last?.step !== undefined &&
+    next.currentStep !== undefined &&
+    (next.currentStep < last.step || (next.status === 'running' && next.currentStep === last.step));
+  const previous = newRun ? null : last;
+  if (next.status !== 'pass' && next.status !== 'fail')
+    return { finished: previous, last: previous };
+  const result: HudStepResult = {
+    step: next.currentStep,
+    intent: next.intent,
+    status: next.status,
+  };
+  return { finished: previous, last: result };
 }
 
 /** Existing metadata/error cap; intent always uses the uncut display model. */

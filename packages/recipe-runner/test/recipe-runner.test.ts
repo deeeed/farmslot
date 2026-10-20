@@ -2442,11 +2442,12 @@ test('CDP app.hud widens the card and shows the step that just finished across p
     { intent: 'Close the position', status: 'fail', error: 'Selector not found' },
     'close',
   );
+  // A failing step stays the main line, in the fail colour, rather than repeating below.
   assert.deepEqual(
     failed.lines.map((line) => line.textContent),
-    ['Close the position', '✗ Close the position', 'error: Selector not found'],
+    ['Close the position', 'error: Selector not found'],
   );
-  assert.equal(failed.lines[1]!.style.color, '#ff8a8a');
+  assert.equal(failed.lines[0]!.style.color, '#ff8a8a');
   const done = await draw(
     { text: 'Recipe failed', status: 'fail', progress: { complete: true } },
     'recipe-complete',

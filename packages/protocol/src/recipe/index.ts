@@ -87,6 +87,8 @@ export {
   hudIntentDisplay,
   hudPlacement,
   hudSecondaryText,
+  type HudStepResult,
+  nextHudFinishedStep,
   RECIPE_INTENT_MAX_LENGTH,
   RECIPE_INTENT_WARN_LENGTH,
   type RecipeHudPlacement,
