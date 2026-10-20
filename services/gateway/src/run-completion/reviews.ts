@@ -264,7 +264,12 @@ export async function augmentReviewAttemptsFromArtifacts(
   return Promise.all(
     reviews.map(async (review) => {
       if (review.source === 'pipeline') return review;
-      const orphanAttempts = await materializeOrphanReviewAttempts(taskDir, review);
+      // Recover only loops the record lost. A recorded loop's mirrored artifacts carry the diff
+      // snapshot time, not the completion time, so they would never dedupe and would count twice.
+      const recorded = new Set((review.attempts ?? []).map((attempt) => attempt.loopNumber));
+      const orphanAttempts = (await materializeOrphanReviewAttempts(taskDir, review)).filter(
+        (attempt) => !recorded.has(attempt.loopNumber),
+      );
       if (orphanAttempts.length === 0) return review;
       const byAttempt = new Map<string, ReviewAttempt>();
       for (const attempt of [...orphanAttempts, ...(review.attempts ?? [])]) {
