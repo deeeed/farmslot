@@ -9,6 +9,7 @@ import path from 'node:path';
 import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@farmslot/protocol';
 import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
 
+import { getNode } from '../fleet/machine-registry.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 
 import type { SlotVars } from './config.js';
@@ -40,6 +41,11 @@ export function isLocal(host: string, machine: string): boolean {
   if (machine === LOCAL_HOSTNAME) return true;
   if (host === `${LOCAL_HOSTNAME}.local`) return true;
   return false;
+}
+
+/** A remote slot machine with no connected node: commands sent to it now fail. */
+export function isDisconnectedRemote(vars: Pick<SlotVars, 'host' | 'machine'>): boolean {
+  return !isLocal(vars.host, vars.machine) && !getNode(vars.machine);
 }
 
 // ─── ExecOptions ───
