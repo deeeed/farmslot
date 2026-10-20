@@ -7,7 +7,9 @@ import {
   type AcceptanceCriterionRef,
   type AcceptanceCriterionView,
   acceptanceVerdictLabel,
+  acceptReviewFindingsAvailable,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type DecisionAction,
   evidenceAttestationAvailable,
   type GateDecisionFields,
@@ -47,9 +49,12 @@ export interface PublicationGateInput {
   readiness?: RunGateReadiness;
   reviewSummary?: ReviewSummary;
   blockedReason?: string;
+  /** The written reason for evidence attestation or for accepting review findings. */
   attestationReason?: string;
   resolved?: boolean;
   attesting?: boolean;
+  /** The person chose to accept the open review findings (ADR-065 Amendment 8). */
+  acceptingFindings?: boolean;
 }
 
 /** Declared labels size both clients; older gates retain their recorded criterion rows. */
@@ -166,6 +171,17 @@ export function acceptanceClaimRows(
   return claims;
 }
 
+export function reviewFixInProgress(run: Pick<Run, 'status' | 'agentContexts'>): boolean {
+  return (
+    run.status === 'fixing' ||
+    !!run.agentContexts?.some(
+      (context) =>
+        context.role === 'review-fix' &&
+        ['launching', 'working', 'waiting'].includes(context.status),
+    )
+  );
+}
+
 /** An optional review policy never waives findings from a review that actually ran. */
 export function publicationReviewBlockingReason(
   run: Pick<Run, 'status' | 'agentContexts' | 'engineState'>,
@@ -199,14 +215,7 @@ export function publicationReviewBlockingReason(
   }
   // A different verdict on unchanged code does not prove the reported fix.
   count = Math.max(count, currentHeadFindings);
-  const fixing =
-    run.status === 'fixing' ||
-    run.agentContexts?.some(
-      (context) =>
-        context.role === 'review-fix' &&
-        ['launching', 'working', 'waiting'].includes(context.status),
-    );
-  if (fixing)
+  if (reviewFixInProgress(run))
     return count
       ? `Review found ${count} issue${count === 1 ? '' : 's'}, fix in progress.`
       : 'Review fix in progress.';
@@ -241,10 +250,19 @@ export function publicationGateView(input: PublicationGateInput) {
   const reviewBlock =
     (input.run && publicationReviewBlockingReason(input.run)) ||
     input.readiness?.reasons.find((reason) => reason.code === 'review-fix-required')?.message;
-  const actions =
+  // Findings block every publish approval except accepting them, under the shared rule.
+  const offeredAccept =
+    !input.resolved && acceptReviewFindingsAvailable(input.readiness)
+      ? input.actions.find(
+          (action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION && !action.disabledReason,
+        )
+      : undefined;
+  const actions = (
     reviewBlock || input.resolved
       ? input.actions.filter((action) => !isPublishApprovalAction(action.id))
-      : input.actions;
+      : input.actions
+  ).filter((action) => action.id !== APPROVE_PUBLISH_UNRESOLVED_ACTION || !offeredAccept);
+  const acceptFindings = offeredAccept ?? null;
   const offeredNormal = actions.find((action) =>
     ['approve-publish', 'approve-publish-evidence-refresh', 'ready'].includes(action.id),
   );
@@ -283,40 +301,55 @@ export function publicationGateView(input: PublicationGateInput) {
     ? null
     : normal && !normal.disabledReason
       ? normal
-      : ((input.attesting ? attestation : null) ?? normal ?? null);
+      : ((input.attesting ? attestation : null) ??
+        (input.acceptingFindings ? acceptFindings : null) ??
+        normal ??
+        null);
+  const accepting = !!acceptFindings && approval?.id === acceptFindings.id;
   const refreshRequired =
     input.readiness?.reasons.some(
       (reason) => reason.code === 'evidence-override-refresh-required',
     ) ?? false;
   const blockedReason = input.resolved
     ? 'This decision is resolved.'
-    : reviewBlock
-      ? gateReviewBlockingReason(reviewBlock, input.gate)
-      : refreshRequired
-        ? 'Refresh package'
-        : pending.size
-          ? `${pending.size} ${pending.size === 1 ? 'criterion needs' : 'criteria need'} a check`
-          : approval?.disabledReason ||
-            (!approval
-              ? attestation
-                ? 'Choose evidence attestation.'
-                : input.blockedReason || 'Publication prerequisites are not satisfied.'
-              : '');
-  const reasonRequired = approval?.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
+    : accepting
+      ? ''
+      : reviewBlock
+        ? gateReviewBlockingReason(reviewBlock, input.gate)
+        : refreshRequired
+          ? 'Refresh package'
+          : pending.size
+            ? `${pending.size} ${pending.size === 1 ? 'criterion needs' : 'criteria need'} a check`
+            : approval?.disabledReason ||
+              (!approval
+                ? attestation
+                  ? 'Choose evidence attestation.'
+                  : input.blockedReason || 'Publication prerequisites are not satisfied.'
+                : '');
+  const reasonRequired = approval?.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION || accepting;
   return {
     warnings: input.reviewSummary?.noCodeReview ? ['No code review ran'] : [],
     claims,
     status: sendBack
       ? (sendBackRecovery ?? 'Issues found')
-      : blockedReason || (attestation ? 'Evidence attestation is available.' : 'Ready to publish'),
+      : blockedReason ||
+        (accepting
+          ? 'Publishing accepts the open review findings.'
+          : attestation
+            ? 'Evidence attestation is available.'
+            : 'Ready to publish'),
     blockedReason:
       blockedReason ||
       (reasonRequired && !isValidEvidenceAttestationReason(input.attestationReason)
-        ? 'Enter an attestation reason before approving.'
+        ? accepting
+          ? 'Enter a reason before accepting the findings.'
+          : 'Enter an attestation reason before approving.'
         : ''),
     approval,
     sendBack: sendBack ?? null,
     attestation,
+    acceptFindings,
+    findings: acceptFindings ? (input.readiness?.findings ?? []) : [],
     refreshRequired,
     secondaryActions: actions.filter(
       (action) =>

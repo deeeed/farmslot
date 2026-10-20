@@ -33,6 +33,8 @@ export function renderReadyTopBar(input: {
   attestationReason?: string;
   attesting?: boolean;
   chooseAttestation?: () => void;
+  acceptingFindings?: boolean;
+  chooseAcceptFindings?: () => void;
   setAttestationReason?: (value: string) => void;
   acting: boolean;
   showClaims?: boolean;
@@ -86,6 +88,8 @@ export function renderReadyTopBar(input: {
       attestationReason: input.attestationReason,
       attesting: input.attesting,
       chooseAttestation: () => input.chooseAttestation?.(),
+      acceptingFindings: input.acceptingFindings,
+      chooseAcceptFindings: () => input.chooseAcceptFindings?.(),
       resolved: Boolean(input.decision?.resolvedAt),
       busy: input.acting,
       pausedRetry: input.pausedRetry,

@@ -5,7 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test, type TestContext } from 'node:test';
 
-import type { AgentContext, ReviewStatus, WorkerSignal } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  gateActionsForReadiness,
+  type ReviewStatus,
+  type WorkerSignal,
+} from '@farmslot/protocol';
 
 const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'recovered-review-artifacts-'));
 process.env.FARMSLOT_HOME = path.join(fixtureRoot, 'home');
@@ -18,8 +23,7 @@ after(() => rm(fixtureRoot, { recursive: true, force: true }));
 
 await import('../runtime/mock-pty.test-support.js');
 const { recoverInflightPublicationReviews } = await import('./recover-inflight-reviews.js');
-const { collectRunGateReadiness, gateActionsForReadiness } =
-  await import('./gate-prerequisites.js');
+const { collectRunGateReadiness } = await import('./gate-prerequisites.js');
 const { reviewResultArtifactPath } = await import('../review/terminal-result.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { makeReadyGatePackage, deleteTestRunIfPresent } = await import('./test-fixtures.js');

@@ -6,6 +6,7 @@ import { Alert } from 'react-native';
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   Events,
   isValidEvidenceAttestationReason,
   Methods,
@@ -258,7 +259,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         return;
       }
       if (
-        action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+        (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION ||
+          action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION) &&
         !isValidEvidenceAttestationReason(attestationReason)
       ) {
         Alert.alert(action.label, 'A written reason is required.');
@@ -271,6 +273,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         null,
         selectionData,
         action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION ? attestationReason : undefined,
+        action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION ? attestationReason : undefined,
       );
       Alert.alert('Confirm action', `Send "${action.id}" for ${decision.title}?`, [
         { text: 'Cancel', style: 'cancel' },
@@ -288,7 +291,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
               return;
             }
             if (
-              action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+              (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION ||
+                action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION) &&
               !isValidEvidenceAttestationReason(latest.attestationReason)
             ) {
               Alert.alert(action.label, 'A written reason is required.');
@@ -302,6 +306,9 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
               null,
               selectionData,
               action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
+                ? latest.attestationReason
+                : undefined,
+              action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION
                 ? latest.attestationReason
                 : undefined,
             );

@@ -187,6 +187,7 @@ export function GateActions({
   const appearance = useColorScheme();
   const viewport = useWindowDimensions();
   const [attestingDecisionId, setAttestingDecisionId] = useState<string | null>(null);
+  const [acceptingDecisionId, setAcceptingDecisionId] = useState<string | null>(null);
   const [judging, setJudging] = useState(false);
   const [moreActions, setMoreActions] = useState(false);
   if (decision.resolvedAt) {
@@ -211,7 +212,9 @@ export function GateActions({
       decision.payload?.kind === 'ready' ? decision.payload.gateSummary?.review : undefined,
     attestationReason,
     attesting: attestingDecisionId === decision.id,
+    acceptingFindings: acceptingDecisionId === decision.id,
   });
+  const accepting = view.approval?.id === view.acceptFindings?.id && Boolean(view.acceptFindings);
   const declaredRows = publicationGateCriteria(
     decision.payload?.kind === 'ready' ? decision.payload : undefined,
   ).length;
@@ -345,6 +348,35 @@ export function GateActions({
           />
         </View>
       ) : null}
+      {accepting ? (
+        <View style={gateStyles.section} accessibilityLabel="Accept review findings">
+          <Text style={[gateStyles.label, { color: palette.text }]}>Open review findings</Text>
+          {view.findings.map((finding, index) => (
+            <Text key={index} style={{ color: palette.text }}>
+              {`${finding.file}${finding.line ? `:${finding.line}` : ''}  ${finding.description}`}
+            </Text>
+          ))}
+          <Text style={[gateStyles.label, { color: palette.text }]}>
+            Reason for accepting these findings
+          </Text>
+          <TextInput
+            testID="companion-accept-findings-reason"
+            accessibilityLabel="Reason for accepting these findings"
+            multiline
+            value={attestationReason}
+            editable={!disabled && sendingActionId === null}
+            onChangeText={onAttestationReason}
+            style={[
+              gateStyles.input,
+              {
+                color: palette.text,
+                borderColor: palette.border,
+                backgroundColor: palette.surface,
+              },
+            ]}
+          />
+        </View>
+      ) : null}
       <View
         style={[
           gateStyles.section,
@@ -364,7 +396,7 @@ export function GateActions({
         ) : null}
         {view.sendBack ? renderAction(view.sendBack, true, false) : null}
         {view.approval ? renderAction(view.approval, true) : null}
-        {view.attestation || view.secondaryActions.length ? (
+        {view.attestation || view.acceptFindings || view.secondaryActions.length ? (
           <Pressable
             style={gateStyles.button}
             accessibilityRole="button"
@@ -385,6 +417,17 @@ export function GateActions({
                 onPress={() => setAttestingDecisionId(decision.id)}
               >
                 <Text style={{ color: palette.text }}>Attest evidence</Text>
+              </Pressable>
+            ) : null}
+            {view.acceptFindings && !accepting ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityHint={view.acceptFindings.description}
+                testID="companion-gate-review-accept-findings"
+                style={gateStyles.button}
+                onPress={() => setAcceptingDecisionId(decision.id)}
+              >
+                <Text style={{ color: palette.text }}>{view.acceptFindings.label}</Text>
               </Pressable>
             ) : null}
             {view.secondaryActions.map((action) => renderAction(action))}

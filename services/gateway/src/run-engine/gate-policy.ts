@@ -152,7 +152,7 @@ export function publicationGateDecisionActions(opts: {
             style: 'danger' as const,
             description: exhausted
               ? reviewRetryCapReason(exhausted)
-              : 'Publish this reviewed package despite unresolved findings. Current-head native reviews and freshness checks still apply.',
+              : 'Publish this package with its open review findings accepted. Your reason, the findings and your identity appear in the PR. Every other prerequisite still applies.',
           },
         ]
       : []),

@@ -44,7 +44,7 @@ import {
   CLOSE_AS_SHIPPED_ACTION,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
-import { assertRunGateReady } from './gate-prerequisites.js';
+import { assertAcceptedFindingsCurrent, assertRunGateReady } from './gate-prerequisites.js';
 import { assertPublicationFinalization } from './publication-finalization.js';
 import { requiresPublicationApproval } from './publication-policy.js';
 import { runSupersededSince } from './run-generation.js';
@@ -416,11 +416,12 @@ export async function executeFinalizeStep(
     );
     // The current title and body are published even when they differ from the
     // reviewed ones; only code and evidence changes refuse the approval.
-    await (context.assertGatePrerequisites ?? assertRunGateReady)(
+    const readiness = await (context.assertGatePrerequisites ?? assertRunGateReady)(
       current,
       preparedPackage,
       resolvedAction,
     );
+    assertAcceptedFindingsCurrent(gateDecision, readiness);
     const currentPackage = await assertReadyGatePackageInputsCurrent(current, preparedPackage);
     if (runSupersededSince(getRun(runId), generation))
       throw new Error('Finalization was superseded during gate validation');

@@ -130,7 +130,7 @@ function acceptState(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionAct
     stoppedAt !== 'review'
       ? 'A refused completion prerequisite cannot be accepted. Send it back once it is fixed, or close it.'
       : run.completionPolicy !== 'artifact-only'
-        ? 'The publish gate does not publish a head with open review findings. Send it back or close it.'
+        ? 'Accept settles without publishing; a publishing run publishes only at its gate. Send it back or close it.'
         : run.output?.captureError
           ? 'The report could not be captured. Refresh it before accepting.'
           : undefined;

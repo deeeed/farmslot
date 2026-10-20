@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- The fail-closed run lifecycle reference describes accepting review findings at the publish gate (ADR-065 Amendment 8).
 - The Recipe Protocol v1 reference's Amendment 6 section states that a task action manifest adds to the action catalog, with its declarations first, and that its run lists them in `summary.json` `taskActions`.
 - The worker reference pages ask for one learnings bullet per failure likely to recur that should change a template, reviewer or engine step, with `- None` as a valid answer (ADR-026 Amendment 1).
 - The task directory contract says that on a complete or no-change signal, `checklist mark <task-dir> N` for a declared deterministic step reruns that check and refreshes its receipt for the current tree without reopening the signal.

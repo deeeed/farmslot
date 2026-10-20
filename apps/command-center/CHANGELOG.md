@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- The publication gate offers Accept Review Findings and Publish under More actions when the gateway allows it: it lists the open findings and asks for the reason before publishing.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.15.0 - 2026-10-19
