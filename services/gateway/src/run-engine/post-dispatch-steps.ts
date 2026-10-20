@@ -916,10 +916,19 @@ export async function rerunReviewIfReviewedInputsChanged(
     plan,
     'dispatch',
   );
-  await reconcilePublishGateReviewPlanResult(runId, plan, reviewPlanResult, context, {
-    reviewedPackage,
-    stampFreshReviews: true,
-  });
+  try {
+    await reconcilePublishGateReviewPlanResult(runId, plan, reviewPlanResult, context, {
+      reviewedPackage,
+      stampFreshReviews: true,
+    });
+  } catch (error) {
+    // A package the gate cannot prepare (a stale CI receipt, say) is the gate's
+    // durable wait: it keeps the slot and offers Retry Gate and Continue Fixing,
+    // and its refresh re-stamps this review. Failing here released the checkout.
+    console.warn(
+      `[run-engine] run ${runId.slice(0, 8)} — package refresh after the review re-run failed; the gate retries it: ${(error as Error).message.slice(0, 200)}`,
+    );
+  }
   // Marked only once a review attempt settled: a restart or a launch that ran
   // nothing leaves the change pending, so the next presentation re-runs it.
   if (reviewPlanResult.reviewIds.length === 0) return false;
