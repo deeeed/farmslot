@@ -640,7 +640,7 @@ still protect what a reviewer cannot judge.
 
 ## Amendment 9: the publication secret scan is an evidence prerequisite, 2026-10-20
 
-**Status:** Proposed.
+**Status:** Accepted (lead, 2026-10-20).
 **Related:** [ADR-062](062-recorded-run-evidence.md) (the frozen publication selection the scan reads), Amendment 8.
 **Specification:** [Gate prerequisites](../reference/fail-closed-run-lifecycle.md#gate-prerequisites).
 
