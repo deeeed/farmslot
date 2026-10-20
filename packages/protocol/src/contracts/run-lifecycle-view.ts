@@ -45,7 +45,12 @@ export const HUMAN_GATE_DECISION_TYPE = 'engine_human_gate';
 const NEEDS_YOUR_DECISION = 'Needs your decision';
 
 /** The fields of a run decision the lifecycle view reads. */
-type GateDecisionFields = { type: string; resolvedAt?: string; payload?: unknown };
+type GateDecisionFields = {
+  type: string;
+  resolvedAt?: string;
+  payload?: unknown;
+  actions?: readonly { id: string }[];
+};
 
 /** The run's latest unresolved human gate, if any. */
 export function openHumanGateDecision<D extends GateDecisionFields>(
@@ -79,9 +84,30 @@ function gateDecisionWait(run: {
   if (run.status !== 'blocked' && run.status !== 'human-gating') return undefined;
   const decision = openHumanGateDecision(run);
   if (!decision) return undefined;
-  const readiness = isRecord(decision.payload) ? decision.payload.gateReadiness : undefined;
-  const reason = isGateReadiness(readiness) ? readiness.reasons[0]?.message : undefined;
+  const reason = gateWaitReason(decision);
   return reason ? { reason } : {};
+}
+
+/**
+ * The gate's reason a person can act on: the first readiness reason whose action the
+ * gate offers. When that first reason's own remedy is not offered because the review
+ * rounds are spent, it says so with the open issue count instead.
+ */
+function gateWaitReason(decision: GateDecisionFields): string | undefined {
+  const payload = isRecord(decision.payload) ? decision.payload : undefined;
+  const readiness = payload?.gateReadiness;
+  const reasons = isGateReadiness(readiness) ? readiness.reasons : [];
+  const offered = new Set(decision.actions?.map((action) => action.id));
+  const actionable = (reason: RunGatePrerequisiteReason) =>
+    !reason.actionId || offered.has(reason.actionId);
+  const [first] = reasons;
+  if (!first || actionable(first)) return first?.message;
+  const budget = isRecord(payload?.reviewRoundBudget) ? payload.reviewRoundBudget : undefined;
+  if (budget?.remaining === 0) {
+    const issues = /\d+ issues?/.exec(first.message)?.[0];
+    return issues ? `Review rounds spent: ${issues} open` : 'Review rounds spent';
+  }
+  return reasons.find(actionable)?.message ?? first.message;
 }
 
 /** A run's status as a badge shows it: a run at its open human gate needs a decision. */

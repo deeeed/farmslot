@@ -262,3 +262,70 @@ test('a blocked run with no open human gate still reads Blocked', () => {
   assert.equal(runDisplayStatus({ ...gating, decisions: [] }), 'human-gating');
   assert.equal(deriveRunLifecycleView({ ...gating, decisions: [] }).label, 'Awaiting decision');
 });
+
+// The recorded gates also carry their offered actions, each reason's action and the
+// review round budget (7721a02b, bda11b1a, 4f0ff296 on 2026-10-20).
+const offeredGate = (
+  actions: string[],
+  remaining: number,
+  reasons: Array<[actionId: string, message: string]>,
+) => ({
+  type: 'engine_human_gate',
+  actions: actions.map((id) => ({ id })),
+  payload: {
+    kind: 'ready',
+    reviewRoundBudget: { remaining },
+    gateReadiness: {
+      state: 'not-ready',
+      identity: { runId: 'run', generation: 2, headSha: 'head' },
+      reasons: reasons.map(([actionId, message]) => ({
+        code: 'review-fix-required',
+        prerequisite: 'review',
+        message,
+        actionId,
+      })),
+    },
+  },
+});
+const fixFour = 'Review found 4 issues. Fix and pass review before publishing.';
+const fixTwo = 'Review found 2 issues. Fix and pass review before publishing.';
+const requestReviews =
+  'Required current-head reviews need valid structured result artifacts for this package. Request reviews for the current head and package.';
+
+test('the gate detail is the first reason whose action the gate offers', () => {
+  const detail = (decision: ReturnType<typeof offeredGate>) =>
+    deriveRunLifecycleView({ status: 'blocked', decisions: [decision] }).activityLabel;
+  // 7721a02b: fixing is not offered and the review rounds are spent.
+  assert.equal(
+    detail(
+      offeredGate(['hold', 'request-review'], 0, [
+        ['continue-review-fix', fixFour],
+        [
+          'hold',
+          'Required current-head reviews need valid structured result artifacts. Review budget 7/7 is exhausted.',
+        ],
+      ]),
+    ),
+    'Needs your decision: Review rounds spent: 4 issues open',
+  );
+  // bda11b1a: fixing is offered.
+  assert.equal(
+    detail(
+      offeredGate(['continue-review-fix', 'hold', 'request-review'], 1, [
+        ['continue-review-fix', fixTwo],
+        ['request-review', requestReviews],
+      ]),
+    ),
+    `Needs your decision: ${fixTwo}`,
+  );
+  // 4f0ff296: fixing is not offered and a review round remains, so the review request leads.
+  assert.equal(
+    detail(
+      offeredGate(['hold', 'request-review'], 1, [
+        ['continue-review-fix', fixTwo],
+        ['request-review', requestReviews],
+      ]),
+    ),
+    `Needs your decision: ${requestReviews}`,
+  );
+});
