@@ -177,6 +177,8 @@ export interface RunRecoveryCollaborators {
   ) => Promise<boolean>;
   quarantineLeakedRun: (run: Run) => Promise<void>;
   reconcileRunAgentRuntime?: (run: Run) => Promise<void>;
+  /** Clear a run error that only settled native workers carry, from recorded state. */
+  clearSettledWorkerError?: (runId: string) => void;
   rearmHandoffAutoRecovery: (run: Run) => (() => void) | undefined;
   rearmPublicationReviewRecovery: (
     run: Run,
@@ -399,6 +401,8 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       }
       deps.updateRun(run.id, { steps: run.steps });
     }
+    // Before any branch below can skip runtime reconciliation, and without the execution node.
+    deps.clearSettledWorkerError?.(run.id);
 
     if (run.status === 'paused') {
       console.log(`[run-engine] run ${run.id.slice(0, 8)} — paused, skipping recovery`);
