@@ -3,7 +3,26 @@ import test from 'node:test';
 
 import { RECIPE_PROTOCOL_SCHEMA_URL } from '../../src/recipe/common.js';
 import { validateRecipeDocument } from '../../src/recipe/document.js';
-import { hudIntentDisplay, hudPlacement, waitForHudPaint } from '../../src/recipe/hud-intent.js';
+import {
+  HUD_FINISHED_FONT_SIZE,
+  HUD_FINISHED_LINE_HEIGHT,
+  HUD_INTENT_FONT_SIZE,
+  HUD_INTENT_LINE_HEIGHT,
+  HUD_INTENT_MAX_LINES,
+  HUD_NATIVE_FINISHED_FONT_SIZE,
+  HUD_NATIVE_FINISHED_LINE_HEIGHT,
+  HUD_NATIVE_INTENT_FONT_SIZE,
+  HUD_NATIVE_INTENT_LINE_HEIGHT,
+  HUD_NATIVE_INTENT_MAX_LINES,
+  hudFinishedLine,
+  hudIntentDisplay,
+  hudPlacement,
+  type HudStepResult,
+  nextHudFinishedStep,
+  RECIPE_INTENT_MAX_LENGTH,
+  RECIPE_INTENT_WARN_LENGTH,
+  waitForHudPaint,
+} from '../../src/recipe/hud-intent.js';
 
 test('HUD acknowledgement waits for a paint without a fixed timer', async () => {
   const frames: (() => void)[] = [];
@@ -67,7 +86,21 @@ function recipe(intent: string) {
   };
 }
 
-test('intent survives transport intact, with wrapping and trailing ellipsis deferred to layout', () => {
+test('HUD readability constants: a larger web intent, an unchanged native panel', () => {
+  assert.deepEqual(
+    [HUD_INTENT_FONT_SIZE, HUD_INTENT_LINE_HEIGHT, HUD_INTENT_MAX_LINES],
+    [16, 20, 3],
+  );
+  assert.deepEqual(
+    [HUD_NATIVE_INTENT_FONT_SIZE, HUD_NATIVE_INTENT_LINE_HEIGHT, HUD_NATIVE_INTENT_MAX_LINES],
+    [13, 17, 2],
+  );
+  assert.deepEqual([HUD_FINISHED_FONT_SIZE, HUD_FINISHED_LINE_HEIGHT], [11, 14]);
+  assert.deepEqual([HUD_NATIVE_FINISHED_FONT_SIZE, HUD_NATIVE_FINISHED_LINE_HEIGHT], [10, 13]);
+  assert.deepEqual([RECIPE_INTENT_WARN_LENGTH, RECIPE_INTENT_MAX_LENGTH], [80, 120]);
+});
+
+test('intent survives transport intact; web never clamps it and native keeps two lines', () => {
   const authored = `Show ${'the full measured proof 🧪 '.repeat(15)}without cutting the end.`;
   const native = hudIntentDisplay(authored, 'native');
   const dom = hudIntentDisplay(authored);
@@ -78,14 +111,103 @@ test('intent survives transport intact, with wrapping and trailing ellipsis defe
     ellipsizeMode: 'tail',
     allowFontScaling: false,
   });
-  assert.equal(dom.webStyle.WebkitLineClamp, '2');
-  assert.equal(dom.webStyle.whiteSpace, 'normal');
-  assert.equal(dom.webStyle.overflowWrap, 'anywhere');
-  assert.equal(dom.webStyle.textOverflow, 'ellipsis');
-  assert.equal(dom.webStyle.maxHeight, '32px');
+  assert.deepEqual(native.nativeStyle, { lineHeight: 17, maxHeight: 34, fontSize: 13 });
+  assert.deepEqual(dom.webStyle, {
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    fontSize: '16px',
+    lineHeight: '20px',
+    fontWeight: '600',
+  });
+  for (const platform of ['card', 'bar'] as const) {
+    const style: Record<string, string> = hudIntentDisplay(authored, platform).webStyle;
+    for (const clip of ['WebkitLineClamp', 'textOverflow', 'maxHeight', 'overflow', 'display'])
+      assert.equal(style[clip], undefined, `${platform} webStyle sets ${clip}`);
+  }
   assert.deepEqual(native.panel, { maxWidth: 360, maxHeight: 88 });
-  assert.deepEqual(dom.panel, { maxWidth: 360, maxHeight: 144 });
+  assert.deepEqual(dom.panel, { maxWidth: 500, maxHeight: 144 });
   assert.deepEqual(hudIntentDisplay(authored, 'bar').panel, { maxWidth: 960, maxHeight: 144 });
+});
+
+test('the finished line shows a result only once it left the main line', () => {
+  const pass = { nodeId: 'open', intent: ' Open  the market ', status: 'pass' };
+  const fail = { nodeId: 'close', intent: 'Close the position', status: 'fail' };
+  assert.equal(hudFinishedLine(null, 'open'), null);
+  assert.equal(hudFinishedLine(undefined), null);
+  assert.equal(hudFinishedLine(pass, 'open'), null);
+  assert.deepEqual(hudFinishedLine(pass, 'close'), { text: '✓ Open the market', tone: 'pass' });
+  assert.deepEqual(hudFinishedLine(pass), { text: '✓ Open the market', tone: 'pass' });
+  assert.equal(hudFinishedLine(fail, 'close'), null);
+  assert.deepEqual(hudFinishedLine(fail, 'next'), { text: '✗ Close the position', tone: 'fail' });
+  assert.equal(hudFinishedLine({ ...pass, status: 'running' }, 'other'), null);
+});
+
+test('native finished-step history resets at each new run', () => {
+  const run = (updates: Array<{ status: string; intent: string; currentStep?: number } | null>) => {
+    let last: HudStepResult | null = null;
+    return updates.map((update) => {
+      const step = nextHudFinishedStep(last, update);
+      last = step.last;
+      return step.finished?.intent ?? null;
+    });
+  };
+  const first = [
+    { status: 'running', intent: 'Open', currentStep: 1 },
+    { status: 'pass', intent: 'Open', currentStep: 1 },
+    { status: 'running', intent: 'Buy', currentStep: 2 },
+    // The runner's completion update has no step number (progress: { complete: true }).
+    { status: 'pass', intent: 'Recipe completed' },
+  ];
+  assert.deepEqual(run(first), [null, null, 'Open', 'Open']);
+  // The same recipe again without a reset: the first run's last result never shows.
+  assert.deepEqual(run([...first, ...first]), [
+    null,
+    null,
+    'Open',
+    'Open',
+    null,
+    null,
+    'Open',
+    'Open',
+  ]);
+  // A one-step run repeated, a cleared HUD and an idle HUD also start clean.
+  const single = [
+    { status: 'running', intent: 'Only', currentStep: 1 },
+    { status: 'pass', intent: 'Only', currentStep: 1 },
+  ];
+  assert.deepEqual(run([...single, ...single]), [null, null, null, null]);
+  assert.deepEqual(run([...first.slice(0, 2), null, first[2]]), [null, null, null, null]);
+  assert.deepEqual(run([...first.slice(0, 2), { status: 'idle', intent: '' }, first[2]]), [
+    null,
+    null,
+    null,
+    null,
+  ]);
+  // A failing step is the main line (in the fail colour) with nothing below it, as on web.
+  assert.deepEqual(run([...first.slice(0, 3), { status: 'fail', intent: 'Buy', currentStep: 2 }]), [
+    null,
+    null,
+    'Open',
+    null,
+  ]);
+  // The runner's real frames: an intent-less end node, then the step-less completion.
+  const passing = [
+    { status: 'running', intent: 'Open', currentStep: 1 },
+    { status: 'pass', intent: 'Open', currentStep: 1 },
+    { status: 'running', intent: 'Recipe is finishing', currentStep: 2 },
+    { status: 'pass', intent: 'Recipe completed', currentStep: 2 },
+    { status: 'pass', intent: 'Recipe completed' },
+  ];
+  const failing = [
+    { status: 'running', intent: 'Open', currentStep: 1 },
+    { status: 'pass', intent: 'Open', currentStep: 1 },
+    { status: 'running', intent: 'Buy', currentStep: 2 },
+    { status: 'fail', intent: 'Buy', currentStep: 2 },
+    { status: 'fail', intent: 'Recipe failed' },
+  ];
+  const fresh = [null, null, 'Open', 'Open', null];
+  assert.deepEqual(run([...passing, ...passing]), [...fresh, ...fresh]);
+  assert.deepEqual(run([...failing, ...passing]), [null, null, 'Open', null, null, ...fresh]);
 });
 
 test('display normalizes whitespace without a character cut or broken Unicode', () => {

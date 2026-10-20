@@ -14,7 +14,11 @@ import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import {
+  HUD_COLORS,
+  HUD_FINISHED_FONT_SIZE,
+  HUD_FINISHED_LINE_HEIGHT,
   HUD_PANEL_BOUNDS,
+  hudFinishedLine,
   hudIntentDisplay,
   hudPlacement,
   hudSecondaryText,
@@ -33,7 +37,7 @@ function progressOf(raw) {
 }
 
 // Fold one app.hud node into the previous state. A running node becomes the
-// current step; a pass/fail node also becomes the "last result" line, and the
+// current step; a pass/fail node also becomes the "just finished" line, and the
 // recipe-complete node closes the run.
 export function nextHudState(prior, node = {}, nodeId = '') {
   // A finished run's HUD stays up until the next run's first update replaces it.
@@ -98,30 +102,34 @@ export function clearHudState(runtimeDir) {
   rmSync(hudFile(runtimeDir), { force: true });
 }
 
+// The card grows with the intent: nothing clips, clamps or ellipsizes it.
 const STYLE = `
 :host { all: initial; }
-.hud { position: fixed; top: 220px; left: 12px; z-index: 2147483647; width: ${HUD_PANEL_BOUNDS.card.maxWidth}px; max-width: calc(100vw - 24px); max-height: ${HUD_PANEL_BOUNDS.card.maxHeight}px; overflow: hidden;
+.hud { position: fixed; top: 220px; left: 12px; z-index: 2147483647; width: ${HUD_PANEL_BOUNDS.card.maxWidth}px; max-width: calc(100vw - 24px);
   box-sizing: border-box; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.18);
   background: rgba(16,18,24,.82); color: #f2f4f7; font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   pointer-events: none; user-select: none; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
-.row { display: flex; gap: 6px; align-items: baseline; }
+.row { display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: ${HUD_COLORS.muted}; }
 .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.step { color: #a9b1bd; font-variant-numeric: tabular-nums; }
-.intent { margin-top: 4px; }
-.badge { display: inline-block; padding: 0 5px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .03em; }
-.running { background: #2f6fed; color: #fff; }
-.pass { background: #1f9d55; color: #fff; }
-.fail { background: #d64545; color: #fff; }
-.last { margin-top: 4px; color: #c7cdd6; }
-.error { color: #ffb4b4; }
+.step { font-variant-numeric: tabular-nums; }
+.intent { margin-top: 4px; color: #fff; }
+.intent.pass { color: ${HUD_COLORS.pass}; }
+.intent.fail { color: ${HUD_COLORS.fail}; }
+.last { margin-top: 4px; font-size: ${HUD_FINISHED_FONT_SIZE}px; line-height: ${HUD_FINISHED_LINE_HEIGHT}px; color: ${HUD_COLORS.muted}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.last.fail { color: ${HUD_COLORS.fail}; }
+.error { margin-top: 2px; font-size: ${HUD_FINISHED_FONT_SIZE}px; line-height: ${HUD_FINISHED_LINE_HEIGHT}px; color: #ffb4b4;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 `;
 
 // A self-contained page expression: draws (or clears, for null) the HUD when
 // the document is on the selected origin, and skips an unchanged state/layout.
 // The wallet screenshot consumer uses bottom-dock to keep footer controls clear.
 export function hudRenderExpression(state, appOrigin, { layout = 'card' } = {}) {
+  const finished =
+    state && !state.finished ? hudFinishedLine(state.last, state.current?.nodeId) : null;
   return `(() => {
     const state = ${JSON.stringify(state ?? null)};
+    const finished = ${JSON.stringify(finished)};
     const layout = ${JSON.stringify(layout)};
     const docked = layout === 'bottom-dock';
     if (location.origin !== ${JSON.stringify(String(appOrigin).replace(/\/$/u, ''))}) return { hud: false, reason: 'not-app-origin' };
@@ -148,7 +156,7 @@ export function hudRenderExpression(state, appOrigin, { layout = 'card' } = {}) 
     const style = el('style', null, ${JSON.stringify(STYLE)});
     const box = el('div', 'hud');
     if (docked) {
-      Object.assign(box.style, { top: 'auto', bottom: '0', left: '0', right: '0', width: '100vw', maxWidth: 'none', maxHeight: 'none', borderRadius: '0', padding: '5px 8px' });
+      Object.assign(box.style, { top: 'auto', bottom: '0', left: '0', right: '0', width: '100vw', maxWidth: 'none', borderRadius: '0', padding: '5px 8px' });
     } else if (state.position) {
       box.style.top = state.position === 'top' ? '12px' : 'auto';
       box.style.bottom = state.position === 'bottom' ? '12px' : 'auto';
@@ -160,21 +168,16 @@ export function hudRenderExpression(state, appOrigin, { layout = 'card' } = {}) 
     if (progress) head.append(el('span', 'step', 'step ' + progress.current + '/' + progress.total));
     box.append(head);
     if (state.current) {
-      const line = el('div', 'intent');
-      Object.assign(line.style, intentStyle);
-      const status = state.finished || 'running';
-      const intent = el('span', null, state.current.intent);
+      // A failing step stays the main line, in the fail colour, rather than repeating below.
+      const failing = state.last && state.last.status === 'fail' && state.last.nodeId === state.current.nodeId;
+      const tone = state.finished || (failing ? 'fail' : '');
+      const intent = el('div', tone ? 'intent ' + tone : 'intent', state.current.intent);
+      Object.assign(intent.style, intentStyle);
       intent.setAttribute('data-farmslot-hud-intent', '');
-      line.append(el('span', 'badge ' + status, status === 'running' ? 'RUN' : status.toUpperCase()), ' ', intent);
-      box.append(line);
+      box.append(intent);
     }
-    if (state.last && !state.finished) {
-      const line = el('div', 'last');
-      Object.assign(line.style, intentStyle);
-      line.append(el('span', 'badge ' + state.last.status, state.last.status.toUpperCase()), ' ', state.last.intent);
-      box.append(line);
-    }
-    if (state.last && state.last.error) box.append(el('div', 'last error', state.last.error));
+    if (finished) box.append(el('div', 'last ' + finished.tone, finished.text));
+    if (state.last && state.last.error) box.append(el('div', 'error', state.last.error));
     root.append(style, box);
     document.documentElement.append(host);
     let height;

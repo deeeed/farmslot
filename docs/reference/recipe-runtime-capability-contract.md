@@ -131,9 +131,9 @@ HUD intent contract:
 
 Default display rules:
 
-- show one intent: `RUN 12/19 Open a small ETH long position`;
-- keep the default HUD to one current-intent line; runners may internally retain parent/child flow context for trace/debug views;
-- show a secondary HUD line only for explicit detail/debug display or failure/error information;
+- show the current intent as the main line, with progress as small muted text and no status badge: `Open a small ETH long position` `12/19`;
+- keep the default HUD to the current intent plus one discreet line for the step that just finished (`✓ intent`, or `✗ intent` in red); runners may internally retain parent/child flow context for trace/debug views;
+- show any other secondary HUD line only for explicit detail/debug display or failure/error information;
 - hide `flow`, `domain`, node id, action name, and proof target unless
   `display.showDebug` is enabled.
 

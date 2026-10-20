@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- The CDP `app.hud` renderer shows the current intent as a 16px main line with no badge, never clipped, a muted `N/M`, and the step that just finished as one muted `✓`/`✗` line, remembered per transport across page connections. The card defaults to 500px wide; detail and error lines clamp at `display.maxDetailLines` (2).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.45.0 - 2026-10-19
