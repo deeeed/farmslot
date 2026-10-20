@@ -585,9 +585,10 @@ async function executeOwnedReview(
   } finally {
     // Completed reviewer sessions can be explicitly continued from the human gate, but
     // only after a valid review generation. A failed launch, timeout, or invalid
-    // terminal artifact must not leave a claimable reviewer session behind.
+    // terminal artifact must not leave a claimable reviewer session behind. Other lineages of
+    // this run keep theirs.
     if (!shouldRetainCompletedReviewer(hasReusableReviewResult)) {
-      invalidateWarmReviewerSessions(runId, reviewRunner);
+      invalidateWarmReviewerSessions(runId, reviewRunner, reviewId ?? undefined);
     }
   }
 }

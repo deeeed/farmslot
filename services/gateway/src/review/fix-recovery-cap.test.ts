@@ -50,6 +50,8 @@ const {
   settleReviewRoundNoVerdict,
 } = await import('./review-round-budget.js');
 const { isLiveNativeReviewer, nativeReviewerContextPrefix } = await import('./review-agent.js');
+const { claimWarmReviewerSession, registerWarmReviewerSession, resetWarmReviewerSessionsForTest } =
+  await import('./session-mode.js');
 const { rewriteStatusFile } = await import('../core/state.js');
 const { REVIEW_FIX_CHECKLIST_TARGET, taskDirRelPath } =
   await import('../tasks/checklist-target.js');
@@ -351,4 +353,67 @@ test('a fix recovered after a restart is re-reviewed WARM in the pipeline lineag
     lastReviewedHeadSha: 'reviewed-head',
     priorIssues: [{ file: 'a.ts', line: 1, description: 'fix the finding' }],
   });
+});
+
+test('a failed review through executeReview retires only its own lineage', async (t) => {
+  // Its native reviewer already retires its own lineage; the review's own cleanup retired them all.
+  const run = createRun({
+    project,
+    flowType: 'dev',
+    mode: 'interactive',
+    ticketOrPr: 'FAILED-REVIEW-LINEAGE',
+    runner: 'claude',
+    slotId: vars.slotId,
+  });
+  t.after(async () => {
+    nativeReviewer = async () => ({ verdict: 'pass', issues: [] });
+    resetWarmReviewerSessionsForTest();
+    await deleteTestRunIfPresent(run.id);
+  });
+  updateRun(run.id, {
+    status: 'reviewing',
+    taskFile: path.join(config.getOrchestratorTaskRoot(project, projectJson), 'review', 'TASK.md'),
+  });
+  const retained = (reviewId: string) => ({
+    runId: run.id,
+    reviewId,
+    familyId: run.familyId,
+    project,
+    ownerPrincipalId: null,
+    transport: 'native' as const,
+    taskDir,
+    artifactScope: null,
+    runner: 'claude',
+    model: 'opus',
+    effort: null,
+    contextId: `${reviewId}-context`,
+    windowName: reviewId,
+    slotId: vars.slotId,
+    runnerSessionId: `${reviewId}-session`,
+    runnerSessionPath: null,
+    lastLoopNumber: 1,
+    lastReviewedHeadSha: 'reviewed',
+  });
+  registerWarmReviewerSession(retained('lineage-a'));
+  registerWarmReviewerSession(retained('lineage-b'));
+  nativeReviewer = async () => {
+    throw new Error('the reviewer launch failed');
+  };
+
+  await assert.rejects(
+    executeReview(run.id, vars.slotId, {
+      reviewRunner: 'claude',
+      model: 'opus',
+      validationDepth: 'static-code',
+      mode: 'cold',
+      reviewId: 'lineage-a',
+    }),
+    /the reviewer launch failed/,
+  );
+
+  assert.equal(claimWarmReviewerSession(retained('lineage-a')), null);
+  assert.equal(
+    claimWarmReviewerSession(retained('lineage-b'))?.runnerSessionId,
+    'lineage-b-session',
+  );
 });
