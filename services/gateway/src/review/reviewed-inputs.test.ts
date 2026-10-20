@@ -264,6 +264,35 @@ test('the publication gate re-runs review once per change before it is presented
   assert.equal(await awaiting(), true);
 });
 
+// TAT-4145 bda11b1a (00:18Z): the re-run was refused at the round limit, then its package
+// refresh met a stale CI receipt; the error failed HUMAN_GATE and released the slot.
+test('a package refused after the re-run is left to the gate, not thrown', async (t) => {
+  const { run, artifacts } = await slotWithTask(t);
+  await reviewPasses(run.id);
+  let launch: 'refused' | 'ok' = 'refused';
+  const context = {
+    executePublishGateReviewPlan: async () => {
+      if (launch === 'refused') return { reviewIds: [] };
+      await noteReviewInputsAtLaunch(run.id);
+      return { reviewIds: ['review-recheck'] };
+    },
+    getDiffStat: async () => ({ files: 1, additions: 1, deletions: 0 }),
+    prepareCompletionPackageForRun: async (): Promise<PrepareCompletionPackageResult> => {
+      throw new Error(
+        'Deterministic CI gate blocked: [{"checks":[{"checklist":"CHECKLIST.md","stepNumber":17,"reference":"ci.local_check","status":"stale"}]}]',
+      );
+    },
+  };
+  const awaiting = async () => (await reviewedInputsAwaitingReview(getRun(run.id)!)) !== null;
+
+  await writeFile(path.join(artifacts, 'on-after.png'), '## Fixed after review\n');
+  assert.equal(await rerunReviewIfReviewedInputsChanged(run.id, context), false);
+  assert.equal(await awaiting(), true, 'a refused launch leaves the change pending');
+  launch = 'ok';
+  assert.equal(await rerunReviewIfReviewedInputsChanged(run.id, context), true);
+  assert.equal(await awaiting(), false, 'a review that ran still counts as the re-run');
+});
+
 test('the re-run reviews with the row the pipeline review ran, after the gate consumed it', async (t) => {
   const { run, artifacts } = await slotWithTask(t);
   const row: ReviewSelection = {

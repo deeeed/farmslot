@@ -68,6 +68,7 @@ import {
   type TerminalTransitionRequest,
 } from '../run-lifecycle/terminal-transition.js';
 import type { RunTransitionResult } from '../run-lifecycle/transition-router.js';
+import { clearSettledWorkerError } from '../runners/native/worker-control.js';
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { PromptDeliveryUncertainError } from '../runners/registry.js';
 import { readRunProgress, runDecisionWaitingStatus } from '../runners/run-progress.js';
@@ -1698,6 +1699,7 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     reconcileRunAgentRuntime: async (run) => {
       await reconcileRunAgentRuntime(run);
     },
+    clearSettledWorkerError,
     rearmHandoffAutoRecovery: (run) =>
       rearmInteractiveHandoffAutoRecovery(run, async (runId, decisionId, actionId) => {
         // methods/run.ts imports this module, so a static import here would

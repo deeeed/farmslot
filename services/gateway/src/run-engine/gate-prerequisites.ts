@@ -19,6 +19,7 @@ import {
   qualifyingPassingReviews,
   qualifyingTerminalReviewInputs,
   type ReadyGatePrPackage,
+  reasonWithoutRemedy,
   registeredAcceptanceCriteria,
   type ReviewStatus,
   type Run,
@@ -379,13 +380,17 @@ export async function collectRunGateAssessment(
     !publicationFulfilled &&
     (preparedPackage || requiresPublicationApproval(run)) &&
     publicationReviewBlockingReason(run, preparedPackage);
-  if (reviewBlock)
+  if (reviewBlock) {
+    // With the review rounds spent no fix can run: say so, and point at Hold as the
+    // budget-bound reasons below do.
+    const spent = (await runReviewRoundBudget(run)).remaining === 0;
     reasons.push({
       code: 'review-fix-required',
       prerequisite: 'review',
-      message: reviewBlock,
-      actionId: 'continue-review-fix',
+      message: spent ? reasonWithoutRemedy(reviewBlock, true) : reviewBlock,
+      actionId: spent ? 'hold' : 'continue-review-fix',
     });
+  }
   const artifactRun = preparedPackage?.artifactBundle
     ? { ...run, artifactBundle: preparedPackage.artifactBundle }
     : run;

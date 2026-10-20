@@ -105,9 +105,9 @@ function gateReasons(decision: GateDecisionFields) {
 /**
  * A reason whose remedy the gate does not offer keeps its finding, not the instruction:
  * with the review rounds spent it reads `Review rounds spent: N issues open`, otherwise
- * its first sentence.
+ * its first sentence. The gateway words its review-fix reason with it too.
  */
-function unofferedReasonText(message: string, spent: boolean): string {
+export function reasonWithoutRemedy(message: string, spent: boolean): string {
   if (spent) {
     const issues = /\d+ issues?/.exec(message)?.[0];
     return issues ? `Review rounds spent: ${issues} open` : 'Review rounds spent';
@@ -124,8 +124,8 @@ export function gateWaitReason(decision: GateDecisionFields): string | undefined
   const { reasons, actionable, spent } = gateReasons(decision);
   const [first] = reasons;
   if (!first || actionable(first)) return first?.message;
-  if (spent) return unofferedReasonText(first.message, true);
-  return reasons.find(actionable)?.message ?? unofferedReasonText(first.message, false);
+  if (spent) return reasonWithoutRemedy(first.message, true);
+  return reasons.find(actionable)?.message ?? reasonWithoutRemedy(first.message, false);
 }
 
 /** The gate's readiness reasons as screens list them, by the same rule as gateWaitReason. */
@@ -134,7 +134,7 @@ export function gateDisplayReasons(decision: GateDecisionFields): RunGatePrerequ
   return reasons.map((reason) =>
     actionable(reason)
       ? reason
-      : { ...reason, message: unofferedReasonText(reason.message, spent) },
+      : { ...reason, message: reasonWithoutRemedy(reason.message, spent) },
   );
 }
 
