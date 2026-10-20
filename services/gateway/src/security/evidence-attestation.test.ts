@@ -40,6 +40,12 @@ test('attestation rejects solo, service, node and unprivileged callers; active p
       () => authorizeEvidenceAttestation(runtime, session),
       /active person device session|Denied/,
     );
+    // Accepting review findings is person-only too, and says so (ADR-065 Amendment 8).
+    if (subject.type === 'service')
+      assert.throws(
+        () => authorizeEvidenceAttestation(runtime, session, 'Accepting review findings'),
+        /Accepting review findings requires an active person device session/,
+      );
   }
   const unprivileged = runtime.writer.createPrincipal(
     { type: 'person', displayName: 'observer' },

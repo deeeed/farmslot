@@ -694,8 +694,8 @@ async function routeAuthorizedMethod(
       authorizeGatewayMethod(authRuntime, attestationSession, Methods.RUN_EXTEND_REVIEW_BUDGET),
     broadcast,
     emit,
-    authorizeEvidenceAttestation: () =>
-      authorizeEvidenceAttestation(authRuntime, attestationSession),
+    authorizeEvidenceAttestation: (action) =>
+      authorizeEvidenceAttestation(authRuntime, attestationSession, action),
     authorizeVisualClaimReview: (kind, policy) =>
       authorizeVisualClaimReview(authRuntime, attestationSession, kind, policy),
     authorizeSourceSelections: () =>

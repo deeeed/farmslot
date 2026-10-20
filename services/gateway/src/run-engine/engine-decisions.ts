@@ -6,6 +6,7 @@ import {
   type DecisionAction,
   Events,
   type EvidenceManifestEntry,
+  gateActionsForReadiness,
   isPrerequisiteGatePayload,
   isTerminalRunStatus,
   type PRReviewOptions,
@@ -18,6 +19,7 @@ import {
   type RunCreateParams,
   type RunDecision,
   type RunDecisionPayload,
+  type RunGateReadiness,
   type RunReviewResult,
   type RunStatus,
 } from '@farmslot/protocol';
@@ -42,7 +44,7 @@ import {
   latestResolvedHumanGateDecision,
 } from './decision-replay.js';
 import { hasValidPrNumber } from './gate-policy.js';
-import { collectRunGateReadiness, gateActionsForReadiness } from './gate-prerequisites.js';
+import { assertAcceptedFindingsCurrent, collectRunGateReadiness } from './gate-prerequisites.js';
 import { assertPrimaryReviewContext } from './review-plan.js';
 import { runSupersededSince } from './run-generation.js';
 
@@ -723,8 +725,9 @@ export async function createEngineDecision(
   if (payload?.kind === 'ready') {
     payload = { ...payload, reviewRoundBudget: await runReviewRoundBudget(run) };
   }
+  let readiness: RunGateReadiness | undefined;
   if (isPrerequisiteGatePayload(payload)) {
-    const readiness = await collectRunGateReadiness(
+    readiness = await collectRunGateReadiness(
       run,
       payload.kind === 'ready' ? (payload.prPackage ?? null) : null,
     );
@@ -759,6 +762,7 @@ export async function createEngineDecision(
           throw new Error('Attested approval replay requires its publication package.');
         assertEvidenceAttestationReceipt(run, existing, payload.prPackage);
       }
+      assertAcceptedFindingsCurrent(existing, readiness);
       return resolvedAction!;
     }
   }

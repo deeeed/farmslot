@@ -17,14 +17,15 @@ import { generationMismatchMessage } from './principal-resolver.js';
 export function authorizeEvidenceAttestation(
   runtime: GatewayAuthRuntime,
   session: GatewayAuthSession,
+  action = 'Evidence attestation',
 ): EvidenceAttestationApprover {
   const principal = authorizeGatewayMethod(runtime, session, Methods.RUN_RESOLVE_DECISION);
   if (session.authentication?.kind !== 'person-session' || principal.subject.type !== 'person') {
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
-      'Evidence attestation requires an active person device session with publish authority.',
+      `${action} requires an active person device session with publish authority.`,
       {
-        userAction: 'Sign in with a current client as a person admin before attesting.',
+        userAction: 'Sign in with a current client as a person admin before approving.',
       },
     );
   }
