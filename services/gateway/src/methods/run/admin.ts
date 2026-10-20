@@ -61,7 +61,7 @@ import { slotRelease, slotReleasePreflight } from '../slot/release.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
-async function reconcileDeletedRun(
+export async function reconcileDeletedRun(
   runId: string,
   options: { keepNeedsAttention?: boolean } = {},
 ): Promise<void> {

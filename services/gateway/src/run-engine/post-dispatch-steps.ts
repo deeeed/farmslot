@@ -997,6 +997,7 @@ export async function executeHumanGateStep(
     isHumanGateEnabled,
   } = context;
   const current = getRun(runId)!;
+  const generation = current.engineState?.generation ?? 0;
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
       await import('../run-completion/human-publication.js');
@@ -1441,6 +1442,9 @@ export async function executeHumanGateStep(
       throw blockedRunError(`Publication gate blocked by action: ${gateAction}`, gateAction);
     }
   }
+
+  if (runSupersededSince(getRun(runId), generation))
+    return { inputs, outputs: { resolvedAction: 'abort' } };
 
   const waitDurationMs = Date.now() - gateStart;
 
