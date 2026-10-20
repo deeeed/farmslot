@@ -128,27 +128,30 @@ export interface HudStepResult {
 
 /**
  * Folds one step-numbered HUD update into the step that just finished. A new
- * run starts clean: a cleared or idle HUD, an earlier step, or a running step
- * that is not after the last result.
+ * run starts clean: a cleared or idle HUD, an earlier step, a running step that
+ * is not after the last result, or any numbered step after the run's step-less
+ * completion result. As on web, a failing step shows nothing below it, and the
+ * finished line never repeats the main line's text.
  */
 export function nextHudFinishedStep(
   last: HudStepResult | null,
   next: { status: string; intent: string; currentStep?: number } | null,
 ): { finished: HudStepResult | null; last: HudStepResult | null } {
   if (!next || next.status === 'idle') return { finished: null, last: null };
+  // The runner's completion result carries no step number, so a numbered step after it is a new run.
   const newRun =
-    last?.step !== undefined &&
+    last !== null &&
     next.currentStep !== undefined &&
-    (next.currentStep < last.step || (next.status === 'running' && next.currentStep === last.step));
+    (last.step === undefined ||
+      next.currentStep < last.step ||
+      (next.status === 'running' && next.currentStep === last.step));
   const previous = newRun ? null : last;
-  if (next.status !== 'pass' && next.status !== 'fail')
-    return { finished: previous, last: previous };
-  const result: HudStepResult = {
-    step: next.currentStep,
-    intent: next.intent,
-    status: next.status,
+  const finished = next.status === 'fail' || previous?.intent === next.intent ? null : previous;
+  if (next.status !== 'pass' && next.status !== 'fail') return { finished, last: previous };
+  return {
+    finished,
+    last: { step: next.currentStep, intent: next.intent, status: next.status },
   };
-  return { finished: previous, last: result };
 }
 
 /** Existing metadata/error cap; intent always uses the uncut display model. */

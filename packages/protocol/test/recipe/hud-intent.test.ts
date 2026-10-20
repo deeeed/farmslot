@@ -155,7 +155,8 @@ test('native finished-step history resets at each new run', () => {
     { status: 'running', intent: 'Open', currentStep: 1 },
     { status: 'pass', intent: 'Open', currentStep: 1 },
     { status: 'running', intent: 'Buy', currentStep: 2 },
-    { status: 'pass', intent: 'Recipe completed', currentStep: 3 },
+    // The runner's completion update has no step number (progress: { complete: true }).
+    { status: 'pass', intent: 'Recipe completed' },
   ];
   assert.deepEqual(run(first), [null, null, 'Open', 'Open']);
   // The same recipe again without a reset: the first run's last result never shows.
@@ -182,13 +183,31 @@ test('native finished-step history resets at each new run', () => {
     null,
     null,
   ]);
-  // A failing step is the main line (in the fail colour); the line below keeps the last pass.
+  // A failing step is the main line (in the fail colour) with nothing below it, as on web.
   assert.deepEqual(run([...first.slice(0, 3), { status: 'fail', intent: 'Buy', currentStep: 2 }]), [
     null,
     null,
     'Open',
-    'Open',
+    null,
   ]);
+  // The runner's real frames: an intent-less end node, then the step-less completion.
+  const passing = [
+    { status: 'running', intent: 'Open', currentStep: 1 },
+    { status: 'pass', intent: 'Open', currentStep: 1 },
+    { status: 'running', intent: 'Recipe is finishing', currentStep: 2 },
+    { status: 'pass', intent: 'Recipe completed', currentStep: 2 },
+    { status: 'pass', intent: 'Recipe completed' },
+  ];
+  const failing = [
+    { status: 'running', intent: 'Open', currentStep: 1 },
+    { status: 'pass', intent: 'Open', currentStep: 1 },
+    { status: 'running', intent: 'Buy', currentStep: 2 },
+    { status: 'fail', intent: 'Buy', currentStep: 2 },
+    { status: 'fail', intent: 'Recipe failed' },
+  ];
+  const fresh = [null, null, 'Open', 'Open', null];
+  assert.deepEqual(run([...passing, ...passing]), [...fresh, ...fresh]);
+  assert.deepEqual(run([...failing, ...passing]), [null, null, 'Open', null, null, ...fresh]);
 });
 
 test('display normalizes whitespace without a character cut or broken Unicode', () => {

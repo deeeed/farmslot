@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  HUD_COLORS,
   HUD_FINISHED_FONT_SIZE,
   HUD_INTENT_FONT_SIZE,
   HUD_INTENT_LINE_HEIGHT,
@@ -139,8 +140,10 @@ try {
     });
     for (const renderer of ['web', 'runner'] as const) {
       // A pass, then the next running node: the finished step sits below the intent.
+      let state: ReturnType<typeof nextHudState> | null = null;
       if (renderer === 'web') {
-        let state = nextHudState(null, step('running', 'open', previous, 1), 'open');
+        await transport.execute('app.hud', { clear: true }, context);
+        state = nextHudState(null, step('running', 'open', previous, 1), 'open');
         state = nextHudState(state, step('pass', 'open', previous, 1), 'open');
         state = nextHudState(state, step('running', 'longest', intent, 2), 'longest');
         await page.evaluate(hudRenderExpression(state, origin));
@@ -195,7 +198,47 @@ try {
         path.join(output, `${renderer}-${viewport}.png`),
         Buffer.from(shot.data, 'base64'),
       );
-      receipts.push({ viewport, renderer, lines, card: box, intent: line, finished });
+      // The step fails: it stays the main line in the fail colour, with no finished line below.
+      const failure = { ...step('fail', 'longest', intent, 2), error: 'Selector not found' };
+      if (renderer === 'web') {
+        await page.evaluate(hudRenderExpression(nextHudState(state, failure, 'longest'), origin));
+      } else {
+        await transport.execute('app.hud', failure, context);
+      }
+      const failedTree = await page.session.call<{ root: DomNode }>('DOM.getDocument', {
+        depth: -1,
+        pierce: true,
+      });
+      const failedHost = find(failedTree.root, (entry) =>
+        renderer === 'web'
+          ? entry.nodeName === 'MM-HARNESS-HUD'
+          : attr(entry, 'id') === 'farmslot-recipe-hud',
+      );
+      assert.ok(failedHost, 'HUD host missing after the failure');
+      const failedLine = find(
+        failedHost,
+        (entry) => attr(entry, 'data-farmslot-hud-intent') !== undefined,
+      );
+      assert.ok(failedLine, 'Failing intent line missing');
+      const failed = await measure(failedLine);
+      assert.equal(failed.text, intent);
+      const failColor = await page.evaluate(
+        `(() => { const probe = document.createElement('i'); probe.style.color = ${JSON.stringify(HUD_COLORS.fail)}; document.body.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color; })()`,
+      );
+      assert.equal(failed.color, failColor, 'A failing main line takes the fail colour');
+      assert.equal(
+        find(failedHost, (entry) => /^[✓✗] /u.test(ownText(entry))),
+        undefined,
+        'A failing step is not repeated below itself',
+      );
+      const failShot = await page.session.call<{ data: string }>('Page.captureScreenshot', {
+        format: 'png',
+      });
+      await writeFile(
+        path.join(output, `${renderer}-${viewport}-fail.png`),
+        Buffer.from(failShot.data, 'base64'),
+      );
+      receipts.push({ viewport, renderer, lines, card: box, intent: line, finished, failed });
     }
   }
   await transport.execute('app.hud', { clear: true }, context);
