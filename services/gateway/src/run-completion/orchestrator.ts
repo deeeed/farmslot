@@ -46,7 +46,7 @@ import {
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
 import { contributionStack } from '../run-engine/diff-artifacts.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
-import { readFrozenRecordedEvidenceSources } from '../run-engine/recorded-evidence-sources.js';
+import { readFrozenPublicationRecipeSources } from '../run-engine/recorded-evidence-sources.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
@@ -478,7 +478,7 @@ async function appendVisualJudgmentProvenance(
   >,
 ): Promise<string> {
   if (!prepared.visualJudgmentReceiptIds?.length) return body;
-  const sources = await readFrozenRecordedEvidenceSources(
+  const sources = await readFrozenPublicationRecipeSources(
     run,
     prepared.evidenceManifest ?? [],
     prepared.selectedEvidenceKeys,
@@ -906,7 +906,9 @@ export async function prepareCompletionPackageTransitionLocked(
     run.visualJudgmentReceipts?.length ||
     run.agentContexts?.some((c) => c.pipelineVisualReviewResult)
   ) {
-    const sources = await readFrozenRecordedEvidenceSources(
+    // The gate's own reader: the selected attempt's proof, with selected captures from another
+    // attempt as before evidence. Reading only the selected keys' roots can miss the proof.
+    const sources = await readFrozenPublicationRecipeSources(
       run,
       evidenceManifest,
       basePackage.selectedEvidenceKeys,
