@@ -26,7 +26,8 @@ const head = 'a'.repeat(40);
 const noop = async () => {};
 // Scripted host behaviour; the run store, the session registry and the round budget are real.
 let ancestorExitCode = 0;
-let failResume = false;
+/** How a retained reviewer's resume fails before it accepts the prompt. */
+let resumeFailure: 'handoff' | 'delivery' | 'superseded' | null = null;
 let freshSessions = 0;
 const dispatches: Array<{ contextId: string; retainedFrom?: { contextId: string } }> = [];
 const deltaCaptures: string[] = [];
@@ -85,13 +86,24 @@ mock.module('../runners/native/worker.js', {
         generation: 'generation',
         commandId: 'review-command',
       };
-      if (source && failResume) {
+      if (source && resumeFailure) {
         // The handoff reservation exists, but the reviewer never accepted the prompt.
         await upsertAgentContext(input.runId, 'review', {
           id: input.contextId,
           nativeSession: binding,
         });
-        throw new NativeWorkerOperationUncertainError('handoff', 'transfer refused', undefined);
+        if (resumeFailure === 'superseded') {
+          const run = getRun(input.runId)!;
+          updateRun(input.runId, {
+            engineState: { ...run.engineState, generation: (run.engineState?.generation ?? 0) + 1 },
+          });
+          throw new Error('Native review was superseded by another run action');
+        }
+        throw new NativeWorkerOperationUncertainError(
+          resumeFailure,
+          resumeFailure === 'delivery' ? 'prompt acceptance timed out' : 'transfer refused',
+          undefined,
+        );
       }
       await upsertAgentContext(input.runId, 'review', {
         id: input.contextId,
@@ -155,6 +167,17 @@ mock.module('./snapshots.js', {
       },
       artifactPaths: [],
     }),
+    // A reattach reads the range its launch persisted.
+    readPersistedReviewSnapshot: async () => ({
+      snapshot: {
+        source: 'local-git',
+        baseSha: head,
+        headSha: head,
+        diffPath: 'artifacts/review.diff',
+        capturedAt: new Date().toISOString(),
+      },
+      artifactPaths: [],
+    }),
     captureReviewDeltaSnapshot: async (
       _vars: unknown,
       _taskDir: string,
@@ -184,21 +207,22 @@ mock.module('./templates.js', {
 
 const { runNativeReviewAgent } = await import('./native-review-agent.js');
 const { resetWarmReviewerSessionsForTest } = await import('./session-mode.js');
+const { reviewLaunchStartedAt, reviewRoundAdmissionId } = await import('./review-round-budget.js');
 
-/** A run before publication: no PR exists yet. */
-async function prePublishRun(t: TestContext) {
+/** A run before publication by default; a ticket naming a PR makes it a published run. */
+async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
   const previous = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
   resetWarmReviewerSessionsForTest();
   ancestorExitCode = 0;
-  failResume = false;
+  resumeFailure = null;
   dispatches.length = 0;
   deltaCaptures.length = 0;
   const run = runWithSessionOriginator(owner, () =>
     createRun({
       flowType: 'dev',
       project: 'native-review-warm',
-      ticketOrPr: 'WARM-PREPUBLISH',
+      ticketOrPr,
       slotId: vars.slotId,
       transport: 'native',
     }),
@@ -273,8 +297,10 @@ test('a pre-publish reviewer registers its session and the WARM re-review contin
   assert.deepEqual(deltaCaptures, []);
 });
 
+const published = 'owner/repo#42';
+
 test('an automatic re-review with no retained session runs a delta-scoped COLD and records why', async (t) => {
-  const run = await prePublishRun(t);
+  const run = await prePublishRun(t, published);
   const result = await reReview(run.id);
   assert.equal(result.mode, 'cold');
   assert.equal(result.session?.continuity, 'fresh');
@@ -296,7 +322,7 @@ test('an automatic re-review with no retained session runs a delta-scoped COLD a
 });
 
 test('a person asking for WARM without a retained session still sees the refusal', async (t) => {
-  const run = await prePublishRun(t);
+  const run = await prePublishRun(t, published);
   await assert.rejects(
     review(run.id, { loopNumber: 2, mode: 'warm' }),
     /WARM review refused \(missing-session\)/,
@@ -305,7 +331,7 @@ test('a person asking for WARM without a retained session still sees the refusal
 });
 
 test('a head that no longer descends from the reviewed head falls back to the delta', async (t) => {
-  const run = await prePublishRun(t);
+  const run = await prePublishRun(t, published);
   await review(run.id);
   ancestorExitCode = 1;
   const result = await reReview(run.id);
@@ -315,10 +341,10 @@ test('a head that no longer descends from the reviewed head falls back to the de
 });
 
 test('a resume that fails to start runs the fallback under the same admitted round', async (t) => {
-  const run = await prePublishRun(t);
+  const run = await prePublishRun(t, published);
   await review(run.id);
   const admittedBefore = getRun(run.id)!.reviewRoundAdmissions?.length ?? 0;
-  failResume = true;
+  resumeFailure = 'handoff';
   const result = await reReview(run.id);
   assert.equal(result.mode, 'cold');
   assert.equal(result.session?.fallback?.reason, 'session-unavailable');
@@ -332,4 +358,101 @@ test('a resume that fails to start runs the fallback under the same admitted rou
     reviewers(run.id).map((context) => context.status),
     ['complete', 'failed', 'complete'],
   );
+  // The fallback keeps the admitted attempt's launch time: its receipt is the admitted one.
+  const fallback = reviewers(run.id).at(-1)!;
+  const admitted = getRun(run.id)!.reviewRoundAdmissions ?? [];
+  assert.ok(
+    admitted.includes(
+      reviewRoundAdmissionId(
+        fallback.reviewId!,
+        fallback.reviewLoopNumber!,
+        reviewLaunchStartedAt(fallback),
+      ),
+    ),
+  );
+  // A restart reattaches to the running fallback: same receipt, same fallback record.
+  updateRun(run.id, {
+    agentContexts: getRun(run.id)!.agentContexts!.map((context) =>
+      context.id === fallback.id ? { ...context, status: 'working' as const } : context,
+    ),
+  });
+  const reattached = await reReview(run.id);
+  assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, admitted.length);
+  assert.equal(reattached.mode, 'cold');
+  assert.deepEqual(reattached.session?.fallback, result.session?.fallback);
+});
+
+test('a delivery that may have reached the retained reviewer never starts a second reviewer', async (t) => {
+  const run = await prePublishRun(t, published);
+  await review(run.id);
+  resumeFailure = 'delivery';
+  await assert.rejects(reReview(run.id), NativeWorkerOperationUncertainError);
+  assert.equal(dispatches.length, 2);
+  assert.deepEqual(deltaCaptures, []);
+});
+
+test('a superseded resume settles its round no-verdict instead of falling back', async (t) => {
+  const run = await prePublishRun(t, published);
+  await review(run.id);
+  resumeFailure = 'superseded';
+  await assert.rejects(reReview(run.id), /superseded/);
+  assert.equal(dispatches.length, 2);
+  assert.equal(Object.keys(getRun(run.id)!.reviewRoundSettlements ?? {}).length, 1);
+});
+
+test('a failed review retires only its own lineage', async (t) => {
+  const run = await prePublishRun(t, published);
+  await review(run.id);
+  await review(run.id, { reviewId: 'lineage-b' });
+  resumeFailure = 'delivery';
+  await assert.rejects(reReview(run.id), NativeWorkerOperationUncertainError);
+  resumeFailure = null;
+  const other = await reReview(run.id, { reviewId: 'lineage-b' });
+  assert.equal(other.session?.continuity, 'resumed');
+});
+
+/** Another turn of the same lineage runs on the retained session until `release`. */
+function holdSession(runId: string) {
+  const retained = reviewers(runId)[0]!;
+  updateRun(runId, {
+    agentContexts: [
+      ...getRun(runId)!.agentContexts!,
+      {
+        id: 'holder',
+        role: 'review',
+        label: 'Review',
+        status: 'working',
+        runId,
+        slotId: vars.slotId,
+        reviewId: retained.reviewId,
+        runnerSessionId: retained.runnerSessionId,
+      },
+    ],
+  });
+  return () =>
+    updateRun(runId, {
+      agentContexts: getRun(runId)!.agentContexts!.map((context) =>
+        context.id === 'holder' ? { ...context, status: 'complete' as const } : context,
+      ),
+    });
+}
+
+test('a busy retained reviewer is waited for, then continued', async (t) => {
+  const run = await prePublishRun(t, published);
+  const first = await review(run.id);
+  const release = holdSession(run.id);
+  const timer = setTimeout(release, 300);
+  t.after(() => clearTimeout(timer));
+  const result = await reReview(run.id);
+  assert.equal(result.session?.continuity, 'resumed');
+  assert.equal(result.reviewerSessionId, first.reviewerSessionId);
+});
+
+test('a reviewer still busy at the deadline falls back to the delta', async (t) => {
+  const run = await prePublishRun(t, published);
+  await review(run.id);
+  holdSession(run.id);
+  const result = await reReview(run.id, { reviewTimeoutMs: 300 });
+  assert.equal(result.session?.fallback?.reason, 'session-busy');
+  assert.equal(result.mode, 'cold');
 });

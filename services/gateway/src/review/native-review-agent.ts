@@ -19,8 +19,9 @@ import { validateNativeRunner } from '../runners/native/manager.js';
 import { nativeReviewerOwner, nativeReviewerResultSchema } from '../runners/native/review-owner.js';
 import { cancelNativeWorkerContext, dispatchNativeWorker } from '../runners/native/worker.js';
 import { readNativeWorkerSnapshot } from '../runners/native/worker-control.js';
+import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
-import { runnerDefaultSafetyTier } from '../runners/registry.js';
+import { PromptDeliveryUncertainError, runnerDefaultSafetyTier } from '../runners/registry.js';
 import {
   clearRunActiveTaskFile,
   getAllRuns,
@@ -81,12 +82,12 @@ import {
 } from './review-round-budget.js';
 import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
 import {
-  activeReviewerHolding,
   claimWarmReviewerSession,
   invalidateWarmReviewerSessions,
   registerWarmReviewerSession,
   resolveWarmReviewerSession,
   reviewPRIdentity,
+  usableRetainedReviewer,
   warmLineageScope,
   type WarmReviewerScope,
   WarmReviewRefusal,
@@ -134,6 +135,8 @@ class NativeReviewResumeFailure extends Error {
     readonly refusal: WarmReviewRefusal,
     readonly roundId: string,
     readonly contextId: string,
+    /** The admitted attempt's launch time: its receipt and any reattach key on it. */
+    readonly startedAt: string,
     options: ErrorOptions,
   ) {
     super(refusal.message, options);
@@ -166,13 +169,13 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
     )
       throw error;
     // ADR-063 Amendment 5: the same attempt runs the delta-scoped COLD under its receipt.
-    return runNativeReviewAttempt(input, { refusal: error.refusal, roundId: error.roundId });
+    return runNativeReviewAttempt(input, error);
   }
 }
 
 async function runNativeReviewAttempt(
   input: NativeReviewInput,
-  resumeFailure?: { refusal: WarmReviewRefusal; roundId: string },
+  resumeFailure?: Pick<NativeReviewResumeFailure, 'refusal' | 'roundId' | 'startedAt'>,
 ): Promise<ReviewAgentResult> {
   const { vars, runId, runner, model, taskDir, loopNumber, artifactScope, validationDepth } = input;
   const original = getRun(runId);
@@ -245,40 +248,18 @@ async function runNativeReviewAttempt(
     warmRunId = undefined;
   };
   const resolveRetained = () => {
-    const session = resolveWarmReviewerSession(scope, getAllRuns());
+    const runs = getAllRuns();
+    const session = resolveWarmReviewerSession(scope, runs);
     if (!session)
       throw new WarmReviewRefusal(
         'missing-session',
         'no verified previous reviewer of this lineage is retained',
       );
-    const sourceRun = getRun(session.runId);
-    const context = sourceRun?.agentContexts?.find(
-      (candidate) => candidate.id === session.contextId,
+    const context = usableRetainedReviewer(
+      session,
+      { ownerPrincipalId, slotId: vars.slotId },
+      runs,
     );
-    if (
-      !sourceRun ||
-      context?.nativeSession?.ownerPrincipalId !== ownerPrincipalId ||
-      !context?.nativeSession ||
-      context.role !== 'review' ||
-      context.nativeSession.releasedAt ||
-      context.nativeSession.recovery
-    )
-      throw new WarmReviewRefusal(
-        'session-unavailable',
-        'the retained native reviewer has no owned reusable session',
-      );
-    if (session.slotId !== vars.slotId)
-      throw new WarmReviewRefusal(
-        'slot-mismatch',
-        'the retained reviewer belongs to a different slot',
-      );
-    const holder = activeReviewerHolding(session.runnerSessionId, getAllRuns());
-    if (holder && holder.reviewId !== lineage)
-      throw new WarmReviewRefusal(
-        'session-unavailable',
-        'another review lineage holds the session',
-      );
-    if (holder) throw new WarmReviewRefusal('session-busy', 'the retained reviewer is active');
     return { session, context };
   };
   if (input.mode === 'warm' && !recovering && !fallback) {
@@ -307,7 +288,8 @@ async function runNativeReviewAttempt(
   const resultRelPath = reviewerResultRelPath(contextId);
   const taskMdPath = taskDirRelPath(taskDir, target.checklist);
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
-  const startedAt = reviewLaunchStartedAt(context);
+  // A fallback keeps the failed resume's launch time, so a reattach names the admitted receipt.
+  const startedAt = reviewLaunchStartedAt(context, resumeFailure?.startedAt);
   const roundId = resumeFailure?.roundId ?? reviewRoundAdmissionId(lineage, loopNumber, startedAt);
   let resultSchema = context?.nativeSession?.resultSchema;
   let progress: { stop(): void | Promise<void> } | undefined;
@@ -406,6 +388,15 @@ async function runNativeReviewAttempt(
           reviewResultFile: resultRelPath,
           artifactScope: artifactScope ?? null,
           reviewLoopNumber: loopNumber,
+          ...(fallback
+            ? {
+                reviewFallback: {
+                  reason: fallback.reason,
+                  detail: fallback.detail,
+                  comparedRanges: comparedRanges ?? [],
+                },
+              }
+            : {}),
           runner,
           model,
           ...(visualInput ? { pipelineVisualReviewInput: visualInput } : {}),
@@ -552,10 +543,23 @@ async function runNativeReviewAttempt(
       try {
         await dispatched;
       } catch (error) {
-        const accepted = getRun(runId)?.agentContexts?.find(
-          (candidate) => candidate.id === contextId,
-        )?.nativeSession?.acceptedAt;
-        if (!warm || !input.rereview || accepted) throw error;
+        const current = getRun(runId);
+        const accepted = current?.agentContexts?.find((candidate) => candidate.id === contextId)
+          ?.nativeSession?.acceptedAt;
+        // Only a resume that never started falls back: not a superseded attempt, and not a
+        // delivery whose reviewer may still be running the prompt.
+        if (
+          !warm ||
+          !input.rereview ||
+          accepted ||
+          !nativeReviewOperationIsCurrent() ||
+          !current ||
+          isTerminalRunStatus(current.status) ||
+          (current.engineState?.generation ?? 0) !== generation ||
+          error instanceof PromptDeliveryUncertainError ||
+          (error instanceof NativeWorkerOperationUncertainError && error.operation === 'delivery')
+        )
+          throw error;
         throw new NativeReviewResumeFailure(
           new WarmReviewRefusal(
             'session-unavailable',
@@ -563,6 +567,7 @@ async function runNativeReviewAttempt(
           ),
           roundId,
           contextId,
+          startedAt,
           { cause: error },
         );
       }
@@ -684,7 +689,11 @@ async function runNativeReviewAttempt(
         lastReviewedHeadSha: reviewSnapshot.snapshot.headSha!,
       });
     const artifactPaths = [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths];
-    const mode: ReviewMode = fallback ? 'cold' : input.mode;
+    // A fallback reattached after a restart reports the fallback its context recorded.
+    const fallbackRecord = fallback
+      ? { reason: fallback.reason, detail: fallback.detail, comparedRanges: comparedRanges ?? [] }
+      : context.reviewFallback;
+    const mode: ReviewMode = fallbackRecord ? 'cold' : input.mode;
     return {
       ...feedback,
       validationDepth,
@@ -707,15 +716,7 @@ async function runNativeReviewAttempt(
         runner,
         model,
         effort: input.effort?.trim() || null,
-        ...(fallback
-          ? {
-              fallback: {
-                reason: fallback.reason,
-                detail: fallback.detail,
-                comparedRanges: comparedRanges ?? [],
-              },
-            }
-          : {}),
+        ...(fallbackRecord ? { fallback: fallbackRecord } : {}),
       },
       reviewSnapshot: reviewSnapshot.snapshot,
       usage: unavailableRunnerSessionUsage({
@@ -754,7 +755,7 @@ async function runNativeReviewAttempt(
             return readNativeWorkerSnapshot(runId, 'review', contextId);
           });
     primaryFailure = failure;
-    invalidateWarmReviewerSessions(runId, runner);
+    invalidateWarmReviewerSessions(runId, runner, lineage);
     const run = getRun(runId);
     if (
       context &&
