@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- A run waiting at its open human gate shows `Needs your decision` with the gate's readiness reason in the runs list badge, the mini pipeline and the run header, instead of Blocked.
 - The decision workspace and gate review show reviewer attempts that ended without a verdict next to the review rounds once there is one, for example `Review rounds 4/5 · 1/3 no-verdict`.
 
 - A cancelled run that still holds its slot shows it in run detail with Replay from <step> and Release slot side by side, and the fleet card reads "held by cancelled run <id>" with Release slot. Release resets the checkout, as deleting the run does, after a confirmation; a refusal shows its reason.

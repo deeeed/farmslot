@@ -4,7 +4,9 @@ import test from 'node:test';
 import {
   blockedRunReason,
   deriveRunLifecycleView,
+  openHumanGateDecision,
   type Run,
+  runDisplayStatus,
   type RunGateReadiness,
   type RunStep,
   runStepDisplayDetail,
@@ -164,4 +166,94 @@ test('a cancelled run skips its unfinished steps; done and failed runs show step
     );
     assert.equal(deriveRunLifecycleView({ status, error: 'boom' }).activityLabel, undefined);
   }
+});
+
+// Runs 7721a02b (TAT-4006) and bda11b1a (TAT-4145) as run.get returned them on 2026-10-20:
+// status blocked at the publish gate, human-gate running, an open engine_human_gate.
+const gateSteps = [
+  { name: 'find-slot', status: 'done' },
+  { name: 'write-task', status: 'done' },
+  { name: 'prepare', status: 'done' },
+  { name: 'dispatch', status: 'done' },
+  { name: 'monitor', status: 'done' },
+  { name: 'review', status: 'done' },
+  { name: 'complete', status: 'done' },
+  { name: 'human-gate', status: 'running', detail: 'Waiting for operator decision' },
+  { name: 'finalize', status: 'pending' },
+  { name: 'ci-watch', status: 'pending' },
+] satisfies Pick<RunStep, 'name' | 'status' | 'detail'>[];
+const gate = (resolvedAt: string | undefined, ...messages: string[]) => ({
+  type: 'engine_human_gate',
+  ...(resolvedAt ? { resolvedAt } : {}),
+  payload: {
+    kind: 'ready',
+    gateReadiness: {
+      state: 'not-ready',
+      identity: { runId: 'run', generation: 2, headSha: 'head' },
+      reasons: messages.map((message) => ({
+        code: 'review-fix-required',
+        prerequisite: 'review',
+        message,
+      })),
+    },
+  },
+});
+const tat4006 = {
+  status: 'blocked' as const,
+  error:
+    'Native host stopped. Verify the old process group is stopped, then explicitly resume the saved native identity.',
+  steps: gateSteps,
+  decisions: [
+    gate(
+      undefined,
+      'Review found 4 issues. Fix and pass review before publishing.',
+      'Required current-head reviews need valid structured result artifacts for this package. Review budget 7/7 is exhausted.',
+    ),
+  ],
+};
+const tat4145 = {
+  status: 'blocked' as const,
+  steps: gateSteps,
+  decisions: [
+    gate(
+      '2026-10-19T19:44:41.545Z',
+      'Review found 2 issues. Fix and pass review before publishing.',
+    ),
+    gate(undefined, 'Review found 2 issues. Fix and pass review before publishing.'),
+  ],
+};
+
+test('a run blocked at its open human gate needs a decision and names the readiness reason', () => {
+  for (const [run, reason] of [
+    [tat4006, 'Review found 4 issues. Fix and pass review before publishing.'],
+    [tat4145, 'Review found 2 issues. Fix and pass review before publishing.'],
+  ] as const) {
+    const view = deriveRunLifecycleView(run);
+    assert.equal(view.label, 'Needs your decision');
+    assert.equal(view.activityLabel, `Needs your decision: ${reason}`);
+    assert.equal(runDisplayStatus(run), 'Needs your decision');
+    const humanGate = run.steps.find((step) => step.name === 'human-gate')!;
+    assert.equal(runStepDisplayStatus(run, humanGate), 'running');
+    assert.equal(runStepDisplayDetail(run, humanGate), reason);
+    assert.ok(!displayStatuses(run).includes('blocked'));
+  }
+  assert.equal(openHumanGateDecision(tat4145), tat4145.decisions[1]);
+  const noReason = { ...tat4145, decisions: [{ type: 'engine_human_gate' }] };
+  assert.equal(deriveRunLifecycleView(noReason).activityLabel, 'Needs your decision');
+});
+
+test('a blocked run with no open human gate still reads Blocked', () => {
+  const resolved = {
+    ...tat4006,
+    decisions: [gate('2026-10-19T19:44:41.545Z', 'Review found 4 issues.')],
+  };
+  assert.equal(deriveRunLifecycleView(resolved).label, 'Blocked');
+  assert.equal(deriveRunLifecycleView(resolved).activityLabel, `Blocked: ${tat4006.error}`);
+  assert.equal(runDisplayStatus(resolved), 'blocked');
+  assert.equal(deriveRunLifecycleView(blockedRun).activityLabel, `Blocked: ${blockedRun.error}`);
+  assert.equal(runDisplayStatus({ ...tat4145, status: 'human-gating' }), 'human-gating');
+  assert.equal(
+    deriveRunLifecycleView({ ...tat4145, status: 'human-gating' }).label,
+    'Awaiting decision',
+  );
 });

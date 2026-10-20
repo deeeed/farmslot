@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- A blocked run whose human gate decision is open reads `Needs your decision` with the gate's first readiness reason (`deriveRunLifecycleView`, `runStepDisplayStatus`/`Detail`, new `runDisplayStatus`), instead of Blocked; its gate step is not marked blocked. A blocked run with no open gate still reads Blocked. `openHumanGateDecision` and `HUMAN_GATE_DECISION_TYPE` move here from Companion.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.59.0 - 2026-10-19

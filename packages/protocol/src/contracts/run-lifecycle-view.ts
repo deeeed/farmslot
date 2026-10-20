@@ -40,14 +40,59 @@ const labels: Record<RunStatus, string> = {
   cancelled: 'Cancelled',
 };
 
+export const HUMAN_GATE_DECISION_TYPE = 'engine_human_gate';
+
+const NEEDS_YOUR_DECISION = 'Needs your decision';
+
+/** The fields of a run decision the lifecycle view reads. */
+type GateDecisionFields = { type: string; resolvedAt?: string; payload?: unknown };
+
+/** The run's latest unresolved human gate, if any. */
+export function openHumanGateDecision<D extends GateDecisionFields>(
+  run: { decisions?: readonly D[] } | null | undefined,
+): D | null {
+  const decisions = run?.decisions ?? [];
+  for (let index = decisions.length - 1; index >= 0; index -= 1) {
+    const decision = decisions[index]!;
+    if (decision.type === HUMAN_GATE_DECISION_TYPE && !decision.resolvedAt) return decision;
+  }
+  return null;
+}
+
+/**
+ * A blocked run whose human gate is open waits for a person's decision, not on a
+ * fault: it reads as needing one, with the gate's first readiness reason.
+ */
+function gateDecisionWait(run: {
+  status: RunStatus;
+  decisions?: readonly GateDecisionFields[];
+}): { reason?: string } | undefined {
+  if (run.status !== 'blocked') return undefined;
+  const decision = openHumanGateDecision(run);
+  if (!decision) return undefined;
+  const readiness = isRecord(decision.payload) ? decision.payload.gateReadiness : undefined;
+  const reason = isGateReadiness(readiness) ? readiness.reasons[0]?.message : undefined;
+  return reason ? { reason } : {};
+}
+
+/** A run's status as a badge shows it: a blocked run at its open human gate needs a decision. */
+export function runDisplayStatus(run: {
+  status: RunStatus;
+  decisions?: readonly GateDecisionFields[];
+}): string {
+  return gateDecisionWait(run) ? NEEDS_YOUR_DECISION : run.status;
+}
+
 /** Both clients and the CLI present the gateway's state and prerequisite reasons. */
 export function deriveRunLifecycleView(input: {
   status: RunStatus;
   gateReadiness?: unknown;
   waitingForOperator?: WorkerOperatorWait;
   error?: string | null;
+  decisions?: readonly GateDecisionFields[];
 }): RunLifecycleView {
   const blockedReason = blockedRunReason(input.error);
+  const gateWait = gateDecisionWait(input);
   const readiness = isGateReadiness(input.gateReadiness) ? input.gateReadiness : undefined;
   const canAdvance = readiness?.state === 'ready' && input.status === 'human-gating';
   const tone =
@@ -69,14 +114,20 @@ export function deriveRunLifecycleView(input: {
             : 'running';
   return {
     status: input.status,
-    label: labels[input.status],
-    ...(input.status === 'blocked'
-      ? { activityLabel: blockedReason ? `Blocked: ${blockedReason}` : labels.blocked }
-      : input.waitingForOperator && ['monitoring', 'reviewing', 'fixing'].includes(input.status)
-        ? { activityLabel: `Waiting on operator: ${input.waitingForOperator.who}` }
-        : ['fixing', 'review-failed', 'reconciling', 'needs-decision'].includes(input.status)
-          ? { activityLabel: labels[input.status] }
-          : {}),
+    label: gateWait ? NEEDS_YOUR_DECISION : labels[input.status],
+    ...(gateWait
+      ? {
+          activityLabel: gateWait.reason
+            ? `${NEEDS_YOUR_DECISION}: ${gateWait.reason}`
+            : NEEDS_YOUR_DECISION,
+        }
+      : input.status === 'blocked'
+        ? { activityLabel: blockedReason ? `Blocked: ${blockedReason}` : labels.blocked }
+        : input.waitingForOperator && ['monitoring', 'reviewing', 'fixing'].includes(input.status)
+          ? { activityLabel: `Waiting on operator: ${input.waitingForOperator.who}` }
+          : ['fixing', 'review-failed', 'reconciling', 'needs-decision'].includes(input.status)
+            ? { activityLabel: labels[input.status] }
+            : {}),
     tone,
     ...(readiness
       ? {
@@ -107,14 +158,20 @@ export function blockedRunReason(error?: string | null): string | undefined {
  * The status a client shows for a run's step. A cancelled run's unfinished steps
  * read as skipped. The engine records the step a blocked run stopped at as done
  * and every later step as skipped, which reads as a finished run, so that step
- * (the last one neither pending nor skipped) shows as blocked.
+ * (the last one neither pending nor skipped) shows as blocked. A run waiting at its
+ * open human gate keeps that step as it is.
  */
 export function runStepDisplayStatus(
-  run: { status: RunStatus; steps: readonly Pick<RunStep, 'name' | 'status'>[] },
+  run: {
+    status: RunStatus;
+    steps: readonly Pick<RunStep, 'name' | 'status'>[];
+    decisions?: readonly GateDecisionFields[];
+  },
   step: Pick<RunStep, 'name' | 'status'>,
 ): RunStepDisplayStatus {
   if (
     run.status === 'blocked' &&
+    !gateDecisionWait(run) &&
     step.name ===
       [...run.steps].reverse().find((s) => s.status !== 'pending' && s.status !== 'skipped')?.name
   )
@@ -124,15 +181,21 @@ export function runStepDisplayStatus(
   return step.status;
 }
 
-/** A step's detail as clients show it: a blocked run's reason on the step it stopped at. */
+/**
+ * A step's detail as clients show it: a blocked run's reason on the step it stopped
+ * at, and the gate's readiness reason on a human gate that waits for a decision.
+ */
 export function runStepDisplayDetail(
   run: {
     status: RunStatus;
     steps: readonly Pick<RunStep, 'name' | 'status'>[];
     error?: string | null;
+    decisions?: readonly GateDecisionFields[];
   },
   step: Pick<RunStep, 'name' | 'status' | 'detail'>,
 ): string | undefined {
+  const gateWait = step.name === 'human-gate' && step.status === 'running' && gateDecisionWait(run);
+  if (gateWait) return gateWait.reason ?? step.detail;
   return runStepDisplayStatus(run, step) === 'blocked'
     ? (blockedRunReason(run.error) ?? step.detail)
     : step.detail;

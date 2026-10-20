@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- The runs list status badge shows `Needs your decision` for a run waiting at its open human gate, instead of `blocked`; the run header and pipeline show the gate's readiness reason.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.27.0 - 2026-10-19

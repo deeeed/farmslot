@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
   deriveRunLifecycleView,
+  type RunDecision,
   type RunStatus,
   type RunStep,
   runStepDisplayDetail,
@@ -52,17 +53,19 @@ export function RunPipelineMini({
   runStatus,
   waitingForOperator,
   error,
+  decisions,
 }: {
   steps: RunStep[];
   runStatus?: RunStatus;
   waitingForOperator?: WorkerOperatorWait;
   error?: string;
+  decisions?: RunDecision[];
 }) {
   const isCancelled = runStatus === 'cancelled';
   const visible = steps.filter((s) => s.status !== 'skipped');
   if (visible.length === 0) return null;
 
-  const run = runStatus ? { status: runStatus, steps, error } : undefined;
+  const run = runStatus ? { status: runStatus, steps, error, decisions } : undefined;
   const eff = (s: RunStep) => (run ? runStepDisplayStatus(run, s) : s.status);
   const runningIdx = visible.findIndex((s) => eff(s) === 'running');
   const nextIdx = visible.findIndex((s) => eff(s) === 'pending');
@@ -74,12 +77,14 @@ export function RunPipelineMini({
   const allDone = visible.every((s) => eff(s) === 'done');
   const hasFailed = visible.some((s) => eff(s) === 'failed');
   const blocked = visible.find((s) => eff(s) === 'blocked');
-  const detail = blocked && run ? runStepDisplayDetail(run, blocked) : active?.detail;
+  const shown = blocked ?? active;
+  const detail = shown && run ? runStepDisplayDetail(run, shown) : active?.detail;
   const duration = active ? stepDuration(active) : null;
   const label = isCancelled
     ? 'cancelled'
     : ((runStatus
-        ? deriveRunLifecycleView({ status: runStatus, waitingForOperator, error }).activityLabel
+        ? deriveRunLifecycleView({ status: runStatus, waitingForOperator, error, decisions })
+            .activityLabel
         : undefined) ??
       (allDone
         ? 'done'
