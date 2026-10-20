@@ -6,6 +6,7 @@ import {
   type ArtifactRef,
   FLOW_WORKER_REPORT_ARTIFACTS,
   isTerminalRunStatus,
+  RecordedEvidenceReadError,
   type Run,
   runClaimOverrideSnapshotIdentity,
   type RunDecision,
@@ -198,13 +199,23 @@ export async function captureRunOutput(
     ]),
   );
   if (workerFinished || options.forPublication) {
-    const selection = await resolvePublicationManifest(
-      path.dirname(taskFile),
-      undefined,
-      undefined,
-      run.recordedEvidenceContractVersion ?? 0,
-      publicationBaselineContext(run),
-    );
+    let selection: Awaited<ReturnType<typeof resolvePublicationManifest>> = null;
+    try {
+      selection = await resolvePublicationManifest(
+        path.dirname(taskFile),
+        undefined,
+        undefined,
+        run.recordedEvidenceContractVersion ?? 0,
+        publicationBaselineContext(run, [...artifactsByPath.values()]),
+      );
+    } catch (error) {
+      if (!(error instanceof RecordedEvidenceReadError)) throw error;
+      // A failed recipe still owns its raw report and diagnostics. The publication
+      // gate revalidates this metadata and refuses it before any publication.
+      console.warn(
+        `[output] Retaining raw output without a publication selection: ${error.message}`,
+      );
+    }
     if (selection) {
       const snapshot = await writePublicationSelectionSnapshot(
         path.dirname(taskFile),
