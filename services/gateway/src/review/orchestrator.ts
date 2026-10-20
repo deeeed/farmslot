@@ -757,8 +757,11 @@ function fixDeltaIsKnownEmpty(snapshot: ReviewFixDeltaSnapshot): boolean {
  * verdict from the FINAL attempt, so leaving a `pass` attempt here would let the
  * publication gate materialize a qualifying PASS while the run is blocked.
  * Stamp the block onto that attempt so the aggregate verdict stays authoritative.
+ * A re-review that found issues keeps them: they are the findings Continue Fixing
+ * delivers (ADR-063 Amendment 4), and they already keep the gate from passing.
  */
 function blockedReviewAttempt(attempt: ReviewAttempt, reason: string): ReviewAttempt {
+  if (attempt.verdict === 'issues' && attempt.unresolvedCount > 0) return { ...attempt, reason };
   return { ...attempt, verdict: 'failed', reason };
 }
 

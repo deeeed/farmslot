@@ -233,17 +233,19 @@ function latestTerminalReview(reviews: readonly ReviewStatus[]): ReviewStatus | 
 }
 
 /**
- * The review whose findings the publish gate can continue: a pending continuation or, while a
- * review round is available, findings at `headSha` the loop never delivered because the round
- * budget stopped it (ADR-063 Amendment 4). Recovery reads only pendingReviewContinuation, so a
- * restart never delivers them on its own; a person chooses Continue Fixing.
+ * The review whose findings the publish gate can continue, only while a review round is
+ * available (ADR-063 Amendment 4): a pending continuation, or findings at `headSha` the loop
+ * never delivered because the round budget stopped it. Recovery reads only
+ * pendingReviewContinuation, so a restart never delivers them on its own; a person chooses
+ * Continue Fixing.
  */
 export function gateReviewContinuation(
   reviews: readonly ReviewStatus[],
   { roundAvailable, headSha }: { roundAvailable: boolean; headSha?: string | null },
 ): ReviewStatus | undefined {
+  if (!roundAvailable) return undefined;
   const pending = pendingReviewContinuation(reviews);
-  if (pending || !roundAvailable) return pending;
+  if (pending) return pending;
   const latest = latestTerminalReview(reviews);
   if (!latest || !undeliveredReviewFindings(latest)) return undefined;
   const reviewedHead = latest.reviewSnapshot?.headSha ?? latest.reviewedHeadSha;

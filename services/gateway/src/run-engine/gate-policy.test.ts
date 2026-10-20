@@ -790,3 +790,36 @@ test('round-limited gate findings continue only while a round is available', () 
   });
   assert.ok(actions.some((action) => action.id === CONTINUE_REVIEW_FIX_ACTION));
 });
+
+/** TAT-4145 bda11b1a round 7: a codex re-review of a blocked fix left 3 findings pending at a4595cb3. */
+const blockedFixGateReview = {
+  id: 'review-bda11b1a-e1ba-4b8d-9880-dcff987afff0-7e058e1b-18d8-4e99-9854-8e1471ab1418',
+  source: 'human-gate',
+  runner: 'codex',
+  mode: 'cold' as const,
+  verdict: 'issues',
+  loopNumber: 3,
+  unresolvedCount: 3,
+  feedbackSent: false,
+  recoveryContinuationPending: true,
+  retryCount: 1,
+  maxRetries: 2,
+  reviewedHeadSha: 'a4595cb3f266826294ea46fd83c2deed022d0bbb',
+  issues: [
+    { file: 'src/features/perpetuals/order/hooks/useOrderMarginMode.ts', description: 'finding 1' },
+    { file: 'src/features/perpetuals/order/hooks/useOrderMarginMode.ts', description: 'finding 2' },
+    { file: 'src/features/perpetuals/order/hooks/useOrderMarginMode.ts', description: 'finding 3' },
+  ],
+} satisfies ReviewStatus;
+
+test('a pending continuation is offered only while a review round is available', () => {
+  // At 7/7 the gate must not offer Continue Fixing (ADR-063 Amendment 4); after the 7→8 grant it does.
+  const reviews = [roundLimitedGateReview, blockedFixGateReview];
+  const headSha = blockedFixGateReview.reviewedHeadSha;
+  assert.equal(pendingReviewContinuation(reviews), blockedFixGateReview, 'recovery still sees it');
+  assert.equal(gateReviewContinuation(reviews, { roundAvailable: false, headSha }), undefined);
+  assert.equal(
+    gateReviewContinuation(reviews, { roundAvailable: true, headSha }),
+    blockedFixGateReview,
+  );
+});
