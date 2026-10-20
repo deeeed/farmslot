@@ -118,6 +118,8 @@ export function renderReadyTopBar(input: {
   `;
 }
 
+type ReadyGateTab = { id: ReadyWorkspaceTab; label: string };
+
 export function renderReadyTabBar(input: {
   payload: ReadyGatePayload;
   activeTab: ReadyWorkspaceTab;
@@ -137,27 +139,30 @@ export function renderReadyTabBar(input: {
   const hasLearnings = !!input.payload.workerLearnings;
   const hasPreview = Boolean(input.payload.prPackage || input.packagePending);
 
-  if (input.payload.prPackage)
+  if (input.payload.prPackage) {
+    const gateTab = (tab: ReadyGateTab) =>
+      html`<button
+        role="tab"
+        class="rdy-tab ${input.activeTab === tab.id ? 'active' : ''}"
+        aria-selected=${input.activeTab === tab.id}
+        @click=${() => input.setActiveTab(tab.id)}
+      >
+        ${tab.label}
+      </button>`;
+    const extraTabs = (
+      [
+        { id: 'diff', label: `Diff (${input.diffCount})` },
+        hasInput && { id: 'input', label: `Input (${input.inputCount})` },
+        hasRecipe && { id: 'recipe', label: 'Recipe' },
+        hasLearnings && { id: 'learnings', label: 'Learnings' },
+      ] satisfies (ReadyGateTab | false)[]
+    ).filter((tab) => tab !== false);
     return html` <div class="rdy-tab-bar" role="tablist" aria-label="Publication gate">
-      ${PUBLICATION_GATE_TABS.map(
-        (tab) =>
-          html`<button
-            role="tab"
-            class="rdy-tab ${input.activeTab === tab.id ? 'active' : ''}"
-            aria-selected=${input.activeTab === tab.id}
-            @click=${() => input.setActiveTab(tab.id)}
-          >
-            ${tab.label}
-          </button>`,
-      )}
-      <details class="gate-extra-tabs">
-        <summary>More views</summary>
-        ${(['diff', 'input', 'recipe', 'learnings'] as const).map(
-          (id) =>
-            html`<button class="rdy-tab" @click=${() => input.setActiveTab(id)}>${id}</button>`,
-        )}
-      </details>
+      ${PUBLICATION_GATE_TABS.filter((tab) => tab.id !== 'criteria').map(gateTab)}
+      <span class="gate-tab-divider" aria-hidden="true"></span>
+      ${extraTabs.map(gateTab)}
     </div>`;
+  }
   return html`
     <div class="rdy-tab-bar">
       ${hasPreview

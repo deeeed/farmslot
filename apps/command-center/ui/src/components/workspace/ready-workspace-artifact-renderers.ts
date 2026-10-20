@@ -10,6 +10,7 @@ import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-he
 import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 
 import {
+  ARTIFACT_TYPES,
   type ArtifactFilter,
   type ArtifactGroup,
   type ArtifactTypeFilter,
@@ -20,6 +21,7 @@ import {
   workspaceArtifactGroupLabel,
   workspaceArtifactType,
   workspaceArtifactTypeBadge,
+  workspaceArtifactTypeCounts,
   workspaceArtifactTypeLabel,
 } from './workspace-artifacts.js';
 import {
@@ -131,16 +133,7 @@ export function renderReadyArtifactGroups(ctx: ReadyArtifactGroupsContext) {
       : ctx.artifacts.filter(
           (artifact) => workspaceArtifactGroup(artifact, ctx.evidenceModel) === activeFilter,
         );
-  const typeCounts: Record<ArtifactTypeFilter, number> = {
-    all: ctx.artifacts.length,
-    image: 0,
-    video: 0,
-    markdown: 0,
-    json: 0,
-    diff: 0,
-    other: 0,
-  };
-  for (const artifact of ctx.artifacts) typeCounts[workspaceArtifactType(artifact)] += 1;
+  const typeCounts = workspaceArtifactTypeCounts(ctx.artifacts);
   const activeTypeFilter = ctx.hideFilter ? 'all' : ctx.artifactTypeFilter;
   const filtered =
     activeTypeFilter === 'all'
@@ -158,15 +151,9 @@ export function renderReadyArtifactGroups(ctx: ReadyArtifactGroupsContext) {
     { value: 'review', label: 'Review', count: counts.review },
     { value: 'other', label: 'Other', count: counts.other },
   ];
-  const typeFilters: Array<{ value: ArtifactTypeFilter; count: number }> = [
-    { value: 'all', count: typeCounts.all },
-    { value: 'image', count: typeCounts.image },
-    { value: 'video', count: typeCounts.video },
-    { value: 'markdown', count: typeCounts.markdown },
-    { value: 'json', count: typeCounts.json },
-    { value: 'diff', count: typeCounts.diff },
-    { value: 'other', count: typeCounts.other },
-  ];
+  const typeFilters: Array<{ value: ArtifactTypeFilter; count: number }> = (
+    ['all', ...ARTIFACT_TYPES] as const
+  ).map((value) => ({ value, count: typeCounts[value] }));
 
   return html`
     <div class="rdy-artifact-groups">

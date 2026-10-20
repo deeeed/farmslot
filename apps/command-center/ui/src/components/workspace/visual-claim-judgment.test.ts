@@ -89,15 +89,29 @@ test('a refusal is inline and leaves retry controls available', () => {
   assert.match(text, /Judgment saved, refresh refused/);
   assert.match(text, /Looks right/);
 });
-test('a confirmed criterion collapses action controls behind Change without dropping them', () => {
+test('a confirmed criterion collapses action controls behind Change verdict without dropping them', () => {
   const text = litText(
     renderVisualClaimJudgment({
       ...input,
       row: { ...row, pending: false, claim: { ...row.claim, proofKinds: ['person-reviewed'] } },
     }),
   );
-  assert.match(text, /<details class="gate-change">\s*<summary>Change<\/summary>/);
+  assert.match(text, /<details class="gate-change">\s*<summary>Change verdict<\/summary>/);
   assert.match(text, /Looks right/);
   assert.match(text, /Record issue/);
   assert.doesNotMatch(text, /Agent review.*Not recorded/);
+});
+test('a checked criterion nobody can judge again shows no empty Change verdict', () => {
+  const text = litText(
+    renderVisualClaimJudgment({
+      ...input,
+      row: {
+        ...row,
+        pending: false,
+        reviewKind: null,
+        claim: { ...row.claim, proofKinds: ['person-reviewed'] },
+      },
+    }),
+  );
+  assert.doesNotMatch(text, /gate-change|Change verdict|Looks right/);
 });

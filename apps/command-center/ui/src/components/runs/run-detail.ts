@@ -46,6 +46,7 @@ import './step-inspector.js';
 import './blocked-run-recovery.js';
 import './run-pipeline-mini.js';
 import './run-tag-editor.js';
+import '../shared/evidence-reviewer.js';
 import '../shared/media-lightbox.js';
 import '../shared/step-artifacts.js';
 import '../workspace/review-workspace.js';
@@ -64,6 +65,16 @@ import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
 } from '../progress-tracker/acceptance-panel.js';
+import {
+  type EvidenceReviewerSelection,
+  evidenceReviewerSelection,
+} from '../shared/evidence-reviewer.js';
+import {
+  type EvidenceReviewerView,
+  evidenceReviewerViewFromHash,
+  evidenceReviewerViewKey,
+  writeEvidenceReviewerHash,
+} from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
@@ -83,7 +94,7 @@ import {
   resumeStoppedNativeWorker,
 } from './run-detail-actions.js';
 import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
-import { renderRunGateSection } from './run-detail-decision-renderers.js';
+import { renderRunGateSection, runMountsPublicationGate } from './run-detail-decision-renderers.js';
 import {
   acceptanceEvidenceSelection,
   buildRerunAlongsideHref,
@@ -1024,10 +1035,16 @@ export class RunDetail extends RunDetailState {
 
   /** The one way the evidence lightbox opens: the Evidence tab, an `artifact=` link or an AC row. */
   private _openEvidenceLightbox(selection: EvidenceLightboxSelection, writeHash = true): void {
+    if (
+      selection.criterionId &&
+      this._openInGateReview(selection.criterionId, selection.items[selection.index])
+    )
+      return;
     this._evidenceLightboxItems = selection.items;
     this._evidenceLightboxIndex = selection.index;
     this._evidenceLightboxScope = selection.scope;
     this._evidenceLightboxCriterionId = selection.criterionId;
+    this._evidenceGallery = false;
     this._evidenceArtifactUnavailable = null;
     this._evidenceLightboxOpen = true;
     if (writeHash) this._updateEvidenceArtifactHash(selection.items[selection.index] ?? null);
@@ -1035,6 +1052,7 @@ export class RunDetail extends RunDetailState {
 
   private _applyEvidenceArtifactFromHash(preserveCurrent = false): void {
     if (!this.run) return;
+    if (this._applyReviewFromHash()) return;
     const { artifactRun, artifact, artifactView, artifactAc } =
       artifactSelectionFromRunDetailHash();
     if (!artifact || (artifactView === STEP_ARTIFACT_VIEW && this.selectedStep)) {
@@ -1361,6 +1379,15 @@ export class RunDetail extends RunDetailState {
         model.cueClip(index);
         open(true);
       },
+      openProofFile: (claimId, path) => {
+        model.selectClaim(claimId, path);
+        this._openEvidenceLightbox({
+          items: [this._evidenceFileItem(path, model)],
+          index: 0,
+          scope: `${claimId} evidence`,
+          criterionId: claimId,
+        });
+      },
     };
   }
 
@@ -1456,7 +1483,129 @@ export class RunDetail extends RunDetailState {
     if (location.hash !== next) history.replaceState(null, '', next);
   }
 
+  /**
+   * On a run showing its publication gate, a criterion's review opens in the gate's
+   * review, the one owner of review links; its link replaces this artifact link.
+   */
+  private _openInGateReview(claimId: string, opened: LightboxItem | undefined): boolean {
+    if (!this.run || !runMountsPublicationGate(this.run)) return false;
+    const gate = this.renderRoot.querySelector('ready-workspace');
+    if (!gate?.openEvidenceReview(claimId, opened)) return false;
+    // A saved gate sits in a collapsible section; its review shows only while it is open.
+    const section = gate.closest('details');
+    if (section) section.open = true;
+    this._evidenceLightboxOpen = false;
+    this._evidenceLightboxCriterionId = null;
+    this._updateEvidenceArtifactHash(null);
+    return true;
+  }
+
+  /** One criterion's evidence opens as the full-screen review, on the file the user chose. */
+  private _evidenceReviewer(): EvidenceReviewerSelection | null {
+    const claimId = this._evidenceLightboxCriterionId;
+    const model = this.evidenceModel;
+    if (!this._evidenceLightboxOpen || this._evidenceGallery || !claimId || !model) return null;
+    return {
+      ...evidenceReviewerSelection({
+        model,
+        claimId,
+        resolveUrl: this._captureEvidenceResolver(),
+        opened: this._evidenceLightboxItems[this._evidenceLightboxIndex],
+      }),
+      ...this._reviewLink,
+    };
+  }
+
+  /** One evidence file of the run, served and reviewed through its evidence model. */
+  private _evidenceFileItem(path: string, model: EvidenceReviewModel): LightboxItem {
+    const resolve = this._captureEvidenceResolver();
+    return {
+      path,
+      purpose: 'evidence',
+      url: resolve(path),
+      evidenceModel: model,
+      resolveArtifactUrl: resolve,
+    };
+  }
+
+  /** The link the review last applied: where it left the recording and the open step check. */
+  private _reviewLink?: Pick<EvidenceReviewerSelection, 'atMs' | 'check' | 'link'>;
+  /** The view the hash holds as applied or reported, so only a new link reapplies. */
+  private _reviewLinkKey = '';
+
+  /** The review reports its view; the link follows unless the gate owns review links. */
+  private _onReviewerView(view: EvidenceReviewerView): void {
+    if (this.run && runMountsPublicationGate(this.run)) return;
+    this._reviewLinkKey = evidenceReviewerViewKey(view);
+    writeEvidenceReviewerHash(view);
+  }
+
+  /**
+   * A review link opens the review on its criterion, file, moment and step check,
+   * also over a review already open. The publication gate owns review links
+   * whenever run detail mounts it.
+   */
+  private _applyReviewFromHash(): boolean {
+    const run = this.run;
+    const model = this.evidenceModel;
+    const view = evidenceReviewerViewFromHash();
+    if (!view) this._reviewLinkKey = '';
+    if (!run || !model || !view || runMountsPublicationGate(run)) return false;
+    if (!model.claims.some((claim) => claim.id === view.claimId)) return false;
+    const key = evidenceReviewerViewKey(view);
+    if (this._evidenceLightboxOpen && key === this._reviewLinkKey) return true;
+    this._reviewLinkKey = key;
+    this._reviewLink = {
+      atMs: view.atMs,
+      check: view.check,
+      link: (this._reviewLink?.link ?? 0) + 1,
+    };
+    this._openEvidenceLightbox(
+      {
+        items: view.path ? [this._evidenceFileItem(view.path, model)] : [],
+        index: 0,
+        scope: `${view.claimId} evidence`,
+        criterionId: view.claimId,
+      },
+      false,
+    );
+    return true;
+  }
+
+  /** A criterion's files in the gallery, from the review. */
+  private _openClaimFiles(claimId: string): void {
+    const row = runAcceptanceCriterionEvidence(this).find((candidate) => candidate.id === claimId);
+    const criterion = this.evidenceModel?.claims.find((claim) => claim.id === claimId);
+    if (!row?.evidence.length || !criterion) return;
+    this._openAcceptanceEvidence({
+      criterion,
+      evidence: row.evidence,
+      index: 0,
+      evidenceModel: this.evidenceModel ?? undefined,
+    });
+    this._evidenceGallery = true;
+  }
+
+  /**
+   * A criterion chosen in the review becomes the link only when its own files list
+   * the recording: the link resolver reopens exactly that pair, and nothing else.
+   */
+  private _selectEvidenceClaim(claimId: string): void {
+    const recording = this._evidenceLightboxItems[this._evidenceLightboxIndex];
+    const reopenable = runAcceptanceCriterionEvidence(this).some(
+      (row) => row.id === claimId && Boolean(recording && row.evidence.includes(recording.path)),
+    );
+    if (!reopenable) return;
+    this._evidenceLightboxCriterionId = claimId;
+    this._updateEvidenceArtifactHash(recording ?? null);
+  }
+
   private _closeEvidenceLightbox(): void {
+    // The gate's own review keeps its link.
+    if (evidenceReviewerViewFromHash() && !(this.run && runMountsPublicationGate(this.run)))
+      writeEvidenceReviewerHash(null);
+    this._reviewLink = undefined;
+    this._reviewLinkKey = '';
     this._evidenceLightboxOpen = false;
     this._evidenceArtifactUnavailable = null;
     this._updateEvidenceArtifactHash(null);
@@ -1533,6 +1682,14 @@ export class RunDetail extends RunDetailState {
       artifactUrl: this._artifactUrl,
       onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
       closeEvidenceLightbox: () => this._closeEvidenceLightbox(),
+      reviewerView: (view) => this._onReviewerView(view),
+      evidenceReviewer: this._evidenceReviewer(),
+      showEvidenceGallery: (claimId) => this._openClaimFiles(claimId),
+      reviewEvidence:
+        this._evidenceLightboxCriterionId && this.evidenceModel
+          ? () => (this._evidenceGallery = false)
+          : undefined,
+      selectEvidenceClaim: (claimId) => this._selectEvidenceClaim(claimId),
       navigateEvidenceLightbox: (index) => this._navigateEvidenceLightbox(index),
       replaceEvidenceLightbox: ({ items, index }) => {
         this._evidenceLightboxItems = items;

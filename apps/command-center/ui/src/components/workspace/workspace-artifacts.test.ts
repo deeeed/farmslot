@@ -146,7 +146,9 @@ test('workspaceArtifactType classifies filters and labels', () => {
   assert.equal(workspaceArtifactType({ path: 'report.md', purpose: 'Markdown' }), 'markdown');
   assert.equal(workspaceArtifactType({ path: 'data/result.json', purpose: 'Payload' }), 'json');
   assert.equal(workspaceArtifactType({ path: 'patch.diff', purpose: 'Patch' }), 'diff');
-  assert.equal(workspaceArtifactType({ path: 'logs/stdout.txt', purpose: 'Output' }), 'other');
+  assert.equal(workspaceArtifactType({ path: 'logs/stdout.txt', purpose: 'Output' }), 'log');
+  assert.equal(workspaceArtifactType({ path: 'artifacts/diff.txt', purpose: 'other' }), 'diff');
+  assert.equal(workspaceArtifactType({ path: 'bundle.zip', purpose: 'other' }), 'other');
   assert.equal(workspaceArtifactTypeLabel('diff'), 'Diffs');
   assert.equal(workspaceArtifactTypeBadge('markdown'), 'MD');
 });

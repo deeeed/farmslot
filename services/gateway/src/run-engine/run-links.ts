@@ -9,6 +9,8 @@ import {
 import { loadProjectVars } from '../core/config.js';
 import { getRun, updateRun } from '../runs/store.js';
 
+import { loadProjectVarsOrNull } from './project-vars.js';
+
 // ─── External links ───
 type ProjectLinkConfig = {
   ci?: { repo?: string };
@@ -87,4 +89,23 @@ export async function refreshRunLinks(runId: string): Promise<void> {
   if (links.length > 0) {
     updateRun(runId, { links });
   }
+}
+
+/**
+ * Runs created before links were computed at creation show their ticket with
+ * no link. Compute links once for every run that names a ticket and has none.
+ */
+export async function backfillMissingRunLinks(runs: readonly Run[]): Promise<void> {
+  const unlinked = runs.filter(
+    (run) =>
+      !run.links?.length &&
+      (run.ticketData?.jiraKey ||
+        run.ticketData?.githubIssue ||
+        /^[A-Z]+-\d+$/i.test(run.ticketOrPr)),
+  );
+  // A project without config (deleted, or legacy) is checked and reported once, not per run.
+  const missingProjects = new Set<string>();
+  for (const project of new Set(unlinked.map((run) => run.project)))
+    if (!(await loadProjectVarsOrNull(project, 'run links backfill'))) missingProjects.add(project);
+  for (const run of unlinked) if (!missingProjects.has(run.project)) await refreshRunLinks(run.id);
 }

@@ -274,6 +274,18 @@ function renderResultDecisionSection(
   </section>`;
 }
 
+/**
+ * Whether the gate section mounts the publication gate (open or saved), which
+ * then owns review links: the same branches renderRunGateSection takes.
+ */
+export function runMountsPublicationGate(run: Pick<Run, 'status' | 'decisions'>): boolean {
+  if (pendingResultDecision(run)) return false;
+  const pending = run.decisions.find((decision) => !decision.resolvedAt);
+  return pending
+    ? decisionPayloadKind(pending.payload) === 'ready'
+    : Boolean(retainedEvidenceGate(run));
+}
+
 export function renderRunGateSection(run: Run, context: RunDecisionRenderContext) {
   const result = pendingResultDecision(run);
   if (result) return renderResultDecisionSection(run, result, context);

@@ -31,8 +31,10 @@ export function renderVisualClaimJudgment(input: VisualClaimJudgmentInput) {
         input.changeReason((event.currentTarget as HTMLTextAreaElement).value)}
     ></textarea>
   </label>`;
+  // A criterion a person can judge: it asks for a visual review or waits for one.
+  const judgeable = Boolean(row.reviewKind || row.pending);
   const controls = html`
-    ${row.reviewKind || row.pending
+    ${judgeable
       ? html`<div class="gate-judgment-actions">
           ${delegated ? rationale : nothing}
           <button
@@ -76,10 +78,12 @@ export function renderVisualClaimJudgment(input: VisualClaimJudgmentInput) {
     aria-busy=${Boolean(pending)}
   >
     ${checked && !pending
-      ? html`<details class="gate-change">
-          <summary>Change</summary>
-          ${controls}
-        </details>`
+      ? judgeable
+        ? html`<details class="gate-change">
+            <summary>Change verdict</summary>
+            ${controls}
+          </details>`
+        : nothing
       : controls}
     ${feedback?.phase === 'error'
       ? html`<span class="gate-row-error" role="alert">${feedback.message}</span>`

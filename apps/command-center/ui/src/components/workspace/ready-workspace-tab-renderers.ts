@@ -132,23 +132,27 @@ export function renderReadyRecipeTab(input: {
 }
 
 export function renderReadyEvidenceTab(input: {
-  payload: ReadyGatePayload;
+  payload: Pick<ReadyGatePayload, 'prPackage'>;
   artifacts: ArtifactRef[];
+  /** The acceptance criteria with their verdicts; Review evidence opens the full-screen review. */
+  criteria?: unknown;
   selectionToolbar: TemplateResult | typeof nothing;
   artifactGroups: TemplateResult | typeof nothing;
   loading?: boolean;
   error?: string;
   retry?: () => void;
 }) {
-  if (input.loading && !input.artifacts.length) return renderEvidenceGridSkeleton();
-  if (input.error && !input.artifacts.length)
-    return renderEvidenceGridSkeleton(input.error, input.retry);
-  if (input.artifacts.length === 0) return html`<div class="rdy-tab-empty">No evidence</div>`;
-  return html`
-    <div class="rdy-evidence-tab">
-      ${input.payload.prPackage ? input.selectionToolbar : nothing} ${input.artifactGroups}
-    </div>
-  `;
+  // The criteria show whatever the files do: a run can prove them by logs or state alone.
+  const files =
+    input.loading && !input.artifacts.length
+      ? renderEvidenceGridSkeleton()
+      : input.error && !input.artifacts.length
+        ? renderEvidenceGridSkeleton(input.error, input.retry)
+        : input.artifacts.length === 0
+          ? html`<div class="rdy-tab-empty">No evidence files</div>`
+          : html`${input.payload.prPackage ? input.selectionToolbar : nothing}
+            ${input.artifactGroups}`;
+  return html`<div class="rdy-evidence-tab">${input.criteria ?? nothing} ${files}</div>`;
 }
 
 export function renderReadyEvidenceSelectionToolbar(input: {

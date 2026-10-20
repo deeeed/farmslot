@@ -34,6 +34,53 @@ export const mediaLightboxStyles = css`
     padding: ${unsafeCSS(spacing.md)};
     border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}22;
   }
+  .ml-embedded {
+    height: 100%;
+    display: flex;
+  }
+  .ml-modal:fullscreen {
+    width: 100vw;
+    height: 100vh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .ml-embedded .ml-header {
+    padding: 4px ${unsafeCSS(spacing.sm)};
+  }
+  .ml-embedded .ml-header > div:first-child {
+    display: flex;
+    align-items: baseline;
+    gap: ${unsafeCSS(spacing.sm)};
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .ml-embedded .ml-purpose-row {
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+  .ml-embedded .ml-path,
+  .ml-embedded .ml-caption,
+  .ml-embedded .ml-provenance {
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: normal;
+  }
+  .ml-embedded .ml-video-controls {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 4px;
+  }
+  .ml-embedded .ml-modal {
+    width: 100%;
+    max-height: none;
+    flex: 1;
+    min-height: 0;
+  }
   .ml-backdrop.maximized {
     padding: 0;
   }
@@ -44,42 +91,60 @@ export const mediaLightboxStyles = css`
     border: 0;
     border-radius: 0;
   }
-  .maximized .ml-body {
+  .maximized .ml-body,
+  .ml-embedded .ml-body {
     flex: 1;
     min-height: 0;
     align-items: stretch;
     padding: 0;
   }
   .maximized .ml-html-shell,
-  .maximized .ml-md-shell {
+  .maximized .ml-md-shell,
+  .ml-embedded .ml-html-shell,
+  .ml-embedded .ml-md-shell {
     flex: 1;
     min-height: 0;
     max-width: none;
   }
-  .maximized .ml-html-frame {
+  .maximized .ml-html-frame,
+  .ml-embedded .ml-html-frame {
     flex: 1;
     min-height: 0;
     height: 100%;
   }
-  .maximized .ml-md-body {
+  .maximized .ml-md-body,
+  .ml-embedded .ml-md-body {
     flex: 1;
     min-height: 0;
     max-height: none;
   }
   .maximized .ml-image-shell,
-  .maximized .ml-video-shell {
+  .maximized .ml-video-shell,
+  .ml-embedded .ml-image-shell,
+  .ml-embedded .ml-video-shell {
     min-height: 0;
   }
-  .maximized .ml-stage {
+  .maximized .ml-stage,
+  .ml-embedded .ml-stage {
     flex: 1;
     min-height: 0;
   }
-  .maximized .ml-expanded {
+  .maximized .ml-expanded,
+  .ml-embedded .ml-expanded {
     max-height: 100%;
   }
-  .maximized .ml-video-shell .ml-video {
+  .maximized .ml-video-stage,
+  .ml-embedded .ml-video-stage {
     flex: 1;
+    width: 100%;
     min-height: 0;
+  }
+  .maximized .ml-video-stage .ml-video,
+  .ml-embedded .ml-video-stage .ml-video {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    object-fit: contain;
   }
   .maximized .ml-filmstrip {
     display: none;
@@ -272,6 +337,16 @@ export const mediaLightboxStyles = css`
     transform-origin: center center;
     user-select: none;
   }
+  /* Until the authenticated download lands: a calm block, not alt text that reads as broken. */
+  .ml-expanded:not([src]),
+  .ml-film-thumb:not([src]) {
+    color: transparent;
+    background: ${unsafeCSS(colors.bgSurface)};
+  }
+  img.ml-expanded:not([src]) {
+    width: min(100%, 640px);
+    aspect-ratio: 16 / 10;
+  }
   .ml-image-shell {
     width: 100%;
     display: flex;
@@ -363,8 +438,25 @@ export const mediaLightboxStyles = css`
     gap: ${unsafeCSS(spacing.sm)};
     flex-wrap: wrap;
   }
-  .ml-video-scrub {
+  .ml-scrub-track {
+    position: relative;
+    display: flex;
+    align-items: center;
     min-width: min(560px, 60vw);
+  }
+  .ml-scrub-band {
+    position: absolute;
+    top: 50%;
+    height: 12px;
+    transform: translateY(-50%);
+    background: ${unsafeCSS(colors.accent)}55;
+    border-radius: 2px;
+    pointer-events: none;
+  }
+  .ml-video-scrub {
+    position: relative;
+    width: 100%;
+    margin: 0;
     accent-color: ${unsafeCSS(colors.accent)};
   }
   .ml-fallback {

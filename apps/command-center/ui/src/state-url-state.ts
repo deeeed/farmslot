@@ -1,3 +1,4 @@
+import { EVIDENCE_REVIEWER_PARAMS } from './components/shared/evidence-reviewer-url-state.js';
 import { buildHash, parseHashRoute } from './utils/url-state.js';
 
 export interface GlobalFilters {
@@ -41,6 +42,7 @@ const RUN_DETAIL_PARAMS = [
   'artifact',
   'artifactAc',
   'artifactView',
+  ...EVIDENCE_REVIEWER_PARAMS,
 ] as const;
 
 function splitCsv(raw: string | null): string[] {

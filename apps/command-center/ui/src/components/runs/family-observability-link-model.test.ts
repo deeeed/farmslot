@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { FamilyObservabilityRunSummary, RunLink } from '@farmslot/protocol';
+import type { FamilyObservabilityRunSummary, RunLink, RunTicketData } from '@farmslot/protocol';
 
 import {
   familyPrUrl,
   familyTicketUrl,
   pullNumberFromUrl,
+  runSourceLinks,
 } from './family-observability-link-model.js';
 
 function link(label: string, url: string): RunLink {
@@ -89,3 +90,43 @@ test('familyPrUrl prefers explicit PR links then ticket repo then sibling repo',
 
   assert.equal(familyPrUrl(run('none', 'PROJ-1', [], null), []), null);
 });
+
+test('runSourceLinks names the Jira ticket and links it only once the gateway resolved it', () => {
+  const ticketData = jiraSourceTicket('TAT-4006');
+  assert.deepEqual(runSourceLinks({ ticketOrPr: 'TAT-4006', ticketData }), [
+    { label: 'Jira', text: 'TAT-4006', url: null },
+  ]);
+  assert.deepEqual(
+    runSourceLinks({
+      ticketOrPr: 'TAT-4006',
+      ticketData,
+      links: [link('Jira', 'https://jira.example.invalid/browse/TAT-4006')],
+      backlogItemId: 'bab0b56e-f019-46c3-96f1-0fa8fabdbc26',
+    }),
+    [
+      { label: 'Jira', text: 'TAT-4006', url: 'https://jira.example.invalid/browse/TAT-4006' },
+      {
+        label: 'Backlog',
+        text: 'bab0b56e',
+        url: `#backlog?item=bab0b56e-f019-46c3-96f1-0fa8fabdbc26&backlogStatus=${encodeURIComponent(
+          'candidate,ready,queued,dispatching,running,done,failed,needs-attention,archived',
+        )}`,
+      },
+    ],
+  );
+  assert.deepEqual(runSourceLinks({ ticketOrPr: 'adhoc' }), []);
+});
+
+function jiraSourceTicket(jiraKey: string): RunTicketData {
+  return {
+    source: 'jira',
+    jiraKey,
+    title: '',
+    description: '',
+    acceptanceCriteria: [],
+    affectedArea: '',
+    stepsToReproduce: [],
+    screenshots: [],
+    labels: [],
+  };
+}
