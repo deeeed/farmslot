@@ -15,13 +15,11 @@ import {
 
 import {
   acceptanceClaimRows,
-  gateReviewLineageOptions,
   humanGateBlockingReason,
   type PublicationGateClaim,
   publicationGateCriteria,
   publicationGateView,
   publicationReviewBlockingReason,
-  reviewFallbackLine,
 } from '../src/publication-gate.js';
 
 const evidenceOnly: RunGateReadiness = {
@@ -682,7 +680,8 @@ test('an open gate shows the reason a person can act on, not a fix it does not o
   );
 });
 
-test('the gate shows why a review ran a delta-scoped COLD and what it compared', () => {
+test('the gate shows why a review ran a delta-scoped COLD and what it compared', async () => {
+  const { reviewFallbackLine } = await import('../src/publication-gate.js');
   const last = 'a'.repeat(40);
   const head = 'b'.repeat(40);
   const fallback = {
@@ -717,7 +716,8 @@ test('the gate shows why a review ran a delta-scoped COLD and what it compared',
   assert.equal(reviewFallbackLine({ session: { mode: 'warm', continuity: 'resumed' } }), null);
 });
 
-test('a Request Review reads the lineages its ready gate listed', () => {
+test('a Request Review reads the lineages its ready gate listed', async () => {
+  const { gateReviewLineageOptions } = await import('../src/publication-gate.js');
   const option = {
     context: { reviewId: 'lineage', familyId: 'family' },
     runner: 'codex',

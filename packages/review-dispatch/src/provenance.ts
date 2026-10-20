@@ -70,15 +70,16 @@ export function assertWarmReviewContext(
 ): void {
   const used = new Set<string>();
   sequence.forEach((selection, index) => {
-    if (selection.mode !== 'warm') return;
     const lineage = context?.reviewLineages[index];
-    if (!lineage)
+    if (selection.mode === 'warm' && !lineage)
       throw new Error(
         `WARM review row ${index + 1} requires an unambiguous run family or repository/PR and reviewId lineage. Choose COLD or open a specific review recheck.`,
       );
+    // A COLD row may continue a lineage too; no two counted rows share one.
+    if (!lineage) return;
     const key = reviewLineageKey(lineage);
     if (sequenceRole === 'reviews' && used.has(key))
-      throw new Error('A WARM sequence cannot count the same review lineage twice');
+      throw new Error('A review sequence cannot count the same review lineage twice');
     used.add(key);
   });
 }

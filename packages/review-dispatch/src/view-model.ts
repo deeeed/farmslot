@@ -16,7 +16,7 @@ import {
   runnerOption,
 } from './catalog.js';
 import { copyExecutionResources } from './execution.js';
-import { assertWarmReviewContext } from './provenance.js';
+import { assertWarmReviewContext, reviewLineageKey } from './provenance.js';
 import { sequenceMaximumRows } from './row-limit.js';
 import type {
   ReviewDispatchAction,
@@ -221,7 +221,16 @@ export class ReviewDispatchViewModel {
     patch: Partial<ReviewSelection> = {},
   ): ReviewDispatchRow {
     const linked = this.linkedRow(row, index);
-    if (!this.preselects || !linked.context) return linked;
+    if (!this.preselects) return linked;
+    // A runner with no earlier lineage starts a new one, COLD.
+    if (!linked.context)
+      return {
+        ...linked,
+        selection: parseReviewSelection(
+          { ...row.selection, mode: 'cold', ...patch },
+          { catalog: this.catalog },
+        ),
+      };
     const available = !linked.note;
     const option = this.lineageOption(index, row.selection.runner)!;
     return {
@@ -311,13 +320,19 @@ export class ReviewDispatchViewModel {
     }
     selection = parseReviewSelection(selection, { catalog: this.catalog });
     const runnerChanged = patch.runner !== undefined && patch.runner !== current.runner;
-    this.currentRows = this.currentRows.map((row, index) =>
-      row.id !== id
-        ? row
-        : runnerChanged && this.preselects
-          ? this.preselectedRow({ id, selection, context: null }, index, patch)
-          : { ...row, selection },
-    );
+    this.currentRows = this.currentRows.map((row) => (row.id === id ? { ...row, selection } : row));
+    // A runner change can move lineages between same-runner rows: allocate them again in row
+    // order, so no two rows share one, and preselect every row whose lineage changed.
+    if (runnerChanged && this.preselects)
+      this.currentRows = this.currentRows.map((row, index) => {
+        const linked = this.linkedRow(row, index);
+        const sameLineage =
+          (linked.context && reviewLineageKey(linked.context)) ===
+          (row.context && reviewLineageKey(row.context));
+        return row.id === id || !sameLineage
+          ? this.preselectedRow(row, index, row.id === id ? patch : {})
+          : linked;
+      });
     this.changed();
   }
   setRunner(id: number, runner: string): void {
@@ -379,8 +394,12 @@ export class ReviewDispatchViewModel {
   }
   toReviewContext(): ReviewRequestContext | undefined {
     if (this.currentContext.workflow === 'qa') return undefined;
+    // A person's COLD at the gate stays in its lineage (ADR-063 Amendment 5); elsewhere only a
+    // WARM row continues one.
     const reviewLineages = this.currentRows.map((row) =>
-      row.selection.mode === 'warm' && row.context ? { ...row.context } : null,
+      row.context && (row.selection.mode === 'warm' || this.currentContext.lineageOptions)
+        ? { ...row.context }
+        : null,
     );
     return reviewLineages.some(Boolean) ? { reviewLineages } : undefined;
   }

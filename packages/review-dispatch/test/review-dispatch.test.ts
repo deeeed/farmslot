@@ -441,15 +441,101 @@ test('a gate request preselects each row runner latest available lineage in WARM
   vm.setRunner(vm.rows[2].id, 'claude');
   assert.equal(vm.rows[2].selection.mode, 'cold');
   assert.match(vm.rows[2].note ?? '', /different slot/);
+  // The COLD row stays in its lineage too (ADR-063 Amendment 5).
   assert.deepEqual(vm.toRequestPayload().context, {
     reviewLineages: [
       { reviewId: 'latest-codex', familyId: 'family-a' },
       { reviewId: 'older-codex', familyId: 'family-a' },
-      null,
+      { reviewId: 'claude', familyId: 'family-a' },
     ],
   });
   vm.setMode(vm.rows[2].id, 'warm');
   assert.equal(vm.toRequestPayload().context?.reviewLineages[2]?.reviewId, 'claude');
+});
+
+test('a person choosing COLD at the gate keeps the review in its lineage', () => {
+  const vm = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['request-review'],
+      defaults: { runner: 'codex' },
+      lineageOptions: [
+        {
+          context: { reviewId: 'lineage-a', familyId: 'family-a' },
+          runner: 'codex',
+          model: null,
+          effort: null,
+          reviewedAt: '2026-10-20T12:00:00Z',
+        },
+      ],
+    },
+  });
+  assert.equal(vm.rows[0].selection.mode, 'warm');
+  vm.setMode(vm.rows[0].id, 'cold');
+  assert.deepEqual(vm.toRequestPayload(), {
+    runner: 'codex',
+    model: null,
+    effort: null,
+    mode: 'cold',
+    context: { reviewLineages: [{ reviewId: 'lineage-a', familyId: 'family-a' }] },
+  });
+  // Outside a gate, a COLD row starts a new review as before.
+  const dispatch = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['request-review'],
+      reviewContext: { reviewLineages: [lineage] },
+    },
+    sequence: [cold],
+  });
+  assert.equal(dispatch.toRequestPayload().context, undefined);
+});
+
+test('a runner change reallocates gate lineages so no two rows share one', () => {
+  const option = (reviewId: string, runner: string, reviewedAt: string) => ({
+    context: { reviewId, familyId: 'family-a' },
+    runner,
+    model: null,
+    effort: null,
+    reviewedAt,
+  });
+  const vm = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['request-review'],
+      allowSequence: true,
+      defaults: { runner: 'claude' },
+      lineageOptions: [
+        option('claude-lineage', 'claude', '2026-10-20T10:00:00Z'),
+        option('codex-lineage', 'codex', '2026-10-20T11:00:00Z'),
+      ],
+    },
+  });
+  vm.addRow({ runner: 'codex' });
+  assert.deepEqual(
+    vm.rows.map((row) => [row.context?.reviewId ?? null, row.selection.mode]),
+    [
+      ['claude-lineage', 'warm'],
+      ['codex-lineage', 'warm'],
+    ],
+  );
+  // The first row takes codex's only lineage; the second row is now a new COLD review.
+  vm.setRunner(vm.rows[0].id, 'codex');
+  assert.deepEqual(
+    vm.rows.map((row) => [row.context?.reviewId ?? null, row.selection.mode]),
+    [
+      ['codex-lineage', 'warm'],
+      [null, 'cold'],
+    ],
+  );
+  assert.equal(vm.valid, true);
+  // A WARM row moved to a runner with no lineage starts a new COLD review.
+  vm.setRunner(vm.rows[0].id, 'grok');
+  assert.deepEqual(
+    vm.rows.map((row) => [row.context?.reviewId ?? null, row.selection.mode]),
+    [
+      [null, 'cold'],
+      ['codex-lineage', 'warm'],
+    ],
+  );
+  assert.equal(vm.valid, true);
 });
 
 test('gate lineages arriving after the picker was built preselect its default rows', () => {
