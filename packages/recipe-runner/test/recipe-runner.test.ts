@@ -2324,6 +2324,7 @@ function fakeDomPage(document: FakeDocument): { page: CdpWebPage; mouse: string[
     }),
   });
   const page = new CdpWebPage({
+    close() {},
     async call(method: string, params: Record<string, unknown> = {}) {
       if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'frame' } } };
       if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
@@ -2353,7 +2354,7 @@ function hudTransport(page: CdpWebPage): ReturnType<typeof createCdpWebUiTranspo
   });
 }
 
-test('CDP app.hud preserves intent for two-line layout and caps only auxiliary text in a closed shadow root', async () => {
+test('CDP app.hud preserves the whole intent and caps only auxiliary text in a closed shadow root', async () => {
   const document = new FakeDocument();
   const { page } = fakeDomPage(document);
   const transport = hudTransport(page);
@@ -2381,8 +2382,16 @@ test('CDP app.hud preserves intent for two-line layout and caps only auxiliary t
     const root = document.shadowRoots.get(host)!;
     // Every node is a div, and every recipe value is a text node.
     assert.ok(root.descendants().every((node) => node.tagName === 'DIV'));
-    const [badge, body] = root.children[0]!.children;
-    assert.equal(badge!.textContent, 'RUN 2/5');
+    const [body, progress] = root.children[0]!.children;
+    assert.equal(progress!.textContent, '2/5');
+    const intent = body!.children.find(
+      (line) => line.getAttribute('data-farmslot-hud-intent') === '',
+    );
+    for (const clip of ['WebkitLineClamp', 'textOverflow', 'maxHeight', 'overflow'])
+      assert.equal(intent!.style[clip], undefined, `the intent sets ${clip}`);
+    assert.deepEqual([intent!.style.fontSize, intent!.style.lineHeight], ['16px', '20px']);
+    assert.equal(host.style.maxHeight, undefined);
+    assert.equal(host.style.overflow, undefined);
     return body!.children.map((line) => line.textContent);
   };
 
@@ -2395,6 +2404,66 @@ test('CDP app.hud preserves intent for two-line layout and caps only auxiliary t
     `${'b'.repeat(178)}😀…`,
     markup,
     capped,
+  ]);
+});
+
+test('CDP app.hud widens the card and shows the step that just finished across page connections', async () => {
+  const document = new FakeDocument();
+  // getPage connects a new page per action, as the command-center runner does.
+  const transport = createCdpWebUiTransport({ getPage: async () => fakeDomPage(document).page });
+  const draw = async (node: Record<string, unknown>, nodeId: string) => {
+    const display = { layout: 'card' };
+    await transport.execute('app.hud', { display, progress: { current: 1, total: 2 }, ...node }, {
+      nodeId,
+    } as never);
+    const host = document.getElementById('farmslot-recipe-hud')!;
+    const [body] = document.shadowRoots.get(host)!.children[0]!.children;
+    return { host, lines: body!.children };
+  };
+  const texts = async (node: Record<string, unknown>, nodeId: string) =>
+    (await draw(node, nodeId)).lines.map((line) => line.textContent);
+
+  const { host } = await draw({ intent: 'Open the market', status: 'running' }, 'open');
+  assert.equal(host.style.width, '500px');
+  assert.equal(host.style.maxWidth, 'min(500px, calc(100vw - 16px))');
+  assert.deepEqual(await texts({ intent: 'Open the market', status: 'pass' }, 'open'), [
+    'Open the market',
+  ]);
+  const { lines } = await draw({ intent: 'Close the position', status: 'running' }, 'close');
+  assert.deepEqual(
+    lines.map((line) => line.textContent),
+    ['Close the position', '✓ Open the market'],
+  );
+  assert.deepEqual(
+    [lines[1]!.style.color, lines[1]!.style.fontSize, lines[1]!.style.whiteSpace],
+    ['rgba(255,255,255,0.55)', '11px', 'nowrap'],
+  );
+  const failed = await draw(
+    { intent: 'Close the position', status: 'fail', error: 'Selector not found' },
+    'close',
+  );
+  // A failing step stays the main line, in the fail colour, rather than repeating below.
+  assert.deepEqual(
+    failed.lines.map((line) => line.textContent),
+    ['Close the position', 'error: Selector not found'],
+  );
+  assert.equal(failed.lines[0]!.style.color, '#ff8a8a');
+  const done = await draw(
+    { text: 'Recipe failed', status: 'fail', progress: { complete: true } },
+    'recipe-complete',
+  );
+  assert.deepEqual(
+    done.lines.map((line) => line.textContent),
+    ['Recipe failed'],
+  );
+  assert.equal(done.lines[0]!.style.color, '#ff8a8a');
+  assert.deepEqual(await texts({ intent: 'Open the market', status: 'running' }, 'open'), [
+    'Open the market',
+  ]);
+  await texts({ intent: 'Open the market', status: 'pass' }, 'open');
+  await transport.execute('app.hud', { clear: true }, { nodeId: 'clear' } as never);
+  assert.deepEqual(await texts({ intent: 'Close the position', status: 'running' }, 'close'), [
+    'Close the position',
   ]);
 });
 

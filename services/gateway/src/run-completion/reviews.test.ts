@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import type { ReviewStatus } from '@farmslot/protocol';
 
-import { materializeReviewArtifacts } from './reviews.js';
+import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 import { makeRun } from './test-fixtures.js';
 
 test('materializeReviewArtifacts coalesces review retry attempts', async () => {
@@ -165,4 +165,53 @@ test('completed pipeline materialization drops a stale pending record', async ()
     ],
   });
   assert.equal((await materializeReviewArtifacts(run))[0]?.verdict, 'pass');
+});
+
+test('mirrored review loops add no attempt the review already records', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'review-augment-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const review: ReviewStatus = {
+    id: 'review-run-1-dispatch',
+    source: 'dispatch',
+    mode: 'cold',
+    loopNumber: 2,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    maxRetries: 1,
+    attempts: [
+      {
+        mode: 'cold',
+        loopNumber: 2,
+        verdict: 'issues',
+        unresolvedCount: 1,
+        completedAt: '2026-10-20T01:00:00.000Z',
+      },
+    ],
+  };
+  for (const loop of [1, 2]) {
+    const dir = path.join(root, 'artifacts', review.id, `review-loop-${loop}`);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, 'review-result.json'),
+      JSON.stringify({ schemaVersion: 1, verdict: 'issues', issues: [], unresolvedCount: 1 }),
+    );
+    await writeFile(
+      path.join(dir, 'review-diff-stat.json'),
+      JSON.stringify({ capturedAt: `2026-10-20T00:${loop}0:00.000Z` }),
+    );
+  }
+
+  const [augmented] = await augmentReviewAttemptsFromArtifacts(
+    makeRun({ taskFile: path.join(root, 'TASK.md') }),
+    [review],
+  );
+
+  assert.deepEqual(
+    augmented!.attempts?.map((attempt) => [attempt.loopNumber, attempt.completedAt]),
+    [
+      [1, '2026-10-20T00:10:00.000Z'],
+      [2, '2026-10-20T01:00:00.000Z'],
+    ],
+    'loop 1 is recovered from its artifacts; recorded loop 2 is not counted twice',
+  );
 });

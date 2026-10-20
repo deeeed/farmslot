@@ -151,7 +151,10 @@ exclude legacy bytes to create apparent capacity. Admission reserves all selecte
 media for a capture together; it does not rescan those trees for each media file.
 
 Capture and commit the report, manifests, ledger, trace/timeline and review
-metadata before media admission. Media quota exhaustion MUST NOT discard or hide
+metadata before media admission. Review metadata includes the result artifact
+of every publish-gate review, whether the pipeline, a dispatch or a human gate
+started it: prerequisite selection reads those results only from the bundle.
+Media quota exhaustion MUST NOT discard or hide
 a produced report: commit the available report/metadata with explicit missing
 media, then retry media capture after capacity recovery. A protected-metadata
 reservation failure refuses admission before new work can rely on that capacity;
