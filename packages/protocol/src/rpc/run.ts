@@ -628,8 +628,16 @@ export interface RunResolveDecisionParams {
   actionId: string;
   /** Written human explanation, accepted only by evidence-attested publish approval. */
   evidenceAttestationReason?: string;
-  /** Written reason for a result decision; `accept-result` requires one. */
+  /**
+   * Written reason for a result decision (`accept-result` requires one) or for accepting
+   * review findings (`approve-publish-unresolved` requires one).
+   */
   reason?: string;
+  /**
+   * The gate readiness `findingsDigest` the client showed. `approve-publish-unresolved`
+   * requires it and is refused when the head's open findings differ (ADR-065 Amendment 8).
+   */
+  findingsDigest?: string;
   /** Optional completed failure-triage assessment consulted for this choice. */
   triageAssessmentId?: string;
   selectionData?: Record<string, unknown>;

@@ -10,6 +10,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   buildRunResolveDecisionParams,
   Methods,
   withArtifactBundleDigest,
@@ -805,6 +806,9 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           actionId,
           ...(actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
             ? { evidenceAttestationReason: this._evidenceAttestationReason }
+            : {}),
+          ...(actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION
+            ? { reason: this._evidenceAttestationReason }
             : {}),
           ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
           publicationTarget: this._publicationTarget,

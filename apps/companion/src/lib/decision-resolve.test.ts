@@ -3,13 +3,14 @@ import test from 'node:test';
 
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   createReviewCuration,
   Methods,
   type ReadyGatePayload,
   type ReviewGatePayload,
 } from '@farmslot/protocol';
 
-import { decisionResolveRequest } from './decision-resolve';
+import { decisionResolveRequest, gateActionReasons } from './decision-resolve';
 
 test('native attestation requires the run and sends the shared reason and package identity', () => {
   const action = APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
@@ -162,5 +163,45 @@ test('a result decision sends its written reason with run.resolveDecision', () =
   assert.equal(
     (request.params as { reason?: string }).reason,
     'Known findings on a comparison lane.',
+  );
+});
+
+test('accepting review findings sends the typed reason and the digest of the findings shown', () => {
+  const accepting: ReadyGatePayload = {
+    kind: 'ready',
+    prNumber: null,
+    repo: null,
+    diffStat: { files: 0, additions: 0, deletions: 0 },
+    workerReport: '',
+    branch: 'branch',
+    gateReadiness: {
+      state: 'not-ready',
+      identity: { runId: 'run', generation: 1 },
+      reasons: [],
+      findings: [{ reviewId: 'review', file: 'src/a.ts', description: 'Open finding' }],
+      findingsDigest: 'sha256:shown',
+    },
+  };
+  const decision = {
+    id: 'gate',
+    payload: accepting,
+    runMeta: { runId: 'run', flowType: 'dev' as const, ticketOrPr: 'TAT-1' },
+  };
+  const reasons = gateActionReasons(APPROVE_PUBLISH_UNRESOLVED_ACTION, 'The owner accepts it.');
+  const { params } = decisionResolveRequest(
+    decision,
+    APPROVE_PUBLISH_UNRESOLVED_ACTION,
+    null,
+    undefined,
+    reasons.evidenceAttestationReason,
+    reasons.reason,
+  );
+  assert.deepEqual(reasons, { reason: 'The owner accepts it.' });
+  assert.deepEqual(gateActionReasons('hold', 'ignored'), {});
+  assert.equal('reason' in params && params.reason, 'The owner accepts it.');
+  assert.equal('findingsDigest' in params && params.findingsDigest, 'sha256:shown');
+  assert.throws(
+    () => decisionResolveRequest({ id: 'gate' }, APPROVE_PUBLISH_UNRESOLVED_ACTION),
+    /Load the publish run before accepting review findings/,
   );
 });

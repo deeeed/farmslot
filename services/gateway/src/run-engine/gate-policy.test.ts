@@ -616,9 +616,11 @@ test('exhausted extra-review cannot bypass review subject drift', () => {
     reviews: [exhausted],
     preparedPackage: { headSha: 'abc1234', reviewSubjectHash: 'subject-new' },
   });
+  // Defined with every package; the gate readiness withholds it while the reviewed subject
+  // differs from the package (ADR-065 Amendment 8).
   assert.equal(
     actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
-    false,
+    true,
   );
   assert.equal(
     actions.some((action) => action.id === 'continue-review-fix'),

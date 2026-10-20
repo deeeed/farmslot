@@ -88,10 +88,24 @@ export interface RunGateInputIdentity {
   packageHash?: string | null;
 }
 
+/** An open finding at the package head, as its review's structured result recorded it. */
+export interface GateReviewFinding {
+  reviewId: string;
+  file: string;
+  line?: number;
+  description: string;
+}
+
 export interface RunGateReadiness {
   state: 'collecting' | 'not-ready' | 'ready';
   identity: RunGateInputIdentity;
   reasons: RunGatePrerequisiteReason[];
+  /**
+   * The head's open findings, present only when every review reporting one returned a
+   * valid structured result. Accepting them echoes `findingsDigest` (ADR-065 Amendment 8).
+   */
+  findings?: GateReviewFinding[];
+  findingsDigest?: string;
 }
 
 /** Gate payloads whose advancing actions require the shared prerequisite evaluation. */

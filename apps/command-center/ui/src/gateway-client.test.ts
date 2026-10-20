@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import test, { type TestContext } from 'node:test';
+import test from 'node:test';
 
+import { installFakeGateway } from './testing/fake-gateway.js';
 import { initializeDesktopConnection } from './desktop-connection.js';
 import {
   GATEWAY_SESSION_EXPIRY_STORAGE_KEY,
@@ -8,87 +9,9 @@ import {
   GATEWAY_TOKEN_STORAGE_KEY,
 } from './gateway-url.js';
 
-/** Browser globals and a socket whose gateway answers auth.connect only. */
-function installGatewayGlobals(t: TestContext) {
-  const keys = ['window', 'localStorage', 'location', 'document', 'WebSocket'] as const;
-  const descriptors = keys.map(
-    (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
-  );
-  const store = new Map<string, string>();
-  class Socket extends EventTarget {
-    static OPEN = 1;
-    static CONNECTING = 0;
-    static instances: Socket[] = [];
-    static holdAuth = false;
-    static tokens: unknown[] = [];
-    readyState = 0;
-    constructor() {
-      super();
-      Socket.instances.push(this);
-      queueMicrotask(() => {
-        this.readyState = 1;
-        this.dispatchEvent(new Event('open'));
-      });
-    }
-    send(text: string) {
-      const request = JSON.parse(text);
-      if (request.method !== 'auth.connect') return;
-      Socket.tokens.push(request.params?.token);
-      if (Socket.holdAuth) return;
-      queueMicrotask(() =>
-        this.dispatchEvent(
-          new MessageEvent('message', {
-            data: JSON.stringify({
-              type: 'res',
-              id: request.id,
-              ok: true,
-              payload: {
-                ok: true,
-                capabilities: { workspaceAccess: 'farm' },
-                principal: {
-                  id: 'operator',
-                  subjectKind: 'service',
-                  displayName: 'Operator',
-                  roles: [{ role: 'admin', scope: { kind: 'global' } }],
-                },
-              },
-            }),
-          }),
-        ),
-      );
-    }
-    close() {
-      this.readyState = 3;
-    }
-    gatewayRestart() {
-      this.readyState = 3;
-      this.dispatchEvent(new Event('close'));
-    }
-  }
-  const values = {
-    window: {},
-    localStorage: {
-      getItem: (key: string) => store.get(key) ?? null,
-      setItem: (key: string, value: string) => store.set(key, value),
-      removeItem: (key: string) => store.delete(key),
-    },
-    location: { protocol: 'http:', host: 'localhost:1234', hash: '', hostname: 'localhost' },
-    document: { cookie: '' },
-    WebSocket: Socket,
-  };
-  for (const key of keys)
-    Object.defineProperty(globalThis, key, { configurable: true, value: values[key] });
-  t.after(() => {
-    for (const [key, descriptor] of descriptors) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else Reflect.deleteProperty(globalThis, key);
-    }
-  });
-  return { Socket, store };
-}
-
 test('sign-out disconnects, rejects pending work, survives refresh and allows deliberate login', async (t) => {
-  const { Socket, store } = installGatewayGlobals(t);
+  const fakeGateway = installFakeGateway(t, 'operator');
+  const { store } = fakeGateway;
   const { GatewayClient, gateway } = await import('./gateway-client.js');
   let client = new GatewayClient();
   t.after(() => {
@@ -113,42 +36,42 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
   const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
   await flush();
   assert.equal(client.connectionState, 'connected');
-  assert.equal(Socket.tokens.at(-1), 'first-device-secret');
+  assert.equal(fakeGateway.tokens.at(-1), 'first-device-secret');
   assert.equal(store.get(GATEWAY_SESSION_EXPIRY_STORAGE_KEY), originalExpiry);
   // A gateway deploy can interrupt auth.connect itself, not just an established socket.
-  Socket.holdAuth = true;
-  Socket.instances.at(-1)!.gatewayRestart();
+  fakeGateway.holdAuth = true;
+  fakeGateway.restart();
   client.reconnect();
   await flush();
   assert.equal(client.connectionState, 'connecting');
-  Socket.instances.at(-1)!.gatewayRestart();
+  fakeGateway.restart();
   await flush();
-  Socket.holdAuth = false;
+  fakeGateway.holdAuth = false;
   client.reconnect();
   await flush();
   assert.equal(client.connectionState, 'connected');
   assert.equal(client.authenticatedPrincipalId, 'operator');
-  assert.equal(Socket.tokens.at(-1), 'first-device-secret');
+  assert.equal(fakeGateway.tokens.at(-1), 'first-device-secret');
   assert.equal(store.get(GATEWAY_SESSION_EXPIRY_STORAGE_KEY), originalExpiry);
-  const socketCountBeforeSignOut = Socket.instances.length;
+  const socketCountBeforeSignOut = fakeGateway.sockets.length;
   const pending = assert.rejects(client.request('pending.work'), /Signed out/);
   await client.signOut();
   await pending;
   assert.equal(client.connectionState, 'auth_required');
   assert.equal(client.authenticatedPrincipalId, null);
   assert.equal(client.workspaceAccess, 'none');
-  assert.equal(Socket.instances[0].readyState, 3);
+  assert.equal(fakeGateway.sockets[0].readyState, 3);
   assert.equal(store.has(GATEWAY_TOKEN_STORAGE_KEY), false);
   assert.equal(store.has(GATEWAY_SESSION_EXPIRY_STORAGE_KEY), false);
   assert.equal(store.get(GATEWAY_SIGNED_OUT_STORAGE_KEY), 'true');
   client.connect();
   client.reconnect();
-  assert.equal(Socket.instances.length, socketCountBeforeSignOut);
+  assert.equal(fakeGateway.sockets.length, socketCountBeforeSignOut);
   const refreshed = new GatewayClient();
   t.after(() => refreshed.disconnect());
   refreshed.connect();
   assert.equal(refreshed.connectionState, 'auth_required');
-  assert.equal(Socket.instances.length, socketCountBeforeSignOut);
+  assert.equal(fakeGateway.sockets.length, socketCountBeforeSignOut);
   await refreshed.setAuthCredentials({ token: 'replacement-device-secret' });
   const reconnected = new Promise<void>((resolve) =>
     refreshed.onConnectionChange((s) => {
@@ -280,7 +203,7 @@ test('one-use hosted invitations are distinct from stored bearer credentials', a
 });
 
 test('a request the gateway never answers rejects as a typed timeout', async (t) => {
-  installGatewayGlobals(t);
+  installFakeGateway(t);
   const { GatewayClient } = await import('./gateway-client.js');
   const { GatewayRequestTimeoutError } = await import('./gateway-request-timeout.js');
   const client = new GatewayClient();

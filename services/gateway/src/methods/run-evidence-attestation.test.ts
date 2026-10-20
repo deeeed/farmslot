@@ -6,6 +6,7 @@ import { mock, test } from 'node:test';
 
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   buildRunResolveDecisionParams,
   type Principal,
   type ReadyGatePrPackage,
@@ -38,6 +39,7 @@ const { postProcessPRBody, replaceMarkdownSection } =
   await import('../run-completion/publication-artifacts.js');
 const { buildPublishGateReviewStatus } = await import('../run-engine/gate-policy.js');
 const { runWithSessionOriginator } = await import('../security/work-originator.js');
+const { assertAcceptedFindingsCurrent } = await import('../run-engine/gate-prerequisites.js');
 
 const approver = { principalId: 'operator', displayName: 'Operator', credentialId: 'credential' };
 
@@ -362,4 +364,105 @@ test('caller-supplied attestation receipt cannot consume a gate', async (t) => {
     /gateway-owned/,
   );
   assert.equal(getRun(f.run.id)!.decisions[0].resolvedAt, undefined);
+});
+
+/** The gate as TAT-4006's: one open finding at the head, review rounds spent. */
+async function acceptFixture(t: test.TestContext) {
+  const f = await fixture(t);
+  const readiness = {
+    state: 'not-ready' as const,
+    identity: f.readiness.identity,
+    reasons: [
+      {
+        code: 'review-fix-required',
+        prerequisite: 'review' as const,
+        message: 'Review rounds spent: 1 issue open',
+        actionId: 'hold',
+        allowedReviewOverrides: [APPROVE_PUBLISH_UNRESOLVED_ACTION],
+      },
+    ],
+    findings: [
+      {
+        reviewId: 'review-8',
+        file: 'acceptance-status.json',
+        line: 10,
+        description: 'Owner gate.',
+      },
+    ],
+    findingsDigest: 'sha256:shown',
+  };
+  f.decision.actions = [
+    { id: APPROVE_PUBLISH_UNRESOLVED_ACTION, label: 'Accept', style: 'danger' },
+    { id: 'hold', label: 'Hold', style: 'secondary' },
+  ];
+  f.decision.payload = {
+    ...f.decision.payload!,
+    gateReadiness: readiness,
+  } as RunDecision['payload'];
+  updateRun(f.run.id, { decisions: [f.decision] });
+  const params = buildRunResolveDecisionParams({
+    runId: f.run.id,
+    decision: f.decision,
+    actionId: APPROVE_PUBLISH_UNRESOLVED_ACTION,
+    reason: 'The owner accepts the descoped clause.',
+  });
+  const person: Principal = {
+    id: 'operator',
+    subject: { type: 'person', displayName: 'Operator' },
+    roles: [],
+  };
+  const resolve = (
+    request: typeof params,
+    dependencies: Parameters<typeof runResolveDecision>[2] = {},
+  ) =>
+    runWithSessionOriginator(person, () =>
+      runResolveDecision(request, () => {}, {
+        assertGatePrerequisites: async () => readiness,
+        resumeRun: async () => {},
+        ...dependencies,
+      }),
+    );
+  return { ...f, readiness, params, resolve };
+}
+
+test('accepting review findings needs a person, a written reason and the shown findings', async (t) => {
+  const f = await acceptFixture(t);
+  assert.equal(f.params.findingsDigest, 'sha256:shown');
+  await assert.rejects(f.resolve(f.params), /authenticated human publish gate/);
+  const person = { authorizeEvidenceAttestation: () => approver };
+  await assert.rejects(f.resolve({ ...f.params, reason: ' ' }, person), /written reason/);
+  await assert.rejects(f.resolve({ ...f.params, findingsDigest: undefined }, person), /digest/);
+  await assert.rejects(
+    f.resolve({ ...f.params, findingsDigest: 'sha256:stale' }, person),
+    /findings changed since they were shown/,
+  );
+  assert.equal(getRun(f.run.id)!.decisions[0].resolvedAt, undefined);
+  assert.equal(getRun(f.run.id)!.decisions[0].publicationApproval, undefined);
+});
+
+test('accepted findings are recorded with the reason, head and approver, and disclosed in the PR', async (t) => {
+  const f = await acceptFixture(t);
+  const result = await f.resolve(f.params, { authorizeEvidenceAttestation: () => approver });
+  const saved = result.run.decisions[0]!;
+  assert.equal(saved.resolvedAction, APPROVE_PUBLISH_UNRESOLVED_ACTION);
+  assert.deepEqual(saved.publicationApproval?.acceptedFindings, {
+    findings: f.readiness.findings,
+    digest: 'sha256:shown',
+  });
+  assert.equal(saved.publicationApproval?.reason, 'The owner accepts the descoped clause.');
+  assert.equal(saved.publicationApproval?.headSha, f.prepared.headSha);
+  assert.deepEqual(saved.publicationApproval?.approver, approver);
+  const body = withPublicationProvenance(result.run, '## Summary\n\nChange.');
+  assert.match(body, /## Accepted review findings/);
+  assert.match(body, /Accepted by Operator \(operator\)/);
+  assert.match(body, /The owner accepts the descoped clause\./);
+  assert.match(body, /acceptance-status\.json:10: Owner gate\. \(review review-8\)/);
+  assert.equal(withPublicationProvenance(result.run, body), body);
+  // Finalize and replay refuse once the head's open findings differ from the accepted set.
+  assertAcceptedFindingsCurrent(saved, f.readiness);
+  for (const readiness of [undefined, { ...f.readiness, findingsDigest: 'sha256:other' }])
+    assert.throws(
+      () => assertAcceptedFindingsCurrent(saved, readiness),
+      /no longer match the open findings/,
+    );
 });

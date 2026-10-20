@@ -2,7 +2,7 @@
 // a completion prerequisite did not accept waits in `needs-decision` for one
 // person's choice (send back, accept, close) instead of ending `failed`.
 
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import {
   type DecisionAction,
@@ -23,6 +23,7 @@ import {
   supersedePendingResultDecisions,
 } from '@farmslot/protocol';
 
+import { findingsDigest } from '../core/findings-digest.js';
 import type { ReviewResult } from '../review/orchestrator.js';
 import { completionVerificationMode } from '../run-engine/push-verification.js';
 import {
@@ -130,7 +131,7 @@ function acceptState(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionAct
     stoppedAt !== 'review'
       ? 'A refused completion prerequisite cannot be accepted. Send it back once it is fixed, or close it.'
       : run.completionPolicy !== 'artifact-only'
-        ? 'The publish gate does not publish a head with open review findings. Send it back or close it.'
+        ? 'Accept settles without publishing; a publishing run publishes only at its gate. Send it back or close it.'
         : run.output?.captureError
           ? 'The report could not be captured. Refresh it before accepting.'
           : undefined;
@@ -182,9 +183,7 @@ export async function buildResultDecision(
     ...(findings ? { findings } : {}),
     ...(refused ? { refusal: refused } : {}),
     delivered: delivered(run, stoppedAt),
-    findingsDigest: `sha256:${createHash('sha256')
-      .update(JSON.stringify(findings ?? refused?.reasons ?? []))
-      .digest('hex')}`,
+    findingsDigest: findingsDigest(findings ?? refused?.reasons ?? []),
     ...(outputReview ? { outputReviewDecisionId: outputReview.id } : {}),
     actions: [
       await sendBackState(run, stoppedAt),

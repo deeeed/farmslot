@@ -74,7 +74,7 @@ import {
 import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
-import { decisionResolveRequest } from '../../lib/decision-resolve';
+import { decisionResolveRequest, gateActionReasons } from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
 import {
@@ -657,13 +657,16 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const resolveAction = useCallback(
     (actionId: string, selectionData?: Record<string, unknown>, reason?: string) => {
       if (!client || !decision) return;
+      const gateReasons = gateActionReasons(actionId, attestationReason);
       if (
-        actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+        (gateReasons.evidenceAttestationReason !== undefined || gateReasons.reason !== undefined) &&
         !isValidEvidenceAttestationReason(attestationReason)
       ) {
         Alert.alert(
           'Written reason required',
-          'Explain the evidence policy attestation before approving.',
+          actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
+            ? 'Explain the evidence policy attestation before approving.'
+            : 'Explain why you accept these findings before publishing.',
         );
         return;
       }
@@ -704,8 +707,8 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           : slotPicker && actionId === 'pick'
             ? { slotId: slotPicker.selectedSlotId }
             : selectionData,
-        actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION ? attestationReason : undefined,
-        reason,
+        gateReasons.evidenceAttestationReason,
+        reason ?? gateReasons.reason,
       );
 
       // Transition ids already on screen. `run.resolveDecision` returns before

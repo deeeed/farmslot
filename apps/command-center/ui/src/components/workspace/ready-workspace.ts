@@ -109,6 +109,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _visualJudgmentFeedback?: VisualJudgmentFeedback;
   @state() private _visualReviewReasons: Record<string, string> = {};
   @state() private _attestingDecisionId: string | null = null;
+  @state() private _acceptingFindingsDecisionId: string | null = null;
   @state() private _evidenceLoading = true;
   @state() private _evidenceError = '';
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
@@ -591,6 +592,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       attesting: this._attestingDecisionId === this.decision?.id,
       chooseAttestation: () => {
         this._attestingDecisionId = this.decision?.id ?? null;
+      },
+      acceptingFindings: this._acceptingFindingsDecisionId === this.decision?.id,
+      chooseAcceptFindings: () => {
+        this._acceptingFindingsDecisionId = this.decision?.id ?? null;
       },
       setAttestationReason: (value) => this._setEvidenceAttestationReason(value),
       acting: this._acting || this._refreshingPackage,

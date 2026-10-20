@@ -16,6 +16,7 @@ import type { RunOverrideClaimParams, RunResolveDecisionParams } from '../rpc/ru
 
 import { evidenceAttestationReason } from './publish-approval.js';
 import { reviewPostingFingerprint } from './review-curation.js';
+import { APPROVE_PUBLISH_UNRESOLVED_ACTION } from './review-retries.js';
 
 /** Candidate selection shared by the desktop and native decision renderers. */
 export function slotPickerViewModel(payload: SlotPickerPayload, selectedSlotId?: string | null) {
@@ -37,7 +38,10 @@ export interface RunDecisionActionInput {
   recipeRunId?: string;
   claimOverrideReason?: string;
   evidenceAttestationReason?: string;
-  /** Written reason for a result decision; `accept-result` requires one (ADR-065 Amendment 7). */
+  /**
+   * Written reason for a result decision (`accept-result`, ADR-065 Amendment 7) or for
+   * accepting review findings (`approve-publish-unresolved`, Amendment 8); both require one.
+   */
   reason?: string;
   selectionData?: Record<string, unknown>;
   resourcePosture?: ResourcePostureGateChoice;
@@ -128,7 +132,10 @@ export function buildRunResolveDecisionParams(input: {
   decision: Pick<RunDecision, 'id' | 'payload'>;
   actionId: string;
   evidenceAttestationReason?: string;
-  /** Written reason for a result decision; `accept-result` requires one (ADR-065 Amendment 7). */
+  /**
+   * Written reason for a result decision (`accept-result`, ADR-065 Amendment 7) or for
+   * accepting review findings (`approve-publish-unresolved`, Amendment 8); both require one.
+   */
   reason?: string;
   triageAssessmentId?: string;
   publicationTarget?: PublicationTarget;
@@ -169,12 +176,18 @@ export function buildRunResolveDecisionParams(input: {
   // Send back derives its Issues from the frozen gate decision; the gateway refuses selection data.
   if (input.actionId === SEND_BACK_TO_AGENT_ACTION) selectionData = undefined;
   const reason = input.reason?.trim();
+  // Accepting findings binds to the ones this client showed.
+  const findingsDigest =
+    input.actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION
+      ? payload?.gateReadiness?.findingsDigest
+      : undefined;
   return {
     runId: input.runId,
     decisionId: input.decision.id,
     actionId: input.actionId,
     ...(attestationReason !== undefined ? { evidenceAttestationReason: attestationReason } : {}),
     ...(reason ? { reason } : {}),
+    ...(findingsDigest ? { findingsDigest } : {}),
     ...(input.triageAssessmentId !== undefined
       ? { triageAssessmentId: input.triageAssessmentId }
       : {}),

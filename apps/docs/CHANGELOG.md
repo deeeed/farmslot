@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- The fail-closed run lifecycle reference describes accepting review findings at the publish gate (ADR-065 Amendment 8).
 - The retained run artifacts reference says review metadata includes every publish-gate review's result artifact, whatever started the review.
 - The Recipe Protocol v1 intent section follows ADR-034 Amendment 7 (HUD readability): the current intent is the main line, shown whole in up to three lines on web and two on native, with one discreet line for the step that just finished.
 - The Recipe Protocol v1 reference's Amendment 6 section states that a task action manifest adds to the action catalog, with its declarations first, and that its run lists them in `summary.json` `taskActions`.
