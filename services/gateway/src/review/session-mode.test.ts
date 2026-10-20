@@ -142,6 +142,31 @@ test('a pre-publish run registers its validated reviewer and a WARM re-review co
     session: { mode: 'cold' as const, continuity: 'fresh' as const, reviewId: scope.reviewId },
   }));
   assert.equal(persistedWarmReviewerSession(prePublish, run)?.lastReviewedHeadSha, '1111111');
+  // A refused request's row ran no session; the rebuild matches its earlier validated attempt.
+  run.engineState.publishGate!.reviews = run.engineState.publishGate!.reviews!.map((review) => ({
+    ...review,
+    verdict: 'failed' as const,
+    unresolvedCount: 0,
+    reviewerSessionId: null,
+    reviewedHeadSha: undefined,
+    session: { mode: 'warm' as const, continuity: 'refused' as const, reviewId: scope.reviewId },
+    attempts: [
+      {
+        mode: 'cold' as const,
+        session: { ...review.session!, sessionId: session.runnerSessionId },
+        loopNumber: 1,
+        verdict: 'issues' as const,
+        unresolvedCount: 1,
+        reviewSnapshot: {
+          source: 'local-git' as const,
+          capturedAt: 'captured',
+          headSha: session.lastReviewedHeadSha,
+        },
+      },
+      { mode: 'warm' as const, loopNumber: 2, verdict: 'failed' as const, unresolvedCount: 0 },
+    ],
+  }));
+  assert.equal(persistedWarmReviewerSession(prePublish, run)?.lastReviewedHeadSha, '1111111');
 });
 
 test('a failed review retires only its own lineage', () => {

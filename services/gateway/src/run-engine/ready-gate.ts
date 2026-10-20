@@ -28,6 +28,7 @@ import {
   reviewRetryCapReason,
   reviewRetryCount,
   type ReviewSelection,
+  type ReviewSessionTrace,
   type ReviewStatus,
   type Run,
   type RunDecision,
@@ -77,6 +78,7 @@ import {
   latestReviewOfLineage,
   reReviewOfStatus,
   reviewLineageId,
+  WarmReviewRefusal,
 } from '../review/session-mode.js';
 import { removeSlotFiles } from '../review/snapshots.js';
 import { resolveWorkerTaskDir } from '../review/templates.js';
@@ -620,11 +622,20 @@ export async function executePublishGateReviewPlan(
       console.warn(
         `[run-engine] run ${runId.slice(0, 8)} — ${source} review ${reviewId} unavailable: ${message}`,
       );
+      // No session ran for this request. The row still names its lineage, and its earlier
+      // attempts keep the lineage's validated result, so a later request can continue it.
+      const session: ReviewSessionTrace | undefined = lineageId
+        ? {
+            mode: planStep.mode,
+            continuity: 'refused',
+            reviewId: lineageId,
+            ...(err instanceof WarmReviewRefusal ? { refusalReason: err.reason } : {}),
+          }
+        : undefined;
       reviewResult = {
         mode: planStep.mode,
         reviewId: lineageId ?? reviewId,
-        // The lineage keeps its last session, so the replaced row still names its lineage.
-        ...(priorReview?.session ? { session: priorReview.session } : {}),
+        ...(session ? { session } : {}),
         runner: requestedRunner,
         model: planStep.model ?? undefined,
         effort: planStep.effort,
@@ -633,9 +644,11 @@ export async function executePublishGateReviewPlan(
         retryCount: 0,
         validationDepth,
         attempts: [
+          ...(priorReview?.attempts ?? []),
           {
-            loopNumber: 1,
+            loopNumber: (priorReview?.attempts?.at(-1)?.loopNumber ?? 0) + 1,
             mode: planStep.mode,
+            ...(session ? { session } : {}),
             verdict: 'failed',
             unresolvedCount: 0,
             reason: `review-unavailable: ${message}`,

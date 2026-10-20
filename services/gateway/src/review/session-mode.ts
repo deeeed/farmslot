@@ -4,10 +4,13 @@ import {
   parseGitHubPullUrl,
   parseGitHubRef,
   prNumberFromRunInput,
+  type ReviewAttempt,
   type ReviewContinuationContext,
   type ReviewGatePayload,
+  type ReviewIssue,
   type ReviewMode,
   type ReviewSessionRefusalReason,
+  type ReviewSessionTrace,
   type ReviewStatus,
   type Run,
 } from '@farmslot/protocol';
@@ -135,18 +138,48 @@ export function latestReviewOfLineage<T extends Pick<ReviewStatus, 'id' | 'sessi
 }
 
 /**
+ * A lineage's last validated result: its row's, or its latest validated attempt's when the row's
+ * request failed or was refused. Such a request ran no session, so its row records none.
+ */
+export function lastValidatedReview(review: ReviewStatus | undefined):
+  | {
+      headSha: string;
+      issues: ReviewIssue[];
+      session?: ReviewSessionTrace;
+      sessionId?: string | null;
+    }
+  | undefined {
+  const results: Array<
+    ReviewAttempt & Pick<ReviewStatus, 'reviewedHeadSha' | 'reviewerSessionId'>
+  > = review ? [review, ...[...(review.attempts ?? [])].reverse()] : [];
+  const result = results.find(
+    (candidate) => candidate.verdict === 'pass' || candidate.verdict === 'issues',
+  );
+  const headSha =
+    result?.reviewSnapshot?.source === 'unavailable'
+      ? undefined
+      : (result?.reviewSnapshot?.headSha ?? result?.reviewedHeadSha);
+  return result && headSha
+    ? {
+        headSha,
+        issues: result.issues ?? [],
+        session: result.session,
+        sessionId:
+          result.reviewerSessionId ?? result.usage?.runnerSessionId ?? result.session?.sessionId,
+      }
+    : undefined;
+}
+
+/**
  * A review's lineage qualifies for a re-review with a validated verdict and a recorded reviewed
  * head (ADR-063 Amendment 5); its findings go to a fallback's fresh session.
  */
 export function reReviewOfStatus(
   review: ReviewStatus | undefined,
 ): ReReviewContinuation | undefined {
-  const head =
-    review?.reviewSnapshot?.source === 'unavailable'
-      ? undefined
-      : (review?.reviewSnapshot?.headSha ?? review?.reviewedHeadSha);
-  return head && (review?.verdict === 'pass' || review?.verdict === 'issues')
-    ? { lastReviewedHeadSha: head, priorIssues: review.issues ?? [] }
+  const validated = lastValidatedReview(review);
+  return validated
+    ? { lastReviewedHeadSha: validated.headSha, priorIssues: validated.issues }
     : undefined;
 }
 
@@ -311,10 +344,9 @@ export function persistedWarmReviewerSession(
       (candidate) =>
         reviewLineageId(candidate) === scope.reviewId &&
         candidate.runner === scope.runner &&
-        ['pass', 'issues'].includes(candidate.verdict) &&
-        candidate.reviewedHeadSha &&
-        candidate.reviewerSessionId,
+        lastValidatedReview(candidate)?.sessionId,
     );
+  const validated = lastValidatedReview(review);
   if (!run.slotId) return null;
   const contexts = [...(run.agentContexts ?? [])].reverse().filter(
     (candidate) =>
@@ -331,8 +363,8 @@ export function persistedWarmReviewerSession(
       candidate.reviewResultValidatedAt &&
       (candidate.runnerSessionCapturedAt || candidate.nativeSession?.acceptedAt) &&
       candidate.runnerSessionId &&
-      (review
-        ? candidate.runnerSessionId === review.reviewerSessionId
+      (validated
+        ? candidate.runnerSessionId === validated.sessionId
         : scope.repository &&
           scope.prNumber &&
           primaryReviewedHeadForSession(run, {
@@ -351,7 +383,7 @@ export function persistedWarmReviewerSession(
   const context = contexts[0];
   if (!context) return null;
   const reviewedHeadSha =
-    review?.reviewedHeadSha ??
+    validated?.headSha ??
     (scope.repository && scope.prNumber
       ? primaryReviewedHeadForSession(run, {
           reviewId: scope.reviewId,

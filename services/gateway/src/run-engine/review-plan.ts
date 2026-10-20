@@ -28,6 +28,7 @@ import {
 
 import {
   assertLineageBelongsToRun,
+  lastValidatedReview,
   lineageContextForRun,
   reReviewOfStatus,
   resolveWarmReviewerSession,
@@ -436,14 +437,15 @@ export async function reviewLineageOptionsForRun(
     latest.set(reviewLineageId(review), review);
   const options: ReviewLineageOption[] = [];
   for (const [reviewId, review] of latest) {
-    const reviewedHeadSha = reReviewOfStatus(review)?.lastReviewedHeadSha;
+    // A refused request keeps its lineage: the earlier validated result names it.
+    const validated = lastValidatedReview(review);
     if (
       !review.runner ||
-      !reviewedHeadSha ||
-      !review.session?.sessionId ||
-      !['fresh', 'resumed'].includes(review.session.continuity)
+      !validated?.session?.sessionId ||
+      !['fresh', 'resumed'].includes(validated.session.continuity)
     )
       continue;
+    const reviewedHeadSha = validated.headSha;
     const context = lineageContextForRun(run, reviewId);
     const selection = {
       runner: normalizeRunner(review.runner),
