@@ -13,10 +13,11 @@ export function assertPublicationBranchPushed(
   runId: string,
 ): void {
   if (push.exitCode === 0) return;
+  // A hook prints its findings on stdout, ahead of its closing hints: keep them in the log.
   console.warn(
-    `[run-completion] run ${runId.slice(0, 8)} — git push output: ${push.stdout.slice(-4000)}`,
+    `[run-completion] run ${runId.slice(0, 8)} — git push output: ${push.stdout.slice(-20_000)}`,
   );
   throw new Error(
-    `git push of ${branch} failed (exit ${push.exitCode}); a pre-push hook or the remote refused it: ${push.stderr.trim().slice(-1500) || 'no error output'}`,
+    `git push of ${branch} failed (exit ${push.exitCode}); the repository's pre-push hook, the remote or the push timeout stopped it (hook output is in the gateway log): ${push.stderr.trim().slice(-1500) || 'no error output'}`,
   );
 }

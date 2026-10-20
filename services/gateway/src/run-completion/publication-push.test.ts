@@ -14,7 +14,7 @@ test('a push the pre-push hook refuses stops publication with its error', () => 
   };
   assert.throws(
     () => assertPublicationBranchPushed(refused, 'TAT-4006-feat', '7721a02b-run'),
-    /git push of TAT-4006-feat failed \(exit 1\); a pre-push hook or the remote refused it: error: failed to push some refs/,
+    /git push of TAT-4006-feat failed \(exit 1\); the repository's pre-push hook, the remote or the push timeout stopped it \(hook output is in the gateway log\): error: failed to push some refs/,
   );
   // A push killed at its timeout fails the same way.
   assert.throws(
