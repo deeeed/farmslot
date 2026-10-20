@@ -183,6 +183,31 @@ while the report remains readable. Do not truncate video, silently drop selected
 files, or evict pinned snapshots to admit a new capture. Operators can change the
 server-owned limits or release history/pins through existing lifecycle operations.
 
+### Settled-run retention
+
+ADR-039 Amendment 2. The gateway MUST run a retention pass every hour. A run is
+removable only when all of these hold:
+
+- it is `done` or `cancelled`, or archived;
+- its latest update, completion or archive time is at least 48 hours old;
+- it has no open decision, an uncleaned review workspace, pending closeout or a
+  held native worker, and holds no slot;
+- it has no pending backlog reconciliation and no operator tags;
+- it has no PR, or its PR is merged or closed. A PR not recorded as merged or
+  closed counts as merged or closed only when the pass read its repository's open
+  PRs and it is not among them. An unreadable or possibly truncated list keeps it.
+
+The pass MUST recheck a run immediately before deleting it, then delete its record
+and session archive. It MUST then remove, when no remaining run references them,
+the run's task directory under a farm task root (`projects/<project>/tasks`,
+`.runs/review-workspace-tasks`), and its review-workspace directory and native
+worker state on the gateway's own node, while it holds review-workspace
+reclamation. It MUST NOT remove another node's storage or a slot checkout. Bundles
+then follow GC above: deleting the run releases its history pin. Task pins whose
+task directory no longer exists are removed once their provenance is 48 hours old.
+A dry run reports the same selection, with entries and bytes per store, and
+changes nothing.
+
 ## Public surface and backfill
 
 The experimental public command is:

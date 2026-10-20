@@ -1991,6 +1991,19 @@ async function archiveRunBody(id: string): Promise<boolean> {
   return true;
 }
 
+/** Run retention removes an archived record and its session archive (ADR-039 Amendment 2). */
+export async function deleteArchivedRun(id: string): Promise<boolean> {
+  try {
+    await unlink(path.join(ARCHIVE_DIR, `${id}.json`));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+  invalidateArchivedRunsCache();
+  await rm(runSessionArchiveDir(id), { recursive: true, force: true });
+  return true;
+}
+
 const CLEANUP_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function cleanupRuns(

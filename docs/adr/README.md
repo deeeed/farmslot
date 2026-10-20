@@ -90,6 +90,8 @@ Companion end to end. ADR-009 has an Accepted
 [conditional file edits amendment](009-slot-workspace.md#amendment-1-2026-10-20-conditional-file-edits)
 that replaces its read-only decision.
 
+ADR-039 has a Proposed [settled-run retention amendment](039-run-portable-bundles.md#amendment-2-2026-10-20-settled-run-retention): an hourly gateway pass deletes done, cancelled and archived runs 48 hours after they settle, with the storage only they own.
+
 ADR-039 has an Accepted [gateway-retained artifact amendment](039-run-portable-bundles.md#amendment-1-2026-10-15-gateway-retained-run-artifacts) and [normative retention specification](../reference/retained-run-artifacts.md). The lead accepted the amendment on 2026-10-15 at `978e2e27`; implementation remains pending.
 
 ADR-062 includes accepted [completed evidence and storage](062-recorded-run-evidence.md#completed-evidence-review-and-run-footprint) design, with implementation pending, and shipped [review curation/results](062-recorded-run-evidence.md#shared-review-curation-and-saved-results). Its [evidence-policy amendment 3](062-recorded-run-evidence.md#amendment-3-2026-10-13-evidence-policy-and-human-attestation) is Accepted under [#1011](https://github.com/deeeed/farmslot/pull/1011). Attested approval shipped there; normal-policy binding rules remain separate implementation.

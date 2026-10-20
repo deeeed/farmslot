@@ -345,3 +345,54 @@ reused slot to invalidate history. One local immutable capture removes that
 read-time dependency. It costs bounded gateway disk and copy work at capture.
 Incomplete historical data remains explicit; retention does not manufacture
 missing proof. Export/import continue to use the same portable bundle format.
+
+## Amendment 2: 2026-10-20 settled-run retention
+
+**Status:** Proposed (lead review requested), 2026-10-20.
+**Related:** [ADR-056](056-runner-session-archive.md) (session archives),
+[ADR-058](058-static-review-and-farm-owned-qa.md) (review workspaces),
+[ADR-062](062-recorded-run-evidence.md) (evidence lifetimes),
+[ADR-065](065-fail-closed-run-lifecycle.md) (settled-run guards).
+**Normative specification:** [Settled-run retention](../reference/retained-run-artifacts.md#settled-run-retention).
+
+### Context
+
+A run kept its record, task directory with recordings, session archive, review
+workspace, native worker state and bundle until an operator deleted it. Archive
+kept them forever, and task pins were never removed. On the dev farm host this
+filled the disk while runs worked: 21 GB free fell to 14 GB in 3.5 hours. The
+owner's rule (2026-10-19) is that completely done runs are cleaned up, with no
+archive.
+
+### Decision
+
+The gateway runs one retention pass every hour. It deletes a run and the storage
+only that run owns when the run is done or cancelled, or archived; settled at
+least 48 hours ago; needs none of its execution storage (no open decision, review
+workspace cleaned, no closeout pending, no held native worker); holds no slot; has
+no pending backlog reconciliation; carries no operator tags; and has no PR, or a
+PR that is merged or closed. Live, gated, blocked and unarchived failed runs are
+never selected. A PR the run does not record as merged or closed counts as open
+unless the pass reads that repository's open PRs and it is not among them; an
+unreadable or possibly truncated list keeps the run.
+
+Deleting the run releases its history pin, so the bundle store's collector then
+removes bundles no remaining run references. The pass removes the run's task
+directory under a farm task root, and its review-workspace directory and native
+worker state on the gateway's own node, when no remaining run references them.
+Task pins whose task directory no longer exists are removed 48 hours after they
+were written. Other nodes' storage and slot checkouts are left to their owners.
+
+### Rationale and consequences
+
+Published PR evidence lives in the project's artifacts repository, so deleting a
+merged or closed run's local bundle leaves its PR intact. Archive becomes a
+48-hour holding state rather than permanent history. Shared caches (review
+repositories and support caches, slot scaffolding) and the bundle store budget
+keep their existing owners. Settled runs with stale open decisions stay until
+those decisions are resolved.
+
+### Public surface
+
+No RPC or protocol change. `services/gateway/scripts/run-retention-plan.ts` is a
+read-only dry run of the pass that lists entries and GB per store.
