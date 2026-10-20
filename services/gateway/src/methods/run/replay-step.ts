@@ -45,8 +45,11 @@ import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import { captureRunOutput } from '../../run-completion/output.js';
 import { retainedMaintenanceStepOutputs } from '../../run-engine/branch-maintenance.js';
+import { pendingDecisionForRun } from '../../run-engine/decision-projection.js';
+import { resolveEngineDecision } from '../../run-engine/engine-decisions.js';
 import {
   hasValidPrNumber,
+  reopenSupersededGateDecisions,
   supersedeStaleHumanGateDecisions,
 } from '../../run-engine/gate-policy.js';
 import {
@@ -884,6 +887,16 @@ const pendingReviewReplays = new Map<
   { flight: ReviewReplayFlight; result: Promise<RunReplayStepResult> }
 >();
 
+/**
+ * Gate decisions superseded by replays of a run that are still in flight. The last of
+ * those replays to finish reopens them when none revived the run, so overlapping
+ * replays cannot strand them (TAT-4158 4237202e, 2026-10-20).
+ */
+const gateReentries = new Map<
+  string,
+  { decisionIds: Set<string>; inFlight: number; revived: boolean }
+>();
+
 export async function runReplayStep(
   params: RunReplayStepParams,
   emit: Emit,
@@ -1296,39 +1309,114 @@ async function replayRunStep(
   const selectionGeneration = existing.engineState?.generation;
   let revived = false;
   let nativeReplayGeneration: number | undefined;
-  let supersededGate: { generation: number; decisionIds: Set<string> } | undefined;
-  // A replay that fails before it revives the run leaves the run as it found it, so
-  // the gate decisions it superseded open again. Otherwise a blocked run is left
-  // with nothing to resolve (TAT-4158 4237202e, 2026-10-20). A newer replay or a
-  // status change since means another action owns the run; that one stays.
-  const reopenSupersededGateDecisions = async (gate: NonNullable<typeof supersededGate>) => {
+  const entryStatus = existing.status;
+  let gateReentry: { decisionIds: Set<string>; inFlight: number; revived: boolean } | undefined;
+  // A replay that fails before any replay revives the run leaves the run as it found
+  // it, so the gate decisions superseded meanwhile open again. Otherwise a blocked run
+  // is left with nothing to resolve. A status change since means another action owns
+  // the run; then they stay superseded.
+  const reopenGateDecisions = async (decisionIds: Set<string>) => {
     const current = getRun(params.runId);
-    if (
-      !current ||
-      current.status !== existing.status ||
-      current.engineState?.generation !== gate.generation
-    )
-      return;
-    let reopened = 0;
-    const decisions = current.decisions.map((decision) => {
-      if (
-        !gate.decisionIds.has(decision.id) ||
-        decision.resolvedAction !== 'superseded' ||
-        decision.context?.supersededBy !== 'gate-reentry'
-      )
-        return decision;
-      reopened += 1;
-      const { resolvedAt: _resolvedAt, resolvedAction: _resolvedAction, ...open } = decision;
-      const { supersededBy: _supersededBy, ...context } = decision.context;
-      return { ...open, context };
-    });
-    if (!reopened) return;
+    if (!current || current.status !== entryStatus) return;
+    const { decisions, reopened } = reopenSupersededGateDecisions(current.decisions, decisionIds);
+    if (!reopened.length) return;
+    // Their engine loop was cancelled at a generation the replay since bumped: woken, it
+    // returns 'abort'. Retiring it routes the reopened card through the lost-engine
+    // continuation instead of a waiter that would swallow the person's choice.
+    for (const decision of reopened) resolveEngineDecision(decision.id, 'superseded');
     const run = updateRun(params.runId, { decisions });
     await persistRunNow(run, 'replay-rollback-decisions');
     emit(Events.RUN_UPDATED, { run });
+    for (const decision of reopened)
+      emit(Events.RUN_DECISION_NEW, {
+        runId: run.id,
+        decision: pendingDecisionForRun(run, decision),
+        slotId: run.slotId,
+      });
     console.log(
-      `[run] replay of ${params.runId.slice(0, 8)} failed; reopened ${reopened} superseded gate decision(s)`,
+      `[run] replay of ${params.runId.slice(0, 8)} failed; reopened ${reopened.length} superseded gate decision(s)`,
     );
+  };
+  const leaveGateReentry = async (failed: boolean) => {
+    const entry = gateReentry;
+    if (!entry) return;
+    gateReentry = undefined;
+    entry.inFlight -= 1;
+    if (entry.inFlight > 0) return;
+    gateReentries.delete(params.runId);
+    if (failed && !entry.revived) await reopenGateDecisions(entry.decisionIds);
+  };
+  const rollBackReclaimedSlot = async (err: unknown) => {
+    if (
+      reclaimedSlotId &&
+      !revived &&
+      (initialNativeStatus === undefined ||
+        (getRun(params.runId)?.engineState?.generation === nativeReplayGeneration &&
+          getRun(params.runId)?.status === initialNativeStatus))
+    ) {
+      try {
+        if (priorOwnedSlotFields) {
+          const { markSlotStatusIf } = await import('../../core/index.js');
+          const restored = await markSlotStatusIf(
+            reclaimedSlotId,
+            (slot) =>
+              slot.current_run_id === params.runId &&
+              slot.slot_epoch === reclaimedSlotEpoch &&
+              slot.phase !== SLOT_PHASE_RELEASING,
+            priorOwnedSlotFields,
+          );
+          if (restored.applied) {
+            const restoredSlotId =
+              priorRunSlotId === reclaimedSlotId &&
+              (priorOwnedSlotFields as Record<string, unknown>).current_run_id !== params.runId
+                ? null
+                : priorRunSlotId;
+            if (getRun(params.runId)?.slotId !== restoredSlotId) {
+              const run = updateRun(params.runId, { slotId: restoredSlotId });
+              await persistRunNow(run, 'replay-rollback-slot');
+              emit(Events.RUN_UPDATED, { run });
+            }
+          }
+        } else {
+          if (reclaimedSlotEpoch === null)
+            throw new Error(
+              `Cannot undo replay reclaim of ${reclaimedSlotId} without its claim epoch`,
+            );
+          const { slotRelease } = await import('../slot.js');
+          const release = await slotRelease(
+            { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
+            () => {},
+            rollbackReclaimedSlotReleaseOptions(existing.status, params.runId, reclaimedSlotEpoch),
+          );
+          if (!release.released) {
+            const current = await readSlotRow(reclaimedSlotId);
+            if (
+              current?.current_run_id === params.runId &&
+              current.slot_epoch === reclaimedSlotEpoch &&
+              current.phase !== SLOT_PHASE_RELEASING
+            ) {
+              throw new Error('slot release refused while replay still owns the reclaimed slot');
+            }
+            if (
+              current?.current_run_id !== params.runId &&
+              getRun(params.runId)?.slotId === reclaimedSlotId
+            ) {
+              const run = updateRun(params.runId, { slotId: null });
+              await persistRunNow(run, 'replay-rollback-slot');
+              emit(Events.RUN_UPDATED, { run });
+            }
+          }
+        }
+      } catch (releaseErr) {
+        const replayMessage = err instanceof Error ? err.message : String(err);
+        const rollbackMessage =
+          releaseErr instanceof Error ? releaseErr.message : String(releaseErr);
+        throw new AggregateError(
+          [err, releaseErr],
+          `Replay failed: ${replayMessage}; rollback of reclaimed slot ${reclaimedSlotId} failed: ${rollbackMessage}`,
+        );
+      }
+    }
   };
   try {
     const slotCapabilities = reselectsSlot
@@ -1397,11 +1485,15 @@ async function replayRunStep(
         : [];
     if (supersedeStaleHumanGateDecisions(supersededGateAudit) > 0) {
       updateRun(params.runId, { decisions: existing.decisions });
-      supersededGate = {
-        generation: ownedGeneration,
-        decisionIds: new Set(supersededGateAudit.map((decision) => decision.id)),
-      };
     }
+    gateReentry = gateReentries.get(params.runId) ?? {
+      decisionIds: new Set(),
+      inFlight: 0,
+      revived: false,
+    };
+    for (const decision of supersededGateAudit) gateReentry.decisionIds.add(decision.id);
+    gateReentry.inFlight += 1;
+    gateReentries.set(params.runId, gateReentry);
 
     // Test-only pause after sync supersession. Do not `await` a missing hook:
     // that still yields and reopens the decision-resolver race this block closes.
@@ -2097,6 +2189,7 @@ async function replayRunStep(
     // launchAttempt differs (N vs N+1 requeue).
     await persistRunNow(getRun(params.runId)!, 'replay-revive');
     revived = true;
+    if (gateReentry) gateReentry.revived = true;
     const lockToDrop = softLock;
     if (lockToDrop) {
       if (getQueueSnapshot().some((item) => item.id === lockToDrop.itemId)) {
@@ -2137,79 +2230,19 @@ async function replayRunStep(
     }
 
     console.log(`[run] replaying ${params.runId.slice(0, 8)} from step ${replayStepName}`);
+    await leaveGateReentry(false);
     return { run: getRun(params.runId)! };
   } catch (err) {
     await releaseSoftLockIfHeld();
-    if (supersededGate && !revived) await reopenSupersededGateDecisions(supersededGate);
-    if (
-      reclaimedSlotId &&
-      !revived &&
-      (initialNativeStatus === undefined ||
-        (getRun(params.runId)?.engineState?.generation === nativeReplayGeneration &&
-          getRun(params.runId)?.status === initialNativeStatus))
-    ) {
-      try {
-        if (priorOwnedSlotFields) {
-          const { markSlotStatusIf } = await import('../../core/index.js');
-          const restored = await markSlotStatusIf(
-            reclaimedSlotId,
-            (slot) =>
-              slot.current_run_id === params.runId &&
-              slot.slot_epoch === reclaimedSlotEpoch &&
-              slot.phase !== SLOT_PHASE_RELEASING,
-            priorOwnedSlotFields,
-          );
-          if (restored.applied) {
-            const restoredSlotId =
-              priorRunSlotId === reclaimedSlotId &&
-              (priorOwnedSlotFields as Record<string, unknown>).current_run_id !== params.runId
-                ? null
-                : priorRunSlotId;
-            if (getRun(params.runId)?.slotId !== restoredSlotId) {
-              const run = updateRun(params.runId, { slotId: restoredSlotId });
-              await persistRunNow(run, 'replay-rollback-slot');
-              emit(Events.RUN_UPDATED, { run });
-            }
-          }
-        } else {
-          if (reclaimedSlotEpoch === null)
-            throw new Error(
-              `Cannot undo replay reclaim of ${reclaimedSlotId} without its claim epoch`,
-            );
-          const { slotRelease } = await import('../slot.js');
-          const release = await slotRelease(
-            { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
-            () => {},
-            rollbackReclaimedSlotReleaseOptions(existing.status, params.runId, reclaimedSlotEpoch),
-          );
-          if (!release.released) {
-            const current = await readSlotRow(reclaimedSlotId);
-            if (
-              current?.current_run_id === params.runId &&
-              current.slot_epoch === reclaimedSlotEpoch &&
-              current.phase !== SLOT_PHASE_RELEASING
-            ) {
-              throw new Error('slot release refused while replay still owns the reclaimed slot');
-            }
-            if (
-              current?.current_run_id !== params.runId &&
-              getRun(params.runId)?.slotId === reclaimedSlotId
-            ) {
-              const run = updateRun(params.runId, { slotId: null });
-              await persistRunNow(run, 'replay-rollback-slot');
-              emit(Events.RUN_UPDATED, { run });
-            }
-          }
-        }
-      } catch (releaseErr) {
-        const replayMessage = err instanceof Error ? err.message : String(err);
-        const rollbackMessage =
-          releaseErr instanceof Error ? releaseErr.message : String(releaseErr);
-        throw new AggregateError(
-          [err, releaseErr],
-          `Replay failed: ${replayMessage}; rollback of reclaimed slot ${reclaimedSlotId} failed: ${rollbackMessage}`,
-        );
-      }
+    try {
+      await rollBackReclaimedSlot(err);
+    } finally {
+      // After the slot is back, and without replacing the replay's own error.
+      await leaveGateReentry(true).catch((reopenErr: unknown) =>
+        console.warn(
+          `[run] replay of ${params.runId.slice(0, 8)} could not reopen its gate decisions: ${(reopenErr as Error).message}`,
+        ),
+      );
     }
     throw err;
   }
