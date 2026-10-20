@@ -748,9 +748,17 @@ export class FarmApp extends LitElement {
     this.parseHash();
   };
 
+  /** The live access level, or the kept workspace's while it reconnects. */
+  private get shownWorkspaceAccess(): 'farm' | 'native' | 'none' {
+    const s = getState();
+    if (s.connection === 'connected') return gateway.workspaceAccess;
+    return s.connection === 'auth_required' ? 'none' : s.workspaceAccess;
+  }
+
   private parseHash() {
-    if (gateway.workspaceAccess !== 'farm') {
-      if (gateway.workspaceAccess === 'native') this.route = 'native';
+    const access = this.shownWorkspaceAccess;
+    if (access !== 'farm') {
+      if (access === 'native') this.route = 'native';
       return;
     }
     const raw = location.hash.replace('#', '') || this.defaultRouteForEmptyHash();
@@ -2221,18 +2229,20 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
   }
 
   render() {
-    if (this.connection !== 'connected') {
+    const access = this.shownWorkspaceAccess;
+    // A kept farm workspace stays on screen while it reconnects; its slices show as stale.
+    if (this.connection !== 'connected' && access !== 'farm') {
       return this.connection === 'auth_required'
         ? this.renderAuthScreen()
         : this.renderOnboardingScreen();
     }
-    if (gateway.workspaceAccess === 'none') {
+    if (access === 'none') {
       return html`<p>
           This account has no workspace access. Ask your farm administrator to enroll it.
         </p>
         ${this.renderAuthScreen()} ${this.renderAccountControl()}`;
     }
-    if (gateway.workspaceAccess === 'native') return this.renderNativeWorkspace();
+    if (access === 'native') return this.renderNativeWorkspace();
     const activeRunCount = activeSidebarRuns(
       this.runs,
       this.globalFilters,

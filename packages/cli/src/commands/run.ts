@@ -6,6 +6,7 @@ import type { Command } from 'commander';
 
 import {
   type AgentRole,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   assertPRReviewOptions,
   buildRunDecisionActionRequest,
   buildRunResolveDecisionParams,
@@ -171,8 +172,14 @@ export function buildRunGateParams(
     if (actionId !== 'pick') throw new Error('--slot requires --action pick');
     selectionData = { slotId: options.slot.trim() };
   }
-  // A result decision takes a written reason of its own (ADR-065 Amendment 7).
-  if (decision.payload?.kind === 'result-decision')
+  // A result decision and accepting review findings take a written reason of their own
+  // (ADR-065 Amendments 7 and 8); the shared builder binds the findings shown.
+  if (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION && !options.reason?.trim())
+    throw new Error('Accepting review findings requires --reason.');
+  if (
+    decision.payload?.kind === 'result-decision' ||
+    actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION
+  )
     return buildRunResolveDecisionParams({
       runId: run.id,
       decision,
@@ -864,7 +871,7 @@ export function registerRunCommand(program: Command): void {
     .option('--decision <id>', 'Decision id when several are pending')
     .option(
       '--reason <text>',
-      'Written reason for evidence attestation, human claim review or a result decision',
+      'Written reason for evidence attestation, accepting review findings (approve-publish-unresolved), human claim review or a result decision',
     )
     .option('--claim <id>', 'Registered claim for human evidence review')
     .option('--recipe-run <id>', 'Selected recorded execution for human evidence review')
@@ -926,6 +933,11 @@ export function registerRunCommand(program: Command): void {
               });
               if (view.gateLabel) output.write(`  ${view.gateLabel}\n`);
               for (const reason of view.reasons) output.write(`  ${reason.message}\n`);
+              if (readiness?.findings?.length) output.write('  Open review findings:\n');
+              for (const finding of readiness?.findings ?? [])
+                output.write(
+                  `    ${finding.file}${finding.line ? `:${finding.line}` : ''}  ${finding.description}\n`,
+                );
               for (const a of d.actions ?? []) output.write(`  - ${a.id}  ${a.label}\n`);
             }
           }

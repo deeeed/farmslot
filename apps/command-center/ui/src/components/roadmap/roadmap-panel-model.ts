@@ -15,6 +15,8 @@ import {
   summarizeRoadmapDelivery,
 } from '@farmslot/protocol';
 
+import { backlogItemHref } from '../backlog/backlog-panel-model.js';
+
 export type RoadmapSortKey = 'stage' | 'project' | 'id' | 'title' | 'promotion' | 'updated';
 export type RoadmapSortDirection = 'asc' | 'desc';
 
@@ -261,9 +263,7 @@ export function roadmapDeliveryBacklinks(
       // keep it as evidence of stale provenance rather than a link that clears the
       // destination's selection.
       href: entry.resolved
-        ? `#backlog?item=${encodeURIComponent(entry.backlogItemId)}${
-            entry.status ? `&backlogStatus=${encodeURIComponent(entry.status)}` : ''
-          }`
+        ? backlogItemHref(entry.backlogItemId, entry.status ? [entry.status] : undefined)
         : '',
       external: false,
       testId: 'roadmap-delivery-backlog-link',

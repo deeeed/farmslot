@@ -1,5 +1,7 @@
 import type { FamilyObservabilityRunSummary, Run, RunLink } from '@farmslot/protocol';
-import { githubPullUrl, parseGitHubRef } from '@farmslot/protocol';
+import { BACKLOG_STATUSES, githubPullUrl, parseGitHubRef } from '@farmslot/protocol';
+
+import { backlogItemHref } from '../backlog/backlog-panel-model.js';
 
 type RunWithLinks = Pick<FamilyObservabilityRunSummary, 'links' | 'runId' | 'ticketOrPr'>;
 type RunWithPr = Pick<FamilyObservabilityRunSummary, 'links' | 'prNumber' | 'runId' | 'ticketOrPr'>;
@@ -71,4 +73,32 @@ export function familyPrUrl(run: RunWithPr, runs: readonly RunWithLinks[]): stri
   const siblingMatch = parseGitHubRef(sibling?.ticketOrPr);
   if (siblingMatch) return githubPullUrl({ repo: siblingMatch.repo, number: run.prNumber });
   return null;
+}
+
+/** Where a run's work came from: its Jira ticket, GitHub issue or backlog item. */
+export interface RunSourceLink {
+  label: 'Jira' | 'Issue' | 'Backlog';
+  text: string;
+  /** Null until the gateway has resolved the link; the key still shows. */
+  url: string | null;
+}
+
+export function runSourceLinks(
+  run: Pick<Run, 'ticketOrPr' | 'ticketData' | 'links' | 'backlogItemId'>,
+): RunSourceLink[] {
+  const linked = (label: RunSourceLink['label']) =>
+    run.links?.find((link) => link.label === label)?.url ?? null;
+  const sources: RunSourceLink[] = [];
+  if (run.ticketData?.jiraKey)
+    sources.push({ label: 'Jira', text: run.ticketData.jiraKey, url: linked('Jira') });
+  if (run.ticketData?.githubIssue)
+    sources.push({ label: 'Issue', text: run.ticketData.githubIssue, url: linked('Issue') });
+  if (run.backlogItemId)
+    sources.push({
+      label: 'Backlog',
+      text: run.backlogItemId.slice(0, 8),
+      // The run does not know its item's status, which is often done by now.
+      url: backlogItemHref(run.backlogItemId, BACKLOG_STATUSES),
+    });
+  return sources;
 }

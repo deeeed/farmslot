@@ -28,6 +28,7 @@ export interface PublicationGatePanelInput extends PublicationGateInput {
   reviewDisabled: boolean;
   changeReason: (reason: string) => void;
   chooseAttestation: () => void;
+  chooseAcceptFindings?: () => void;
   focusClaim?: (id: string) => void | Promise<void>;
   invoke: (id: string) => void;
   requestReview: () => void;
@@ -56,6 +57,31 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
             <textarea
               data-testid="evidence-attestation-reason"
               aria-label="Reason for evidence policy attestation"
+              .value=${input.attestationReason ?? ''}
+              ?disabled=${disabled}
+              @input=${(event: Event) =>
+                input.changeReason((event.target as HTMLTextAreaElement).value)}
+            ></textarea>
+          </label>
+        </section>`
+      : nothing}
+    ${view.acceptFindings && view.approval?.id === view.acceptFindings.id
+      ? html`<section class="gate-attestation" aria-label="Accept review findings">
+          <h3>Open review findings</h3>
+          <ul data-testid="accept-findings-list">
+            ${view.findings.map(
+              (finding) =>
+                html`<li>
+                  <code>${finding.file}${finding.line ? `:${finding.line}` : ''}</code>
+                  ${finding.description}
+                </li>`,
+            )}
+          </ul>
+          <label
+            >Reason for accepting these findings
+            <textarea
+              data-testid="accept-findings-reason"
+              aria-label="Reason for accepting these findings"
               .value=${input.attestationReason ?? ''}
               ?disabled=${disabled}
               @input=${(event: Event) =>
@@ -121,15 +147,27 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                 ${input.busy
                   ? 'Submitting…'
                   : input.pendingConfirm === view.approval?.id
-                    ? view.attestation
-                      ? 'Confirm attestation and publish?'
-                      : 'Confirm Publish?'
+                    ? view.approval?.id === view.acceptFindings?.id
+                      ? 'Confirm accepting the findings and publish?'
+                      : view.attestation
+                        ? 'Confirm attestation and publish?'
+                        : 'Confirm Publish?'
                     : (view.approval?.label ?? 'Approve publish')}
               </button>`
             : nothing}
-          ${view.attestation || view.secondaryActions.length
+          ${view.attestation || view.acceptFindings || view.secondaryActions.length
             ? html`<details class="gate-more-actions">
                 <summary>More actions</summary>
+                ${view.acceptFindings && view.approval?.id !== view.acceptFindings.id
+                  ? html`<button
+                      class="gate-secondary"
+                      data-testid="gate-accept-findings"
+                      title=${view.acceptFindings.description ?? ''}
+                      @click=${input.chooseAcceptFindings}
+                    >
+                      ${view.acceptFindings.label}
+                    </button>`
+                  : nothing}
                 ${view.attestation && !input.attesting
                   ? html`<button
                       class="gate-secondary"
@@ -198,10 +236,10 @@ export function publicationGatePanelStyles(scope = 'ready-workspace') {
     ready-workspace .rdy-gate-details, ready-workspace .rdy-review-content { padding: ${spacing.md} ${spacing.lg}; }
     ready-workspace .rdy-gate-details > summary, ready-workspace .rdy-review-content > summary, ready-workspace .rdy-package-details > summary { cursor: pointer; padding: ${spacing.md}; min-height: 44px; display: flex; align-items: center; }
     ready-workspace .gate-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-    ready-workspace .rdy-tab-bar[role="tablist"] { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; gap: 4px; background: var(--gate-background); }
-    ready-workspace .rdy-tab-bar[role="tablist"] .rdy-tab { min-height: 44px; min-width: 44px; padding: 8px; font-size: ${fonts.sizeSm}; color: var(--gate-text); }
-    ready-workspace .gate-extra-tabs > summary { min-height: 44px; padding: 8px; display: flex; align-items: center; cursor: pointer; }
-    @media (max-width: 720px) { ready-workspace .rdy-tab-bar[role="tablist"] { grid-template-columns: repeat(4, minmax(0, 1fr)); } ready-workspace .gate-extra-tabs { grid-column: 1 / -1; } }
+    ready-workspace .rdy-tab-bar[role="tablist"] { display: flex; align-items: stretch; gap: 4px; overflow-x: auto; scrollbar-width: none; background: var(--gate-background); }
+    ready-workspace .rdy-tab-bar[role="tablist"] .rdy-tab { flex: 1 0 auto; min-height: 44px; min-width: 44px; padding: 8px ${spacing.md}; white-space: nowrap; font-size: ${fonts.sizeSm}; color: var(--gate-text); border-radius: 0; border-bottom: 2px solid transparent; }
+    ready-workspace .rdy-tab-bar[role="tablist"] .rdy-tab.active { border-bottom-color: var(--gate-accent); }
+    ready-workspace .gate-tab-divider { flex: none; width: 1px; margin: 10px 4px; background: var(--gate-border); }
     @media (max-width: 720px) { ready-workspace .gate-attestation { grid-template-columns: 1fr; } }
   `.replaceAll('ready-workspace', scope);
 }

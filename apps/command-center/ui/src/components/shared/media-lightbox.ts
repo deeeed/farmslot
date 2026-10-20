@@ -78,15 +78,18 @@ export class MediaLightbox extends MediaLightboxState {
   private _timelineAbort?: AbortController;
   private _resumeEvidencePlayback = false;
   @state() private _videoPlayError = '';
+  private _pendingSeekMs: number | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('keydown', this._onKeyDown);
+    document.addEventListener('fullscreenchange', this._onFullscreenChange);
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener('keydown', this._onKeyDown);
+    document.removeEventListener('fullscreenchange', this._onFullscreenChange);
     if (this._logTimer) clearInterval(this._logTimer);
     this.clearMediaDocuments();
     this._timelines.clear();
@@ -148,7 +151,7 @@ export class MediaLightbox extends MediaLightboxState {
       )
     )
       void this._loadActiveVideoTimeline();
-    if (changed.has('open') && this.open) {
+    if (changed.has('open') && this.open && !this.embedded) {
       if (this.items[this.selectedIndex]?.fullscreen) this._maximized = true;
       this.updateComplete.then(() => {
         this.renderRoot.querySelector<HTMLElement>('.ml-modal')?.focus();
@@ -248,7 +251,18 @@ export class MediaLightbox extends MediaLightboxState {
   }
 
   private _onKeyDown = (e: KeyboardEvent) => {
-    if (!this.open) return;
+    if (!this.open || (this.embedded && !this.ownsKeys && !this._fullscreen)) return;
+    if (
+      e
+        .composedPath()
+        .some(
+          (target) =>
+            target instanceof HTMLTextAreaElement ||
+            (target instanceof HTMLElement && target.isContentEditable) ||
+            (target instanceof HTMLInputElement && target.type !== 'range'),
+        )
+    )
+      return;
     if (e.key === 'Escape') {
       e.preventDefault();
       this._close();
@@ -258,6 +272,17 @@ export class MediaLightbox extends MediaLightboxState {
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       this._navigate(-1);
+    } else if (e.key.toLowerCase() === 'f' && this.mode === 'single') {
+      const item = this.items[this.selectedIndex];
+      const type = item ? mediaLightboxFileType(item) : null;
+      if (type !== 'image' && type !== 'video') return;
+      e.preventDefault();
+      this._toggleFullscreen();
+    } else if ((e.key === ',' || e.key === '.') && this.mode === 'single') {
+      const item = this.items[this.selectedIndex];
+      if (!item || !isVideoLightboxItem(item)) return;
+      e.preventDefault();
+      this._stepVideo(e.key === ',' ? -1 : 1);
     } else if (e.key.toLowerCase() === 'c' && this.pairs.length > 0) {
       e.preventDefault();
       this._toggleMode();
@@ -283,6 +308,7 @@ export class MediaLightbox extends MediaLightboxState {
   }
 
   private _onPointerDown(e: PointerEvent) {
+    this._panMoved = false;
     if (this._zoom <= 1) return;
     this._panning = true;
     this._panStartX = e.clientX - this._panX;
@@ -292,6 +318,7 @@ export class MediaLightbox extends MediaLightboxState {
 
   private _onPointerMove(e: PointerEvent) {
     if (!this._panning || this._zoom <= 1) return;
+    this._panMoved = true;
     this._panX = e.clientX - this._panStartX;
     this._panY = e.clientY - this._panStartY;
   }
@@ -299,6 +326,66 @@ export class MediaLightbox extends MediaLightboxState {
   private _onPointerUp(e: PointerEvent) {
     this._panning = false;
     (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+  }
+
+  /** Zooms toward the pointer, keeping the point under it in place. */
+  private _onWheelZoom(e: WheelEvent) {
+    // A sideways trackpad swipe is not a zoom.
+    if (e.deltaY === 0) return;
+    e.preventDefault();
+    const stage = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const zoom = Math.max(1, Math.min(4, this._zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    if (zoom === 1) {
+      this._resetView();
+      return;
+    }
+    const x = e.clientX - (stage.left + stage.width / 2);
+    const y = e.clientY - (stage.top + stage.height / 2);
+    this._panX = x - (zoom * (x - this._panX)) / this._zoom;
+    this._panY = y - (zoom * (y - this._panY)) / this._zoom;
+    this._zoom = Number(zoom.toFixed(2));
+  }
+
+  private _onFullscreenChange = () => {
+    // The document only sees the outermost host; the shadow root knows its own element.
+    this._fullscreen = Boolean(this.shadowRoot?.fullscreenElement);
+  };
+
+  private _toggleFullscreen() {
+    if (this._fullscreen) {
+      void document.exitFullscreen();
+      return;
+    }
+    const modal = this.renderRoot.querySelector<HTMLElement>('.ml-modal');
+    if (modal) void modal.requestFullscreen();
+  }
+
+  /** Zoom, pan reset and fullscreen for a screenshot or a video. */
+  private _renderZoomToolbar() {
+    return html`<div class="ml-toolbar">
+      <button class="ml-btn" @click=${() => this._zoomBy(-0.25)} ?disabled=${this._zoom <= 1}>
+        −
+      </button>
+      <span class="ml-count">${Math.round(this._zoom * 100)}%</span>
+      <button class="ml-btn" @click=${() => this._zoomBy(0.25)} ?disabled=${this._zoom >= 4}>
+        +
+      </button>
+      <button
+        class="ml-btn"
+        @click=${() => this._resetView()}
+        ?disabled=${this._zoom === 1 && this._panX === 0 && this._panY === 0}
+      >
+        Reset
+      </button>
+      <button
+        class="ml-btn"
+        data-testid="media-fullscreen"
+        title="Fullscreen (f)"
+        @click=${() => this._toggleFullscreen()}
+      >
+        ${this._fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+      </button>
+    </div>`;
   }
 
   private _onDividerDown(e: PointerEvent) {
@@ -400,15 +487,49 @@ export class MediaLightbox extends MediaLightboxState {
     );
   }
 
+  /** Where the shown recording is, or null when no video is shown. */
+  currentTimeMs(): number | null {
+    const video = this._primaryVideo();
+    return video ? video.currentTime * 1000 : null;
+  }
+
+  /**
+   * Seeks every synced video; before the media loads, the seek waits for it.
+   */
+  seekToMs(ms: number): void {
+    const video = this._primaryVideo();
+    if (!video || video.readyState < 1) {
+      this._pendingSeekMs = ms;
+      return;
+    }
+    this._pendingSeekMs = null;
+    for (const candidate of this._videoSet()) candidate.currentTime = ms / 1000;
+    this._syncVideoState(video);
+  }
+
+  /** Where a paused video rests (a pause, a scrub, a frame step), for a host's link. */
+  private _reportMoment(video: HTMLVideoElement): void {
+    // A video removed from the page (closed, or swapped for a screenshot) pauses too.
+    if (!video.paused || !video.isConnected) return;
+    this.dispatchEvent(
+      new CustomEvent('lightbox-moment', { detail: { ms: video.currentTime * 1000 } }),
+    );
+  }
+
   private _syncVideoState(video: HTMLVideoElement | null = this._primaryVideo()): void {
     if (!video || !this._videoSet().includes(video)) return;
+    if (this._pendingSeekMs !== null && video.readyState >= 1) {
+      const ms = this._pendingSeekMs;
+      this._pendingSeekMs = null;
+      for (const candidate of this._videoSet()) candidate.currentTime = ms / 1000;
+    }
     this._videoTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
     this._videoDuration = Number.isFinite(video.duration) ? video.duration : 0;
     this._videoPaused = video.paused;
     this._videoRate = video.playbackRate || 1;
     this._applyInitialVideoMarker();
     const state = this._timelineState();
-    if (state?.model && state.data) {
+    if (this.confine && state?.model && state.data) {
       const effect = state.model.playbackAt(
         state.data.videoPath,
         video.currentTime * 1000,
@@ -466,7 +587,7 @@ export class MediaLightbox extends MediaLightboxState {
   private _finishEvidencePlayback(video: HTMLVideoElement): void {
     const state = this._timelineState();
     if (video !== this._primaryVideo()) return;
-    if (!state?.data || !state.model || !video) return;
+    if (!this.confine || !state?.data || !state.model || !video) return;
     const effect = state.model.playbackAt(
       state.data.videoPath,
       video.currentTime * 1000,
@@ -633,6 +754,8 @@ export class MediaLightbox extends MediaLightboxState {
   private _appliedVideoMarker = '';
   private _appliedVideoModel?: EvidenceReviewModel;
   private _applyInitialVideoMarker(): void {
+    // An unconfined player is driven by its host's seeks; the clip cue would override them.
+    if (!this.confine) return;
     const item = this._activeVideoItem();
     const data = this._timelineState()?.data;
     const video = this._primaryVideo();
@@ -677,6 +800,12 @@ export class MediaLightbox extends MediaLightboxState {
     if (!marker) return;
     this._appliedVideoMarker = key;
     this._seekMarker(marker, item.initialTracePhase ?? 'end', true);
+  }
+
+  /** Playback and timeline failures still show when the host lists the steps itself. */
+  private _renderVideoProblems() {
+    const error = this._videoPlayError || this._timelineState()?.error;
+    return error ? html`<p class="ml-count">${error}</p>` : nothing;
   }
 
   private _renderVideoMarkers() {
@@ -817,7 +946,7 @@ export class MediaLightbox extends MediaLightboxState {
       this._appliedVideoModel = model;
       this._appliedVideoMarker = '';
     }
-    if (model?.selection?.clips.length) {
+    if (this.confine && model?.selection?.clips.length) {
       const effect = model.seekClip(next * 1000);
       if (effect.seekMs !== null) next = effect.seekMs / 1000;
     }
@@ -838,7 +967,14 @@ export class MediaLightbox extends MediaLightboxState {
     const duration = this._videoDuration || 0;
     const time = duration ? Math.min(this._videoTime, duration) : this._videoTime;
     const RATES = [0.25, 0.5, 1, 2];
-    const hasFrameIndex = Boolean(this._timelineState()?.data);
+    const timeline = this._timelineState();
+    const hasFrameIndex = Boolean(timeline?.data);
+    const bands =
+      duration > 0 && timeline?.data
+        ? (timeline.model?.selection?.clips ?? []).filter(
+            (clip) => clip.videoPath === timeline.data?.videoPath,
+          )
+        : [];
     return html`
       <div class="ml-video-controls" data-testid="media-lightbox-video-controls">
         <div class="ml-video-control-row">
@@ -878,25 +1014,37 @@ export class MediaLightbox extends MediaLightboxState {
               </button>
             `,
           )}
+          ${compare ? nothing : this._renderZoomToolbar()}
         </div>
         <div class="ml-video-scrub-row">
           <span class="ml-count">${compare ? 'Synced' : 'Video'} · Space play/pause</span>
-          <input
-            class="ml-video-scrub"
-            type="range"
-            min="0"
-            max=${duration || 0}
-            step="0.01"
-            .value=${String(time)}
-            ?disabled=${duration <= 0}
-            @input=${(event: Event) => this._scrubVideo((event.target as HTMLInputElement).value)}
-            aria-label="Video timeline"
-          />
+          <div class="ml-scrub-track">
+            ${bands.map(
+              (clip) =>
+                html`<span
+                  class="ml-scrub-band"
+                  data-testid="video-clip-band"
+                  title=${clip.caption}
+                  style=${`left:${(clip.startMs / 1000 / duration) * 100}%;width:${Math.max(((clip.endMs - clip.startMs) / 1000 / duration) * 100, 0.5)}%`}
+                ></span>`,
+            )}
+            <input
+              class="ml-video-scrub"
+              type="range"
+              min="0"
+              max=${duration || 0}
+              step="0.01"
+              .value=${String(time)}
+              ?disabled=${duration <= 0}
+              @input=${(event: Event) => this._scrubVideo((event.target as HTMLInputElement).value)}
+              aria-label="Video timeline"
+            />
+          </div>
           <span class="ml-count">
             ${formatEvidenceReviewVideoTime(time)} / ${formatEvidenceReviewVideoTime(duration)}
           </span>
         </div>
-        ${this._renderVideoMarkers()}
+        ${this.hideTimeline ? this._renderVideoProblems() : this._renderVideoMarkers()}
       </div>
     `;
   }
@@ -917,7 +1065,7 @@ export class MediaLightbox extends MediaLightboxState {
         : visible[0];
     const item = this.items[selectedIdx];
     if (!item) return nothing;
-    const hasMultiple = this.items.length > 1;
+    const hasMultiple = this.items.length > 1 && !this.embedded;
     const broken = this._broken.has(selectedIdx);
     const FILTER_CHIPS: { label: string; value: ArtifactKind | 'all' }[] = [
       { label: 'All', value: 'all' },
@@ -925,15 +1073,17 @@ export class MediaLightbox extends MediaLightboxState {
       { label: 'After', value: 'after' },
       { label: 'Setup', value: 'setup' },
     ];
-    const showFilter = this.items.length > 4;
+    const showFilter = this.items.length > 4 && !this.embedded;
     const scoped = Boolean(this.scopeLabel);
     const totalItems = this.totalItems || this.items.length;
     const fileType = mediaLightboxFileType(item);
 
     return html`
       <div
-        class=${`ml-backdrop ${this._maximized ? 'maximized' : ''}`}
-        @click=${() => this._close()}
+        class=${this.embedded
+          ? 'ml-embedded'
+          : `ml-backdrop ${this._maximized || this._fullscreen ? 'maximized' : ''}`}
+        @click=${() => !this.embedded && this._close()}
       >
         <div class="ml-modal" tabindex="0" @click=${(e: Event) => e.stopPropagation()}>
           <div class="ml-header">
@@ -1022,8 +1172,29 @@ export class MediaLightbox extends MediaLightboxState {
                     <button class="ml-btn" @click=${() => this._navigate(1)}>Next</button>
                   `
                 : nothing}
-              ${this._renderMaximizeControl()}
-              <button class="ml-btn" @click=${() => this._close()}>Close</button>
+              ${this.embedded
+                ? this.expandLabel
+                  ? html`<button
+                      class="ml-btn"
+                      @click=${() => {
+                        // The host's viewer opens under a fullscreen player otherwise.
+                        if (this._fullscreen) void document.exitFullscreen();
+                        this.dispatchEvent(new CustomEvent('lightbox-expand'));
+                      }}
+                    >
+                      ${this.expandLabel}
+                    </button>`
+                  : nothing
+                : html`${this.reviewable
+                      ? html`<button
+                          class="ml-btn"
+                          data-testid="media-full-review"
+                          @click=${() => this.dispatchEvent(new CustomEvent('lightbox-review'))}
+                        >
+                          Full review
+                        </button>`
+                      : nothing}${this._renderMaximizeControl()}
+                    <button class="ml-btn" @click=${() => this._close()}>Close</button>`}
             </div>
           </div>
           <div class="ml-body ${fileType === 'log' ? 'ml-log-body' : ''}">
@@ -1031,31 +1202,8 @@ export class MediaLightbox extends MediaLightboxState {
               ? html`<div class="ml-fallback ml-broken">This media could not be loaded.</div>`
               : fileType === 'image'
                 ? html` <div class="ml-image-shell">
-                    <div class="ml-toolbar">
-                      <button
-                        class="ml-btn"
-                        @click=${() => this._zoomBy(-0.25)}
-                        ?disabled=${this._zoom <= 1}
-                      >
-                        −
-                      </button>
-                      <span class="ml-count">${Math.round(this._zoom * 100)}%</span>
-                      <button
-                        class="ml-btn"
-                        @click=${() => this._zoomBy(0.25)}
-                        ?disabled=${this._zoom >= 4}
-                      >
-                        +
-                      </button>
-                      <button
-                        class="ml-btn"
-                        @click=${() => this._resetView()}
-                        ?disabled=${this._zoom === 1 && this._panX === 0 && this._panY === 0}
-                      >
-                        Reset
-                      </button>
-                    </div>
-                    <div class="ml-stage">
+                    ${this._renderZoomToolbar()}
+                    <div class="ml-stage" @wheel=${(e: WheelEvent) => this._onWheelZoom(e)}>
                       <img
                         class="ml-expanded"
                         src=${gatewayMediaSrc(item.url)}
@@ -1072,31 +1220,50 @@ export class MediaLightbox extends MediaLightboxState {
                 : fileType === 'video'
                   ? html`
                       <div class="ml-video-shell">
-                        ${keyed(
-                          item.url,
-                          html`<video
-                            class="ml-expanded ml-video"
-                            src=${gatewayMediaSrc(item.url)}
-                            autoplay
-                            preload="metadata"
-                            @click=${() => this._toggleVideoPlayback()}
-                            @loadedmetadata=${(event: Event) =>
-                              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-                            @timeupdate=${(event: Event) =>
-                              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-                            @play=${(event: Event) =>
-                              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-                            @pause=${(event: Event) =>
-                              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-                            @ratechange=${(event: Event) =>
-                              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-                            @seeked=${(event: Event) =>
-                              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-                            @ended=${(event: Event) =>
-                              this._finishEvidencePlayback(event.currentTarget as HTMLVideoElement)}
-                            @error=${() => this._markBroken(selectedIdx)}
-                          ></video>`,
-                        )}
+                        <div
+                          class="ml-stage ml-video-stage"
+                          @wheel=${(e: WheelEvent) => this._onWheelZoom(e)}
+                        >
+                          ${keyed(
+                            item.url,
+                            html`<video
+                              class="ml-expanded ml-video"
+                              src=${gatewayMediaSrc(item.url)}
+                              autoplay
+                              preload="metadata"
+                              style=${`transform: translate(${this._panX}px, ${this._panY}px) scale(${this._zoom}); cursor: ${this._zoom > 1 ? 'grab' : 'pointer'};`}
+                              @pointerdown=${(e: PointerEvent) => this._onPointerDown(e)}
+                              @pointermove=${(e: PointerEvent) => this._onPointerMove(e)}
+                              @pointerup=${(e: PointerEvent) => this._onPointerUp(e)}
+                              @pointercancel=${(e: PointerEvent) => this._onPointerUp(e)}
+                              @click=${() => {
+                                if (this._panMoved) this._panMoved = false;
+                                else this._toggleVideoPlayback();
+                              }}
+                              @loadedmetadata=${(event: Event) =>
+                                this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                              @timeupdate=${(event: Event) =>
+                                this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                              @play=${(event: Event) =>
+                                this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                              @pause=${(event: Event) => {
+                                this._syncVideoState(event.currentTarget as HTMLVideoElement);
+                                this._reportMoment(event.currentTarget as HTMLVideoElement);
+                              }}
+                              @ratechange=${(event: Event) =>
+                                this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                              @seeked=${(event: Event) => {
+                                this._syncVideoState(event.currentTarget as HTMLVideoElement);
+                                this._reportMoment(event.currentTarget as HTMLVideoElement);
+                              }}
+                              @ended=${(event: Event) =>
+                                this._finishEvidencePlayback(
+                                  event.currentTarget as HTMLVideoElement,
+                                )}
+                              @error=${() => this._markBroken(selectedIdx)}
+                            ></video>`,
+                          )}
+                        </div>
                         ${this._renderVideoControls(false)}
                       </div>
                     `

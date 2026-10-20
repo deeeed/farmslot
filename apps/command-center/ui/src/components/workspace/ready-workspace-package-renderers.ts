@@ -24,7 +24,6 @@ export interface ReadyPackagePanelContext {
   recovering: boolean;
   publicationTarget: PublicationTarget;
   openPackageArtifact: (artifact: ArtifactRef) => void;
-  openReviewFlow: () => void;
   toggleExpanded: () => void;
   refreshPackage: () => void | Promise<void>;
   setPublicationTarget: (target: PublicationTarget) => void;
@@ -84,13 +83,6 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
                 >`}
           </div>
           <div class="rdy-package-actions">
-            <button class="rdy-review-flow-button" @click=${ctx.openReviewFlow}>
-              Review history
-              <span
-                >${reviewSummary.totalAttempts}
-                round${reviewSummary.totalAttempts === 1 ? '' : 's'}</span
-              >
-            </button>
             <button class="rdy-cockpit-link" @click=${ctx.toggleExpanded}>
               ${ctx.expanded ? 'Hide package details' : 'Package details'}
             </button>

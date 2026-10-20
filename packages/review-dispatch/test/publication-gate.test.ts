@@ -347,6 +347,70 @@ test('both publication clients hide all approval variants behind an unresolved-r
   assert.equal(publicationGateView({ actions, resolved: true }).approval, null);
 });
 
+test('accepting the checked review findings is the one approval offered while they block', () => {
+  const accept = {
+    id: 'approve-publish-unresolved',
+    label: 'Accept Review Findings and Publish',
+    style: 'danger' as const,
+  };
+  const actions = [
+    { id: 'approve-publish', label: 'Approve publish', style: 'primary' as const },
+    accept,
+    { id: 'hold', label: 'Hold', style: 'secondary' as const },
+  ];
+  const findings = [{ reviewId: 'review', file: 'src/a.ts', line: 3, description: 'Open' }];
+  const readiness: RunGateReadiness = {
+    state: 'not-ready',
+    identity: evidenceOnly.identity,
+    reasons: [
+      {
+        code: 'review-fix-required',
+        prerequisite: 'review',
+        message: 'Review rounds spent: 1 issue open',
+        actionId: 'hold',
+        allowedReviewOverrides: ['approve-publish-unresolved'],
+      },
+    ],
+    findings,
+    findingsDigest: 'sha256:findings',
+  };
+  const offered = publicationGateView({ actions, readiness });
+  assert.equal(offered.acceptFindings?.id, 'approve-publish-unresolved');
+  assert.deepEqual(offered.findings, findings);
+  assert.equal(offered.approval, null);
+  assert.equal(offered.status, 'Review rounds spent: 1 issue open');
+  assert.deepEqual(
+    offered.secondaryActions.map((action) => action.id),
+    ['hold'],
+  );
+  const accepting = publicationGateView({ actions, readiness, acceptingFindings: true });
+  assert.equal(accepting.approval?.id, 'approve-publish-unresolved');
+  assert.equal(accepting.blockedReason, 'Enter a reason before accepting the findings.');
+  const reasoned = publicationGateView({
+    actions,
+    readiness,
+    acceptingFindings: true,
+    attestationReason: 'The owner accepts this design choice.',
+  });
+  assert.equal(reasoned.blockedReason, '');
+  assert.equal(reasoned.status, 'Publishing accepts the open review findings.');
+  // Without the checked findings, or with another blocker, the shared rule withholds it.
+  for (const withheld of [
+    { ...readiness, findings: undefined, findingsDigest: undefined },
+    {
+      ...readiness,
+      reasons: [
+        ...readiness.reasons,
+        { code: 'deterministic-not-passed', prerequisite: 'deterministic' as const, message: 'x' },
+      ],
+    },
+  ]) {
+    const view = publicationGateView({ actions, readiness: withheld, acceptingFindings: true });
+    assert.equal(view.acceptFindings, null);
+    assert.equal(view.approval, null);
+  }
+});
+
 test('live run state overrides stale approval actions even without a decision or readiness payload', () => {
   const run: NonNullable<Parameters<typeof publicationGateView>[0]['run']> = {
     status: 'human-gating',

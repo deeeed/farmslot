@@ -43,11 +43,13 @@ import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
+import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
+import type { EvidenceReviewerView } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem, LightboxSelection } from '../shared/media-lightbox-types.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
 import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
-import { ticketUrlForRun } from './family-observability-link-model.js';
+import { runSourceLinks, ticketUrlForRun } from './family-observability-link-model.js';
 import { familyRunHash } from './family-observability-url-state.js';
 import type { RunLifecycleAction } from './run-detail-actions.js';
 import { renderCancelledRunSlotChoices } from './run-detail-cancelled-slot-renderers.js';
@@ -229,6 +231,15 @@ export interface RunEvidenceRenderContext {
     event: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
   ) => void;
   closeEvidenceLightbox: () => void;
+  /** Set while one criterion's evidence is open in the full-screen review. */
+  evidenceReviewer?: EvidenceReviewerSelection | null;
+  /** The view the open review reports, for the link. */
+  reviewerView?: (view: EvidenceReviewerView) => void;
+  /** The files of the criterion the review shows, in the gallery. */
+  showEvidenceGallery?: (claimId: string) => void;
+  /** Set when the open gallery is one criterion's files: its recording can switch to the review. */
+  reviewEvidence?: () => void;
+  selectEvidenceClaim?: (claimId: string) => void;
   navigateEvidenceLightbox: (index: number) => void;
   replaceEvidenceLightbox: (selection: LightboxSelection) => void;
   refreshOutput?: () => void;
@@ -384,9 +395,22 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
           <span>Cannot open <code>${unavailable.path}</code>: ${unavailable.reason}</span>
           <button type="button" @click=${() => ctx.closeEvidenceLightbox()}>Dismiss</button>
         </div>`
+      : nothing}${ctx.evidenceReviewer
+      ? html`<evidence-reviewer
+          .selection=${ctx.evidenceReviewer}
+          @reviewer-close=${() => ctx.closeEvidenceLightbox()}
+          @reviewer-files=${(event: CustomEvent<{ claimId: string }>) =>
+            ctx.showEvidenceGallery?.(event.detail.claimId)}
+          @reviewer-view=${(event: CustomEvent<EvidenceReviewerView>) =>
+            ctx.reviewerView?.(event.detail)}
+          @reviewer-claim=${(event: CustomEvent<{ claimId: string }>) =>
+            ctx.selectEvidenceClaim?.(event.detail.claimId)}
+        ></evidence-reviewer>`
       : nothing}<media-lightbox
       .items=${ctx.evidenceLightboxItems}
-      .open=${ctx.evidenceLightboxOpen}
+      .open=${ctx.evidenceLightboxOpen && !ctx.evidenceReviewer}
+      .reviewable=${Boolean(ctx.reviewEvidence)}
+      @lightbox-review=${() => ctx.reviewEvidence?.()}
       .selectedIndex=${ctx.evidenceLightboxIndex}
       scopeLabel=${ctx.evidenceLightboxScope ?? RUN_OUTPUT_SCOPE}
       @lightbox-close=${() => ctx.closeEvidenceLightbox()}
@@ -488,6 +512,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         (decision.type === 'engine_output_review' && decision.payload?.kind === 'output-review')),
   );
   const prLink = prLinkForRun(r);
+  const sources = runSourceLinks(r);
   const ticketUrl = ticketUrlForRun(r.ticketOrPr, r, ctx.siblings);
   const familyRootUrl =
     r.familyRootTicketOrPr && r.familyRootTicketOrPr !== r.ticketOrPr
@@ -783,17 +808,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             : nothing}
         </div>`
       : nothing}
-    ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
-      ? ctx._renderRunEvidence(r)
-      : nothing}
-    ${r.output ? ctx.renderGateSection(r) : nothing}
-    ${renderRunReviewResult(
-      r,
-      () => void ctx._onReplayStep('human-gate'),
-      actionsBlocked || ctx._rereviewInFlight,
-      () => void ctx._rereviewLatestHead(r),
-    )}
-    ${r.reviewWorkspace && !r.output ? ctx.renderGateSection(r) : nothing}
     ${r.qa
       ? html`<p data-testid="run-qa-profile">
           QA profile: <strong>${r.qa.profile.title}</strong> <code>${r.qa.profile.id}</code>
@@ -812,6 +826,27 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         <div class="meta-label">ID</div>
         <div class="meta-value">${r.id.slice(0, 8)}</div>
       </div>
+      ${sources.length
+        ? html`<div class="meta-item" data-testid="run-source">
+            <div class="meta-label">Source</div>
+            <div class="meta-value">
+              ${sources.map((source) =>
+                source.url
+                  ? html`<a
+                      href=${source.url}
+                      target=${source.url.startsWith('#') ? '_self' : '_blank'}
+                      rel="noopener noreferrer"
+                      title=${r.ticketData?.title ?? ''}
+                      style="color:${colors.accent}; text-decoration:none; margin-right:8px"
+                      >${source.label} ${source.text}${source.url.startsWith('#') ? '' : ' ↗'}</a
+                    >`
+                  : html`<span title="Link not resolved yet" style="margin-right:8px"
+                      >${source.label} ${source.text}</span
+                    >`,
+              )}
+            </div>
+          </div>`
+        : nothing}
       <div class="meta-item">
         <div class="meta-label">Family</div>
         <div class="meta-value">
@@ -1110,6 +1145,17 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           `
         : nothing}
     </div>
+    ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
+      ? ctx._renderRunEvidence(r)
+      : nothing}
+    ${r.output ? ctx.renderGateSection(r) : nothing}
+    ${renderRunReviewResult(
+      r,
+      () => void ctx._onReplayStep('human-gate'),
+      actionsBlocked || ctx._rereviewInFlight,
+      () => void ctx._rereviewLatestHead(r),
+    )}
+    ${r.reviewWorkspace && !r.output ? ctx.renderGateSection(r) : nothing}
     ${ctx._renderAgentSessions(r)} ${renderReviewChain(r)}
     ${ctx.siblings.length
       ? html`

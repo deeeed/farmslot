@@ -47,6 +47,20 @@ import {
   runResolveDecision,
 } from './run.js';
 
+/** What accepting review findings sends besides the package binding (ADR-065 Amendment 8). */
+const ACCEPTANCE = { reason: 'The owner accepts the finding.', findingsDigest: 'sha256:shown' };
+const acceptor = {
+  id: 'acceptor',
+  subject: { type: 'person' as const, displayName: 'Acceptor' },
+  roles: [],
+};
+const acceptorAuthority = {
+  authorizeEvidenceAttestation: () => ({
+    principalId: 'acceptor',
+    displayName: 'Acceptor',
+    personSessionId: 'acceptor-session',
+  }),
+};
 test('planning resolves the same dispatch defaults without creating a run or consuming a queue claim', async () => {
   const before = getAllRuns().map((run) => run.id);
   let claimed = true;
@@ -759,9 +773,12 @@ test('publication RPC refuses unresolved findings without a pending decision, in
           assert.fail('no side effects'),
         ),
         (error: unknown) =>
-          error instanceof GatewayMethodError &&
-          error.code === 'RUN_GATE_NOT_READY' &&
-          /Review found 1 issue/.test(error.message),
+          // Readiness, not the review-block pre-check, decides accepting findings.
+          actionId === 'approve-publish-unresolved'
+            ? /Decision not found/.test(String(error))
+            : error instanceof GatewayMethodError &&
+              error.code === 'RUN_GATE_NOT_READY' &&
+              /Review found 1 issue/.test(error.message),
       );
     }
     assert.deepEqual(getRun(run.id), before);
@@ -904,20 +921,25 @@ for (const actionId of ['approve-publish', 'approve-publish-unresolved']) {
       },
     });
 
+    const accepting = actionId === 'approve-publish-unresolved';
     await assert.rejects(
       () =>
-        runResolveDecision(
-          {
-            runId: run.id,
-            decisionId: decision.id,
-            actionId,
-            selectionData: {
-              packageId: visiblePackage.id,
-              packageHash: visiblePackage.packageHash,
-              packageHeadSha: visiblePackage.headSha,
+        runWithSessionOriginator(acceptor, () =>
+          runResolveDecision(
+            {
+              runId: run.id,
+              decisionId: decision.id,
+              actionId,
+              ...(accepting ? ACCEPTANCE : {}),
+              selectionData: {
+                packageId: visiblePackage.id,
+                packageHash: visiblePackage.packageHash,
+                packageHeadSha: visiblePackage.headSha,
+              },
             },
-          },
-          () => {},
+            () => {},
+            accepting ? acceptorAuthority : {},
+          ),
         ),
       /refresh package and re-review before publishing/,
     );
@@ -1006,21 +1028,26 @@ for (const actionId of ['approve-publish', 'approve-publish-unresolved']) {
     await retainRunFixture(getRun(run.id)!, prPackage);
     await overwriteRetainedFixture(getRun(run.id)!, 'artifacts/keep.png', 'mutated-image');
 
+    const accepting = actionId === 'approve-publish-unresolved';
     await assert.rejects(
       () =>
-        runResolveDecision(
-          {
-            runId: run.id,
-            decisionId: decision.id,
-            actionId,
-            selectionData: {
-              packageId: prPackage.id,
-              packageHash: prPackage.packageHash,
-              packageHeadSha: prPackage.headSha,
-              selectedEvidenceKeys: ['artifacts/keep.png'],
+        runWithSessionOriginator(acceptor, () =>
+          runResolveDecision(
+            {
+              runId: run.id,
+              decisionId: decision.id,
+              actionId,
+              ...(accepting ? ACCEPTANCE : {}),
+              selectionData: {
+                packageId: prPackage.id,
+                packageHash: prPackage.packageHash,
+                packageHeadSha: prPackage.headSha,
+                selectedEvidenceKeys: ['artifacts/keep.png'],
+              },
             },
-          },
-          () => {},
+            () => {},
+            accepting ? acceptorAuthority : {},
+          ),
         ),
       /selected evidence hash mismatch/,
     );
@@ -3306,7 +3333,7 @@ test('refused publication approval stays pending without restoring, replaying or
     title: 'Gate',
     description: '',
     createdAt: '2026-10-15T00:00:00Z',
-    actions: [{ id: 'approve-publish-unresolved', label: 'Approve', style: 'danger' }],
+    actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
     payload: {
       kind: 'ready',
       prNumber: null,
@@ -3334,7 +3361,7 @@ test('refused publication approval stays pending without restoring, replaying or
   const effects: string[] = [];
   await assert.rejects(
     runResolveDecision(
-      { runId: run.id, decisionId: decision.id, actionId: 'approve-publish-unresolved' },
+      { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
       () => effects.push('broadcast'),
       {
         assertGatePrerequisites: async () => {
@@ -3452,43 +3479,69 @@ test('real packaged approval restores a parked run before reading a reused slot 
   });
   await retainRunFixture(getRun(run.id)!, pkg);
   let restores = 0;
-  await runResolveDecision(
-    {
-      runId: run.id,
-      decisionId: decision.id,
-      actionId: 'approve-publish-unresolved',
-      selectionData: {
-        packageId: pkg.id,
-        packageHash: pkg.packageHash,
-        packageHeadSha: head,
-        selectedEvidenceKeys: [],
+  const findings = [{ reviewId: 'review', file: 'src/a.ts', description: 'Accepted finding' }];
+  await runWithSessionOriginator(acceptor, () =>
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'approve-publish-unresolved',
+        ...ACCEPTANCE,
+        selectionData: {
+          packageId: pkg.id,
+          packageHash: pkg.packageHash,
+          packageHeadSha: head,
+          selectedEvidenceKeys: [],
+        },
       },
-    },
-    () => {},
-    {
-      assertGatePrerequisites: async () => {},
-      resumeRun: async () => {},
-      restoreGatePark: async () => {
-        restores++;
-        const park = getRun(run.id)!.park!;
-        updateRun(run.id, {
-          slotId: ownedSlot,
-          park: { ...park, slotId: ownedSlot, phase: 'restored', slotFreedAt: undefined },
-        });
-        return {
-          ok: true,
-          runId: run.id,
-          slotId: ownedSlot,
-          restoredGeneration: 1,
-          reloadedSessionId: 'retained',
-          gateReplayed: false,
-          record: getRun(run.id)!.park!,
-        };
+      () => {},
+      {
+        ...acceptorAuthority,
+        assertGatePrerequisites: async (current) => ({
+          state: 'not-ready' as const,
+          identity: {
+            runId: run.id,
+            generation: current.engineState?.generation ?? 0,
+            packageHash: pkg.packageHash,
+          },
+          reasons: [
+            {
+              code: 'review-fix-required',
+              prerequisite: 'review' as const,
+              message: 'Review rounds spent: 1 issue open',
+              allowedReviewOverrides: ['approve-publish-unresolved'],
+            },
+          ],
+          findings,
+          findingsDigest: ACCEPTANCE.findingsDigest,
+        }),
+        resumeRun: async () => {},
+        restoreGatePark: async () => {
+          restores++;
+          const park = getRun(run.id)!.park!;
+          updateRun(run.id, {
+            slotId: ownedSlot,
+            park: { ...park, slotId: ownedSlot, phase: 'restored', slotFreedAt: undefined },
+          });
+          return {
+            ok: true,
+            runId: run.id,
+            slotId: ownedSlot,
+            restoredGeneration: 1,
+            reloadedSessionId: 'retained',
+            gateReplayed: false,
+            record: getRun(run.id)!.park!,
+          };
+        },
       },
-    },
+    ),
   );
   assert.equal(restores, 1);
   assert.equal(getRun(run.id)!.decisions[0].resolvedAction, 'approve-publish-unresolved');
+  assert.deepEqual(getRun(run.id)!.decisions[0].publicationApproval?.acceptedFindings, {
+    findings,
+    digest: ACCEPTANCE.findingsDigest,
+  });
   assert.equal(getRun(run.id)!.engineState?.publishGate?.publicationStatus, 'pending_publish');
   assert.equal(getRun(run.id)!.engineState?.publishGate?.approvedPackageHash, pkg.packageHash);
   const { loadAllRuns } = await import('../runs/store.js');

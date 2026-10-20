@@ -15,6 +15,7 @@ import {
 import '../shared/hydrating-placeholder.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { isPlainClick } from '../progress-tracker/acceptance-panel.js';
 import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 
 import { renderVisualClaimJudgment } from './visual-claim-judgment.js';
@@ -76,6 +77,8 @@ export interface WorkspaceEvidenceComparison {
   artifactUrl(path: string): string;
   openMedia(media: EvidenceReviewComparisonMedia, clipIndex?: number): void;
   openMoment(claimId: string, index: number): void;
+  /** A criterion's proof file, opened in the host's evidence review instead of a new tab. */
+  openProofFile?(claimId: string, artifactPath: string): void;
   changed(): void;
 }
 
@@ -477,6 +480,11 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
                   href=${gatewayMediaSrc(input.artifactUrl(file.artifactPath))}
                   target="_blank"
                   rel="noopener"
+                  @click=${(event: MouseEvent) => {
+                    if (!input.openProofFile || !isPlainClick(event)) return;
+                    event.preventDefault();
+                    input.openProofFile(row.claim.id, file.artifactPath);
+                  }}
                 >
                   Selected file · ${file.name}
                 </a>

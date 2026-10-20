@@ -7,10 +7,9 @@ import type {
   RunStepStatus,
 } from '@farmslot/protocol';
 
-import { colors, fonts } from '../../styles/theme-tokens.js';
-import { formatBytes } from '../../utils/format.js';
+import './artifact-browser.js';
 
-import { gatewayMediaSrc } from './gateway-media-src.js';
+import { colors, fonts } from '../../styles/theme-tokens.js';
 
 /**
  * Shared expandable step row used by family-observability and step-inspector.
@@ -88,14 +87,6 @@ export class StepArtifacts extends LitElement {
     .muted {
       color: ${unsafeCSS(colors.textMuted)};
     }
-    .artifact-link {
-      color: ${unsafeCSS(colors.accent)};
-      text-decoration: none;
-      cursor: pointer;
-    }
-    .artifact-link:hover {
-      text-decoration: underline;
-    }
     .status {
       font-family: ${unsafeCSS(fonts.mono)};
     }
@@ -153,28 +144,15 @@ export class StepArtifacts extends LitElement {
             Artifacts${this.artifacts.length ? html` (${this.artifacts.length})` : nothing}
           </div>
           ${this.artifacts.length
-            ? html`
-                <ul class="list">
-                  ${this.artifacts.map(
-                    (a, i) => html`
-                      <li>
-                        <a
-                          class="artifact-link"
-                          href=${gatewayMediaSrc(url ? url(a) : '#')}
-                          @click=${(e: Event) => this._onArtifactClick(i, e)}
-                          >${a.path}</a
-                        >
-                        <span class="muted">
-                          ·
-                          ${a.purpose}${a.sizeBytes != null
-                            ? ` · ${formatBytes(a.sizeBytes)}`
-                            : ''}</span
-                        >
-                      </li>
-                    `,
-                  )}
-                </ul>
-              `
+            ? html`<artifact-browser
+                .artifacts=${this.artifacts}
+                .artifactHref=${(index: number) => {
+                  const artifact = this.artifacts[index];
+                  return url && artifact ? url(artifact) : '#';
+                }}
+                @artifact-open=${(event: CustomEvent<{ index: number }>) =>
+                  this._onArtifactClick(event.detail.index, event)}
+              ></artifact-browser>`
             : html`<div class="muted">No artifacts captured for this step.</div>`}
         </div>
         ${this.learnings.length

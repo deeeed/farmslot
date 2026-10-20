@@ -60,6 +60,12 @@ export function withPublicationProvenance(run: Run, body: string): string {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/([`*_[\]\\])/gu, '\\$1');
+    const fenced = (text: string) => {
+      const fence = '`'.repeat(
+        Math.max(3, ...[...text.matchAll(/`+/g)].map((match) => match[0].length + 1)),
+      );
+      return [`${fence}text`, text, fence];
+    };
     if (
       approval &&
       (approval.packageHash !== prepared.packageHash ||
@@ -76,19 +82,33 @@ export function withPublicationProvenance(run: Run, body: string): string {
         ? `${plain(approval.displayName)} · ${approval.subjectKind} · ${plain(approval.principalId)} · ${approval.approvedAt}\nPackage: \`${approval.packageHash}\`. Visual receipts: ${approval.visualJudgmentReceiptIds.map(plain).join(', ') || 'none'}.`
         : 'Not recorded.',
     );
+    const accepted = approval?.acceptedFindings;
+    if (accepted) {
+      if (!approval.approver || !approval.reason || !approval.headSha)
+        throw new Error('The accepted review findings receipt is incomplete.');
+      const section = [
+        `Accepted by ${plain(approval.approver.displayName)} (${plain(approval.approver.principalId)}) at ${approval.approvedAt}.`,
+        `Head: \`${approval.headSha}\`. Findings digest: \`${accepted.digest}\`.`,
+        '',
+        'Reason:',
+        ...fenced(approval.reason),
+        '',
+        'Accepted findings:',
+        ...accepted.findings.map(
+          (finding) =>
+            `- ${plain(finding.file)}${finding.line ? `:${finding.line}` : ''}: ${plain(finding.description)} (review ${plain(finding.reviewId)})`,
+        ),
+      ].join('\n');
+      body = replaceMarkdownSection(body, '## Accepted review findings', section).trimEnd() + '\n';
+    }
     const receipt = assertEvidenceAttestationReceipt(run, decision, prepared);
     if (receipt) {
-      const fence = '`'.repeat(
-        Math.max(3, ...[...receipt.reason.matchAll(/`+/g)].map((match) => match[0].length + 1)),
-      );
       const section = [
         `Approved by ${plain(receipt.approver.displayName)} (${plain(receipt.approver.principalId)}) at ${receipt.approvedAt}.`,
         `Package: \`${receipt.packageHash}\`. Decision: \`${receipt.decisionId}\`.`,
         '',
         'Reason:',
-        `${fence}text`,
-        receipt.reason,
-        fence,
+        ...fenced(receipt.reason),
         '',
         'Waived claim-policy findings:',
         ...receipt.waivedReasons.map((reason) => `- ${plain(reason.message)}`),

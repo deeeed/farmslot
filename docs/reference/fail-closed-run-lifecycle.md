@@ -65,6 +65,32 @@ existing action definitions; do not add a second decision store.
 
 When project policy skips code review, the shared gate projection and published PR MUST disclose "No code review ran" without withholding approval solely for that skip.
 
+The evidence prerequisite includes publication's secret scan (ADR-065 Amendment 9). The gateway MUST run, on the prepared package, the scan publication applies to the draft title and body, the evidence selection completed with its paired halves as publication uploads it, and the frozen text of those recordings and their recipes. A hit is `publication-secret-values`, naming kinds and fingerprints only, never values. A scan that cannot read the frozen evidence is `evidence-validation-unavailable`. Evidence attestation waives neither. Text that publication generates or adds only when it publishes keeps its publication-time scan.
+
+### Accepting review findings
+
+"Accept Review Findings and Publish" (`approve-publish-unresolved`) publishes the
+package head with its open review findings accepted (ADR-065 Amendment 8). Only a
+person session with human-attestation authority may take it, with a written
+reason that is non-empty after trimming. Service, node and unauthenticated
+callers are refused.
+
+It yields only `review-fix-required` and `review-result-required`. Every other
+reason, including `review-result-invalid`, still refuses it. It is available only
+when the required number of reviews returned a valid structured result for the
+prepared package, every review reporting an open finding at the head returned
+one, at least one finding is open and no fix or review is running. Then the
+readiness carries `findings` (each with its review id, file, line and
+description) and their `findingsDigest`. `@farmslot/protocol`'s
+`gateActionsForReadiness` and `acceptReviewFindingsAvailable` are the one
+availability rule the gateway and every client apply.
+
+The request carries `reason` and the `findingsDigest` the client showed. Resolve
+and the finalize recheck refuse when the head's open findings have a different
+digest. The publication approval records the accepted findings and digest, the
+reason, the package head and the approver, and the published PR body discloses
+them under "Accepted review findings".
+
 Inspection, hold, evidence selection/judgments, review requests and authorized
 fix/recovery actions MUST remain usable as appropriate. A `collecting` gate may
 gather the visual judgments and reviewer artifacts it still needs. It MUST NOT

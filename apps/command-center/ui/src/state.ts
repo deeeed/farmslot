@@ -91,11 +91,14 @@ export function isFullyHydrated(h: HydratedSlices): boolean {
 }
 
 export function isHydrating(s: AppState, slice: HydratedSlice): boolean {
-  return s.connection === 'connected' && !s.hydrated[slice];
+  // A kept workspace stays visibly stale while disconnected, not falsely live.
+  return s.connection !== 'auth_required' && !s.hydrated[slice];
 }
 
 export interface AppState {
   connection: ConnectionState;
+  /** Access level of the account the shown workspace belongs to; kept across a transient disconnect. */
+  workspaceAccess: 'farm' | 'native' | 'none';
   hydrated: HydratedSlices;
   // `true` iff the most recent bootstrap snapshot RPC for this slice
   // rejected. Views consult this on the hydrating→hydrated transition to
@@ -185,6 +188,7 @@ function filtersEqual(a: GlobalFilters, b: GlobalFilters): boolean {
 
 const state: AppState = {
   connection: gateway.connectionState,
+  workspaceAccess: 'none',
   hydrated: { ...EMPTY_HYDRATED },
   bootstrapFailed: { ...EMPTY_HYDRATED },
   fleet: null,
@@ -229,8 +233,60 @@ function clearWorkspaceState(): void {
     projectDefaultBranches: {},
     projectSlotTracking: {},
     githubQuota: null,
+    workspaceAccess: 'none',
   });
   state.runDeletionsRevision += 1;
+}
+
+interface WorkspaceOwner {
+  credentialGeneration: number;
+  principalId: string | null;
+  access: 'farm' | 'native' | 'none';
+}
+
+let workspaceOwner: WorkspaceOwner | null = null;
+
+/**
+ * Returns whether the account behind the workspace changed. Keep the workspace through a
+ * transient disconnect or gateway restart. Clear it only when the
+ * account behind it changes: sign-in or sign-out on this client, refused credentials, or a
+ * reconnect as another principal or access level.
+ */
+function syncWorkspaceOwner(conn: ConnectionState): boolean {
+  const previous = workspaceOwner;
+  if (
+    conn === 'auth_required' ||
+    (workspaceOwner && workspaceOwner.credentialGeneration !== gateway.credentialGeneration)
+  ) {
+    workspaceOwner = null;
+    clearWorkspaceState();
+  }
+  if (conn !== 'connected') return previous !== null && workspaceOwner === null;
+  const owner: WorkspaceOwner = {
+    credentialGeneration: gateway.credentialGeneration,
+    principalId: gateway.authenticatedPrincipalId,
+    access: gateway.workspaceAccess,
+  };
+  const changed =
+    !workspaceOwner ||
+    workspaceOwner.principalId !== owner.principalId ||
+    workspaceOwner.access !== owner.access;
+  if (changed && workspaceOwner) clearWorkspaceState();
+  workspaceOwner = owner;
+  state.workspaceAccess = owner.access;
+  return changed;
+}
+
+const workspaceOwnerListeners = new Set<() => void>();
+
+function notifyWorkspaceOwnerChange(): void {
+  for (const listener of workspaceOwnerListeners) listener();
+}
+
+/** Runs after the account behind the workspace changes; never on a transient disconnect. */
+export function onWorkspaceOwnerChange(listener: () => void): () => void {
+  workspaceOwnerListeners.add(listener);
+  return () => workspaceOwnerListeners.delete(listener);
 }
 
 function resetBootstrapState(): void {
@@ -780,9 +836,10 @@ export function initState(): void {
       // dead connection and would corrupt the next one if drained.
       activeBootstrap = null;
       resetBootstrapState();
-      clearWorkspaceState();
     }
+    const ownerChanged = syncWorkspaceOwner(conn);
     setConnection(conn);
+    if (ownerChanged) notifyWorkspaceOwnerChange();
     if (conn === 'connected' && gateway.workspaceAccess === 'farm') {
       const epoch = gateway.connectionEpoch;
       void fetchInitialState(epoch);

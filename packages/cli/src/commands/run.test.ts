@@ -12,6 +12,7 @@ import { WebSocketServer } from 'ws';
 
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ResultDecisionPayload,
   type Run,
   type RunDecision,
@@ -65,6 +66,16 @@ test('gate CLI serializes a written attestation reason with its visible package 
   });
   assert.equal(params.evidenceAttestationReason, 'Inspected retained evidence.');
   assert.equal(params.selectionData?.packageHash, 'hash');
+  // Accepting review findings sends its own reason (ADR-065 Amendment 8).
+  assert.throws(
+    () => buildRunGateParams(run, decision, APPROVE_PUBLISH_UNRESOLVED_ACTION, {}),
+    /requires --reason/,
+  );
+  const accepted = buildRunGateParams(run, decision, APPROVE_PUBLISH_UNRESOLVED_ACTION, {
+    reason: ' The owner accepts it. ',
+  });
+  assert.equal(accepted.reason, 'The owner accepts it.');
+  assert.equal(accepted.evidenceAttestationReason, undefined);
   const program = new Command();
   registerRunCommand(program);
   assert.ok(

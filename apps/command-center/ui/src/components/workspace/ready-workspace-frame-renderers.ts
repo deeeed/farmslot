@@ -36,7 +36,8 @@ export interface ReadyWorkspaceFrameInput {
   renderTabContent: () => unknown;
   renderInputArtifactViewer: () => unknown;
   renderReviewRequestModal: () => unknown;
-  renderReviewFlowModal: () => unknown;
+  /** The criterion evidence review, over the gate while open. */
+  renderReview: () => unknown;
   beginRecovery: () => void;
   onResizeStart: (event: MouseEvent) => void;
   lightbox: {
@@ -74,7 +75,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
   const reviewContent = html`${input.renderTabBar()}
     <div
       class="rdy-tab-pane-host"
-      style=${packageGate ? 'height:min(65vh,640px);flex:none' : nothing}
+      style=${packageGate ? 'flex:1 1 min(65vh,640px);min-height:0' : nothing}
     >
       ${input.renderTabContent()}
     </div>`;
@@ -107,7 +108,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
         ${reviewContent}
       </div>
     </div>
-    ${input.renderTopBar()}
+    ${input.renderTopBar()} ${input.renderReview()}
     <media-lightbox
       .items=${input.lightbox.items}
       .pairs=${input.lightbox.pairs}
@@ -138,7 +139,6 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
       @diff-modal-close=${input.diffModal.close}
     ></diff-viewer-modal>
     ${input.renderInputArtifactViewer()} ${input.renderReviewRequestModal()}
-    ${input.renderReviewFlowModal()}
   `;
 }
 

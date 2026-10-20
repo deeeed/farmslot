@@ -11,6 +11,7 @@ import {
   type ReviewStatus,
   type Run,
   type RunDecision,
+  type RunGateReadiness,
 } from '@farmslot/protocol';
 import { colors } from '@farmslot/theme';
 
@@ -287,8 +288,28 @@ const OVERRIDES: DecisionAction[] = [
   { id: 'hold', label: 'Hold', style: 'secondary' },
 ];
 
-const withheld = (actions: DecisionAction[], guard: ReturnType<typeof approvePublishGuard>) =>
-  gateReviewActions(actions, guard).map((action) => [action.id, action.disabledReason]);
+/** A gate whose head findings can be accepted (ADR-065 Amendment 8). */
+const ACCEPTABLE: RunGateReadiness = {
+  state: 'not-ready',
+  identity: { runId: 'run', generation: 1 },
+  reasons: [
+    {
+      code: 'review-fix-required',
+      prerequisite: 'review',
+      message: 'Review rounds spent: 1 issue open',
+      allowedReviewOverrides: [APPROVE_PUBLISH_UNRESOLVED_ACTION],
+    },
+  ],
+  findings: [{ reviewId: 'review', file: 'src/a.ts', description: 'Open finding' }],
+  findingsDigest: 'sha256:findings',
+};
+
+const withheld = (
+  actions: DecisionAction[],
+  guard: ReturnType<typeof approvePublishGuard>,
+  readiness: RunGateReadiness | undefined = ACCEPTABLE,
+) =>
+  gateReviewActions(actions, guard, readiness).map((action) => [action.id, action.disabledReason]);
 
 test('approve-publish is withheld while a criterion has no verdict; hold and review requests stay', () => {
   const guard = approvePublishGuard({
@@ -427,6 +448,25 @@ test('open findings or a running fix withhold every publish approval, overrides 
         APPROVE_PUBLISH_UNRESOLVED_ACTION,
         'Review found 2 issues. Fix and pass review before publishing.',
       ],
+      [
+        APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+        'Review found 2 issues. Fix and pass review before publishing.',
+      ],
+      ['ready', 'Review found 2 issues. Fix and pass review before publishing.'],
+      ['hold', null],
+      ['approve-publish', 'Review found 2 issues. Fix and pass review before publishing.'],
+    ],
+  );
+  // The gate's checked findings offer accepting them, and only that (ADR-065 Amendment 8).
+  assert.deepEqual(
+    gateReviewActions(
+      gate.actions,
+      humanGateGuard(findings, gate, judged).guard,
+      ACCEPTABLE,
+      'Review found 2 issues. Fix and pass review before publishing.',
+    ).map((action) => [action.id, action.disabledReason]),
+    [
+      [APPROVE_PUBLISH_UNRESOLVED_ACTION, null],
       [
         APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
         'Review found 2 issues. Fix and pass review before publishing.',
