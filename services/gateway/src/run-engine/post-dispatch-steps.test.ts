@@ -2165,3 +2165,165 @@ test('accepted publication resumes its gate without collecting reviews or replac
   assert.equal(getRun(run.id)!.decisions.length, 1);
   assert.equal(getRun(run.id)!.engineState?.publishGate?.approvedPackageHash, 'approved-package');
 });
+
+// TAT-4145 bda11b1a (00:18Z): a stale CI receipt failed the gate's package refresh after a
+// review plan; the error failed HUMAN_GATE, and the failure released the slot.
+const STALE_CI_RECEIPT =
+  'Deterministic CI gate blocked: [{"checks":[{"checklist":"CHECKLIST.md","stepNumber":17,"reference":"ci.local_check","status":"stale"}]}]';
+const claudeColdRow: ReviewSelection = {
+  runner: 'claude',
+  model: null,
+  effort: null,
+  mode: 'cold',
+};
+
+async function staleReceiptGateRun(
+  t: test.TestContext,
+  ticketOrPr: string,
+  reviewSequence: ReviewSelection[],
+  reviews: ReviewStatus[],
+) {
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'gate-stale-receipt-'));
+  const run = createRun({
+    project: 'review-replay',
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    ticketOrPr,
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+    await rm(taskDir, { recursive: true, force: true });
+  });
+  await mkdir(path.join(taskDir, 'artifacts'));
+  await writeFile(
+    path.join(taskDir, 'artifacts/pr-package.json'),
+    JSON.stringify(makeReadyGatePackage({ headSha: 'c'.repeat(40) })),
+  );
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: 'stale-receipt-slot',
+    taskFile: path.join(taskDir, 'TASK.md'),
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [],
+    engineState: {
+      publishGate: {
+        publicationStatus: 'not_published',
+        reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+        reviewSequence,
+        reviewSequenceRequestedAt: reviewSequence.length ? '2026-10-20T00:18:39.114Z' : undefined,
+        reviews,
+      },
+    },
+  });
+  return run;
+}
+
+function preparedGatePackage(): PrepareCompletionPackageResult {
+  return {
+    completion: {
+      prNumber: null,
+      ciRepo: null,
+      artifactsCopied: true,
+      prCommentPosted: false,
+      prTitleUpdated: false,
+      prMarkedReady: false,
+      retrospectiveCreated: false,
+      artifacts: [],
+    },
+    prPackage: makeReadyGatePackage(),
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+    reviews: [],
+  };
+}
+
+test('gate re-entry with a refused re-run row and a stale CI receipt reaches the gate wait', async (t) => {
+  // The refused re-run left its row persisted; a restart and Retry Gate re-enter with it.
+  const run = await staleReceiptGateRun(
+    t,
+    'STALE-RECEIPT-REENTRY',
+    [claudeColdRow],
+    [
+      {
+        id: 'pipeline-pass',
+        source: 'pipeline',
+        loopNumber: 1,
+        ...claudeColdRow,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        reviewedHeadSha: 'a'.repeat(40),
+        completedAt: '2026-10-19T15:50:37Z',
+      },
+    ],
+  );
+  const plans: ReviewSelection[][] = [];
+  let gates = 0;
+  await executeHumanGateStep(run.id, {
+    ...restartReplayContext(),
+    executePublishGateReviewPlan: async (_runId, _slotId, plan) => {
+      plans.push(plan);
+      return {
+        reviewIds: [],
+        rejection: {
+          code: 'REVIEW_ROUND_LIMIT_REACHED',
+          message: 'All 7 authorized review rounds are spent',
+          userAction: 'Stop review work.',
+          rejectedAt: '2026-10-20T00:18:39.113Z',
+        },
+      };
+    },
+    prepareCompletionPackageForRun: async () => {
+      throw new Error(STALE_CI_RECEIPT);
+    },
+    executeReadyGate: async () => {
+      gates += 1;
+      return 'approve-publish';
+    },
+  });
+  assert.deepEqual(plans, [[claudeColdRow]]);
+  assert.equal(gates, 1, 'the gate owns the package it cannot prepare yet');
+});
+
+test('a requested gate review whose package meets a stale CI receipt returns to the gate', async (t) => {
+  const run = await staleReceiptGateRun(
+    t,
+    'STALE-RECEIPT-REQUEST',
+    [],
+    [
+      {
+        id: 'dispatch-pass',
+        source: 'dispatch',
+        loopNumber: 1,
+        ...claudeColdRow,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        reviewedHeadSha: 'c'.repeat(40),
+        completedAt: '2026-10-19T16:00:00Z',
+      },
+    ],
+  );
+  let prepares = 0;
+  let gates = 0;
+  await executeHumanGateStep(run.id, {
+    ...restartReplayContext(),
+    executePublishGateReviewPlan: async () => ({ reviewIds: ['review-requested'] }),
+    // The requested review's fix loop commits, so its package refresh meets a stale receipt.
+    prepareCompletionPackageForRun: async () => {
+      prepares += 1;
+      if (prepares === 1) return preparedGatePackage();
+      throw new Error(STALE_CI_RECEIPT);
+    },
+    executeReadyGate: async () => {
+      gates += 1;
+      if (gates > 1) return 'approve-publish';
+      const latest = getRun(run.id)!;
+      updateRun(run.id, {
+        engineState: {
+          ...latest.engineState,
+          publishGate: { ...latest.engineState?.publishGate, reviewSequence: [claudeColdRow] },
+        },
+      });
+      return 'request-review';
+    },
+  });
+  assert.equal(gates, 2, 'the requested review returns to the gate');
+});

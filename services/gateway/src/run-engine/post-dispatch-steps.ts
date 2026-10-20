@@ -295,9 +295,8 @@ export async function reconcilePublishGateReviewPlanResult(
   });
   getRun(runId)!;
   const diffStat = await context.getDiffStat(getRun(runId)!);
-  const prepared = await (context.prepareCompletionPackageForRun ?? prepareCompletionPackage)(
-    runId,
-    {
+  const prepared = await prepareGatePackageAfterReviews(runId, () =>
+    (context.prepareCompletionPackageForRun ?? prepareCompletionPackage)(runId, {
       diffStat,
       reviewPolicy: getRun(runId)?.engineState?.publishGate?.reviewPolicy,
       publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
@@ -309,12 +308,34 @@ export async function reconcilePublishGateReviewPlanResult(
           }
         : {}),
       requireArtifactMirror: true,
-    },
+    }),
   );
-  if (options.stampFreshReviews) {
+  if (prepared && options.stampFreshReviews) {
     stampFreshReviewsForPreparedPackage(runId, result.reviewIds, prepared.prPackage);
   }
   return completedReviewCount;
+}
+
+/**
+ * Prepare the gate's package once its reviews settled. A package the gate cannot
+ * prepare yet (a stale CI receipt, say) is left to executeReadyGate, whose durable
+ * wait keeps the slot, offers Retry Gate and Continue Fixing, and re-stamps the
+ * settled reviews on its refresh. Throwing here failed the run and released the
+ * checkout (TAT-4145 bda11b1a).
+ */
+async function prepareGatePackageAfterReviews(
+  runId: string,
+  prepare: () => ReturnType<typeof prepareCompletionPackage>,
+): Promise<Awaited<ReturnType<typeof prepareCompletionPackage>> | undefined> {
+  try {
+    return await prepare();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[run-engine] run ${runId.slice(0, 8)} — gate package not prepared after review; the gate retries it: ${message.slice(0, 200)}`,
+    );
+    return undefined;
+  }
 }
 
 async function evalReviewAxisSkip(run: Run): Promise<{
@@ -916,19 +937,10 @@ export async function rerunReviewIfReviewedInputsChanged(
     plan,
     'dispatch',
   );
-  try {
-    await reconcilePublishGateReviewPlanResult(runId, plan, reviewPlanResult, context, {
-      reviewedPackage,
-      stampFreshReviews: true,
-    });
-  } catch (error) {
-    // A package the gate cannot prepare (a stale CI receipt, say) is the gate's
-    // durable wait: it keeps the slot and offers Retry Gate and Continue Fixing,
-    // and its refresh re-stamps this review. Failing here released the checkout.
-    console.warn(
-      `[run-engine] run ${runId.slice(0, 8)} — package refresh after the review re-run failed; the gate retries it: ${(error as Error).message.slice(0, 200)}`,
-    );
-  }
+  await reconcilePublishGateReviewPlanResult(runId, plan, reviewPlanResult, context, {
+    reviewedPackage,
+    stampFreshReviews: true,
+  });
   // Marked only once a review attempt settled: a restart or a launch that ran
   // nothing leaves the change pending, so the next presentation re-runs it.
   if (reviewPlanResult.reviewIds.length === 0) return false;
@@ -1291,16 +1303,19 @@ export async function executeHumanGateStep(
       } else if (recoveredReviewIds.length > 0) {
         const beforeRefresh = await readReadyGatePreparedPackage(getRun(runId)!);
         const diffStat = await getDiffStat(getRun(runId)!);
-        const prepared = await prepareCompletionPackage(runId, {
-          diffStat,
-          reviewPolicy: getRun(runId)?.engineState?.publishGate?.reviewPolicy,
-          publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
-          selectedEvidenceKeys: beforeRefresh?.selectedEvidenceKeys,
-          priorEvidenceManifest: beforeRefresh?.evidenceManifest,
-          stampReviews: false,
-          requireArtifactMirror: true,
-        });
-        stampFreshReviewsForPreparedPackage(runId, recoveredReviewIds, prepared.prPackage);
+        const prepared = await prepareGatePackageAfterReviews(runId, () =>
+          prepareCompletionPackage(runId, {
+            diffStat,
+            reviewPolicy: getRun(runId)?.engineState?.publishGate?.reviewPolicy,
+            publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
+            selectedEvidenceKeys: beforeRefresh?.selectedEvidenceKeys,
+            priorEvidenceManifest: beforeRefresh?.evidenceManifest,
+            stampReviews: false,
+            requireArtifactMirror: true,
+          }),
+        );
+        if (prepared)
+          stampFreshReviewsForPreparedPackage(runId, recoveredReviewIds, prepared.prPackage);
       }
     }
     const presentReadyGate = async (): Promise<string> => {
