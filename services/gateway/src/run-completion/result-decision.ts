@@ -2,7 +2,7 @@
 // a completion prerequisite did not accept waits in `needs-decision` for one
 // person's choice (send back, accept, close) instead of ending `failed`.
 
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import {
   type DecisionAction,
@@ -23,6 +23,7 @@ import {
   supersedePendingResultDecisions,
 } from '@farmslot/protocol';
 
+import { findingsDigest } from '../core/findings-digest.js';
 import type { ReviewResult } from '../review/orchestrator.js';
 import { completionVerificationMode } from '../run-engine/push-verification.js';
 import {
@@ -182,9 +183,7 @@ export async function buildResultDecision(
     ...(findings ? { findings } : {}),
     ...(refused ? { refusal: refused } : {}),
     delivered: delivered(run, stoppedAt),
-    findingsDigest: `sha256:${createHash('sha256')
-      .update(JSON.stringify(findings ?? refused?.reasons ?? []))
-      .digest('hex')}`,
+    findingsDigest: findingsDigest(findings ?? refused?.reasons ?? []),
     ...(outputReview ? { outputReviewDecisionId: outputReview.id } : {}),
     actions: [
       await sendBackState(run, stoppedAt),

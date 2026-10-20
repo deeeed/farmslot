@@ -1582,7 +1582,7 @@ type TriageAssessmentPrice = NonNullable<NonNullable<AssessmentRecord['reservati
 export interface RunResolveDecisionDependencies {
   assertGatePrerequisites?: import('../run-engine/gate-prerequisites.js').GatePrerequisiteAssertion;
   /** Supplied only by the authenticated ingress, never RPC parameters or background callers. */
-  authorizeEvidenceAttestation?: () => EvidenceAttestationApprover;
+  authorizeEvidenceAttestation?: (action?: string) => EvidenceAttestationApprover;
   triageSnapshot?: (
     runId: string,
     step: string,
@@ -1925,6 +1925,8 @@ export function continueResolvedRunDecision(
   return engineResumed;
 }
 
+const ACCEPTING_FINDINGS = 'Accepting review findings';
+
 export async function resolveRunDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
@@ -1971,14 +1973,16 @@ export async function resolveRunDecision(
     ) {
       throw new GatewayMethodError(
         'AUTH_FORBIDDEN',
-        `${attestedApproval ? 'Evidence attestation' : 'Accepting review findings'} requires an authenticated human publish gate.`,
+        `${attestedApproval ? 'Evidence attestation' : ACCEPTING_FINDINGS} requires an authenticated human publish gate.`,
       );
     }
-    attestationApprover = dependencies.authorizeEvidenceAttestation();
+    attestationApprover = dependencies.authorizeEvidenceAttestation(
+      acceptingFindings ? ACCEPTING_FINDINGS : undefined,
+    );
     if (acceptingFindings && !publicationPrincipal)
       throw new GatewayMethodError(
         'AUTH_FORBIDDEN',
-        'Accepting review findings requires an authenticated human publish gate.',
+        `${ACCEPTING_FINDINGS} requires an authenticated human publish gate.`,
       );
   }
   if (decision.payload?.kind === 'result-decision') {
@@ -2286,7 +2290,7 @@ export async function resolveRunDecision(
     if (
       acceptedFindings &&
       !sameEvidenceAttestationApprover(
-        dependencies.authorizeEvidenceAttestation!(),
+        dependencies.authorizeEvidenceAttestation!(ACCEPTING_FINDINGS),
         attestationApprover!,
       )
     )

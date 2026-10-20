@@ -20,6 +20,8 @@ import {
   openHumanGateDecision,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
+  type ReviewAttempt,
+  type ReviewStatus,
   type ReviewSummary,
   type Run,
   type RunGateReadiness,
@@ -171,6 +173,39 @@ export function acceptanceClaimRows(
   return claims;
 }
 
+/** A review row or one of its attempts that reported findings, with the head it reviewed. */
+export interface ReviewFindingEntry {
+  review: ReviewStatus;
+  entry: ReviewStatus | ReviewAttempt;
+  findings: number;
+  head?: string | null;
+}
+
+/**
+ * Every entry that reported findings. The publication block counts them at the head, and
+ * accepting findings accepts exactly theirs (ADR-065 Amendment 8).
+ */
+export function reviewFindingEntries(reviews: readonly ReviewStatus[]): ReviewFindingEntry[] {
+  return reviews.flatMap((review) =>
+    [...(review.attempts ?? []), review].flatMap((entry) => {
+      const findings = Math.max(entry.unresolvedCount ?? 0, entry.issues?.length ?? 0);
+      return entry.verdict === 'issues' && findings > 0
+        ? [
+            {
+              review,
+              entry,
+              findings,
+              head:
+                entry === review
+                  ? (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)
+                  : entry.reviewSnapshot?.headSha,
+            },
+          ]
+        : [];
+    }),
+  );
+}
+
 export function reviewFixInProgress(run: Pick<Run, 'status' | 'agentContexts'>): boolean {
   return (
     run.status === 'fixing' ||
@@ -195,17 +230,9 @@ export function publicationReviewBlockingReason(
   let currentHeadFindings = 0;
   let count = 0;
   for (const review of reviews) {
-    for (const entry of [...(review.attempts ?? []), review]) {
-      const findings = Math.max(entry.unresolvedCount ?? 0, entry.issues?.length ?? 0);
-      if (entry.verdict === 'issues' && findings > 0) {
-        count = findings;
-        const issueHead =
-          entry === review
-            ? (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)
-            : entry.reviewSnapshot?.headSha;
-        if (head && issueHead === head)
-          currentHeadFindings = Math.max(currentHeadFindings, findings);
-      }
+    for (const { findings, head: issueHead } of reviewFindingEntries([review])) {
+      count = findings;
+      if (head && issueHead === head) currentHeadFindings = Math.max(currentHeadFindings, findings);
     }
     if (
       review.verdict === 'pass' &&

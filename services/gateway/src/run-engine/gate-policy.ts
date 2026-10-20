@@ -13,7 +13,6 @@ import {
   type NoChangeGatePayload,
   PUBLISH_APPROVAL_ACTIONS,
   qualifyingPassingReviews,
-  qualifyingTerminalReviewInputs,
   type ReadyGatePrPackage,
   type ReviewAttempt,
   type ReviewDiffSnapshot,
@@ -137,22 +136,14 @@ export function publicationGateDecisionActions(opts: {
           }
         : {}),
     },
-    ...(!opts.reviewSatisfied &&
-    opts.preparedPackage &&
-    qualifyingTerminalReviewInputs(opts.reviews ?? []).filter((review) =>
-      publicationReviewMatchesPreparedPackage(review, opts.preparedPackage!),
-    ).length >=
-      effectiveRequiredReviewCount(
-        opts.preparedPackage.reviewPolicy ?? { minimumReviews: 1, requestedBy: 'dispatch' },
-      )
+    // Gate readiness alone decides when accepting findings is offered (ADR-065 Amendment 8).
+    ...(opts.preparedPackage
       ? [
           {
             id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
             label: 'Accept Review Findings and Publish',
             style: 'danger' as const,
-            description: exhausted
-              ? reviewRetryCapReason(exhausted)
-              : 'Publish this package with its open review findings accepted. Your reason, the findings and your identity appear in the PR. Every other prerequisite still applies.',
+            description: `${exhausted ? `${reviewRetryCapReason(exhausted)} ` : ''}Publish this package with its open review findings accepted. Your reason, the findings and your identity appear in the PR. Every other prerequisite still applies.`,
           },
         ]
       : []),

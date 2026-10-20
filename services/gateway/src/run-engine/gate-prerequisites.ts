@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -31,8 +30,9 @@ import {
   type RunGatePrerequisiteReason,
   type RunGateReadiness,
 } from '@farmslot/protocol';
-import { reviewFixInProgress } from '@farmslot/review-dispatch';
+import { reviewFindingEntries, reviewFixInProgress } from '@farmslot/review-dispatch';
 
+import { findingsDigest } from '../core/findings-digest.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { assertQaCompletion } from '../qa/completion.js';
@@ -336,8 +336,8 @@ export async function reviewsWithValidResults(
 
 /**
  * The head's open findings, when the required reviews returned valid results for the package,
- * every review reporting a finding at the head is one of them, and no fix or review runs
- * (ADR-065 Amendment 8). The findings are exactly those results' issues.
+ * every entry the publication block counts at the head has its own valid structured result,
+ * and no fix or review runs (ADR-065 Amendment 8). The findings are exactly those results' issues.
  */
 async function acceptableHeadFindings(
   run: Run,
@@ -347,34 +347,30 @@ async function acceptableHeadFindings(
   source: Pick<GatePrerequisiteReaders, 'reviewResult'>,
 ): Promise<GateReviewFinding[] | undefined> {
   const reviews = run.engineState?.publishGate?.reviews ?? [];
-  const valid = validInputs.filter((review) =>
-    publicationReviewMatchesPreparedPackage(review, preparedPackage),
-  );
   if (
-    valid.length < required ||
+    validInputs.filter((review) => publicationReviewMatchesPreparedPackage(review, preparedPackage))
+      .length < required ||
     reviewFixInProgress(run) ||
     reviews.some((review) => review.verdict === 'pending')
   )
     return undefined;
-  const reporting = [...new Map(reviews.map((review) => [review.id, review])).values()].filter(
-    (review) =>
-      [...(review.attempts ?? []), review].some(
-        (entry) =>
-          entry.verdict === 'issues' &&
-          Math.max(entry.unresolvedCount ?? 0, entry.issues?.length ?? 0) > 0 &&
-          (entry === review
-            ? (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)
-            : entry.reviewSnapshot?.headSha) === preparedPackage.headSha,
-      ),
-  );
   const findings: GateReviewFinding[] = [];
-  for (const review of reporting) {
-    const artifact = reviewResultArtifactPath(review);
+  const seen = new Set<string>();
+  for (const { review, entry, findings: count, head } of reviewFindingEntries(reviews)) {
+    if (head !== preparedPackage.headSha) continue;
+    const artifact = reviewResultArtifactPath(
+      entry === review ? review : { artifactPaths: entry.artifactPaths },
+    );
     const raw = artifact ? await source.reviewResult(run, artifact) : undefined;
-    if (!artifact || !raw || !valid.some((entry) => entry.id === review.id)) return undefined;
-    const result = parseStructuredReviewFeedback(raw, artifact);
-    if (result.incomplete || result.verdict !== 'issues') return undefined;
-    findings.push(...result.issues.map((issue) => ({ reviewId: review.id, ...issue })));
+    const result = raw ? parseStructuredReviewFeedback(raw, artifact!) : undefined;
+    if (!result || result.incomplete || result.verdict !== 'issues' || result.issues.length < count)
+      return undefined;
+    for (const issue of result.issues) {
+      const key = JSON.stringify([review.id, issue.file, issue.line ?? null, issue.description]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      findings.push({ reviewId: review.id, ...issue });
+    }
   }
   return findings.length ? findings : undefined;
 }
@@ -626,10 +622,7 @@ export async function collectRunGateAssessment(
         prerequisite: 'review',
         message: `Required current-head reviews need valid structured result artifacts for this package. ${nextStep}`,
         actionId: budget.remaining === 0 ? 'hold' : 'request-review',
-        // Accepting findings never stands in for an invalid result (ADR-065 Amendment 8).
-        allowedReviewOverrides: recordedPolicySatisfied
-          ? allowedReviewOverrides.filter((id) => id !== APPROVE_PUBLISH_UNRESOLVED_ACTION)
-          : allowedReviewOverrides,
+        allowedReviewOverrides,
       });
     }
   }
@@ -695,7 +688,7 @@ export async function collectRunGateAssessment(
       ...(findings
         ? {
             findings,
-            findingsDigest: `sha256:${createHash('sha256').update(JSON.stringify(findings)).digest('hex')}`,
+            findingsDigest: findingsDigest(findings),
           }
         : {}),
     },

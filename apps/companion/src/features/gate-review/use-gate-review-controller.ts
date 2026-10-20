@@ -32,7 +32,7 @@ import {
   type VisualArtifactPair,
 } from '../../lib/artifact-url';
 import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
-import { decisionResolveRequest } from '../../lib/decision-resolve';
+import { decisionResolveRequest, gateActionReasons } from '../../lib/decision-resolve';
 import {
   evidenceMediaItems,
   recordedEvidenceArtifactUrl,
@@ -272,8 +272,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         action.id,
         null,
         selectionData,
-        action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION ? attestationReason : undefined,
-        action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION ? attestationReason : undefined,
+        gateActionReasons(action.id, attestationReason).evidenceAttestationReason,
+        gateActionReasons(action.id, attestationReason).reason,
       );
       Alert.alert('Confirm action', `Send "${action.id}" for ${decision.title}?`, [
         { text: 'Cancel', style: 'cancel' },
@@ -305,12 +305,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
               action.id,
               null,
               selectionData,
-              action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
-                ? latest.attestationReason
-                : undefined,
-              action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION
-                ? latest.attestationReason
-                : undefined,
+              gateActionReasons(action.id, latest.attestationReason).evidenceAttestationReason,
+              gateActionReasons(action.id, latest.attestationReason).reason,
             );
             if (JSON.stringify(now) !== JSON.stringify(confirmed)) {
               Alert.alert(action.label, 'The publish package changed; review it again.');
