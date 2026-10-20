@@ -10,9 +10,12 @@ import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   evidenceAttestationAvailable,
+  type GateDecisionFields,
+  gateWaitReason,
   isPublishApprovalAction,
   isValidEvidenceAttestationReason,
   latestReview,
+  openHumanGateDecision,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   type ReviewSummary,
@@ -34,6 +37,8 @@ export interface PublicationGateClaim extends AcceptanceCriterionView {
 
 export interface PublicationGateInput {
   run?: Pick<Run, 'status' | 'agentContexts' | 'engineState'> | null;
+  /** The open human gate: its actionable reason is what the view shows as blocking. */
+  gate?: GateDecisionFields | null;
 
   actions: readonly PublicationGateAction[];
   claims?: readonly PublicationGateClaim[];
@@ -210,6 +215,18 @@ export function publicationReviewBlockingReason(
   return undefined;
 }
 
+/**
+ * What a run's open human gate waits on, as one line a person can act on: the gate's
+ * reason whose action it offers (the lifecycle view's rule), else the review findings.
+ * Presentation only; publish guards keep using publicationReviewBlockingReason.
+ */
+export function humanGateBlockingReason(
+  run: Pick<Run, 'status' | 'agentContexts' | 'engineState' | 'decisions'>,
+): string | undefined {
+  const gate = openHumanGateDecision(run);
+  return (gate ? gateWaitReason(gate) : undefined) ?? publicationReviewBlockingReason(run);
+}
+
 /** Presentation only: action availability and evidence judgments remain gateway-owned. */
 export function publicationGateView(input: PublicationGateInput) {
   const pending = new Set(input.pendingVisualClaimIds ?? []);
@@ -267,7 +284,7 @@ export function publicationGateView(input: PublicationGateInput) {
   const blockedReason = input.resolved
     ? 'This decision is resolved.'
     : reviewBlock
-      ? reviewBlock
+      ? ((input.gate ? gateWaitReason(input.gate) : undefined) ?? reviewBlock)
       : refreshRequired
         ? 'Refresh package'
         : pending.size

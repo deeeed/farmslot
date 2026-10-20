@@ -4,6 +4,9 @@ import { readyReviewBlockingDisplayReason } from '../../utils/review-gate-displa
 
 export { readyWorkspaceLightStyles } from './ready-workspace-styles.js';
 
-export function readyReviewBlockingReason(payload: ReadyGatePayload): string {
-  return readyReviewBlockingDisplayReason(payload);
+export function readyReviewBlockingReason(
+  payload: ReadyGatePayload,
+  actions?: readonly { id: string }[],
+): string {
+  return readyReviewBlockingDisplayReason(payload, actions);
 }

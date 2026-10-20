@@ -8,12 +8,14 @@ import {
   type RecipeRepairScope,
   renderAcceptanceCoverage,
   type ReviewStatus,
+  type RunDecision,
   type RunGateReadiness,
   SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 
 import {
   acceptanceClaimRows,
+  humanGateBlockingReason,
   type PublicationGateClaim,
   publicationGateCriteria,
   publicationGateView,
@@ -527,4 +529,89 @@ test('retained criteria show their earlier proof revision in the shared row deta
     ],
   });
   assert.equal(row!.detail, 'Earlier proof · ccccccc');
+});
+
+// Run 7721a02b (TAT-4006) on 2026-10-20: 4 open findings, all review rounds spent, so
+// its open gate offers only Hold and Request Review.
+test('an open gate shows the reason a person can act on, not a fix it does not offer', () => {
+  const findings: ReviewStatus = {
+    id: 'review',
+    source: 'pipeline',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 4,
+    reviewedHeadSha: 'head',
+  };
+  const readiness: RunGateReadiness = {
+    state: 'not-ready',
+    identity: { runId: 'run', generation: 8 },
+    reasons: [
+      {
+        code: 'review-fix-required',
+        prerequisite: 'review',
+        message: 'Review found 4 issues. Fix and pass review before publishing.',
+        actionId: 'continue-review-fix',
+      },
+      {
+        code: 'review-result-required',
+        prerequisite: 'review',
+        message: 'Required current-head reviews need valid structured result artifacts.',
+        actionId: 'hold',
+      },
+    ],
+  };
+  const gate: RunDecision = {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'TAT-4006 — human gate',
+    description: '',
+    createdAt: '2026-10-19T17:30:13.466Z',
+    actions: [
+      { id: 'hold', label: 'Hold', style: 'secondary' },
+      { id: 'request-review', label: 'Request Review', style: 'secondary' },
+    ],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: 'MetaMask/core',
+      diffStat: { files: 7, additions: 507, deletions: 3 },
+      workerReport: '',
+      branch: 'TAT-4006',
+      gateReadiness: readiness,
+      reviewRoundBudget: {
+        used: 7,
+        limit: 7,
+        remaining: 0,
+        label: 'Review rounds 7/7',
+        noVerdict: 0,
+        noVerdictLimit: 3,
+      },
+    },
+  };
+  const run = {
+    status: 'blocked' as const,
+    engineState: { publishGate: { reviews: [findings] } },
+    decisions: [gate],
+  };
+  const spent = 'Review rounds spent: 4 issues open';
+  assert.equal(humanGateBlockingReason(run), spent);
+  // Without an open gate the review findings still speak.
+  assert.match(humanGateBlockingReason({ ...run, decisions: [] }) ?? '', /Review found 4 issues/);
+  // The gate view shows the same line; the publish guard still withholds approval.
+  const view = publicationGateView({
+    run,
+    gate,
+    readiness,
+    actions: [
+      ...gate.actions,
+      { id: 'approve-publish', label: 'Approve publish', style: 'primary' },
+    ],
+  });
+  assert.equal(view.status, spent);
+  assert.equal(view.approval, null);
+  assert.match(
+    publicationGateView({ run, readiness, actions: gate.actions }).status,
+    /Fix and pass/,
+  );
 });

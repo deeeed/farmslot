@@ -537,3 +537,44 @@ test('a run with no child units keeps the plain parent rows', () => {
   );
   assert.deepEqual(display.checklist, [{ stepNumber: 1, label: 'Reproduce', duration: '5.0s' }]);
 });
+
+// Run 7721a02b (TAT-4006): fixing is no longer offered once the review rounds are spent.
+test('a not-ready gate shows the reason a person can act on', () => {
+  const gated: ReadyGatePayload = {
+    ...payload({ verdict: 'issues', unresolvedCount: 4 }),
+    gateReadiness: {
+      state: 'not-ready',
+      identity: { runId: 'run', generation: 8 },
+      reasons: [
+        {
+          code: 'review-fix-required',
+          prerequisite: 'review',
+          message: 'Review found 4 issues. Fix and pass review before publishing.',
+          actionId: 'continue-review-fix',
+        },
+        {
+          code: 'review-result-required',
+          prerequisite: 'review',
+          message: 'Required current-head reviews need valid structured result artifacts.',
+          actionId: 'request-review',
+        },
+      ],
+    },
+    reviewRoundBudget: {
+      used: 7,
+      limit: 7,
+      remaining: 0,
+      label: 'Review rounds 7/7',
+      noVerdict: 0,
+      noVerdictLimit: 3,
+    },
+  };
+  assert.equal(
+    readyReviewBlockingDisplayReason(gated, [{ id: 'hold' }, { id: 'request-review' }]),
+    'Review rounds spent: 4 issues open',
+  );
+  assert.equal(
+    readyReviewBlockingDisplayReason(gated, [{ id: 'continue-review-fix' }, { id: 'hold' }]),
+    'Review found 4 issues. Fix and pass review before publishing.',
+  );
+});

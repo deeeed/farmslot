@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `humanGateBlockingReason(run)` gives the line a run's open human gate waits on: the gate's reason whose action it offers, else the review findings. `publicationGateView` takes an optional `gate` and shows that reason as its status. The publish guard still uses `publicationReviewBlockingReason`.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.0 - 2026-10-19
