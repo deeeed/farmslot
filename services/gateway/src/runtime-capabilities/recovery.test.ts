@@ -831,6 +831,7 @@ test('a cleanup that failed while its node was away is retried when the node rec
     releaseEffects: ['Release the browser reservation; preserve the running browser'],
   };
   const owner = 'bda11b1a-e1ba-4b8d-9880-dcff987afff0';
+  const liveRun = 'run-live';
   const proofRequirement = {
     capabilityId: 'terminal-browser',
     reason: 'TAT-4145 recorded proof',
@@ -838,47 +839,65 @@ test('a cleanup that failed while its node was away is retried when the node rec
   };
   let nodeConnected = true;
   let fenced = false;
+  let catalogReadable = true;
   const actions: string[] = [];
   const registryAfterRestart = () =>
     new RuntimeCapabilityRegistry({
       store,
-      catalogForSlot: async (slotId) => ({
-        slotId,
-        project: 'test-project',
-        capabilities: [terminalBrowser],
-      }),
-      runAction: async (_slot, action) => {
+      catalogForSlot: async (slotId) => {
+        if (!catalogReadable && slotId === 'macpro-mmt-2')
+          throw new Error('slot config unreadable');
+        return { slotId, project: 'test-project', capabilities: [terminalBrowser] };
+      },
+      runAction: async (slotId, action) => {
         if (!nodeConnected)
           throw new ResourceCommandUnavailableError('Resource node macpro is disconnected');
-        actions.push(action.kind === 'slot-action' ? action.actionId : action.action);
+        actions.push(
+          `${slotId}:${action.kind === 'slot-action' ? action.actionId : action.action}`,
+        );
         return { ok: true };
       },
-      isTerminalOwner: () => fenced,
+      isTerminalOwner: (ownerRunId) => fenced && ownerRunId === owner,
       recoveryStartedAtForRun: () => Date.now(),
     });
+  const leaseOn = (slotId: string) =>
+    store.snapshot().leases.find((lease) => lease.slotId === slotId);
 
-  const acquired = await registryAfterRestart().acquire({
-    slotId: 'macpro-mmt-1',
-    capabilityId: 'terminal-browser',
-    ownerRunId: owner,
-    proofRequirement,
-  });
-  assert.equal(acquired.ok, true);
+  const seed = registryAfterRestart();
+  for (const [slotId, ownerRunId] of [
+    ['macpro-mmt-1', owner],
+    ['macpro-mmt-2', liveRun],
+  ]) {
+    const acquired = await seed.acquire({
+      slotId,
+      capabilityId: 'terminal-browser',
+      ownerRunId,
+      proofRequirement,
+    });
+    assert.equal(acquired.ok, true);
+  }
 
-  // Restart while the run is fenced and macpro has not reconnected yet.
+  // Restart while bda11b1a is fenced and macpro has not reconnected yet. The
+  // live run's slot config is unreadable too, so recovery refuses that lease.
   fenced = true;
   nodeConnected = false;
+  catalogReadable = false;
   await reconcileRuntimeCapabilityLeases(registryAfterRestart());
   const failure = 'Provider action threw: Resource node macpro is disconnected';
-  assert.equal(store.snapshot().leases[0]?.state, 'error');
-  assert.equal(store.snapshot().leases[0]?.cleanupFailure, failure);
+  assert.equal(leaseOn('macpro-mmt-1')?.state, 'error');
+  assert.equal(leaseOn('macpro-mmt-1')?.cleanupFailure, failure);
+  assert.equal(leaseOn('macpro-mmt-1')?.cleanupUnreachable, failure);
+  assert.equal(leaseOn('macpro-mmt-2')?.state, 'error');
+  assert.match(leaseOn('macpro-mmt-2')?.cleanupFailure ?? '', /catalog unavailable/);
+  assert.equal(leaseOn('macpro-mmt-2')?.cleanupUnreachable, undefined);
 
   // A replay lifts the fence; a later restart with macpro back still skips the lease.
   fenced = false;
   nodeConnected = true;
+  catalogReadable = true;
   const registry = registryAfterRestart();
   await reconcileRuntimeCapabilityLeases(registry);
-  assert.equal(store.snapshot().leases[0]?.state, 'error');
+  assert.equal(leaseOn('macpro-mmt-1')?.state, 'error');
   const refused = await registry.acquire({
     slotId: 'macpro-mmt-1',
     capabilityId: 'terminal-browser',
@@ -891,18 +910,21 @@ test('a cleanup that failed while its node was away is retried when the node rec
 
   // Another machine reconnecting leaves this slot's lease alone.
   await registry.retryFailedCleanup(['macwork-mmt-1']);
-  assert.equal(store.snapshot().leases[0]?.state, 'error');
+  assert.equal(leaseOn('macpro-mmt-1')?.state, 'error');
 
-  // macpro reconnects: the retained-browser release runs and the lease is released.
-  const summary = await registry.retryFailedCleanup(['macpro-mmt-1']);
+  // macpro reconnects: only the cleanup that could not reach it is retried.
+  const summary = await registry.retryFailedCleanup(['macpro-mmt-1', 'macpro-mmt-2']);
   assert.deepEqual(
-    summary.released.map((lease) => lease.capabilityId),
-    ['terminal-browser'],
+    summary.released.map((lease) => lease.slotId),
+    ['macpro-mmt-1'],
   );
-  assert.ok(actions.includes('terminal-browser-retain'));
-  const lease = store.snapshot().leases[0];
-  assert.equal(lease?.state, 'released');
-  assert.equal(lease?.cleanupFailure, undefined);
+  assert.ok(actions.includes('macpro-mmt-1:terminal-browser-retain'));
+  assert.ok(!actions.includes('macpro-mmt-2:terminal-browser-retain'));
+  assert.equal(leaseOn('macpro-mmt-1')?.state, 'released');
+  assert.equal(leaseOn('macpro-mmt-1')?.cleanupFailure, undefined);
+  assert.equal(leaseOn('macpro-mmt-1')?.cleanupUnreachable, undefined);
+  // The refused lease may still back the live run's provider; it waits for an operator.
+  assert.equal(leaseOn('macpro-mmt-2')?.state, 'error');
   const reacquired = await registry.acquire({
     slotId: 'macpro-mmt-1',
     capabilityId: 'terminal-browser',

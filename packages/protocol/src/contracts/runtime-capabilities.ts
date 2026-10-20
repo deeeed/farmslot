@@ -264,6 +264,13 @@ export interface RuntimeCapabilityLease {
   /** Kernel identities captured for this provider, preserved across warm reuse. */
   providerProcesses?: Array<{ pid: number; group: number; identity: string; resourceId?: string }>;
   cleanupFailure?: string;
+  /**
+   * The `cleanupFailure` of a release action that could not reach the slot's
+   * node. The node's reconnect retries that cleanup. A later failure or a
+   * successful cleanup replaces or clears `cleanupFailure`, which then no longer
+   * matches, so a cleanup that recovery refused is never retried this way.
+   */
+  cleanupUnreachable?: string;
   /** Admission pressure retained while this lease is queued. */
   pressure?: RuntimeCapabilityLeasePressure;
   /**
