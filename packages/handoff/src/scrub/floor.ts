@@ -27,8 +27,16 @@ const BIP39_INDEX = new Map<string, number>(BIP39_ENGLISH.map((word, index) => [
 const MNEMONIC_LENGTHS = [12, 15, 18, 21, 24] as const;
 const MNEMONIC_MIN_LENGTH = MNEMONIC_LENGTHS[0];
 
-/** A JSON string literal on one line, escapes included. */
-const JSON_STRING_LITERAL = /"(?:[^"\\\n]|\\.)*"/g;
+/**
+ * A JSON string literal on one line, escapes included. A bare escape outside a
+ * literal is its own alternative, so a match never restarts at an escaped quote
+ * (that restart made an unclosed quote before many `\\"` quadratic).
+ */
+const JSON_STRING_LITERAL = /\\.|"(?:[^"\\\n]|\\.)*"/g;
+
+/** Word offsets a phrase may sit at inside a run: contiguous, or interleaved
+ * with one or two wordlist label words (`word 1: x`, `{index, word}` rows). */
+const MNEMONIC_STRIDES = [1, 2, 3] as const;
 
 function fingerprint(match: string): string {
   return `sha256:${createHash('sha256').update(match).digest('hex').slice(0, 12)}`;
@@ -163,14 +171,19 @@ function unescapeOnce(text: string): string {
 /**
  * Detect BIP-39 recovery phrases. Within any run of >= 12 consecutive wordlist
  * words, every window of a standard mnemonic length (12/15/18/21/24) whose
- * BIP-39 checksum is valid blocks. Searching windows inside a longer run keeps
+ * BIP-39 checksum is valid blocks, taking every word, every second word or
+ * every third word (a phrase interleaved with wordlist labels). Searching windows inside a longer run keeps
  * the fail-closed case where a wallet dump carries adjacent wordlist words
  * (labels, prefixes); requiring the checksum stops runs of ordinary words, such
  * as recipe intent prose and node ids, from reading as a phrase. A correctly
  * written mnemonic always passes its checksum.
- * A JSON string holding several words is one unit, so a run never crosses from
- * one field's prose into the next key or value; single-word strings (a mnemonic
- * stored as a word array) still compose, and so does the space-joined view the
+ * In a text that is one JSON document, a string holding several words is one
+ * unit, so a run never crosses from one field's prose into the next key or
+ * value; single-word strings (a mnemonic stored as a word array) still compose.
+ * A phrase split across separate multi-word JSON values is therefore not
+ * composed, as cross-field detection was already scope-capped. Outside a JSON
+ * document quotes are ordinary separators, so quoted rows in Markdown, YAML, CSV
+ * or plain text still compose, and so does the space-joined view the
  * quarantine audit scans. snake_case identifiers stay single tokens, so
  * dictionary-word node IDs do not compose a mnemonic; kebab-case parts still
  * split, because the quarantine audit must catch a phrase composed across
@@ -181,16 +194,20 @@ function unescapeOnce(text: string): string {
  * accidental carrier: embedded logs in summary.json) still tokenizes as a word
  * run instead of gluing the escape letter onto the next word.
  */
-function detectMnemonics(text: string): FloorHit[] {
-  const tokens = text
-    .toLowerCase()
-    .replace(/\\[ntr]/g, ' ')
-    // A JSON string holding several words is one unit: a phrase does not run out
-    // of it into the next key or value. Single-word strings still compose, so a
-    // mnemonic stored as a word array stays one run.
-    .replace(JSON_STRING_LITERAL, (literal) =>
-      (literal.match(/[a-z]+/g)?.length ?? 0) > 1 ? ` _ ${literal} _ ` : literal,
-    )
+function detectMnemonics(text: string, jsonDocument: boolean): FloorHit[] {
+  const lowered = text.toLowerCase().replace(/\\[ntr]/g, ' ');
+  const tokens = (
+    jsonDocument
+      ? // In a JSON document a string holding several words is one unit: a phrase
+        // does not run out of it into the next key or value. Single-word strings
+        // still compose, so a mnemonic stored as a word array stays one run.
+        lowered.replace(JSON_STRING_LITERAL, (literal) =>
+          literal.startsWith('"') && (literal.match(/[a-z]+/g)?.length ?? 0) > 1
+            ? ` _ ${literal} _ `
+            : literal,
+        )
+      : lowered
+  )
     // Keep identifier runs separate before removing Markdown emphasis edges.
     .replace(/\b[a-z0-9]+(?:_[a-z0-9]+)+\b/g, '_')
     .split(/[^a-z_]+/)
@@ -205,10 +222,13 @@ function detectMnemonics(text: string): FloorHit[] {
       if (runStart !== -1 && i - runStart >= MNEMONIC_MIN_LENGTH) {
         const run = tokens.slice(runStart, i);
         for (const length of MNEMONIC_LENGTHS) {
-          for (let start = 0; start + length <= run.length; start += 1) {
-            const window = run.slice(start, start + length);
-            if (hasValidMnemonicChecksum(window)) {
-              hits.push({ kind: 'srp', fingerprint: fingerprint(window.join(' ')) });
+          for (const stride of MNEMONIC_STRIDES) {
+            for (let start = 0; start + (length - 1) * stride < run.length; start += 1) {
+              const window: string[] = [];
+              for (let k = 0; k < length; k += 1) window.push(run[start + k * stride] ?? '');
+              if (hasValidMnemonicChecksum(window)) {
+                hits.push({ kind: 'srp', fingerprint: fingerprint(window.join(' ')) });
+              }
             }
           }
         }
@@ -217,6 +237,16 @@ function detectMnemonics(text: string): FloorHit[] {
     }
   }
   return hits;
+}
+
+/** Text that is one JSON object or array, where quotes are string boundaries. */
+function isJsonDocument(text: string): boolean {
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === 'object' && value !== null;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -258,6 +288,7 @@ function hasValidMnemonicChecksum(words: readonly string[]): boolean {
  */
 export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] = []): FloorHit[] {
   const byFingerprint = new Map<string, FloorHit>();
+  const jsonDocument = isJsonDocument(text);
 
   // Farm patterns arrive from config: matchAll requires the global flag, so a
   // non-global pattern is re-created with /g instead of throwing mid-scan.
@@ -289,7 +320,7 @@ export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] 
   };
 
   for (const variant of variants) {
-    for (const hit of detectMnemonics(variant)) record(hit);
+    for (const hit of detectMnemonics(variant, jsonDocument && variant === text)) record(hit);
     for (const hit of detectCookies(variant)) record(hit);
     // Hand-authored floor + farm extras + the ported gitleaks vendor ruleset.
     // Gitleaks rules run through the SAME unescape variants and are UNION-only

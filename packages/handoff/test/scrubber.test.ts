@@ -171,6 +171,8 @@ test('recipe prose, keys and node ids that are all wordlist words are not a reco
 test('a checksum-valid mnemonic still blocks inside JSON, next to hyphens and labels', () => {
   const srp = (text: string) => scanForFloorSecrets(text).some(({ kind }) => kind === 'srp');
   const hyphenated = VECTOR_12.split(' ').join('-');
+  const words = VECTOR_12.split(' ');
+  const [first, second] = [words.slice(0, 6).join(' '), words.slice(6).join(' ')];
   for (const text of [
     JSON.stringify({ intent: `restore wallet then ${VECTOR_12}` }),
     JSON.stringify({ note: `--- ${MNEMONIC_24} ---` }),
@@ -179,9 +181,31 @@ test('a checksum-valid mnemonic still blocks inside JSON, next to hyphens and la
     `- ${VECTOR_12} -`,
     `seed-phrase: ${hyphenated}`,
     `wallet seed ${VECTOR_12} above`,
+    // Quoted rows outside a JSON document: quotes are ordinary separators there.
+    `"${first}"\n"${second}"`,
+    `words:\n  - "${first}"\n  - "${second}"`,
+    `"${first}","${second}"`,
+    `| "${first}" |\n| "${second}" |`,
+    // A quoted phrase split across two lines of source code.
+    `phrase = (\n    "${first} "\n    "${second}"\n)`,
+    // Interleaved with wordlist labels.
+    words.map((word, index) => `Word ${index + 1}: ${word}`).join('\n'),
+    JSON.stringify(words.map((word, index) => ({ index: index + 1, word }))),
     `recovery\n${VECTOR_12.split(' ').join('\\n')}`,
   ]) {
     assert.ok(srp(text), 'a valid mnemonic must block');
+  }
+});
+
+test('the recovery-phrase scan stays linear on unbalanced and escaped quotes', () => {
+  // An unclosed quote before many escaped quotes made the JSON string matcher
+  // rescan the line once per quote (minutes on a few hundred KB).
+  const unclosed = `state="${'{\\"items\\":[1],'.repeat(20_000)}`;
+  const document = JSON.stringify({ log: `${'"quoted" '.repeat(30_000)}` });
+  for (const text of [unclosed, document]) {
+    const started = performance.now();
+    scanForFloorSecrets(text);
+    assert.ok(performance.now() - started < 10_000, `scan took ${performance.now() - started} ms`);
   }
 });
 

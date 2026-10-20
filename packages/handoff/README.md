@@ -84,10 +84,21 @@ Deliberate detection choices and known limits:
   prefixes); the checksum keeps ordinary word runs, such as recipe intent prose
   and node ids, from reading as a phrase. A correctly written mnemonic always
   passes its checksum.
-- A JSON string holding several words is one unit, so a run never crosses from
-  one field into the next key or value. Single-word strings still compose (a
-  mnemonic stored as a word array blocks), and the quarantine audit's
-  space-joined views are unaffected. Underscore-bearing identifiers remain
+- In a text that is one JSON document, a string holding several words is one
+  unit, so a run never crosses from one field into the next key or value.
+  Single-word strings still compose (a mnemonic stored as a word array blocks).
+  A phrase split across separate multi-word JSON values is not composed, the
+  existing cross-field scope cap. Outside a JSON document quotes are ordinary
+  separators, so quoted rows in Markdown, YAML, CSV or plain text still compose,
+  and the quarantine audit's space-joined views are unaffected.
+- Windows are taken contiguous and at strides of two and three, so a phrase
+  interleaved with wordlist labels (`Word 1: x`, `{index, word}` rows) still
+  blocks. Known misses: a phrase whose words are not contiguous or at those
+  strides (a column-major grid), one split across separate multi-word JSON
+  values, and a damaged phrase (a wrong or missing word) now block only when
+  some window happens to pass the checksum. A 4-bit checksum also lets about one
+  random 12-word window in 16 through, so long wordlist-only prose can still
+  block. Underscore-bearing identifiers remain
   single tokens so separate recipe node IDs cannot compose a recovery phrase;
   kebab-case parts still split, so a phrase across kebab-case identity fields
   stays visible to the quarantine audit.
