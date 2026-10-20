@@ -6,23 +6,16 @@ import './components/app-shell.js';
 import { requestPermission } from './utils/notifications.js';
 import { initializeDesktopAttention } from './desktop-attention.js';
 import { gateway } from './gateway-client.js';
-import { initState } from './state.js';
+import { initState, onWorkspaceOwnerChange } from './state.js';
 
 // Wire up state management to gateway events
 initState();
 initializeDesktopAttention();
 
-// Tear down principal-owned views on authentication changes. Pending reads may
-// settle after disconnect, but their old components cannot render into the new workspace.
-let workspaceIdentity = '';
-gateway.onConnectionChange(() => {
-  const identity = JSON.stringify([
-    gateway.gatewayUrl,
-    gateway.authenticatedPrincipalId,
-    gateway.workspaceAccess,
-  ]);
-  if (identity === workspaceIdentity) return;
-  workspaceIdentity = identity;
+// Tear down principal-owned views when the account changes. Pending reads may settle
+// after disconnect, but their old components cannot render into the new workspace.
+// A transient disconnect keeps the views mounted.
+onWorkspaceOwnerChange(() => {
   if (gateway.workspaceAccess === 'native') history.replaceState(null, '', '#native');
   const current = document.querySelector('farm-app');
   current?.replaceWith(document.createElement('farm-app'));
