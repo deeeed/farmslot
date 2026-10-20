@@ -45,8 +45,14 @@ const noop = async () => {};
 mock.module('../core/config.js', {
   namedExports: { ...config, loadProjectVars: async () => ({ projectJson: {} }) },
 });
+// The reviewer's TASK.md, by path.
+const slotFiles = new Map<string, string>();
 mock.module('../methods/dispatch/slot-file-write.js', {
-  namedExports: { writeTextFileOnSlot: noop },
+  namedExports: {
+    writeTextFileOnSlot: async (_vars: unknown, file: string, content: string) => {
+      slotFiles.set(file, content);
+    },
+  },
 });
 mock.module('../run-engine/run-monitor.js', {
   namedExports: {
@@ -233,6 +239,19 @@ test('a reviewer that leaves no feedback file settles no-verdict; a verdict coun
   assert.equal(getRun(reviewed.id)!.reviewRoundSettlements, undefined);
   const budget = await runReviewRoundBudget(getRun(reviewed.id)!);
   assert.deepEqual([budget.used, budget.noVerdict], [1, 0]);
+});
+
+test('a slot reviewer is told to keep probe tests and scratch out of the checkout', async (t) => {
+  // A gate reviewer's probe tests in the task's artifacts broke the product's unit run.
+  ending = 'verdict';
+  const run = await nativeRun(t);
+  await review(run.id);
+  const reviewer = getRun(run.id)!.agentContexts!.find((context) => context.role === 'review')!;
+  const contract = slotFiles.get(reviewer.taskFile!) ?? '';
+  assert.match(contract, /^## Reviewer-specific execution contract/);
+  assert.ok(contract.includes(`\${TMPDIR:-/tmp}/farmslot-review/${reviewer.id}`));
+  assert.match(contract, /write nothing in the checkout/);
+  assert.match(contract, /delete it before you write your result/);
 });
 
 for (const [end, uncertainty] of [

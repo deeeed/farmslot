@@ -1136,23 +1136,14 @@ function writeObservabilityInstallManifest(obsDir, manifest) {
   );
 }
 
-function ensureCompatObservabilityLink(repoPath, obsDir, runtimeDir = '.agent') {
+// Older installs linked <repo>/.observability to the runner observations. Runner state
+// stays outside the checkout, so that link is removed; a real directory is left alone.
+function removeCompatObservabilityLink(repoPath, runtimeDir = '.agent') {
   if (path.isAbsolute(runtimeDir) || runtimeDir.startsWith('~/') || runtimeDir.startsWith('../'))
     return;
   const compatObsDir = path.join(repoPath, '.observability');
-  let stat;
-  try {
-    stat = fs.lstatSync(compatObsDir);
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-    return;
-  }
-
-  if (!stat.isSymbolicLink()) return;
-  const currentTarget = path.resolve(path.dirname(compatObsDir), fs.readlinkSync(compatObsDir));
-  if (currentTarget === obsDir) return;
-  fs.unlinkSync(compatObsDir);
-  fs.symlinkSync(obsDir, compatObsDir, 'dir');
+  if (fs.lstatSync(compatObsDir, { throwIfNoEntry: false })?.isSymbolicLink())
+    fs.unlinkSync(compatObsDir);
 }
 
 const PI_OBSERVABILITY_FILES = [
@@ -1184,7 +1175,7 @@ function installObservabilityBinaries({ repo, runtimeDir, slotId, runner }) {
   const hookPath = path.join(binDir, 'farmslot-observability-hook.mjs');
   fs.writeFileSync(hookPath, HOOK_SCRIPT);
   execFileSync(process.execPath, ['--check', hookPath], { stdio: 'pipe' });
-  ensureCompatObservabilityLink(repoPath, obsDir, runtimeDir);
+  removeCompatObservabilityLink(repoPath, runtimeDir);
   const hookCommand = [
     `FARMSLOT_OBS_DIR=${shQuote(obsDir)}`,
     `FARMSLOT_SLOT_ID=${shQuote(slotId)}`,
@@ -1364,7 +1355,7 @@ function installPi({ repo, runtimeDir, slotId }) {
     events: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'],
     xaiSeed: xaiSeed.seeded ? 'grok-cli' : xaiSeed.reason,
   });
-  ensureCompatObservabilityLink(repoPath, obsDir, runtimeDir);
+  removeCompatObservabilityLink(repoPath, runtimeDir);
   return { obsDir };
 }
 
@@ -1413,7 +1404,13 @@ function relocateRunnerState(repo, runtimeDir = '.agent') {
     const source = path.join(previous, name);
     const destination = path.join(external, name);
     const stat = fs.lstatSync(source, { throwIfNoEntry: false });
-    if (!stat || stat.isSymbolicLink()) continue;
+    if (!stat) continue;
+    if (stat.isSymbolicLink()) {
+      // An earlier install left this alias in the checkout; runner state stays outside it.
+      if (path.resolve(path.dirname(source), fs.readlinkSync(source)) === destination)
+        fs.unlinkSync(source);
+      continue;
+    }
     let supportHash;
     if (fs.existsSync(destination)) {
       // Node support may seed the destination before first migration. Preserve
@@ -1428,9 +1425,6 @@ function relocateRunnerState(repo, runtimeDir = '.agent') {
     }
     fs.renameSync(source, destination);
     if (supportHash) fs.writeFileSync(path.join(destination, 'node-support-hash'), supportHash);
-    // Already-running hook commands and session paths retain their identity.
-    // Fresh installs create no alias inside the product checkout.
-    fs.symlinkSync(destination, source, 'dir');
   }
 }
 

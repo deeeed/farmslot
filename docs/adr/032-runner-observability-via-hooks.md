@@ -404,3 +404,29 @@ This work does not map cleanly to a current canonical milestone. The closest fit
 - ADR-023 (runner-agnostic TUI execution; abstraction surface)
 - ADR-027 (state persistence model; `Run.monitorState` shape)
 - ADR-031 (deterministic-first auto-recovery; degraded-mode handling)
+
+## Amendment 1: no runner state inside the slot checkout, 2026-10-20
+
+**Status:** Accepted (lead, 2026-10-20).
+**Related:** [ADR-047](047-worker-session-history-panel.md) (session history reads runner homes).
+
+### Decision
+
+Runner homes, caches and observations never appear inside the slot's checkout, not even through a link:
+
+- A tmux runner keeps its home and observations in the slot's external runtime directory, `<slot parent>/.farmslot-runtime/<repo>/<runtime_dir>/`, used since 2026-10-16. This replaces `{{runtime_dir}}/codex-home` and `{{runtime_dir}}/.observability/` inside the checkout.
+- A native worker or reviewer keeps its home in its session state directory on the node.
+
+The installer that moved old in-checkout state to the external directory no longer leaves a link at the old path. It removes a link an earlier install left there when the link points at the external directory, and the older `<repo>/.observability` compatibility link. A real directory at either path is not a link and is handled as before.
+
+A slot reviewer writes probe tests and other scratch files to a per-reviewer directory under the node's temporary directory, which its contract names. A sandboxed runner can write there. Apart from its review files, the reviewer writes nothing in the checkout; a probe that must sit in the checkout to run is deleted before the reviewer writes its result. Review evidence stays in the task's artifacts.
+
+### Rationale and consequences
+
+A gate reviewer's plugin cache and probe tests inside the checkout broke the product's own typecheck and unit run. The runner homes had already moved out, but a link left at the old path still showed their files inside the checkout, and nothing told the reviewer where else to write probes. A pack-level exclusion is a stopgap. A product tool that walks the checkout should never see runner state, whatever the project's tooling includes.
+
+A session started before the move, and still running with the old path, loses its hook writes once the link is removed. Its next launch or resume uses the external directory.
+
+### Public surface
+
+There is no new configuration, environment variable or RPC. The reviewer contract names the scratch directory. Packs that excluded `temp/**` can keep or drop the exclusion.
