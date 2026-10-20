@@ -143,7 +143,8 @@ export function reviewChecklistMarkPrompt(
  */
 export function reviewerScratchRule(contextId: string): string {
   return (
-    `Apart from the review files named above, write nothing in the checkout. Put probe tests and ` +
+    `Apart from the review files named above and the evidence your checklist asks for, write ` +
+    `nothing in the checkout. Put probe tests and ` +
     `other scratch files under \`\${TMPDIR:-/tmp}/farmslot-review/${contextId}\` (create it with ` +
     `\`mkdir -p\`). If a probe must sit in the checkout to run, delete it before you write your result.`
   );

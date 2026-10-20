@@ -130,7 +130,9 @@ for (const symlinked of [false, true]) {
       assert.ok(installer);
       const result = spawnSync('/bin/bash', ['-c', installer[0]], { encoding: 'utf8' });
       assert.equal(result.status, 0, result.stderr);
-      assert.ok(fs.lstatSync(path.join(original, 'codex-home')).isSymbolicLink());
+      // The state moves out and no link is left at the old path (ADR-032 Amendment 1).
+      for (const name of ['codex-home', '.observability'])
+        assert.equal(fs.lstatSync(path.join(original, name), { throwIfNoEntry: false }), undefined);
       assert.equal(
         fs.readFileSync(
           path.join(launch.runtime_dir, 'codex-home/sessions/retained.jsonl'),
@@ -139,7 +141,7 @@ for (const symlinked of [false, true]) {
         'retained history',
       );
       assert.equal(
-        fs.readFileSync(path.join(original, '.observability/hooks.jsonl'), 'utf8'),
+        fs.readFileSync(path.join(launch.runtime_dir, '.observability/hooks.jsonl'), 'utf8'),
         'retained observations',
       );
     } finally {

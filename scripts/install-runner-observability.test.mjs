@@ -346,9 +346,6 @@ test('install removes the old-path links an earlier install left in the checkout
   fs.mkdirSync(legacy, { recursive: true });
   fs.symlinkSync(path.join(external, 'codex-home'), path.join(legacy, 'codex-home'), 'dir');
   fs.symlinkSync(path.join(external, '.observability'), path.join(legacy, '.observability'), 'dir');
-  // A link the project made itself, pointing elsewhere, is not runner state.
-  const foreign = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-foreign-'));
-  fs.symlinkSync(foreign, path.join(legacy, 'other'), 'dir');
 
   execFileSync(
     process.execPath,
@@ -370,7 +367,34 @@ test('install removes the old-path links an earlier install left in the checkout
     assert.equal(fs.lstatSync(path.join(legacy, name), { throwIfNoEntry: false }), undefined);
   assert.ok(fs.existsSync(path.join(external, 'codex-home', 'plugins', 'cache', 'template.ts')));
   assert.ok(fs.existsSync(path.join(external, '.observability', 'claude-settings.json')));
-  assert.ok(fs.lstatSync(path.join(legacy, 'other')).isSymbolicLink());
+});
+
+test('install keeps a link at the old path that points somewhere other than the runner state', () => {
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-foreign-link-'));
+  const runtimeDir = 'temp/farmslot';
+  runtimeRoots.add(runnerRuntimeDir(repo, runtimeDir));
+  const legacy = path.join(repo, runtimeDir);
+  fs.mkdirSync(legacy, { recursive: true });
+  const foreign = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-foreign-'));
+  fs.symlinkSync(foreign, path.join(legacy, 'codex-home'), 'dir');
+
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'claude',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      runtimeDir,
+      '--slot-id',
+      'install-test-foreign-link',
+    ],
+    { stdio: 'pipe' },
+  );
+
+  assert.equal(fs.readlinkSync(path.join(legacy, 'codex-home')), foreign);
 });
 
 test('claude install preserves a non-symlink compatibility directory', () => {

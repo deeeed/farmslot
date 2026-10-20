@@ -419,13 +419,13 @@ Runner homes, caches and observations never appear inside the slot's checkout, n
 
 The installer that moved old in-checkout state to the external directory no longer leaves a link at the old path. It removes a link an earlier install left there when the link points at the external directory, and the older `<repo>/.observability` compatibility link. A real directory at either path is not a link and is handled as before.
 
-A slot reviewer writes probe tests and other scratch files to a per-reviewer directory under the node's temporary directory, which its contract names. A sandboxed runner can write there. Apart from its review files, the reviewer writes nothing in the checkout; a probe that must sit in the checkout to run is deleted before the reviewer writes its result. Review evidence stays in the task's artifacts.
+A slot reviewer writes probe tests and other scratch files to a per-reviewer directory under the node's temporary directory, which its contract names. A sandboxed runner can write there. Apart from its review files and the evidence its checklist asks for, the reviewer writes nothing in the checkout; a probe that must sit in the checkout to run is deleted before the reviewer writes its result. Review evidence stays in the task's artifacts.
 
 ### Rationale and consequences
 
 A gate reviewer's plugin cache and probe tests inside the checkout broke the product's own typecheck and unit run. The runner homes had already moved out, but a link left at the old path still showed their files inside the checkout, and nothing told the reviewer where else to write probes. A pack-level exclusion is a stopgap. A product tool that walks the checkout should never see runner state, whatever the project's tooling includes.
 
-A session started before the move, and still running with the old path, loses its hook writes once the link is removed. Its next launch or resume uses the external directory.
+A session that still runs with the old in-checkout path when its state moves, or when the old link is removed, loses that state: its hook writes, and for Codex its whole home. End or relaunch such a session first; its next launch or resume uses the external directory.
 
 ### Public surface
 
