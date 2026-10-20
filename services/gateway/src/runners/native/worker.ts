@@ -48,7 +48,7 @@ import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-command.js';
 
 import { routeNativeExecution } from './node.js';
 import { nativeReviewerOwner } from './review-owner.js';
-import { clearSupersededWorkerError } from './worker-control.js';
+import { clearSettledWorkerError } from './worker-control.js';
 import { NativeSlotOwnershipError, NativeWorkerOperationUncertainError } from './worker-error.js';
 import { prepareNativeWorkerLaunch } from './worker-launch.js';
 import {
@@ -874,7 +874,7 @@ export async function dispatchNativeWorker(input: {
     { ...binding, acceptedAt: binding.acceptedAt ?? new Date().toISOString() },
     { status: 'working' },
   );
-  clearSupersededWorkerError(run.id);
+  clearSettledWorkerError(run.id);
   if (input.role === primaryRoleForFlow(run.flowType)) {
     const latest = checkRun();
     updateRun(run.id, {

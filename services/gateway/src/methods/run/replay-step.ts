@@ -38,12 +38,11 @@ import {
   renewQueueClaim,
 } from '../../backlog/dispatch-queue.js';
 import { assertPRRunActivation } from '../../backlog/pr-admission.js';
-import { execOnSlot, isLocal } from '../../core/exec.js';
+import { execOnSlot, isDisconnectedRemote } from '../../core/exec.js';
 import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
-import { getNode } from '../../fleet/machine-registry.js';
 import { captureRunOutput } from '../../run-completion/output.js';
 import { retainedMaintenanceStepOutputs } from '../../run-engine/branch-maintenance.js';
 import {
@@ -1206,11 +1205,30 @@ async function replayRunStep(
     const preflight = await slotReleasePreflight(priorRelease, { restartRunId: params.runId });
     // Remote commands wait for a disconnected node, then fail and leave the slot held.
     const vars = preflight?.vars;
-    if (vars && !isLocal(vars.host, vars.machine) && !getNode(vars.machine))
+    if (vars && isDisconnectedRemote(vars))
       throw unreleasedPriorSlotError(
         priorRelease.slotId,
         params.runId,
         `machine ${vars.machine} is not connected`,
+      );
+  }
+  // A gate replay reads the worker's artifacts from its slot before the engine
+  // starts, outside the engine's wait for a reconnecting node. Refuse while that
+  // node is offline, before the open decision is superseded, so the run stays
+  // held and restart recovery retries the replay once the node reconnects.
+  if (replayStepName === PS.HUMAN_GATE && !hasActiveReviewFix(existing)) {
+    const gateSlotId = recoverReplaySlotId(existing, targetIdx, findSlotIdx, prepareIdx);
+    const { loadSlotVars, SlotConfigError } = await import('../../core/config.js');
+    // A slot with no pool entry has no machine to check; every other error refuses.
+    const vars = gateSlotId
+      ? await loadSlotVars(gateSlotId).catch((error: unknown) => {
+          if (error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND') return null;
+          throw error;
+        })
+      : null;
+    if (vars && isDisconnectedRemote(vars))
+      throw new Error(
+        `Cannot replay ${PS.HUMAN_GATE} yet: machine ${vars.machine} for slot ${gateSlotId} is not connected. Replay again once the node reconnects.`,
       );
   }
   const replaySnapshot = getRun(params.runId) ?? existing;

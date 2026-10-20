@@ -22,6 +22,7 @@ import {
 } from '../../backlog/dispatch-queue.js';
 import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
+import { isPublicationReviewRecoveryHeld } from '../../run-engine/recovery.js';
 import { makeRun } from '../../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 import {
@@ -3311,6 +3312,88 @@ test('a find-slot replay whose old slot is on a disconnected machine is refused 
   assert.equal(getRun(run.id)?.slotId, slotId);
   const row = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
   assert.deepEqual([row.current_run_id, row.phase], [run.id, 'occupied']);
+});
+
+// TAT-4158 4237202e: restart recovery replayed the gate before macpro reconnected.
+// The replay superseded the open decision, then failed, so the run was no
+// longer held and recovery had nothing left to retry.
+test('a human-gate replay whose slot machine is disconnected keeps the open decision', async (t) => {
+  const slotId = await disposablePoolSlot(t, 'gate-offline', {
+    machine: 'replay-gate-offline-node',
+    host: 'replay-gate-offline-node.invalid',
+  });
+  const taskFile = '/tmp/farmslot-human-gate-offline/TASK.md';
+  const created = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    slotId,
+  });
+  const pendingGate: RunDecision = {
+    id: 'pending-gate-offline',
+    type: 'engine_human_gate',
+    title: 'Ready to publish?',
+    description: 'Open decision at restart',
+    actions: [{ id: 'approve-publish', label: 'Approve publish', style: 'primary' as const }],
+    createdAt: '2026-10-19T21:25:33.487Z',
+  };
+  const doneThroughComplete = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+    'complete',
+  ]);
+  const run = updateRun(created.id, {
+    status: 'blocked',
+    taskFile,
+    decisions: [pendingGate],
+    steps: created.steps.map((step) =>
+      doneThroughComplete.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'human-gate'
+          ? { ...step, status: 'running' }
+          : step,
+    ),
+  });
+  await holdOnlySlot(t, slotId, {
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: run.id,
+    slot_epoch: 4,
+  });
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { slotId: null });
+    await evictTestRun(run.id, 'failed');
+  });
+  const generation = getRun(run.id)?.engineState?.generation;
+
+  const refusal: unknown = await runReplayStep(
+    { runId: run.id, stepName: 'human-gate', triggeredBy: 'auto-recovery' },
+    () => {},
+    { startEngine: async () => {} },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  const after = getRun(run.id);
+  const decision = after?.decisions.find((d) => d.id === 'pending-gate-offline');
+  assert.equal(decision?.resolvedAt, undefined, 'the open decision stays actionable');
+  assert.equal(after?.engineState?.generation, generation, 'refused before mutation');
+  assert.equal(after?.status, 'blocked');
+  assert.ok(after && isPublicationReviewRecoveryHeld(after), 'recovery can re-arm and retry');
+  assert.equal(after?.slotId, slotId);
+  const row = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
+  assert.deepEqual([row.current_run_id, row.phase, row.slot_epoch], [run.id, 'occupied', 4]);
+  assert.ok(refusal instanceof Error);
+  assert.match(
+    refusal.message,
+    new RegExp(`machine replay-gate-offline-node for slot ${slotId} is not connected`),
+  );
 });
 
 test('a replay refused for PR ownership leaves the discarded run untouched', async (t) => {

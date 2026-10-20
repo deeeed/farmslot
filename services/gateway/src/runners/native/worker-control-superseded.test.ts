@@ -66,13 +66,34 @@ mock.module('../../runs/store.js', {
     },
   },
 });
-mock.module('./node.js', { namedExports: { routeNativeExecution: async () => failedSnapshot } });
+// Each read gets its own session: failed after the host stopped, except a reviewer still working.
+const healthySessions = new Set<string>();
+mock.module('./node.js', {
+  namedExports: {
+    routeNativeExecution: async (
+      _owner: string,
+      _method: string,
+      params: { sessionId: string },
+    ) => {
+      const healthy = healthySessions.has(params.sessionId);
+      return {
+        ...failedSnapshot,
+        session: {
+          ...failedSnapshot.session,
+          id: params.sessionId,
+          generation: binding(params.sessionId).generation,
+          workerLeaseId: binding(params.sessionId).leaseId,
+          ...(healthy ? { state: 'running', error: undefined, processStopped: false } : {}),
+        },
+      };
+    },
+  },
+});
 const owner = await import('../../security/native-worker-owner.js');
 mock.module('../../security/native-worker-owner.js', {
   namedExports: { ...owner, assertNativeRunOwner: () => {} },
 });
-const { clearSupersededWorkerError, readNativeWorkerSnapshot } =
-  await import('./worker-control.js');
+const { clearSettledWorkerError, readNativeWorkerSnapshot } = await import('./worker-control.js');
 const { reconcileNativeRunAgentRuntime } = await import('./worker-runtime.js');
 const { makeRun } = await import('../../run-engine/test-fixtures.js');
 
@@ -109,7 +130,7 @@ const run = (runError: string, next: AgentContext): Run => ({
 
 test('a running relaunch clears its predecessor failure, and a restart does not put it back', async () => {
   current = run(error, relaunch());
-  clearSupersededWorkerError(current.id);
+  clearSettledWorkerError(current.id);
   assert.equal(current.error, undefined);
   // Gateway restart: runtime reconciliation reads every unreleased binding, the failed one too.
   await readNativeWorkerSnapshot(current.id, undefined, failed.id);
@@ -125,7 +146,7 @@ test('run.error stays for another failure, a relaunch not yet accepted, or anoth
     ['another review', error, relaunch({ reviewId: 'pipeline-review-other' })],
   ] as const) {
     current = run(runError, next);
-    clearSupersededWorkerError(current.id);
+    clearSettledWorkerError(current.id);
     assert.equal(current.error, runError, name);
   }
   // Until a relaunch accepts its task, the failed reviewer's error is the run's error.
@@ -158,4 +179,116 @@ test("a closed reviewer from an earlier round leaves a tmux worker's block reaso
   };
   await reconcileNativeRunAgentRuntime(current);
   assert.equal(current.error, workerReason);
+});
+
+const hostStopped =
+  'Native host stopped. Verify the old process group is stopped, then explicitly resume the saved native identity.';
+const finishedReviewer = (key: string, overrides: Partial<AgentContext> = {}): AgentContext =>
+  reviewer(`${key}-0000-4000-8000-000000000000`, {
+    status: 'complete',
+    error: hostStopped,
+    nativeSession: {
+      ...binding(`${key}-0000-4000-8000-000000000000`),
+      acceptedAt: '2026-10-19T21:00:00.000Z',
+    },
+    ...overrides,
+  });
+
+test('a finished reviewer whose host stopped later no longer holds the run error', async () => {
+  // TAT-4160 4f0ff296 at its live gate: seven finished reviewers kept retained sessions, the host
+  // stopped, and every restart copied the host-stop failure back onto run.error.
+  healthySessions.add('93dc3aec-0000-4000-8000-000000000000');
+  current = {
+    ...makeRun({ id: '4f0ff296-05d3-4492-b3f8-9431199608ed', status: 'human-gating' }),
+    error: hostStopped,
+    agentContexts: [
+      finishedReviewer('172c9f3f'),
+      finishedReviewer('98a0e766', { runner: 'codex', reviewId: 'review-4f0ff296-codex' }),
+      reviewer('93dc3aec-0000-4000-8000-000000000000', {
+        runner: 'codex',
+        reviewId: 'review-4f0ff296-codex-2',
+      }),
+    ],
+  };
+  // Startup recovery clears it first, then reconciliation reads every held session again.
+  clearSettledWorkerError(current.id);
+  await reconcileNativeRunAgentRuntime(current);
+  assert.equal(current.error, undefined);
+  assert.ok(current.agentContexts?.[0]?.error, 'the context keeps its own failure');
+});
+
+test("a blocked run's stale host-stop error clears when only settled or closed reviewers carry it", () => {
+  // TAT-4006 7721a02b at its gate: finished reviewers, plus a failed round-3 reviewer whose
+  // session closed under another review id, carry the host-stop failure.
+  const tmuxWorker = (role: 'dev' | 'review-fix'): AgentContext => ({
+    id: role,
+    runId: '7721a02b-ceda-431a-a741-d743837c40b4',
+    role,
+    label: role,
+    status: 'blocked',
+    runner: 'claude',
+    slotId: 'macwork-coredev-2',
+  });
+  const closedRoundThree = {
+    ...failed,
+    error: hostStopped,
+    reviewId: 'rev-claude-native-d3e2200a889b-0941e7a0',
+  };
+  const contexts = [
+    finishedReviewer('818974e8', {
+      nativeSession: {
+        ...binding('818974e8-0000-4000-8000-000000000000'),
+        closedAt: '2026-10-19T15:33:48.000Z',
+      },
+    }),
+    closedRoundThree,
+    finishedReviewer('209ba723'),
+    tmuxWorker('dev'),
+    tmuxWorker('review-fix'),
+  ];
+  current = {
+    ...makeRun({ id: '7721a02b-ceda-431a-a741-d743837c40b4', status: 'blocked' }),
+    error: hostStopped,
+    agentContexts: contexts,
+  };
+  clearSettledWorkerError(current.id);
+  assert.equal(current.error, undefined);
+
+  // A reviewer still in play that carries the same failure keeps it on the run.
+  current = {
+    ...current,
+    error: hostStopped,
+    agentContexts: [...contexts, reviewer(failedSession, { status: 'failed', error: hostStopped })],
+  };
+  clearSettledWorkerError(current.id);
+  assert.equal(current.error, hostStopped);
+
+  // So does the latest reviewer that failed and closed before any later reviewer accepted.
+  current = {
+    ...current,
+    error: hostStopped,
+    agentContexts: [
+      ...contexts,
+      reviewer(failedSession, {
+        status: 'failed',
+        error: hostStopped,
+        reviewId: 'pipeline-review-latest',
+        nativeSession: { ...binding(failedSession), closedAt: '2026-10-20T02:00:00.000Z' },
+      }),
+    ],
+  };
+  clearSettledWorkerError(current.id);
+  assert.equal(current.error, hostStopped);
+});
+
+test('a finished reviewer does not put its later host failure on the run', async () => {
+  const finished = finishedReviewer('5e23567c', { error: undefined });
+  current = {
+    ...makeRun({ id: '7721a02b-ceda-431a-a741-d743837c40b4', status: 'blocked' }),
+    error: 'Operator item 1 (deposit split) cannot run in this checkout.',
+    agentContexts: [finished],
+  };
+  await readNativeWorkerSnapshot(current.id, undefined, finished.id);
+  assert.equal(current.error, 'Operator item 1 (deposit split) cannot run in this checkout.');
+  assert.equal(current.agentContexts?.[0]?.error, error);
 });
