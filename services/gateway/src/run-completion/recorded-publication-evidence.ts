@@ -200,13 +200,18 @@ function scannedFrozenSelection(
   return selected;
 }
 
+interface FrozenPublicationTextClosure {
+  sources: Awaited<ReturnType<typeof readFrozenPublicationRecipeSources>>;
+  textEntries: ArtifactRef[];
+}
+
 /** The recipe sources of the selected recordings and the text publication carries with them. */
 async function frozenPublicationTextClosure(
   run: Run,
   inventory: readonly ArtifactRef[],
   selected: readonly ArtifactRef[],
   bundleRef?: RunArtifactBundleRef,
-) {
+): Promise<FrozenPublicationTextClosure> {
   const media = selected
     .filter((artifact) => isUploadableMediaPath(artifact.path))
     .map(({ path }) => path);

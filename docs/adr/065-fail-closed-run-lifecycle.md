@@ -641,7 +641,7 @@ still protect what a reviewer cannot judge.
 ## Amendment 9: the publication secret scan is an evidence prerequisite, 2026-10-20
 
 **Status:** Proposed.
-**Related:** [ADR-062](062-recorded-run-evidence.md) (publication secrecy), Amendment 8.
+**Related:** [ADR-062](062-recorded-run-evidence.md) (the frozen publication selection the scan reads), Amendment 8.
 **Specification:** [Gate prerequisites](../reference/fail-closed-run-lifecycle.md#gate-prerequisites).
 
 ### Context
@@ -649,26 +649,31 @@ still protect what a reviewer cannot judge.
 Publication refuses a package that carries secret values: the draft title and
 body, the evidence selection, or the frozen text of a selected recording and its
 recipe. It uses the Handoff floor detector and names fingerprints only. No ADR
-said where that scan runs, and it ran at publication alone. A gate could read
+said where that scan runs; it was added at publication alone. A gate could read
 `ready` with no reasons, and the approved package then failed at finalize
 (TAT-4145 run bda11b1a, gate 5bc9ef11).
 
 ### Decision
 
-The gate prerequisites run the same scan, over the same inputs publication
-scans, on the prepared package. A hit is the evidence reason
+The gate prerequisites run publication's scan of the prepared package's own
+inputs: the draft title and body, the evidence selection completed with the
+other half of each selected before/after or video pair, as publication uploads
+it, and the frozen text of those recordings and their recipes. A verdict holds
+for the package's content. A hit is the evidence reason
 `publication-secret-values`, its message names kinds and fingerprints only, and
 its next action is `hold` (Retry Gate after the producer is fixed and the
 package refreshed). A scan that cannot read the frozen evidence is
 `evidence-validation-unavailable`, because an unscanned package is not known to
 be clean. Evidence attestation cannot waive either reason. Publication keeps
-its own scan unchanged.
+its own scans unchanged, including those of text it generates or adds only at
+publication: an operator comment, rewritten prose and the opt-in worker-report
+comment.
 
 ### Rationale and consequences
 
-A person is never asked to approve a package that publication will refuse.
-Each check is the code publication runs, so the gate and publication cannot
-disagree about what counts as a secret. A detector false positive now shows at
+A person is no longer asked to approve a package whose own inputs publication
+will refuse. Each check is the code publication runs, so the gate and
+publication cannot disagree about what counts as a secret. A detector false positive now shows at
 the gate instead of at finalize. The fix for that belongs in the detector.
 
 ### Public surface
