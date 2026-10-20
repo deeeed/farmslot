@@ -199,7 +199,8 @@ export class ReviewDispatchViewModel {
       .sort((a, b) => b.reviewedAt.localeCompare(a.reviewedAt))[earlier];
   }
   private linkedRow(row: ReviewDispatchRow, index: number): ReviewDispatchRow {
-    if (!this.preselects) return { ...row, context: this.contextForRow(index) };
+    if (!this.preselects)
+      return { id: row.id, selection: row.selection, context: this.contextForRow(index) };
     const option = this.lineageOption(index, row.selection.runner);
     return {
       id: row.id,
