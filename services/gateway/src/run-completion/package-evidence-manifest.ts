@@ -23,7 +23,10 @@ import {
   publicationBaselineContext,
 } from './publication-artifacts.js';
 import { sha256File, sortArtifactRefsForComparison } from './ready-gate-package.js';
-import { recordedPublicationDependencies } from './recorded-publication-evidence.js';
+import {
+  type PublicationSelectionSource,
+  recordedPublicationDependencies,
+} from './recorded-publication-evidence.js';
 import { retainedRunArtifactManifest, retainedRunTaskDirectory } from './retained-artifacts.js';
 
 const PACKAGE_OUTPUT_ARTIFACT_PATHS = new Set([
@@ -51,6 +54,7 @@ export async function buildPackageEvidenceManifest(
   evidenceManifest: EvidenceManifest | null | undefined,
   contractVersion = 1,
   baseline?: PublicationBaselineContext,
+  selectionSource: PublicationSelectionSource = 'capture',
 ): Promise<ArtifactRef[]> {
   const omittedEvidenceKeys = evidenceManifestOmitSet(evidenceManifest);
   const hasDeclaredEvidence =
@@ -95,6 +99,7 @@ export async function buildPackageEvidenceManifest(
         evidenceManifest,
         contractVersion,
         baseline,
+        selectionSource,
       )
     : [];
   return sortArtifactRefsForComparison([
@@ -125,6 +130,7 @@ export async function readCurrentPackageEvidence(run: Run): Promise<CurrentPacka
       manifest,
       run.recordedEvidenceContractVersion ?? 0,
       publicationBaselineContext(run),
+      'retained',
     ),
   };
 }

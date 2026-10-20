@@ -769,6 +769,7 @@ export async function prepareCompletionPackageTransitionLocked(
     runEvidenceManifest,
     run.recordedEvidenceContractVersion ?? 0,
     publicationBaselineContext(run),
+    'retained',
   );
   const validation = await readValidationSummary(run);
   const projectVars = await loadProjectVars(run.project);

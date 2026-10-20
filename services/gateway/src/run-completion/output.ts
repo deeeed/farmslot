@@ -17,7 +17,12 @@ import { GATEWAY_OWNED_DIFF_ARTIFACTS } from '../core/artifact-copy-policy.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { type ArtifactMirrorOptions, refreshArtifactMirror } from './artifact-mirror.js';
-import { scanArtifacts } from './publication-artifacts.js';
+import {
+  publicationBaselineContext,
+  resolvePublicationManifest,
+  scanArtifacts,
+} from './publication-artifacts.js';
+import { writePublicationSelectionSnapshot } from './recorded-publication-evidence.js';
 import {
   createRunArtifactAcquisition,
   readRetainedRunText,
@@ -186,14 +191,29 @@ export async function captureRunOutput(
     mirror && !run.reviewWorkspace
       ? await refreshArtifactMirror(run, { ...options, acquisition })
       : 0;
-  const artifacts = [
-    ...new Map(
-      [...(await scanArtifacts(path.dirname(taskFile))), ...acquisition.media].map((artifact) => [
-        artifact.path,
-        artifact,
-      ]),
-    ).values(),
-  ];
+  const artifactsByPath = new Map(
+    [...(await scanArtifacts(path.dirname(taskFile))), ...acquisition.media].map((artifact) => [
+      artifact.path,
+      artifact,
+    ]),
+  );
+  if (workerFinished || options.forPublication) {
+    const selection = await resolvePublicationManifest(
+      path.dirname(taskFile),
+      undefined,
+      undefined,
+      run.recordedEvidenceContractVersion ?? 0,
+      publicationBaselineContext(run),
+    );
+    if (selection) {
+      const snapshot = await writePublicationSelectionSnapshot(
+        path.dirname(taskFile),
+        selection.manifest,
+      );
+      artifactsByPath.set(snapshot.path, snapshot);
+    }
+  }
+  const artifacts = [...artifactsByPath.values()];
   if (artifacts.some((artifact) => !artifact.sha256))
     throw new Error('Could not fingerprint all output files');
   const candidates = [

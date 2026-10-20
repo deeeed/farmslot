@@ -96,6 +96,57 @@ async function fixture(t: TestContext) {
   return { taskDir, root, run, artifacts, manifest };
 }
 
+test('finished capture registers its generated publication selection before strict reads', async (t) => {
+  const { taskDir } = await fixture(t);
+  const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
+  const { captureRunOutput } = await import('./output.js');
+  const { readCurrentPackageEvidence } = await import('./package-evidence-manifest.js');
+  const { readRetainedRunText, retainedRunArtifactManifest } =
+    await import('./retained-artifacts.js');
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'selection-retention-fixture',
+    ticketOrPr: 'fixture/core#10855',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, {
+    taskFile: path.join(taskDir, 'TASK.md'),
+    status: 'completing',
+    recordedEvidenceContractVersion: 0,
+  });
+  await captureRunOutput(run.id, false, true);
+  const captured = getRun(run.id)!;
+  const evidence = await readCurrentPackageEvidence(captured);
+  const selection = evidence.inventory.find((entry) =>
+    entry.path.startsWith('artifacts/pr-package-evidence/'),
+  );
+  assert.ok(selection);
+  assert.ok(
+    captured.output?.artifactManifest.some((entry) => entry.path === selection.path),
+    'The generated selection belongs to the captured output inventory',
+  );
+  assert.ok(
+    (await retainedRunArtifactManifest(captured)).some((entry) => entry.path === selection.path),
+    'The immutable bundle manifest indexes the generated selection',
+  );
+  assert.equal(
+    digest(Buffer.from(await readRetainedRunText(captured, selection.path))),
+    selection.sha256,
+  );
+  await verifyFrozenPublicationEvidence(captured, evidence.inventory, [
+    'artifacts/recipe-run/proof.png',
+  ]);
+  await captureRunOutput(run.id, false, true);
+  const replayed = getRun(run.id)!;
+  const replayEvidence = await readCurrentPackageEvidence(replayed);
+  await verifyFrozenPublicationEvidence(replayed, replayEvidence.inventory, [
+    'artifacts/recipe-run/proof.png',
+  ]);
+});
+
 test('frozen indexed text is scanned without changing bytes or admitting historical packages', async (t) => {
   const { taskDir, root, run, artifacts, manifest } = await fixture(t);
   // The published all-zero-entropy BIP-39 test vector: checksum-valid, never a wallet.
