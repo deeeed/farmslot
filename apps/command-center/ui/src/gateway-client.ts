@@ -210,6 +210,8 @@ export class GatewayClient {
   private state: ConnectionState = 'disconnected';
   private epoch = 0;
   private principal: SelfPrincipalSummary | null = null;
+  /** Moves on every explicit sign-in or sign-out, never on a token refresh or reconnect. */
+  private credentialRevision = 0;
   private adminRole = false;
   private access: 'farm' | 'native' | 'none' = 'none';
   private reqId = 0;
@@ -328,6 +330,10 @@ export class GatewayClient {
     return this.state === 'connected' && this.adminRole;
   }
 
+  get credentialGeneration(): number {
+    return this.credentialRevision;
+  }
+
   get workspaceAccess(): 'farm' | 'native' | 'none' {
     return this.state === 'connected' ? this.access : 'none';
   }
@@ -369,6 +375,7 @@ export class GatewayClient {
     this.person = this.createPersonClient();
     this.rememberMe = rememberMe;
     this.auth = auth;
+    this.credentialRevision += 1;
     setGatewayMemoryAuth({}, this.url);
     syncBrowserHttpAuthCookie({}, this.url);
     this.explicitSignIn = true;
@@ -403,6 +410,7 @@ export class GatewayClient {
       closeSession: () => {
         this.person.stopRefresh();
         this.auth = {};
+        this.credentialRevision += 1;
         clearGatewayMemoryAuth();
         syncBrowserHttpAuthCookie({}, this.url);
         this.authBlocked = true;
