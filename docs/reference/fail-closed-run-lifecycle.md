@@ -65,6 +65,8 @@ existing action definitions; do not add a second decision store.
 
 When project policy skips code review, the shared gate projection and published PR MUST disclose "No code review ran" without withholding approval solely for that skip.
 
+The evidence prerequisite includes publication's secret scan (ADR-065 Amendment 9). The gateway MUST run, on the prepared package, the scan publication applies to the draft title and body, the evidence selection and the frozen text of the selected recordings and their recipes. A hit is `publication-secret-values`, naming kinds and fingerprints only, never values. A scan that cannot read the frozen evidence is `evidence-validation-unavailable`. Evidence attestation waives neither.
+
 Inspection, hold, evidence selection/judgments, review requests and authorized
 fix/recovery actions MUST remain usable as appropriate. A `collecting` gate may
 gather the visual judgments and reviewer artifacts it still needs. It MUST NOT

@@ -1510,3 +1510,32 @@ test('a review claim is satisfied only by the gate review prerequisite at the pa
     'an open finding at the head',
   );
 });
+
+// TAT-4145 bda11b1a gate 5bc9ef11 read ready with no reasons; publication then refused the
+// package for secret values. The gate runs the same scan, so approval is never offered.
+test('a package publication would refuse for secret values is not ready for approval', async () => {
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  const inputs = {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewResult: async () => undefined,
+  };
+  const run = makeRun();
+  assert.equal((await collectRunGateReadiness(run, prepared, inputs)).state, 'ready');
+
+  const phrase = Array<string>(12).fill('abandon').join(' ');
+  const refused = await collectRunGateReadiness(
+    run,
+    { ...prepared, draftBody: `${prepared.draftBody}\n\n${phrase}` },
+    inputs,
+  );
+  assert.equal(refused.state, 'not-ready');
+  const reason = refused.reasons.find(({ code }) => code === 'publication-secret-values');
+  assert.equal(reason?.prerequisite, 'evidence');
+  assert.match(reason?.message ?? '', /Publication blocked by secret values: srp sha256:/);
+  assert.doesNotMatch(reason?.message ?? '', /abandon/, 'fingerprints only, never the value');
+});

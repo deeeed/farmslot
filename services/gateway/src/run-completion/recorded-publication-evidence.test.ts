@@ -131,6 +131,39 @@ test('frozen indexed text is scanned without changing bytes or admitting histori
   ]);
 });
 
+// TAT-4145 bda11b1a: the selected recording's frozen recipe text carried a secret-shaped
+// value, the gate read ready, and publication refused at finalize.
+test('the publication gate refuses the frozen evidence text publication would refuse', async (t) => {
+  const { collectRunGateReadiness } = await import('../run-engine/gate-prerequisites.js');
+  const { taskDir, root, run, artifacts, manifest } = await fixture(t);
+  await writeFile(
+    path.join(root, 'observed.log'),
+    JSON.stringify({ arbitrary: Array<string>(12).fill('abandon').join(' ') }),
+  );
+  await indexFixtureArtifact(root, 'observed.log', 'log');
+  artifacts.push({ path: 'artifacts/recipe-run/observed.log', purpose: 'other' });
+  const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
+  await retainRunFixture(run);
+  const readiness = await collectRunGateReadiness(
+    run,
+    makeReadyGatePackage({
+      evidenceManifest: inventory,
+      selectedEvidenceKeys: ['artifacts/recipe-run/proof.png'],
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    }),
+    {
+      deterministic: async () => {},
+      acceptance: async () => ({ criteria: [], ledger: null, issues: [] }),
+      progress: async () => ({ kind: 'idle' as const }),
+      selectedEvidence: async () => {},
+      reviewResult: async () => undefined,
+    },
+  );
+  assert.equal(readiness.state, 'not-ready');
+  const reason = readiness.reasons.find(({ code }) => code === 'publication-secret-values');
+  assert.match(reason?.message ?? '', /Publication blocked by secret values: srp sha256:/);
+});
+
 test('a declared empty diagnostic log remains valid publication evidence', async (t) => {
   const { taskDir, root, run, artifacts, manifest } = await fixture(t);
   await writeFile(path.join(root, 'diagnostics-app-log.txt'), '');

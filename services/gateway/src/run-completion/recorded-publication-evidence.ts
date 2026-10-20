@@ -186,26 +186,27 @@ export async function readFrozenPublicationManifest(
   return value as EvidenceManifest;
 }
 
-/** Refuse changed trace/claims/timeline bytes before any selected media is uploaded. */
-export async function verifyFrozenPublicationEvidence(
-  run: Run,
+/** The selected evidence, after publication's secret scan of the selection itself. */
+function scannedFrozenSelection(
   inventory: readonly ArtifactRef[],
   selectedEvidenceKeys: readonly string[],
-  bundleRef?: RunArtifactBundleRef,
-): Promise<void> {
-  if (!inventory.length && !selectedEvidenceKeys.length) return;
+): ArtifactRef[] {
   assertPublicationTextSafe(JSON.stringify(selectedEvidenceKeys));
   const selected = selectedEvidenceKeys.flatMap((key) => {
     const artifact = resolveSelectedEvidenceRef(key, [...inventory]);
     return artifact ? [artifact] : [];
   });
   assertPublicationTextSafe(JSON.stringify(selected));
-  await verifyReadyGateSelectedEvidenceFiles(
-    run,
-    { evidenceManifest: [...inventory], artifactBundle: bundleRef },
-    [...selectedEvidenceKeys],
-  );
-  await readFrozenPublicationManifest(run, inventory, bundleRef);
+  return selected;
+}
+
+/** The recipe sources of the selected recordings and the text publication carries with them. */
+async function frozenPublicationTextClosure(
+  run: Run,
+  inventory: readonly ArtifactRef[],
+  selected: readonly ArtifactRef[],
+  bundleRef?: RunArtifactBundleRef,
+) {
   const media = selected
     .filter((artifact) => isUploadableMediaPath(artifact.path))
     .map(({ path }) => path);
@@ -219,15 +220,6 @@ export async function verifyFrozenPublicationEvidence(
     selectedRecordedMedia,
     bundleRef,
   );
-  for (const source of sources) {
-    const issues = validateRecordedEvidencePackage(source.input).findings.filter(
-      (finding) => finding.severity === 'error',
-    );
-    if (issues.length)
-      throw new Error(
-        `Frozen publication recipe is invalid: ${issues.map((issue) => issue.message).join('; ')}`,
-      );
-  }
   // This inventory is the frozen publication closure, not the task's historical
   // artifacts. Media pixels retain their existing visual-review requirements.
   // Selected before roots were validated above even though only the head ledger
@@ -246,9 +238,67 @@ export async function verifyFrozenPublicationEvidence(
         artifact.path === SELECTION_MANIFEST_PATH ||
         textPrefixes.some((prefix) => artifact.path.startsWith(prefix))),
   );
+  return { sources, textEntries };
+}
+
+async function scanFrozenPublicationText(
+  run: Run,
+  textEntries: readonly ArtifactRef[],
+  bundleRef?: RunArtifactBundleRef,
+): Promise<void> {
   // The canonical closure above and retained reader check the byte identities.
   // Its valid empty logs must not inherit the selected-media non-empty rule.
   for (const artifact of textEntries) {
     assertPublicationTextSafe(await readRetainedRunText(run, artifact.path, bundleRef));
   }
+}
+
+/**
+ * Publication's secret scan of the frozen evidence it publishes, without its
+ * byte verification. The publication gate runs it on the prepared package
+ * (ADR-065 Amendment 9), so a package publication would refuse is never offered.
+ */
+export async function scanFrozenPublicationEvidence(
+  run: Run,
+  inventory: readonly ArtifactRef[],
+  selectedEvidenceKeys: readonly string[],
+  bundleRef?: RunArtifactBundleRef,
+): Promise<void> {
+  if (!inventory.length && !selectedEvidenceKeys.length) return;
+  const selected = scannedFrozenSelection(inventory, selectedEvidenceKeys);
+  const { textEntries } = await frozenPublicationTextClosure(run, inventory, selected, bundleRef);
+  await scanFrozenPublicationText(run, textEntries, bundleRef);
+}
+
+/** Refuse changed trace/claims/timeline bytes before any selected media is uploaded. */
+export async function verifyFrozenPublicationEvidence(
+  run: Run,
+  inventory: readonly ArtifactRef[],
+  selectedEvidenceKeys: readonly string[],
+  bundleRef?: RunArtifactBundleRef,
+): Promise<void> {
+  if (!inventory.length && !selectedEvidenceKeys.length) return;
+  const selected = scannedFrozenSelection(inventory, selectedEvidenceKeys);
+  await verifyReadyGateSelectedEvidenceFiles(
+    run,
+    { evidenceManifest: [...inventory], artifactBundle: bundleRef },
+    [...selectedEvidenceKeys],
+  );
+  await readFrozenPublicationManifest(run, inventory, bundleRef);
+  const { sources, textEntries } = await frozenPublicationTextClosure(
+    run,
+    inventory,
+    selected,
+    bundleRef,
+  );
+  for (const source of sources) {
+    const issues = validateRecordedEvidencePackage(source.input).findings.filter(
+      (finding) => finding.severity === 'error',
+    );
+    if (issues.length)
+      throw new Error(
+        `Frozen publication recipe is invalid: ${issues.map((issue) => issue.message).join('; ')}`,
+      );
+  }
+  await scanFrozenPublicationText(run, textEntries, bundleRef);
 }
