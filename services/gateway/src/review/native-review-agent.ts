@@ -124,6 +124,27 @@ type NativeReviewInput = {
 const REFUSED_APPROVALS =
   '\nRunner actions that need approval are refused, never asked: do not retry them; continue the review from the code.';
 
+/**
+ * Stop a settled reviewer's process; its saved conversation stays resumable.
+ *
+ * WARM does not need the live process: a re-review transfers the stopped session
+ * and resumes it (dispatchNativeWorker's handoff). A live idle reviewer only held
+ * its process and MCP servers until the slot changed hands (TAT-4006 run 7721a02b's
+ * reviewer outlived its result by five hours). The verdict is already recorded, so
+ * an unconfirmed stop is reported, not raised.
+ */
+async function stopSettledReviewer(runId: string, contextId: string): Promise<void> {
+  const context = getRun(runId)?.agentContexts?.find((candidate) => candidate.id === contextId);
+  if (!context) return;
+  try {
+    await cancelNativeWorkerContext(runId, context);
+  } catch (error) {
+    console.warn(
+      `[review] ${runId.slice(0, 8)}: settled reviewer ${contextId} did not confirm its stop: ${(error as Error).message}`,
+    );
+  }
+}
+
 export async function runNativeReviewAgent(input: NativeReviewInput): Promise<ReviewAgentResult> {
   const run = getRun(input.runId);
   if (!run) throw new Error('Native review run not found');
@@ -538,6 +559,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
     );
     await persistRunNow(getRun(runId)!, 'native reviewer result validated');
     if (feedback.incomplete) await settleReviewRoundNoVerdict(runId, roundId, 'no-feedback-file');
+    await stopSettledReviewer(runId, contextId);
 
     if (retained && context.runnerSessionId !== retained.runnerSessionId)
       throw new WarmReviewRefusal(
