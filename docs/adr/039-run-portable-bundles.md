@@ -345,3 +345,76 @@ reused slot to invalidate history. One local immutable capture removes that
 read-time dependency. It costs bounded gateway disk and copy work at capture.
 Incomplete historical data remains explicit; retention does not manufacture
 missing proof. Export/import continue to use the same portable bundle format.
+
+## Amendment 2: 2026-10-20 settled-run retention
+
+**Status:** Accepted (lead, 2026-10-20).
+**Related:** [ADR-056](056-runner-session-archive.md) (session archives),
+[ADR-058](058-static-review-and-farm-owned-qa.md) (review workspaces),
+[ADR-062](062-recorded-run-evidence.md) (evidence lifetimes),
+[ADR-065](065-fail-closed-run-lifecycle.md) (settled-run guards).
+**Normative specification:** [Settled-run retention](../reference/retained-run-artifacts.md#settled-run-retention).
+
+### Context
+
+A run kept its record, task directory with recordings, session archive, review
+workspace, native worker state and bundle until an operator deleted it. Archive
+kept them forever, and task pins were never removed. On the dev farm host this
+filled the disk while runs worked: 21 GB free fell to 14 GB in 3.5 hours. The
+owner's rule (2026-10-19) is that completely done runs are cleaned up, with no
+archive.
+
+### Decision
+
+The gateway runs one retention pass 10 minutes after it starts and then every
+hour. It deletes a run, and the storage only that run owns, when all of these
+hold:
+
+- the run is done or cancelled, or archived;
+- it settled at least 48 hours ago;
+- it needs none of its execution storage: no open decision, its review workspace
+  is cleaned, no closeout is pending and no native worker is held;
+- it holds no slot and has no pending backlog reconciliation;
+- it carries no operator tags;
+- it has no PR, or its PR is merged or closed.
+
+Live, gated, blocked and unarchived failed runs are never selected. A PR the run
+does not record as merged or closed is checked under every identity the run has:
+the review-session identity (adopted target, PR work, PR link or `owner/repo#N`
+ticket) and its number in the project's repository. It counts as settled only when
+the pass read those repositories' open PRs and none is among them. An
+unresolvable identity, an unreadable repository or a possibly truncated list keeps
+the run.
+
+Deleting the run releases its backlog link without requeueing the item, as
+archiving a blocked run does, and releases its history pin. The bundle store's
+collector then removes bundles no remaining run references. Just before deleting
+each run, the pass rechecks it and, in the same synchronous step, moves aside the
+directories no other run references and no run being admitted holds: its task
+directory under a farm task root, and its review-workspace directory and native
+worker state on the gateway's own node. Each move is recorded first. A refused
+delete moves them back; an interrupted pass's directories go back if their run
+still exists and are purged once it is gone. A directory on another volume, which
+cannot move reversibly, keeps its run. Task pins whose task directory no longer
+exists are removed 48 hours after they were written. Other nodes' storage and slot
+checkouts are left to their owners.
+
+### Rationale and consequences
+
+Published PR evidence lives in the project's artifacts repository, so deleting a
+merged or closed run's local bundle leaves its PR intact. Archive becomes a
+48-hour holding state rather than permanent history. A deleted run also leaves
+roadmap delivery lineage, family observability, evaluation trial results and
+review-round history. Operator tags keep a run for those uses.
+
+Shared caches (review repositories and support caches, slot scaffolding) and the
+bundle store budget keep their existing owners. Storage on other nodes has no
+retention pass yet. Settled runs with stale open decisions stay until those
+decisions are resolved.
+
+### Public surface
+
+No RPC or protocol change. `@farmslot/run-bundle` exports `runBundleRefs`, the one
+list of a run's bundle references that GC, readers and retention share.
+`services/gateway/scripts/run-retention-plan.ts` is a read-only dry run of the pass
+that lists entries and GB per store.

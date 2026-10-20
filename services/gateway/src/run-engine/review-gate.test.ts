@@ -8,13 +8,47 @@ import { type ReviewGatePayload, type RunDecision } from '@farmslot/protocol';
 import { farmslotRoot } from '../projects/repo-root.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
+import { hasEngineDecisionWaiter, resolveEngineDecision } from './engine-decisions.js';
 import {
   assertReviewSnapshotMatchesPullRequest,
+  executeReviewGate,
   publishPinnedReview,
   refreshReviewGate,
   reviewEvidencePostArgs,
   shouldIncludeReviewEvidence,
 } from './review-gate.js';
+
+test('a superseded review-posting gate stops without dismissing the reopened run', async (t) => {
+  const run = createRun({
+    flowType: 'review-pr',
+    project: 'missing-review-gate',
+    ticketOrPr: '42',
+  });
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: null,
+    engineState: { generation: 1 },
+  });
+  const execution = executeReviewGate(run.id);
+  t.after(async () => {
+    for (const decision of getRun(run.id)!.decisions) resolveEngineDecision(decision.id, 'abort');
+    await execution;
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  let decisionId: string | undefined;
+  for (let i = 0; i < 400 && !(decisionId && hasEngineDecisionWaiter(decisionId)); i++) {
+    decisionId = getRun(run.id)!.decisions.find((d) => d.type === 'engine_review_posting')?.id;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(decisionId && hasEngineDecisionWaiter(decisionId));
+  const afterReplay = structuredClone(
+    updateRun(run.id, { status: 'blocked', engineState: { generation: 2 } }),
+  );
+  resolveEngineDecision(decisionId, 'superseded');
+  await execution;
+  assert.deepEqual(getRun(run.id), afterReplay, 'stale gate effects cannot overwrite replay state');
+});
 
 test('refresh preserves the fresh decision list and refuses an in-flight resolution or replacement', async (t) => {
   const tasks = path.join(farmslotRoot, '.sandbox/review-refresh-retained/tasks');

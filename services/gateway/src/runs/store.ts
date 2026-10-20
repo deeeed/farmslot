@@ -1628,8 +1628,8 @@ const ARCHIVE_DIR = path.join(RUNS_DIR, 'archive');
  * Archived runs leave the live map but stay durable on disk, so any projection
  * that claims historical lineage must read them too — archiving is exactly the
  * "outside the current page" case. Cached because roadmap delivery reads this per
- * request; only `archiveRun` invalidates it, since `deleteRun` unlinks from
- * `RUNS_DIR` and never touches the archive directory.
+ * request; `archiveRun` invalidates it and `deleteArchivedRun` drops its one record.
+ * `deleteRun` unlinks from `RUNS_DIR` and never touches the archive directory.
  */
 let archivedRunsCache: Run[] | null = null;
 /**
@@ -1991,6 +1991,58 @@ async function archiveRunBody(id: string): Promise<boolean> {
   return true;
 }
 
+const taskDirectoryOf = (taskFile: string) => path.resolve(path.dirname(taskFile));
+
+const admittingTaskDirectories = new Map<string, number>();
+
+/**
+ * Hold a task directory while a run that names it is admitted, until it is registered
+ * or refused. Run retention leaves held directories in place (ADR-039 Amendment 2).
+ */
+export async function withTaskAdmission<T>(
+  taskFile: string | undefined,
+  admit: () => Promise<T>,
+): Promise<T> {
+  if (!taskFile) return admit();
+  const dir = taskDirectoryOf(taskFile);
+  admittingTaskDirectories.set(dir, (admittingTaskDirectories.get(dir) ?? 0) + 1);
+  try {
+    return await admit();
+  } finally {
+    const holds = admittingTaskDirectories.get(dir)! - 1;
+    if (holds) admittingTaskDirectories.set(dir, holds);
+    else admittingTaskDirectories.delete(dir);
+  }
+}
+
+export function isTaskDirectoryAdmitting(dir: string): boolean {
+  return admittingTaskDirectories.has(path.resolve(dir));
+}
+
+/** Every task directory a run names: its task, its active task and its agents' tasks. */
+export function runTaskDirectories(run: Run): string[] {
+  return [run.taskFile, run.activeTaskFile, ...(run.agentContexts ?? []).map((c) => c.taskFile)]
+    .filter((file): file is string => typeof file === 'string')
+    .map(taskDirectoryOf);
+}
+
+/** Run retention removes an archived record and its session archive (ADR-039 Amendment 2). */
+export async function deleteArchivedRun(id: string): Promise<boolean> {
+  try {
+    await unlink(path.join(ARCHIVE_DIR, `${id}.json`));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+  // Drop the one record rather than rescanning the whole archive on the next read.
+  if (archivedRunsCache) {
+    archivedRunsCache = archivedRunsCache.filter((run) => run.id !== id);
+    archivedRunsGeneration++;
+  } else invalidateArchivedRunsCache();
+  await rm(runSessionArchiveDir(id), { recursive: true, force: true });
+  return true;
+}
+
 const CLEANUP_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function cleanupRuns(
@@ -2020,15 +2072,7 @@ export async function cleanupRuns(
   // Snapshot ownership before archiving evicts failed/cancelled runs from the
   // live map. Dry-run and real cleanup must evaluate the same task directories.
   const cleanupRunSnapshot = [...runs.values()].filter((run) => !isRunStoreLeak(run));
-  const taskDirectories = (run: Run) =>
-    [
-      run.taskFile,
-      run.activeTaskFile,
-      ...(run.agentContexts ?? []).map((context) => context.taskFile),
-    ]
-      .filter((file): file is string => typeof file === 'string')
-      .map((file) => path.dirname(file));
-  const archivedTaskDirectories = new Set((await getArchivedRuns()).flatMap(taskDirectories));
+  const archivedTaskDirectories = new Set((await getArchivedRuns()).flatMap(runTaskDirectories));
 
   // Scan for failed/cancelled runs older than 7 days → archive.
   // Active, held, gated, and CI-watching runs never enter this branch.
@@ -2070,7 +2114,9 @@ export async function cleanupRuns(
       if (archivedTaskDirectories.has(taskPath)) continue;
 
       // Check if any run references this task dir
-      const matchingRuns = cleanupRunSnapshot.filter((r) => taskDirectories(r).includes(taskPath));
+      const matchingRuns = cleanupRunSnapshot.filter((r) =>
+        runTaskDirectories(r).includes(taskPath),
+      );
       if (
         matchingRuns.length &&
         matchingRuns.every(

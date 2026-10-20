@@ -45,6 +45,7 @@ import {
   copyFileChunked,
   readRemoteFileChunkedToBuffer,
 } from './file-transfer.js';
+import { replaceReadOnlyDestination } from './owned-copy.js';
 
 export const MAX_ARTIFACT_TREE_DEPTH = 12;
 // Subset of SlotVars — SlotVars satisfies this via structural typing
@@ -407,6 +408,7 @@ export async function slotCopyFile(
       (await existingSlotFileMatches(ctx, remotePath, localPath, (await stat(remotePath)).size))
     )
       return false;
+    await replaceReadOnlyDestination(localPath);
     if (options.maxBytes === undefined) await copyFile(remotePath, localPath);
     else {
       let bytes = 0;
@@ -462,6 +464,7 @@ export async function slotCopyFile(
     const result = (await request('fs.readBase64', pathParams, {
       timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
     })) as { content: string };
+    await replaceReadOnlyDestination(localPath);
     await fsWriteFile(localPath, Buffer.from(result.content, 'base64'));
     return true;
   }
