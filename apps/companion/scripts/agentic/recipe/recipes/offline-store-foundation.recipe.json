@@ -112,6 +112,21 @@
         "match": "\"storeDeleted\":true",
         "intent": "Require an actual store deletion receipt from the native request adapter.",
         "proves": ["foundation"],
+        "next": "offline-sign-out"
+      },
+      "offline-sign-out": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-client-cache.mjs offline-sign-out",
+        "intent": "Disconnect a disposable authenticated native client, then sign out while it is already offline.",
+        "next": "offline-sign-out-proof"
+      },
+      "offline-sign-out-proof": {
+        "action": "assert_output",
+        "source": "offline-sign-out",
+        "stream": "stdout",
+        "match": "\"storeDeleted\":true,\"reason\":\"sign-out\"",
+        "intent": "Require a deletion notification even when sign-out does not change the disconnected transport state.",
+        "proves": ["foundation"],
         "next": "stop"
       }
     }

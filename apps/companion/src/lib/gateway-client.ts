@@ -94,7 +94,8 @@ export class GatewayClient {
     await this.personSession?.signOut();
     await this.personSession?.dispose();
     this.personSession = null;
-    this.resourceReason = 'sign-out';
+    // Offline sign-out changes authority even when the transport state stays disconnected.
+    this.setState(this.state, true, 'sign-out');
   }
 
   get httpAuthHeaders(): GatewayHttpAuthHeaders {

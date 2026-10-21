@@ -8,7 +8,7 @@ const [action, sourceId, ref] = process.argv.slice(2);
 const metro = process.env.METRO_PORT;
 assert(/^\d+$/.test(metro ?? ''), 'Select the isolated METRO_PORT');
 async function observe(action) {
-  const timeout = action === 'credential-refusal' ? 15000 : 3000;
+  const timeout = action === 'credential-refusal' || action === 'offline-sign-out' ? 15000 : 3000;
   const response = await fetch(`http://127.0.0.1:${metro}/farmslot-recipe/command`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -40,7 +40,7 @@ function rpc(method, params) {
 }
 let before;
 let minimumRevision = 0;
-if (action === 'credential-refusal') {
+if (action === 'credential-refusal' || action === 'offline-sign-out') {
   const proof = await observe(action);
   assert.equal(proof.result, 'PASS', JSON.stringify(proof));
   assert.equal(proof.storeDeleted, true);

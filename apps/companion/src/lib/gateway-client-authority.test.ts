@@ -135,6 +135,17 @@ for (const code of ['TIMEOUT', 'AUTH_FAILED']) {
       assert.equal(store.deleted, code === 'AUTH_FAILED');
       assert.equal(state.data?.value, code === 'TIMEOUT' ? 'cached' : undefined);
       if (code === 'TIMEOUT') assert.equal(state.status, 'stale');
+      if (code === 'TIMEOUT') {
+        await client.clearAccountSession();
+        client.disconnect();
+        await cache.retry(query);
+        assert.equal(
+          store.deleted,
+          true,
+          'sign-out while disconnected must delete the retained store',
+        );
+        assert.equal(cache.read(query).data, undefined);
+      }
     } finally {
       await cache.dispose();
       client.disconnect();

@@ -9,7 +9,11 @@ import {
 import { GatewayClient } from '../lib/gateway-client';
 
 /** Revoke a disposable credential through the real gateway; keep its secret inside native memory. */
-export async function proveOfflineCacheCredentialRefusal(admin: GatewayClient, gatewayUrl: string) {
+export async function proveOfflineCacheCredentialRefusal(
+  admin: GatewayClient,
+  gatewayUrl: string,
+  mode: 'credential-refusal' | 'offline-sign-out' = 'credential-refusal',
+) {
   const principalId = admin.authenticatedPrincipal?.id;
   if (!__DEV__ || !principalId) throw new Error('Use a signed-in isolated development stack');
   const issued = await admin.request<CredentialIssueResult>(Methods.CREDENTIAL_ISSUE, {
@@ -42,15 +46,24 @@ export async function proveOfflineCacheCredentialRefusal(admin: GatewayClient, g
     client.connect();
     if (!(await until(() => cache.read(query).status === 'ready')))
       throw new Error('Disposable native cache did not complete its initial read');
-    await admin.request(Methods.CREDENTIAL_REVOKE, { credentialId: issued.credential.id });
-    revoked = true;
-    client.reconnect();
+    if (mode === 'offline-sign-out') {
+      client.disconnect();
+      if (store.deleted)
+        throw new Error('A transport disconnect deleted the store before sign-out');
+      await client.clearAccountSession();
+      client.disconnect();
+    } else {
+      await admin.request(Methods.CREDENTIAL_REVOKE, { credentialId: issued.credential.id });
+      revoked = true;
+      client.reconnect();
+    }
     await until(() => store.deleted);
     return {
       result:
         store.deleted &&
         cache.read(query).data === undefined &&
-        client.resourceConnectionReason === 'credential-refused'
+        client.resourceConnectionReason ===
+          (mode === 'offline-sign-out' ? 'sign-out' : 'credential-refused')
           ? 'PASS'
           : 'FAIL',
       storeDeleted: store.deleted,

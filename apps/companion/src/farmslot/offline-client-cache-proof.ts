@@ -24,10 +24,17 @@ export const observeOfflineClientCacheProof: FarmslotRecipeUiObserver = async (r
   const state = useConnectionStore.getState();
   const client = state.client;
   if (!client) throw new Error('Connect Companion before proving its resource cache');
-  if (refs[0] === 'offline-store-foundation:credential-refusal') {
+  if (
+    refs[0] === 'offline-store-foundation:credential-refusal' ||
+    refs[0] === 'offline-store-foundation:offline-sign-out'
+  ) {
     return {
       observations: {
-        offlineStoreFoundation: await proveOfflineCacheCredentialRefusal(client, state.gatewayUrl),
+        offlineStoreFoundation: await proveOfflineCacheCredentialRefusal(
+          client,
+          state.gatewayUrl,
+          refs[0].endsWith(':offline-sign-out') ? 'offline-sign-out' : 'credential-refusal',
+        ),
       },
     };
   }
