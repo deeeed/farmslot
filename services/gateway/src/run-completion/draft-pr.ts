@@ -16,6 +16,7 @@ import {
 } from './evidence-manifest.js';
 import { exactEvidenceKeys } from './evidence-paths.js';
 import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT, renderPrBody } from './pr-body-render.js';
+import { lowercaseLeadingTitleWord } from './pr-title.js';
 import { readEvidenceManifest, replaceMarkdownSection } from './publication-artifacts.js';
 import { retainedArtifactRun } from './retained-artifacts.js';
 import { readTaskArtifactText } from './retrospective.js';
@@ -70,10 +71,7 @@ export function buildDraftPrTitle(run: Run, draftBody: string): string {
   const commitType = run.flowType === 'fix-bug' ? 'fix' : run.flowType === 'dev' ? 'feat' : 'chore';
   const scope = inferDraftPrTitleScope(run);
   const scopePart = scope ? `(${scope})` : '';
-  // Lower-case a leading word, never a ticket key (`TAT-4037`).
-  const desc = /^[A-Z][A-Z0-9]*-\d+/.test(sanitized)
-    ? sanitized
-    : sanitized.charAt(0).toLowerCase() + sanitized.slice(1);
+  const desc = lowercaseLeadingTitleWord(sanitized);
   return `${commitType}${scopePart}: ${desc}`;
 }
 

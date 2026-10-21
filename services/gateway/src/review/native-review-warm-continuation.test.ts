@@ -26,6 +26,7 @@ const owner: Principal = {
   roles: [{ role: 'admin', scope: { kind: 'global' } }],
 };
 const head = 'a'.repeat(40);
+let currentHead = head;
 const noop = async () => {};
 // Scripted host behaviour; the run store, the session registry and the round budget are real.
 let ancestorExitCode = 0;
@@ -222,7 +223,7 @@ mock.module('./snapshots.js', {
       snapshot: {
         source: 'local-git',
         baseSha: 'b'.repeat(40),
-        headSha: head,
+        headSha: currentHead,
         diffPath: 'artifacts/review.diff',
         capturedAt: new Date().toISOString(),
       },
@@ -233,7 +234,7 @@ mock.module('./snapshots.js', {
       snapshot: {
         source: 'local-git',
         baseSha: head,
-        headSha: head,
+        headSha: currentHead,
         diffPath: 'artifacts/review.diff',
         capturedAt: new Date().toISOString(),
       },
@@ -291,6 +292,7 @@ async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
   resetWarmReviewerSessionsForTest();
   ancestorExitCode = 0;
+  currentHead = head;
   commandFailed = false;
   expectedFixCheck = undefined;
   resumed.length = 0;
@@ -566,6 +568,40 @@ test('a failed warm command retries its same session and refunded attempt after 
   assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, admissions);
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 2);
   assert.equal(reviewers(run.id).length, 2, 'no replacement reviewer context');
+});
+
+test('an operator delta request retries the refunded WARM attempt without a restart or fresh review', async (t) => {
+  const run = await prePublishRun(t);
+  const first = await review(run.id);
+  currentHead = 'c'.repeat(40);
+  commandFailed = true;
+  await assert.rejects(reReview(run.id));
+  const failed = reviewers(run.id).at(-1)!;
+  const admissions = [...getRun(run.id)!.reviewRoundAdmissions!];
+  const dispatchCount = dispatches.length;
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
+  // Auth is repaired externally. The gate supplies rereview, not resumeFromResult,
+  // and this process still has the failed attempt's invalidated session cache.
+  commandFailed = false;
+  const result = await executeReview(run.id, vars.slotId, {
+    reviewRunner: 'claude',
+    model: 'opus',
+    mode: 'warm',
+    reviewId: 'lineage-a',
+    publicationReview: true,
+    validationDepth: 'static-code',
+    rereview: { lastReviewedHeadSha: head, priorIssues },
+  });
+  assert.deepEqual(resumed, [failed.id]);
+  assert.equal(dispatches.length, dispatchCount, 'no replacement reviewer dispatch');
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.reviewerSessionId, first.reviewerSessionId);
+  assert.equal(result.session?.fallback, undefined);
+  assert.equal(result.reviewSnapshot?.baseSha, head);
+  assert.equal(result.reviewSnapshot?.headSha, currentHead);
+  assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, admissions);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 2);
+  assert.equal(reviewers(run.id).length, 2);
 });
 
 test('an explicit cold request does not adopt a refunded warm attempt', async (t) => {

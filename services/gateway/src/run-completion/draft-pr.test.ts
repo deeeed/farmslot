@@ -217,6 +217,18 @@ test('buildDraftPrTitle keeps a leading ticket key upper-case', () => {
   assert.equal(buildDraftPrTitle(run, ''), 'feat: TAT-4037 Show market icons');
 });
 
+test('ticket PR titles preserve a leading acronym or identifier and lowercase an ordinary word', () => {
+  for (const [title, description] of [
+    ['ORDER_SIZE_MIN placeholder', 'ORDER_SIZE_MIN placeholder'],
+    ['XYZ validation', 'XYZ validation'],
+    ['API response', 'API response'],
+    ['Order placeholder', 'order placeholder'],
+  ]) {
+    const run = makeRun({ flowType: 'fix-bug', ticketData: manualTicketData(title) });
+    assert.equal(buildDraftPrTitle(run, ''), `fix: ${description}`);
+  }
+});
+
 // TAT-4138 published `feat: TAT-4138` while its approved body opened with this heading.
 const TAT_4138_HEADING = 'fix(icons): serve base icons for 1000x markets and null missing icons';
 const TAT_4138_BODY = [
