@@ -4,8 +4,11 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Failed runs stay in Active until archived, even after their resources are released. Gateway, Command Center and Companion share this rule; done and cancelled runs stay out. `hasUnsettledRunExecution` preserves the execution checks for PR ownership, work graphs, family workflow outcomes and dispatch conflicts.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.62.0 - 2026-10-21
+
+- Failed runs stay in Active until archived, even after their resources are released. Gateway, Command Center and Companion share this rule; done and cancelled runs stay out. `hasUnsettledRunExecution` preserves the execution checks for PR ownership, work graphs, family workflow outcomes and dispatch conflicts.
 
 ## 0.61.0 - 2026-10-21
 
