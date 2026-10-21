@@ -15,6 +15,7 @@ import {
   type RunGetResult,
 } from '@farmslot/protocol';
 import {
+  gateReviewLineageOptions,
   ReviewDispatchViewModel,
   reviewLineagesForRun,
   reviewRequestContextForRun,
@@ -122,12 +123,16 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
     [],
   );
   useEffect(() => {
+    // ADR-063 Amendment 5: a gate lists its lineages; rows preselect their runner's latest
+    // available one in WARM.
+    const lineageOptions = gateReviewLineageOptions(run, decisionId);
     reviewPicker.setContext({
       ...reviewPicker.context,
       reviewLineages: reviewLineagesForRun(run),
-      reviewContext: reviewRequestContextForRun(run),
+      reviewContext: lineageOptions ? undefined : reviewRequestContextForRun(run),
+      lineageOptions,
     });
-  }, [reviewPicker, run]);
+  }, [decisionId, reviewPicker, run]);
 
   const refresh = useCallback(
     async (reason: string) => {

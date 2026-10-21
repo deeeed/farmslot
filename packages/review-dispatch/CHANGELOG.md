@@ -2,8 +2,13 @@
 
 ## Unreleased
 
-- `publicationGateView` offers accepting the open review findings (`acceptFindings`, with `findings`) while they block every other publish approval, and asks for the reason when `acceptingFindings` is set. `reviewFixInProgress(run)` and `reviewFindingEntries(reviews)`, the review entries the publication block counts, are exported.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.9.0 - 2026-10-21
+
+- Align with `@farmslot/protocol` 0.61.0, `@farmslot/adapter-sdk` 0.25.1.
+- A lineage recorded before a PR is valid and names its run family; one recorded with a PR keeps its repository/PR (`reviewLineageKey`). The gate picker's `lineageOptions` preselect each row runner's most recent available lineage in WARM with its model and effort, once per lineage, and a row whose earlier lineage can't continue stays COLD with a `note` saying why; a person's COLD at the gate stays in its lineage, and a runner change reallocates lineages so no two rows share one (ADR-063 Amendment 5). `reviewLineagesForRun` also reads a gate row's attempts, so a row whose request was refused keeps its lineage. `gateReviewLineageOptions` reads those lineages from a ready gate, and `reviewFallbackLine` words why a review ran a delta-scoped COLD and the ranges it compared.
+- `publicationGateView` offers accepting the open review findings (`acceptFindings`, with `findings`) while they block every other publish approval, and asks for the reason when `acceptingFindings` is set. `reviewFixInProgress(run)` and `reviewFindingEntries(reviews)`, the review entries the publication block counts, are exported.
 
 ## 0.8.0 - 2026-10-20
 

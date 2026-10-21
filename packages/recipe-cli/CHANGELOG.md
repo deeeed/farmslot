@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.30.1 - 2026-10-21
+
+- Align with `@farmslot/protocol` 0.61.0, `@farmslot/recipe-runner` 0.46.1, `@farmslot/adapter-sdk` 0.25.1, `@farmslot/agent-runtime` 0.37.0.
+
 ## 0.30.0 - 2026-10-20
 
 - Align with `@farmslot/protocol` 0.60.0, `@farmslot/adapter-sdk` 0.25.0, `@farmslot/agent-runtime` 0.36.0 and `@farmslot/recipe-runner` 0.46.0.

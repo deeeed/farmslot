@@ -6,6 +6,7 @@ import {
   PIPELINE_REVIEW_SOURCE,
   REQUESTED_REVIEW_SOURCE,
   reviewLoopNumberFromId,
+  reviewSourceKindForId,
 } from './review-sources.js';
 
 test('pipeline and requested review artifacts have distinct neutral namespaces', () => {
@@ -23,4 +24,7 @@ test('review source parser rejects foreign and invalid ids', () => {
   assert.equal(reviewLoopNumberFromId(REQUESTED_REVIEW_SOURCE, 'pipeline-review-7'), null);
   assert.equal(reviewLoopNumberFromId(REQUESTED_REVIEW_SOURCE, 'review-0'), null);
   assert.throws(() => inferReviewSourceKind({ id: 'unknown-1' }));
+  // A reviewer lineage id is not a row id: naming no source is an answer, not an error.
+  assert.equal(reviewSourceKindForId('rev-claude-native-9e436a666c45-bc5247b7'), undefined);
+  assert.equal(reviewSourceKindForId('pipeline-review-rev-claude-native-9e436a666c45'), 'pipeline');
 });

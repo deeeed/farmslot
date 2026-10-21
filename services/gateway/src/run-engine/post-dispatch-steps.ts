@@ -38,11 +38,16 @@ import {
 import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
-import { executeReview } from '../review/orchestrator.js';
+import { executeReview, reReviewMode } from '../review/orchestrator.js';
 import {
   markReviewedInputsRerun,
   reviewedInputsAwaitingReview,
 } from '../review/reviewed-inputs.js';
+import {
+  latestReviewOfLineage,
+  lineageContextForRun,
+  reReviewOfStatus,
+} from '../review/session-mode.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
   isArtifactOnlyRun,
@@ -177,7 +182,7 @@ export interface PostDispatchStepContext {
     slotId: string,
     plan: ReviewSelection[],
     trigger: 'dispatch' | 'human-gate',
-    options?: Pick<PublishGateReviewPlanDependencies, 'automaticLaunch'>,
+    options?: Pick<PublishGateReviewPlanDependencies, 'automaticLaunch' | 'reviewSequenceContext'>,
   ) => Promise<PublishGateReviewPlanResult>;
   executeReadyGate: (runId: string) => Promise<string>;
   executeReviewGate: (runId: string) => Promise<void>;
@@ -785,7 +790,8 @@ export async function executeReviewStep(
       ? {
           ...reviewer,
           validationDepth: sendBack.validationDepth ?? validationDepth,
-          mode: sendBack.mode ?? mode,
+          // ADR-063 Amendment 5: the fix's re-review continues this review's lineage WARM.
+          mode: reReviewMode(sendBack, mode),
           reviewId: sendBack.reviewId ?? reviewId,
           resumeFromResult: sendBack,
         }
@@ -813,7 +819,7 @@ export async function executeReviewStep(
       const retryResult = await executeReviewForRun(runId, current.slotId, {
         ...reviewer,
         validationDepth,
-        mode: result.mode ?? 'cold',
+        mode: reReviewMode(result, 'cold'),
         reviewId: result.reviewId,
         resumeFromResult: result,
       });
@@ -924,18 +930,40 @@ export async function rerunReviewIfReviewedInputsChanged(
     `[run-engine] run ${runId.slice(0, 8)} — evidence or HEAD changed since the last review; running review again`,
   );
   // ADR-063 Amendment 3: the recheck runs the row the pipeline review ran.
-  const reviewSelection = latest.steps.find((step) => step.name === S.REVIEW)?.inputs
-    ?.reviewSelection;
+  const reviewStep = latest.steps.find((step) => step.name === S.REVIEW);
+  const reviewSelection = reviewStep?.inputs?.reviewSelection;
+  // Amendment 5: it continues that review's lineage, named by the pipeline result's session.
+  const session = reviewStep?.outputs?.session;
+  const pipelineReviewId =
+    session && typeof session === 'object' && 'reviewId' in session ? session.reviewId : undefined;
+  // The pipeline row wraps the lineage in its own id (pipeline-review-<lineage>).
+  const pipelineReview =
+    typeof pipelineReviewId === 'string'
+      ? latestReviewOfLineage(latest.engineState?.publishGate?.reviews ?? [], pipelineReviewId)
+      : undefined;
+  const lineage =
+    typeof pipelineReviewId === 'string' && reReviewOfStatus(pipelineReview)
+      ? lineageContextForRun(latest, pipelineReviewId)
+      : undefined;
+  const mode = lineage ? 'warm' : resolveReviewMode();
   const plan: ReviewSelection[] = [
     reviewSelection
-      ? { ...parseReviewSelection(reviewSelection), mode: resolveReviewMode() }
-      : { runner: 'claude', model: null, effort: null, mode: resolveReviewMode() },
+      ? { ...parseReviewSelection(reviewSelection), mode }
+      : lineage && pipelineReview?.runner
+        ? {
+            runner: pipelineReview.runner,
+            model: pipelineReview.model ?? null,
+            effort: pipelineReview.effort ?? null,
+            mode,
+          }
+        : { runner: 'claude', model: null, effort: null, mode },
   ];
   const reviewPlanResult = await context.executePublishGateReviewPlan(
     runId,
     reviewSlotId,
     plan,
     'dispatch',
+    lineage ? { reviewSequenceContext: { reviewLineages: [lineage] } } : undefined,
   );
   await reconcilePublishGateReviewPlanResult(runId, plan, reviewPlanResult, context, {
     reviewedPackage,

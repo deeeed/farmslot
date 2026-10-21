@@ -12,6 +12,7 @@ import {
 
 const run: RereviewRun = {
   id: 'run-1',
+  familyId: 'family-1',
   flowType: 'review-pr',
   status: 'blocked',
   project: 'mobile',

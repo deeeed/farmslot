@@ -1,11 +1,11 @@
 {
-  "version": "0.29.0",
-  "date": "2026-10-20",
+  "version": "0.30.0",
+  "date": "2026-10-21",
   "items": [
-    "Visual judgments apply to the proof the gate reads, and the retained bundle keeps every gate review's result",
-    "Spent review rounds read `Review rounds spent: N issues open` and point at Hold",
-    "After a restart, running reviewers are reattached, a run whose machine is offline stays held, and finished native sessions no longer fail the run",
-    "Findings from a blocked fix's re-review stay continuable, and the gate re-binds a slot still on the run's branch",
-    "Runner state no longer lives inside slot checkouts, and a reviewSequence's first row runs the pipeline review"
+    "Re-reviews continue the earlier session and use a delta review when that session cannot resume.",
+    "Settled native reviewers stop their processes and MCP servers while preserving resumable conversations.",
+    "Follow-up artifacts stay writable and completion retains generated publication selections in its manifest.",
+    "Publication gates check secret values before approval and can publish explicitly accepted review findings.",
+    "Settled runs are removed after 48 hours unless decisions, slots, open PRs or storage dependencies keep them."
   ]
 }

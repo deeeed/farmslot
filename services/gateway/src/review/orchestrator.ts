@@ -96,12 +96,20 @@ import {
   withNativeReviewOperation,
 } from './native-review-operation.js';
 import { initReviewProgress, startProgressWatcher } from './progress.js';
-import { liveNativeReviewer, type ReviewAgentResult, runReviewAgent } from './review-agent.js';
+import {
+  liveNativeReviewer,
+  type ReReviewContinuation,
+  reReviewContinuation,
+  type ReviewAgentResult,
+  runReviewAgent,
+} from './review-agent.js';
 import { reviewNoVerdictCapReason, runReviewRoundBudget } from './review-round-budget.js';
 import { recordReviewedInputs } from './reviewed-inputs.js';
 import {
   invalidateWarmReviewerSessions,
   invalidateWarmReviewerSessionsForSlot,
+  reReviewOfStatus,
+  reviewLineageId,
   shouldRetainCompletedReviewer,
 } from './session-mode.js';
 import {
@@ -154,6 +162,17 @@ export interface ReviewResult {
   durationMs?: number;
 }
 
+/**
+ * A re-review of a lineage that has a validated result and a recorded reviewed head runs WARM;
+ * otherwise the review is a first pass in its own mode (ADR-063 Amendment 5).
+ */
+export function reReviewMode(
+  result: Pick<ReviewResult, 'reviewId' | 'reviewSnapshot' | 'issues' | 'mode'>,
+  firstPassMode?: ReviewMode | null,
+): ReviewMode | undefined {
+  return reReviewContinuation(result) ? 'warm' : (result.mode ?? firstPassMode ?? undefined);
+}
+
 /** The fix checklist exists, but the retained worker did not accept its prompt. */
 export class ReviewFixDeliveryError extends Error {
   override name = 'ReviewFixDeliveryError';
@@ -186,6 +205,8 @@ export interface ReviewOptions {
   priorAttempts?: ReviewAttempt[];
   /** Continue an operator-approved fix loop from findings already produced by this run. */
   resumeFromResult?: ReviewResult;
+  /** An automatic re-review of `reviewId`: an unavailable session falls back to its delta. */
+  rereview?: ReReviewContinuation;
   /** Send back: the first resumed fix pass is already charged by a persisted reservation. */
   reservedFixPass?: ReservedFixPass;
 }
@@ -347,6 +368,7 @@ async function executeOwnedReview(
       validationDepth,
       artifactScope,
       mode,
+      reviewId,
       findingsArtifactScope: artifactScope,
       ...(options.reservedFixPass
         ? {
@@ -479,6 +501,7 @@ async function executeOwnedReview(
       mode,
       effort,
       live?.reviewId ?? reviewId,
+      options.rereview,
     );
 
     if (result.incomplete) {
@@ -562,9 +585,10 @@ async function executeOwnedReview(
   } finally {
     // Completed reviewer sessions can be explicitly continued from the human gate, but
     // only after a valid review generation. A failed launch, timeout, or invalid
-    // terminal artifact must not leave a claimable reviewer session behind.
+    // terminal artifact must not leave a claimable reviewer session behind. Other lineages of
+    // this run keep theirs.
     if (!shouldRetainCompletedReviewer(hasReusableReviewResult)) {
-      invalidateWarmReviewerSessions(runId, reviewRunner);
+      invalidateWarmReviewerSessions(runId, reviewRunner, reviewId ?? undefined);
     }
   }
 }
@@ -634,6 +658,7 @@ export interface ReviewRetryDeps {
 
     effort?: string | null,
     reviewId?: string | null,
+    rereview?: ReReviewContinuation | null,
   ) => Promise<ReviewAgentResult>;
   captureFixDelta: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -1172,6 +1197,8 @@ export async function runReviewRetryLoop({
         runId,
         `${workerBlockReason ? 'Worker made partial fixes before blocking' : 'Worker fix complete'}; running ${reviewRunner} re-review (${nextLoopNumber})...`,
       );
+      // ADR-063 Amendment 5: the re-review continues the lineage that raised the findings.
+      const rereview = reReviewContinuation(result);
       result = await deps.runReviewAgent(
         vars,
         reviewRunner,
@@ -1183,9 +1210,10 @@ export async function runReviewRetryLoop({
         nextLoopNumber,
         validationDepth,
         artifactScope,
-        mode,
+        rereview ? 'warm' : mode,
         effort,
         result.reviewId,
+        rereview,
       );
       const retryAttempt: ReviewAttempt = {
         ...reviewAttemptFromResult(
@@ -1710,6 +1738,7 @@ async function recoverReviewFixPass({
   validationDepth,
   artifactScope,
   mode = resolveReviewMode(),
+  reviewId,
   findingsArtifactScope,
   reservedFixPass,
   setProgressDetail = setReviewProgressDetail,
@@ -1728,6 +1757,8 @@ async function recoverReviewFixPass({
   validationDepth: ReviewValidationDepth;
   artifactScope?: string | null;
   mode?: ReviewMode;
+  /** The lineage the review runs; the pipeline review has no gate row to name it yet. */
+  reviewId?: string | null;
   findingsArtifactScope?: string | null;
   /** A Send back pass whose persisted charge this recovered fix spends. */
   reservedFixPass?: ReservedFixPass & { retryCount: number };
@@ -1848,7 +1879,23 @@ async function recoverReviewFixPass({
     const ownerReview = latestRun?.engineState?.publishGate?.reviews?.find(
       (review) => review.id === (fixContext.artifactScope ?? findingsArtifactScope),
     );
+    const lineage = (ownerReview && reviewLineageId(ownerReview)) ?? reviewId ?? undefined;
+    // The fix follows the review that raised its findings: re-review at the next loop.
+    const reviewedLoop =
+      [...(latestRun?.agentContexts ?? [])]
+        .reverse()
+        .find(
+          (context) =>
+            context.role === 'review' &&
+            !!lineage &&
+            context.reviewId === lineage &&
+            typeof context.reviewLoopNumber === 'number',
+        )?.reviewLoopNumber ??
+      ownerReview?.attempts?.at(-1)?.loopNumber ??
+      1;
+    const recheckLoop = reviewedLoop + 1;
     const priorResult: ReviewAgentResult = {
+      reviewId: lineage,
       verdict: 'issues',
       issues,
       validationDepth,
@@ -1952,7 +1999,7 @@ async function recoverReviewFixPass({
             attempts: [
               {
                 mode,
-                loopNumber: 1,
+                loopNumber: reviewedLoop,
                 verdict: 'issues',
                 unresolvedCount: issues.length,
                 issues,
@@ -2022,7 +2069,7 @@ async function recoverReviewFixPass({
           attempts: [
             {
               mode,
-              loopNumber: 1,
+              loopNumber: reviewedLoop,
               verdict: 'issues',
               unresolvedCount: issues.length,
               validationDepth,
@@ -2042,7 +2089,7 @@ async function recoverReviewFixPass({
         effort,
         maxRetries,
         reviewTimeoutMs,
-        reviewResult: { verdict: 'issues', issues, validationDepth },
+        reviewResult: priorResult,
         retryCount: recoveredRetryCount,
         validationDepth,
         artifactScope,
@@ -2072,12 +2119,12 @@ async function recoverReviewFixPass({
       return null;
     // Keep the reusable fix-context watch; the next review round uses the same files.
     const fixDelta = await withNativeReviewMutation(() =>
-      captureFixDeltaSnapshot(vars, taskDir, 2, fixBaseSha, artifactScope),
+      captureFixDeltaSnapshot(vars, taskDir, recheckLoop, fixBaseSha, artifactScope),
     );
     if (runSupersededSince(getRun(runId), recoveryGeneration)) return null;
     const initialAttempt: ReviewAttempt = {
       mode,
-      loopNumber: 1,
+      loopNumber: reviewedLoop,
       verdict: 'issues',
       unresolvedCount: issues.length,
       issues,
@@ -2097,7 +2144,7 @@ async function recoverReviewFixPass({
           initialAttempt,
           {
             mode,
-            loopNumber: 2,
+            loopNumber: recheckLoop,
             verdict: 'failed',
             unresolvedCount: issues.length,
             issues,
@@ -2127,7 +2174,7 @@ async function recoverReviewFixPass({
           initialAttempt,
           {
             mode,
-            loopNumber: 2,
+            loopNumber: recheckLoop,
             verdict: 'failed',
             reason: workerBlockReason,
             unresolvedCount: issues.length,
@@ -2159,9 +2206,16 @@ async function recoverReviewFixPass({
       };
     setProgressDetail(
       runId,
-      `${workerBlockReason ? 'Worker made partial fixes before blocking' : 'Worker fix complete'}; running ${reviewRunner} re-review (2)...`,
+      `${workerBlockReason ? 'Worker made partial fixes before blocking' : 'Worker fix complete'}; running ${reviewRunner} re-review (${recheckLoop})...`,
     );
     updateRun(runId, { status: 'reviewing' });
+    // ADR-063 Amendment 5: the recovered re-review continues the lineage that raised the
+    // findings; the fix's delivery base is the head that lineage reviewed.
+    const reviewedHeadSha = reReviewOfStatus(ownerReview)?.lastReviewedHeadSha ?? fixBaseSha;
+    const rereview =
+      lineage && reviewedHeadSha
+        ? { lastReviewedHeadSha: reviewedHeadSha, priorIssues: issues }
+        : undefined;
     const retryResult = await runReviewAgent(
       vars,
       reviewRunner,
@@ -2170,12 +2224,13 @@ async function recoverReviewFixPass({
       slotId,
       runId,
       reviewTimeoutMs,
-      2,
+      recheckLoop,
       validationDepth,
       artifactScope,
-      mode,
+      rereview ? 'warm' : mode,
       effort,
-      ownerReview?.id,
+      lineage,
+      rereview,
     );
     const seededReviewResult = {
       ...retryResult,
@@ -2189,7 +2244,12 @@ async function recoverReviewFixPass({
         retryResult.verdict === 'issues' &&
         retryResult.issues.length > 0;
       const secondAttempt = blockedReviewAttempt(
-        reviewAttemptFromResult(retryResult, 2, fixDelta.snapshot, fixDelta.artifactPaths),
+        reviewAttemptFromResult(
+          retryResult,
+          recheckLoop,
+          fixDelta.snapshot,
+          fixDelta.artifactPaths,
+        ),
         workerBlockReason,
       );
       return {

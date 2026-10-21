@@ -6,9 +6,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Add the experimental ADR-071 resource query cache and store seam, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases.
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.61.0 - 2026-10-21
+
+- A review lineage no longer needs a PR (ADR-063 Amendment 5): `ReviewContinuationContext` makes `repository`/`prNumber` optional and adds the run `familyId`. `ReviewSessionTrace.fallback` (`ReviewSessionFallback`) records why a re-review ran a delta-scoped COLD and the ranges it compared, and `AgentContext.reviewFallback` keeps it for a reattach after a restart, with the new `reviewed-head-not-ancestor` refusal reason. `ReadyGatePayload.reviewLineageOptions` (`ReviewLineageOption`) lists the lineages a gate Request Review can continue and whether each session is available.
 - `gateActionsForReadiness`, `gateReasonsForAction`, `advancingGateAction` and `acceptReviewFindingsAvailable` are exported: the one gate action availability rule the gateway and clients share. `RunGateReadiness` adds `findings` and `findingsDigest`; the publication approval adds `acceptedFindings`, `reason`, `headSha` and `approver`; `run.resolveDecision` takes `findingsDigest`, which `buildRunResolveDecisionParams` fills in for `approve-publish-unresolved` (ADR-065 Amendment 8).
 - `RuntimeCapabilityLease.cleanupUnreachable` holds the `cleanupFailure` of a release action that could not reach the slot's node. The gateway retries that cleanup when the node reconnects.
-- Active-development baseline; add user-facing changes here before release or package publication.
 - `VIEW_QUERY_PARAMETERS` accepts the evidence review's `review`, `reviewFile`, `reviewAt` and `reviewCheck`, so a shared review link opens on the same criterion, file, moment and step check.
 
 ## 0.60.0 - 2026-10-20

@@ -15,6 +15,7 @@ import {
   parseUntrackedFileManifest,
   preferredRemoteReviewBaseRef,
   reviewAttemptFromResult,
+  reviewDeltaSinceReviewedHead,
   reviewSnapshotIdentityText,
   tmuxListReviewWindowIdsSnippet,
 } from './snapshots.js';
@@ -216,6 +217,78 @@ test('immutable review ranges include committed text and docs excluded by source
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
+});
+
+// ADR-063 Amendment 5: after a rebase the delta is the branch's own change at both heads.
+test('a rebased lineage delta compares its own change with range-diff and leaves base-only changes out', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'review-range-diff-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const git = (...args: string[]) =>
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ],
+      { cwd: repo, encoding: 'utf8' },
+    ).trim();
+  const commit = async (file: string, text: string, message: string) => {
+    await writeFile(path.join(repo, file), text);
+    git('add', '.');
+    git('commit', '-qm', message);
+    return git('rev-parse', 'HEAD');
+  };
+  git('init', '-q', '-b', 'main');
+  const forkPoint = await commit('base.txt', 'base\n', 'test: base');
+  git('checkout', '-qb', 'feature');
+  const reviewed = await commit('feature.txt', 'first\n', 'feat: reviewed change');
+  git('checkout', '-q', 'main');
+  const mainHead = await commit('main-only.txt', 'from the base branch\n', 'chore: base only');
+  git('checkout', '-q', 'feature');
+  git('rebase', '-q', 'main');
+  const rebased = git('rev-parse', 'HEAD');
+  const current = await commit('feature.txt', 'fixed\n', 'fix: address finding');
+  const exec = async (command: string) => {
+    try {
+      return {
+        exitCode: 0,
+        stdout: execFileSync('bash', ['-c', command], { cwd: repo, encoding: 'utf8' }),
+        stderr: '',
+      };
+    } catch (error) {
+      const failed = error as { status?: number; stdout?: string; stderr?: string };
+      return {
+        exitCode: failed.status ?? 1,
+        stdout: failed.stdout ?? '',
+        stderr: failed.stderr ?? '',
+      };
+    }
+  };
+
+  const delta = await reviewDeltaSinceReviewedHead(exec, {
+    lastReviewedHeadSha: reviewed,
+    headSha: current,
+    baseRef: 'main',
+  });
+  assert.deepEqual(delta.comparedRanges, [`${forkPoint}..${reviewed}`, `${mainHead}..${current}`]);
+  // The reviewed commit carried over unchanged; the fix is the only new commit.
+  assert.match(delta.rangeDiff ?? '', /= 1: +[0-9a-f]+ feat: reviewed change/);
+  assert.match(delta.rangeDiff ?? '', /> 2: +[0-9a-f]+ fix: address finding/);
+  assert.doesNotMatch(delta.rangeDiff ?? '', /main-only|from the base branch|chore: base only/);
+  // While the head descends from the reviewed head, the delta is last..head.
+  assert.deepEqual(
+    await reviewDeltaSinceReviewedHead(exec, {
+      lastReviewedHeadSha: rebased,
+      headSha: current,
+      baseRef: 'main',
+    }),
+    { comparedRanges: [`${rebased}..${current}`] },
+  );
 });
 
 test('working-tree review counts tracked and real untracked identities without patch rows', async (t) => {

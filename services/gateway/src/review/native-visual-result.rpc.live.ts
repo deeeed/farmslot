@@ -2,9 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import os from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { deflateSync } from 'node:zlib';
@@ -18,6 +16,8 @@ import {
 } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
+
+import { createNativeProofFixture } from '../runtime/native-proof-fixture.live-support.js';
 
 function squarePng(red: boolean): Buffer {
   const crc = (bytes: Buffer) => {
@@ -65,101 +65,7 @@ test(
   'real native provider returns bound visual results through the authenticated gateway',
   { timeout: 300_000 },
   async (t) => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'native-visual-result-'));
-    const state = path.join(root, 'native');
-    process.env.FARMSLOT_NATIVE_STATE_DIR = state;
-    process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
-    process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
-    process.env.NODE_TEST_CONTEXT = '1';
-    const server = createServer();
-    let wss: import('ws').WebSocketServer | undefined;
-    const sessions: string[] = [];
-    let client: import('../../../../packages/cli/src/gateway-client.js').GatewayClient | undefined;
-    t.after(async () => {
-      const failures: unknown[] = [];
-      const attempt = async (operation: () => Promise<unknown>) => {
-        try {
-          await operation();
-        } catch (error) {
-          failures.push(error);
-        }
-      };
-      if (client)
-        for (const sessionId of sessions)
-          await attempt(() => client!.call(Methods.NATIVE_SESSION_CLOSE, { sessionId }));
-      if (wss) {
-        for (const connection of wss.clients) connection.terminate();
-        await attempt(() => new Promise<void>((resolve) => wss!.close(() => resolve())));
-      }
-      if (server.listening)
-        await attempt(
-          () =>
-            new Promise<void>((resolve, reject) =>
-              server.close((error) => (error ? reject(error) : resolve())),
-            ),
-        );
-      let hostStopped = false;
-      await attempt(async () => {
-        const hostText = await readFile(path.join(state, 'host.json'), 'utf8').catch(
-          (error: unknown) => {
-            // Failed imports or admission can finish before a proof host is created.
-            if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
-              return undefined;
-            throw error;
-          },
-        );
-        if (!hostText) {
-          hostStopped = true;
-          return;
-        }
-        const host = JSON.parse(hostText);
-        const command = execFileSync('ps', ['-p', String(host.pid), '-o', 'command='], {
-          encoding: 'utf8',
-        });
-        assert.ok(command.includes(state), 'Only the host launched for this proof may be stopped');
-        process.kill(host.pid, 'SIGTERM');
-        const deadline = Date.now() + 10_000;
-        while (true) {
-          let alive = true;
-          try {
-            process.kill(host.pid, 0);
-          } catch (error) {
-            if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH')
-              throw error;
-            alive = false;
-          }
-          if (!alive) break;
-          assert.ok(Date.now() < deadline, 'The owned proof host did not stop');
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-        hostStopped = true;
-      });
-      if (hostStopped) await attempt(() => rm(root, { force: true, recursive: true }));
-      if (failures.length) throw new AggregateError(failures, 'Owned native proof cleanup failed');
-    });
-    const { createGatewayAuthRuntime } = await import('../security/auth.js');
-    const runtime = createGatewayAuthRuntime({ FARMSLOT_HOME: path.join(root, 'auth') });
-    const person = runtime.writer.createPrincipal(
-      { type: 'person', displayName: 'Isolated visual proof' },
-      [{ role: 'admin', scope: { kind: 'global' } }],
-    );
-    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = person.id;
-    const credential = runtime.writer.issueCredential(person.id, 'Disposable proof');
-    const grant = runtime.writer.exchangePersonCredential(credential.secret, {
-      deviceName: 'Loopback native proof',
-      deviceKind: 'cli',
-    });
-    const { createWebSocketServer } = await import('../server.js');
-    const { GatewayClient } = await import('../../../../packages/cli/src/gateway-client.js');
-    wss = createWebSocketServer(server, runtime);
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    assert.ok(address && typeof address !== 'string');
-    client = new GatewayClient({
-      url: `ws://127.0.0.1:${address.port}/ws`,
-      timeout: 60_000,
-      credential: { token: grant.accessToken },
-    });
+    const { root, client, trackSession } = await createNativeProofFixture(t);
     const runner = process.env.FARMSLOT_VISUAL_REVIEW_RUNNER ?? 'codex';
     const receipts = [];
     for (const red of [true, false]) {
@@ -174,7 +80,7 @@ test(
         { runner, cwd, resultSchema: PIPELINE_VISUAL_RESULT_SCHEMA },
       );
       const session: NativeSessionInfo = created.session;
-      sessions.push(session.id);
+      trackSession({ sessionId: session.id });
       const commandId = randomUUID();
       await client.call(Methods.NATIVE_SESSION_SEND, {
         sessionId: session.id,
