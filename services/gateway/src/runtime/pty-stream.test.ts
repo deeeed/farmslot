@@ -65,11 +65,14 @@ test('a reviewer PTY selects its window and exact pane before attaching', (t) =>
     selectTarget: 'proof-session:reviewer.1',
   });
   assert.ok(spawned);
-  const result = childProcess.spawnSync(spawned.command, spawned.args, {
+  assert.equal(spawned.command, 'zsh');
+  assert.equal(spawned.args[0], '-lc');
+  // Execute the POSIX attach script with sh so this regression also runs on Linux CI.
+  const result = childProcess.spawnSync('sh', ['-c', spawned.args[1]], {
     encoding: 'utf8',
     env: { ...process.env, TERMINAL_ATTACH_STATE: stateFile },
   });
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
   assert.equal(result.stdout.trim(), 'reviewer:1');
 });
 
