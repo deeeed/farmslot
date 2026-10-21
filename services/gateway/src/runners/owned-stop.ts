@@ -1,7 +1,12 @@
 import { type AgentContext, isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
 import { execOnSlot, loadSlotVars, ownsRunSlotCleanup, readSlotRow } from '../core/index.js';
-import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  resolveExactTmuxWindowPane,
+  shellQuote,
+  tmuxSendTextCommand,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import { getRunWithArchived } from '../runs/store.js';
 
 import { getRunnerDefinition, isKnownRunner, runnerPromptSubmitKey } from './registry.js';
@@ -142,7 +147,27 @@ export async function stopRunOwnedTmuxWorkers(
     if (!slotId) return `Worker ${context.id} has no slot ownership evidence`;
     const vars = await loadSlotVars(slotId);
     const recoveryAction = `Verify its window, then use farmslot slot release --keep-work ${slotId}`;
-    const ownedTarget = runnerSessionContextTarget(run, context);
+    const recordedTarget = runnerSessionContextTarget(run, context);
+    let ownedTarget = recordedTarget;
+    if (
+      !ownedTarget &&
+      isTerminalRunStatus(run.status) &&
+      context.runner &&
+      context.runnerSessionId &&
+      context.runnerSessionPath &&
+      context.target.window &&
+      !/^\d+$/.test(context.target.window) &&
+      context.target.target === `${context.target.session}:${context.target.window}`
+    ) {
+      const candidate = await resolveExactTmuxWindowPane(vars, context.target.target);
+      // Do not replace conflicting recorded pane ownership with a named-window lookup.
+      if (
+        candidate &&
+        !contexts.some((peer) => peer.target && contextPaneId(peer.target) === candidate.paneId)
+      )
+        ownedTarget = { ...context.target, paneId: candidate.paneId };
+      // stopRunnerForPark still verifies this candidate's exact saved conversation before exit.
+    }
     const targetPaneId = ownedTarget && contextPaneId(ownedTarget);
     if (!ownedTarget || !targetPaneId) {
       if ((await quiescentHistoricalWorkerPanes(vars, run, context)) !== null) continue;
@@ -171,7 +196,10 @@ export async function stopRunOwnedTmuxWorkers(
       const currentSlot = await readSlotRow(slotId);
       const current = currentRun?.agentContexts?.find((candidate) => candidate.id === context.id);
       const currentTarget =
-        currentRun && current ? runnerSessionContextTarget(currentRun, current) : null;
+        currentRun && current
+          ? (runnerSessionContextTarget(currentRun, current) ??
+            (!recordedTarget ? ownedTarget : null))
+          : null;
       if (
         !ownsRunSlotCleanup(currentSlot, run.id) ||
         currentSlot?.slot_epoch !== slot?.slot_epoch ||
