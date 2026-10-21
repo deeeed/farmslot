@@ -6,6 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot bindings, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire.
 - Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
+- Finished runs can clean up a worker whose pane ID was lost by verifying its saved conversation in the recorded window.
+
 - A validated WARM pass after evidence-only fixes satisfies the publication gate at the same code head; earlier findings stay in review history without blocking it again.
 
 - Restart recovery resumes a monitor whose operator wait was resolved, preserving its running step until the monitor validates worker completion.
