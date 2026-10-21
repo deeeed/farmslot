@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show the existing shared review history panel on run detail while rounds run, as well as at the gate.
+
 - Verify exact reviewed line selection for line comments using the shared source context.
 
 - Open the current worker or reviewer directly from the run header. Terminal requests retain the exact actor binding; finished runs show a disabled action and reason. Worktree terminals reuse the existing terminal screen.

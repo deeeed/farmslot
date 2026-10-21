@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share review history derivation and artifact loading across Command Center and Companion, including active rounds before a publication gate.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.11.0 - 2026-10-21

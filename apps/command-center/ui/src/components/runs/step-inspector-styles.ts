@@ -7,6 +7,35 @@ export const stepInspectorStyles = css`
     display: block;
   }
 
+  .review-history-round summary {
+    min-height: 44px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .review-history-body {
+    display: grid;
+    gap: 8px;
+    padding: 8px 0 16px;
+  }
+  .review-history-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .review-history-actions button,
+  [data-testid='review-history'] button {
+    min-height: 44px;
+    background: ${unsafeCSS(colors.bgCard)};
+    border: 1px solid ${unsafeCSS(colors.accent)};
+    border-radius: ${unsafeCSS(radii.md)};
+    color: ${unsafeCSS(colors.accent)};
+    padding: 8px 12px;
+    font: inherit;
+    cursor: pointer;
+  }
   .inspector {
     background: ${unsafeCSS(colors.bgCard)};
     border: 1px solid ${unsafeCSS(colors.accent)}33;

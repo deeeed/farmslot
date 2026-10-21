@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Use the shared review artifact directory resolver so live history reads the same round snapshots the engine writes.
+
 - Restart recovery resumes a monitor whose operator wait was resolved, preserving its running step until the monitor validates worker completion.
 
 - Opening a running review's terminal selects its exact tmux window and pane before streaming, so the worker window cannot replace the reviewer buffer.

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show round reviewers, modes, timings, findings and fix deltas on review steps through the shared history model.
+
 - Selecting a review line comment reveals and highlights its exact source line with the inline comment, including while the editor loads.
 
 - Run terminal controls and Open in Slot View select the same current reviewer or worker as Companion; finished runs show a disabled terminal action with a reason.

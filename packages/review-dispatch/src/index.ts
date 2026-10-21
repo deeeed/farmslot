@@ -6,6 +6,7 @@ export * from './execution.js';
 export * from './provenance.js';
 export * from './publication-gate.js';
 export * from './result-decision.js';
+export * from './review-history.js';
 export * from './run-activity.js';
 export * from './run-results.js';
 export * from './types.js';

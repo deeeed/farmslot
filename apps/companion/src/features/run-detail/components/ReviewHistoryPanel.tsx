@@ -1,114 +1,81 @@
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import {
-  deriveChecklistStepDurations,
-  observedReviewSessionContinuity,
-  type ReadyGatePayload,
-  type ReviewAttempt,
-  type ReviewChainEntry,
-  type ReviewStatus,
-  type Run,
-} from '@farmslot/protocol';
+import { type ReviewChainEntry, type Run } from '@farmslot/protocol';
+import { type ReviewHistoryCheck, type ReviewHistoryRound } from '@farmslot/review-dispatch';
 
+import { MobileDiffViewer } from '../../../components/MobileDiffViewer';
 import { colors, fonts, radii, spacing } from '../../../lib/theme';
 import { formatPreciseDuration } from '../../workspace-shared/format';
-
-function latestReadyReviews(run: Run): ReviewStatus[] {
-  for (let index = run.decisions.length - 1; index >= 0; index -= 1) {
-    const payload = run.decisions[index]?.payload;
-    if (payload?.kind === 'ready') return (payload as ReadyGatePayload).reviews ?? [];
-  }
-  return [];
-}
-
-function shaRange(attempt: ReviewAttempt): string {
-  const snapshot = attempt.reviewSnapshot;
-  const base = snapshot?.baseSha?.slice(0, 7);
-  const head = snapshot?.headSha?.slice(0, 7);
-  return base || head ? `${base ?? '?'} → ${head ?? '?'}` : 'SHA unavailable';
-}
-
-function stat(attempt: ReviewAttempt): string | null {
-  const delta = attempt.fixDelta;
-  const diff = delta?.diffStat;
-  if (!diff) return null;
-  const untracked = delta.untrackedFiles?.length ?? 0;
-  const tracked = Math.max(0, diff.files - untracked);
-  const paths = untracked
-    ? `${tracked} tracked + ${untracked} untracked`
-    : `${diff.files} file${diff.files === 1 ? '' : 's'}`;
-  return `${paths} · +${diff.additions} −${diff.deletions}`;
-}
-
-function totalDuration(attempt: ReviewAttempt): string | null {
-  if (!attempt.startedAt || !attempt.completedAt) return null;
-  const durationMs = Date.parse(attempt.completedAt) - Date.parse(attempt.startedAt);
-  return Number.isFinite(durationMs) && durationMs >= 0 ? formatPreciseDuration(durationMs) : null;
-}
-
-function reviewSource(review: ReviewStatus): string {
-  if (review.source === 'human-gate') return 'Requested review';
-  return 'Review';
-}
+import { useReviewHistory } from '../use-review-history';
 
 function ReviewAttemptCard({
-  attempt,
-  attemptIndex,
+  round,
   defaultExpanded,
-  feedbackSent,
   onOpenArtifact,
 }: {
-  attempt: ReviewAttempt;
-  attemptIndex: number;
+  round: ReviewHistoryRound;
   defaultExpanded: boolean;
-  feedbackSent: boolean;
   onOpenArtifact: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const findings = attempt.issues ?? [];
-  const passed = attempt.verdict === 'pass';
-  const findingLabel = `${findings.length} finding${findings.length === 1 ? '' : 's'}`;
-  const timing = deriveChecklistStepDurations(attempt.checklistTiming, attempt.startedAt);
-  const elapsed = totalDuration(attempt);
-
+  const passed = round.verdict === 'pass';
   return (
     <View style={styles.attempt}>
       <Pressable style={styles.attemptSummary} onPress={() => setExpanded((value) => !value)}>
         <View style={styles.grow}>
-          <Text style={styles.attemptTitle}>Review round {attemptIndex + 1}</Text>
+          <Text style={styles.attemptTitle}>Review round {round.loopNumber}</Text>
           <Text style={styles.meta}>
-            {shaRange(attempt)} · {attempt.validationDepth || 'static-code'}
-            {elapsed ? ` · ${elapsed}` : ''}
+            {round.runner} / {round.model} · {round.modeLabel}
+          </Text>
+          <Text style={styles.meta}>
+            {round.reviewRange} · {round.validationDepth}
+            {round.durationMs !== null ? ` · ${formatPreciseDuration(round.durationMs)}` : ''}
           </Text>
         </View>
         <View style={styles.outcome}>
           <Text style={[styles.verdict, passed ? styles.passed : styles.issues]}>
-            {attempt.verdict}
+            {round.verdict}
           </Text>
-          <Text style={styles.findingCount}>
-            {findingLabel} · {attempt.unresolvedCount} unresolved
-          </Text>
+          <Text style={styles.findingCount}>{round.unresolvedLabel}</Text>
         </View>
         <Text style={styles.expand}>{expanded ? '−' : '+'}</Text>
       </Pressable>
-
       {expanded ? (
         <View style={styles.roundDetails}>
-          <Text style={passed ? styles.roundPassed : styles.roundIssues}>
-            {passed
-              ? 'No unresolved findings in this round.'
-              : `${findingLabel} recorded${feedbackSent ? ' and sent to the worker' : ''}.`}
-          </Text>
-          {attemptIndex > 0 && stat(attempt) ? (
-            <Text style={styles.fixStat}>
-              Fix after review round {attemptIndex}: {stat(attempt)}
+          <Text style={styles.meta}>Started {round.startedAt ?? 'not recorded'}</Text>
+          {round.earlierAttempts.map((attempt, index) => (
+            <Text key={index} style={styles.meta}>
+              Earlier attempt: {attempt.status} · {attempt.startedAt ?? 'start not recorded'} ·{' '}
+              {attempt.durationMs !== null
+                ? formatPreciseDuration(attempt.durationMs)
+                : 'duration not recorded'}
+            </Text>
+          ))}
+          {round.hasFix ? (
+            <>
+              <Text style={styles.fixStat}>
+                Fix before round {round.loopNumber}: {round.fixRange ?? 'SHA not recorded'}
+              </Text>
+              <Text style={styles.meta}>
+                {round.fixStat ?? 'Diffstat not recorded'} ·{' '}
+                {round.fixDurationMs !== null
+                  ? formatPreciseDuration(round.fixDurationMs)
+                  : 'Fix duration not recorded'}
+              </Text>
+              <Text style={styles.meta}>Resolved findings: {round.resolution}</Text>
+            </>
+          ) : null}
+          {round.fixRunning ? (
+            <Text style={styles.pending}>
+              Worker fixing findings · started {round.activeFixStartedAt ?? 'not recorded'}
             </Text>
           ) : null}
-          {timing.length ? (
+          <Text style={styles.meta}>{round.findingsLabel}</Text>
+          {round.timing.length ? (
             <View style={styles.timing}>
-              <Text style={styles.timingTitle}>Checklist timing · {timing.length} steps</Text>
-              {timing.map((step) => (
+              <Text style={styles.timingTitle}>Checklist timing · {round.timing.length} steps</Text>
+              {round.timing.map((step) => (
                 <View key={`${step.stepNumber}:${step.label}`} style={styles.timingRow}>
                   <Text style={styles.timingStep}>{step.stepNumber}</Text>
                   <Text style={styles.timingLabel}>{step.label}</Text>
@@ -119,30 +86,42 @@ function ReviewAttemptCard({
               ))}
             </View>
           ) : null}
-          {findings.map((issue, issueIndex) => (
-            <View key={`${issue.file}:${issue.line ?? ''}:${issueIndex}`} style={styles.finding}>
+          {round.findings.map((issue, index) => (
+            <View key={`${issue.file}:${issue.line}:${index}`} style={styles.finding}>
               <Text style={styles.findingLocation}>
-                {issue.file || 'General finding'}
-                {issue.line ? `:${issue.line}` : ''}
+                {issue.file}
+                {issue.line ? `:${issue.line}` : ''} · {issue.severity}
               </Text>
-              <Text style={styles.issue}>{issue.description}</Text>
+              <Text style={styles.issue}>{issue.title}</Text>
+              {issue.details ? <Text style={styles.meta}>{issue.details}</Text> : null}
             </View>
           ))}
+          {round.unavailable.length ? (
+            <Text style={styles.stale}>
+              Some history artifacts are unavailable. Refresh history to try again.
+            </Text>
+          ) : null}
+          {round.fixDiffText ? (
+            <MobileDiffViewer
+              title={`Changed files before round ${round.loopNumber}`}
+              diffText={round.fixDiffText}
+              maxHeight={240}
+            />
+          ) : null}
           <View style={styles.actions}>
-            {attempt.reviewSnapshot?.diffPath ? (
-              <Pressable
-                style={styles.diffButton}
-                onPress={() => onOpenArtifact(attempt.reviewSnapshot!.diffPath!)}
-              >
+            {round.diffPath && round.reviewDiffRetained ? (
+              <Pressable style={styles.diffButton} onPress={() => onOpenArtifact(round.diffPath!)}>
                 <Text style={styles.diffButtonText}>Reviewed diff</Text>
               </Pressable>
             ) : null}
-            {attempt.fixDelta?.diffPath ? (
+            {round.fixDiffPath && !round.fixDiffText ? (
               <Pressable
+                disabled={Boolean(round.fixDiffError)}
+                accessibilityHint={round.fixDiffError ?? undefined}
                 style={styles.fixButton}
-                onPress={() => onOpenArtifact(attempt.fixDelta!.diffPath!)}
+                onPress={() => onOpenArtifact(round.fixDiffPath!)}
               >
-                <Text style={styles.fixButtonText}>Changes since prior round</Text>
+                <Text style={styles.fixButtonText}>Changed files and diff</Text>
               </Pressable>
             ) : null}
           </View>
@@ -154,54 +133,35 @@ function ReviewAttemptCard({
 
 function ReviewCard({
   review,
-  reviewIndex,
   defaultExpanded,
-  continuationActive,
-  reviewerActive,
   onOpenArtifact,
 }: {
-  review: ReviewStatus;
-  reviewIndex: number;
+  review: ReviewHistoryCheck;
   defaultExpanded: boolean;
-  continuationActive: boolean;
-  reviewerActive: boolean;
   onOpenArtifact: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const attempts = review.attempts?.length ? review.attempts : ([review] as ReviewAttempt[]);
-  const findingCount = attempts.reduce(
-    (total, attempt) => total + (attempt.issues?.length ?? 0),
-    0,
-  );
-  const passed = review.verdict === 'pass';
-  const pendingContinuation =
-    review.recoveryContinuationPending === true &&
-    (attempts.at(-1)?.unresolvedCount ?? review.unresolvedCount) > 0;
-
   return (
     <View style={styles.reviewerCard}>
       <Pressable style={styles.reviewSummary} onPress={() => setExpanded((value) => !value)}>
         <View style={styles.reviewNumber}>
-          <Text style={styles.reviewNumberText}>{reviewIndex + 1}</Text>
+          <Text style={styles.reviewNumberText}>{review.checkNumber}</Text>
         </View>
         <View style={styles.grow}>
           <Text style={styles.reviewerTitle}>
-            {review.runner || 'Unknown runner'} / {review.model || 'default'}
+            {review.runner} / {review.model}
           </Text>
           <Text style={styles.meta}>
-            Check {reviewIndex + 1} · {reviewSource(review)} · {attempts.length} round
-            {attempts.length === 1 ? '' : 's'}
+            Check {review.checkNumber} · {review.source} · {review.rounds.length} rounds
           </Text>
           <Text style={styles.meta}>
-            {findingCount} finding{findingCount === 1 ? '' : 's'} across all rounds
+            {review.findingCount} findings across all rounds · {review.unresolvedCount ?? '?'}{' '}
+            unresolved
           </Text>
         </View>
-        <View style={styles.outcome}>
-          <Text style={[styles.verdict, passed ? styles.passed : styles.issues]}>
-            {review.verdict}
-          </Text>
-          <Text style={styles.findingCount}>{review.unresolvedCount} unresolved</Text>
-        </View>
+        <Text style={[styles.verdict, review.verdict === 'pass' ? styles.passed : styles.issues]}>
+          {review.verdict}
+        </Text>
         <Text style={styles.expand}>{expanded ? '−' : '+'}</Text>
       </Pressable>
       {expanded ? (
@@ -209,22 +169,12 @@ function ReviewCard({
           {review.stale ? (
             <Text style={styles.stale}>This review no longer matches the current package.</Text>
           ) : null}
-          {pendingContinuation ? (
-            <Text style={styles.pending}>
-              {reviewerActive
-                ? 'The worker fix is complete; the next review round is running.'
-                : continuationActive
-                  ? `Worker is fixing the latest ${review.unresolvedCount} finding${review.unresolvedCount === 1 ? '' : 's'}.`
-                  : `Stopped after the retry limit: the latest ${review.unresolvedCount} finding${review.unresolvedCount === 1 ? '' : 's'} still need delivery to the worker.`}
-            </Text>
-          ) : null}
-          {attempts.map((attempt, attemptIndex) => (
+          {review.continuation ? <Text style={styles.pending}>{review.continuation}</Text> : null}
+          {review.rounds.map((round, index) => (
             <ReviewAttemptCard
-              key={`${review.id}:${attempt.loopNumber}:${attemptIndex}`}
-              attempt={attempt}
-              attemptIndex={attemptIndex}
-              defaultExpanded={attempt.verdict !== 'pass' && attemptIndex === attempts.length - 1}
-              feedbackSent={attemptIndex < attempts.length - 1 || review.feedbackSent === true}
+              key={round.key}
+              round={round}
+              defaultExpanded={round.verdict !== 'pass' && index === review.rounds.length - 1}
               onOpenArtifact={onOpenArtifact}
             />
           ))}
@@ -243,88 +193,69 @@ export function ReviewHistoryPanel({
   chain: ReviewChainEntry[];
   onOpenArtifact: (path: string) => void;
 }) {
-  const reviews = latestReadyReviews(run);
-  if (chain.length === 0 && reviews.length === 0) return null;
-  const attemptCount = reviews.reduce((total, review) => total + (review.attempts?.length || 1), 0);
-  const continuationActive = (run.agentContexts ?? []).some(
-    (context) =>
-      context.role === 'review-fix' && ['launching', 'working', 'waiting'].includes(context.status),
-  );
-
+  const history = useReviewHistory(run, chain);
+  if (!history.chain.length && !history.checks.length) return null;
   return (
-    <View style={styles.section}>
+    <View style={styles.section} testID="run-review-history">
       <View style={styles.header}>
         <Text style={styles.title}>Review history</Text>
-        <Text style={styles.count}>
-          {chain.length ? `${chain.length} diff generation${chain.length === 1 ? '' : 's'} · ` : ''}
-          {reviews.length} review check{reviews.length === 1 ? '' : 's'} · {attemptCount} round
-          {attemptCount === 1 ? '' : 's'}
-        </Text>
+        <Pressable style={styles.diffButton} onPress={history.refresh}>
+          <Text style={styles.diffButtonText}>Refresh history</Text>
+        </Pressable>
+        {history.loading ? <Text style={styles.meta}>Loading recorded round details…</Text> : null}
+        <Text style={styles.count}>{history.summary}</Text>
       </View>
-
-      {chain.length ? (
+      {history.chain.length ? (
         <View style={styles.chain}>
-          {chain.map((entry, index) => {
-            const diffPath = entry.artifactRefs.find((artifact) =>
-              artifact.path.endsWith('.diff'),
-            )?.path;
-            return (
-              <View key={entry.runId} style={styles.generation}>
-                <View style={styles.timelineRail}>
-                  <View
-                    style={[
-                      styles.timelineDot,
-                      entry.unresolvedCount === 0 && styles.timelineDotPassed,
-                    ]}
-                  />
-                  {index < chain.length - 1 ? <View style={styles.timelineLine} /> : null}
-                </View>
-                <View style={styles.generationBody}>
-                  <View style={styles.row}>
-                    <Text style={styles.generationTitle}>Generation {entry.generation}</Text>
-                    <Text
-                      style={[
-                        styles.verdict,
-                        entry.unresolvedCount === 0 ? styles.passed : styles.issues,
-                      ]}
-                    >
-                      {entry.verdict}
-                    </Text>
-                  </View>
-                  <Text style={styles.meta}>
-                    {entry.runner || 'unknown runner'} / {entry.model || 'default'} ·{' '}
-                    {entry.mode.toUpperCase()} · {entry.validationDepth}
-                  </Text>
-                  <Text style={styles.meta}>
-                    {entry.baseSha?.slice(0, 7) ?? '?'} → {entry.headSha?.slice(0, 7) ?? '?'} ·{' '}
-                    {entry.unresolvedCount ?? '?'} unresolved
-                  </Text>
-                  <Text style={styles.meta}>session {observedReviewSessionContinuity(entry)}</Text>
-                  {diffPath ? (
-                    <Pressable style={styles.diffButton} onPress={() => onOpenArtifact(diffPath)}>
-                      <Text style={styles.diffButtonText}>Open generation diff</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
+          {history.chain.map((entry, index) => (
+            <View key={entry.runId} style={styles.generation}>
+              <View style={styles.timelineRail}>
+                <View
+                  style={[
+                    styles.timelineDot,
+                    entry.unresolvedCount === 0 && styles.timelineDotPassed,
+                  ]}
+                />
+                {index < history.chain.length - 1 ? <View style={styles.timelineLine} /> : null}
               </View>
-            );
-          })}
+              <View style={styles.generationBody}>
+                <View style={styles.row}>
+                  <Text style={styles.generationTitle}>Generation {entry.generation}</Text>
+                  <Text
+                    style={[
+                      styles.verdict,
+                      entry.unresolvedCount === 0 ? styles.passed : styles.issues,
+                    ]}
+                  >
+                    {entry.verdict}
+                  </Text>
+                </View>
+                <Text style={styles.meta}>
+                  {entry.runner || 'unknown runner'} / {entry.model || 'default'} ·{' '}
+                  {entry.mode.toUpperCase()} · {entry.validationDepth}
+                </Text>
+                <Text style={styles.meta}>
+                  {entry.range} · {entry.unresolvedCount ?? '?'} unresolved
+                </Text>
+                <Text style={styles.meta}>session {entry.continuity}</Text>
+                {entry.diffPath ? (
+                  <Pressable
+                    style={styles.diffButton}
+                    onPress={() => onOpenArtifact(entry.diffPath!)}
+                  >
+                    <Text style={styles.diffButtonText}>Open generation diff</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          ))}
         </View>
       ) : null}
-
-      {reviews.map((review, reviewIndex) => (
+      {history.checks.map((review, index) => (
         <ReviewCard
           key={review.id}
           review={review}
-          reviewIndex={reviewIndex}
-          defaultExpanded={review.verdict !== 'pass' && reviewIndex === reviews.length - 1}
-          continuationActive={continuationActive}
-          reviewerActive={(run.agentContexts ?? []).some(
-            (context) =>
-              context.role === 'review' &&
-              ['launching', 'working', 'waiting'].includes(context.status) &&
-              context.artifactScope === review.id,
-          )}
+          defaultExpanded={index === history.checks.length - 1}
           onOpenArtifact={onOpenArtifact}
         />
       ))}
@@ -413,8 +344,6 @@ const styles = StyleSheet.create({
   findingCount: { color: colors.textMuted, fontSize: fonts.sizeXs },
   expand: { color: colors.accent, fontSize: fonts.sizeLg, fontWeight: '900', width: 14 },
   roundDetails: { gap: spacing.sm },
-  roundPassed: { color: colors.statusOk, fontSize: fonts.sizeXs, fontWeight: '800' },
-  roundIssues: { color: colors.statusWarn, fontSize: fonts.sizeXs, fontWeight: '800' },
   fixStat: { color: colors.accent, fontFamily: fonts.mono, fontSize: fonts.sizeXs },
   timing: {
     backgroundColor: colors.bgSurface,
@@ -447,6 +376,8 @@ const styles = StyleSheet.create({
   issue: { color: colors.textSecondary, fontSize: fonts.sizeXs, lineHeight: 16 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   diffButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     borderColor: colors.accent,
     borderRadius: radii.md,
     borderWidth: 1,
@@ -455,6 +386,8 @@ const styles = StyleSheet.create({
   },
   diffButtonText: { color: colors.accent, fontSize: fonts.sizeXs, fontWeight: '900' },
   fixButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     backgroundColor: colors.accent,
     borderRadius: radii.md,
     paddingHorizontal: spacing.md,
