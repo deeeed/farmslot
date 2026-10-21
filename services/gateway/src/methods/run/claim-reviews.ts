@@ -7,7 +7,6 @@ import {
 import {
   delegatedVisualClaimAllowed,
   digestRecipeDocument,
-  Events,
   normalizeRecipeClaimId,
   type ProjectVisualClaimReviewPolicy,
   type RecipeVisualJudgmentKind,
@@ -16,7 +15,6 @@ import {
   type RecordedEvidencePackageInput,
   reviewedVisualFiles,
   type Run,
-  type RunRefreshPublishPackageParams,
   type RunReviewVisualClaimParams,
   type RunReviewVisualClaimResult,
   sameEvidenceAttestationApprover,
@@ -29,21 +27,24 @@ import {
   readVisualReviewPolicy,
   selectedSourceInputs,
 } from '../../run-engine/claim-reviews.js';
-import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
 import {
   readVisualReviewSource,
   visualReviewSnapshotIdentity,
 } from '../../run-engine/recorded-evidence-sources.js';
 import { commitRunVisualJudgment, getRun } from '../../runs/store.js';
 
-export interface VisualClaimReviewDependencies {
+import {
+  type ClaimReceiptRefreshDependencies,
+  refreshClaimReceiptPackage,
+} from './claim-receipt-refresh.js';
+
+export interface VisualClaimReviewDependencies extends ClaimReceiptRefreshDependencies {
   authorizeVisualClaimReview?: (
     kind: RecipeVisualJudgmentKind,
     policy?: ProjectVisualClaimReviewPolicy,
   ) => RecipeVisualReviewer;
   policy?: typeof readVisualReviewPolicy;
   source?: typeof readVisualReviewSource;
-  refreshPackage?: (params: RunRefreshPublishPackageParams) => Promise<{ run: Run }>;
 }
 
 /** The execution a package selects for this claim; a repair may select a retained original. */
@@ -213,36 +214,13 @@ export async function runReviewVisualClaim(
         policy,
       ),
   );
-  let updated = getRun(run.id)!;
-  emit(Events.RUN_UPDATED, { run: updated });
-  if (
-    source.decisionId &&
-    updated.decisions.some(
-      (decision) =>
-        decision.id === source.decisionId &&
-        !decision.resolvedAt &&
-        decision.payload?.kind === 'ready',
-    )
-  ) {
-    try {
-      const refreshed = await (dependencies.refreshPackage ?? refreshPublishPackage)({
-        runId: run.id,
-        decisionId: source.decisionId,
-      });
-      updated = refreshed.run;
-    } catch (error) {
-      // The judgment is durable. Its idempotent retry can repeat the supported
-      // refresh without creating another receipt or losing the person's decision.
-      throw new GatewayMethodError(
-        'VISUAL_JUDGMENT_REFRESH_REQUIRED',
-        `Judgment saved, but package refresh failed: ${error instanceof Error ? error.message : String(error)}`,
-        {
-          userAction: 'Retry the judgment or refresh the publication package.',
-          details: { runId: run.id, receiptId: receipt.id },
-        },
-      );
-    }
-    emit(Events.RUN_UPDATED, { run: updated });
-  }
+  const updated = await refreshClaimReceiptPackage({
+    run: getRun(run.id)!,
+    decisionId: source.decisionId,
+    receiptId: receipt.id,
+    kind: 'judgment',
+    emit,
+    refreshPackage: dependencies.refreshPackage,
+  });
   return { run: updated, receipt };
 }

@@ -384,6 +384,9 @@ function legacyReviewSubjectMatchesIgnoringNewEvidenceDigests(
   if (reviewedPackage.branch !== preparedPackage.branch) return false;
   if ((reviewedPackage.remoteBranchRef ?? null) !== (preparedPackage.remoteBranchRef ?? null))
     return false;
+  const reviewedDiffHash = reviewedPackage.reviewSnapshot?.diffHash;
+  const preparedDiffHash = preparedPackage.reviewSnapshot?.diffHash;
+  if (reviewedDiffHash && preparedDiffHash && reviewedDiffHash !== preparedDiffHash) return false;
   if (JSON.stringify(reviewedPackage.diffStat) !== JSON.stringify(preparedPackage.diffStat))
     return false;
   if (

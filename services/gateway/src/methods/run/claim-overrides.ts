@@ -6,7 +6,6 @@ import {
 } from '@farmslot/adapter-sdk/evidence';
 import {
   acceptanceRowExecution,
-  Events,
   type EvidenceAttestationApprover,
   isTerminalRunStatus,
   normalizeRecipeClaimId,
@@ -31,7 +30,12 @@ import {
 } from '../../run-engine/gate-prerequisites.js';
 import { commitRunClaimOverride, getRun } from '../../runs/store.js';
 
-export interface ClaimOverrideDependencies {
+import {
+  type ClaimReceiptRefreshDependencies,
+  refreshClaimReceiptPackage,
+} from './claim-receipt-refresh.js';
+
+export interface ClaimOverrideDependencies extends ClaimReceiptRefreshDependencies {
   authorizeEvidenceAttestation?: () => EvidenceAttestationApprover;
   acceptance?: typeof readGateAcceptance;
   evidence?: typeof readGateRecordedEvidence;
@@ -176,7 +180,13 @@ export async function runOverrideClaim(
       ? (snapshot) => appliedClaimOverrideReceiptIds(snapshot, inputs)
       : undefined,
   );
-  const updated = getRun(run.id)!;
-  emit(Events.RUN_UPDATED, { run: updated });
+  const updated = await refreshClaimReceiptPackage({
+    run: getRun(run.id)!,
+    decisionId: decision.id,
+    receiptId: receipt.id,
+    kind: 'override',
+    emit,
+    refreshPackage: dependencies.refreshPackage,
+  });
   return { run: updated, receipt };
 }

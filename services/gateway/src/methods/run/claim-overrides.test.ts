@@ -11,11 +11,14 @@ import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence'
 import {
   buildRunDecisionActionRequest,
   digestRecipeDocument,
+  isRecord,
   MARK_CLAIM_UNTESTABLE_ACTION,
   type RecipeClaimLedger,
+  type ReviewStatus,
   runClaimOverrideSnapshotIdentity,
   type RunDecision,
   type RunOverrideClaimParams,
+  type RunRefreshPublishPackageParams,
 } from '@farmslot/protocol';
 
 await import('../../runtime/mock-pty.test-support.js');
@@ -24,12 +27,15 @@ const { runOverrideClaim } = await import('./claim-overrides.js');
 const { collectRunGateReadiness } = await import('../../run-engine/gate-prerequisites.js');
 const { deleteTestRunIfPresent, makeReadyGatePackage, retainRunFixture } =
   await import('../../run-engine/test-fixtures.js');
-const { computeReadyGatePackageHash } = await import('../../run-completion/ready-gate-package.js');
+const { computeReadyGatePackageHash, computeReadyGateReviewSubjectHash } =
+  await import('../../run-completion/ready-gate-package.js');
+const { certifyingReview, PASSING_REVIEW_RESULT } =
+  await import('../../run-engine/review-claim.test-support.js');
 
-async function fixture(t: TestContext) {
+export async function fixture(t: TestContext, minimumReviews = 0) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'claim-override-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const directory = path.join(root, 'artifacts/proof');
+  const directory = path.join(root, 'artifacts/recipe-runs/attempt');
   await mkdir(directory, { recursive: true });
   const claim = {
     id: 'AC-1',
@@ -136,7 +142,7 @@ async function fixture(t: TestContext) {
     const bytes = JSON.stringify(document);
     await writeFile(path.join(directory, file), bytes);
     inventory.push({
-      path: `artifacts/proof/${file}`,
+      path: `artifacts/recipe-runs/attempt/${file}`,
       purpose: file === 'evidence-manifest.json' ? 'evidence-manifest-source' : 'json',
       sha256: createHash('sha256').update(bytes).digest('hex'),
     });
@@ -147,8 +153,9 @@ async function fixture(t: TestContext) {
   const prepared = makeReadyGatePackage({
     evidenceManifest: inventory,
     selectedEvidenceKeys: [],
-    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    reviewPolicy: { minimumReviews, requestedBy: 'dispatch' },
   });
+  prepared.reviewSubjectHash = computeReadyGateReviewSubjectHash(prepared);
   prepared.packageHash = computeReadyGatePackageHash(prepared);
   const run = createRun({
     flowType: 'dev',
@@ -198,7 +205,15 @@ async function fixture(t: TestContext) {
     claimOverrideReason: 'The service is offline.',
   });
   const params = request.params as RunOverrideClaimParams;
-  const dependencies = { acceptance, authorizeEvidenceAttestation };
+  const dependencies = {
+    acceptance,
+    authorizeEvidenceAttestation,
+    refreshPackage: async ({ runId }: RunRefreshPublishPackageParams) => {
+      const current = getRun(runId);
+      assert.ok(current);
+      return { run: current };
+    },
+  };
   const gateSources = {
     acceptance,
     deterministic: async () => {},
@@ -207,6 +222,91 @@ async function fixture(t: TestContext) {
   };
   return { run, decision, params, dependencies, gateSources, prepared, directory, input };
 }
+
+test('an override refreshes the pending package after its receipt is durable', async (t) => {
+  const f = await fixture(t, 1);
+  const reviews: ReviewStatus[] = [
+    certifyingReview(f.prepared, {
+      id: 'current-review',
+      reviewerSessionId: 'retained-reviewer',
+      retryCount: 0,
+    }),
+  ];
+  const priorReviewState = structuredClone(reviews);
+  updateRun(f.run.id, { engineState: { publishGate: { reviews } } });
+  let refreshed = 0;
+  const dependencies = {
+    ...f.dependencies,
+    refreshPackage: async (params: RunRefreshPublishPackageParams) => {
+      assert.deepEqual(params, { runId: f.run.id, decisionId: f.decision.id });
+      const stored: unknown = JSON.parse(
+        await readFile(path.join(runsDirectory(), `${f.run.id}.json`), 'utf8'),
+      );
+      assert.ok(isRecord(stored));
+      const current = getRun(f.run.id);
+      assert.ok(current);
+      const receipt = current.claimOverrideReceipts?.[0];
+      assert.ok(receipt);
+      assert.deepEqual(stored.claimOverrideReceipts, [receipt]);
+      assert.equal(current.decisions[0].resolvedAt, undefined);
+      const prPackage = {
+        ...f.prepared,
+        claimOverrideReceiptIds: [receipt.id],
+      };
+      prPackage.packageHash = computeReadyGatePackageHash(prPackage);
+      const decision = current.decisions.find(({ id }) => id === f.decision.id);
+      assert.ok(decision?.payload?.kind === 'ready');
+      decision.payload.prPackage = prPackage;
+      refreshed++;
+      return { run: current };
+    },
+  };
+  const result = await runOverrideClaim(f.params, () => {}, dependencies);
+  assert.equal(refreshed, 1);
+  assert.equal(result.run.decisions[0].resolvedAt, undefined);
+  const payload = result.run.decisions[0].payload;
+  assert.ok(payload?.kind === 'ready');
+  assert.deepEqual(payload.prPackage?.claimOverrideReceiptIds, [result.receipt.id]);
+  assert.deepEqual(result.run.engineState?.publishGate?.reviews, priorReviewState);
+  assert.equal(result.run.reviewRoundAdmissions?.length ?? 0, 0);
+  const readiness = await collectRunGateReadiness(result.run, payload.prPackage, {
+    ...f.gateSources,
+    reviewResult: async (_run, relative) =>
+      relative === reviews[0].artifactPaths?.[0] ? PASSING_REVIEW_RESULT : undefined,
+  });
+  assert.equal(readiness.state, 'ready', JSON.stringify(readiness.reasons));
+  const retry = await runOverrideClaim(f.params, () => {}, dependencies);
+  assert.equal(retry.receipt.id, result.receipt.id);
+  assert.equal(refreshed, 1);
+  assert.deepEqual(retry.run.engineState?.publishGate?.reviews, priorReviewState);
+});
+
+test('an override whose package refresh fails retains its receipt for an idempotent retry', async (t) => {
+  const f = await fixture(t);
+  await assert.rejects(
+    runOverrideClaim(f.params, () => {}, {
+      ...f.dependencies,
+      refreshPackage: async () => {
+        throw new Error('Source is temporarily unavailable');
+      },
+    }),
+    /Override saved, but package refresh failed: Source is temporarily unavailable/,
+  );
+  const saved = getRun(f.run.id)?.claimOverrideReceipts;
+  assert.equal(saved?.length, 1);
+  let refreshed = 0;
+  const result = await runOverrideClaim(f.params, () => {}, {
+    ...f.dependencies,
+    refreshPackage: async (params: RunRefreshPublishPackageParams) => {
+      refreshed++;
+      return f.dependencies.refreshPackage(params);
+    },
+  });
+  assert.equal(refreshed, 1);
+  assert.equal(result.receipt.id, saved?.[0].id);
+  assert.equal(result.run.claimOverrideReceipts?.length, 1);
+  assert.equal(result.run.decisions[0].resolvedAt, undefined);
+});
 
 test('verified receipt is durable, idempotent and satisfies both binding and verdict after refresh', async (t) => {
   const f = await fixture(t);

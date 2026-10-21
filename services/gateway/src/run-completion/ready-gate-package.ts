@@ -8,6 +8,7 @@ import {
   isPublishEvidenceArtifact,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
+  type ReviewDiffSnapshot,
   type Run,
 } from '@farmslot/protocol';
 
@@ -54,6 +55,19 @@ export function computeReadyGatePackageHash(prPackage: ReadyGatePrPackageWithout
   return sha256Text(stableJson(withoutHash));
 }
 
+function reviewSnapshotSubject(snapshot: ReviewDiffSnapshot) {
+  return {
+    source: snapshot.source,
+    baseRef: snapshot.baseRef,
+    baseSha: snapshot.baseSha,
+    headRef: snapshot.headRef,
+    headSha: snapshot.headSha,
+    diffHash: snapshot.diffHash,
+    missingReason: snapshot.missingReason,
+    error: snapshot.error,
+  };
+}
+
 function packageSemanticHashPayload(
   prPackage: ReadyGatePrPackageWithoutHash,
 ): Record<string, unknown> {
@@ -76,15 +90,8 @@ function packageSemanticHashPayload(
     ...(reviewSnapshot
       ? {
           reviewSnapshot: {
-            source: reviewSnapshot.source,
-            baseRef: reviewSnapshot.baseRef,
-            baseSha: reviewSnapshot.baseSha,
-            headRef: reviewSnapshot.headRef,
-            headSha: reviewSnapshot.headSha,
-            diffHash: reviewSnapshot.diffHash,
+            ...reviewSnapshotSubject(reviewSnapshot),
             diffStat: reviewSnapshot.diffStat,
-            missingReason: reviewSnapshot.missingReason,
-            error: reviewSnapshot.error,
           },
         }
       : {}),
@@ -102,10 +109,10 @@ export function computeReadyGatePackageInputHash(prPackage: ReadyGatePrPackageWi
 
 /**
  * What a review certifies: the branch, HEAD, diff, selected evidence and
- * validation summary. The title and body are left out (v2), so editing the
- * description never makes a review stale; the package hash still covers them.
- * Hashes stamped under v1 stay comparable: stored stamps are compared with the
- * stored package hash, and a refresh recomputes both packages with this one.
+ * validation summary. Description, human override receipts and display counts
+ * do not change that subject. The package hashes still cover those fields.
+ * A refresh reprojects older packages with this function before restamping
+ * reviews whose captured code snapshot is still current.
  */
 export function computeReadyGateReviewSubjectHash(
   prPackage: ReadyGatePrPackageWithoutHash,
@@ -137,18 +144,19 @@ export function computeReadyGateReviewSubjectHash(
   );
   return sha256Text(
     stableJson({
-      kind: 'ready-gate-review-subject-v2',
+      kind: 'ready-gate-review-subject-v3',
       branch: payload.branch,
       remoteBranchRef: payload.remoteBranchRef,
       headSha: payload.headSha,
-      diffStat: payload.diffStat,
       evidenceManifest: reviewEvidenceManifest,
       selectedEvidenceKeys:
         canonicalSelectedEvidenceKeys.length > 0
           ? canonicalSelectedEvidenceKeys
           : payload.selectedEvidenceKeys,
       validationSummaryHash: payload.validationSummaryHash,
-      reviewSnapshot: payload.reviewSnapshot,
+      reviewSnapshot: prPackage.reviewSnapshot
+        ? reviewSnapshotSubject(prPackage.reviewSnapshot)
+        : undefined,
     }),
   );
 }
