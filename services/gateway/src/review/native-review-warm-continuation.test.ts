@@ -624,6 +624,47 @@ test('an explicit cold request does not adopt a refunded warm attempt', async (t
   assert.deepEqual(resumed, []);
 });
 
+test('a later valid COLD review supersedes the old refunded WARM attempt', async (t) => {
+  const run = await prePublishRun(t);
+  await review(run.id);
+  commandFailed = true;
+  await assert.rejects(reReview(run.id));
+  const failed = reviewers(run.id).at(-1)!;
+  commandFailed = false;
+  currentHead = 'd'.repeat(40);
+  const latest = await executeReview(run.id, vars.slotId, {
+    reviewRunner: 'claude',
+    model: 'opus',
+    mode: 'cold',
+    reviewId: 'lineage-a',
+    publicationReview: true,
+    validationDepth: 'static-code',
+  });
+  const latestContext = reviewers(run.id).at(-1)!;
+  const result = await executeReview(run.id, vars.slotId, {
+    reviewRunner: 'claude',
+    model: 'opus',
+    mode: 'warm',
+    reviewId: 'lineage-a',
+    publicationReview: true,
+    validationDepth: 'static-code',
+    rereview: { lastReviewedHeadSha: currentHead, priorIssues },
+  });
+  assert.deepEqual(resumed, [], 'the old refunded context must not resume');
+  assert.equal(dispatches.at(-1)?.retainedFrom?.contextId, latestContext.id);
+  assert.equal(result.reviewerSessionId, latest.reviewerSessionId);
+  assert.notEqual(result.reviewerSessionId, failed.runnerSessionId);
+  assert.ok(
+    getRun(run.id)!.reviewRoundSettlements?.[
+      reviewRoundAdmissionId(
+        failed.reviewId!,
+        failed.reviewLoopNumber!,
+        reviewLaunchStartedAt(failed),
+      )
+    ],
+  );
+});
+
 test('a newly reserved repair reaches its worker path before any refunded reviewer', async (t) => {
   const run = await prePublishRun(t);
   const first = await review(run.id);

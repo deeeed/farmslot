@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- An operator WARM delta request resumes its stopped, refunded reviewer attempt after infrastructure recovery, using the same session and admission receipt. Previously only fix-loop continuations recovered that attempt, so another gate request could launch a fresh COLD fallback.
+- An operator WARM delta request resumes its stopped, refunded reviewer attempt after infrastructure recovery, using the same session and admission receipt. A later validated result supersedes the refund. Previously only fix-loop continuations recovered that attempt, so another gate request could launch a fresh COLD fallback.
 - Ticket-derived PR titles preserve leading acronyms and identifiers such as `ORDER_SIZE_MIN` and `API`; only an ordinary capitalized word is lowercased.
 
 - Operator WARM re-reviews use the same delta fallback as automatic re-reviews, and can adopt a legacy reviewer session from its validated result and artifact scope. A failed attempt before inspection keeps the earlier baseline. Seen on TAT-4158, whose verified session was refused as missing.
