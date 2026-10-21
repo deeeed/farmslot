@@ -21,6 +21,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   type AgentContext,
+  type NativeSessionReadResult,
   type ReadyGatePrPackage,
   type ReviewDiffSnapshot,
   reviewFixRetriesExhausted,
@@ -114,13 +115,14 @@ interface PublicationReviewRecoveryOptions {
     slot?: typeof loadSlotVars;
     config?: typeof getReviewConfig;
     package?: typeof readPreparedPackage;
+    native?: typeof import('../runners/native/worker-control.js').readNativeWorkerSnapshot;
   };
 }
 
 async function markRecoveredReviewerContext(
   runId: string,
   ctx: AgentContext,
-  status: 'complete' | 'failed' | 'blocked',
+  status: 'complete' | 'failed' | 'blocked' | 'working',
   patch: Partial<AgentContext>,
 ): Promise<boolean> {
   const completedAt = new Date().toISOString();
@@ -137,7 +139,12 @@ async function markRecoveredReviewerContext(
         ) {
           return null;
         }
-        return { id: ctx.id, status, completedAt, ...patch };
+        return {
+          id: ctx.id,
+          status,
+          completedAt: status === 'working' ? undefined : completedAt,
+          ...patch,
+        };
       },
     },
   );
@@ -237,6 +244,7 @@ type RecoverableReviewRecord = Pick<ReviewStatus, 'id'> &
       | 'reviewerSessionId'
       | 'reviewedHeadSha'
       | 'startedAt'
+      | 'completedAt'
     >
   >;
 
@@ -264,6 +272,17 @@ export function recoveredReviewNeedsArtifactRepair(
   );
 }
 
+function reviewerAttemptPostdatesResult(ctx: RecoveryContext, recorded: RecoverableReviewRecord) {
+  const launched = Date.parse(ctx.attemptStartedAt ?? '');
+  const recordedAt = Math.max(
+    ...[recorded, ...(recorded.attempts ?? [])].flatMap((entry) => {
+      const at = Date.parse(entry.completedAt ?? entry.startedAt ?? '');
+      return Number.isFinite(at) ? [at] : [];
+    }),
+  );
+  return Number.isFinite(launched) && Number.isFinite(recordedAt) && launched > recordedAt;
+}
+
 export function reviewerContextNeedsRecovery(
   ctx: RecoveryContext,
   reviews: RecoverableReviewRecord[],
@@ -278,6 +297,12 @@ export function reviewerContextNeedsRecovery(
   const recordedIndex = reviews.findIndex((review) => review.id === artifactScope);
   if (recordedIndex < 0) return ctx.status !== 'failed';
   const recorded = reviews[recordedIndex];
+  // The lineage's older terminal row cannot settle its next WARM attempt.
+  if (
+    reviewerAttemptPostdatesResult(ctx, recorded) &&
+    !hasLaterSettledReview(reviews, recordedIndex)
+  )
+    return true;
   if (
     !hasLaterSettledReview(reviews, recordedIndex) &&
     recoveredReviewNeedsArtifactRepair(ctx, recorded)
@@ -331,7 +356,7 @@ export function reviewerContextNeedsRecovery(
  * the run/slot UI and makes restart recovery revisit work that has settled.
  */
 export function reviewerContextIsSettled(
-  ctx: Pick<AgentContext, 'role' | 'status' | 'artifactScope'>,
+  ctx: Pick<AgentContext, 'role' | 'status' | 'artifactScope' | 'attemptStartedAt'>,
   reviews: RecoverableReviewRecord[],
 ): boolean {
   if (ctx.role !== 'review' || (ctx.status !== 'working' && ctx.status !== 'launching')) {
@@ -395,6 +420,22 @@ export function buildRecoveredReview(params: {
     ctx,
     REQUESTED_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id,
   );
+  const previous = priorReviews.find((review) => review.id === reviewId);
+  const mode = ctx.reviewFallback ? 'cold' : resolveReviewMode({ explicitMode: previous?.mode });
+  const session =
+    previous?.session && ctx.runnerSessionId && reviewSnapshot
+      ? {
+          ...previous.session,
+          mode,
+          continuity: mode === 'warm' ? ('resumed' as const) : ('fresh' as const),
+          reviewId,
+          sessionId: ctx.runnerSessionId,
+          lastReviewedHeadSha:
+            (mode === 'warm' ? reviewSnapshot.baseSha : reviewSnapshot.headSha) ?? undefined,
+          ...(mode === 'warm' ? { priorRunId: run.id, priorSessionId: ctx.runnerSessionId } : {}),
+          ...(ctx.reviewFallback ? { fallback: ctx.reviewFallback } : {}),
+        }
+      : previous?.session;
   const reviewResult: ReviewResult = {
     verdict: feedback.verdict,
     issues: feedback.issues,
@@ -406,14 +447,13 @@ export function buildRecoveredReview(params: {
     reviewSnapshot,
     reviewId: ctx.reviewId,
     reviewerSessionId: ctx.runnerSessionId ?? undefined,
-    mode: resolveReviewMode({
-      explicitMode: priorReviews.find((review) => review.id === reviewId)?.mode,
-    }),
-    session: priorReviews.find((review) => review.id === reviewId)?.session,
+    mode,
+    session,
     attempts: [
       {
-        loopNumber: 1,
-        mode: resolveReviewMode({ run }),
+        loopNumber: ctx.reviewLoopNumber ?? 1,
+        mode,
+        ...(session ? { session } : {}),
         verdict: feedback.verdict,
         unresolvedCount: feedback.verdict === 'pass' ? 0 : feedback.issues.length,
         ...(feedback.issues.length ? { issues: feedback.issues } : {}),
@@ -439,6 +479,8 @@ export function buildRecoveredReview(params: {
   });
   return {
     ...recovered,
+    source: previous?.source ?? recovered.source,
+    loopNumber: previous?.loopNumber ?? recovered.loopNumber,
     recoveryContinuationPending:
       feedback.verdict === 'issues' && params.recoveryContinuationPending === true,
     startedAt: ctx.attemptStartedAt ?? ctx.startedAt ?? recovered.startedAt,
@@ -618,6 +660,39 @@ async function ingestRecoveredReviewer(
   recoveryContinuationPending: boolean,
   options: PublicationReviewRecoveryOptions,
 ): Promise<RecoveredReviewerAction> {
+  let native: NativeSessionReadResult | undefined;
+  if (ctx.nativeSession?.generation && !ctx.nativeSession.closedAt) {
+    const binding = ctx.nativeSession;
+    const read =
+      options.readers?.native ??
+      (await import('../runners/native/worker-control.js')).readNativeWorkerSnapshot;
+    native = await read(runId, 'review', ctx.id);
+    if (options.shouldAbort?.()) return null;
+    const command = native.commands.find(
+      (entry) => entry.commandId === binding.commandId && entry.generation === binding.generation,
+    );
+    if (command?.state !== 'completed' || command.outcome !== 'completed') {
+      if (
+        command?.state === 'failed' ||
+        command?.outcome === 'failed' ||
+        command?.outcome === 'interrupted' ||
+        native.session.state === 'failed' ||
+        native.session.state === 'closed'
+      ) {
+        if (await markRecoveredReviewerContext(runId, ctx, 'failed', {})) {
+          await (await import('../runners/native/worker.js')).cancelNativeWorkerContext(runId, ctx);
+          await settleRecoveredReviewerNoVerdict(
+            runId,
+            ctx,
+            native.session.error ?? 'Native reviewer stopped without a completed command',
+          );
+        }
+        return null;
+      }
+      if (ctx.status === 'complete') await markRecoveredReviewerContext(runId, ctx, 'working', {});
+      return null;
+    }
+  }
   const signal = await readReviewerTerminalSignal(vars, ctx);
   if (options.shouldAbort?.()) return null;
   const freshSignal = signal && signalMatchesReviewerAttempt(signal, ctx) ? signal : undefined;
@@ -631,7 +706,7 @@ async function ingestRecoveredReviewer(
     );
     return persistedId ? { kind: 'recovered', id: persistedId } : null;
   }
-  if (!freshSignal && (ctx.status === 'working' || ctx.status === 'launching')) {
+  if (!native && !freshSignal && (ctx.status === 'working' || ctx.status === 'launching')) {
     const promptRecovery = await resumeReviewAgentPromptDelivery(vars, runId, ctx);
     if (options.shouldAbort?.()) return null;
     if (promptRecovery === 'inactive' || promptRecovery === 'retired') {
@@ -707,6 +782,7 @@ async function ingestRecoveredReviewer(
     return null;
   if (
     existingReview &&
+    !reviewerAttemptPostdatesResult(ctx, existingReview) &&
     !repairing &&
     !isFailedReviewPlaceholder(existingReview) &&
     existingReview.verdict !== 'skipped' &&
@@ -787,6 +863,7 @@ async function ingestRecoveredReviewer(
   }
   if (
     existingIndex >= 0 &&
+    !reviewerAttemptPostdatesResult(ctx, finalReviews[existingIndex]!) &&
     !repairing &&
     !isFailedReviewPlaceholder(finalReviews[existingIndex]!) &&
     finalReviews[existingIndex]!.verdict !== 'skipped' &&
@@ -802,6 +879,14 @@ async function ingestRecoveredReviewer(
     artifactScope,
     lastSignalAt: repairing ? ctx.lastSignalAt : new Date().toISOString(),
     ...(repairing && ctx.completedAt ? { completedAt: ctx.completedAt } : {}),
+    ...(!repairing ? { reviewResultValidatedAt: new Date().toISOString() } : {}),
+    ...(native && ctx.pipelineVisualReviewInput
+      ? {
+          pipelineVisualReviewResult: (
+            await import('../review/pipeline-visual-review.js')
+          ).collectPipelineVisualResult(finalRun, ctx, native),
+        }
+      : {}),
   });
   if (!contextSettled) return null;
   updateRun(runId, {
@@ -819,6 +904,8 @@ async function ingestRecoveredReviewer(
   const roundId = reviewContextRoundId(ctx);
   if (roundId && (persisted.verdict === 'pass' || persisted.verdict === 'issues'))
     await clearReviewRoundSettlement(runId, roundId);
+  if (native)
+    await (await import('../review/native-review-agent.js')).stopSettledReviewer(runId, ctx.id);
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered in-flight publication review ${persisted.id} (verdict ${persisted.verdict}) from reviewer context ${ctx.id}`,
   );
@@ -1034,6 +1121,26 @@ export function appendRecoveredContinuationAttempt(
   existing: ReviewStatus,
   recovered: ReviewStatus,
 ): ReviewStatus {
+  const prior = existing.attempts ?? [];
+  const fresh = recovered.attempts?.at(-1);
+  if (
+    fresh &&
+    fresh.loopNumber > Math.max(existing.loopNumber, ...prior.map((attempt) => attempt.loopNumber))
+  )
+    return applyReviewRetryCap(
+      {
+        ...recovered,
+        source: existing.source,
+        loopNumber: existing.loopNumber,
+        attempts: [...prior, fresh],
+        artifactPaths: [
+          ...new Set([...(existing.artifactPaths ?? []), ...(recovered.artifactPaths ?? [])]),
+        ],
+        timeline: [...prior, fresh].flatMap((attempt) => attempt.timeline ?? []),
+        startedAt: existing.startedAt ?? recovered.startedAt,
+      },
+      existing,
+    );
   if (reviewFixRetriesExhausted(existing)) {
     return applyReviewRetryCap(existing);
   }

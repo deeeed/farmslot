@@ -748,6 +748,8 @@ export interface ReviewStatus {
   /** Transport/lifecycle explanation when a review did not complete normally. */
   reason?: string;
   issues?: ReviewIssue[];
+  /** Qualified projection from person receipts; never a replacement review verdict. */
+  settledFindings?: import('../recipe/claim-reviews.js').ReviewFindingSettlement[];
   validationDepth?: ReviewValidationDepth;
   usage?: RunnerSessionUsage;
   feedbackSent?: boolean;

@@ -638,6 +638,47 @@ still protect what a reviewer cannot judge.
 - The CLI, Command Center and Companion list the action through that rule, show
   the open findings and ask for the reason before submitting.
 
+### Amendment 8 clarification: claim confirmation settles evidence findings, 2026-10-21
+
+**Status:** Accepted decision (lead, delegated amendment authority, 2026-10-21).
+Implementation requires the paired review and normal merge gates.
+
+A person's qualified `Looks right` confirmation settles retained findings whose
+subject is only that claim's visual or recorded evidence. The judgment receipt
+binds the person, execution, evidence closure, claim and stable finding IDs at
+the reviewed head. The original review, finding text and attempts remain intact.
+This is a claim judgment, not a new review or a blanket acceptance of findings.
+
+Code defects remain open even when they mention the confirmed claim. A finding
+must have an evidence location and an unambiguous claim binding qualified by
+the captured evidence. An ambiguous binding or a source-code finding is never
+settled through claim confirmation. The existing separate findings acceptance
+continues to govern those open findings.
+
+The existing judgment writer and package refresh own settlement and its audit.
+Refresh can attach the same derived finding references to an already recorded
+qualified person confirmation; it never invents a person decision. A refresh
+that changes only human judgments or overrides preserves every existing review
+of unchanged code and reviewed evidence. It may repair missing registration of
+the retained result against that same subject. It cannot launch a reviewer,
+consume or extend a review round, or change the original review verdict.
+
+Restart recovery identifies a review attempt by its retained launch identity.
+An older result in the same lineage cannot settle a newer attempt or prevent
+collection of that attempt's artifacts. A pending command is not a completed
+review, even if its context was previously projected as complete.
+
+`@farmslot/protocol` adds optional
+`RecipeVisualJudgmentReceipt.settledReviewFindings` references and derived
+`ReviewStatus.settledFindings`. Its `reviewFindingId` identifies the original
+finding; `reviewFindingIsSettled`, `openReviewFindingCount` and
+`reviewFindingsSatisfied` serve gateway qualification, shared review policy and
+the publication view in Command Center and Companion. These additive fields
+and helpers ship in a minor protocol release. Existing claim-review
+and package-refresh RPCs remain the only public actions. No new flag, harness
+hook or publication authority is introduced. Older receipts remain valid and
+can acquire qualified settlement references on supported refresh.
+
 ## Amendment 9: the publication secret scan is an evidence prerequisite, 2026-10-20
 
 **Status:** Accepted (lead, 2026-10-20).
