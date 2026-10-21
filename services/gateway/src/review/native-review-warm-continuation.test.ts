@@ -10,6 +10,8 @@ const checklist = await import('../tasks/checklist-target.js');
 const snapshots = await import('./snapshots.js');
 const reviewAgent = await import('./review-agent.js');
 const progress = await import('./progress.js');
+const workerLifecycle = await import('./worker-lifecycle.js');
+const pipelineVisual = await import('./pipeline-visual-review.js');
 const { upsertAgentContext } = await import('../agents/contexts.js');
 const { rewriteStatusFile } = await import('../core/state.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
@@ -32,6 +34,7 @@ let resumeFailure: 'handoff' | 'delivery' | 'superseded' | null = null;
 let freshSessions = 0;
 let commandFailed = false;
 const resumed: string[] = [];
+let expectedFixCheck: Error | undefined;
 const dispatches: Array<{ contextId: string; retainedFrom?: { contextId: string } }> = [];
 const deltaCaptures: string[] = [];
 
@@ -186,6 +189,19 @@ mock.module('./feedback.js', {
 mock.module('./native-reviewer-approvals.js', {
   namedExports: { refuseReviewerApprovals: async () => 0 },
 });
+// This fixture tests retry ownership, not the separately tested visual-result validator.
+mock.module('./pipeline-visual-review.js', {
+  namedExports: { ...pipelineVisual, collectPipelineVisualResult: () => undefined },
+});
+mock.module('./worker-lifecycle.js', {
+  namedExports: {
+    ...workerLifecycle,
+    isWorkerAlive: async () => {
+      if (expectedFixCheck) throw expectedFixCheck;
+      return true;
+    },
+  },
+});
 mock.module('./progress.js', {
   namedExports: { ...progress, startProgressWatcher: () => ({ stop() {} }) },
 });
@@ -276,6 +292,7 @@ async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
   resetWarmReviewerSessionsForTest();
   ancestorExitCode = 0;
   commandFailed = false;
+  expectedFixCheck = undefined;
   resumed.length = 0;
   resumeFailure = null;
   dispatches.length = 0;
@@ -549,4 +566,84 @@ test('a failed warm command retries its same session and refunded attempt after 
   assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, admissions);
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 2);
   assert.equal(reviewers(run.id).length, 2, 'no replacement reviewer context');
+});
+
+test('an explicit cold request does not adopt a refunded warm attempt', async (t) => {
+  const run = await prePublishRun(t);
+  const first = await review(run.id);
+  commandFailed = true;
+  await assert.rejects(reReview(run.id));
+  commandFailed = false;
+  const result = await executeReview(run.id, vars.slotId, {
+    reviewRunner: 'claude',
+    model: 'opus',
+    mode: 'cold',
+    reviewId: 'lineage-a',
+    publicationReview: true,
+    validationDepth: 'static-code',
+  });
+  assert.equal(result.mode, 'cold');
+  assert.notEqual(result.reviewerSessionId, first.reviewerSessionId);
+  assert.equal(result.reviewSnapshot?.baseSha, 'b'.repeat(40));
+  assert.deepEqual(resumed, []);
+});
+
+test('a newly reserved repair reaches its worker path before any refunded reviewer', async (t) => {
+  const run = await prePublishRun(t);
+  const first = await review(run.id);
+  commandFailed = true;
+  await assert.rejects(reReview(run.id));
+  commandFailed = false;
+  const admissions = [...getRun(run.id)!.reviewRoundAdmissions!];
+  expectedFixCheck = new Error('The reserved repair reached its worker path');
+  await assert.rejects(
+    executeReview(run.id, vars.slotId, {
+      reviewRunner: 'claude',
+      model: 'opus',
+      mode: 'warm',
+      reviewId: 'lineage-a',
+      publicationReview: true,
+      validationDepth: 'static-code',
+      resumeFromResult: { ...first, retryCount: 0 },
+      reservedFixPass: {},
+    }),
+    (error) => error === expectedFixCheck,
+  );
+  assert.deepEqual(resumed, []);
+  assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, admissions);
+});
+
+test('a reviewer already launched for the same reserved repair retries without another worker pass', async (t) => {
+  const run = await prePublishRun(t);
+  const first = await review(run.id);
+  commandFailed = true;
+  await assert.rejects(reReview(run.id));
+  commandFailed = false;
+  const failed = reviewers(run.id).at(-1)!;
+  await upsertAgentContext(run.id, 'review', {
+    id: failed.id,
+    pipelineVisualReviewInput: {
+      schemaVersion: 2,
+      headSha: head,
+      repairId: 'owned-repair',
+      scopeDigest: 'sha256:' + 'a'.repeat(64),
+      sources: [],
+      retained: [],
+    },
+  });
+  expectedFixCheck = new Error('The already completed repair must not be repeated');
+  const admissions = [...getRun(run.id)!.reviewRoundAdmissions!];
+  const result = await executeReview(run.id, vars.slotId, {
+    reviewRunner: 'claude',
+    model: 'opus',
+    mode: 'warm',
+    reviewId: 'lineage-a',
+    publicationReview: true,
+    validationDepth: 'static-code',
+    resumeFromResult: { ...first, retryCount: 0 },
+    reservedFixPass: { repairId: 'owned-repair' },
+  });
+  assert.equal(result.reviewerSessionId, first.reviewerSessionId);
+  assert.deepEqual(resumed, [failed.id]);
+  assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, admissions);
 });

@@ -232,18 +232,23 @@ async function runNativeReviewAttempt(
     artifactScope,
     loopNumber,
   });
+  const retryContextId = input.mode === 'warm' ? input.rereview?.retryContextId : undefined;
+  const retry = retryContextId
+    ? refundedNativeReviewer(original, {
+        runner,
+        model,
+        taskDir,
+        artifactScope,
+        reviewId: input.reviewId,
+        effort: input.effort,
+      })
+    : undefined;
+  if (retryContextId && retry?.id !== retryContextId)
+    throw new Error('The refunded reviewer attempt changed before its continuation');
   let context =
     [...(original.agentContexts ?? [])]
       .reverse()
-      .find((candidate) => isLiveNativeReviewer(candidate, contextPrefix)) ??
-    refundedNativeReviewer(original, {
-      runner,
-      model,
-      taskDir,
-      artifactScope,
-      reviewId: input.reviewId,
-      effort: input.effort,
-    });
+      .find((candidate) => isLiveNativeReviewer(candidate, contextPrefix)) ?? retry;
   const contextId = context?.id ?? `${contextPrefix}-${randomUUID().slice(0, 8)}`;
   const recovering = Boolean(context?.nativeSession);
   const identity = reviewPRIdentity(original);

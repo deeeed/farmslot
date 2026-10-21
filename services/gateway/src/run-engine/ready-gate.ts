@@ -384,6 +384,7 @@ async function resumeVisualRepairOnce(
         recoveryContinuationPending: false,
       },
       reservedFixPass: {
+        repairId: repair.repairId,
         onDelivered: () =>
           updateVisualRepair(runId, repair.repairId, {
             status: 'delivered',

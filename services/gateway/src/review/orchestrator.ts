@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import {
   type AgentContext,
+  isPipelineRepairVisualReviewInput,
   isTerminalRunStatus,
   PipelineSteps,
   primaryRoleForFlow,
@@ -214,6 +215,8 @@ export interface ReviewOptions {
 
 /** One pre-charged worker-fix pass; the loop consumes it without another increment. */
 export interface ReservedFixPass {
+  /** Frozen Send back scope; a reviewer of this repair proves its worker pass already ran. */
+  repairId?: string;
   /** Called once the retained worker accepts the reserved fix turn. */
   onDelivered?: () => void;
 }
@@ -353,14 +356,25 @@ async function executeOwnedReview(
     return { skipped: true, reason: 'no-task-dir', retryCount: 0 };
   }
 
-  const refunded = refundedNativeReviewer(getRun(runId) ?? run, {
-    runner: reviewRunner,
-    model,
-    taskDir,
-    artifactScope,
-    reviewId,
-    effort,
-  });
+  const retryOf = options.resumeFromResult && reReviewContinuation(options.resumeFromResult);
+  const failed =
+    mode === 'warm' && retryOf
+      ? refundedNativeReviewer(getRun(runId) ?? run, {
+          runner: reviewRunner,
+          model,
+          taskDir,
+          artifactScope,
+          reviewId,
+          effort,
+        })
+      : undefined;
+  const repairInput = failed?.pipelineVisualReviewInput;
+  const ownsRepair =
+    options.reservedFixPass?.repairId &&
+    repairInput &&
+    isPipelineRepairVisualReviewInput(repairInput) &&
+    repairInput.repairId === options.reservedFixPass.repairId;
+  const refunded = !options.reservedFixPass || ownsRepair ? failed : undefined;
   try {
     const recoveredFixResult = refunded
       ? null
@@ -511,10 +525,10 @@ async function executeOwnedReview(
       firstLoopNumber,
       validationDepth,
       artifactScope,
-      refunded && firstLoopNumber > 1 ? 'warm' : mode,
+      mode,
       effort,
       live?.reviewId ?? reviewId,
-      options.rereview,
+      refunded && retryOf ? { ...retryOf, retryContextId: refunded.id } : options.rereview,
     );
 
     if (result.incomplete) {

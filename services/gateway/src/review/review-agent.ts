@@ -193,6 +193,8 @@ export interface ReReviewContinuation {
   lastReviewedHeadSha: string;
   /** The earlier findings, given to a fresh session when the retained one can't continue. */
   priorIssues: ReviewIssue[];
+  /** The stopped, refunded attempt explicitly selected by its owning continuation. */
+  retryContextId?: string;
 }
 
 /** A validated result with a recorded reviewed head makes the next review a re-review. */
