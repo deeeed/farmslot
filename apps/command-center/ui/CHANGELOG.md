@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback, verified identity handling and persisted Sources panels that render their age offline with disabled actions and follow live change notifications.
+- Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback and verified identity handling. Sources, run lists, load-run dialogs and slot history, full run details, comparisons, family views and decision inboxes retain saved observations offline with their age, disable stale actions and follow live change notifications. Missing run details evict their saved copy, and recipe inventories update when mirrored artifacts arrive.
 
 - The run canvas marks the current fix worker or reviewer as the only running node, with elapsed time and an activity header. Completed reviews are marked done; node details stay within their bounds or tooltips. Ordinary review flows retain their real running node.
 

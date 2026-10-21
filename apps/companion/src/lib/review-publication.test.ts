@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import { reviewPublicationView, reviewRunForDisplay } from './review-publication';
+import { reviewPublicationView } from './review-publication';
 
 const policy = {
   enabled: true,
@@ -48,22 +48,4 @@ test('a published receipt wins over a stale delivery error', () => {
   assert.equal(view.canRetry, false);
   assert.equal(view.account, 'reviewer');
   assert.ok(view.url);
-});
-
-test('full historical detail survives equal-timestamp list trimming but newer updates win', () => {
-  const full = run({
-    id: 'review',
-    updatedAt: 'same',
-    decisions: [{ id: 'gate', payload: { kind: 'review', reviewMd: 'full' } }],
-  } as Partial<Run>);
-  const trimmed = {
-    ...full,
-    decisions: [
-      { ...full.decisions[0], payload: { kind: 'review' }, payloadTrimmed: ['payload.reviewMd'] },
-    ],
-  } as Run;
-  assert.equal(reviewRunForDisplay(full, trimmed), full);
-  const newer = { ...trimmed, updatedAt: 'zz-newer' };
-  assert.equal(reviewRunForDisplay(full, newer), newer);
-  assert.equal(reviewRunForDisplay(full, { ...trimmed, id: 'other' }), full);
 });

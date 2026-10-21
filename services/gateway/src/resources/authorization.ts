@@ -12,10 +12,38 @@ export function canReadResourceKey(
   state: ClientState,
   key: ResourceKey,
 ): boolean {
-  // Only the Sources writer is migrated in the foundation. Other families cannot leak keys.
-  if (key.family !== 'sources') return false;
+  let method: string;
+  switch (key.family) {
+    case 'sources':
+      method = Methods.SOURCES_STATUS;
+      break;
+    case 'runs':
+      method = Methods.RUN_LIST;
+      break;
+    case 'slots':
+    case 'slot':
+      method = Methods.FLEET_STATUS;
+      break;
+    case 'decisions':
+    case 'decision':
+      method = Methods.DECISION_LIST;
+      break;
+    case 'family':
+      method = Methods.FAMILY_OBSERVABILITY_GET;
+      break;
+    case 'run':
+    case 'gate':
+    case 'package':
+    case 'review':
+    case 'artifacts':
+      // These projections belong to the farm run read, which requires admin access.
+      method = Methods.RUN_GET;
+      break;
+    default:
+      return false;
+  }
   try {
-    authorizeGatewayMethod(runtime, state, Methods.SOURCES_STATUS);
+    authorizeGatewayMethod(runtime, state, method);
     return true;
   } catch (error) {
     if (

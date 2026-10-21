@@ -1,38 +1,17 @@
 import { create } from 'zustand';
 
-import type { PendingDecision } from '@farmslot/protocol';
+import type { DecisionListResult, PendingDecision } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 interface DecisionStore {
   decisions: PendingDecision[];
+  observation: ResourceQueryState<DecisionListResult>;
   setDecisions: (decisions: PendingDecision[]) => void;
-  addDecision: (d: PendingDecision) => void;
-  upsertDecision: (d: PendingDecision) => void;
-  removeDecision: (id: string) => void;
 }
 
-export const useDecisionStore = create<DecisionStore>((set, get) => ({
+export const useDecisionStore = create<DecisionStore>((set) => ({
   decisions: [],
+  observation: { status: 'loading' },
 
   setDecisions: (decisions) => set({ decisions }),
-
-  addDecision: (d) => {
-    const { decisions } = get();
-    if (!decisions.find((e) => e.id === d.id)) {
-      set({ decisions: [d, ...decisions] });
-    }
-  },
-
-  upsertDecision: (d) => {
-    const { decisions } = get();
-    const existingIndex = decisions.findIndex((e) => e.id === d.id);
-    if (existingIndex === -1) {
-      set({ decisions: [d, ...decisions] });
-      return;
-    }
-    set({ decisions: decisions.map((existing) => (existing.id === d.id ? d : existing)) });
-  },
-
-  removeDecision: (id) => {
-    set({ decisions: get().decisions.filter((d) => d.id !== id) });
-  },
 }));

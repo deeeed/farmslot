@@ -12,6 +12,7 @@ import {
 import type { SemanticPickerDetail } from './grade-semantic-picker.js';
 
 interface FamilyGradingPanelRenderOptions {
+  disabled?: boolean;
   run: FamilyObservabilityRunSummary;
   draft: GradeDraft;
   isEditing: boolean;
@@ -30,6 +31,7 @@ interface FamilyGradingPanelRenderOptions {
 }
 
 interface FamilyImprovementTriggerRenderOptions {
+  disabled?: boolean;
   run: FamilyObservabilityRunSummary;
   proposing: boolean;
   model: string;
@@ -95,7 +97,7 @@ export function renderFamilyGradingPanel(options: FamilyGradingPanelRenderOption
                             class="verdict-pill ${verdict} ${entry.verdict === verdict
                               ? 'selected'
                               : ''}"
-                            ?disabled=${options.submitting}
+                            ?disabled=${options.disabled || options.submitting}
                             @click=${() => options.onVerdictChange(run, target.id, verdict)}
                           >
                             ${verdict === 'not-applicable' ? 'n/a' : verdict}
@@ -108,7 +110,7 @@ export function renderFamilyGradingPanel(options: FamilyGradingPanelRenderOption
                       type="text"
                       placeholder="note (optional)"
                       .value=${entry.note ?? ''}
-                      ?disabled=${options.submitting}
+                      ?disabled=${options.disabled || options.submitting}
                       @input=${(event: InputEvent) =>
                         options.onVerdictNoteInput(
                           run,
@@ -143,7 +145,7 @@ export function renderFamilyGradingPanel(options: FamilyGradingPanelRenderOption
           ? html`
               <button
                 class="action-btn"
-                ?disabled=${options.submitting}
+                ?disabled=${options.disabled || options.submitting}
                 @click=${options.onCancelEditing}
               >
                 Cancel
@@ -152,7 +154,7 @@ export function renderFamilyGradingPanel(options: FamilyGradingPanelRenderOption
           : nothing}
         <button
           class="action-btn primary"
-          ?disabled=${options.submitting || !draft.semantic}
+          ?disabled=${options.disabled || options.submitting || !draft.semantic}
           @click=${() => options.onSubmitGrade(run)}
         >
           ${options.submitting ? 'Saving…' : existing ? 'Update grade' : 'Submit grade'}
@@ -182,7 +184,7 @@ export function renderFamilyImprovementTrigger(options: FamilyImprovementTrigger
       <div class="improvement-trigger-row">
         <button
           class="action-btn primary"
-          ?disabled=${options.proposing}
+          ?disabled=${options.disabled || options.proposing}
           title=${tooltip}
           @click=${() => options.onPropose(options.run)}
         >

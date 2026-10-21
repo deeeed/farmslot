@@ -1,0 +1,116 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native shared family observations",
+  "description": "Use the private authenticated gateway and owned native device, with explicit FARMSLOT_HOME/FARMSLOT_RUNS_DIR, orchestration disabled and a fresh FARMSLOT_NATIVE_RUN_RECEIPT. Two private fixtures have no task, slot, workspace, worker or session. A second client cancels only the active fixture; teardown removes both. Family summaries and recipe groups stay in memory; selected full-run details persist.",
+  "proofTargets": [
+    {
+      "id": "native-family-notification",
+      "claim": "The actual family screen observes its selected full run and both recipe groups, and a second-client cancellation updates the visible family state without Refresh."
+    },
+    {
+      "id": "native-family-cold-selection",
+      "claim": "A cold offline family route restores the exact selected full-run observation from SQLite, opens its actual detail through Open saved run, and recovers family and recipe observations after reconnect."
+    },
+    {
+      "id": "native-family-route-selection",
+      "claim": "A plain family route records the selected run in its actual navigation parameters, and the cold proof reopens that saved route."
+    }
+  ],
+  "workflow": {
+    "entry": "before",
+    "teardown": "cleanup",
+    "nodes": {
+      "prepare": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs prepare-family",
+        "timeout_ms": 90000,
+        "intent": "Seed a unique two-run family before restarting the private gateway.",
+        "next": "default-route"
+      },
+      "observe": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs family-view",
+        "timeout_ms": 90000,
+        "intent": "Observe the actual native family and use a second client to cancel its owned active run.",
+        "next": "notification-proof"
+      },
+      "notification-proof": {
+        "action": "assert_output",
+        "source": "observe",
+        "stream": "stdout",
+        "match": "\"nativeFamilyNotification\":true",
+        "intent": "Require current shared family, selected full run and both recipe-group observations.",
+        "proves": ["native-family-notification"],
+        "next": "visible"
+      },
+      "visible": {
+        "action": "ui.wait_for",
+        "text": "cancelled",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "The actual family cockpit renders the externally cancelled selected run.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-family-current.png",
+        "intent": "Record the updated family view.",
+        "covers": ["native-family-notification"],
+        "next": "cold"
+      },
+      "cold": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs family-cold",
+        "timeout_ms": 180000,
+        "intent": "Cold restart the real app while the private gateway is stopped, inspect persisted selected detail and reconnect.",
+        "next": "cold-proof"
+      },
+      "cold-proof": {
+        "action": "assert_output",
+        "source": "cold",
+        "stream": "stdout",
+        "match": "\"nativeFamilyColdSelection\":true",
+        "intent": "Require exact saved observation time, actual saved-run link and current family/recipe recovery.",
+        "proves": ["native-family-cold-selection"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "cleanup": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs cleanup-family",
+        "timeout_ms": 90000,
+        "intent": "Remove only the two unique private fixtures.",
+        "next": "cleanup-done"
+      },
+      "cleanup-done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "before": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-family-before.png",
+        "intent": "Start the native recording before fixture setup and external changes.",
+        "next": "prepare"
+      },
+      "default-route": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs family-default-route",
+        "timeout_ms": 90000,
+        "intent": "Open a plain family link and require the actual default selection to appear in its route.",
+        "next": "default-proof"
+      },
+      "default-proof": {
+        "action": "assert_output",
+        "source": "default-route",
+        "stream": "stdout",
+        "match": "\"nativeFamilySelectionRouted\":true",
+        "intent": "Require the selected full run to be preserved by the application navigation state.",
+        "proves": ["native-family-route-selection"],
+        "next": "observe"
+      }
+    }
+  }
+}

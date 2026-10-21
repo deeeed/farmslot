@@ -1,0 +1,161 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native shared run collections and full detail",
+  "description": "Run on the owned iOS simulator or Android emulator against an isolated authenticated gateway. Set FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, GATEWAY_PORT, METRO_PORT, PLATFORM, FARMSLOT_OFFLINE_PROOF=1 and FARMSLOT_NATIVE_RUN_RECEIPT to a new private receipt path. Select IOS_SIMULATOR or the owned emulator serial. A disposable worker file drives the real production inbox; helper teardown removes only its fixture. Set FARMSLOT_RUN_PROOF_FIXTURE to the private mirror fixture for full-run and recipe observation proof. Set FARMSLOT_AGENT_DEVICE_STATE_DIR to a private per-device runner directory. The recipe cold-restarts the app with the owned gateway stopped, checks the saved full run and its actual age banner, then verifies current reconnect. Gate command refusal remains for the rest of this migration. Swipe coordinates use native units: defaults are iOS points; the owned 1080x2424 Android device uses inbox_swipe_x=86 inbox_swipe_y=620 inbox_swipe_distance=1120.",
+  "proofTargets": [
+    {
+      "id": "native-decision-notification",
+      "claim": "A worker-created file decision reaches the native shared cache and visible inbox without Refresh."
+    },
+    {
+      "id": "native-decision-removal",
+      "claim": "A real second-client resolve removes the physical decision file and the native shared-cache projection."
+    },
+    {
+      "id": "native-run-detail",
+      "claim": "The actual native evidence screen observes the owned full run and recipe groups through the shared cache, matching the gateway full output and decision payloads."
+    },
+    {
+      "id": "native-run-cold-reconnect",
+      "claim": "A new offline app runtime restores the exact saved full run and observation age from SQLite, visibly renders its saved age and run title, and becomes current after the owned gateway restarts."
+    }
+  ],
+  "workflow": {
+    "entry": "seed",
+    "nodes": {
+      "seed": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs seed-inbox",
+        "timeout_ms": 90000,
+        "intent": "Write one private worker decision and await its real native observation.",
+        "next": "arrival-proof"
+      },
+      "arrival-proof": {
+        "action": "assert_output",
+        "source": "seed",
+        "stream": "stdout",
+        "match": "\"nativeDecisionArrival\":true",
+        "intent": "Require a current decision observation backed by the actual native store.",
+        "proves": ["native-decision-notification"],
+        "next": "inbox-top"
+      },
+      "visible": {
+        "action": "ui.wait_for",
+        "text_contains": ["Offline native inbox proof"],
+        "expected": "visible",
+        "timeout_ms": 45000,
+        "intent": "Require the actual native inbox to render the worker decision.",
+        "next": "capture",
+        "text": "Offline native inbox proof"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-inbox-arrival.png",
+        "intent": "The native inbox shows the worker's pending decision.",
+        "covers": ["native-decision-notification"],
+        "next": "resolve"
+      },
+      "resolve": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs resolve-inbox",
+        "timeout_ms": 90000,
+        "intent": "A second client removes the real decision file and native inbox row.",
+        "next": "removal-proof"
+      },
+      "removal-proof": {
+        "action": "assert_output",
+        "source": "resolve",
+        "stream": "stdout",
+        "match": "\"nativeDecisionRemoval\":true",
+        "intent": "The current native inbox excludes the resolved decision.",
+        "proves": ["native-decision-removal"],
+        "next": "open-detail"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "inbox-top": {
+        "action": "ui.swipe",
+        "target": {
+          "x": "{{params.inbox_swipe_x}}",
+          "y": "{{params.inbox_swipe_y}}"
+        },
+        "direction": "down",
+        "distance": "{{params.inbox_swipe_distance}}",
+        "duration_ms": 300,
+        "intent": "Show the newest pending decision at the start of the inbox.",
+        "next": "visible"
+      },
+      "open-detail": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs open-detail",
+        "timeout_ms": 90000,
+        "intent": "Open the real run evidence screen and compare its observed full detail with the gateway.",
+        "next": "detail-proof"
+      },
+      "detail-proof": {
+        "action": "assert_output",
+        "source": "open-detail",
+        "stream": "stdout",
+        "match": "\"nativeRunDetail\":true",
+        "intent": "Require the actual mounted screen to observe current full detail and recipe groups.",
+        "proves": ["native-run-detail"],
+        "next": "detail-visible"
+      },
+      "detail-visible": {
+        "action": "ui.wait_for",
+        "text": "{{params.detail_title}}",
+        "expected": "visible",
+        "timeout_ms": 45000,
+        "intent": "The owned run is visible on the native evidence screen.",
+        "next": "detail-capture"
+      },
+      "detail-capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-run-detail.png",
+        "intent": "Record the owned full-run evidence screen.",
+        "covers": ["native-run-detail"],
+        "next": "cold-detail"
+      },
+      "cold-detail": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs cold-detail",
+        "timeout_ms": 180000,
+        "intent": "Cold-restart the real app while the private gateway is offline, verify saved full detail and the rendered age, then reconnect.",
+        "next": "cold-detail-proof"
+      },
+      "cold-detail-proof": {
+        "action": "assert_output",
+        "source": "cold-detail",
+        "stream": "stdout",
+        "match": "\"nativeColdRunDetail\":true",
+        "intent": "Require cold SQLite restoration, actual native rendering and a current reconnect read.",
+        "proves": ["native-run-cold-reconnect"],
+        "next": "done"
+      }
+    }
+  },
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "inbox_swipe_x": {
+        "type": "number",
+        "default": 32
+      },
+      "inbox_swipe_y": {
+        "type": "number",
+        "default": 230
+      },
+      "inbox_swipe_distance": {
+        "type": "number",
+        "default": 420
+      },
+      "detail_title": {
+        "type": "string",
+        "default": "Offline store mirror proof"
+      }
+    }
+  }
+}

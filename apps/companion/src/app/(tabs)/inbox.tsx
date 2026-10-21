@@ -8,6 +8,7 @@ import type { PendingDecision } from '@farmslot/protocol';
 import { KIND_COLORS } from '@farmslot/theme';
 
 import { FilterEmptyState } from '../../components/FilterEmptyState';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunTitle } from '../../components/RunTitle';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import {
@@ -161,6 +162,7 @@ function DecisionCard({ decision }: { decision: PendingDecision }) {
 export default function InboxScreen() {
   const insets = useSafeAreaInsets();
   const decisions = useDecisionStore((s) => s.decisions);
+  const observation = useDecisionStore((s) => s.observation);
   const status = useConnectionStore((s) => s.status);
   const filters = useFilterStore((s) => s.filters);
   const clearFilters = useFilterStore((s) => s.clearAll);
@@ -183,6 +185,7 @@ export default function InboxScreen() {
 
   return (
     <View testID="companion-screen-inbox" collapsable={false} style={baseStyles.container}>
+      <ResourceReadStatus observation={observation} label="decisions" />
       {filteredDecisions.length === 0 ? (
         status === 'connected' && hasFilters ? (
           <FilterEmptyState

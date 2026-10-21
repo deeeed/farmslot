@@ -20,6 +20,10 @@ export class GatewayResourceRevisions {
     ReturnType<typeof setTimeout> | null
   >();
   private publisher?: (payload: ResourceChangedPayload) => void;
+  private readonly deadlines = new Map<
+    string,
+    { at: number; timer: ReturnType<typeof setTimeout> }
+  >();
 
   setPublisher(publish: (payload: ResourceChangedPayload) => void): void {
     this.publisher = publish;
@@ -64,6 +68,27 @@ export class GatewayResourceRevisions {
     } else queueMicrotask(() => this.publish(key.family));
   }
 
+  /** A time-dependent projection has no write at its boundary; its owner schedules that change. */
+  scheduleInvalidation(ownerId: string, key: ResourceKey, at: number | undefined): void {
+    const id = `${resourceKeyId(key)}\0${ownerId}`;
+    const previous = this.deadlines.get(id);
+    if (previous?.at === at) return;
+    if (previous) clearTimeout(previous.timer);
+    this.deadlines.delete(id);
+    if (at === undefined || !Number.isFinite(at) || at <= Date.now()) return;
+    const timer = setTimeout(
+      () => {
+        this.deadlines.delete(id);
+        // Node timers have a signed 32-bit delay; a future timestamp can need another chunk.
+        if (Date.now() < at) this.scheduleInvalidation(ownerId, key, at);
+        else this.advance(key);
+      },
+      Math.min(at - Date.now(), 2_147_483_647),
+    );
+    timer.unref();
+    this.deadlines.set(id, { at, timer });
+  }
+
   private publish(family: ResourceKey['family']): void {
     this.scheduled.delete(family);
     const changes: Change[] = [];
@@ -84,6 +109,8 @@ export class GatewayResourceRevisions {
   }
 
   dispose(): void {
+    for (const { timer } of this.deadlines.values()) clearTimeout(timer);
+    this.deadlines.clear();
     for (const timer of this.scheduled.values()) if (timer) clearTimeout(timer);
     this.pending.clear();
     this.scheduled.clear();

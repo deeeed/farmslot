@@ -24,6 +24,7 @@ interface StoreProxy {
 
 export class ResourceStoreWorkerClient {
   private nextId = 0;
+  private closed = false;
   private failure?: Error;
   private readonly pending = new Map<number, Pending>();
   private readonly stores = new Map<number, StoreProxy>();
@@ -172,7 +173,9 @@ export class ResourceStoreWorkerClient {
         closed = true;
         listeners.clear();
         this.stores.delete(handle);
-        await request<void>({ operation: 'close', handle });
+        // Page teardown already terminated the whole worker. Closing a proxy
+        // afterwards releases only its local ownership, with no live port to use.
+        if (!this.closed) await request<void>({ operation: 'close', handle });
       },
     };
   }
@@ -193,6 +196,7 @@ export class ResourceStoreWorkerClient {
   }
 
   close(): void {
+    this.closed = true;
     this.fail(new Error('Local resource storage worker closed'));
     this.stopMessages();
     this.stopErrors();

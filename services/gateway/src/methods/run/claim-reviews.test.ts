@@ -22,6 +22,7 @@ import {
 import { JsonArtifactWriter } from '../../../../../packages/recipe-runner/src/node/writers.js';
 
 await import('../../runtime/mock-pty.test-support.js');
+const { resourceRevisions } = await import('../../resources/revisions.js');
 const { createRun, updateRun, getRun, runsDirectory } = await import('../../runs/store.js');
 const { runReviewVisualClaim } = await import('./claim-reviews.js');
 const { visualReviewSnapshotIdentity, readVisualReviewSource } =
@@ -332,7 +333,18 @@ test('missing and changed delegation refuse a write without modifying captured e
 test('durable visual review derives parent/check verdicts, retries once and preserves original bytes', async (t) => {
   const f = await fixture(t);
   const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
+  const watched = resourceRevisions.sample([
+    { family: 'run', runId: f.run.id },
+    { family: 'gate', runId: f.run.id, decisionId: f.decision.id },
+    { family: 'artifacts', runId: f.run.id },
+    { family: 'review', runId: f.run.id },
+  ]).dependencies;
   const result = await runReviewVisualClaim(f.params, () => {}, f.dependencies);
+  for (const { key, revision } of watched)
+    assert(
+      resourceRevisions.revision(key) > revision,
+      'A retained visual receipt must invalidate its readers',
+    );
   assert.equal(result.receipt.approver.principalId, 'person');
   assert.deepEqual(
     result.receipt.moments,

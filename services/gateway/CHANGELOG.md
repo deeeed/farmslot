@@ -4,7 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Add experimental per-resource change notifications and read revision stamps, announce client-store capabilities and principal generations, and move Sources off the fleet event carrier.
+- Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot bindings, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire.
+- Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
 
 - Completed terminal reviews can reach their posting gate: single-pane review sessions resolve exactly, and hookless reviewers prove idle from the native rollout held open by their current process.
 

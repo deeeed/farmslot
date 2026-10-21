@@ -12,15 +12,15 @@ import type {
   RunListResult,
   RunStep,
 } from '@farmslot/protocol';
-import { Methods, sortRunsForFamilyView } from '@farmslot/protocol';
+import { Methods, sortRunsForFamilyView, sourceObservationAge } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../shared/hydrating-placeholder.js';
 import '../shared/step-artifacts.js';
 
-import { gateway } from '../../gateway-client.js';
-import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { openMediaLightbox } from '../shared/media-lightbox.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
 import { runCompareStyles } from './run-compare-styles.js';
@@ -62,110 +62,98 @@ export class RunCompare extends LitElement {
   @state() private familySnapshotError = '';
   @state() private directRunFetchError = '';
   @state() private selectedStepName = '';
-  private snapshotFamilyId = '';
-  private directRunA: Run | null = null;
-  private directRunB: Run | null = null;
-  private fetchAttemptedA = '';
-  private fetchAttemptedB = '';
-  private unsub?: () => void;
+  @state() private now = Date.now();
+  private ageTimer?: ReturnType<typeof setInterval>;
+  private readonly runAQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
+    this.runA = state.data?.run ?? null;
+    this.syncFamily();
+    this.syncStatus();
+  });
+  private readonly runBQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
+    this.runB = state.data?.run ?? null;
+    this.syncFamily();
+    this.syncStatus();
+  });
+  private readonly siblingsQuery = new ResourceQueryController<RunListResult>(this, (state) => {
+    this.siblings = sortRunsForFamilyView(
+      (state.data?.runs ?? []).filter(({ id }) => id !== this.runIdA && id !== this.runIdB),
+    );
+  });
+  private readonly familyQuery = new ResourceQueryController<FamilyObservabilityGetResult>(
+    this,
+    (state) => {
+      this.familySnapshot = state.data?.snapshot ?? null;
+      this.familySnapshotError = state.error?.message ?? '';
+      if (!this.selectedStepName) this.selectedStepName = this.defaultStepName();
+    },
+  );
 
   static styles = runCompareStyles;
 
   connectedCallback() {
     super.connectedCallback();
-    this.syncRuns(getState());
-    this.unsub = subscribe((s) => this.syncRuns(s));
+    this.observeRuns();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    this.unsub?.();
+    clearInterval(this.ageTimer);
+    this.ageTimer = undefined;
   }
 
   protected override updated(changed: Map<string, unknown>) {
-    if (changed.has('runIdA') || changed.has('runIdB')) {
-      this.syncRuns(getState());
+    if (changed.has('runIdA') || changed.has('runIdB')) this.observeRuns();
+  }
+
+  private observeRuns(): void {
+    this.runAQuery.setQuery(
+      this.runIdA ? resourceQuery(Methods.RUN_GET, { runId: this.runIdA }) : undefined,
+    );
+    this.runBQuery.setQuery(
+      this.runIdB ? resourceQuery(Methods.RUN_GET, { runId: this.runIdB }) : undefined,
+    );
+  }
+
+  private syncFamily(): void {
+    const familyId =
+      this.runA && this.runB && this.runA.familyId === this.runB.familyId
+        ? this.runA.familyId
+        : undefined;
+    this.siblingsQuery.setQuery(
+      familyId ? resourceQuery(Methods.RUN_LIST, { familyId }) : undefined,
+    );
+    this.familyQuery.setQuery(
+      familyId ? resourceQuery(Methods.FAMILY_OBSERVABILITY_GET, { familyId }) : undefined,
+    );
+    if (!this.runA || !this.runB) this.selectedStepName = '';
+  }
+
+  private syncStatus(): void {
+    const states = [this.runAQuery.state, this.runBQuery.state];
+    this.hydrating = states.some((state) => state.status === 'loading');
+    this.directRunFetchError = states
+      .flatMap((state) => (state.error ? [state.error.message] : []))
+      .join('; ');
+    const stale = states.some((state) => state.status === 'stale' && state.data);
+    if (stale && !this.ageTimer)
+      this.ageTimer = setInterval(() => {
+        this.now = Date.now();
+      }, 1000);
+    if (!stale && this.ageTimer) {
+      clearInterval(this.ageTimer);
+      this.ageTimer = undefined;
     }
   }
 
-  private syncRuns(s: AppState) {
-    const stateRunA = s.runs.find((r) => r.id === this.runIdA) ?? null;
-    const stateRunB = s.runs.find((r) => r.id === this.runIdB) ?? null;
-    this.runA = stateRunA ?? (this.directRunA?.id === this.runIdA ? this.directRunA : null);
-    this.runB = stateRunB ?? (this.directRunB?.id === this.runIdB ? this.directRunB : null);
-    this.hydrating = isHydrating(s, 'runs');
-    if (!this.runA && this.runIdA && !this.hydrating && this.fetchAttemptedA !== this.runIdA) {
-      this.fetchAttemptedA = this.runIdA;
-      void this.fetchDirectRun('a', this.runIdA);
-    }
-    if (!this.runB && this.runIdB && !this.hydrating && this.fetchAttemptedB !== this.runIdB) {
-      this.fetchAttemptedB = this.runIdB;
-      void this.fetchDirectRun('b', this.runIdB);
-    }
-    if (this.runA && this.runB && this.runA.familyId === this.runB.familyId) {
-      void this.fetchSiblings(this.runA.familyId, [this.runA.id, this.runB.id]);
-      void this.fetchFamilySnapshot(this.runA.familyId);
-      if (!this.selectedStepName) this.selectedStepName = this.defaultStepName();
-    } else {
-      this.siblings = [];
-      this.familySnapshot = null;
-      this.snapshotFamilyId = '';
-    }
-  }
-
-  private async fetchDirectRun(side: 'a' | 'b', runId: string): Promise<void> {
-    try {
-      const result = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId });
-      if (side === 'a') {
-        if (this.runIdA !== runId) return;
-        this.directRunA = result.run;
-      } else {
-        if (this.runIdB !== runId) return;
-        this.directRunB = result.run;
-      }
-      this.directRunFetchError = '';
-      this.syncRuns(getState());
-    } catch (err) {
-      // Direct fetch is a recoverable deep-link fallback: the route can still
-      // render once the normal runs snapshot hydrates, so surface the error
-      // instead of throwing away the whole comparison page.
-      this.directRunFetchError = `Run ${runId.slice(0, 8)} could not be loaded directly: ${err instanceof Error ? err.message : String(err)}`;
-      console.warn(`[run-compare] ${this.directRunFetchError}`);
-    }
-  }
-
-  private async fetchSiblings(familyId: string, exclude: string[]) {
-    try {
-      const res = await gateway.request<RunListResult>(Methods.RUN_LIST, { familyId });
-      this.siblings = sortRunsForFamilyView(
-        (res.runs ?? []).filter((r) => !exclude.includes(r.id)),
-      );
-    } catch (err) {
-      console.warn(
-        `[run-compare] failed to fetch siblings for ${familyId}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      this.siblings = [];
-    }
-  }
-
-  private async fetchFamilySnapshot(familyId: string) {
-    if (this.snapshotFamilyId === familyId && this.familySnapshot) return;
-    this.snapshotFamilyId = familyId;
-    this.familySnapshotError = '';
-    try {
-      const result = await gateway.request<FamilyObservabilityGetResult>(
-        Methods.FAMILY_OBSERVABILITY_GET,
-        { familyId },
-      );
-      this.familySnapshot = result.snapshot;
-      if (!this.selectedStepName) this.selectedStepName = this.defaultStepName();
-    } catch (err) {
-      this.familySnapshot = null;
-      this.familySnapshotError = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[run-compare] failed to fetch family observability for ${familyId}: ${this.familySnapshotError}`,
-      );
-    }
+  private renderSavedStatus() {
+    return [this.runAQuery.state, this.runBQuery.state].map((observation, index) =>
+      observation.status === 'stale' && observation.data && observation.observedAt !== undefined
+        ? html`<div class="muted" role="status">
+            Saved run ${index === 0 ? 'A' : 'B'},
+            ${sourceObservationAge(observation.observedAt, this.now)}.
+          </div>`
+        : nothing,
+    );
   }
 
   private get allStepNames(): string[] {
@@ -298,6 +286,7 @@ export class RunCompare extends LitElement {
     const showCompareCaution = familyMismatch || comparisonMismatch;
 
     return html`
+      ${this.renderSavedStatus()}
       <div
         class="back"
         @click=${() => {

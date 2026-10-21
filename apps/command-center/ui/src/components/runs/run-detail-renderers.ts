@@ -307,7 +307,7 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
         ${ctx.refreshOutput
           ? html`<button
               class="evidence-link"
-              ?disabled=${ctx.refreshingOutput || ctx.closingOutput}
+              ?disabled=${ctx.actionsBlocked || ctx.refreshingOutput || ctx.closingOutput}
               @click=${ctx.refreshOutput}
             >
               ${ctx.refreshingOutput ? 'Retrieving files…' : 'Refresh output'}
@@ -548,25 +548,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       href=${`#intelligence?tab=assessments&suggestion=copilot-context&run=${encodeURIComponent(r.id)}`}
       >Suggest a next context read</a
     >
-    ${ctx._bootstrapFailed
-      ? html`<div class="rehydrating-banner">
-          Run refresh failed… showing cached data and pausing actions
-        </div>`
-      : ctx._connectionStale
-        ? html`<div class="rehydrating-banner">
-            Gateway disconnected… showing cached data and pausing actions
-          </div>`
-        : ctx._directRunRefreshFailed
-          ? html`<div class="rehydrating-banner">
-              Run refresh failed… showing cached data and pausing actions
-            </div>`
-          : ctx._directRunRefreshing
-            ? html`<div class="rehydrating-banner">Refreshing run details… actions are paused</div>`
-            : ctx._hydrating
-              ? html`<div class="rehydrating-banner">
-                  Reconnecting… showing last snapshot and pausing actions
-                </div>`
-              : nothing}
     ${r.redirectedToRunId
       ? html`
           <div

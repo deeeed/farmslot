@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { resourceRevisions } from '../resources/revisions.js';
+
 import {
   appendFeedbackConsumptions,
   consumptionsBySourceKey,
@@ -35,15 +37,32 @@ test('missing ledger reads empty; appends are idempotent per (candidate, destina
   const file = path.join(dir, 'nested', 'ledger.json');
   assert.deepEqual(await readFeedbackLedger(file), { version: 1, entries: [] });
 
+  const key = { family: 'decisions', scope: 'farm' } as const;
+  const before = resourceRevisions.revision(key);
   assert.equal((await appendFeedbackConsumptions([ENTRY, ENTRY], file)).length, 1);
+  assert.equal((await readFeedbackLedger(file)).entries.length, 1);
+  assert.equal(resourceRevisions.revision(key), before + 1);
   assert.equal((await appendFeedbackConsumptions([ENTRY], file)).length, 0);
+  assert.equal(resourceRevisions.revision(key), before + 1);
   assert.equal(
     (await appendFeedbackConsumptions([{ ...ENTRY, rule: 'Another rule' }], file)).length,
     1,
   );
   const ledger = await readFeedbackLedger(file);
+  assert.equal(resourceRevisions.revision(key), before + 2);
   assert.equal(ledger.entries.length, 2);
   assert.equal(consumptionsBySourceKey(ledger).get(ENTRY.sourceKey)?.length, 2);
+});
+
+test('failed consumption persistence does not invalidate the current inbox', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'feedback-ledger-refused-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const parent = path.join(dir, 'file');
+  writeFileSync(parent, 'not a directory');
+  const key = { family: 'decisions', scope: 'farm' } as const;
+  const before = resourceRevisions.revision(key);
+  await assert.rejects(appendFeedbackConsumptions([ENTRY], path.join(parent, 'ledger.json')));
+  assert.equal(resourceRevisions.revision(key), before);
 });
 
 test('a malformed ledger is an error, never silently treated as empty', async (t) => {

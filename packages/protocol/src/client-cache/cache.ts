@@ -5,9 +5,11 @@ import type { ResourceQuery } from './registry.js';
 import {
   createMemoryResourceStore,
   normalizeResourceStoreScope,
+  type ResourceStore,
   type ResourceStoreMetadata,
   resourceStoreScopeId,
   sameResourceAuthority,
+  type StoredResourceQuery,
 } from './store.js';
 import type {
   GatewayResourceCache,
@@ -173,6 +175,24 @@ export function createGatewayResourceCache(
     }
     options.onStorageNotice?.(storageNotice);
     for (const entry of entries.values()) notify(entry);
+  }
+
+  /** Retention, writes and lifecycle changes share one ordered store boundary. */
+  function updateStore(
+    target: ResourceStore,
+    current: () => boolean,
+    update: () => Promise<void>,
+  ): Promise<void> {
+    const updating = barrier.then(async () => {
+      if (!current()) return;
+      try {
+        await update();
+      } catch (error) {
+        await recoverStore(error, target);
+      }
+    });
+    barrier = updating;
+    return updating;
   }
 
   async function openFreshStore(
@@ -517,10 +537,11 @@ export function createGatewayResourceCache(
           supported &&
           stampCovers(entry, reply.resourceState) &&
           entry.unknownGeneration === unknownGeneration;
+        const observedAt = Date.now();
         entry.state = {
           status: covered ? 'ready' : supported ? 'stale' : 'unsupported',
           data: reply.data,
-          observedAt: Date.now(),
+          observedAt,
           resourceState: reply.resourceState,
           ...(!reply.resourceState && supported
             ? {
@@ -533,29 +554,63 @@ export function createGatewayResourceCache(
         };
         // Only a real intervening invalidation needs a follow-up; missing metadata is not a retry loop.
         entry.dirty = supported && !covered && entry.dirty;
-        notify(entry);
-        if (
-          !disposed &&
-          pending.version === version &&
-          pending.serial === entry.serial &&
-          !pending.controller.signal.aborted &&
-          writingIncarnation === storeVersion &&
-          entry.query.persisted &&
-          canPersist(connection)
-        ) {
-          const bytes = encoder.encode(JSON.stringify(reply.data)).byteLength;
-          try {
-            if (bytes <= entry.query.maxBytes)
-              await writingStore.putQuery({
+        entry.lastUsed = ++lastUsed;
+        const persistResult = entry.query.persisted && canPersist(connection);
+        const serialized = persistResult ? JSON.stringify(reply.data) : undefined;
+        const bytes = serialized === undefined ? 0 : encoder.encode(serialized).byteLength;
+        const retention = entry.query.retention;
+        const saved: StoredResourceQuery | undefined =
+          serialized !== undefined &&
+          bytes <= entry.query.maxBytes &&
+          (!retention || bytes <= retention.maxBytes)
+            ? {
                 id: entry.query.id,
-                data: reply.data,
-                observedAt: entry.state.observedAt!,
+                data: JSON.parse(serialized),
+                observedAt,
                 bytes,
-              });
-            else await writingStore.deleteQuery(entry.query.id);
-          } catch (error) {
-            await recoverStore(error, writingStore);
-          }
+              }
+            : undefined;
+        notify(entry);
+        // This reply is already accepted. A transport pause may make it stale
+        // without changing its owner or value. Authority changes clear data
+        // synchronously; a newer accepted reply replaces its data or timestamp.
+        const current = () =>
+          !disposed &&
+          entries.get(entry.query.id) === entry &&
+          entry.state.data === reply.data &&
+          entry.state.observedAt === observedAt &&
+          writingIncarnation === storeVersion &&
+          writingStore === store &&
+          !writingStore.deleted;
+        if (persistResult && current()) {
+          await updateStore(writingStore, current, async () => {
+            if (!saved) {
+              await writingStore.deleteQuery(entry.query.id);
+              return;
+            }
+            if (retention) {
+              const previous = (await writingStore.listQueries())
+                .filter(
+                  (value) => value.id !== saved.id && value.id.startsWith(`${entry.query.method}:`),
+                )
+                .sort(
+                  (a, b) =>
+                    a.observedAt - b.observedAt ||
+                    (entries.get(a.id)?.lastUsed ?? 0) - (entries.get(b.id)?.lastUsed ?? 0),
+                );
+              if (!current()) return;
+              let count = previous.length + 1;
+              let total = previous.reduce((sum, value) => sum + value.bytes, saved.bytes);
+              for (const oldest of previous) {
+                if (count <= retention.maxEntries && total <= retention.maxBytes) break;
+                await writingStore.deleteQuery(oldest.id);
+                if (!current()) return;
+                count--;
+                total -= oldest.bytes;
+              }
+            }
+            if (current()) await writingStore.putQuery(saved);
+          });
         }
       } catch (error) {
         if (
@@ -569,8 +624,19 @@ export function createGatewayResourceCache(
         entry.dirty = false;
         if (evictionCodes.has(failure.code)) {
           const evictingStore = store;
+          const evictingIncarnation = storeVersion;
           entry.state = { status: 'error', error: failure };
+          // Commit an accepted refusal before a listener queues its profile's close.
+          const eviction = updateStore(
+            evictingStore,
+            () =>
+              evictingStore === store &&
+              evictingIncarnation === storeVersion &&
+              !evictingStore.deleted,
+            () => evictingStore.deleteQuery(entry.query.id),
+          );
           notify(entry);
+          await eviction;
           if (
             disposed ||
             pending.version !== version ||
@@ -578,11 +644,6 @@ export function createGatewayResourceCache(
             pending.controller.signal.aborted
           )
             return;
-          try {
-            await evictingStore.deleteQuery(entry.query.id);
-          } catch (error) {
-            await recoverStore(error, evictingStore);
-          }
         } else
           entry.state = {
             ...entry.state,

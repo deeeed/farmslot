@@ -1,6 +1,7 @@
 // state.ts — Read/watch .farm-status.json, pool/*.json, projects/*/project.json
 // Transforms raw JSON into protocol types
 
+import { once } from 'node:events';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -43,7 +44,9 @@ import {
   readSourceRuntimeSettings,
   usesRuntimeSettings,
 } from '../core/config.js';
+import { onStatusCommit } from '../core/state.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
+import { SlotRunBindingChanges, statusRunBindings } from '../resources/slot-run-bindings.js';
 
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
 import { getActiveResources, getCachedSlotResources } from './resource-manager.js';
@@ -261,6 +264,20 @@ function normalizePublicationReview(
 }
 
 let cachedFleet: FleetStatus | null = null;
+let fleetReadVersion = 0;
+const slotRunBindings = new SlotRunBindingChanges();
+onStatusCommit((snapshot) => {
+  cachedFleet = null;
+  fleetReadVersion++;
+  try {
+    slotRunBindings.observe(statusRunBindings(snapshot));
+  } catch (error) {
+    // The file committed, but cannot serve a trustworthy binding projection.
+    // Invalidate saved readers and propagate the owning writer's failure.
+    slotRunBindings.unavailable();
+    throw error;
+  }
+});
 const changeHandlers: StateChangeHandler[] = [];
 
 // ─── Task progress overlay (enriched by task-watcher, not persisted to disk) ───
@@ -601,20 +618,35 @@ export function markGhostSlots(fleet: FleetStatus, liveIds: ReadonlySet<string>)
 
 // ─── Public API ───
 
-export async function loadFleetStatus(forceRefresh = false): Promise<FleetStatus> {
+export async function loadFleetStatus(
+  forceRefresh = false,
+  strictRead = false,
+): Promise<FleetStatus> {
   if (cachedFleet && !forceRefresh) return getCachedFleet()!;
+  const version = ++fleetReadVersion;
+  let next: FleetStatus;
   try {
     const content = await readFile(statusFile, 'utf-8');
     const raw: RawStatus = JSON.parse(content);
+    const bindings = statusRunBindings(raw);
     const liveIds = new Set(
       (await loadPoolConfigs()).flatMap((pool) => pool.slots.map((slot) => slot.id)),
     );
-    cachedFleet = markGhostSlots(transformFleet(raw), liveIds);
+    next = markGhostSlots(transformFleet(raw), liveIds);
+    if (version === fleetReadVersion) {
+      cachedFleet = next;
+      slotRunBindings.observe(bindings);
+    }
   } catch (err) {
+    if (version === fleetReadVersion) {
+      cachedFleet = null;
+      slotRunBindings.unavailable();
+    }
+    if (strictRead) throw err;
     console.error(
       `[state] loadFleetStatus failed: ${(err as Error).message} — falling back to empty fleet`,
     );
-    cachedFleet = {
+    next = {
       checkedAt: new Date().toISOString(),
       slots: [],
       summary: {
@@ -628,8 +660,10 @@ export async function loadFleetStatus(forceRefresh = false): Promise<FleetStatus
         warmCount: 0,
       },
     };
+    if (version === fleetReadVersion) cachedFleet = next;
   }
-  return getCachedFleet()!;
+  next.machines = getAllMachineHealth();
+  return next;
 }
 
 export function getCachedFleet(): FleetStatus | null {
@@ -657,9 +691,18 @@ export function stateChangeHandlerCountForTests(): number {
   return changeHandlers.length;
 }
 
-export function startFileWatcher(): void {
-  const watcher = watch(statusFile, { persistent: true, ignoreInitial: true });
-  watcher.on('change', async () => {
+export function startFileWatcher() {
+  // A file watch can lose an unlink immediately after a change on macOS.
+  // Keep watching its directory across atomic replacements and recreation.
+  const directory = path.dirname(statusFile);
+  const watcher = watch(directory, {
+    persistent: true,
+    ignoreInitial: true,
+    depth: 0,
+    ignored: (file) => file !== directory && file !== statusFile,
+  });
+  watcher.on('all', async (event) => {
+    if (event !== 'change' && event !== 'add' && event !== 'unlink') return;
     await loadFleetStatus(true);
     if (cachedFleet) {
       for (const handler of changeHandlers) {
@@ -694,6 +737,13 @@ export function startFileWatcher(): void {
       }
     }, 2000);
   });
+  return {
+    ready: Promise.all([once(watcher, 'ready'), once(poolWatcher, 'ready')]),
+    async close(): Promise<void> {
+      clearTimeout(poolDebounce);
+      await Promise.all([watcher.close(), poolWatcher.close()]);
+    },
+  };
 }
 
 // ─── Pool configs ───

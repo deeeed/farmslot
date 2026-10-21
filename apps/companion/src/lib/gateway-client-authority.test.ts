@@ -92,6 +92,53 @@ function auth(
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 test(
+  'native shared collection transport preserves active, history and decision deadlines',
+  { timeout: 4000 },
+  async (t) => {
+    const original = globalThis.WebSocket;
+    globalThis.WebSocket = Socket as unknown as typeof WebSocket;
+    const { GatewayClient } = await import('./gateway-client');
+    const client = new GatewayClient('ws://localhost:19777', { token: 'admin' });
+    try {
+      client.connect();
+      const socket = Socket.sockets.at(-1)!;
+      socket.open();
+      socket.response(socket.sent[0].id, auth('admin', 'farm'));
+      await settle();
+      t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+      const outcomes: string[] = [];
+      const reads = [
+        client.requestResource('run.list', { active: true }).catch((error: Error) => {
+          outcomes.push(error.message);
+        }),
+        client.requestResource('run.list', { limit: 80, sort: 'newest' }).catch((error: Error) => {
+          outcomes.push(error.message);
+        }),
+        client.requestResource('decision.list', {}).catch((error: Error) => {
+          outcomes.push(error.message);
+        }),
+      ];
+      await settle();
+      t.mock.timers.tick(20_000);
+      await settle();
+      assert.equal(outcomes.length, 1);
+      assert.match(outcomes[0], /20000/);
+      t.mock.timers.tick(10_000);
+      await settle();
+      assert.equal(outcomes.length, 2);
+      assert.match(outcomes[1], /30000/);
+      t.mock.timers.tick(30_000);
+      await Promise.all(reads);
+      assert.equal(outcomes.length, 3);
+      assert.match(outcomes[2], /60000/);
+    } finally {
+      client.disconnect();
+      globalThis.WebSocket = original;
+    }
+  },
+);
+
+test(
   'shared Sources reads survive slow receipt verification while ordinary reads still time out',
   { timeout: 4000 },
   async (t) => {
@@ -111,7 +158,10 @@ test(
         (error: Error) => ({ error }),
       );
       const sourcesId = socket.sent.at(-1)!.id;
-      const runs = assert.rejects(client.requestResource('run.list', {}), /timed out/);
+      const runs = assert.rejects(
+        client.requestResource('run.get', { runId: 'ordinary' }),
+        /timed out/,
+      );
       t.mock.timers.tick(31_000);
       const resourceState = { epoch: 'test', dependencies: [] };
       socket.response(sourcesId, { configured: true }, resourceState);

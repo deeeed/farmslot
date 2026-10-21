@@ -20,11 +20,18 @@ export function onSlotReset(listener: (slotId: string) => void): void {
 
 // Serialize read-modify-write so concurrent updates to different slots don't stomp each other.
 let writeChain: Promise<void> = Promise.resolve();
+const statusCommitListeners: Array<(snapshot: unknown) => void> = [];
+
+/** Synchronous cache invalidation/publication after the atomic file commit. */
+export function onStatusCommit(listener: (snapshot: unknown) => void): void {
+  statusCommitListeners.push(listener);
+}
 
 async function atomicWriteStatus(data: unknown): Promise<void> {
   const tmp = `${statusFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   await writeFile(tmp, JSON.stringify(data, null, 2) + '\n');
   await rename(tmp, statusFile);
+  for (const listener of statusCommitListeners) listener(data);
 }
 
 // ─── Broadcast hook ───

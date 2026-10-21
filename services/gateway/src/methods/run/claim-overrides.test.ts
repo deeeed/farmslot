@@ -22,6 +22,7 @@ import {
 } from '@farmslot/protocol';
 
 await import('../../runtime/mock-pty.test-support.js');
+const { resourceRevisions } = await import('../../resources/revisions.js');
 const { createRun, updateRun, getRun, runsDirectory } = await import('../../runs/store.js');
 const { runOverrideClaim } = await import('./claim-overrides.js');
 const { collectRunGateReadiness } = await import('../../run-engine/gate-prerequisites.js');
@@ -234,6 +235,12 @@ test('an override refreshes the pending package after its receipt is durable', a
   ];
   const priorReviewState = structuredClone(reviews);
   updateRun(f.run.id, { engineState: { publishGate: { reviews } } });
+  const watched = resourceRevisions.sample([
+    { family: 'run', runId: f.run.id },
+    { family: 'gate', runId: f.run.id, decisionId: f.decision.id },
+    { family: 'package', runId: f.run.id, decisionId: f.decision.id },
+    { family: 'review', runId: f.run.id },
+  ]).dependencies;
   let refreshed = 0;
   const dependencies = {
     ...f.dependencies,
@@ -248,6 +255,11 @@ test('an override refreshes the pending package after its receipt is durable', a
       const receipt = current.claimOverrideReceipts?.[0];
       assert.ok(receipt);
       assert.deepEqual(stored.claimOverrideReceipts, [receipt]);
+      for (const { key, revision } of watched)
+        assert(
+          resourceRevisions.revision(key) > revision,
+          'The durable receipt must notify before package refresh',
+        );
       assert.equal(current.decisions[0].resolvedAt, undefined);
       const prPackage = {
         ...f.prepared,

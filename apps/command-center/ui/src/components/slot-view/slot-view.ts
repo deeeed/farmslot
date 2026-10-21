@@ -919,6 +919,7 @@ export class SlotView extends SlotViewRecipePresenter {
         : nothing}
       ${renderSlotPrepareBanner(this)} ${renderSlotViewBody(this, { hasResources })}
       <slot-history-modal
+        .disabled=${this._isRecoveryBlocked}
         slot-id=${this.slotId}
         .project=${this._slot?.project ?? ''}
         slot-branch=${this._git?.branch ?? this._slot?.branch ?? ''}
@@ -937,6 +938,7 @@ export class SlotView extends SlotViewRecipePresenter {
         slot-branch=${this._git?.branch ?? this._slot?.branch ?? ''}
         .slotHealth=${this._slot?.health ?? null}
         .open=${this._loadRunOpen}
+        .disabled=${this._isRecoveryBlocked && this._recoveryPhase !== 'error'}
         @close=${() => {
           this._loadRunOpen = false;
         }}

@@ -11,6 +11,7 @@ import type { FeedbackConsumption } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { resourceRevisions } from '../resources/revisions.js';
 
 export interface FeedbackLedgerEntry extends FeedbackConsumption {
   sourceKey: string;
@@ -95,7 +96,10 @@ export function appendFeedbackConsumptions(
       ledger.entries.push(entry);
       added.push(entry);
     }
-    if (added.length > 0) await writeAtomicJSON(file, ledger);
+    if (added.length > 0) {
+      await writeAtomicJSON(file, ledger);
+      resourceRevisions.advance({ family: 'decisions', scope: 'farm' });
+    }
     return added;
   };
   const next = ledgerQueue.then(run, run);

@@ -21,12 +21,14 @@ import test from 'node:test';
 import type { ReviewStatus } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../fleet/state.js';
+import { resourceRevisions } from '../resources/revisions.js';
 
 import {
   pruneRecipeRunHistory,
   refreshArtifactMirror,
   shouldClearLocalRecipeRunCache,
 } from './artifact-mirror.js';
+import { createRunArtifactAcquisition } from './retained-artifacts.js';
 import { makeRun } from './test-fixtures.js';
 
 test('refreshArtifactMirror preserves gateway-owned review artifacts while clearing stale worker files', async (t) => {
@@ -537,7 +539,10 @@ test('incremental mirror keeps matches, removes stale files and accepts a zero-t
   await put('evidence/keep.log', 'kept');
   await put('evidence/removed.log', 'old');
   const options = { requireSourceArtifacts: true };
+  const key = { family: 'artifacts', runId: run.id } as const;
+  const revision = resourceRevisions.revision(key);
   assert.equal(await refreshArtifactMirror(run, options), 3);
+  assert.equal(resourceRevisions.revision(key), revision + 1, 'Actual mirror arrival must notify');
   const artifacts = path.join(taskDir, 'artifacts');
   const kept = path.join(artifacts, 'evidence/keep.log');
   await utimes(kept, 1, 1);
@@ -548,10 +553,57 @@ test('incremental mirror keeps matches, removes stale files and accepts a zero-t
   assert.equal((await stat(kept)).mtimeMs, 1000);
   assert.equal(existsSync(path.join(artifacts, 'evidence/removed.log')), false);
   assert.equal(await readFile(path.join(artifacts, 'pr-package.json'), 'utf8'), 'gateway-owned');
+  const unchanged = resourceRevisions.revision(key);
   assert.equal(await refreshArtifactMirror(run, options), 0);
+  assert.equal(resourceRevisions.revision(key), unchanged, 'An unchanged mirror must stay quiet');
   await writeFile(path.join(artifacts, 'report.md'), 'wrong');
   assert.equal(await refreshArtifactMirror(run, options), 1);
   assert.equal(await readFile(path.join(artifacts, 'report.md'), 'utf8'), 'other');
+});
+
+test('a prune-only mirror notifies even when it transfers no files', async (t) => {
+  const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(
+    t,
+    'mirror-prune-notice',
+  );
+  await put('report.md', 'kept');
+  await put('evidence/removed.log', 'removed later');
+  assert.equal(await refreshArtifactMirror(run), 2);
+  const key = { family: 'artifacts', runId: run.id } as const;
+  const revision = resourceRevisions.revision(key);
+  await rm(path.join(workerArtifacts, 'evidence/removed.log'));
+  assert.equal(await refreshArtifactMirror(run), 0);
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/evidence/removed.log')), false);
+  assert.equal(resourceRevisions.revision(key), revision + 1);
+  assert.equal(await refreshArtifactMirror(run), 0);
+  assert.equal(resourceRevisions.revision(key), revision + 1);
+});
+
+test('a refused media copy still publishes its completed pruning without claiming success', async (t) => {
+  const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(
+    t,
+    'mirror-failed-notice',
+  );
+  await put('obsolete.log', 'old');
+  assert.equal(await refreshArtifactMirror(run), 1);
+  await rm(path.join(workerArtifacts, 'obsolete.log'));
+  await put('fresh.png', 'new media');
+  // This run is absent from the live store: the real acquisition fence must refuse it.
+  const acquisition = createRunArtifactAcquisition(run);
+  const key = { family: 'artifacts', runId: run.id } as const;
+  const revision = resourceRevisions.revision(key);
+  await assert.rejects(
+    refreshArtifactMirror(run, { acquisition }),
+    /Run attempt changed while acquiring retained media/,
+  );
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/obsolete.log')), false);
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/fresh.png')), false);
+  assert.equal(resourceRevisions.revision(key), revision + 1);
+  await assert.rejects(
+    refreshArtifactMirror(run, { acquisition }),
+    /Run attempt changed while acquiring retained media/,
+  );
+  assert.equal(resourceRevisions.revision(key), revision + 1, 'An unchanged refusal stays quiet');
 });
 
 test('publication preflight refuses a missing selected engine manifest before touching the mirror', async (t) => {

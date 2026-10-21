@@ -22,22 +22,28 @@ import {
   Methods,
   type OutputReviewPayload,
   type Run,
+  type RunGetResult,
   type RunRecipeRunsForRunResult,
   type SelfPrincipalSummary,
   type TaskProgressResult,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import type { GatewayClient } from '../lib/gateway-client';
 import { isGatewayBackgroundPauseError } from '../lib/recoverable-errors';
+import { getResourceCache } from '../lib/resource-cache';
+import { assertNativeRunReady } from '../lib/run-collections';
 import { taskProgressRequestForRun, taskProgressUpdateTargetsRun } from '../lib/task-progress';
 import { type AcceptanceLedgerView, acceptanceLedgerView } from '../lib/task-progress-view';
 import { recordVisualClaimReview } from '../lib/visual-claim-review';
 import { useConnectionStore } from '../store/connection';
 
 import { useConnectedTransport } from './useConnectedTransport';
+import { useResourceQuery } from './useResourceQuery';
 
 export interface RunAcceptance {
+  commandsReady: boolean;
   /** No acceptance data or read error is available yet. */
   loading: boolean;
   evidenceLoading: boolean;
@@ -89,13 +95,16 @@ export function useRunAcceptance(
   run: RunAcceptanceSource | null,
   options: { recipeRunId?: string; reportSnapshot?: OutputReviewPayload; decisionId?: string } = {},
 ): RunAcceptance {
-  const [evidence, setEvidence] = useState<RunRecipeRunsForRunResult | null>(null);
   const [data, setData] = useState<AcceptanceData | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
-  const [evidenceRequestError, setEvidenceRequestError] = useState<string | null>(null);
   const [broadcasts, setBroadcasts] = useState(0);
   const requestRef = useRef(0);
   const runId = run?.id;
+  const fullRunQuery = useMemo(
+    () => (runId ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId }) : undefined),
+    [runId],
+  );
+  const fullRunObservation = useResourceQuery(fullRunQuery);
   const slotId = run?.slotId;
   const workspaceId = run?.reviewWorkspace?.workspaceId;
   const updatedAt = run?.updatedAt;
@@ -108,6 +117,24 @@ export function useRunAcceptance(
       : gate?.payload?.kind === 'output-review'
         ? gate.payload.manifestDigest
         : undefined;
+  const evidenceQuery = useMemo(
+    () =>
+      runId
+        ? resourceQuery<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, {
+            runId,
+            includeRecordedEvidence: true,
+            ...(options.decisionId
+              ? { decisionId: options.decisionId, evidenceSnapshotHash }
+              : options.recipeRunId
+                ? { recipeRunId: options.recipeRunId }
+                : {}),
+          })
+        : undefined,
+    [runId, options.decisionId, options.recipeRunId, evidenceSnapshotHash],
+  );
+  const evidenceObservation = useResourceQuery(evidenceQuery);
+  const evidence = evidenceObservation.data ?? null;
+  const evidenceRequestError = evidenceObservation.error?.message ?? null;
   const target = taskProgressRequestForRun(run);
   const noSurface = Boolean(run) && !target;
   const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
@@ -117,9 +144,7 @@ export function useRunAcceptance(
   useEffect(() => {
     requestRef.current += 1;
     setData(null);
-    setEvidence(null);
     setRequestError(null);
-    setEvidenceRequestError(null);
   }, [
     authorityEpoch,
     runId,
@@ -140,36 +165,12 @@ export function useRunAcceptance(
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     if (!data) setRequestError(null);
-    if (!evidence) setEvidenceRequestError(null);
     client
       .request<TaskProgressResult>(Methods.TASK_PROGRESS, target)
-      .then(async (result) => {
+      .then((result) => {
         if (requestRef.current !== requestId) return;
         setData(result);
         setRequestError(null);
-        try {
-          const source = await client.request<RunRecipeRunsForRunResult>(
-            Methods.RUN_RECIPE_RUNS_FOR_RUN,
-            {
-              runId,
-              includeRecordedEvidence: true,
-              ...(options.decisionId
-                ? { decisionId: options.decisionId, evidenceSnapshotHash }
-                : options.recipeRunId
-                  ? { recipeRunId: options.recipeRunId }
-                  : {}),
-            },
-          );
-          if (requestRef.current === requestId) {
-            setEvidence(source);
-            setEvidenceRequestError(null);
-          }
-        } catch (error) {
-          if (requestRef.current === requestId)
-            setEvidenceRequestError(
-              `Evidence unavailable: ${error instanceof Error ? error.message : String(error)}`,
-            );
-        }
       })
       .catch((err: Error) => {
         if (requestRef.current !== requestId) return;
@@ -253,17 +254,25 @@ export function useRunAcceptance(
         })
       : null;
     return {
+      commandsReady:
+        client?.connectionState === 'connected' &&
+        fullRunObservation.status === 'ready' &&
+        evidenceObservation.status === 'ready',
       loading: !data && !error,
       evidenceLoading: !evidence && !error && !evidenceRequestError,
       evidenceError: error ?? evidenceRequestError,
       retry() {
         setBroadcasts((value) => value + 1);
+        if (evidenceQuery) void getResourceCache()?.retry(evidenceQuery);
       },
       evidenceModel,
       reviewer: client?.authenticatedPrincipal ?? null,
       async recordVisualReview(claimId, verdict, reason) {
+        if (!runId) throw new Error('The current run is unavailable.');
+        assertNativeRunReady(runId, fullRunObservation.data?.run);
+        if (evidenceObservation.status !== 'ready')
+          throw new Error('Wait for current evidence before acting.');
         await recordVisualClaimReview(client, runId, evidenceModel, claimId, verdict, reason);
-        setBroadcasts((value) => value + 1);
       },
       recipeRunId: evidence?.selectedRecipeRunId ?? null,
       acceptanceStatus,
@@ -287,6 +296,9 @@ export function useRunAcceptance(
     noSurface,
     requestError,
     evidenceRequestError,
+    evidenceQuery,
+    evidenceObservation.status,
+    fullRunObservation,
     run?.output,
     run?.links,
     evidencePending,

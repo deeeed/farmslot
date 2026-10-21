@@ -17,9 +17,6 @@ import { diffArtifactCandidate } from '../../../lib/diff';
 import { colors } from '../../../lib/theme';
 import { artifactViewerStyles as styles } from '../styles/artifact-viewer.styles';
 
-export function routeParamString(value: string | string[] | undefined): string {
-  return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
-}
 export function ArtifactStickyFilter({
   compact = false,
   filter,
@@ -150,6 +147,7 @@ export function ArtifactHeader({
   artifactMirrorEpoch,
   artifactMirrorRefreshing,
   artifactMirrorFeedback,
+  commandsReady,
   onRefreshArtifactMirror,
   onFilterChange,
   onSelectRecipeRun,
@@ -174,6 +172,7 @@ export function ArtifactHeader({
   artifactMirrorEpoch: number;
   artifactMirrorRefreshing: boolean;
   artifactMirrorFeedback: string | null;
+  commandsReady: boolean;
   onRefreshArtifactMirror: () => void;
   onFilterChange: (filter: ArtifactWorkspaceFilter) => void;
   onSelectRecipeRun: (id: string | null) => void;
@@ -200,12 +199,21 @@ export function ArtifactHeader({
         <View style={styles.headerActions}>
           <Text style={styles.countText}>{artifactCount} artifacts</Text>
           <Pressable
-            style={[styles.refreshButton, artifactMirrorRefreshing && styles.refreshButtonDisabled]}
-            disabled={artifactMirrorRefreshing}
+            accessibilityLabel={
+              artifactMirrorFeedback
+                ? `Sync run artifacts. ${artifactMirrorFeedback}`
+                : 'Sync run artifacts'
+            }
+            testID="companion-artifacts-sync"
+            style={[
+              styles.refreshButton,
+              (artifactMirrorRefreshing || !commandsReady) && styles.refreshButtonDisabled,
+            ]}
+            disabled={artifactMirrorRefreshing || !commandsReady}
             onPress={onRefreshArtifactMirror}
           >
             <Text style={styles.refreshButtonText}>
-              {artifactMirrorRefreshing ? 'Refreshing…' : artifactMirrorFeedback || 'Refresh'}
+              {artifactMirrorRefreshing ? 'Syncing…' : artifactMirrorFeedback || 'Sync artifacts'}
             </Text>
           </Pressable>
         </View>

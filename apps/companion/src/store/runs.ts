@@ -1,23 +1,20 @@
 import { create } from 'zustand';
 
-import { mergeRunsById, type Run } from '@farmslot/protocol';
+import { type Run, type RunListResult } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 interface RunStore {
   runs: Run[];
+  observation: ResourceQueryState<RunListResult>;
   activeLoading: boolean;
   historyLoading: boolean;
   historyLoaded: boolean;
   setRuns: (runs: Run[]) => void;
-  mergeRuns: (runs: Run[]) => void;
-  setActiveLoading: (loading: boolean) => void;
-  setHistoryLoading: (loading: boolean) => void;
-  resetHistorySync: () => void;
-  upsertRun: (run: Run) => void;
-  removeRun: (id: string) => void;
 }
 
-export const useRunStore = create<RunStore>((set, get) => ({
+export const useRunStore = create<RunStore>((set) => ({
   runs: [],
+  observation: { status: 'loading' },
   activeLoading: false,
   historyLoading: false,
   historyLoaded: false,
@@ -29,32 +26,4 @@ export const useRunStore = create<RunStore>((set, get) => ({
       historyLoading: false,
       historyLoaded: false,
     }),
-
-  mergeRuns: (runs) => {
-    set({
-      runs: mergeRunsById(get().runs, runs),
-      historyLoading: false,
-      historyLoaded: true,
-    });
-  },
-
-  setActiveLoading: (activeLoading) => set({ activeLoading }),
-  setHistoryLoading: (historyLoading) => set({ historyLoading }),
-  resetHistorySync: () => set({ historyLoading: false, historyLoaded: false }),
-
-  upsertRun: (run) => {
-    const { runs } = get();
-    const idx = runs.findIndex((r) => r.id === run.id);
-    if (idx >= 0) {
-      const updated = [...runs];
-      updated[idx] = run;
-      set({ runs: updated });
-    } else {
-      set({ runs: [run, ...runs] });
-    }
-  },
-
-  removeRun: (id) => {
-    set({ runs: get().runs.filter((r) => r.id !== id) });
-  },
 }));

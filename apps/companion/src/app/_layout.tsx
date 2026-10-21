@@ -27,6 +27,7 @@ import { RecipeBridgeProvider } from '../farmslot';
 import { observeLocalStoreProof } from '../farmslot/local-store-proof';
 import { observeOfflineClientCacheProof } from '../farmslot/offline-client-cache-proof';
 import { observeOfflineClientStoreBaseline } from '../farmslot/offline-client-store-baseline';
+import { observeRunCollectionsProof } from '../farmslot/run-collections-proof';
 import { observeSourcesCacheProof } from '../farmslot/sources-cache-proof';
 import { initNotifications } from '../lib/notifications';
 import {
@@ -34,6 +35,7 @@ import {
   initializeNativeResourceCache,
   subscribeResourceCache,
 } from '../lib/resource-cache';
+import { initializeNativeRunCollections } from '../lib/run-collections';
 import { isStoreScreenshotMode, seedStoreScreenshotMode } from '../lib/store-screenshot-mode';
 import { colors } from '../lib/theme';
 import { useWorkspaceRenderAccess } from '../lib/use-workspace-render-access';
@@ -64,6 +66,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     const stopResourceCache = isStoreScreenshotMode ? () => {} : initializeNativeResourceCache();
+    const stopRunCollections = isStoreScreenshotMode ? () => {} : initializeNativeRunCollections();
     if (isStoreScreenshotMode) {
       seedStoreScreenshotMode();
     } else {
@@ -71,7 +74,10 @@ export default function RootLayout() {
     }
     void initTerminalPrefs();
     void initAttentionPrefs();
-    return stopResourceCache;
+    return () => {
+      stopRunCollections();
+      stopResourceCache();
+    };
   }, [init, initAttentionPrefs, initTerminalPrefs]);
 
   useEffect(() => {
@@ -253,6 +259,7 @@ function WorkspaceProviders({ children }: { children: React.ReactNode }) {
         __DEV__
           ? async (refs) =>
               (await observeSourcesCacheProof(refs)) ??
+              (await observeRunCollectionsProof(refs)) ??
               (await observeLocalStoreProof(refs)) ??
               (await observeOfflineClientCacheProof(refs)) ??
               observeOfflineClientStoreBaseline(refs)

@@ -93,8 +93,6 @@ export abstract class RunDetailState extends LitElement {
   @state() _connectionStale = false;
   @state() _directRunRefreshing = false;
   @state() _directRunRefreshFailed = false;
-  /** When the last direct fetch of a trimmed list row failed; gates the retry. */
-  _directRunFailedAt: number | null = null;
   @state() _directRunUnavailable = false;
   @state() _evidenceLightboxOpen = false;
   @state() _evidenceLightboxItems: LightboxItem[] = [];
@@ -117,22 +115,14 @@ export abstract class RunDetailState extends LitElement {
   @state() _selectedRecipeRunId = '';
   _confirmTimer?: ReturnType<typeof setTimeout>;
   _jumpTimer?: ReturnType<typeof setTimeout>;
-  _recipeRunsRefreshToken = Symbol('run-detail-recipe-runs');
-  _recipeRunsRefreshInFlight: Promise<void> | null = null;
-  _recipeRunsRefreshInFlightRunId = '';
   _pendingRecipeRunSelectionId = '';
-  _recipeRunsDelayedRefreshTimer?: ReturnType<typeof setTimeout>;
   unsub?: () => void;
   unsubProgress?: () => void;
   unsubCI?: () => void;
   _clock?: ReturnType<typeof setInterval>;
   _suppressHashSync = false;
-  _missingRunFetchAttempted = false;
   _lastRequestedRunId = '';
-  _directRun: Run | null = null;
-  _directRunRequestSeq = 0;
   _taskProgressRequestSeq = 0;
-  _siblingsRequestSeq = 0;
   _lastTaskProgressFetchAt = 0;
   _liveTimeoutRequestSeq = 0;
   _lastLiveTimeoutFetchAt = 0;

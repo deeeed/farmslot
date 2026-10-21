@@ -25,7 +25,8 @@ interface RecipeRunControlsProps {
   slotId: string | null | undefined;
   project?: string | null;
   recipeRunId?: string | null;
-  onComplete?: (requestId: string) => void;
+  commandsReady: boolean;
+  assertCurrent(): void;
 }
 
 interface RecipeOutputState {
@@ -60,9 +61,12 @@ export function RecipeRunControls({
   slotId,
   project,
   recipeRunId,
-  onComplete,
+  commandsReady,
+  assertCurrent,
 }: RecipeRunControlsProps) {
-  const [uiOptions, setUiOptions] = useState<RecipeRunnerUiOptions>(() => recipeRunnerUiOptions(null));
+  const [uiOptions, setUiOptions] = useState<RecipeRunnerUiOptions>(() =>
+    recipeRunnerUiOptions(null),
+  );
   const [playbackSlowMs, setPlaybackSlowMs] = useState(0);
   const [recordVideo, setRecordVideo] = useState(false);
   const [output, setOutput] = useState<RecipeOutputState | null>(null);
@@ -73,9 +77,11 @@ export function RecipeRunControls({
   const unsubscribersRef = useRef<Array<() => void>>([]);
   const earlyEventsRef = useRef<EarlyRecipeEvent[]>([]);
 
-  const canRun = Boolean(client && runId && slotId && !output?.running);
-  const canCancel = Boolean(client && slotId && output?.running && output.requestId);
-  const canCommand = Boolean(client && runId && slotId && !output?.running);
+  const canRun = Boolean(commandsReady && client && runId && slotId && !output?.running);
+  const canCancel = Boolean(
+    commandsReady && client && slotId && output?.running && output.requestId,
+  );
+  const canCommand = Boolean(commandsReady && client && runId && slotId && !output?.running);
   const params = useMemo(
     () =>
       recipeRequestParams(
@@ -198,15 +204,21 @@ export function RecipeRunControls({
         );
         runningGuardRef.current = false;
         clearSubscriptions();
-        onComplete?.(data.requestId);
       });
       unsubscribersRef.current = [unsubscribeOutput, unsubscribeComplete];
     },
-    [appendLines, clearSubscriptions, client, onComplete],
+    [appendLines, clearSubscriptions, client],
   );
 
   const runRecipe = useCallback(async () => {
-    if (!client || !params || runningGuardRef.current || outputRef.current?.running) return;
+    if (
+      !commandsReady ||
+      !client ||
+      !params ||
+      runningGuardRef.current ||
+      outputRef.current?.running
+    )
+      return;
     runningGuardRef.current = true;
     setError('');
     setCommandPreview('');
@@ -219,6 +231,7 @@ export function RecipeRunControls({
       lines: ['Connecting to gateway and starting recipe replay...'],
     });
     try {
+      assertCurrent();
       const result = await client.request<ScriptActionResult>(Methods.RECIPE_RERUN, params, 30_000);
       requestIdRef.current = result.requestId;
       const earlyEvents = earlyEventsRef.current.filter(
@@ -253,7 +266,6 @@ export function RecipeRunControls({
       if (earlyComplete) {
         runningGuardRef.current = false;
         clearSubscriptions();
-        onComplete?.(result.requestId);
       }
     } catch (err) {
       runningGuardRef.current = false;
@@ -268,11 +280,19 @@ export function RecipeRunControls({
         error: message,
       });
     }
-  }, [clearSubscriptions, client, onComplete, params, subscribeToOutput]);
+  }, [assertCurrent, commandsReady, clearSubscriptions, client, params, subscribeToOutput]);
 
   const cancelRecipe = useCallback(async () => {
-    if (!client || !slotId || !outputRef.current?.running || !outputRef.current.requestId) return;
+    if (
+      !commandsReady ||
+      !client ||
+      !slotId ||
+      !outputRef.current?.running ||
+      !outputRef.current.requestId
+    )
+      return;
     try {
+      assertCurrent();
       const result = await client.request<RecipeCancelResult>(Methods.RECIPE_CANCEL, {
         slotId,
         requestId: outputRef.current.requestId,
@@ -285,18 +305,19 @@ export function RecipeRunControls({
     } catch (err) {
       appendLines([`Cancel failed: ${err instanceof Error ? err.message : String(err)}`]);
     }
-  }, [appendLines, client, slotId]);
+  }, [appendLines, assertCurrent, commandsReady, client, slotId]);
 
   const showCommand = useCallback(async () => {
-    if (!client || !params) return;
+    if (!commandsReady || !client || !params) return;
     setError('');
     try {
+      assertCurrent();
       const result = await client.request<RecipeCommandResult>(Methods.RECIPE_COMMAND, params);
       setCommandPreview(result.command);
     } catch (err) {
       setError(`Failed to build command: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [client, params]);
+  }, [assertCurrent, commandsReady, client, params]);
 
   return (
     <View style={styles.card}>

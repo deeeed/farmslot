@@ -907,10 +907,25 @@ test('resource.changed uses the key read authorization and read replies carry re
   );
   const adminCredential = runtime.writer.issueCredential(admin.id, 'admin-resource-proof');
   const operatorCredential = runtime.writer.issueCredential(operator.id, 'operator-resource-proof');
+  const nativeOwner = runtime.writer.createPrincipal(
+    { type: 'service', displayName: 'resource-native-owner' },
+    [],
+  );
+  runtime.writer.createPrincipal(
+    {
+      type: 'node',
+      displayName: 'resource-node',
+      machine: 'resource-node',
+      nativeOwnerPrincipalId: nativeOwner.id,
+    },
+    [],
+  );
+  const nativeCredential = runtime.writer.issueCredential(nativeOwner.id, 'native-resource-proof');
   const harness = await startServer(runtime);
   try {
     const allowed = await connect(harness.url);
     const denied = await connect(harness.url);
+    const native = await connect(harness.url);
     await request(allowed, Methods.AUTH_CONNECT, {
       clientKind: 'ui',
       token: adminCredential.secret,
@@ -919,6 +934,14 @@ test('resource.changed uses the key read authorization and read replies carry re
       clientKind: 'ui',
       token: operatorCredential.secret,
     });
+    const nativeAuth = await request(native, Methods.AUTH_CONNECT, {
+      clientKind: 'companion',
+      token: nativeCredential.secret,
+    });
+    assert.equal(
+      (nativeAuth.payload as GatewayAuthConnectResult).capabilities.workspaceAccess,
+      'native',
+    );
     const snapshot = await request(allowed, Methods.SOURCES_STATUS, {});
     assert.equal(snapshot.ok, true);
     assert.equal(snapshot.resourceState?.epoch, resourceRevisions.epoch);
@@ -928,7 +951,20 @@ test('resource.changed uses the key read authorization and read replies carry re
         revision: resourceRevisions.revision({ family: 'sources', scope: 'farm' }),
       },
     ]);
+    const runList = await request(denied, Methods.RUN_LIST, { limit: 0 });
+    assert.equal(runList.ok, true);
+    assert.deepEqual(runList.resourceState?.dependencies, [
+      {
+        key: { family: 'runs', scope: 'farm' },
+        revision: resourceRevisions.revision({ family: 'runs', scope: 'farm' }),
+      },
+    ]);
     const deniedNotices: EventFrame[] = [];
+    const nativeNotices: EventFrame[] = [];
+    native.on('message', (raw) => {
+      const frame = JSON.parse(raw.toString()) as EventFrame;
+      if (frame.event === Events.RESOURCE_CHANGED) nativeNotices.push(frame);
+    });
     denied.on('message', (raw) => {
       const frame = JSON.parse(raw.toString()) as EventFrame;
       if (frame.event === Events.RESOURCE_CHANGED) deniedNotices.push(frame);
@@ -944,20 +980,58 @@ test('resource.changed uses the key read authorization and read replies carry re
       epoch: resourceRevisions.epoch,
       changes: [
         { key: { family: 'sources', scope: 'farm' }, revision: 999, kind: 'updated' },
-        { key: { family: 'run', runId: 'not-yet-migrated' }, revision: 1, kind: 'updated' },
+        { key: { family: 'runs', scope: 'farm' }, revision: 1, kind: 'updated' },
+        { key: { family: 'run', runId: 'changed-run' }, revision: 1, kind: 'updated' },
+        { key: { family: 'family', familyId: 'changed-family' }, revision: 1, kind: 'updated' },
+        { key: { family: 'decisions', scope: 'farm' }, revision: 1, kind: 'updated' },
+        {
+          key: { family: 'decision', decisionId: 'changed-decision' },
+          revision: 1,
+          kind: 'updated',
+        },
+        { key: { family: 'gate', runId: 'changed-run' }, revision: 1, kind: 'updated' },
+        { key: { family: 'package', runId: 'changed-run' }, revision: 1, kind: 'updated' },
+        { key: { family: 'review', runId: 'changed-run' }, revision: 1, kind: 'updated' },
+        { key: { family: 'artifacts', runId: 'changed-run' }, revision: 1, kind: 'updated' },
+        { key: { family: 'slots', scope: 'farm' }, revision: 1, kind: 'updated' },
+        { key: { family: 'slot', slotId: 'changed-slot' }, revision: 1, kind: 'updated' },
       ],
     });
     const frame = await received;
     assert.deepEqual((frame.payload as { changes: unknown[] }).changes, [
       { key: { family: 'sources', scope: 'farm' }, revision: 999, kind: 'updated' },
+      { key: { family: 'runs', scope: 'farm' }, revision: 1, kind: 'updated' },
+      { key: { family: 'run', runId: 'changed-run' }, revision: 1, kind: 'updated' },
+      { key: { family: 'family', familyId: 'changed-family' }, revision: 1, kind: 'updated' },
+      { key: { family: 'decisions', scope: 'farm' }, revision: 1, kind: 'updated' },
+      { key: { family: 'decision', decisionId: 'changed-decision' }, revision: 1, kind: 'updated' },
+      { key: { family: 'gate', runId: 'changed-run' }, revision: 1, kind: 'updated' },
+      { key: { family: 'package', runId: 'changed-run' }, revision: 1, kind: 'updated' },
+      { key: { family: 'review', runId: 'changed-run' }, revision: 1, kind: 'updated' },
+      { key: { family: 'artifacts', runId: 'changed-run' }, revision: 1, kind: 'updated' },
+      { key: { family: 'slots', scope: 'farm' }, revision: 1, kind: 'updated' },
+      { key: { family: 'slot', slotId: 'changed-slot' }, revision: 1, kind: 'updated' },
     ]);
     // This response is a websocket ordering barrier, rather than a fixed absence wait.
     const refusal = await request(denied, Methods.SOURCES_STATUS, {});
     assert.equal(refusal.error?.code, 'AUTH_FORBIDDEN');
-    assert.equal(deniedNotices.length, 0);
+    assert.equal((await request(denied, Methods.FLEET_STATUS, {})).error?.code, 'AUTH_FORBIDDEN');
+    assert.equal((await request(native, Methods.FLEET_STATUS, {})).error?.code, 'AUTH_FORBIDDEN');
+    assert.deepEqual(nativeNotices, [], 'Native ownership does not grant farm slot or run keys');
+    assert.deepEqual(
+      deniedNotices.map((notice) => notice.payload),
+      [
+        {
+          version: 1,
+          epoch: resourceRevisions.epoch,
+          changes: [{ key: { family: 'runs', scope: 'farm' }, revision: 1, kind: 'updated' }],
+        },
+      ],
+    );
     allowed.close();
     denied.close();
-    await Promise.all([onceClose(allowed), onceClose(denied)]);
+    native.close();
+    await Promise.all([onceClose(allowed), onceClose(denied), onceClose(native)]);
   } finally {
     await harness.close();
   }

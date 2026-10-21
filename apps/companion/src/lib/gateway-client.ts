@@ -29,6 +29,7 @@ import {
   type GatewayHttpAuthHeaders,
   gatewayHttpAuthHeaders,
 } from './gateway-http-auth';
+import { nativeCollectionReadTimeout } from './gateway-run-sync';
 import { createOfflineClientStoreBaseline } from './offline-client-store-baseline';
 import {
   type WorkspaceAccess,
@@ -421,7 +422,7 @@ export class GatewayClient {
     return this.request<ResourceReadResult<T>>(
       method,
       params,
-      resourceReadTimeout(method) ?? DEFAULT_TIMEOUT,
+      nativeCollectionReadTimeout(method, params) ?? resourceReadTimeout(method) ?? DEFAULT_TIMEOUT,
       {
         includeResourceState: true,
         signal,

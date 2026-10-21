@@ -19,6 +19,7 @@ import { FLOW_COLORS, FLOW_LABELS, projectColor, RUNNER_COLORS } from '@farmslot
 
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
 import { FilterEmptyState } from '../../components/FilterEmptyState';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunPipelineMini } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import {
@@ -30,6 +31,7 @@ import {
 } from '../../lib/artifact-url';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
+import { openNativeRunHistory } from '../../lib/run-collections';
 import {
   type RunEvidenceSignal,
   runEvidenceSignalRouteTarget,
@@ -663,10 +665,11 @@ export default function RunsScreen() {
   const insets = useSafeAreaInsets();
   const runs = useRunStore((s) => s.runs);
   const activeLoading = useRunStore((s) => s.activeLoading);
+  const observation = useRunStore((s) => s.observation);
   const historyLoading = useRunStore((s) => s.historyLoading);
   const status = useConnectionStore((s) => s.status);
   const lastSyncError = useConnectionStore((s) => s.lastSyncError);
-  const syncRunHistory = useConnectionStore((s) => s.syncRunHistory);
+  const syncRunHistory = openNativeRunHistory;
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const filters = useFilterStore((s) => s.filters);
@@ -817,7 +820,8 @@ export default function RunsScreen() {
 
   return (
     <View testID="companion-screen-review" collapsable={false} style={baseStyles.container}>
-      {status === 'connected' ? runScopeHeader : null}
+      <ResourceReadStatus observation={observation} label="runs" />
+      {status === 'connected' || observation.data ? runScopeHeader : null}
       {runRows.length === 0 ? (
         status === 'connected' && runsSyncMessage ? (
           <View style={[styles.emptyContainer, { paddingBottom: insets.bottom }]}>

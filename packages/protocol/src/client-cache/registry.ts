@@ -2,9 +2,16 @@ import { Methods } from '../rpc/registry.js';
 
 import { canonicalResourceJson, type ResourceKey } from './keys.js';
 
+export interface ResourceQueryRetention {
+  readonly maxEntries: number;
+  readonly maxBytes: number;
+}
+
 export interface ResourceQueryDefinition {
   persisted: boolean;
   maxBytes: number;
+  /** Shared bound across this method's canonical query entries. */
+  retention?: ResourceQueryRetention;
   /** Preserve a migrated read's existing transport timeout when it differs from the default. */
   timeoutMs?: number;
   /** Becomes true only when the slice's writers and read stamps are implemented. */
@@ -29,22 +36,83 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     dependencies: () => [{ family: 'sources', scope: 'farm' }],
   },
   [Methods.RUN_LIST]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 20 * mb,
-    live: false,
+    retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 20 * mb },
+    live: true,
     dependencies: () => [{ family: 'runs', scope: 'farm' }],
   },
   [Methods.RUN_GET]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 20 * mb,
-    live: false,
-    dependencies: (params: unknown) => [{ family: 'run', runId: requiredId(params, 'runId') }],
+    retention: { maxEntries: 50, maxBytes: 20 * mb },
+    live: true,
+    dependencies: (params: unknown) => [
+      { family: 'run', runId: requiredId(params, 'runId') },
+      // Review-round budgets include other runs of the same PR.
+      { family: 'runs', scope: 'farm' },
+    ],
   },
   [Methods.DECISION_LIST]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 10 * mb,
-    live: false,
+    retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 10 * mb },
+    live: true,
     dependencies: () => [{ family: 'decisions', scope: 'farm' }],
+  },
+  [Methods.FAMILY_OBSERVABILITY_GET]: {
+    persisted: false,
+    maxBytes: 2 * mb,
+    live: true,
+    dependencies: (params: unknown) => [
+      { family: 'family', familyId: requiredId(params, 'familyId') },
+      // Retrospectives re-derive consumption from feedback and monitor observations.
+      { family: 'decisions', scope: 'farm' },
+    ],
+  },
+  [Methods.RUN_RECIPE_RUNS_FOR_RUN]: {
+    persisted: false,
+    maxBytes: 2 * mb,
+    timeoutMs: 60_000,
+    live: true,
+    dependencies: (params: unknown) => [
+      { family: 'run', runId: requiredId(params, 'runId') },
+      { family: 'artifacts', runId: requiredId(params, 'runId') },
+    ],
+  },
+  [Methods.RUN_SLOT_HISTORY]: {
+    persisted: false,
+    maxBytes: 2 * mb,
+    live: true,
+    dependencies: () => [
+      { family: 'runs', scope: 'farm' },
+      { family: 'slots', scope: 'farm' },
+    ],
+  },
+  [Methods.RUN_FOR_SLOT]: {
+    persisted: false,
+    maxBytes: 20 * mb,
+    live: true,
+    dependencies: (params: unknown) => [
+      { family: 'runs', scope: 'farm' },
+      { family: 'slot', slotId: requiredId(params, 'slotId') },
+    ],
+  },
+  [Methods.RUN_RECIPE_RUNS_FOR_SLOT]: {
+    persisted: false,
+    maxBytes: 2 * mb,
+    timeoutMs: 60_000,
+    live: true,
+    dependencies: (params: unknown) => [
+      { family: 'runs', scope: 'farm' },
+      { family: 'slot', slotId: requiredId(params, 'slotId') },
+    ],
+  },
+  [Methods.RUN_TAGS_LIST]: {
+    persisted: false,
+    maxBytes: 2 * mb,
+    live: true,
+    dependencies: () => [{ family: 'runs', scope: 'farm' }],
   },
   [Methods.FLEET_STATUS]: {
     persisted: false,
@@ -70,6 +138,7 @@ export interface ResourceQuery<T = unknown> {
   readonly dependencies: readonly ResourceKey[];
   readonly persisted: boolean;
   readonly maxBytes: number;
+  readonly retention?: ResourceQueryRetention;
   readonly live: boolean;
   readonly [queryData]?: T;
 }
@@ -90,6 +159,7 @@ export function resourceQuery<T = unknown>(
     dependencies: definition.dependencies(normalized),
     persisted: definition.persisted,
     maxBytes: definition.maxBytes,
+    ...(definition.retention ? { retention: { ...definition.retention } } : {}),
     live: definition.live,
   };
 }

@@ -86,7 +86,7 @@ function runDiffStatForSlotHistory(run: Run): DiffStat & { available: boolean } 
 export async function runSlotHistory(params: SlotRunHistoryParams): Promise<SlotRunHistoryResult> {
   const slotId = params?.slotId?.trim();
   if (!slotId) throw new Error('slotId is required');
-  const slot = (await loadFleetStatus()).slots.find((s) => s.slot === slotId);
+  const slot = (await loadFleetStatus(true, true)).slots.find((s) => s.slot === slotId);
   const { runs, totalCount } = listRunsForSlotHistory(slotId, { limit: params.limit });
   return {
     slotId,

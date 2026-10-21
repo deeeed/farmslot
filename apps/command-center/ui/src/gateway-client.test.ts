@@ -45,6 +45,46 @@ test(
   },
 );
 
+test(
+  'shared run evidence reads keep their existing 60-second deadline',
+  { timeout: 4000 },
+  async (t) => {
+    const fake = installFakeGateway(t);
+    const { GatewayClient, gateway } = await import('./gateway-client.js');
+    const client = new GatewayClient('ws://localhost:1234/ws', { token: 'proof' });
+    t.after(() => {
+      client.disconnect();
+      gateway.disconnect();
+    });
+    client.connect();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const socket = fake.sockets.at(-1)!;
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    let complete = false;
+    const reading = client
+      .requestResource('run.recipeRunsForRun', { runId: 'retained' })
+      .then((value) => {
+        complete = true;
+        return value;
+      });
+    const id = socket.sent.at(-1)!.id;
+    t.mock.timers.tick(59_000);
+    await Promise.resolve();
+    assert.equal(complete, false);
+    socket.response(id, { recipeRuns: [], selectedRecipeRunId: null });
+    assert.deepEqual(await reading, {
+      data: { recipeRuns: [], selectedRecipeRunId: null },
+      resourceState: undefined,
+    });
+    const timedOut = assert.rejects(
+      client.requestResource('run.recipeRunsForRun', { runId: 'slow' }),
+      /60000ms/,
+    );
+    t.mock.timers.tick(60_000);
+    await timedOut;
+  },
+);
+
 for (const code of ['TIMEOUT', 'AUTH_FAILED']) {
   test(`browser reconnect ${code} ${code === 'TIMEOUT' ? 'preserves' : 'deletes'} cached observations`, async (t) => {
     const fake = installFakeGateway(t);

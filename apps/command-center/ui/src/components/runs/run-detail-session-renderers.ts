@@ -204,6 +204,7 @@ export function runnerSessionOpenRefusal(result: RunSessionCommandResult): strin
 }
 
 export interface RunSessionRenderContext {
+  actionsBlocked?: boolean;
   states: Record<string, RunSessionRowState | undefined>;
   onCopy: (row: RunSessionRow, kind: RunSessionCopyKind) => void;
   onOpenOnHost?: (row: RunSessionRow) => void;
@@ -287,6 +288,7 @@ function renderSessionOpenButton(
   row: RunSessionRow,
   state: RunSessionRowState | undefined,
   onOpenOnHost: (row: RunSessionRow) => void,
+  actionsBlocked = false,
 ) {
   const opening = state?.status === 'opening';
   return html`
@@ -296,7 +298,7 @@ function renderSessionOpenButton(
       data-open-state=${opening ? 'opening' : 'idle'}
       title="Recover this session on the slot's node and open it in the terminal view"
       aria-label="Open this session on the host"
-      ?disabled=${opening || state?.status === 'loading'}
+      ?disabled=${actionsBlocked || opening || state?.status === 'loading'}
       @click=${() => onOpenOnHost(row)}
     >
       ${openGlyph()}
@@ -540,7 +542,7 @@ export function renderRunAgentSessions(
                   : html`${renderSessionCopyButton(row, 'reopen', state, ctx.onCopy)}
                     ${renderSessionCopyButton(row, 'attach', state, ctx.onCopy)}
                     ${ctx.onOpenOnHost
-                      ? renderSessionOpenButton(row, state, ctx.onOpenOnHost)
+                      ? renderSessionOpenButton(row, state, ctx.onOpenOnHost, ctx.actionsBlocked)
                       : nothing}`}
             </span>
             ${state?.command

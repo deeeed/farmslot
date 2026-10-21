@@ -17,15 +17,14 @@ import {
   liveGateParkView,
   Methods,
   type RecipeRunArtifactGroup,
-  type Run,
+  type RunGetResult,
   type RunRecipeRunsForRunResult,
-  type RunRecordedEvidenceReview,
-  type RunReplayStepResult,
   type RunStep,
   type TaskProgressResult,
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   humanGateBlockingReason,
   pendingOutputReview,
@@ -33,12 +32,13 @@ import {
   runResultsSummary,
 } from '@farmslot/review-dispatch';
 
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
-import { useConnectedTransport } from '../../hooks/useConnectedTransport';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { useRunOutputReport } from '../../hooks/useRunOutputReport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
@@ -52,8 +52,8 @@ import { diffArtifactCandidate } from '../../lib/diff';
 import { gateReviewHref, openHumanGateDecision } from '../../lib/gate-review';
 import { nativeRunConversationParams } from '../../lib/native-worker-target';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
-import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
-import { runRefreshEventMatches } from '../../lib/run-refresh';
+import { getResourceCache } from '../../lib/resource-cache';
+import { assertNativeRunReady } from '../../lib/run-collections';
 import {
   runWorkspaceDiffValue,
   selectSlotCompareTarget,
@@ -83,14 +83,12 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
-import { useRunStore } from '../../store/runs';
 import { GateReviewEntryCard } from '../gate-review/components/gate-review-panels';
 import { NativeWorkerLinks } from '../native-conversation/components/NativeWorkerLinks';
 import { SourceStatusSection } from '../sources/SourceStatusSection';
 import { CancelledRunSlotRelease } from '../workspace-shared/CancelledRunSlotRelease';
 import { formatDuration } from '../workspace-shared/format';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
-import { readReviewRun } from '../workspace-shared/review-publication-action';
 import { ReviewPublication } from '../workspace-shared/ReviewPublication';
 
 import { InteractiveOperatorPacketsPanel } from './components/InteractiveOperatorPacketsPanel';
@@ -107,6 +105,8 @@ import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
 import { RunResultsCard } from './components/RunResultsCard';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
+
+const emptyRecipeRuns: RecipeRunArtifactGroup[] = [];
 
 const STATUS_COLORS: Record<string, string> = {
   done: colors.statusOk,
@@ -137,37 +137,63 @@ export default function RunDetailScreen() {
   const router = useRouter();
   const client = useConnectionStore((s) => s.client);
   const connectionStatus = useConnectionStore((s) => s.status);
-  const connection = useConnectedTransport();
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
-  const storeRun = useRunStore((s) => s.runs.find((r) => r.id === resolvedRunId));
   const fleetSlots = useFleetStore((s) => s.fleet?.slots);
-  const upsertRun = useRunStore((s) => s.upsertRun);
   const profileId = useConnectionStore((s) => s.activeProfileId);
   const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
-  // A transport pause invalidates pending reads, not already-authorized evidence.
-  const readIdentity = `${resolvedRunId}:${profileId}:${authorityEpoch}`;
-  const readScope = useRef({ client, identity: readIdentity });
-  if (readScope.current.client !== client || readScope.current.identity !== readIdentity)
-    readScope.current = { client, identity: readIdentity };
-  const readRequest = useRef(0);
+  const scopeKey = JSON.stringify([resolvedRunId, profileId, authorityEpoch]);
+  const scope = useRef({ key: scopeKey, client });
+  if (scope.current.key !== scopeKey || scope.current.client !== client)
+    scope.current = { key: scopeKey, client };
   const mounted = useRef(true);
+  const progressRequest = useRef(0);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
-  const [loadedRun, setLoadedRun] = useState<{ scope: object; run: Run }>();
-  const run = loadedRun?.scope === readScope.current ? loadedRun.run : (storeRun ?? null);
-  const setRun = (value: Run) => setLoadedRun({ scope: readScope.current, run: value });
-  const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
+  const requestedRecipeRunId = Array.isArray(recipeRun)
+    ? (recipeRun[0] ?? null)
+    : (recipeRun ?? null);
+  const runQuery = useMemo(
+    () =>
+      resolvedRunId ? resourceQuery<RunGetResult>('run.get', { runId: resolvedRunId }) : undefined,
+    [resolvedRunId],
+  );
+  const recipeQuery = useMemo(
+    () =>
+      resolvedRunId
+        ? resourceQuery<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
+            runId: resolvedRunId,
+            includeRecordedEvidence: true,
+            ...(requestedRecipeRunId && requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+              ? { recipeRunId: requestedRecipeRunId }
+              : {}),
+          })
+        : undefined,
+    [resolvedRunId, requestedRecipeRunId],
+  );
+  const runObservation = useResourceQuery(runQuery);
+  const recipeObservation = useResourceQuery(recipeQuery);
+  const run = runObservation.data?.run ?? null;
+  const recipeRuns = recipeObservation.data?.recipeRuns ?? emptyRecipeRuns;
+  const recordedEvidence = recipeObservation.data?.recordedEvidence ?? null;
+  const recipeRunsLoaded = recipeObservation.data !== undefined;
+  const selectedRecipeRunId =
+    requestedRecipeRunId === DECISION_EVIDENCE_RECIPE_RUN_PARAM
+      ? null
+      : resolveRecipeRunSelection(
+          recipeRuns,
+          requestedRecipeRunId,
+          recipeObservation.data?.selectedRecipeRunId,
+        );
   // The open output review's snapshot is what the retained report is checked against.
   const outputReview = useMemo(() => pendingOutputReview(run), [run]);
-  const [recordedEvidence, setRecordedEvidence] = useState<RunRecordedEvidenceReview | null>(null);
-  const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
-  const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setError] = useState<string | null>(null);
+  const error =
+    actionError ?? runObservation.error?.message ?? recipeObservation.error?.message ?? null;
   const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
   // The acceptance ledger (ADR-060) rides the same progress read and broadcast.
   const [acceptanceStatus, setAcceptanceStatus] = useState<AcceptanceStatusLedger | null>(null);
@@ -178,12 +204,6 @@ export default function RunDetailScreen() {
   const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [replayingStepName, setReplayingStepName] = useState<string | null>(null);
-  const recipeRunsRequestRef = useRef(0);
-
-  const requestedRecipeRunId = Array.isArray(recipeRun)
-    ? (recipeRun[0] ?? null)
-    : (recipeRun ?? null);
-  const requestedRecipeRunIdRef = useRef<string | null>(requestedRecipeRunId);
   const requestedArtifactPath = Array.isArray(artifact) ? (artifact[0] ?? '') : (artifact ?? '');
   const workspaceRouteContext = useMemo(
     () =>
@@ -203,10 +223,6 @@ export default function RunDetailScreen() {
       targetWorkspaceRouteContextParams(targetWorkspace, workspaceRouteContext.decisionKind),
     [workspaceRouteContext.decisionKind],
   );
-
-  useEffect(() => {
-    requestedRecipeRunIdRef.current = requestedRecipeRunId;
-  }, [requestedRecipeRunId]);
 
   const evidencePending = run ? runEvidencePending(run) : false;
   const evidenceModel = useMemo(
@@ -248,140 +264,37 @@ export default function RunDetailScreen() {
     gatewayUrl,
     authHeaders: artifactAuthHeaders,
   });
-  const loadRecipeRuns = useCallback(
-    (selectionHint: string | null) => {
-      const requestId = recipeRunsRequestRef.current + 1;
-      recipeRunsRequestRef.current = requestId;
-      if (!client || !resolvedRunId) {
-        setRecipeRunsLoaded(false);
-        return Promise.resolve();
-      }
-      setRecipeRunsLoaded(false);
-      return client
-        .request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-          runId: resolvedRunId,
-          includeRecordedEvidence: true,
-          ...(selectionHint && selectionHint !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
-            ? { recipeRunId: selectionHint }
-            : {}),
-        })
-        .then((result) => {
-          if (recipeRunsRequestRef.current !== requestId) return;
-          setRecipeRuns(result.recipeRuns);
-          setRecordedEvidence(result.recordedEvidence ?? null);
-          setSelectedRecipeRunId(
-            selectionHint === DECISION_EVIDENCE_RECIPE_RUN_PARAM
-              ? null
-              : resolveRecipeRunSelection(
-                  result.recipeRuns,
-                  selectionHint,
-                  result.selectedRecipeRunId,
-                ),
-          );
-        })
-        .catch((err: Error) => {
-          if (recipeRunsRequestRef.current !== requestId) return;
-          throw err;
-        })
-        .finally(() => {
-          if (recipeRunsRequestRef.current === requestId) setRecipeRunsLoaded(true);
-        });
-    },
-    [client, resolvedRunId],
-  );
+  const retryRun = useCallback(async () => {
+    if (runQuery) await getResourceCache()?.retry(runQuery);
+    if (recipeQuery) await getResourceCache()?.retry(recipeQuery);
+  }, [runQuery, recipeQuery]);
 
-  const loadRun = useCallback(() => {
-    if (!client || !resolvedRunId || connection === null) return Promise.resolve();
-    const scope = readScope.current;
-    const request = ++readRequest.current;
-    const connectionCurrent = currentFarmConnection(client, useConnectionStore.getState);
-    const current = () =>
-      mounted.current &&
-      readScope.current === scope &&
-      readRequest.current === request &&
-      connectionCurrent();
+  useEffect(() => {
     setError(null);
-    return readReviewRun(client, resolvedRunId, current, (value) => {
-      setLoadedRun({ scope, run: value });
-    }).catch((err: Error) => {
-      if (!current()) return;
-      if (isGatewayBackgroundPauseError(err)) {
-        // Reconnect retries a paused read while cached run data stays visible.
-        console.warn(`Run refresh paused: ${err.message}`);
-        return;
-      }
-      setError(`Failed to load run: ${err.message}`);
-    });
-  }, [client, resolvedRunId, connection, profileId, authorityEpoch]);
-
-  useEffect(() => {
-    // Each reconnect re-reads: the operator packets' publish guard judges this run.
-    if (connection === null) return;
-    void loadRun();
-  }, [connection, loadRun]);
-
-  const noteRecipeRunsUnavailable = useCallback((err: Error) => {
-    if (isGatewayBackgroundPauseError(err)) {
-      // Recipe artifacts are secondary context; route changes/background pauses can
-      // race the refresh without blocking the primary evidence/diff/terminal review.
-      console.warn(`Recipe runs unavailable: ${err.message}`);
-      return;
-    }
-    setError(`Failed to load recipe runs: ${err.message}`);
-  }, []);
-
-  useEffect(() => {
-    // Each reconnect re-reads, as the run does: a load that was paused before the gateway
-    // connected, or while it restarted, otherwise leaves the recorded evidence and its
-    // report missing until the screen is opened again.
-    if (connection === null) return;
-    loadRecipeRuns(requestedRecipeRunId).catch(noteRecipeRunsUnavailable);
-  }, [connection, loadRecipeRuns, noteRecipeRunsUnavailable, requestedRecipeRunId]);
-
-  useEffect(() => {
-    if (!client || !resolvedRunId || connection === null) return;
-    const scope = readScope.current;
-    const connectionCurrent = currentFarmConnection(client, useConnectionStore.getState);
-    const handleRunEvent = (payload: unknown, _reason: string) => {
-      if (!mounted.current || readScope.current !== scope || !connectionCurrent()) return;
-      const event = payload as { run?: Run; runId?: string };
-      if (!runRefreshEventMatches(resolvedRunId, event)) return;
-      if (event.run?.id === resolvedRunId) {
-        ++readRequest.current; // A complete event supersedes any earlier run.get reply.
-        setLoadedRun({ scope, run: event.run });
-        upsertRun(event.run);
-      } else {
-        void loadRun();
-      }
-      loadRecipeRuns(requestedRecipeRunIdRef.current).catch(noteRecipeRunsUnavailable);
-    };
-    const unsubscribers = [
-      client.subscribe(Events.RUN_UPDATED, (payload) => handleRunEvent(payload, 'run.updated')),
-      client.subscribe(Events.RUN_COMPLETED, (payload) => handleRunEvent(payload, 'run.completed')),
-      client.subscribe(Events.RUN_STEP_COMPLETED, (payload) =>
-        handleRunEvent(payload, 'run.step.completed'),
-      ),
-      client.subscribe(Events.RUN_DECISION_NEW, (payload) =>
-        handleRunEvent(payload, 'run.decision.new'),
-      ),
-      client.subscribe(Events.RUN_DECISION_RESOLVED, (payload) =>
-        handleRunEvent(payload, 'run.decision.resolved'),
-      ),
-      client.subscribe(Events.RUN_DECISION_UPDATED, (payload) =>
-        handleRunEvent(payload, 'run.decision.updated'),
-      ),
-    ];
-    return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
-    };
-  }, [client, connection, loadRecipeRuns, loadRun, resolvedRunId, upsertRun]);
+    setExpandedStep(null);
+    setReplayingStepName(null);
+    setTaskProgress(null);
+    setAcceptanceStatus(null);
+    setAcceptanceCriteria(null);
+    setAcceptanceStatusError(null);
+    setTaskProgressError(null);
+  }, [resolvedRunId, profileId, authorityEpoch]);
 
   const fetchTaskProgress = useCallback(() => {
     const params = taskProgressRequestForRun(run);
     if (!client || !params) return Promise.resolve();
+    const owner = scope.current;
+    const request = ++progressRequest.current;
+    const connected = currentFarmConnection(client);
+    const current = () =>
+      mounted.current &&
+      scope.current === owner &&
+      progressRequest.current === request &&
+      connected();
     return client
       .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
       .then((result) => {
+        if (!current()) return;
         setTaskProgress(result.structured ?? null);
         setAcceptanceStatus(result.acceptanceStatus ?? null);
         setAcceptanceCriteria(result.acceptanceCriteria ?? null);
@@ -389,13 +302,17 @@ export default function RunDetailScreen() {
         setTaskProgressError(null);
       })
       .catch((err: Error) => {
+        if (!current()) return;
         setTaskProgressError(`Task progress unavailable: ${err.message}`);
       });
-  }, [client, run?.id, run?.slotId, run?.reviewWorkspace?.workspaceId]);
+  }, [client, run?.id, run?.slotId, run?.reviewWorkspace?.workspaceId, profileId, authorityEpoch]);
 
   useEffect(() => {
     if (!isTimelineTab || !client || !run) return;
+    const owner = scope.current;
+    const connected = currentFarmConnection(client);
     const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
+      if (!mounted.current || scope.current !== owner || !connected()) return;
       const update = payload as TaskProgressUpdatedPayload;
       if (!shouldAcceptTaskProgressUpdate(run, update)) return;
       setTaskProgress(update.progress.structured ?? null);
@@ -439,22 +356,21 @@ export default function RunDetailScreen() {
       setReplayingStepName(stepName);
       setError(null);
       try {
-        const result = await client.request<RunReplayStepResult>(Methods.RUN_REPLAY_STEP, {
+        assertNativeRunReady(run.id, run);
+        await client.request(Methods.RUN_REPLAY_STEP, {
           runId: run.id,
           stepName,
           ...(skipPrepare ? { skipPrepare: true } : {}),
         });
         if (!isCurrent()) return;
-        setRun(result.run);
-        upsertRun(result.run);
         setExpandedStep(null);
       } catch (err) {
-        setError(`Failed to retry from ${stepName}: ${(err as Error).message}`);
+        if (isCurrent()) setError(`Failed to retry from ${stepName}: ${(err as Error).message}`);
       } finally {
-        setReplayingStepName(null);
+        if (isCurrent()) setReplayingStepName(null);
       }
     },
-    [client, run, upsertRun],
+    [client, run],
   );
 
   const confirmReplayStep = useCallback(
@@ -552,7 +468,7 @@ export default function RunDetailScreen() {
       <View style={[baseStyles.container, { paddingBottom: insets.bottom }]}>
         <RunDetailSkeleton
           error={error ?? (connectionStatus !== 'connected' ? 'Connect to the gateway' : undefined)}
-          retry={() => void loadRun()}
+          retry={() => void retryRun()}
         />
         <Pressable style={styles.backFallbackButton} onPress={goBackOrRuns}>
           <Text style={styles.backFallbackText}>Back to runs</Text>
@@ -574,7 +490,8 @@ export default function RunDetailScreen() {
     isTerminalRunStatus(run.status) &&
     !run.engineState?.operatorForceCompleted &&
     Boolean(client) &&
-    connectionStatus === 'connected';
+    connectionStatus === 'connected' &&
+    runObservation.status === 'ready';
   const cancelledSlot = cancelledRunSlotChoices(run, fleetSlots ?? []);
   const focusedArtifactPath = requestedArtifactPath.trim() || null;
   const focusedArtifactIsDiff = Boolean(
@@ -585,8 +502,10 @@ export default function RunDetailScreen() {
     verdict: Parameters<typeof recordVisualClaimReview>[4],
     reason?: string,
   ) => {
+    assertNativeRunReady(run.id, run);
+    if (recipeObservation.status !== 'ready')
+      throw new Error('Wait for current evidence before acting.');
     await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
-    await loadRecipeRuns(selectedRecipeRunId);
   };
   const openAcceptanceEvidence = (criterionId: string, path: string) =>
     router.push(acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId));
@@ -664,6 +583,8 @@ export default function RunDetailScreen() {
 
   return (
     <View style={baseStyles.container}>
+      <ResourceReadStatus observation={runObservation} label="run" />
+      <ResourceReadStatus observation={recipeObservation} label="run evidence" />
       <Animated.ScrollView
         testID="companion-screen-run-detail"
         collapsable={false}
@@ -1146,7 +1067,11 @@ export default function RunDetailScreen() {
               <TaskAcceptancePanel
                 evidenceModel={evidenceModel}
                 judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
-                onRecordVisualReview={recordRunVisualReview}
+                onRecordVisualReview={
+                  runObservation.status === 'ready' && recipeObservation.status === 'ready'
+                    ? recordRunVisualReview
+                    : undefined
+                }
                 acceptanceStatus={acceptanceStatus}
                 acceptanceCriteria={acceptanceCriteria}
                 error={acceptanceStatusError}
@@ -1287,7 +1212,11 @@ export default function RunDetailScreen() {
         report={outputReport}
         evidenceModel={evidenceModel}
         judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
-        onRecordVisualReview={recordRunVisualReview}
+        onRecordVisualReview={
+          runObservation.status === 'ready' && recipeObservation.status === 'ready'
+            ? recordRunVisualReview
+            : undefined
+        }
         onOpenEvidence={openAcceptanceEvidence}
         onOpenArtifact={(path) => openRunEvidenceArtifact(path, DECISION_EVIDENCE_RECIPE_RUN_PARAM)}
       />

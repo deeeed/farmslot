@@ -1,0 +1,2076 @@
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { access, chmod, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+
+import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
+
+import { withOwnedGatewayOffline } from './owned-gateway-outage.mjs';
+
+const execute = promisify(execFile);
+const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
+const phase = process.argv[2];
+assert(
+  [
+    'file-decision',
+    'mirror-arrival',
+    'missing-run',
+    'inbox-expiry',
+    'quiet-gate',
+    'feedback-consumption',
+    'query-stamps',
+    'inbox-web',
+    'list-web',
+    'bulk-archive-web',
+    'detail-web',
+    'detail-deletion-web',
+    'compare-web',
+    'family-web',
+    'load-modal-web',
+    'history-web',
+    'store-navigation-web',
+  ].includes(phase),
+  'Select a run proof phase',
+);
+assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1', 'Select the isolated proof stack');
+if (phase.endsWith('-web'))
+  assert(/^\d+$/.test(process.env.FARMSLOT_CDP_PORT ?? ''), 'Select the private browser');
+assert(process.env.FARMSLOT_HOME && process.env.FARMSLOT_GATEWAY_PROFILE);
+assert(/^\d+$/.test(process.env.GATEWAY_PORT ?? ''));
+assert.equal(await realpath(process.cwd()), await realpath(root), 'Run from the reviewed checkout');
+const profile = await automationGatewayTarget();
+assert(profile, 'Select an authenticated test profile');
+const gateway = new URL(profile.url);
+assert(['localhost', '127.0.0.1', '[::1]'].includes(gateway.hostname));
+assert.equal(Number(gateway.port), Number(process.env.GATEWAY_PORT));
+const { stdout: listeners } = await execute('lsof', [
+  '-t',
+  `-iTCP:${gateway.port}`,
+  '-sTCP:LISTEN',
+]);
+const pid = Number(listeners.trim());
+assert(Number.isSafeInteger(pid) && pid > 0, 'Expected one owned gateway');
+const { stdout: cwd } = await execute('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']);
+assert(cwd.split('\n').includes(`n${root}/services/gateway`), 'Use the gateway for this checkout');
+const home = await realpath(process.env.FARMSLOT_HOME);
+const projects = await realpath(process.env.FARMSLOT_PROJECTS_DIR ?? path.join(home, 'projects'));
+const withinHome = path.relative(home, projects);
+assert(
+  withinHome && !withinHome.startsWith('..') && !path.isAbsolute(withinHome),
+  'Proof projects must stay inside the isolated home',
+);
+
+async function rpc(method, params = {}) {
+  const { stdout } = await execute(
+    process.execPath,
+    [
+      path.join(root, 'apps/command-center/scripts/cdp.mjs'),
+      'gateway',
+      method,
+      JSON.stringify(params),
+    ],
+    {
+      env: { ...process.env, FARMSLOT_RPC_TIMEOUT_MS: '120000' },
+      timeout: 150000,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  return JSON.parse(stdout);
+}
+
+if (phase === 'store-navigation-web') {
+  const cdp = async (...args) => {
+    const { stdout } = await execute(
+      process.execPath,
+      [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+      { timeout: 20000, maxBuffer: 1024 * 1024 },
+    );
+    return JSON.parse(stdout);
+  };
+  const probe = path.join(
+    root,
+    'apps/command-center/scripts/probes/offline-resource-navigation.js',
+  );
+  const base = new URL(process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`);
+  assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
+  base.hash = 'runs';
+  await cdp('goto', base.href);
+  const current = async () => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      if (
+        (await cdp('tabs')).some(
+          (tab) =>
+            tab.type === 'page' && tab.url.startsWith(base.origin) && tab.url.includes('#runs'),
+        )
+      ) {
+        value = await cdp('eval', 'runs', '--file', probe);
+        if (value.status === 'ready' && value.diagnostics?.storage === 'opfs-sahpool') return value;
+      }
+      await delay(50);
+    } while (Date.now() < deadline);
+    assert.fail(
+      `Navigation must restore the current SQLite-backed run view: ${JSON.stringify(value)}`,
+    );
+  };
+  let before = await current();
+  const cycles = [];
+  for (let index = 0; index < 10; index++) {
+    const away = new URL(
+      `/@fs${root}/apps/command-center/scripts/fixtures/opfs-write-teardown.html`,
+      base,
+    );
+    away.search = new URLSearchParams({
+      id: `resource-navigation-${index}`,
+      landed: '1',
+    }).toString();
+    away.hash = 'opfs-diagnostic';
+    await cdp('goto', away.href);
+    await cdp('eval', 'opfs-diagnostic', 'setTimeout(() => history.back(), 0); return true;');
+    const after = await current();
+    assert.equal(after.diagnostics.integrity, 'ok');
+    assert.equal(after.rows, before.rows, 'Ordinary navigation cannot delete saved runs');
+    const restoredDocument = after.documentStartedAt === before.documentStartedAt;
+    if (restoredDocument) {
+      assert(
+        after.workerStarts > before.workerStarts,
+        'A restored document must reopen its retired worker',
+      );
+      assert(
+        after.connectionId > before.connectionId,
+        'A restored document must reauthenticate on a new connection',
+      );
+    }
+    cycles.push({ index, restoredDocument, before, after });
+    before = after;
+  }
+  assert(
+    cycles.some((cycle) => cycle.restoredDocument),
+    'Prove a real back/forward-cache restoration',
+  );
+  const artifacts =
+    process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR ?? path.join(home, 'navigation-proof', randomUUID());
+  await mkdir(artifacts, { recursive: true });
+  await writeFile(path.join(artifacts, 'navigation-cycles.json'), JSON.stringify(cycles, null, 2));
+  await cdp('screenshot', 'runs', path.join(artifacts, 'navigation-restored.png'));
+  console.log(
+    JSON.stringify({
+      result: 'PASS',
+      action: phase,
+      navigationCycles: cycles.length,
+      backForwardRestorations: cycles.filter((cycle) => cycle.restoredDocument).length,
+      navigationStoreLifecycle: true,
+      sqliteIntegrity: 'ok',
+      screenshots: artifacts,
+    }),
+  );
+  process.exit(0);
+}
+
+if (phase === 'inbox-web') {
+  const cdpPath = path.join(root, 'apps/command-center/scripts/cdp.mjs');
+  const probePath = path.join(root, 'apps/command-center/scripts/probes/offline-runs.js');
+  const route = 'decisions';
+  const base = new URL(process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`);
+  assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
+  base.hash = route;
+  const id = randomUUID();
+  const project = path.join(projects, `offline-inbox-proof-${id}`);
+  const task = path.join(project, 'tasks', 'decision');
+  const file = path.join(task, '.pending_decision.json');
+  const artifacts =
+    process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR ?? path.join(home, 'inbox-proof-evidence', id);
+  await mkdir(task, { recursive: true });
+  await mkdir(artifacts, { recursive: true });
+  const cdp = async (...args) => {
+    const { stdout } = await execute(process.execPath, [cdpPath, ...args], {
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
+    });
+    return JSON.parse(stdout);
+  };
+  const snapshot = () => cdp('eval', route, '--file', probePath);
+  const row = (value) => value.rows?.find((entry) => entry.id === id);
+  const until = async (ready, label, timeout = 45000) => {
+    const deadline = Date.now() + timeout;
+    let value;
+    do {
+      value = await snapshot();
+      if (ready(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const button = `decision-inbox >>> [data-decision-id="${id}"]`;
+  try {
+    base.searchParams.set('inbox-proof', id);
+    await cdp('goto', base.href);
+    await cdp('focus', route);
+    const initial = await until(
+      (value) => value.freshness === 'ready' && value.runFreshness === 'ready',
+      'The actual collections must finish their current reads',
+    );
+    assert.equal(initial.storage, 'opfs-sahpool', 'Cold proof requires the owner browser database');
+    await writeFile(
+      file,
+      JSON.stringify({
+        id,
+        type: 'blocked_alert',
+        title: `Private inbox ${id}`,
+        actions: [{ id: 'acknowledge', label: 'Acknowledge' }],
+        created_at: new Date().toISOString(),
+      }),
+      { flag: 'wx' },
+    );
+    const arrived = await until(
+      (value) =>
+        value.freshness === 'ready' && row(value)?.rendered && row(value)?.disabled === false,
+      'A worker-created decision must appear without a client refresh',
+    );
+    await cdp('screenshot', route, path.join(artifacts, 'arrived.png'));
+    await chmod(task, 0o555);
+    await cdp('click', route, button);
+    const refused = await until(
+      (value) => /EACCES|EPERM|permission denied/i.test(row(value)?.error ?? ''),
+      'The physical refusal must be visible',
+    );
+    await cdp('screenshot', route, path.join(artifacts, 'refused.png'));
+    await chmod(task, 0o755);
+    const beforeOffline = await until(
+      (value) => value.freshness === 'ready' && row(value)?.rendered,
+      'The saved inbox must be current before going offline',
+    );
+    let cold;
+    let repaint;
+    let offlineObservedAt;
+    await withOwnedGatewayOffline(async () => {
+      const stale = await until(
+        (value) => value.freshness === 'stale' && row(value)?.disabled,
+        'A stored decision must disable its actions after disconnect',
+      );
+      assert(stale.observedAt >= beforeOffline.observedAt);
+      offlineObservedAt = stale.observedAt;
+      await cdp(
+        'click',
+        route,
+        `decision-inbox >>> .decision:has([data-decision-id="${id}"]) .decision-title`,
+      );
+      await cdp('key', route, '1');
+      await until(
+        (value) => /Wait for current decisions/.test(row(value)?.error ?? ''),
+        'The real keyboard shortcut must refuse stale facts',
+      );
+      repaint = await until(
+        (value) => value.stale && value.stale !== stale.stale,
+        'The displayed saved age must repaint without a read',
+      );
+      base.searchParams.set('offline-cold', randomUUID());
+      await cdp('goto', base.href);
+      await cdp('focus', route);
+      cold = await until(
+        (value) => value.freshness === 'stale' && row(value)?.rendered && row(value)?.disabled,
+        'A fresh offline document must render the saved inbox',
+      );
+      assert.equal(
+        cold.observedAt,
+        offlineObservedAt,
+        'Cold rendering must preserve the actual observation time',
+      );
+      assert(cold.runCount > 0 && cold.runFreshness === 'stale');
+      await cdp('screenshot', route, path.join(artifacts, 'cold-offline.png'));
+    });
+    await until(
+      (value) => value.freshness === 'ready' && row(value)?.rendered && !row(value)?.disabled,
+      'Reconnect must keep the decision until a current read enables it',
+    );
+    await access(file);
+    await cdp('click', route, button);
+    await until(
+      (value) => value.freshness === 'ready' && !row(value),
+      'An explicit UI resolve must remove the rendered decision',
+    );
+    await assert.rejects(access(file), { code: 'ENOENT' });
+    assert(!(await rpc('decision.list')).decisions.some((entry) => entry.id === id));
+    await cdp('screenshot', route, path.join(artifacts, 'resolved.png'));
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        action: phase,
+        id,
+        notificationArrival: arrived.observedAt,
+        refusal: row(refused).error,
+        inboxNotificationObserved: true,
+        resolveRefusalVisible: true,
+        staleActionsRefused: true,
+        staleKeyboardRefused: true,
+        ageRepaint: repaint.stale,
+        coldObservedAt: cold.observedAt,
+        coldInboxRestored: true,
+        currentReadBeforeResolve: true,
+        coldRunProjectionRows: cold.runCount,
+        explicitResolveRemovedFile: true,
+        inboxClientProof: true,
+        screenshots: artifacts,
+      }),
+    );
+  } finally {
+    await chmod(task, 0o755);
+    await rm(project, { recursive: true, force: true });
+  }
+  process.exit(0);
+}
+
+if (phase === 'list-web') {
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  assert.equal(fixture.taskFile, path.join(fixture.taskDir, 'TASK.md'));
+  for (const directory of [fixture.taskDir, fixture.workerRepo]) {
+    const relative = path.relative(home, await realpath(directory));
+    assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+  }
+  const original = (await rpc('run.get', { runId: fixture.runId })).run;
+  assert.equal(original.readOnly, false, 'Never mutate imported reference runs');
+  assert.equal(original.taskFile, fixture.taskFile);
+  assert.equal(original.slotId, fixture.slotId);
+  const tag = `offline-list-${randomUUID().slice(0, 24)}`;
+  const tags = [...(original.tags ?? []), tag];
+  const artifacts =
+    process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR ?? path.join(home, 'list-proof-evidence', tag);
+  await mkdir(artifacts, { recursive: true });
+  const cdpPath = path.join(root, 'apps/command-center/scripts/cdp.mjs');
+  const probePath = path.join(root, 'apps/command-center/scripts/probes/offline-run-list.js');
+  const route = 'runs';
+  const base = new URL(process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`);
+  assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
+  base.hash = `runs?tab=all&tag=${tag}`;
+  const cdp = async (...args) => {
+    const { stdout } = await execute(process.execPath, [cdpPath, ...args], {
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
+    });
+    return JSON.parse(stdout);
+  };
+  const until = async (ready, label, timeout = 45000) => {
+    const deadline = Date.now() + timeout;
+    let value;
+    do {
+      value = await cdp('eval', route, '--file', probePath);
+      if (ready(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const hasRun = (value) => value.rows?.some((row) => row.id === fixture.runId && row.visible);
+  let cold;
+  let beforeOffline;
+  let age;
+  try {
+    base.searchParams.set('list-proof', tag);
+    await cdp('goto', base.href);
+    await cdp('focus', route);
+    const initial = await until(
+      (value) =>
+        value.tag === tag &&
+        value.tagFreshness === 'ready' &&
+        value.freshness === 'ready' &&
+        !hasRun(value),
+      'The empty tagged list must finish a current read',
+    );
+    assert.equal(
+      initial.storage,
+      'opfs-sahpool',
+      'The filtered proof requires actual browser SQLite',
+    );
+    await rpc('run.tags.set', { runId: fixture.runId, tags });
+    await until(
+      (value) => value.tagFreshness === 'ready' && hasRun(value),
+      'An external tag write must populate the open filtered list',
+    );
+    await cdp('screenshot', route, path.join(artifacts, 'filtered-arrival.png'));
+    await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
+    await until(
+      (value) => value.tagFreshness === 'ready' && !hasRun(value),
+      'Removing a tag must remove the row from the open filtered list',
+    );
+    await rpc('run.tags.set', { runId: fixture.runId, tags });
+    beforeOffline = await until(
+      (value) => value.tagFreshness === 'ready' && value.freshness === 'ready' && hasRun(value),
+      'The filtered list must be saved before disconnect',
+    );
+    await withOwnedGatewayOffline(async () => {
+      const stale = await until(
+        (value) =>
+          value.freshness === 'stale' &&
+          value.tagFreshness === 'stale' &&
+          hasRun(value) &&
+          value.actionsDisabled,
+        'Saved filtered rows must disable their command controls',
+      );
+      age = await until(
+        (value) => value.stale && value.stale !== stale.stale,
+        'Saved run age must repaint while offline',
+      );
+      assert(!/old\s+old/.test(age.stale), 'The saved age must not repeat its age suffix');
+      base.searchParams.set('offline-cold', randomUUID());
+      await cdp('goto', base.href);
+      await cdp('focus', route);
+      cold = await until(
+        (value) =>
+          value.freshness === 'stale' &&
+          value.tagFreshness === 'stale' &&
+          hasRun(value) &&
+          value.actionsDisabled,
+        'A new offline document must restore the actual saved filtered list',
+      );
+      assert(stale.tagObservedAt >= beforeOffline.tagObservedAt);
+      assert.equal(cold.tagObservedAt, stale.tagObservedAt);
+      await cdp('screenshot', route, path.join(artifacts, 'filtered-cold-offline.png'));
+    });
+    await until(
+      (value) =>
+        value.freshness === 'ready' &&
+        value.tagFreshness === 'ready' &&
+        hasRun(value) &&
+        !value.actionsDisabled,
+      'Filtered run actions must wait for a current reconnect read',
+    );
+    await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
+    await until(
+      (value) => value.tagFreshness === 'ready' && !hasRun(value),
+      'The restored tag set must remove the proof row without Refresh',
+    );
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        action: phase,
+        runId: fixture.runId,
+        filteredMembershipUpdates: true,
+        coldFilteredListRestored: true,
+        staleRunActionsDisabled: true,
+        currentReadBeforeRunActions: true,
+        savedAge: age.stale,
+        coldObservedAt: cold.tagObservedAt,
+        screenshots: artifacts,
+      }),
+    );
+  } finally {
+    const current = (await rpc('run.get', { runId: fixture.runId })).run;
+    if (current.tags?.includes(tag))
+      await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
+  }
+  process.exit(0);
+}
+
+async function observeResources() {
+  const socket = new WebSocket(profile.url);
+  const changes = [];
+  socket.addEventListener('message', ({ data }) => {
+    const frame = JSON.parse(data);
+    if (frame.type === 'event' && frame.event === 'resource.changed')
+      changes.push(
+        ...frame.payload.changes.map((change) => ({ ...change, receivedAt: Date.now() })),
+      );
+  });
+  const request = (method, params = {}, stamped = false) =>
+    new Promise((resolve, reject) => {
+      const id = randomUUID();
+      const finish = (error, result) => {
+        clearTimeout(timer);
+        socket.removeEventListener('message', receive);
+        if (error) reject(error);
+        else resolve(result);
+      };
+      const receive = ({ data }) => {
+        const frame = JSON.parse(data);
+        if (frame.type !== 'res' || frame.id !== id) return;
+        finish(
+          frame.ok
+            ? undefined
+            : Object.assign(new Error(frame.error?.message ?? 'Gateway read refused'), {
+                code: frame.error?.code,
+              }),
+          stamped ? { data: frame.payload, resourceState: frame.resourceState } : frame.payload,
+        );
+      };
+      const timer = setTimeout(
+        () => finish(new Error(`Resource proof ${method} timed out`)),
+        10000,
+      );
+      socket.addEventListener('message', receive);
+      socket.send(JSON.stringify({ type: 'req', id, method, params }));
+    });
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('Resource proof connection timed out')),
+        10000,
+      );
+      socket.addEventListener(
+        'open',
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
+      socket.addEventListener(
+        'error',
+        () => {
+          clearTimeout(timer);
+          reject(new Error('Resource proof connection failed'));
+        },
+        { once: true },
+      );
+    });
+    const auth = await request('auth.connect', {
+      clientKind: 'ui',
+      token: profile.credential.token,
+    });
+    assert.equal(auth.capabilities.resourceChanges.version, 1);
+    return {
+      changes,
+      epoch: auth.capabilities.resourceChanges.epoch,
+      read: request,
+      readStamped: (method, params) => request(method, params, true),
+      barrier: () => request('gateway.ping'),
+      close: () => socket.close(),
+    };
+  } catch (error) {
+    socket.close();
+    throw error;
+  }
+}
+
+async function withRunFixture(build, prove) {
+  assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+  assert.equal(process.env.FARMSLOT_RUNS_DIR, path.join(home, 'runs'));
+  assert((await realpath(process.env.FARMSLOT_RUNS_DIR)).startsWith(`${home}/`));
+  const runId = randomUUID();
+  const runFile = path.join(process.env.FARMSLOT_RUNS_DIR, `${runId}.json`);
+  let seeded = false;
+  let observed;
+  let run;
+  try {
+    await withOwnedGatewayOffline(async () => {
+      const now = Date.now();
+      const createdAt = new Date(now).toISOString();
+      run = {
+        id: runId,
+        familyId: runId,
+        parentRunId: null,
+        familyRootTicketOrPr: 'Offline run proof',
+        lane: 'validation',
+        variant: null,
+        flowType: 'dev',
+        mode: 'interactive',
+        status: 'done',
+        project: 'farmslot-farm',
+        ticketOrPr: 'Offline run proof',
+        slotId: null,
+        branch: null,
+        completionPolicy: 'artifact-only',
+        taskFile: null,
+        steps: [],
+        decisions: [],
+        metrics: {
+          nudgeCount: 0,
+          model: null,
+          runner: null,
+          runnerSessionId: null,
+          runnerSessionPath: null,
+        },
+        createdAt,
+        startedAt: createdAt,
+        completedAt: createdAt,
+        updatedAt: createdAt,
+        agentContexts: [],
+        ...(await build({ runId, now, createdAt })),
+      };
+      assert.equal(run.id, runId);
+      assert.equal(run.slotId, null);
+      assert.equal(run.taskFile, null);
+      await writeFile(runFile, JSON.stringify(run, null, 2), { flag: 'wx', mode: 0o600 });
+      seeded = true;
+    });
+    observed = await observeResources();
+    return await prove({ runId, runFile, run, observed });
+  } finally {
+    observed?.close();
+    if (seeded)
+      await withOwnedGatewayOffline(async () => {
+        try {
+          await rm(runFile);
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+          // An archive proof legitimately moved this owned fixture out of the live store.
+          const archived = path.join(home, 'runs', 'archive', `${runId}.json`);
+          assert.equal(JSON.parse(await readFile(archived, 'utf8')).id, runId);
+          await rm(archived);
+        }
+      });
+  }
+}
+
+async function detailBrowser(runId) {
+  const route = `run/${runId}`;
+  const base = new URL(process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`);
+  assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
+  base.searchParams.set('detail-proof', randomUUID());
+  base.hash = route;
+  const artifacts =
+    process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR ??
+    path.join(home, 'detail-proof-evidence', randomUUID());
+  await mkdir(artifacts, { recursive: true });
+  const cdp = async (...args) => {
+    const { stdout } = await execute(
+      process.execPath,
+      [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+      { timeout: 60000, maxBuffer: 1024 * 1024 },
+    );
+    return JSON.parse(stdout);
+  };
+  const probe = path.join(root, 'apps/command-center/scripts/probes/offline-run-detail.js');
+  const storeProbe = path.join(
+    root,
+    'apps/command-center/scripts/probes/offline-run-detail-store.js',
+  );
+  const snapshot = () => cdp('eval', route, '--file', probe);
+  const until = async (ready, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await snapshot();
+      if (ready(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const navigate = async () => {
+    await cdp('goto', base.href);
+    await cdp('focus', route);
+  };
+  await navigate();
+  return {
+    base,
+    route,
+    cdp,
+    artifacts,
+    until,
+    navigate,
+    peek: () => cdp('eval', route, '--file', storeProbe),
+  };
+}
+
+if (phase === 'detail-web') {
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  const original = (await rpc('run.get', { runId: fixture.runId })).run;
+  assert.equal(original.readOnly, false);
+  assert.equal(original.taskFile, fixture.taskFile);
+  const tag = `offline-detail-${randomUUID().slice(0, 20)}`;
+  const browser = await detailBrowser(fixture.runId);
+  const { until, cdp, route, artifacts } = browser;
+  let cold, age;
+  try {
+    const initial = await until(
+      (value) =>
+        value.freshness === 'ready' &&
+        value.fullObservationRendered &&
+        value.recipeFreshness === 'ready',
+      'The full run and recipe observations must finish their current reads',
+    );
+    assert.equal(initial.storage, 'opfs-sahpool');
+    assert(initial.titleRendered && !initial.commandsDisabled);
+    await rpc('run.tags.set', { runId: fixture.runId, tags: [...(original.tags ?? []), tag] });
+    await until(
+      (value) =>
+        value.freshness === 'ready' &&
+        value.fullObservationRendered &&
+        value.renderedTags.includes(tag),
+      'An external writer must update the open full run without Refresh',
+    );
+    const { stdout } = await execute(
+      process.execPath,
+      [path.join(root, 'apps/command-center/scripts/prove-offline-runs.mjs'), 'mirror-arrival'],
+      { timeout: 180000, maxBuffer: 1024 * 1024 },
+    );
+    const mirror = JSON.parse(stdout);
+    assert.equal(mirror.result, 'PASS');
+    await until(
+      (value) =>
+        value.freshness === 'ready' &&
+        value.recipeFreshness === 'ready' &&
+        value.artifactPaths.includes(mirror.artifact) &&
+        value.recipeArtifactPaths.includes(mirror.artifact),
+      'Actual mirror arrival must update both open detail and recipe groups',
+    );
+    await cdp('screenshot', route, path.join(artifacts, 'detail-live-arrival.png'));
+    const saved = await until(
+      (value) => value.freshness === 'ready' && value.fullObservationRendered,
+      'The detail must be saved before disconnect',
+    );
+    await withOwnedGatewayOffline(async () => {
+      const stale = await until(
+        (value) =>
+          value.freshness === 'stale' && value.fullObservationRendered && value.commandsDisabled,
+        'A saved full run must disable its actual command controls',
+      );
+      age = await until(
+        (value) => value.stale && value.stale !== stale.stale,
+        'The saved full-run age must repaint without a read',
+      );
+      browser.base.searchParams.set('cold-detail', randomUUID());
+      await browser.navigate();
+      cold = await until(
+        (value) =>
+          value.freshness === 'stale' &&
+          value.fullObservationRendered &&
+          value.commandsDisabled &&
+          value.titleRendered &&
+          value.renderedTags.includes(tag) &&
+          value.artifactPaths.includes(mirror.artifact),
+        'A new offline document must restore the full run rather than a compact list row',
+      );
+      assert(stale.observedAt >= saved.observedAt);
+      assert.equal(cold.observedAt, stale.observedAt);
+      await cdp('screenshot', route, path.join(artifacts, 'detail-cold-offline.png'));
+    });
+    await until(
+      (value) =>
+        value.freshness === 'ready' && value.fullObservationRendered && !value.commandsDisabled,
+      'Run commands must wait for a current reconnect read',
+    );
+    await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
+    await until(
+      (value) => value.freshness === 'ready' && !value.renderedTags.includes(tag),
+      'The restored tag set must reach the open detail',
+    );
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        action: phase,
+        fullDetailNotifications: true,
+        actualMirrorObservedInDetailAndRecipes: true,
+        coldFullDetailRestored: true,
+        fullDetailCommandsGated: true,
+        coldObservedAt: cold.observedAt,
+        staleAge: age.stale,
+        screenshots: artifacts,
+      }),
+    );
+  } finally {
+    const current = (await rpc('run.get', { runId: fixture.runId })).run;
+    if (current.tags?.includes(tag))
+      await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
+  }
+  process.exit(0);
+}
+
+if (phase === 'detail-deletion-web') {
+  const result = await withRunFixture(
+    () => ({}),
+    async ({ runId, runFile }) => {
+      const browser = await detailBrowser(runId);
+      const { until, cdp, route, artifacts } = browser;
+      await until(
+        (value) => value.freshness === 'ready' && value.fullObservationRendered,
+        'The disposable detail must be current',
+      );
+      const saved = await browser.peek();
+      assert(
+        saved.persistent && saved.storedObservedAt !== undefined,
+        'The actual SQLite detail row must exist before archive',
+      );
+      await rpc('run.archive', { runId });
+      await until(
+        (value) =>
+          value.error?.code === 'RUN_NOT_FOUND' && !value.visibleRun && value.missingRendered,
+        'An authorized not-found must remove the displayed full detail',
+      );
+      const deadline = Date.now() + 15000;
+      let removed;
+      do {
+        removed = await browser.peek();
+        if (removed.storedObservedAt === undefined) break;
+        await delay(100);
+      } while (Date.now() < deadline);
+      assert.equal(
+        removed.storedObservedAt,
+        undefined,
+        'The authorized not-found must evict the actual SQLite row',
+      );
+      await assert.rejects(access(runFile), { code: 'ENOENT' });
+      await cdp('screenshot', route, path.join(artifacts, 'detail-archived.png'));
+      await withOwnedGatewayOffline(async () => {
+        browser.base.searchParams.set('cold-deleted', randomUUID());
+        await browser.navigate();
+        await until(
+          (value) => value.mounted && !value.visibleRun && !value.fullObservationRendered,
+          'The removed detail must not return in a new offline document',
+        );
+        const absent = await browser.peek();
+        assert.equal(absent.storedObservedAt, undefined);
+        await cdp('screenshot', route, path.join(artifacts, 'detail-deleted-cold-offline.png'));
+      });
+      return {
+        result: 'PASS',
+        action: phase,
+        deletedDetailEvicted: true,
+        actualSqliteRowRemoved: true,
+        screenshots: artifacts,
+      };
+    },
+  );
+  console.log(JSON.stringify(result));
+  process.exit(0);
+}
+
+if (phase === 'family-web') {
+  const artifacts = process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR;
+  assert(artifacts);
+  await mkdir(artifacts, { recursive: true });
+  const cdpPath = path.join(root, 'apps/command-center/scripts/cdp.mjs');
+  const probePath = path.join(root, 'apps/command-center/scripts/probes/offline-family.js');
+  const cdp = async (...args) => {
+    const { stdout } = await execute(process.execPath, [cdpPath, ...args], { timeout: 60000 });
+    return JSON.parse(stdout);
+  };
+  const until = async (ready, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await cdp('eval', 'family/', '--file', probePath);
+      if (ready(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const result = await withRunFixture(
+    () => ({ status: 'monitoring', completedAt: undefined, ticketOrPr: 'Offline family root' }),
+    async (first) =>
+      withRunFixture(
+        () => ({ familyId: first.runId, ticketOrPr: 'Offline family sibling' }),
+        async (second) => {
+          const base = new URL(
+            process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`,
+          );
+          base.searchParams.set('family-proof', randomUUID());
+          base.hash = `family/${first.runId}`;
+          await cdp('goto', base.href);
+          await cdp('focus', 'family/');
+          await until(
+            (value) =>
+              value.snapshotCanonical &&
+              value.familyFreshness === 'ready' &&
+              value.detailFreshness === 'ready' &&
+              value.workflowState === 'active' &&
+              value.runIds.includes(second.runId),
+            'The real family page must observe the family and selected full run',
+          );
+          // Both fixtures have no slot, task, workspace, worker or session to stop.
+          const cancelled = await rpc('run.cancel', { runId: first.runId });
+          assert.equal(cancelled.run.status, 'cancelled');
+          await until(
+            (value) =>
+              value.snapshotCanonical &&
+              value.familyFreshness === 'ready' &&
+              value.workflowState === 'complete' &&
+              value.workflowRendered,
+            'A second-client cancellation must update the visible family without Refresh',
+          );
+          await cdp('screenshot', 'family/', path.join(artifacts, 'family-current.png'));
+          await withOwnedGatewayOffline(async () => {
+            const stale = await until(
+              (value) =>
+                value.familyFreshness === 'stale' &&
+                value.detailFreshness === 'stale' &&
+                value.reportDisabled &&
+                value.saved.length >= 2 &&
+                value.storedObservedAt === value.observedAt,
+              'Saved family observations must disable report generation and show their age',
+            );
+            assert(stale.selectionInRoute, 'A plain family route must remember its selected run');
+            base.hash = stale.hash;
+            base.searchParams.set('offline-cold', randomUUID());
+            await cdp('goto', base.href);
+            const cold = await until(
+              (value) =>
+                value.detailFreshness === 'stale' &&
+                value.fullRunId === stale.selectedRunId &&
+                value.savedRunLink === 'Open saved run',
+              'A cold family route must offer its actual persisted selected run without a fabricated family summary',
+            );
+            assert.equal(cold.observedAt, stale.observedAt);
+            assert.equal(cold.storage, 'opfs-sahpool');
+            await cdp('screenshot', 'family/', path.join(artifacts, 'family-cold.png'));
+            await cdp(
+              'click',
+              'family/',
+              `family-observability >>> a[href="#run/${stale.selectedRunId}"]`,
+            );
+            const deadline = Date.now() + 30000;
+            let opened;
+            do {
+              opened = await cdp(
+                'eval',
+                `run/${stale.selectedRunId}`,
+                '--file',
+                path.join(root, 'apps/command-center/scripts/probes/offline-run-detail.js'),
+              );
+              if (
+                opened.fullObservationRendered &&
+                opened.visibleRun === stale.selectedRunId &&
+                opened.freshness === 'stale'
+              )
+                break;
+              await delay(100);
+            } while (Date.now() < deadline);
+            assert(
+              opened.fullObservationRendered &&
+                opened.visibleRun === stale.selectedRunId &&
+                opened.freshness === 'stale',
+              'Open saved run must render the selected persisted full detail offline',
+            );
+            await cdp(
+              'screenshot',
+              `run/${stale.selectedRunId}`,
+              path.join(artifacts, 'family-opened-run.png'),
+            );
+            await cdp('goto', base.href);
+            await until(
+              (value) =>
+                value.detailFreshness === 'stale' && value.savedRunLink === 'Open saved run',
+              'Returning to the saved family route must retain the same offline selection',
+            );
+          });
+          await until(
+            (value) =>
+              value.familyFreshness === 'ready' &&
+              value.detailFreshness === 'ready' &&
+              value.snapshotCanonical &&
+              value.workflowState === 'complete',
+            'Current family and selected-run observations must return after reconnect',
+          );
+          return { result: 'PASS', action: phase, sharedFamily: true, coldFamilySelection: true };
+        },
+      ),
+  );
+  console.log(JSON.stringify(result));
+  process.exit(0);
+}
+
+if (phase === 'compare-web') {
+  const cdpPath = path.join(root, 'apps/command-center/scripts/cdp.mjs');
+  const probePath = path.join(root, 'apps/command-center/scripts/probes/offline-run-compare.js');
+  const artifacts = process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR;
+  assert(artifacts, 'Select the comparison capture directory');
+  await mkdir(artifacts, { recursive: true });
+  const cdp = async (...args) => {
+    const { stdout } = await execute(process.execPath, [cdpPath, ...args], { timeout: 60000 });
+    return JSON.parse(stdout);
+  };
+  const until = async (ready, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await cdp('eval', 'runs/compare', '--file', probePath);
+      if (ready(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const result = await withRunFixture(
+    () => ({ ticketOrPr: 'Offline comparison A' }),
+    async (first) =>
+      withRunFixture(
+        () => ({ familyId: first.runId, ticketOrPr: 'Offline comparison B' }),
+        async (second) => {
+          const base = new URL(
+            process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`,
+          );
+          base.searchParams.set('compare-proof', randomUUID());
+          base.hash = `runs/compare?a=${first.runId}&b=${second.runId}`;
+          await cdp('goto', base.href);
+          await cdp('focus', 'runs/compare');
+          const ready = await until(
+            (value) =>
+              value.fullRunsCanonical &&
+              value.titlesRendered &&
+              value.freshness.every((state) => state === 'ready') &&
+              value.familyFreshness === 'ready' &&
+              value.familyRunIds.includes(second.runId),
+            'The comparison must observe both full runs and their family snapshot',
+          );
+          assert.equal(ready.storage, 'opfs-sahpool');
+          const tag = `compare-${randomUUID().slice(0, 12)}`;
+          await rpc('run.tags.set', { runId: first.runId, tags: [tag] });
+          await until(
+            (value) =>
+              value.freshness.every((state) => state === 'ready') && value.tags[0].includes(tag),
+            'The open full comparison must follow an external run writer without Refresh',
+          );
+          await cdp('screenshot', 'runs/compare', path.join(artifacts, 'comparison-current.png'));
+          await withOwnedGatewayOffline(async () => {
+            const stale = await until(
+              (value) =>
+                value.freshness.every((state) => state === 'stale') && value.saved.length === 2,
+              'Both saved comparison runs must become visibly stale',
+            );
+            base.searchParams.set('offline-cold', randomUUID());
+            await cdp('goto', base.href);
+            const cold = await until(
+              (value) =>
+                value.fullRunsCanonical &&
+                value.titlesRendered &&
+                value.freshness.every((state) => state === 'stale') &&
+                value.saved.length === 2,
+              'A new offline document must render both saved full runs and their age',
+            );
+            assert.deepEqual(cold.observedAt, stale.observedAt);
+            assert(cold.tags[0].includes(tag));
+            await cdp('screenshot', 'runs/compare', path.join(artifacts, 'comparison-cold.png'));
+          });
+          await until(
+            (value) =>
+              value.freshness.every((state) => state === 'ready') &&
+              value.familyFreshness === 'ready',
+            'Reconnect must refresh comparison and family observations',
+          );
+          return {
+            result: 'PASS',
+            action: phase,
+            sharedComparison: true,
+            coldComparison: true,
+            runIds: [first.runId, second.runId],
+          };
+        },
+      ),
+  );
+  console.log(JSON.stringify(result));
+  process.exit(0);
+}
+
+if (phase === 'load-modal-web') {
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  const slotId = fixture.slotId;
+  assert(/^[a-z0-9-]+$/i.test(slotId));
+  const poolFile = path.join(home, 'pool', `${slotId}.json`);
+  const pool = JSON.parse(await readFile(poolFile, 'utf8'));
+  const configured = pool.slots.find((slot) => slot.id === slotId);
+  assert.equal(
+    configured?.enabled,
+    false,
+    'Use only the owned disabled slot for the prepare refusal',
+  );
+  assert((await realpath(configured.repo)).startsWith(`${home}/`));
+  const workspace = await rpc('git.status', { slotId });
+  assert.equal(
+    typeof workspace.branch,
+    'string',
+    'The slot fixture must be a readable Git workspace',
+  );
+  const artifacts =
+    process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR ?? path.join(home, 'load-modal-proof', randomUUID());
+  await mkdir(artifacts, { recursive: true });
+  const cdp = async (...args) => {
+    const { stdout } = await execute(
+      process.execPath,
+      [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+      { timeout: 60000, maxBuffer: 1024 * 1024 },
+    );
+    return JSON.parse(stdout);
+  };
+  const probe = path.join(root, 'apps/command-center/scripts/probes/offline-load-run.js');
+  const storeProbe = path.join(
+    root,
+    'apps/command-center/scripts/probes/offline-load-run-store.js',
+  );
+  const route = `slot/${slotId}`;
+  const snapshot = () => cdp('eval', route, '--file', probe);
+  const until = async (ready, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await snapshot();
+      if (ready(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const result = await withRunFixture(
+    ({ runId }) => ({
+      status: 'blocked',
+      completedAt: undefined,
+      branch: `offline-load-${runId}`,
+      ticketOrPr: `Offline load-run proof ${runId.slice(0, 8)}`,
+    }),
+    async ({ runId, runFile }) => {
+      const pages = (await cdp('tabs')).filter((tab) => tab.type === 'page');
+      const ui = new URL(
+        process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`,
+      );
+      assert(['localhost', '127.0.0.1', '[::1]'].includes(ui.hostname));
+      const app = pages.find((tab) => tab.url.startsWith(`${ui.origin}/`));
+      assert(app, 'Use the existing private browser document');
+      const url = new URL(app.url);
+      url.hash = route;
+      await cdp('goto', url.href);
+      await cdp('focus', route);
+      const button = `slot-view slot-load-run-modal >>> [data-run-id="${runId}"] .slrm-load`;
+      await cdp(
+        'click',
+        route,
+        'slot-view button[title="Browse all runs and warm-switch this slot onto one"]',
+      );
+      await until(
+        (value) =>
+          value.open &&
+          !value.contextBlocked &&
+          value.status === 'ready' &&
+          value.rowsMatchCanonical &&
+          value.rows?.some((row) => row.id === runId && row.visible && !row.disabled),
+        'The real load dialog must render the canonical current project list',
+      );
+      await cdp(
+        'fill',
+        route,
+        'slot-view slot-load-run-modal >>> .slrm-input',
+        `Offline load-run proof ${runId.slice(0, 8)}`,
+      );
+      const initial = await until(
+        (value) => value.rows.length === 1 && value.rows[0].id === runId && value.rows[0].visible,
+        'The user search must isolate the owned run',
+      );
+      assert.equal(initial.project, 'farmslot-farm');
+      assert.deepEqual(initial.query.params, { limit: 200, project: 'farmslot-farm' });
+      assert.equal(initial.storage, 'opfs-sahpool');
+      const confirmationAt = Date.now();
+      await cdp('click', route, button);
+      await until(
+        (value) => value.pendingConfirm === runId && !value.busy,
+        'The first explicit click must only arm confirmation',
+      );
+      await rpc('run.cancel', { runId });
+      const changed = await until(
+        (value) =>
+          value.status === 'ready' &&
+          value.rowsMatchCanonical &&
+          value.rows[0]?.text.includes('cancelled'),
+        'An external writer must update the visible dialog and retire its old confirmation',
+      );
+      const confirmationClearedMs = Date.now() - confirmationAt;
+      assert(
+        confirmationClearedMs < 2500,
+        'Observe invalidation before the independent confirmation timeout',
+      );
+      assert.equal(
+        changed.pendingConfirm,
+        '',
+        'A changed observation must immediately retire the armed confirmation',
+      );
+      await cdp('screenshot', route, path.join(artifacts, 'load-dialog-current.png'));
+      await cdp('click', route, button);
+      await until(
+        (value) => value.pendingConfirm === runId,
+        'The current updated row must be explicitly selected again',
+      );
+      const before = await snapshot();
+      let savedAt;
+      await withOwnedGatewayOffline(async () => {
+        const stale = await until(
+          (value) =>
+            value.status === 'stale' &&
+            value.rowsMatchCanonical &&
+            value.rows[0]?.visible &&
+            value.rows[0].disabled &&
+            value.pendingConfirm === '',
+          'Saved dialog rows must remain visible, disable loading and retire confirmation after disconnect',
+        );
+        savedAt = stale.observedAt;
+        assert(savedAt >= before.observedAt);
+        await until(
+          (value) => value.stale && value.stale !== stale.stale,
+          'The dialog saved age must repaint without a network read',
+        );
+        const deadline = Date.now() + 15000;
+        let stored;
+        do {
+          stored = await cdp('eval', route, '--file', storeProbe);
+          if (stored.persistent && stored.storedObservedAt === savedAt) break;
+          await delay(50);
+        } while (Date.now() < deadline);
+        assert.equal(
+          stored.storedObservedAt,
+          savedAt,
+          'The accepted dialog observation must reach the actual SQLite row',
+        );
+        await cdp('screenshot', route, path.join(artifacts, 'load-dialog-stale.png'));
+        assert.equal(JSON.parse(await readFile(runFile, 'utf8')).slotId, null);
+      });
+      const current = await until(
+        (value) =>
+          value.status === 'ready' &&
+          !value.contextBlocked &&
+          value.rowsMatchCanonical &&
+          value.rows[0]?.visible &&
+          !value.rows[0].disabled &&
+          !value.pendingConfirm &&
+          !value.busy,
+        'Reconnect must refetch the dialog without replaying its selection',
+      );
+      assert.equal(
+        current.prepare?.requestId,
+        initial.prepare?.requestId,
+        'A reconnect must not start a prepare',
+      );
+      const latestPool = JSON.parse(await readFile(poolFile, 'utf8'));
+      assert.equal(latestPool.slots.find((slot) => slot.id === slotId)?.enabled, false);
+      await cdp('click', route, button);
+      await until(
+        (value) => value.pendingConfirm === runId,
+        'Loading after reconnect needs a new first click',
+      );
+      await cdp('click', route, button);
+      const refused = await until(
+        (value) => !value.busy && Boolean(value.actionError),
+        'The real disabled-slot prepare refusal must be visible and release busy state',
+      );
+      assert.equal(JSON.parse(await readFile(runFile, 'utf8')).slotId, null);
+      await cdp('screenshot', route, path.join(artifacts, 'load-dialog-refused.png'));
+      await cdp('click', route, 'slot-view slot-load-run-modal >>> .slrm-close');
+      await until(
+        (value) => !value.open && !value.query,
+        'Closing the dialog must release its query observer',
+      );
+      return {
+        result: 'PASS',
+        action: phase,
+        dialogNotification: true,
+        canonicalProjectQuery: true,
+        staleDialogActionsDisabled: true,
+        confirmationNotReplayed: true,
+        confirmationClearedMs,
+        sqliteObservedAt: savedAt,
+        physicalPrepareRefusal: refused.actionError,
+        dialogCommandRefusalVisible: true,
+        screenshots: artifacts,
+        coldSlotContextPendingFleetPersistence: true,
+      };
+    },
+  );
+  console.log(JSON.stringify(result));
+  process.exit(0);
+}
+
+if (phase === 'history-web') {
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  const { slotId, runId } = fixture;
+  const pool = JSON.parse(await readFile(path.join(home, 'pool', `${slotId}.json`), 'utf8'));
+  const configured = pool.slots.find((slot) => slot.id === slotId);
+  assert.equal(configured?.enabled, false);
+  assert((await realpath(configured.repo)).startsWith(`${home}/`));
+  assert.equal(fixture.runFile, path.join(home, 'runs', `${runId}.json`));
+  const runBytes = await readFile(fixture.runFile, 'utf8');
+  const run = JSON.parse(runBytes);
+  assert.equal(run.readOnly, false, 'Never change imported reference runs');
+  assert.equal(run.slotId, slotId);
+  assert.equal(run.status, 'done');
+  const statusFile = path.join(root, '.farm-status.json');
+  const originalStatus = await readFile(statusFile, 'utf8');
+  const originalSlot = JSON.parse(originalStatus).slots.find((slot) => slot.slot === slotId);
+  assert(originalSlot && !originalSlot.current_run_id, 'Use the idle owned fixture binding');
+  const commitStatus = async (content) => {
+    const temporary = `${statusFile}.${randomUUID()}.tmp`;
+    await writeFile(temporary, content);
+    await rename(temporary, statusFile);
+  };
+  const bind = async (owner, remove = false) => {
+    const status = JSON.parse(await readFile(statusFile, 'utf8'));
+    const row = status.slots.find((slot) => slot.slot === slotId);
+    assert(row && [null, undefined, runId].includes(row.current_run_id));
+    if (remove) status.slots = status.slots.filter((slot) => slot.slot !== slotId);
+    else row.current_run_id = owner;
+    await commitStatus(JSON.stringify(status));
+  };
+  const artifacts =
+    process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR ?? path.join(home, 'history-proof', randomUUID());
+  await mkdir(artifacts, { recursive: true });
+  const cdp = async (...args) => {
+    const { stdout } = await execute(
+      process.execPath,
+      [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+      { timeout: 60000, maxBuffer: 1024 * 1024 },
+    );
+    return JSON.parse(stdout);
+  };
+  const route = `slot/${slotId}`;
+  const snapshot = () =>
+    cdp(
+      'eval',
+      route,
+      '--file',
+      path.join(root, 'apps/command-center/scripts/probes/offline-slot-history.js'),
+    );
+  const row = (value) => value.rows?.find((entry) => entry.id === runId);
+  const until = async (ready, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await snapshot();
+      if (ready(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const base = new URL(process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`);
+  assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
+  base.hash = route;
+  const prepare = `slot-view slot-history-modal >>> [data-run-id="${runId}"] slot-prepare-popover`;
+  let seeded;
+  let observed;
+  try {
+    await withOwnedGatewayOffline(async () => {
+      seeded = JSON.stringify({ ...run, branch: 'offline-history-proof' }, null, 2);
+      await writeFile(fixture.runFile, seeded);
+    });
+    observed = await observeResources();
+    await cdp('goto', base.href);
+    await cdp('focus', route);
+    await cdp('click', route, 'slot-view button[title="View recent retained runs for this slot"]');
+    const initial = await until(
+      (value) =>
+        value.open && value.status === 'ready' && value.rowsMatchCanonical && row(value)?.visible,
+      'The actual history dialog must render its shared current query',
+    );
+    assert.deepEqual(initial.query.params, { limit: 25, slotId });
+    await cdp(
+      'click',
+      route,
+      `slot-view slot-history-modal >>> [data-run-id="${runId}"] .shm-row-main`,
+    );
+    await until(
+      (value) => row(value)?.prepareDisabled === false,
+      'A current retained run must expose its real prepare control',
+    );
+    await cdp('click', route, `${prepare} >>> .spp-trigger`);
+    await until((value) => row(value)?.confirming, 'The real prepare options must open');
+    await bind(runId);
+    const bound = await until(
+      (value) => value.status === 'ready' && value.rowsMatchCanonical && row(value)?.current,
+      'A pointer-only external commit must update the visible current marker',
+    );
+    assert.equal(row(bound).confirming, false, 'Invalidation must retire the armed prepare');
+    assert.equal((await rpc('run.forSlot', { slotId })).run?.id, runId);
+    assert(observed.changes.some(({ key }) => key.family === 'slot' && key.slotId === slotId));
+    assert.equal(
+      await readFile(fixture.runFile, 'utf8'),
+      seeded,
+      'Binding proof must not rewrite a run',
+    );
+    await cdp('screenshot', route, path.join(artifacts, 'history-current.png'));
+    await bind(null);
+    await until(
+      (value) => value.status === 'ready' && row(value) && !row(value).current,
+      'Clearing only the binding must remove the current marker',
+    );
+    assert.equal(
+      (await rpc('run.forSlot', { slotId })).run?.id,
+      runId,
+      'The existing idle-slot fallback may still show its retained reviewable run',
+    );
+    await bind(null, true);
+    await until(
+      (value) =>
+        value.status === 'ready' && value.slotExists === false && row(value)?.prepareDisabled,
+      'Removed membership must disable history prepare without deleting retained rows',
+    );
+    await commitStatus(originalStatus);
+    await until(
+      (value) =>
+        value.status === 'ready' &&
+        !value.contextBlocked &&
+        value.slotExists &&
+        row(value)?.prepareDisabled === false,
+      'Restoring membership must refresh current history without a run write',
+    );
+    try {
+      await commitStatus('{corrupt');
+      const failed = await until(
+        (value) =>
+          value.error &&
+          value.rowsMatchCanonical &&
+          row(value)?.visible &&
+          row(value).prepareDisabled,
+        'A failed current read must preserve visible history and expose its error',
+      );
+      assert(failed.stale, 'The preserved history must show its saved age after a read failure');
+      await cdp('screenshot', route, path.join(artifacts, 'history-read-error.png'));
+    } finally {
+      await commitStatus(originalStatus);
+    }
+    await until(
+      (value) =>
+        value.status === 'ready' && !value.contextBlocked && row(value)?.prepareDisabled === false,
+      'Readable recovery must replace the failure',
+    );
+    await cdp('click', route, `${prepare} >>> .spp-trigger`);
+    await until(
+      (value) => row(value)?.confirming,
+      'The current row must need a new prepare selection',
+    );
+    observed.close();
+    observed = undefined;
+    await withOwnedGatewayOffline(async () => {
+      const stale = await until(
+        (value) =>
+          value.status === 'stale' &&
+          value.rowsMatchCanonical &&
+          row(value)?.visible &&
+          row(value).prepareDisabled &&
+          !row(value).confirming,
+        'Disconnect must preserve history, disable actions and clear prepare confirmation',
+      );
+      await until(
+        (value) => value.stale && value.stale !== stale.stale,
+        'The saved history age must repaint without reading',
+      );
+      await cdp('screenshot', route, path.join(artifacts, 'history-offline.png'));
+      assert.equal(await readFile(fixture.runFile, 'utf8'), seeded);
+    });
+    await until(
+      (value) =>
+        value.status === 'ready' &&
+        !value.contextBlocked &&
+        row(value)?.prepareDisabled === false &&
+        !row(value).confirming,
+      'Reconnect must require a fresh prepare selection without command replay',
+    );
+    await cdp('click', route, `${prepare} >>> .spp-trigger`);
+    await cdp('click', route, `${prepare} >>> .spp-btn.primary`);
+    const refused = await until(
+      (value) => row(value)?.actionError && !row(value).busy,
+      'The physical prepare refusal must be visible and release busy state',
+    );
+    assert.equal(await readFile(fixture.runFile, 'utf8'), seeded);
+    await cdp('screenshot', route, path.join(artifacts, 'history-prepare-refused.png'));
+    await cdp('click', route, 'slot-view slot-history-modal >>> .shm-close');
+    await until(
+      (value) => !value.open && !value.query,
+      'Closing history must release its shared observation',
+    );
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        action: phase,
+        pointerOnlyHistoryUpdate: true,
+        retainedMembershipUpdate: true,
+        readFailurePreservesHistory: true,
+        historySavedAge: true,
+        historyConfirmationNotReplayed: true,
+        historyPrepareRefusal: row(refused).actionError,
+        sharedHistoryProof: true,
+        screenshots: artifacts,
+        coldHistoryNotPersisted: true,
+      }),
+    );
+  } finally {
+    observed?.close();
+    try {
+      await commitStatus(originalStatus);
+      base.hash = 'runs';
+      await cdp('goto', base.href);
+    } finally {
+      if (seeded)
+        await withOwnedGatewayOffline(async () => {
+          assert.equal(
+            await readFile(fixture.runFile, 'utf8'),
+            seeded,
+            'Do not overwrite another fixture writer',
+          );
+          await writeFile(fixture.runFile, runBytes);
+        });
+    }
+  }
+  process.exit(0);
+}
+
+if (phase === 'bulk-archive-web') {
+  const tag = `offline-archive-${randomUUID().slice(0, 20)}`;
+  const artifacts =
+    process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR ?? path.join(home, 'archive-proof-evidence', tag);
+  await mkdir(artifacts, { recursive: true });
+  const cdpPath = path.join(root, 'apps/command-center/scripts/cdp.mjs');
+  const probePath = path.join(root, 'apps/command-center/scripts/probes/offline-run-list.js');
+  const cdp = async (...args) => {
+    const { stdout } = await execute(process.execPath, [cdpPath, ...args], {
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
+    });
+    return JSON.parse(stdout);
+  };
+  const result = await withRunFixture(
+    () => ({ tags: [tag] }),
+    async (first) =>
+      withRunFixture(
+        () => ({ tags: [tag] }),
+        async (second) => {
+          const ids = [first.runId, second.runId];
+          const base = new URL(
+            process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`,
+          );
+          assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
+          base.searchParams.set('archive-proof', tag);
+          base.hash = `runs?tab=all&tag=${tag}`;
+          const until = async (ready, label) => {
+            const deadline = Date.now() + 45000;
+            let value;
+            do {
+              value = await cdp('eval', 'runs', '--file', probePath);
+              if (ready(value)) return value;
+              await delay(100);
+            } while (Date.now() < deadline);
+            assert.fail(`${label}: ${JSON.stringify(value)}`);
+          };
+          await cdp('goto', base.href);
+          await cdp('focus', 'runs');
+          await until(
+            (value) =>
+              value.freshness === 'ready' &&
+              value.tagFreshness === 'ready' &&
+              ids.every((id) => value.rows.some((row) => row.id === id && row.visible)),
+            'Both disposable runs must be visible and current',
+          );
+          await cdp('click', 'runs', 'run-list >>> .manage-btn');
+          for (const id of ids)
+            await cdp('click', 'runs', `run-list >>> [data-row-id="${id}"] .selector-btn`);
+          await until(
+            (value) => value.selectedCount === 2 && value.archiveDisabled === false,
+            'The explicit archive selection must contain both current runs',
+          );
+          await cdp('screenshot', 'runs', path.join(artifacts, 'archive-two-selected.png'));
+          await cdp('click', 'runs', 'run-list >>> .actions-bar.manage .action-btn.cleanup');
+          await until(
+            (value) =>
+              value.freshness === 'ready' &&
+              value.tagFreshness === 'ready' &&
+              !value.actionInProgress &&
+              ids.every((id) => !value.rows.some((row) => row.id === id)),
+            'One explicit archive must remove both selected runs',
+          );
+          for (const id of ids) {
+            await assert.rejects(access(path.join(home, 'runs', `${id}.json`)), { code: 'ENOENT' });
+            const archived = JSON.parse(
+              await readFile(path.join(home, 'runs', 'archive', `${id}.json`), 'utf8'),
+            );
+            assert.equal(archived.id, id);
+            assert(archived.archivedAt);
+            await assert.rejects(second.observed.read('run.get', { runId: id }), {
+              code: 'RUN_NOT_FOUND',
+            });
+          }
+          await cdp('screenshot', 'runs', path.join(artifacts, 'archive-two-completed.png'));
+          return {
+            result: 'PASS',
+            action: phase,
+            explicitBatchArchived: 2,
+            runIds: ids,
+            screenshots: artifacts,
+          };
+        },
+      ),
+  );
+  console.log(JSON.stringify(result));
+  process.exit(0);
+}
+
+if (phase === 'inbox-expiry') {
+  const decisionId = randomUUID();
+  let expiresAt;
+  const result = await withRunFixture(
+    ({ now }) => {
+      expiresAt = now + 25_000;
+      const completedAt = new Date(expiresAt - 48 * 60 * 60 * 1000).toISOString();
+      const createdAt = new Date(Date.parse(completedAt) - 60_000).toISOString();
+      return {
+        completedAt,
+        createdAt,
+        startedAt: createdAt,
+        updatedAt: completedAt,
+        decisions: [
+          {
+            id: decisionId,
+            type: 'blocked_alert',
+            title: 'Inbox expiry proof',
+            description: 'A completed pending decision expires without a run write.',
+            actions: [],
+            createdAt,
+          },
+        ],
+      };
+    },
+    async ({ runId, runFile, observed }) => {
+      const before = await observed.read('decision.list');
+      assert(
+        before.decisions.some((decision) => decision.id === decisionId),
+        'The expiring decision must be visible before its deadline',
+      );
+      const unchanged = await readFile(runFile, 'utf8');
+      const deadline = expiresAt + 8000;
+      const expiredNotice = () =>
+        observed.changes.find(
+          ({ key, receivedAt }) => key.family === 'decisions' && receivedAt >= expiresAt,
+        );
+      while (!expiredNotice() && Date.now() < deadline) await delay(50);
+      assert(expiredNotice(), 'The gateway must publish the completed-decision expiry boundary');
+      const after = await observed.read('decision.list');
+      assert(!after.decisions.some((decision) => decision.id === decisionId));
+      assert.equal((await observed.read('run.get', { runId })).run.status, 'done');
+      assert.equal(
+        await readFile(runFile, 'utf8'),
+        unchanged,
+        'Inbox expiry must not rewrite the run',
+      );
+      return {
+        result: 'PASS',
+        action: phase,
+        runId,
+        decisionId,
+        expiresAt,
+        noticeAt: expiredNotice().receivedAt,
+        expiredInboxNotice: true,
+        persistedRunUnchanged: true,
+      };
+    },
+  );
+  console.log(JSON.stringify(result));
+  process.exit(0);
+}
+
+if (phase === 'quiet-gate') {
+  const decisionId = randomUUID();
+  const result = await withRunFixture(
+    ({ createdAt }) => ({
+      status: 'human-gating',
+      completedAt: undefined,
+      decisions: [
+        {
+          id: decisionId,
+          type: 'engine_human_gate',
+          title: 'Stable no-change gate',
+          description: 'A source prerequisite is missing.',
+          createdAt,
+          actions: [{ id: 'hold', label: 'Hold' }],
+          payload: {
+            kind: 'no-change',
+            disposition: 'no-change',
+            reason: 'No worker source is bound.',
+          },
+        },
+      ],
+    }),
+    async ({ runId, runFile, observed }) => {
+      const primed = (await observed.read('run.get', { runId })).run;
+      const readiness = primed.decisions.find((decision) => decision.id === decisionId)?.payload
+        ?.gateReadiness;
+      assert(readiness, 'The first real read must evaluate the gate prerequisites');
+      const deadline = Date.now() + 5000;
+      let persisted;
+      do {
+        persisted = await readFile(runFile, 'utf8');
+        if (JSON.parse(persisted).updatedAt === primed.updatedAt) break;
+        await delay(20);
+      } while (Date.now() < deadline);
+      assert.equal(JSON.parse(persisted).updatedAt, primed.updatedAt);
+      await observed.barrier();
+      const before = observed.changes.length;
+      for (let index = 0; index < 3; index++) {
+        const current = (await observed.read('run.get', { runId })).run;
+        assert.deepEqual(
+          current.decisions.find((decision) => decision.id === decisionId)?.payload?.gateReadiness,
+          readiness,
+        );
+      }
+      await observed.barrier();
+      assert(
+        !observed.changes.slice(before).some(({ key }) => key.runId === runId),
+        'Unchanged gate reads must not invalidate themselves',
+      );
+      assert.equal(await readFile(runFile, 'utf8'), persisted);
+      return {
+        result: 'PASS',
+        action: phase,
+        runId,
+        decisionId,
+        gateReadiness: readiness.state,
+        stableGateReads: 3,
+        unchangedGateQuiet: true,
+      };
+    },
+  );
+  console.log(JSON.stringify(result));
+  process.exit(0);
+}
+
+if (phase === 'feedback-consumption') {
+  const draftId = randomUUID();
+  const retrospectiveId = randomUUID();
+  const candidateId = randomUUID();
+  const library = path.join(home, `offline-feedback-library-${candidateId}`);
+  const targetPath = 'review/antipatterns.md';
+  await mkdir(path.join(library, 'review'), { recursive: true });
+  await execute('git', ['init', '--quiet', '--initial-branch=fixture', library]);
+  await writeFile(
+    path.join(library, targetPath),
+    '# Private feedback proof\n\nRecord the rule before acknowledging it.\n',
+    { flag: 'wx' },
+  );
+  try {
+    const result = await withRunFixture(
+      ({ runId, createdAt }) => {
+        const candidate = {
+          id: candidateId,
+          sourceKey: `github.com/offline/fixture#1:review-comment:${candidateId}`,
+          provider: 'github',
+          repository: 'offline/fixture',
+          prNumber: 1,
+          kind: 'review-comment',
+          revision: candidateId,
+          authorKind: 'human',
+          resolution: { state: 'open' },
+          runIds: [runId],
+          familyChangeRunIds: [],
+          attribution: { kind: 'unknown', note: 'Private fixture' },
+          sources: ['comments-triage'],
+        };
+        return {
+          decisions: [
+            {
+              id: draftId,
+              type: 'engine_learnings_draft',
+              title: 'Private landed rule',
+              description: 'The rule exists in the private fixture library.',
+              createdAt,
+              actions: [{ id: 'landed', label: 'Recorded in canonical library' }],
+              payload: {
+                kind: 'learnings-draft',
+                project: 'farmslot-farm',
+                sourceRunId: runId,
+                destination: {
+                  repo: library,
+                  path: targetPath,
+                  source: 'vars.knowledge_destination',
+                },
+                holds: [],
+                drafts: [
+                  {
+                    id: `offline-rule-${candidateId}`,
+                    targetPath,
+                    targetRepo: library,
+                    symptom: 'Unrecorded feedback',
+                    cause: 'Missing acknowledgement',
+                    action: 'Record the landed rule',
+                    sourceEntry: candidateId,
+                  },
+                ],
+                feedbackCandidates: [candidate],
+              },
+            },
+            {
+              id: retrospectiveId,
+              type: 'retrospective',
+              title: 'Private feedback retrospective',
+              description: 'Read current consumption from the owning ledger.',
+              createdAt,
+              actions: [],
+              payload: {
+                kind: 'retrospective',
+                outcome: 'success',
+                whatThisIs: 'Private feedback proof',
+                actionEffects: [],
+                feedbackCandidates: [candidate],
+              },
+            },
+          ],
+        };
+      },
+      async ({ runId, observed }) => {
+        const inboxCandidate = async () => {
+          const inbox = await observed.read('decision.list');
+          return inbox.decisions
+            .find(({ id }) => id === retrospectiveId)
+            ?.payload?.feedbackCandidates?.find(({ id }) => id === candidateId);
+        };
+        const before = await inboxCandidate();
+        assert(before && !before.consumedBy?.length);
+        const mark = observed.changes.length;
+        assert.equal(
+          (await observed.read('decision.resolve', { decisionId: draftId, actionId: 'landed' }))
+            .resolved,
+          true,
+        );
+        const after = await inboxCandidate();
+        assert(
+          after?.consumedBy?.some(
+            (entry) =>
+              entry.rule === `offline-rule-${candidateId}` && entry.revision === candidateId,
+          ),
+          'A landed rule must appear in the current retrospective consumption',
+        );
+        const ledgerFile =
+          process.env.FARMSLOT_FEEDBACK_LEDGER ?? path.join(home, 'state/feedback-ledger.json');
+        assert((await realpath(ledgerFile)).startsWith(`${home}/`));
+        const ledger = JSON.parse(await readFile(ledgerFile, 'utf8'));
+        assert(
+          ledger.entries.some(
+            (entry) => entry.candidateId === candidateId && entry.decisionId === draftId,
+          ),
+        );
+        await observed.barrier();
+        assert(observed.changes.slice(mark).some(({ key }) => key.family === 'decisions'));
+        return {
+          result: 'PASS',
+          action: phase,
+          runId,
+          candidateId,
+          ledgerEntryReadable: true,
+          retrospectiveConsumptionUpdated: true,
+        };
+      },
+    );
+    console.log(JSON.stringify(result));
+  } finally {
+    await rm(library, { recursive: true, force: true });
+  }
+  process.exit(0);
+}
+
+if (phase === 'query-stamps') {
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  const observed = await observeResources();
+  try {
+    const reads = [
+      [
+        'run.list',
+        { limit: 1000, includeFamilySummaries: true, includeProjectAnalytics: true },
+        ['runs'],
+      ],
+      ['run.get', { runId: fixture.runId }, ['run', 'runs']],
+      ['decision.list', {}, ['decisions']],
+      ['family.observability.get', { familyId: fixture.runId }, ['decisions', 'family']],
+      ['run.recipeRunsForRun', { runId: fixture.runId }, ['artifacts', 'run']],
+      ['run.slotHistory', { slotId: fixture.slotId, limit: 5 }, ['runs', 'slots']],
+      ['run.forSlot', { slotId: fixture.slotId }, ['runs', 'slot']],
+      ['run.recipeRunsForSlot', { slotId: fixture.slotId }, ['runs', 'slot']],
+      ['run.tags.list', {}, ['runs']],
+    ];
+    const receipts = [];
+    for (const [method, params, families] of reads) {
+      const result = await observed.readStamped(method, params);
+      assert.equal(
+        result.resourceState?.epoch,
+        observed.epoch,
+        `${method} must carry the current read epoch`,
+      );
+      assert.deepEqual(
+        result.resourceState.dependencies.map(({ key }) => key.family).sort(),
+        families,
+      );
+      for (const { key, revision } of result.resourceState.dependencies) {
+        assert(Number.isSafeInteger(revision) && revision >= 0);
+        if ('runId' in key) assert.equal(key.runId, fixture.runId);
+        if ('familyId' in key) assert.equal(key.familyId, fixture.runId);
+        if ('slotId' in key) assert.equal(key.slotId, fixture.slotId);
+        if ('scope' in key) assert.equal(key.scope, 'farm');
+      }
+      receipts.push({ method, dependencies: result.resourceState.dependencies });
+    }
+    console.log(
+      JSON.stringify({ result: 'PASS', action: phase, stampedRunReads: reads.length, receipts }),
+    );
+  } finally {
+    observed.close();
+  }
+  process.exit(0);
+}
+
+if (phase === 'missing-run') {
+  const observed = await observeResources();
+  const runId = `offline-missing-${randomUUID()}`;
+  try {
+    for (const method of ['run.get', 'run.recipeRunsForRun'])
+      await assert.rejects(
+        observed.read(method, { runId }),
+        { code: 'RUN_NOT_FOUND' },
+        'Missing runs must return the cache eviction code',
+      );
+    console.log(
+      JSON.stringify({ result: 'PASS', action: phase, runId, structuredMissingRun: true }),
+    );
+  } finally {
+    observed.close();
+  }
+  process.exit(0);
+}
+
+if (phase === 'mirror-arrival') {
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'Select the owned setup-time run fixture');
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  assert.match(fixture.runId, /^[a-f0-9-]{36}$/);
+  for (const directory of [fixture.taskDir, fixture.workerRepo, fixture.workerTaskDir]) {
+    const relative = path.relative(home, await realpath(directory));
+    assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+  }
+  assert.equal(fixture.taskFile, path.join(fixture.taskDir, 'TASK.md'));
+  assert.equal(fixture.workerTaskDir, path.join(fixture.workerRepo, '.task', fixture.runId));
+  assert.equal(process.env.FARMSLOT_POOL_DIR, path.join(home, 'pool'));
+  const pool = JSON.parse(
+    await readFile(path.join(home, 'pool', `${fixture.slotId}.json`), 'utf8'),
+  );
+  assert.equal(pool.host, 'localhost');
+  assert(pool.slots.some((slot) => slot.id === fixture.slotId && slot.repo === fixture.workerRepo));
+  const before = (await rpc('run.get', { runId: fixture.runId })).run;
+  assert.equal(before.taskFile, fixture.taskFile);
+  assert.equal(before.slotId, fixture.slotId);
+  assert.equal(before.readOnly, false, 'Never mutate imported reference runs');
+  const artifact = `artifacts/offline-mirror-${randomUUID()}.md`;
+  const contents = `# Artifact arriving after completion\n\n${randomUUID()}\n`;
+  const expectedHash = createHash('sha256').update(contents).digest('hex');
+  assert(!before.output?.artifactManifest.some((entry) => entry.path === artifact));
+  const source = path.join(fixture.workerTaskDir, artifact);
+  const destination = path.join(fixture.taskDir, artifact);
+  await assert.rejects(access(destination), { code: 'ENOENT' });
+  const observed = await observeResources();
+  try {
+    await writeFile(source, contents, { flag: 'wx' });
+    await observed.barrier();
+    assert(
+      !observed.changes.some(
+        ({ key }) => key.family === 'artifacts' && key.runId === fixture.runId,
+      ),
+      'Worker completion alone must not announce a readable gateway mirror',
+    );
+    // The worker writes only its source. The real refresh must acquire and retain it.
+    const refreshed = await rpc('run.refreshMirror', { runId: fixture.runId });
+    assert.equal(refreshed.ok, true, refreshed.reason);
+    assert(refreshed.copied > 0, 'The late worker artifact must actually transfer');
+    assert.equal(await readFile(destination, 'utf8'), contents);
+    const after = (await rpc('run.get', { runId: fixture.runId })).run;
+    assert.equal(after.output.captureError, undefined);
+    const entry = after.output.artifactManifest.find((entry) => entry.path === artifact);
+    assert(entry, 'The gateway output must contain the newly acquired artifact');
+    assert.equal(entry.sha256, expectedHash);
+    assert.equal(entry.sizeBytes, Buffer.byteLength(contents));
+    assert(after.output.artifactBundle?.bundleDigest, 'The output must be retained by identity');
+    const retainedUrl = new URL('/api/run-artifact', gateway);
+    retainedUrl.protocol = 'http:';
+    retainedUrl.search = new URLSearchParams({
+      runId: fixture.runId,
+      path: artifact,
+      recipeRunId: 'current-artifacts',
+      bundleDigest: after.output.artifactBundle.bundleDigest,
+    });
+    const retained = await fetch(retainedUrl, {
+      headers: { Authorization: `Bearer ${profile.credential.token}` },
+    });
+    assert.equal(
+      retained.status,
+      200,
+      'The retained artifact must be readable through its real endpoint',
+    );
+    assert.equal(await retained.text(), contents);
+    assert.equal(retained.headers.get('ETag'), `"${expectedHash}"`);
+    assert.equal(
+      retained.headers.get('X-Farmslot-Bundle-Digest'),
+      after.output.artifactBundle.bundleDigest,
+    );
+    await observed.barrier();
+    assert(
+      observed.changes.some(({ key }) => key.family === 'artifacts' && key.runId === fixture.runId),
+      'Actual mirror arrival must publish its own artifact change',
+    );
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        action: phase,
+        runId: fixture.runId,
+        artifact,
+        copied: refreshed.copied,
+        sha256: entry.sha256,
+        bytes: entry.sizeBytes,
+        bundleDigest: after.output.artifactBundle.bundleDigest,
+        workerSourceArrived: true,
+        readableMirrorMatches: true,
+        gatewayManifestMatches: true,
+        retainedHttpMatches: true,
+        artifactChangeObserved: true,
+      }),
+    );
+  } finally {
+    observed.close();
+  }
+  process.exit(0);
+}
+
+const id = randomUUID();
+const project = path.join(projects, `offline-store-proof-${id}`);
+await mkdir(project);
+try {
+  const task = path.join(project, 'tasks', 'decision-proof');
+  await mkdir(task, { recursive: true });
+  const file = path.join(task, '.pending_decision.json');
+  await writeFile(
+    file,
+    JSON.stringify({
+      id,
+      type: 'blocked_alert',
+      title: 'Run store decision proof',
+      actions: [{ id: 'acknowledge', label: 'Acknowledge' }],
+      created_at: new Date().toISOString(),
+    }),
+  );
+  const before = await rpc('decision.list');
+  assert.equal(before.decisions.filter((decision) => decision.id === id).length, 1);
+  assert.equal(
+    before.decisions.find((decision) => decision.id === id).title,
+    'Run store decision proof',
+  );
+  const acknowledgement = await rpc('decision.resolve', {
+    decisionId: id,
+    actionId: 'acknowledge',
+  });
+  assert.equal(acknowledgement.resolved, true);
+  await assert.rejects(
+    access(file),
+    { code: 'ENOENT' },
+    'An acknowledged decision must have no source',
+  );
+  const after = await rpc('decision.list');
+  assert(!after.decisions.some((decision) => decision.id === id));
+  console.log(
+    JSON.stringify({
+      result: 'PASS',
+      action: 'file-decision',
+      explicitId: id,
+      readableBefore: true,
+      resolved: true,
+      fileRemoved: true,
+      absentFromInbox: true,
+    }),
+  );
+} finally {
+  await rm(project, { recursive: true, force: true });
+}

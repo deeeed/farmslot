@@ -12,6 +12,7 @@
 //   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
 //   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
 //   node scripts/cdp.mjs click <hash> <selector>       Click a control, searching shadow roots.
+//   node scripts/cdp.mjs key <hash> <1-9|Enter|Escape|Tab> Send a real key to the focused control.
 //   node scripts/cdp.mjs select <hash> <selector> <value> Choose a styled choice or native select option.
 //   Selectors may cross shadow roots with >>>, e.g. native-session-view >>> textarea.
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
@@ -222,7 +223,18 @@ async function focusTab(hash) {
   const { call, close } = await connect(tab.webSocketDebuggerUrl);
   await call('Page.enable');
   await call('Page.bringToFront');
+  const deadline = Date.now() + 5000;
+  let visibility;
+  do {
+    visibility = await call('Runtime.evaluate', {
+      expression: 'document.visibilityState',
+      returnByValue: true,
+    });
+    if (visibility.result?.value === 'visible') break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  } while (Date.now() < deadline);
   close();
+  if (visibility.result?.value !== 'visible') die('The selected tab did not become visible', 2);
   const origin = new URL(tab.url).origin;
   // `about:blank` and similar yield the literal string "null", which would make
   // the permission grant a silent no-op.
@@ -236,7 +248,13 @@ async function focusTab(hash) {
     permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
   });
   browser.close();
-  return { id: tab.id, url: tab.url, origin, clipboardGranted: true };
+  return {
+    id: tab.id,
+    url: tab.url,
+    origin,
+    clipboardGranted: true,
+    visibility: visibility.result?.value,
+  };
 }
 
 async function evalInTab(hash, expr) {
@@ -278,6 +296,24 @@ async function evalInTab(hash, expr) {
       2,
     );
   return r.result?.value;
+}
+
+async function keyInTab(hash, key) {
+  const keyCode =
+    { Enter: 13, Escape: 27, Tab: 9 }[key] ?? (/^[1-9]$/.test(key) ? key.charCodeAt(0) : undefined);
+  if (keyCode === undefined) die('key supports 1-9, Enter, Escape or Tab');
+  const tab = await findTab(hash);
+  if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+  const { call, close } = await connect(tab.webSocketDebuggerUrl);
+  try {
+    const code = /^[1-9]$/.test(key) ? `Digit${key}` : key;
+    const event = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
+    await call('Input.dispatchKeyEvent', { type: 'keyDown', ...event });
+    await call('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
+    return { key };
+  } finally {
+    close();
+  }
 }
 
 async function viewportTab(hash, width, height) {
@@ -333,8 +369,11 @@ async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
   try {
     if (dialogChoice) await call('Page.enable');
     await call('Page.bringToFront');
-    const result = await call('Runtime.evaluate', {
-      expression: `(() => {
+    const clickDeadline = Date.now() + 5000;
+    let result;
+    do {
+      result = await call('Runtime.evaluate', {
+        expression: `(() => {
         const parts = ${JSON.stringify(selector)}.split('>>>').map(part=>part.trim());
         function find(root, part) {
           const element = root.querySelector(part);
@@ -348,17 +387,23 @@ async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
           element=parts.length===1 ? find(root,part) : root?.querySelector(part);
           if (index < parts.length-1) root=element?.shadowRoot;
         }
-        if(!element || element.disabled || !element.getClientRects().length) throw Error('Click target unavailable');
+        if(!element) throw Error('Click target unavailable: missing');
+        if(element.disabled) throw Error('Click target unavailable: disabled');
         element.scrollIntoView({block:'center'});
+        if(!element.getClientRects().length) throw Error('Click target unavailable: hidden');
         const rect=element.getBoundingClientRect();
         return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};
       })()`,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails)
-      throw new Error(
-        result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
-      );
+        returnByValue: true,
+      });
+      if (!result.exceptionDetails) break;
+      const message =
+        result.exceptionDetails.exception?.description ?? result.exceptionDetails.text;
+      if (!message.includes('Click target unavailable') || Date.now() >= clickDeadline)
+        throw new Error(message);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    } while (Date.now() < clickDeadline);
+    if (result.exceptionDetails) throw new Error('Click target unavailable before deadline');
     for (const type of ['mousePressed', 'mouseReleased'])
       await call('Input.dispatchMouseEvent', {
         type,
@@ -601,6 +646,10 @@ try {
     const [hash] = rest;
     if (!hash) die('usage: cdp.mjs focus <hash|-|route>');
     console.log(JSON.stringify(await focusTab(hash), null, 2));
+  } else if (cmd === 'key') {
+    const [hash, key] = rest;
+    if (!hash || !key) die('usage: cdp.mjs key <hash> <1-9|Enter|Escape|Tab>');
+    console.log(JSON.stringify(await keyInTab(hash, key)));
   } else if (cmd === 'login') {
     const [hash] = rest;
     if (!hash) die('usage: cdp.mjs login <hash>');

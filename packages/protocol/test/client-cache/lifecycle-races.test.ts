@@ -18,6 +18,47 @@ const scope: ResourceStoreScope = {
 const authority = { roles: [], workspaceAccess: 'farm' as const };
 const query = { ...resourceQuery<{ value: string }>('sources.status'), persisted: true };
 
+for (const reason of ['network', 'background', 'unobserve'] as const) {
+  test(`an accepted observation persists when its ready listener triggers ${reason}`, async () => {
+    const store = createMemoryResourceStore();
+    await store.putQuery({ id: query.id, data: { value: 'older' }, observedAt: 1, bytes: 17 });
+    const transport = new ResourceCacheConformanceTransport(scope);
+    transport.setConnection({ connected: true, id: 1 });
+    const cache = createGatewayResourceCache({ transport, store });
+    let paused = false;
+    let stop = () => {};
+    stop = cache.observe(query, (state) => {
+      if (state.status !== 'ready' || paused) return;
+      paused = true;
+      if (reason === 'unobserve') stop();
+      else
+        transport.setConnection(
+          reason === 'network' ? { connected: false, id: 1 } : { foreground: false, id: 1 },
+          reason,
+        );
+    });
+    try {
+      const pending = cache.retry(query);
+      (await transport.nextRead()).resolve({ value: 'latest' });
+      await pending;
+      assert(paused);
+      const visible = cache.read(query);
+      assert.equal(visible.status, 'stale');
+      assert.equal(visible.data?.value, 'latest');
+      const saved = await store.getQuery<{ value: string }>(query.id);
+      assert.equal(
+        saved?.data.value,
+        'latest',
+        'Pausing a transport must not discard an already accepted snapshot',
+      );
+      assert.equal(saved?.observedAt, visible.observedAt);
+    } finally {
+      stop();
+      await cache.dispose();
+    }
+  });
+}
+
 test('a reconnect queued immediately after sign-out cannot skip deletion', async () => {
   const store = createMemoryResourceStore();
   await store.setMetadata({ scope, authority });

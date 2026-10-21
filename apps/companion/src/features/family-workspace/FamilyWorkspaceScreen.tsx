@@ -5,6 +5,7 @@ import type { FamilyObservabilityArtifact } from '@farmslot/protocol';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { MediaViewer } from '../../components/MediaViewer';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import {
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -76,8 +77,24 @@ export default function FamilyWorkspaceScreen() {
         >
           <Text style={baseStyles.textSecondary}>
             {screen.error ??
-              (screen.client ? 'Loading family workspace…' : 'Connect to gateway to load family.')}
+              (screen.client?.connectionState === 'connected'
+                ? 'Loading family workspace…'
+                : 'Connect to load the family summary.')}
           </Text>
+          {screen.selectedFullRun ? (
+            <>
+              <ResourceReadStatus observation={screen.selectedRunObservation} label="run" />
+              <Text style={baseStyles.textSecondary}>{screen.selectedFullRun.ticketOrPr}</Text>
+              <Pressable style={styles.backFallbackButton} onPress={screen.openSavedRun}>
+                <Text style={styles.backFallbackText}>Open saved run</Text>
+              </Pressable>
+            </>
+          ) : null}
+          {screen.error ? (
+            <Pressable style={styles.backFallbackButton} onPress={() => void screen.retryFamily()}>
+              <Text style={styles.backFallbackText}>Retry family</Text>
+            </Pressable>
+          ) : null}
           <Pressable style={styles.backFallbackButton} onPress={screen.goBackOrRuns}>
             <Text style={styles.backFallbackText}>Back to runs</Text>
           </Pressable>
@@ -150,6 +167,8 @@ export default function FamilyWorkspaceScreen() {
     <>
       <Stack.Screen options={{ title: 'Family Workspace' }} />
       <View style={baseStyles.container} testID="companion-screen-family-workspace">
+        <ResourceReadStatus observation={screen.familyObservation} label="family" />
+        <ResourceReadStatus observation={screen.selectedRunObservation} label="run" />
         <WorkspaceSectionTabs
           activeTab={activeTab}
           tabs={[...FAMILY_WORKSPACE_TABS]}
@@ -835,7 +854,17 @@ export default function FamilyWorkspaceScreen() {
             </View>
           ) : null}
 
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {error ? (
+            <>
+              <Text style={styles.errorText}>{error}</Text>
+              <Pressable
+                style={styles.backFallbackButton}
+                onPress={() => void screen.retryFamily()}
+              >
+                <Text style={styles.backFallbackText}>Retry family</Text>
+              </Pressable>
+            </>
+          ) : null}
 
           {activeTab === 'retros' ? (
             <View style={styles.section}>

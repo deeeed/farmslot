@@ -1,4 +1,4 @@
-// Reactive state store — holds fleet/PR/decision data, updated by gateway events
+// Reactive view state. Shared cache observations own run and decision facts.
 
 import type {
   BacklogItem,
@@ -6,8 +6,6 @@ import type {
   BacklogUpdatedPayload,
   ConfigProjectsResult,
   DecisionListResult,
-  DecisionNewPayload,
-  DecisionResolvedPayload,
   DispatchQueueListResult,
   FleetStatus,
   FleetStatusResult,
@@ -23,14 +21,11 @@ import type {
   QueueItem,
   QueueUpdatedPayload,
   Run,
-  RunCompletedPayload,
-  RunCreatedPayload,
   RunDeletedPayload,
   RunFamilyReadinessSummary,
   RunListResult,
   RunListSummaryMeta,
   RunProjectAnalyticsSummary,
-  RunUpdatedPayload,
   SlotChangedPayload,
   SlotStatus,
   WorkGraphListResult,
@@ -43,13 +38,25 @@ import {
   DEFAULT_BRANCH,
   Events,
   isTerminalRunStatus,
-  mergeRunsById,
+  mergeRunListObservations,
   Methods,
 } from '@farmslot/protocol';
+import {
+  type GatewayResourceCache,
+  resourceQuery,
+  type ResourceQueryState,
+} from '@farmslot/protocol/client-cache';
 
 import { notify as browserNotify } from './utils/notifications.js';
 import { safeLsGet, safeLsRemove } from './utils/storage.js';
 import { type ConnectionState, gateway } from './gateway-client.js';
+import {
+  getResourceCache,
+  getResourceWorkspaceAccess,
+  getResourceWorkspaceKey,
+  initializeResourceCache,
+  subscribeResourceCache,
+} from './resource-cache.js';
 import {
   filtersHash,
   type GlobalFilters,
@@ -108,6 +115,8 @@ export interface AppState {
   prs: PRStatus[];
   decisions: PendingDecision[];
   runs: Run[];
+  runsObservation: ResourceQueryState<RunListResult>;
+  decisionsObservation: ResourceQueryState<DecisionListResult>;
   /** Moves for every RUN_DELETED event, including ids outside the paginated run list. */
   runDeletionsRevision: number;
   runSummaryMeta: RunListSummaryMeta | null;
@@ -194,6 +203,8 @@ const state: AppState = {
   prs: [],
   decisions: [],
   runs: [],
+  runsObservation: { status: 'loading' },
+  decisionsObservation: { status: 'loading' },
   runDeletionsRevision: 0,
   runSummaryMeta: null,
   runFamilySummaries: [],
@@ -218,6 +229,8 @@ function clearWorkspaceState(): void {
     prs: [],
     decisions: [],
     runs: [],
+    runsObservation: { status: 'loading' },
+    decisionsObservation: { status: 'loading' },
     runSummaryMeta: null,
     runFamilySummaries: [],
     runProjectAnalytics: [],
@@ -445,6 +458,88 @@ function notify(): void {
   fireNotify();
 }
 
+export const runHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, {
+  limit: 1000,
+  includeFamilySummaries: true,
+  includeProjectAnalytics: true,
+});
+export const activeRunsQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, { active: true });
+export const decisionsQuery = resourceQuery<DecisionListResult>(Methods.DECISION_LIST);
+
+let collectionCache: GatewayResourceCache | undefined;
+let collectionWorkspaceKey: string | undefined;
+let collectionFarm = false;
+let collectionObservers: Array<() => void> = [];
+
+/** These arrays are view projections; notifications and persistence belong to the shared cache. */
+function bindRunCollections(): void {
+  const cache = getResourceCache();
+  const workspaceKey = getResourceWorkspaceKey();
+  const farm =
+    getResourceWorkspaceAccess() === 'farm' ||
+    (gateway.connectionState === 'connected' && gateway.workspaceAccess === 'farm');
+  if (
+    collectionCache === cache &&
+    collectionWorkspaceKey === workspaceKey &&
+    collectionFarm === farm
+  )
+    return;
+  for (const stop of collectionObservers) stop();
+  collectionObservers = [];
+  collectionCache = cache;
+  collectionWorkspaceKey = workspaceKey;
+  collectionFarm = farm;
+  state.runsObservation = { status: 'loading' };
+  state.decisionsObservation = { status: 'loading' };
+  state.runs = [];
+  state.decisions = [];
+  if (!cache || !farm) {
+    notify();
+    return;
+  }
+  if (gateway.connectionState !== 'connected') state.workspaceAccess = 'farm';
+  const current = () => collectionCache === cache && collectionWorkspaceKey === workspaceKey;
+  const observeRuns = () => {
+    if (!current()) return;
+    const result = mergeRunListObservations(
+      cache.read(activeRunsQuery),
+      cache.read(runHistoryQuery),
+    );
+    state.runsObservation = result;
+    state.runs = result.data?.runs ?? [];
+    state.runSummaryMeta = result.data?.summaryMeta ?? null;
+    state.runFamilySummaries = result.data?.familySummaries ?? [];
+    state.runProjectAnalytics = result.data?.projectAnalytics ?? [];
+    state.hydrated = { ...state.hydrated, runs: result.status !== 'loading' };
+    state.bootstrapFailed = { ...state.bootstrapFailed, runs: Boolean(result.error) };
+    notify();
+  };
+  collectionObservers.push(cache.observe(runHistoryQuery, observeRuns));
+  collectionObservers.push(cache.observe(activeRunsQuery, observeRuns));
+  collectionObservers.push(
+    cache.observe(decisionsQuery, (result) => {
+      if (!current()) return;
+      const previous = state.decisionsObservation.data;
+      state.decisionsObservation = result;
+      state.decisions = result.data?.decisions ?? [];
+      state.hydrated = { ...state.hydrated, decisions: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, decisions: Boolean(result.error) };
+      if (previous && result.status === 'ready') {
+        const ids = new Set(previous.decisions.map(({ id }) => id));
+        for (const decision of state.decisions)
+          if (!ids.has(decision.id))
+            browserNotify('Decision needed', {
+              body: decision.title,
+              tag: `decision-${decision.id}`,
+              route: '#decisions',
+              attention: true,
+            });
+      }
+      notify();
+    }),
+  );
+}
+
 // --- Public API ---
 
 export function getState(): Readonly<AppState> {
@@ -572,74 +667,8 @@ export function updateDecisions(decisions: PendingDecision[]): void {
   notify();
 }
 
-/**
- * Merge a snapshot from `decision.list` into local state. Caller passes the
- * set of decision ids known BEFORE the snapshot request was fired; any
- * local id outside that set arrived during the request window (e.g. an
- * analyzing placeholder via RUN_DECISION_NEW) and must survive the merge.
- * Old local ids absent from the snapshot are server-resolved → drop.
- */
-export function mergeDecisions(snapshot: PendingDecision[], preRequestIds: Set<string>): void {
-  const snapshotIds = new Set(snapshot.map((d) => d.id));
-  const newLocal = state.decisions.filter(
-    (d) => !snapshotIds.has(d.id) && !preRequestIds.has(d.id),
-  );
-  state.decisions = [...snapshot, ...newLocal];
-  notify();
-}
-
-export function addDecision(decision: PendingDecision): void {
-  if (state.decisions.some((d) => d.id === decision.id)) return;
-  state.decisions = [...state.decisions, decision];
-  browserNotify('Decision needed', {
-    body: `${decision.title}`,
-    tag: `decision-${decision.id}`,
-    route: '#decisions',
-    attention: true,
-  });
-  notify();
-}
-
-export function removeDecision(id: string): void {
-  state.decisions = state.decisions.filter((d) => d.id !== id);
-  notify();
-}
-
-export function updateDecision(decision: PendingDecision): void {
-  const idx = state.decisions.findIndex((d) => d.id === decision.id);
-  // Strictly an update — if the id isn't in the inbox the decision was either
-  // never seen (NEW arrived after UPDATED — unlikely with the gateway's
-  // ordering) or already removed via RESOLVED. Re-adding here would resurrect
-  // a resolved card; safer to drop. Log so the rare reorder/reload race is
-  // visible rather than silently swallowed.
-  if (idx === -1) {
-    console.warn(
-      `[state] updateDecision dropped — id=${decision.id.slice(0, 8)} not in inbox (NEW unseen or already RESOLVED)`,
-    );
-    return;
-  }
-  state.decisions = state.decisions.map((d, i) => (i === idx ? decision : d));
-  notify();
-}
-
-/**
- * Drop any local decisions that the run's authoritative `decisions` array now
- * shows as resolved. Recovers the inbox from missed RUN_DECISION_RESOLVED
- * events (e.g. when the resolve happened in another tab or before subscribe).
- */
-export function sweepResolvedFromRun(run: Run): void {
-  const resolvedIds = new Set((run.decisions ?? []).filter((d) => d.resolvedAt).map((d) => d.id));
-  if (resolvedIds.size === 0) return;
-  const before = state.decisions.length;
-  state.decisions = state.decisions.filter((d) => !resolvedIds.has(d.id));
-  if (state.decisions.length !== before) notify();
-}
-
-// Bootstrap path: server returns authoritative summaries with `totalCount`. Adopt
-// them as-is. Live path (`upsertRun`/`removeRun`) recomputes locally from the
-// already-flowing `RUN_*` events so the strip never goes stale and we don't
-// burn a round-trip per delta. Helper is pure (no fs/network — enforced by
-// `protocol/run-family-readiness.test.ts`), so doing it client-side is cheap.
+// Development fixtures can provide rows without server summaries. Product
+// observations use the summary metadata from their canonical query result.
 function recomputeRunSummariesInPlace(): void {
   if (!state.runSummaryMeta) return;
   state.runFamilySummaries = buildRunFamilyReadinessSummaries(state.runs);
@@ -664,39 +693,6 @@ export function updateRuns(
     recomputeRunSummariesInPlace();
   }
   state.bootstrapFailed = { ...state.bootstrapFailed, runs: false };
-  notify();
-}
-
-export function upsertRun(run: Run): void {
-  const idx = state.runs.findIndex((r) => r.id === run.id);
-  state.runs = idx >= 0 ? state.runs.map((r, i) => (i === idx ? run : r)) : [run, ...state.runs];
-  // Track local create against the server-snapshot total so isTruncated reflects
-  // the post-event state. RUN_DELETED would otherwise flip isTruncated=true even
-  // when totalCount and runs.length both dropped together.
-  if (idx < 0 && state.runSummaryMeta) {
-    state.runSummaryMeta = {
-      ...state.runSummaryMeta,
-      totalCount: state.runSummaryMeta.totalCount + 1,
-    };
-  }
-  recomputeRunSummariesInPlace();
-  notify();
-}
-
-export function removeRun(runId: string): void {
-  // RUN_DELETED doubles as archive notification. The id may be outside the
-  // paginated state.runs snapshot, but gateway-derived projections still include
-  // it and must invalidate even when this local array stays byte-for-byte equal.
-  state.runDeletionsRevision++;
-  const before = state.runs.length;
-  state.runs = state.runs.filter((r) => r.id !== runId);
-  if (state.runs.length !== before && state.runSummaryMeta) {
-    state.runSummaryMeta = {
-      ...state.runSummaryMeta,
-      totalCount: Math.max(0, state.runSummaryMeta.totalCount - 1),
-    };
-  }
-  recomputeRunSummariesInPlace();
   notify();
 }
 
@@ -800,6 +796,9 @@ export function waitForCoreHydration(epoch?: number): Promise<void> {
 // --- Wire up gateway events ---
 
 export function initState(): void {
+  initializeResourceCache();
+  subscribeResourceCache(bindRunCollections);
+  bindRunCollections();
   // Keep URL ↔ state in sync: inbound hash changes refresh filter state; state
   // changes re-write the hash so filters ride along across route navigations.
   if (typeof window !== 'undefined') {
@@ -837,6 +836,7 @@ export function initState(): void {
       resetBootstrapState();
     }
     const ownerChanged = syncWorkspaceOwner(conn);
+    bindRunCollections();
     setConnection(conn);
     if (ownerChanged) notifyWorkspaceOwnerChange();
     if (conn === 'connected' && gateway.workspaceAccess === 'farm') {
@@ -874,110 +874,13 @@ export function initState(): void {
   //
   // Used by both NEW and UPDATED handlers so a placeholder card swapped in
   // place keeps its runMeta + slotId + context (Apply/Chat need runId).
-  const buildPendingDecision = (p: DecisionNewPayload): PendingDecision | null => {
-    const d = p.decision ?? p;
-    if (!d.id) return null;
-    let runMeta: PendingDecision['runMeta'];
-    if (p.runId) {
-      const run = state.runs.find((r) => r.id === p.runId);
-      if (run) {
-        runMeta = {
-          runId: run.id,
-          familyId: run.familyId,
-          flowType: run.flowType,
-          ticketOrPr: run.ticketOrPr,
-          prNumber: run.prNumber ?? undefined,
-          branch: run.branch ?? undefined,
-          runner: run.metrics?.runner ?? undefined,
-          model: run.metrics?.model ?? undefined,
-          summary: run.summary ?? undefined,
-        };
-      }
-    }
-    const payload = 'payload' in d ? d.payload : undefined;
-    return {
-      id: d.id,
-      type: (d.type ?? 'unknown') as PendingDecision['type'],
-      slotId: p.slotId ?? null,
-      title: d.title ?? '',
-      description: d.description ?? '',
-      context: { runId: p.runId, ...(d.context ?? {}) },
-      actions: d.actions ?? [],
-      createdAt: d.createdAt ?? new Date().toISOString(),
-      payload,
-      runMeta,
-    };
-  };
-
-  const onDecisionNew = (p: DecisionNewPayload) => {
-    // Build the decision only after the runs slice has drained, so runMeta
-    // reflects any buffered RUN_CREATED/RUN_UPDATED for the decision's run.
-    // Slices drain in RPC-resolution order, so DECISION_LIST may finish
-    // before RUN_LIST. The decisions buffer itself is gated behind runs in
-    // `markReady` via `pendingDecisionsDrain`. Every decision event for a
-    // decision ID stays in the decisions buffer and drains in insertion order,
-    // so a DECISION_NEW → DECISION_RESOLVED sequence cannot re-add a resolved
-    // decision.
-    deferEvent('decisions', () => {
-      const decision = buildPendingDecision(p);
-      if (decision) addDecision(decision);
-    });
-  };
-  gateway.subscribe<DecisionNewPayload>(Events.DECISION_NEW, onDecisionNew);
-  gateway.subscribe<DecisionNewPayload>(Events.RUN_DECISION_NEW, onDecisionNew);
-
-  const onDecisionResolved = (p: DecisionResolvedPayload) => {
-    const id = p.id ?? p.decisionId;
-    if (id) deferEvent('decisions', () => removeDecision(id));
-  };
-  gateway.subscribe<DecisionResolvedPayload>(Events.DECISION_RESOLVED, onDecisionResolved);
-  gateway.subscribe<DecisionResolvedPayload>(Events.RUN_DECISION_RESOLVED, onDecisionResolved);
-
-  const onDecisionUpdated = (p: DecisionNewPayload) => {
-    deferEvent('decisions', () => {
-      const decision = buildPendingDecision(p);
-      if (decision) updateDecision(decision);
-    });
-  };
-  gateway.subscribe<DecisionNewPayload>(Events.DECISION_UPDATED, onDecisionUpdated);
-  gateway.subscribe<DecisionNewPayload>(Events.RUN_DECISION_UPDATED, onDecisionUpdated);
-
-  // Run events
-  gateway.subscribe<RunCreatedPayload>(Events.RUN_CREATED, (p) => {
-    if (p.run) {
-      console.log(
-        `[state] RUN_CREATED runId=${p.run.id.slice(0, 8)} status=${p.run.status} decisions=${p.run.decisions?.length ?? 0}`,
-      );
-      deferEvent('runs', () => upsertRun(p.run!));
-    }
-  });
-
-  gateway.subscribe<RunUpdatedPayload>(Events.RUN_UPDATED, (p) => {
-    if (p.run) {
-      const unresolvedReview = (p.run.decisions ?? []).some(
-        (d) => !d.resolvedAt && (d.payload as { kind?: string } | undefined)?.kind === 'review',
-      );
-      console.log(
-        `[state] RUN_UPDATED runId=${p.run.id.slice(0, 8)} status=${p.run.status} decisions=${p.run.decisions?.length ?? 0} unresolvedReview=${unresolvedReview}`,
-      );
-      deferEvent('runs', () => upsertRun(p.run!));
-      // Authoritative sweep — drop any local decisions the run already shows as
-      // resolved (recovers from missed DECISION_RESOLVED events after restart
-      // or cross-tab resolves).
-      const run = p.run!;
-      deferEvent('decisions', () => sweepResolvedFromRun(run));
-    }
-  });
-
-  gateway.subscribe<RunCompletedPayload>(Events.RUN_COMPLETED, (p) => {
-    if (p.run) {
-      console.log(`[state] RUN_COMPLETED runId=${p.run.id.slice(0, 8)} status=${p.run.status}`);
-      deferEvent('runs', () => upsertRun(p.run!));
-    }
-  });
-
+  // Cache observations own run/decision facts. This counter only bridges views
+  // whose slot-derived projections are migrated in the following slice.
   gateway.subscribe<RunDeletedPayload>(Events.RUN_DELETED, (p) => {
-    if (p.runId) deferEvent('runs', () => removeRun(p.runId));
+    if (p.runId) {
+      state.runDeletionsRevision++;
+      notify();
+    }
   });
 
   // Queue events
@@ -1153,28 +1056,19 @@ async function runFetchInitialState(
     })
     .catch(() => markFailed('fleet'))
     .finally(() => markReady('fleet'));
-  const decisionsJob = gateway
-    .request<DecisionListResult>(Methods.DECISION_LIST)
-    .then((r) => {
-      if (stillCurrent() && r.decisions) updateDecisions(r.decisions);
-    })
-    .catch(() => {
-      if (stillCurrent()) updateDecisions([]);
-      markFailed('decisions');
-    })
+  const cache = getResourceCache();
+  const decisionsJob = (
+    cache
+      ? cache.retry(decisionsQuery)
+      : Promise.reject(new Error('Offline decision store is unavailable'))
+  )
+    .catch(() => markFailed('decisions'))
     .finally(() => markReady('decisions'));
-  // The newest-runs window can miss a long-lived active run; the active list never does.
-  const runsJob = Promise.all([
-    gateway.request<RunListResult>(Methods.RUN_LIST, {
-      limit: 1000,
-      includeFamilySummaries: true,
-      includeProjectAnalytics: true,
-    }),
-    gateway.request<RunListResult>(Methods.RUN_LIST, { active: true }),
-  ])
-    .then(([r, active]) => {
-      if (stillCurrent() && r.runs) updateRuns(mergeRunsById(r.runs, active.runs ?? []), r);
-    })
+  const runsJob = (
+    cache
+      ? Promise.all([cache.retry(runHistoryQuery), cache.retry(activeRunsQuery)])
+      : Promise.reject(new Error('Offline run store is unavailable'))
+  )
     .catch(() => markFailed('runs'))
     .finally(() => markReady('runs'));
   const queueJob = gateway

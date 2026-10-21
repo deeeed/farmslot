@@ -21,6 +21,7 @@ import {
   selectSingleActiveRunForSlot,
   SKIP_ACTIVE_RUN_SELECTION,
 } from '../../core/active-run-selection.js';
+import { GatewayMethodError } from '../../core/method-error.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { attachLiveRecipeContext } from '../../live-recipe/context.js';
 import { attachReviewRoundBudget } from '../../review/review-round-budget.js';
@@ -71,7 +72,7 @@ export function resolveBoundTerminalRunForSlot(
 
 export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   const run = getRun(params.runId);
-  if (!run) throw new Error(`Run not found: ${params.runId}`);
+  if (!run) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${params.runId}`);
   return { run: await presentRun(run), recoveryHints: runRecoveryHints(run) };
 }
 
@@ -111,7 +112,7 @@ export function selectActiveRunForSlot(
 
 export async function runForSlot(params: RunForSlotParams): Promise<RunForSlotResult> {
   const { runs: active } = listRuns({ active: true });
-  const slot = (await loadFleetStatus()).slots.find((s) => s.slot === params.slotId);
+  const slot = (await loadFleetStatus(true, true)).slots.find((s) => s.slot === params.slotId);
   const boundTerminal = resolveBoundTerminalRunForSlot(slot?.currentRunId);
   if (boundTerminal) {
     return { run: await presentRun(boundTerminal) };
@@ -138,7 +139,7 @@ export async function runRecipeRunsForSlot(
   params: RunRecipeRunsForSlotParams,
 ): Promise<RunRecipeRunsForSlotResult> {
   const { runs: active } = listRuns({ active: true });
-  const slot = (await loadFleetStatus()).slots.find((s) => s.slot === params.slotId);
+  const slot = (await loadFleetStatus(true, true)).slots.find((s) => s.slot === params.slotId);
   const run =
     resolveBoundTerminalRunForSlot(slot?.currentRunId) ??
     selectActiveRunForSlot(params.slotId, active, slot?.currentRunId);
@@ -172,7 +173,7 @@ export async function runRecipeRunsForRun(
   const run = getRun(params.runId);
   // Run-scoped mobile artifact review is anchored to an explicit run id; unlike
   // the slot-scoped helper, a missing run is caller state drift and should surface.
-  if (!run) throw new Error(`Run not found: ${params.runId}`);
+  if (!run) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${params.runId}`);
   if (!run.taskFile) return { recipeRuns: [], selectedRecipeRunId: null };
   const noEvidence = {
     artifactPrefix: 'artifacts/',

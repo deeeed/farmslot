@@ -9,12 +9,13 @@ export function resetFarmState() {
   useFleetStore.setState({ fleet: null, loading: false });
   useRunStore.setState({
     runs: [],
+    observation: { status: 'loading' },
     activeLoading: false,
     historyLoading: false,
     historyLoaded: false,
   });
   usePRStore.setState({ prs: [], updatedAt: null, loading: false, lastError: null });
-  useDecisionStore.setState({ decisions: [] });
+  useDecisionStore.setState({ decisions: [], observation: { status: 'loading' } });
   useFilterStore.setState((state) => ({
     filters: { projects: [], machines: [] },
     availableProjects: [],

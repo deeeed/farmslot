@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Linking } from 'react-native';
 
 import {
@@ -15,27 +15,37 @@ import {
   savedReviewView,
   toggleReviewFinding,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
+import { getResourceCache } from '../../lib/resource-cache';
 import { loadReviewFindingSource, reviewFindingSourceRequest } from '../../lib/review-curation';
-import { reviewPublicationView, reviewRunForDisplay } from '../../lib/review-publication';
+import { reviewPublicationView } from '../../lib/review-publication';
+import { assertNativeRunReady } from '../../lib/run-collections';
 import { useConnectionStore } from '../../store/connection';
-import { useRunStore } from '../../store/runs';
-
-import { readReviewRun, retryReviewPublication } from './review-publication-action';
 
 export type ReviewPublicationContext = 'publication' | 'saved';
 
 export function useReviewPublication(
   run: Run | null,
-  decision?: RunDecision | null,
-  onRefreshed?: (run: Run) => void,
+  selectedDecision?: RunDecision | null,
   context: ReviewPublicationContext = 'publication',
 ) {
   const client = useConnectionStore((state) => state.client);
   const profileId = useConnectionStore((state) => state.activeProfileId);
   const epoch = useConnectionStore((state) => state.authorityEpoch);
   const status = useConnectionStore((state) => state.status);
+  const query = useMemo(
+    () => (run?.id ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: run.id }) : undefined),
+    [run?.id],
+  );
+  const observation = useResourceQuery(query);
+  const effectiveRun = observation.data?.run ?? null;
+  const decision = selectedDecision
+    ? (effectiveRun?.decisions.find(({ id }) => id === selectedDecision.id) ?? null)
+    : null;
+
   const payload =
     context === 'publication' &&
     decision?.type === 'engine_review_posting' &&
@@ -76,18 +86,7 @@ export function useReviewPublication(
   const currentSource = source?.scope === scope.current ? source : undefined;
   const pending = useRef<object | undefined>(undefined);
   const currentAction = action?.scope === scope.current ? action : undefined;
-  const storedRun = useRunStore((state) => state.runs.find((item) => item.id === run?.id));
-  const effectiveRun = reviewRunForDisplay(run, storedRun);
   const savedCandidate = !payload && effectiveRun ? savedReviewView(effectiveRun) : null;
-  const [detail, setDetail] = useState<{
-    identity: string;
-    run?: Run;
-    loading: boolean;
-    error?: string;
-  }>();
-  const detailRequest = useRef<object | undefined>(undefined);
-  // Keep read evidence and its open document through transport-only pauses.
-  const currentDetail = detail?.identity === savedIdentity ? detail : undefined;
   const viewModel = effectiveRun ? reviewPublicationView(effectiveRun) : null;
   const captureCurrent = (bindSelection = true) => {
     const capturedScope = scope.current;
@@ -103,31 +102,8 @@ export function useReviewPublication(
   const curationRef = useRef(curation);
   curationRef.current = curation;
   const readSaved = async () => {
-    if (!client || !run || status !== 'connected') return;
-    const request = {};
-    detailRequest.current = request;
-    const connectionCurrent = captureCurrent(false);
-    const current = () => connectionCurrent() && detailRequest.current === request;
-    const retained = currentDetail?.run;
-    setDetail({ identity: savedIdentity, run: retained, loading: true });
-    try {
-      await readReviewRun(client, run.id, current, (fullRun) => {
-        setDetail({ identity: savedIdentity, run: fullRun, loading: false });
-      });
-    } catch (error) {
-      if (current())
-        setDetail({
-          identity: savedIdentity,
-          run: retained,
-          loading: false,
-          error: error instanceof Error ? error.message : String(error),
-        });
-    }
+    if (query) await getResourceCache()?.retry(query);
   };
-  useEffect(() => {
-    if (savedCandidate && status === 'connected') void readSaved();
-    // A reconnect or newer run invalidates a full read, even if run.list trimmed it.
-  }, [identity, status, effectiveRun?.updatedAt, Boolean(savedCandidate)]);
   const changeCuration = (change: (state: ReviewCurationState) => ReviewCurationState) => {
     if (!curation) return;
     const state = change(curationRef.current!);
@@ -183,18 +159,13 @@ export function useReviewPublication(
     pending.current = capturedScope;
     setAction({ scope: capturedScope, busy: true });
     try {
+      assertNativeRunReady(run.id, effectiveRun ?? undefined);
       if (operation === 'open') {
         if (viewModel?.url) await Linking.openURL(viewModel.url);
       } else if (operation === 'retry') {
-        await retryReviewPublication(client, run.id, current, useRunStore.getState().upsertRun);
+        await client.request(Methods.PR_REVIEW_PUBLISH, { runId: run.id }, 120_000);
       } else {
-        const result = await client.request<RunGetResult>(Methods.RUN_REFRESH_REVIEW_GATE, {
-          runId: run.id,
-        });
-        if (current()) {
-          useRunStore.getState().upsertRun(result.run);
-          onRefreshed?.(result.run);
-        }
+        await client.request(Methods.RUN_REFRESH_REVIEW_GATE, { runId: run.id });
       }
       if (current()) setAction({ scope: capturedScope, busy: false });
     } catch (error) {
@@ -210,18 +181,17 @@ export function useReviewPublication(
   };
   return {
     viewModel,
-    saved: savedCandidate && currentDetail?.run ? savedReviewView(currentDetail.run) : null,
-    savedLoading: Boolean(
-      savedCandidate && status === 'connected' && (!currentDetail || currentDetail.loading),
-    ),
-    savedOffline: Boolean(savedCandidate && !currentDetail?.run && status !== 'connected'),
-    savedError: currentDetail?.error,
+    observation,
+    saved: savedCandidate,
+    savedLoading: Boolean(run && observation.status === 'loading'),
+    savedOffline: Boolean(savedCandidate && observation.status === 'stale'),
+    savedError: observation.error?.message,
     readSaved: () => {
       void readSaved();
     },
     context,
     viewIdentity: payload ? identity : savedIdentity,
-    report: payload?.reviewMd ?? currentDetail?.run?.reviewResult?.reviewMd,
+    report: payload?.reviewMd ?? effectiveRun?.reviewResult?.reviewMd,
     curation: payload && curation ? reviewCurationView(payload, curation) : null,
     selectionData: curation
       ? { ...curation, includedIndices: [...curation.includedIndices] }
@@ -246,7 +216,7 @@ export function useReviewPublication(
     },
     busy: currentAction?.busy ?? false,
     error: viewModel?.state === 'published' ? undefined : currentAction?.error,
-    disabled: status !== 'connected' || Boolean(payload && !run),
+    disabled: status !== 'connected' || observation.status !== 'ready',
     retry: () => {
       void execute('retry');
     },

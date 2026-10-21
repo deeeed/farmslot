@@ -3,6 +3,7 @@ import { createBrowserSqliteResourceStore } from '@farmslot/local-store/browser'
 import { sourceStatusQuery } from '@farmslot/protocol';
 import {
   normalizeResourceStoreScope,
+  type ResourceQuery,
   type ResourceQueryState,
   type ResourceStoreScope,
 } from '@farmslot/protocol/client-cache';
@@ -26,7 +27,10 @@ export function requestResourceReconnect() {
 }
 
 /** Read the real app cache and its SQLite row; never seed data or change authentication. */
-export async function inspectResourceAuthority(scope?: ResourceStoreScope) {
+export async function inspectResourceAuthority(
+  scope?: ResourceStoreScope,
+  query: ResourceQuery<unknown> = sourceStatusQuery(),
+) {
   requireDevelopment();
   const identity = parseResourceStoreIdentity(
     localStorage.getItem(resourceIdentityStorageKey(gateway.gatewayUrl)),
@@ -44,12 +48,12 @@ export async function inspectResourceAuthority(scope?: ResourceStoreScope) {
     const store = await createBrowserSqliteResourceStore({ scope: inspectedScope });
     try {
       persistent = store.persistent;
-      storedObservedAt = (await store.getQuery(sourceStatusQuery().id))?.observedAt;
+      storedObservedAt = (await store.getQuery(query.id))?.observedAt;
     } finally {
       await store.close();
     }
   }
-  const state = getResourceCache()?.read(sourceStatusQuery());
+  const state = getResourceCache()?.read(query);
   return {
     connection: gateway.connectionState,
     principalId: gateway.authenticatedPrincipalId,
