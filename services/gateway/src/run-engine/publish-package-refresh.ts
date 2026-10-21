@@ -52,7 +52,7 @@ import { refreshRunGateReadiness } from './gate-prerequisites.js';
 import { buildGateSummary } from './gate-summary.js';
 import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
-import { refreshReviewDiffIdentities } from './review-diff-refresh.js';
+import { refreshReviewDiffIdentities, refreshReviewDiffSnapshot } from './review-diff-refresh.js';
 import { getDiffStat } from './task-artifacts.js';
 import { activeVisualRepair, visualRepairOffered } from './visual-repair.js';
 
@@ -453,9 +453,27 @@ async function refreshPublishPackageTransitionLocked(
   const historicalReadyGatePackages = refreshedRun.decisions
     .map((entry) => (entry.payload as ReadyGatePayload | undefined)?.prPackage)
     .filter((entry): entry is ReadyGatePrPackage => Boolean(entry));
+  // Compare both sides using verified canonical digests, while retaining each
+  // historical package's recorded stamps and immutable stored artifact.
+  const capturedSnapshots = prepared.reviews.flatMap((review) =>
+    [review, ...(review.attempts ?? [])].flatMap((attempt) => attempt.reviewSnapshot ?? []),
+  );
+  const reviewedPackages = await Promise.all(
+    [oldPayload.prPackage, ...historicalReadyGatePackages].map(async (reviewedPackage) => {
+      if (!reviewedPackage?.reviewSnapshot) return reviewedPackage;
+      const snapshot = await refreshReviewDiffSnapshot(
+        refreshedRun,
+        reviewedPackage.reviewSnapshot,
+        capturedSnapshots,
+      );
+      return snapshot === reviewedPackage.reviewSnapshot
+        ? reviewedPackage
+        : { ...reviewedPackage, reviewSnapshot: snapshot };
+    }),
+  );
   const reviews = restampReviewsForRefreshedPackage(
     await refreshReviewDiffIdentities(refreshedRun, prepared.reviews),
-    [oldPayload.prPackage, ...historicalReadyGatePackages],
+    reviewedPackages,
     prPackage,
   );
   const requiredReviewCount = effectiveRequiredReviewCount(reviewPolicy);
