@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A validated WARM pass after evidence-only fixes satisfies the publication gate at the same code head; earlier findings stay in review history without blocking it again.
+
 - Restart recovery resumes a monitor whose operator wait was resolved, preserving its running step until the monitor validates worker completion.
 
 - Opening a running review's terminal selects its exact tmux window and pane before streaming, so the worker window cannot replace the reviewer buffer.

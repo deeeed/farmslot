@@ -189,12 +189,24 @@ export interface ReviewFindingEntry {
 }
 
 /**
- * Every entry that reported findings. The publication block counts them at the head, and
+ * Entries with findings still open. The publication block counts them at the head, and
  * accepting findings accepts exactly theirs (ADR-065 Amendment 8).
  */
 export function reviewFindingEntries(reviews: readonly ReviewStatus[]): ReviewFindingEntry[] {
-  return reviews.flatMap((review) =>
-    [...(review.attempts ?? []), review].flatMap((entry) => {
+  return reviews.flatMap((review) => {
+    // A passing continuation settles this lineage's earlier findings, including
+    // evidence-only fixes at the same head. Other review rows keep their findings.
+    const final = review.attempts?.at(-1);
+    if (
+      review.verdict === 'pass' &&
+      review.unresolvedCount === 0 &&
+      final?.verdict === 'pass' &&
+      final.reviewSnapshot?.source !== 'unavailable' &&
+      final.reviewSnapshot?.headSha &&
+      final.reviewSnapshot.headSha === (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)
+    )
+      return [];
+    return [...(review.attempts ?? []), review].flatMap((entry) => {
       const findings = openReviewFindingCount(review, entry);
       return entry.verdict === 'issues' && findings > 0
         ? [
@@ -209,8 +221,8 @@ export function reviewFindingEntries(reviews: readonly ReviewStatus[]): ReviewFi
             },
           ]
         : [];
-    }),
-  );
+    });
+  });
 }
 
 export function reviewFixInProgress(run: Pick<Run, 'status' | 'agentContexts'>): boolean {
