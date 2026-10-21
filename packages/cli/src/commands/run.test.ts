@@ -283,7 +283,7 @@ test('run gate WARM requires and preserves retained lineage', () => {
   assert.throws(() => buildRunGateParams(run, decision, 'hold', selection), /request-review/);
 });
 
-test('run gate Request Review continues the runner latest available lineage WARM by default', () => {
+test('run gate Request Review continues the runner latest validated lineage WARM by default', () => {
   const option = {
     context: { reviewId: 'pipeline-review-run', familyId: 'family-1' },
     runner: 'codex',
@@ -320,7 +320,7 @@ test('run gate Request Review continues the runner latest available lineage WARM
       context: { reviewLineages: [option.context] },
     },
   );
-  // Unavailable: COLD; and a person's --review-mode cold always wins. Both stay in the lineage.
+  // Unavailable sessions keep WARM/model/effort for delta fallback; explicit COLD still wins.
   const context = { reviewLineages: [option.context] };
   assert.deepEqual(
     buildRunGateParams(
@@ -331,7 +331,7 @@ test('run gate Request Review continues the runner latest available lineage WARM
         runner: 'codex',
       },
     ).selectionData?.reviewRequest,
-    { runner: 'codex', model: null, effort: null, mode: 'cold', context },
+    { runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', mode: 'warm', context },
   );
   assert.deepEqual(
     buildRunGateParams(run, gate(), 'request-review', { runner: 'codex', reviewMode: 'cold' })

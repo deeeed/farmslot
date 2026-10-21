@@ -207,7 +207,7 @@ export function ReviewDispatchPicker({
                 ) : null}
                 <Text style={styles.help}>
                   {row.selection.mode === 'warm'
-                    ? "Continue this review's verified reviewer session for changes since its last reviewed head. An unavailable session requires waiting or choosing COLD."
+                    ? "Continue this review's session for changes since its last reviewed head. If it is unavailable, a fresh session reviews those changes."
                     : 'Create a fresh reviewer session for the complete PR diff.'}
                 </Text>
               </>
