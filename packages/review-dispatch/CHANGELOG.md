@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Publication blockers carry finding summaries and inline actions. WARM review choices inherit and lock the retained runner, model and effort, and refuse unavailable sessions.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.10.0 - 2026-10-21

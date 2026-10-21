@@ -5,7 +5,8 @@ import {
 } from '@farmslot/protocol';
 
 export interface GatewayRequestOptions {
-  timeout?: number;
+  /** null waits for the server response or disconnection, including a slow mutation. */
+  timeout?: number | null;
   /** Reset the idle timer when this gateway event arrives. */
   extendOnEvent?: string;
   extendWhen?: (payload: unknown) => boolean;
@@ -35,7 +36,7 @@ export interface IdleRequestTimeoutHandle {
 
 /** Idle timer that restarts on `extend()` and never fires after `clear()`. */
 export function createIdleRequestTimeout(options: {
-  timeoutMs: number;
+  timeoutMs: number | null;
   onTimeout: () => void;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (id: unknown) => void;
@@ -50,7 +51,7 @@ export function createIdleRequestTimeout(options: {
   let cleared = false;
 
   const arm = () => {
-    if (cleared) return;
+    if (cleared || options.timeoutMs === null) return;
     if (timer !== undefined) clearTimer(timer);
     timer = setTimer(() => {
       if (cleared) return;

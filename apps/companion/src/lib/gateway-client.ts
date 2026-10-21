@@ -41,7 +41,7 @@ type ConnectionCallback = (state: ConnectionState) => void;
 interface PendingRequest {
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 const DEFAULT_TIMEOUT = 15_000;
@@ -335,7 +335,7 @@ export class GatewayClient {
   async request<T = unknown>(
     method: string,
     params?: unknown,
-    timeout = DEFAULT_TIMEOUT,
+    timeout: number | null = DEFAULT_TIMEOUT,
   ): Promise<T> {
     if (this.personSession?.session && !isAuthenticationEntry(method))
       return this.personSession.withAccess(async (token) => {
@@ -348,11 +348,11 @@ export class GatewayClient {
   private async requestRaw<T = unknown>(
     method: string,
     params?: unknown,
-    timeout = DEFAULT_TIMEOUT,
+    timeout: number | null = DEFAULT_TIMEOUT,
   ): Promise<T> {
     const generation = this.generation;
     if (!isAuthenticationEntry(method) && this.state !== 'connected') {
-      await this.waitForConnected(timeout);
+      await this.waitForConnected(timeout ?? DEFAULT_TIMEOUT);
     }
 
     if (generation !== this.generation) throw new Error('Gateway identity changed before request');
@@ -367,10 +367,13 @@ export class GatewayClient {
     const frame: RequestFrame = { type: 'req', id, method, params };
 
     const result = await new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Request ${method} timed out after ${timeout}ms`));
-      }, timeout);
+      const timer =
+        timeout === null
+          ? undefined
+          : setTimeout(() => {
+              this.pending.delete(id);
+              reject(new Error(`Request ${method} timed out after ${timeout}ms`));
+            }, timeout);
 
       this.pending.set(id, {
         resolve: resolve as (v: unknown) => void,

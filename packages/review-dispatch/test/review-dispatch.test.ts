@@ -476,12 +476,16 @@ test('a gate request preselects each row runner latest validated lineage in WARM
   assert.equal(vm.rows[2].selection.mode, 'cold');
   assert.equal(vm.rows[2].context, null);
   assert.equal(vm.rows[2].note, undefined);
-  // An unavailable session remains WARM, preserving the baseline model and effort for its delta.
+  // COLD changes stay explicit; WARM then inherits the retained model and effort.
   vm.setRunner(vm.rows[2].id, 'claude');
+  assert.equal(vm.rows[2].selection.mode, 'cold');
+  vm.setMode(vm.rows[2].id, 'warm');
   assert.equal(vm.rows[2].selection.mode, 'warm');
   assert.equal(vm.rows[2].selection.model, 'claude-model-claude');
   assert.match(vm.rows[2].note ?? '', /different slot/);
-  // The fallback row stays in its lineage too (ADR-063 Amendment 5).
+  assert.throws(() => vm.toRequestPayload(), /different slot/);
+  // A fresh session requires the person's explicit COLD choice.
+  vm.setMode(vm.rows[2].id, 'cold');
   assert.deepEqual(vm.toRequestPayload().context, {
     reviewLineages: [
       { reviewId: 'latest-codex', familyId: 'family-a' },
@@ -490,7 +494,7 @@ test('a gate request preselects each row runner latest validated lineage in WARM
     ],
   });
   vm.setMode(vm.rows[2].id, 'warm');
-  assert.equal(vm.toRequestPayload().context?.reviewLineages[2]?.reviewId, 'claude');
+  assert.throws(() => vm.toRequestPayload(), /different slot/);
 });
 
 test('a person choosing COLD at the gate keeps the review in its lineage', () => {
@@ -548,6 +552,7 @@ test('a runner change reallocates gate lineages so no two rows share one', () =>
       ],
     },
   });
+  vm.setReviewContext(vm.rows[0].id, { reviewId: 'claude-lineage', familyId: 'family-a' });
   vm.addRow({ runner: 'codex' });
   assert.deepEqual(
     vm.rows.map((row) => [row.context?.reviewId ?? null, row.selection.mode]),
@@ -557,7 +562,9 @@ test('a runner change reallocates gate lineages so no two rows share one', () =>
     ],
   );
   // The first row takes codex's only lineage; the second row is now a new COLD review.
+  vm.setMode(vm.rows[0].id, 'cold');
   vm.setRunner(vm.rows[0].id, 'codex');
+  vm.setMode(vm.rows[0].id, 'warm');
   assert.deepEqual(
     vm.rows.map((row) => [row.context?.reviewId ?? null, row.selection.mode]),
     [
@@ -567,6 +574,7 @@ test('a runner change reallocates gate lineages so no two rows share one', () =>
   );
   assert.equal(vm.valid, true);
   // A WARM row moved to a runner with no lineage starts a new COLD review.
+  vm.setMode(vm.rows[0].id, 'cold');
   vm.setRunner(vm.rows[0].id, 'grok');
   assert.deepEqual(
     vm.rows.map((row) => [row.context?.reviewId ?? null, row.selection.mode]),
@@ -580,7 +588,11 @@ test('a runner change reallocates gate lineages so no two rows share one', () =>
 
 test('gate lineages arriving after the picker was built preselect its default rows', () => {
   const vm = new ReviewDispatchViewModel({
-    context: { allowedActions: ['request-review'], allowSequence: true },
+    context: {
+      allowedActions: ['request-review'],
+      allowSequence: true,
+      defaults: { runner: 'claude', model: 'claude-opus-5-5' },
+    },
   });
   assert.equal(vm.rows[0].selection.mode, 'cold');
   vm.setContext({
@@ -588,14 +600,21 @@ test('gate lineages arriving after the picker was built preselect its default ro
     lineageOptions: [
       {
         context: { reviewId: 'pipeline-review-run-a', familyId: 'family-a' },
-        runner: vm.rows[0].selection.runner,
-        model: null,
-        effort: null,
+        runner: 'codex',
+        model: 'gpt-6.1-sol',
+        effort: 'high',
         reviewedAt: '2026-10-20T12:00:00Z',
       },
     ],
   });
   assert.equal(vm.rows[0].selection.mode, 'warm');
+  assert.deepEqual(vm.toRequestPayload(), {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'high',
+    mode: 'warm',
+    context: { reviewLineages: [{ reviewId: 'pipeline-review-run-a', familyId: 'family-a' }] },
+  });
   vm.setMode(vm.rows[0].id, 'cold');
   // A later refresh keeps the person's choice.
   vm.setContext({ ...vm.context });
@@ -863,4 +882,61 @@ test('model picker chips share filtering, custom selection and long-list policy'
     ],
   });
   assert.equal(vm.modelPickerState(row).searchable, false);
+});
+
+test('a retained Codex WARM review replaces COLD runner defaults in the request', () => {
+  const retained = {
+    context: { familyId: 'family-4190', reviewId: 'pipeline-review-fc324f59' },
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'high',
+    reviewedAt: '2026-10-21T02:52:09Z',
+  };
+  const vm = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['request-review'],
+      defaults: { runner: 'claude', model: 'claude-opus-5-5', mode: 'warm' },
+      reviewLineages: [retained.context],
+      lineageOptions: [retained],
+    },
+  });
+  assert.deepEqual(vm.toRequestPayload(), {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'high',
+    mode: 'warm',
+    context: { reviewLineages: [retained.context] },
+  });
+  assert.equal(vm.executionLocked(vm.rows[0].id), true);
+  assert.throws(() => vm.setRunner(vm.rows[0].id, 'claude'), /retained reviewer settings/);
+  assert.throws(() => vm.setModel(vm.rows[0].id, 'gpt-6-astra'), /retained reviewer settings/);
+  assert.throws(() => vm.setEffort(vm.rows[0].id, 'ultra'), /retained reviewer settings/);
+});
+
+test('selecting a retained WARM review fills its settings and refuses an unavailable session', () => {
+  const retained = {
+    context: { familyId: 'family-4190', reviewId: 'pipeline-review-fc324f59' },
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'high',
+    reviewedAt: '2026-10-21T02:52:09Z',
+    unavailableReason: 'The retained session cannot be resumed on this slot.',
+  };
+  const vm = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['request-review'],
+      defaults: { runner: 'claude', model: 'claude-opus-5-5' },
+      reviewLineages: [retained.context],
+      lineageOptions: [retained],
+    },
+  });
+  const id = vm.rows[0].id;
+  vm.setMode(id, 'warm');
+  vm.setReviewContext(id, retained.context);
+  assert.equal(vm.rows[0].selection.runner, 'codex');
+  assert.equal(vm.rows[0].selection.model, 'gpt-6.1-sol');
+  assert.equal(vm.rows[0].selection.effort, 'high');
+  assert.equal(vm.canInvoke('request-review'), false);
+  assert.match(vm.errors[0], /cannot be resumed/);
+  assert.throws(() => vm.toRequestPayload(), /cannot be resumed/);
 });

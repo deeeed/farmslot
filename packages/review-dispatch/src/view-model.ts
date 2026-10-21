@@ -148,6 +148,14 @@ export class ReviewDispatchViewModel {
       );
     if (sequence.length < this.minRows)
       throw new Error(`Review picker requires at least ${this.minRows} rows`);
+    for (const row of this.currentRows) {
+      if (!this.preselects || row.selection.mode !== 'warm' || !row.context) continue;
+      const option = this.optionForContext(row.context);
+      if (!option)
+        throw new Error('Retained reviewer settings are unavailable. Refresh the review choices.');
+      if (option.unavailableReason)
+        throw new Error(`Cannot resume this review: ${option.unavailableReason}`);
+    }
   }
   private defaultSelection(patch: Partial<ReviewSelection> = {}): ReviewSelection {
     const values = { ...this.currentContext.defaults, ...patch };
@@ -189,31 +197,61 @@ export class ReviewDispatchViewModel {
   private get preselects(): boolean {
     return !!this.currentContext.lineageOptions && !this.currentContext.reviewContext;
   }
+  private optionForContext(context: Readonly<ReviewContinuationContext> | null) {
+    return context
+      ? this.currentContext.lineageOptions?.find(
+          (option) => reviewLineageKey(option.context) === reviewLineageKey(context),
+        )
+      : undefined;
+  }
+  executionLocked(id: number): boolean {
+    const row = this.row(id);
+    return this.preselects && row.selection.mode === 'warm' && row.context !== null;
+  }
   /** The lineage a row continues: its runner's lineages, most recent first, taken in row order. */
   private lineageOption(index: number, runner: string): ReviewLineageOption | undefined {
     const earlier = this.currentRows
       .slice(0, index)
-      .filter((row) => row.selection.runner === runner).length;
+      .flatMap((row) => (row.context ? [reviewLineageKey(row.context)] : []));
     return [...(this.currentContext.lineageOptions ?? [])]
-      .filter((option) => option.runner === runner)
-      .sort((a, b) => b.reviewedAt.localeCompare(a.reviewedAt))[earlier];
+      .filter(
+        (option) => option.runner === runner && !earlier.includes(reviewLineageKey(option.context)),
+      )
+      .sort(
+        (a, b) =>
+          Number(Boolean(a.unavailableReason)) - Number(Boolean(b.unavailableReason)) ||
+          b.reviewedAt.localeCompare(a.reviewedAt),
+      )[0];
   }
   private linkedRow(row: ReviewDispatchRow, index: number): ReviewDispatchRow {
     if (!this.preselects)
       return { id: row.id, selection: row.selection, context: this.contextForRow(index) };
-    const option = this.lineageOption(index, row.selection.runner);
+    const selected = this.optionForContext(row.context);
+    const alreadyUsed =
+      selected &&
+      this.currentRows
+        .slice(0, index)
+        .some(
+          (earlier) =>
+            earlier.context &&
+            reviewLineageKey(earlier.context) === reviewLineageKey(selected.context),
+        );
+    const option =
+      selected?.runner === row.selection.runner && !alreadyUsed
+        ? selected
+        : this.lineageOption(index, row.selection.runner);
     return {
       id: row.id,
       selection: row.selection,
       context: option ? { ...option.context } : null,
       ...(option?.unavailableReason
-        ? { note: `Review changes in a fresh session: ${option.unavailableReason}` }
+        ? { note: `Cannot resume this review: ${option.unavailableReason}` }
         : {}),
     };
   }
   /**
    * ADR-063 Amendment 5: a row continues its runner's lineage in WARM, with that lineage's
-   * model and effort. An unavailable session uses the same delta in a fresh session.
+   * model and effort. An unavailable session stays visible and cannot be submitted WARM.
    */
   private preselectedRow(
     row: ReviewDispatchRow,
@@ -231,16 +269,22 @@ export class ReviewDispatchViewModel {
           { catalog: this.catalog },
         ),
       };
-    const option = this.lineageOption(index, row.selection.runner)!;
+    const option = this.optionForContext(linked.context)!;
+    if (patch.mode === 'cold')
+      return {
+        ...linked,
+        selection: parseReviewSelection({ ...row.selection, ...patch }, { catalog: this.catalog }),
+      };
     return {
       ...linked,
       selection: parseReviewSelection(
         {
           ...row.selection,
+          ...patch,
+          runner: option.runner,
           model: option.model,
           effort: option.effort,
           mode: 'warm',
-          ...patch,
         },
         { catalog: this.catalog },
       ),
@@ -251,6 +295,11 @@ export class ReviewDispatchViewModel {
     if (!row) throw new Error(`Unknown review picker row: ${id}`);
     return row;
   }
+  private relinkRows(link: (row: ReviewDispatchRow, index: number) => ReviewDispatchRow): void {
+    const rows = this.currentRows;
+    this.currentRows = [];
+    for (const [index, row] of rows.entries()) this.currentRows.push(link(row, index));
+  }
 
   setCatalog(catalog: ReviewDispatchCatalog): void {
     this.currentContext = this.checkContext({ ...this.currentContext, catalog });
@@ -260,8 +309,8 @@ export class ReviewDispatchViewModel {
     // Rows built before a gate's lineages arrived still hold their defaults.
     const arrived = !this.currentContext.lineageOptions && !!context.lineageOptions;
     this.currentContext = this.checkContext(context);
-    this.currentRows = this.currentRows.map((row, index) =>
-      arrived ? this.preselectedRow(row, index) : this.linkedRow(row, index),
+    this.relinkRows((row, index) =>
+      arrived ? this.initialRow(row.id, index) : this.linkedRow(row, index),
     );
     this.changed();
   }
@@ -275,16 +324,51 @@ export class ReviewDispatchViewModel {
       throw new Error(`Review picker requires at least ${this.minRows} rows`);
     this.currentRows = [];
     for (const [index, selection] of selections.entries())
-      this.currentRows.push(this.linkedRow({ id: this.nextId++, selection, context: null }, index));
+      this.currentRows.push(
+        this.preselectedRow({ id: this.nextId++, selection, context: null }, index, {
+          mode: selection.mode,
+        }),
+      );
     this.changed();
+  }
+  private initialRow(
+    id: number,
+    index: number,
+    selection: Partial<ReviewSelection> = {},
+  ): ReviewDispatchRow {
+    const retained =
+      this.preselects && selection.runner === undefined && selection.mode !== 'cold'
+        ? [...(this.currentContext.lineageOptions ?? [])]
+            .filter(
+              (option) =>
+                !this.currentRows.some(
+                  (row) =>
+                    row.context &&
+                    reviewLineageKey(row.context) === reviewLineageKey(option.context),
+                ),
+            )
+            .sort(
+              (a, b) =>
+                Number(Boolean(a.unavailableReason)) - Number(Boolean(b.unavailableReason)) ||
+                b.reviewedAt.localeCompare(a.reviewedAt),
+            )[0]
+        : undefined;
+    const initial = retained
+      ? { ...selection, runner: retained.runner, model: retained.model, effort: retained.effort }
+      : selection;
+    return this.preselectedRow(
+      {
+        id,
+        selection: this.defaultSelection(initial),
+        context: retained?.context ?? null,
+      },
+      index,
+      initial,
+    );
   }
   addRow(selection: Partial<ReviewSelection> = {}): void {
     if (!this.canAddRow) throw new Error(`Review picker permits at most ${this.maxRows} rows`);
-    const row = this.preselectedRow(
-      { id: this.nextId++, selection: this.defaultSelection(selection), context: null },
-      this.currentRows.length,
-      selection,
-    );
+    const row = this.initialRow(this.nextId++, this.currentRows.length, selection);
     this.currentRows = [...this.currentRows, row];
     this.changed();
   }
@@ -304,7 +388,10 @@ export class ReviewDispatchViewModel {
     this.changed();
   }
   updateRow(id: number, patch: Partial<ReviewSelection>): void {
-    const current = this.row(id).selection;
+    const row = this.row(id);
+    const current = row.selection;
+    if (this.executionLocked(id) && ['runner', 'model', 'effort'].some((key) => key in patch))
+      throw new Error('WARM uses the retained reviewer settings. Choose COLD to change them.');
     let selection = { ...current, ...patch };
     if (patch.runner !== undefined && patch.runner !== current.runner) {
       runnerOption(patch.runner, this.catalog);
@@ -319,18 +406,27 @@ export class ReviewDispatchViewModel {
       selection.effort = null;
     }
     selection = parseReviewSelection(selection, { catalog: this.catalog });
+    const retained =
+      this.preselects && selection.mode === 'warm' ? this.optionForContext(row.context) : undefined;
+    if (retained)
+      selection = {
+        ...selection,
+        runner: retained.runner,
+        model: retained.model,
+        effort: retained.effort,
+      };
     const runnerChanged = patch.runner !== undefined && patch.runner !== current.runner;
     this.currentRows = this.currentRows.map((row) => (row.id === id ? { ...row, selection } : row));
     // A runner change can move lineages between same-runner rows: allocate them again in row
     // order, so no two rows share one, and preselect every row whose lineage changed.
     if (runnerChanged && this.preselects)
-      this.currentRows = this.currentRows.map((row, index) => {
+      this.relinkRows((row, index) => {
         const linked = this.linkedRow(row, index);
         const sameLineage =
           (linked.context && reviewLineageKey(linked.context)) ===
           (row.context && reviewLineageKey(row.context));
         return row.id === id || !sameLineage
-          ? this.preselectedRow(row, index, row.id === id ? patch : {})
+          ? this.preselectedRow(row, index, row.id === id ? { ...patch, mode: selection.mode } : {})
           : linked;
       });
     this.changed();
@@ -387,9 +483,30 @@ export class ReviewDispatchViewModel {
   setReviewContext(id: number, context: ReviewContinuationContext | null): void {
     this.row(id);
     if (context) assertReviewContinuationContext(context);
-    this.currentRows = this.currentRows.map((row) =>
-      row.id === id ? { ...row, context: context ? { ...context } : null } : row,
-    );
+    this.currentRows = this.currentRows.map((row) => {
+      if (row.id !== id) return row;
+      const retained =
+        this.preselects && row.selection.mode === 'warm'
+          ? this.optionForContext(context)
+          : undefined;
+      return {
+        ...row,
+        context: context ? { ...context } : null,
+        ...(retained
+          ? {
+              selection: {
+                ...row.selection,
+                runner: retained.runner,
+                model: retained.model,
+                effort: retained.effort,
+              },
+            }
+          : {}),
+        note: retained?.unavailableReason
+          ? `Cannot resume this review: ${retained.unavailableReason}`
+          : undefined,
+      };
+    });
     this.changed();
   }
   toReviewContext(): ReviewRequestContext | undefined {

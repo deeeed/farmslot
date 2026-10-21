@@ -54,6 +54,7 @@ export interface ReadyReviewRequestModalContext {
   open: boolean;
   viewModel: ReviewDispatchViewModel;
   acting: boolean;
+  message?: string;
   close: () => void;
   changed: () => void;
   submit: () => void | Promise<void>;
@@ -64,7 +65,7 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
   return html`<div
     class="rdy-modal-backdrop"
     @click=${(event: Event) => {
-      if (event.target === event.currentTarget) ctx.close();
+      if (!ctx.acting && event.target === event.currentTarget) ctx.close();
     }}
   >
     <div class="rdy-review-modal" role="dialog" aria-modal="true" aria-label="Request review">
@@ -77,7 +78,7 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
             starts a fresh whole-PR review.
           </p>
         </div>
-        <button class="rdy-modal-close" @click=${ctx.close}>Close</button>
+        <button class="rdy-modal-close" ?disabled=${ctx.acting} @click=${ctx.close}>Close</button>
       </div>
       <review-dispatch-picker
         .viewModel=${ctx.viewModel}
@@ -86,8 +87,11 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
         @review-dispatch-change=${ctx.changed}
         @review-dispatch-status-change=${ctx.changed}
       ></review-dispatch-picker>
+      ${ctx.message ? html`<div role="status">${ctx.message}</div>` : nothing}
       <div class="rdy-review-modal-actions">
-        <button class="rdy-btn rdy-btn-secondary" @click=${ctx.close}>Cancel</button>
+        <button class="rdy-btn rdy-btn-secondary" ?disabled=${ctx.acting} @click=${ctx.close}>
+          Cancel
+        </button>
         <button
           class="rdy-btn rdy-btn-primary"
           ?disabled=${ctx.acting || !ctx.viewModel.canInvoke('request-review')}

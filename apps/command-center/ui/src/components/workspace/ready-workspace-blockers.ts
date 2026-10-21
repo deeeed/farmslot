@@ -4,6 +4,7 @@ import type { ReviewRoundBudget } from '@farmslot/protocol';
 import {
   anotherReviewRoundView,
   type PublicationBlocker,
+  type PublicationBlockerAction,
   untestableOverrideView,
 } from '@farmslot/review-dispatch';
 
@@ -21,7 +22,7 @@ export interface ReadyBlockersInput {
   budget?: Pick<ReviewRoundBudget, 'used' | 'limit'>;
   busy: boolean;
   /** Opens the blocker's sheet, or the gate's accept-findings flow. */
-  choose: (blocker: PublicationBlocker) => void;
+  choose: (action: PublicationBlockerAction) => void;
   changeSheet: (text: string) => void;
   cancelSheet: () => void;
   skip: (claimId: string, reason: string) => void;
@@ -29,7 +30,8 @@ export interface ReadyBlockersInput {
 }
 
 function renderBlockerSheet(input: ReadyBlockersInput, blocker: PublicationBlocker) {
-  const { sheet, action } = { sheet: input.sheet, action: blocker.action };
+  const sheet = input.sheet;
+  const action = blocker.actions.find((entry) => entry.kind === sheet?.kind);
   if (!sheet || !action || sheet.kind !== action.kind) return nothing;
   if (sheet.kind === 'skip-criterion' && action.kind === 'skip-criterion') {
     if (sheet.claimId !== action.claimId) return nothing;
@@ -83,18 +85,38 @@ export function renderReadyBlockers(input: ReadyBlockersInput) {
         (blocker) =>
           html`<li data-blocker=${blocker.key}>
             <div class="rdy-blocker-row">
-              <span>${blocker.message}</span>
-              ${blocker.action
-                ? html`<button
-                    type="button"
-                    class="gate-secondary"
-                    data-testid=${`blocker-${blocker.action.kind}`}
-                    ?disabled=${input.busy}
-                    @click=${() => input.choose(blocker)}
-                  >
-                    ${blocker.action.label}
-                  </button>`
-                : nothing}
+              <span
+                >${blocker.message}
+                ${blocker.findings.map(
+                  (finding) => html`<span class="rdy-finding-summary">${finding.summary}</span>`,
+                )}
+              </span>
+              ${blocker.actions.map((action) =>
+                action.kind === 'see-findings'
+                  ? html`<details class="rdy-finding-details">
+                      <summary class="gate-secondary" data-testid="blocker-see-findings">
+                        ${action.label}
+                      </summary>
+                      <ul>
+                        ${blocker.findings.map(
+                          (finding) =>
+                            html`<li>
+                              <code>${finding.file}${finding.line ? `:${finding.line}` : ''}</code>
+                              ${finding.description}
+                            </li>`,
+                        )}
+                      </ul>
+                    </details>`
+                  : html`<button
+                      type="button"
+                      class="gate-secondary"
+                      data-testid=${`blocker-${action.kind}`}
+                      ?disabled=${input.busy}
+                      @click=${() => input.choose(action)}
+                    >
+                      ${action.label}
+                    </button>`,
+              )}
             </div>
             ${renderBlockerSheet(input, blocker)}
           </li>`,
@@ -110,5 +132,9 @@ export function readyBlockersStyles(): string {
     ready-workspace .rdy-blockers ul { list-style: none; margin: 0; padding: 0; display: grid; gap: ${spacing.sm}; }
     ready-workspace .rdy-blocker-row { display: flex; flex-wrap: wrap; align-items: center; gap: ${spacing.md}; }
     ready-workspace .rdy-blocker-row > span { flex: 0 1 auto; min-width: 0; max-width: 72ch; overflow-wrap: anywhere; }
+    ready-workspace .rdy-finding-summary { display: block; }
+    ready-workspace .rdy-finding-details summary { display: flex; align-items: center; }
+    ready-workspace .rdy-finding-details[open] { flex-basis: 100%; }
+    ready-workspace .rdy-finding-details ul { max-width: 72ch; padding-top: ${spacing.sm}; }
   `;
 }

@@ -104,6 +104,15 @@ export function GateReviewScreen({
             setAcceptingDecisionId(accepting ? viewModel.decision.id : null)
           }
           onAnotherRound={actions.giveAnotherRound}
+          reviewPicker={viewModel.reviewPicker}
+          onRequestReview={(reviewRequest) => {
+            const action = viewModel.actions.find((entry) => entry.id === 'request-review');
+            if (action) actions.resolve(action, { reviewRequest });
+          }}
+          onReviewEvidence={(claimId) => {
+            setTab('evidence');
+            setFocusClaim({ claimId });
+          }}
         />
         <View
           accessibilityRole="tablist"
@@ -213,6 +222,7 @@ export function GateReviewScreen({
           </Text>
         ) : null}
         <GateActions
+          inlineBlockers
           run={viewModel.run}
           showClaims={false}
           loading={acceptance.loading}
