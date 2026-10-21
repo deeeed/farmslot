@@ -1901,6 +1901,10 @@ export class RunDetail extends RunDetailState {
         this._syncSelectedStepToHash();
       },
       toggleTerminal: () => {
+        if (!this._showTerminal) {
+          this._terminalContextId = '';
+          this._terminalRole = '';
+        }
         this._showTerminal = !this._showTerminal;
       },
     });

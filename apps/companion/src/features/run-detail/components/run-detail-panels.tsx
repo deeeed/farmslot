@@ -11,6 +11,7 @@ import {
   type RunStepDisplayStatus,
   runStepDisplayStatus,
 } from '@farmslot/protocol';
+import { runTerminalView } from '@farmslot/review-dispatch';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
 import { RunTitle } from '../../../components/RunTitle';
@@ -200,6 +201,7 @@ export function RunFocusedArtifactCard({
   onOpenSlot,
   onOpenTerminal,
   terminalLabel = 'Terminal',
+  terminalDisabledReason,
   onOpenFamily,
   onOpenPR,
 }: {
@@ -219,6 +221,7 @@ export function RunFocusedArtifactCard({
   onOpenCompare: () => void;
   onOpenSlot: () => void;
   terminalLabel?: string;
+  terminalDisabledReason?: string | null;
   onOpenTerminal: () => void;
   onOpenFamily: () => void;
   onOpenPR: () => void;
@@ -273,9 +276,9 @@ export function RunFocusedArtifactCard({
         <CockpitTile label="Slot" value={slotId ?? '-'} onPress={onOpenSlot} disabled={!slotId} />
         <CockpitTile
           label={terminalLabel}
-          value={slotId ? 'live' : '-'}
+          value={terminalDisabledReason ?? (slotId ? 'live' : '-')}
           onPress={onOpenTerminal}
-          disabled={!slotId}
+          disabled={Boolean(terminalDisabledReason) || !slotId}
         />
         <CockpitTile
           label="Family"
@@ -345,6 +348,7 @@ export function RunReviewWorkspaceSummary({
   onOpenPR: () => void;
   onOpenCompareTarget: () => void;
 }) {
+  const terminal = runTerminalView(run);
   const manifest = extractRunArtifactManifest(run);
   const manifestCount = manifest.length;
   const gate = gates[0] ?? null;
@@ -502,6 +506,7 @@ export function RunReviewWorkspaceSummary({
           onOpenSlot={onOpenSlot}
           onOpenTerminal={onOpenTerminal}
           terminalLabel={terminalLabel}
+          terminalDisabledReason={terminal.disabledReason}
           artifactCount={manifestCount}
           recipeArtifactCount={recipeArtifactCount}
           recipeAvailable={recipeAvailable}
@@ -529,11 +534,12 @@ export function RunReviewWorkspaceSummary({
         retroSummary={retroSummary}
         visualPairCount={workspaceVisualPairCount}
         pendingCount={(run.decisions ?? []).filter((decision) => !decision.resolvedAt).length}
-        terminalAvailable={Boolean(run.slotId)}
+        terminalAvailable={!terminal.disabledReason}
         slotId={run.slotId}
         prNumber={run.prNumber}
         onOpenTerminal={onOpenTerminal}
         terminalLabel={terminalLabel}
+        terminalDisabledReason={terminal.disabledReason}
         onOpenSlot={onOpenSlot}
         onOpenPR={onOpenPR}
         onOpenArtifacts={() => onOpenArtifacts()}
@@ -746,6 +752,7 @@ export function RunBeforeAfterPriorityPanel({
   onOpenSlot,
   onOpenTerminal,
   terminalLabel = 'Terminal',
+  terminalDisabledReason,
 }: {
   pair: VisualArtifactPair;
   pairCount: number;
@@ -765,6 +772,7 @@ export function RunBeforeAfterPriorityPanel({
   onOpenDiff: () => void;
   onOpenSlot: () => void | undefined;
   terminalLabel?: string;
+  terminalDisabledReason?: string | null;
   onOpenTerminal: () => void | undefined;
 }) {
   return (
@@ -807,9 +815,9 @@ export function RunBeforeAfterPriorityPanel({
         <CockpitTile label="Slot" value={slotId ?? '-'} onPress={onOpenSlot} disabled={!slotId} />
         <CockpitTile
           label={terminalLabel}
-          value={slotId ? 'live' : '-'}
+          value={terminalDisabledReason ?? (slotId ? 'live' : '-')}
           onPress={onOpenTerminal}
-          disabled={!slotId}
+          disabled={Boolean(terminalDisabledReason) || !slotId}
         />
       </ScrollView>
     </View>
@@ -839,6 +847,7 @@ export function RunWorkspaceCockpit({
   prNumber,
   onOpenTerminal,
   terminalLabel = 'Terminal',
+  terminalDisabledReason,
   onOpenSlot,
   onOpenPR,
   onOpenArtifacts,
@@ -867,6 +876,7 @@ export function RunWorkspaceCockpit({
   slotId: string | null | undefined;
   prNumber: number | null | undefined;
   terminalLabel?: string;
+  terminalDisabledReason?: string | null;
   onOpenTerminal: () => void | undefined;
   onOpenSlot: () => void | undefined;
   onOpenPR: () => void;
@@ -892,6 +902,7 @@ export function RunWorkspaceCockpit({
           style={[styles.cockpitTerminalButton, !terminalAvailable && styles.cockpitTileDisabled]}
           onPress={onOpenTerminal}
           disabled={!terminalAvailable}
+          accessibilityHint={terminalDisabledReason ?? undefined}
         >
           <Text style={styles.cockpitTerminalText}>{terminalLabel}</Text>
         </Pressable>
@@ -1007,15 +1018,20 @@ export function CockpitTile({
   onPress,
   disabled,
   hint,
+  testID,
 }: {
   label: string;
   value: string;
   onPress: () => void | undefined;
   disabled?: boolean;
   hint?: string;
+  testID?: string;
 }) {
   return (
     <Pressable
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: Boolean(disabled) }}
       style={[styles.cockpitTile, disabled && styles.cockpitTileDisabled]}
       onPress={onPress}
       disabled={disabled}

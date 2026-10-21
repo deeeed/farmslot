@@ -24,6 +24,7 @@ import {
   pendingResultDecision,
   type ResultDecision,
   resultDecisionView,
+  runTerminalView,
 } from '@farmslot/review-dispatch';
 
 import './result-decision-panel.js';
@@ -35,6 +36,7 @@ import {
 } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
+import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 import { readyReviewRequestProgress } from '../workspace/ready-workspace-review-request-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import {
@@ -398,6 +400,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
           }
         | undefined)
     : undefined;
+  const terminalTarget = runTerminalView(run).target;
 
   return html`
     <div
@@ -426,7 +429,11 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
             ? html`
                 <a
                   class="gate-slot-link"
-                  href=${`#slot/${run.slotId}?runId=${encodeURIComponent(run.id)}`}
+                  href=${slotViewHash({
+                    slotId: terminalTarget?.slotId || run.slotId,
+                    runId: run.id,
+                    contextId: terminalTarget?.contextId,
+                  })}
                   >Open in Slot View</a
                 >
               `

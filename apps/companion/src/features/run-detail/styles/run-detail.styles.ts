@@ -794,18 +794,6 @@ export const runDetailStyles = StyleSheet.create({
   recipeControlsWrap: {
     marginTop: spacing.md,
   },
-  terminalButton: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    backgroundColor: colors.accent + '20',
-    borderRadius: radii.md,
-  },
-  terminalButtonText: {
-    color: colors.accent,
-    fontSize: fonts.sizeSm,
-    fontWeight: '700',
-  },
   errorText: {
     color: colors.statusFail,
     fontSize: fonts.sizeSm,

@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Restart recovery resumes a monitor whose operator wait was resolved, preserving its running step until the monitor validates worker completion.
 
+- Opening a running review's terminal selects its exact tmux window and pane before streaming, so the worker window cannot replace the reviewer buffer.
 - Gate blockers recommend only actions offered by that same gate. An exhausted fix loop no longer advertises a continuation that resolution refuses.
 
 - Adopting a published PR completes a reconciled run whose work and gate are already settled, clearing its stale error without replaying work. Progress, source and slot-ownership checks still apply.
