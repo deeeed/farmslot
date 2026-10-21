@@ -4,10 +4,76 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { ReviewStatus } from '@farmslot/protocol';
+import type { ReviewAttempt, ReviewStatus } from '@farmslot/protocol';
 
 import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 import { makeRun } from './test-fixtures.js';
+
+test('an unchanged blocked fix retains its last reviewed findings and snapshot', async () => {
+  const head = 'c'.repeat(40);
+  const issues = [{ file: 'evidence-manifest.json', description: 'AC-1 needs person acceptance' }];
+  const attempts: ReviewAttempt[] = [
+    {
+      mode: 'warm',
+      loopNumber: 2,
+      verdict: 'issues',
+      unresolvedCount: 1,
+      issues,
+      reviewSnapshot: { source: 'local-git', headSha: head, capturedAt: '2026-10-21T02:39:11Z' },
+      session: {
+        mode: 'warm',
+        reviewId: 'pipeline-review-retained',
+        continuity: 'resumed',
+        sessionId: 'original-session',
+      },
+      completedAt: '2026-10-21T02:52:07Z',
+    },
+    {
+      mode: 'cold',
+      loopNumber: 3,
+      verdict: 'failed',
+      unresolvedCount: 1,
+      issues,
+      fixDelta: {
+        source: 'local-git',
+        fixBaseSha: head,
+        fixHeadSha: head,
+        diffStat: { files: 0, additions: 0, deletions: 0 },
+        capturedAt: '2026-10-21T02:54:20Z',
+      },
+      completedAt: '2026-10-21T02:54:20Z',
+    },
+  ];
+  for (const persisted of [false, true]) {
+    const prior: ReviewStatus = {
+      id: 'pipeline-review-retained',
+      mode: 'warm',
+      loopNumber: 1,
+      verdict: 'failed',
+      unresolvedCount: 1,
+      issues,
+      attempts,
+      completedAt: attempts[1].completedAt,
+    };
+    const run = makeRun({
+      taskFile: undefined,
+      engineState: { publishGate: { reviews: persisted ? [prior] : [] } },
+      steps: [
+        {
+          name: 'review',
+          status: 'done',
+          outputs: { verdict: 'blocked', reviewId: prior.id, attempts },
+        },
+      ],
+    });
+    const [review] = await materializeReviewArtifacts(run);
+    assert.equal(review.verdict, 'issues');
+    assert.equal(review.reviewSnapshot?.headSha, head);
+    assert.equal(review.reviewerSessionId, 'original-session');
+    assert.deepEqual(review.issues, issues);
+    assert.deepEqual(review.attempts, attempts, 'the blocked fix remains audit history');
+  }
+});
 
 test('materializeReviewArtifacts coalesces review retry attempts', async () => {
   const run = makeRun({

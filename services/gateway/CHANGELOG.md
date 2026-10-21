@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A blocked worker fix that changed no code keeps the last same-head review findings visible at publication. Gate recovery and evidence refresh wait for the person's decision instead of starting or retrying an automatic review of that unchanged head.
+
 - Operator WARM re-reviews use the same delta fallback as automatic re-reviews, and can adopt a legacy reviewer session from its validated result and artifact scope. A failed attempt before inspection keeps the earlier baseline. Seen on TAT-4158, whose verified session was refused as missing.
 
 - Admit retained passing reviews from delta-scoped fresh-session fallbacks at their recorded scope. TAT-4191's unchanged-head pass was incorrectly compared with the full PR diff and remained blocked after package refresh.

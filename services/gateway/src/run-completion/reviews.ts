@@ -12,6 +12,7 @@ import {
 } from '../live-recipe/context.js';
 import { formatReviewMarkdown } from '../quality/review-artifacts.js';
 import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
+import { preserveUnchangedReviewFindings } from '../review/retained-findings.js';
 
 function newerPersistedReview(run: Run, review: ReviewStatus): ReviewStatus | undefined {
   const running = run.steps.find((step) => step.name === 'review')?.status === 'running';
@@ -24,7 +25,7 @@ function newerPersistedReview(run: Run, review: ReviewStatus): ReviewStatus | un
   const priorAt = prior.completedAt ?? prior.reviewSnapshot?.capturedAt ?? prior.startedAt ?? '';
   const materializedAt =
     review.completedAt ?? review.reviewSnapshot?.capturedAt ?? review.startedAt ?? '';
-  return priorAt >= materializedAt ? prior : undefined;
+  return priorAt >= materializedAt ? preserveUnchangedReviewFindings(prior) : undefined;
 }
 
 export async function materializeReviewArtifacts(run: Run): Promise<ReviewStatus[]> {
@@ -45,7 +46,7 @@ export async function materializeReviewArtifacts(run: Run): Promise<ReviewStatus
       1,
       typeof out.reviewId === 'string' ? out.reviewId.replace(/^pipeline-review-/, '') : undefined,
     );
-    const review: ReviewStatus = {
+    const review = preserveUnchangedReviewFindings({
       id: refs.id,
       source: 'pipeline',
       mode: out.mode === 'warm' ? 'warm' : 'cold',
@@ -78,7 +79,7 @@ export async function materializeReviewArtifacts(run: Run): Promise<ReviewStatus
           .find((attempt) => attempt.fixDelta)?.fixDelta,
       startedAt: attempts[0]?.startedAt ?? step.startedAt,
       completedAt: finalAttempt.completedAt ?? step.completedAt,
-    };
+    });
     const prior = newerPersistedReview(run, review);
     if (prior) return [prior];
     if (run.taskFile) {
