@@ -2,9 +2,11 @@ import { randomUUID } from 'node:crypto';
 
 import {
   type EvidenceAttestationApprover,
+  FLOW_STEPS,
   githubPullUrl,
   type HumanPublicationAdoptionReceipt,
   parseGitHubPullUrl,
+  PipelineSteps,
   PUBLICATION_ADOPTION_ACTION,
   type Run,
   type RunAdoptPublishedPrParams,
@@ -19,9 +21,20 @@ import { ghRequest } from '../../integrations/github-client.js';
 import { findPRNumber, recordRunPRPublication } from '../../integrations/pr-linkage.js';
 import { adoptedPublicationContinuationRefusals } from '../../run-completion/human-publication.js';
 import { collectRunGateReadiness } from '../../run-engine/gate-prerequisites.js';
+import {
+  beginTerminalTeardown,
+  endTerminalTeardown,
+} from '../../run-engine/terminal-teardown-registry.js';
+import {
+  operatorCompletionCollaborators,
+  routeTerminalRunTransition,
+} from '../../run-lifecycle/terminal-transition.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
-import { getRun, getRunWithArchived } from '../../runs/store.js';
+import type { RunTransitionEffectOutcome } from '../../run-lifecycle/transition-router.js';
+import { getRun, getRunWithArchived, persistRunNow } from '../../runs/store.js';
 import { withRunSources } from '../../sources/runtime.js';
+
+import type { releaseCompletedRunSlot } from './lifecycle-control.js';
 
 interface PublishedPrFacts {
   number: number;
@@ -41,6 +54,7 @@ export interface PublicationAdoptionDependencies {
   readiness?: typeof collectRunGateReadiness;
   continuationRefusals?: typeof adoptedPublicationContinuationRefusals;
   continueDecision?: (run: Run, decisionId: string) => Promise<boolean>;
+  releaseSlot?: typeof releaseCompletedRunSlot;
 }
 
 function adoptionIdentity(run: Run): string {
@@ -100,6 +114,18 @@ function unavailableReadiness(error: unknown): RunGatePrerequisiteReason[] {
       message: `Readiness could not be evaluated: ${(error as Error).message}`,
     },
   ];
+}
+
+function continuationEffectRefusals(
+  effects: RunTransitionEffectOutcome[],
+): RunGatePrerequisiteReason[] {
+  return effects
+    .filter((effect) => effect.status === 'failed')
+    .map((effect) => ({
+      code: 'publication-continuation-effect-failed',
+      prerequisite: 'lifecycle',
+      message: `${effect.name}: ${effect.detail}`,
+    }));
 }
 
 export async function runAdoptPublishedPr(
@@ -230,7 +256,9 @@ export async function runAdoptPublishedPr(
         : {}),
     };
   }
-  return withRunTransition(initial.id, async () => {
+  let completed = false;
+  let teardownSlotId: string | null = null;
+  return withRunTransition<RunAdoptPublishedPrResult>(initial.id, async () => {
     const currentApprover = authorize();
     if (!sameEvidenceAttestationApprover(currentApprover, approver))
       throw new GatewayMethodError(
@@ -281,7 +309,8 @@ export async function runAdoptPublishedPr(
       refusals: projectionRefusals,
     };
     if (projectionRefusals.length) return { ...result, continuation: 'refused' };
-    if (result.archived || !receipt!.priorGate?.decisionId || !getRun(run.id)) return result;
+    if (result.archived || !getRun(run.id) || run.status === 'done') return result;
+    const continuationIdentity = adoptionIdentity(run);
     try {
       result.refusals = await (
         dependencies.continuationRefusals ?? adoptedPublicationContinuationRefusals
@@ -290,6 +319,67 @@ export async function runAdoptPublishedPr(
       result.refusals = unavailableReadiness(error);
     }
     if (result.refusals.length) return { ...result, continuation: 'refused' };
+    const { publishCompletedRun } = await import('./lifecycle-control.js');
+    const afterReadiness = getRun(run.id);
+    if (!afterReadiness || adoptionIdentity(afterReadiness) !== continuationIdentity) return result;
+    // A lost engine can leave every step settled with no publication decision
+    // to wake. Skipped finalization/CI are settled work, not steps to replay.
+    if (
+      ['reconciling', 'blocked', 'human-gating'].includes(afterReadiness.status) &&
+      FLOW_STEPS[afterReadiness.flowType].every((name) =>
+        afterReadiness.steps.some(
+          (step) =>
+            step.name === name &&
+            (step.status === 'done' ||
+              (step.status === 'skipped' &&
+                (name === PipelineSteps.FINALIZE || name === PipelineSteps.CI_WATCH))),
+        ),
+      )
+    ) {
+      const stepsIdentity = JSON.stringify(afterReadiness.steps);
+      teardownSlotId = afterReadiness.slotId ?? null;
+      if (teardownSlotId) beginTerminalTeardown(teardownSlotId);
+      const transition = await routeTerminalRunTransition({
+        kind: 'complete',
+        runId: afterReadiness.id,
+        actor: 'operator',
+        settlingStatus: afterReadiness.status,
+        persist: persistRunNow,
+        before: [
+          {
+            name: 'adoption-continuation-current',
+            severity: 'required',
+            apply: ({ run: latest }) => {
+              if (
+                adoptionIdentity(latest) !== continuationIdentity ||
+                JSON.stringify(latest.steps) !== stepsIdentity
+              )
+                throw new Error('Publication continuation changed before completion');
+            },
+          },
+        ],
+        patch: {
+          status: 'done',
+          error: undefined,
+          completedAt: new Date().toISOString(),
+          metrics: {
+            ...afterReadiness.metrics,
+            outcome: 'success',
+            durationMs: Date.now() - Date.parse(afterReadiness.createdAt),
+          },
+        },
+        collaborators: operatorCompletionCollaborators(publishCompletedRun),
+      });
+      if (!transition) return result;
+      completed = true;
+      return {
+        ...result,
+        run: transition.run,
+        continuation: 'resumed' as const,
+        refusals: continuationEffectRefusals(transition.effects),
+      };
+    }
+    if (!receipt!.priorGate?.decisionId) return result;
     const resumed = await (
       dependencies.continueDecision ??
       (async (updated, decisionId) => {
@@ -303,5 +393,22 @@ export async function runAdoptPublishedPr(
       })
     )(run, receipt!.priorGate!.decisionId!);
     return { ...result, continuation: resumed ? 'resumed' : 'waiting' };
-  });
+  })
+    .then(async (result) => {
+      if (!completed) return result;
+      // Release can join another machine/run transition; never hold those keys here.
+      const { collectCompletedRunSlotReleaseEffect } = await import('./lifecycle-control.js');
+      const effects = await collectCompletedRunSlotReleaseEffect(
+        result.run,
+        dependencies.releaseSlot,
+      );
+      return {
+        ...result,
+        run: getRun(initial.id) ?? result.run,
+        refusals: [...result.refusals, ...continuationEffectRefusals(effects)],
+      };
+    })
+    .finally(() => {
+      if (teardownSlotId) endTerminalTeardown(teardownSlotId);
+    });
 }

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Opening a running review's terminal selects its exact tmux window and pane before streaming, so the worker window cannot replace the reviewer buffer.
+- Adopting a published PR completes a reconciled run whose work and gate are already settled, clearing its stale error without replaying work. Progress, source and slot-ownership checks still apply.
 
 - Human-gate WARM requests refuse an unavailable retained session before consuming the gate or admitting a review round.
 - A person's bound claim confirmation settles that claim's evidence-only review findings and preserves review validity during package refresh. Restart recovery collects a newer warm attempt's own result instead of marking it complete from an older lineage result.

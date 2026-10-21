@@ -36,7 +36,10 @@ import {
   terminalTransitionDeps,
 } from '../../run-lifecycle/terminal-transition.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
-import { routeRunTransition } from '../../run-lifecycle/transition-router.js';
+import {
+  routeRunTransition,
+  type RunTransitionEffectOutcome,
+} from '../../run-lifecycle/transition-router.js';
 import {
   isRunnerPaneRetired,
   normalizeRunner,
@@ -154,7 +157,7 @@ export async function runForceComplete(
   // The terminal override fences replay before releasing the coordinator.
   // Teardown may cancel a handoff source or join another slot release; neither
   // can run while this request holds the machine/run keys they may need.
-  const effects = await collectForceCompleteSlotReleaseEffect(result.run, deps);
+  const effects = await collectCompletedRunSlotReleaseEffect(result.run, deps.releaseSlot);
   return {
     ...result,
     run: getRun(params.runId) ?? result.run,
@@ -297,13 +300,13 @@ export async function runForceCompleteTransitionLocked(
   return { run: getRun(params.runId) ?? transition.run, effects: transition.effects };
 }
 
-async function collectForceCompleteSlotReleaseEffect(
+export async function collectCompletedRunSlotReleaseEffect(
   run: Run,
-  deps: RunForceCompleteTransitionDependencies,
-): Promise<RunForceCompleteResult['effects']> {
+  releaseSlot: typeof releaseCompletedRunSlot = releaseCompletedRunSlot,
+): Promise<RunTransitionEffectOutcome[]> {
   if (!run.slotId) return [{ name: 'slot-release', status: 'skipped', detail: 'no slot bound' }];
   try {
-    const { released, skipped } = await deps.releaseSlot(run);
+    const { released, skipped } = await releaseSlot(run);
     return released
       ? [{ name: 'slot-release', status: 'ok' }]
       : [
@@ -315,7 +318,7 @@ async function collectForceCompleteSlotReleaseEffect(
         ];
   } catch (err) {
     const detail = (err as Error).message;
-    console.warn(`[run] force-complete slot release failed for ${run.id.slice(0, 8)}: ${detail}`);
+    console.warn(`[run] completed slot release failed for ${run.id.slice(0, 8)}: ${detail}`);
     return [{ name: 'slot-release', status: 'failed', detail }];
   }
 }

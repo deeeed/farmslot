@@ -141,6 +141,11 @@ export function freshDispatchEngineStateForReplay(
   return { ...rest, flags };
 }
 
+function assertReplayOutsideTerminalCleanup(run: Run): void {
+  if (run.slotId && isTerminalTeardownInFlight(run.slotId))
+    throw new Error('Run is finishing terminal cleanup; retry replay after cleanup settles');
+}
+
 function assertReplayOwnsRun(
   runId: string,
   ownedGeneration: number,
@@ -995,6 +1000,7 @@ async function replayRunStep(
     throw new Error(`Run ${params.runId} was force-completed and cannot be replayed`);
   }
   assertRunNotArchiving(params.runId);
+  assertReplayOutsideTerminalCleanup(existing);
   if (existing.readOnly) {
     throw new Error(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,
@@ -1426,6 +1432,7 @@ async function replayRunStep(
       : undefined;
     if (hooks.afterSlotPlanning) await hooks.afterSlotPlanning();
     const planned = getRun(params.runId);
+    if (planned) assertReplayOutsideTerminalCleanup(planned);
     if (
       planned?.slotId !== priorRunSlotId ||
       planned?.engineState?.generation !== selectionGeneration ||
