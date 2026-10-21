@@ -1,61 +1,97 @@
-import { strict as assert } from 'node:assert';
-import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import test from 'node:test';
 
-import type { ReviewLoopAttempt } from './step-inspector-model.js';
+import type { ReviewHistoryRound } from '@farmslot/review-dispatch';
+
+import { litBindings, litText } from '../../testing/lit-text.js';
+
 import { renderReviewAttempt } from './step-inspector-review-renderer.js';
 
-// Flatten a lit TemplateResult (and nested results/arrays) into its rendered
-// text by interleaving the static `strings` with the resolved dynamic `values`.
-// `nothing` and other sentinels have neither, so they collapse to ''.
-function litText(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  if (Array.isArray(value)) return value.map(litText).join('');
-  if (typeof value === 'object' && 'strings' in value && 'values' in value) {
-    const { strings, values } = value as { strings: string[]; values: unknown[] };
-    return strings.map((s, i) => s + (i < values.length ? litText(values[i]) : '')).join('');
-  }
-  return '';
-}
-
-function attempt(overrides: Partial<ReviewLoopAttempt> = {}): ReviewLoopAttempt {
+function round(overrides: Partial<ReviewHistoryRound> = {}): ReviewHistoryRound {
   return {
+    key: 'review:2',
+    reviewId: 'review',
     loopNumber: 2,
-    verdict: 'pass',
-    unresolvedCount: 0,
-    issues: [],
-    completedAt: '',
-    hasFixDelta: false,
-    fixDeltaPath: null,
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    mode: 'warm',
+    modeLabel: 'WARM',
+    verdict: 'issues',
+    startedAt: '2026-10-21T10:00:00Z',
+    completedAt: '2026-10-21T10:02:00Z',
+    durationMs: 120000,
+    unresolvedCount: 1,
+    unresolvedLabel: '1 unresolved',
+    findingsLabel: '1 finding recorded.',
+    findings: [
+      {
+        title: 'Missing fill',
+        details: '',
+        severity: 'Severity not recorded',
+        file: 'order.ts',
+        line: 462,
+      },
+    ],
+    earlierAttempts: [],
+    reviewRange: 'aaaaaaa → bbbbbbb',
+    fixRange: null,
+    fixStat: null,
+    fixDurationMs: null,
+    fixRunning: false,
+    activeFixStartedAt: null,
+    resolution: 'Not recorded',
+    hasFix: false,
+    diffPath: null,
+    reviewDiffRetained: false,
+    fixDiffPath: null,
+    fixDiffText: null,
+    fixDiffError: null,
+    validationDepth: 'static-code',
+    timing: [],
+    unavailable: [],
     ...overrides,
   };
 }
 
-test('renderReviewAttempt shows a tracked worker fix without requiring a diff artifact', () => {
-  const text = litText(renderReviewAttempt(attempt({ hasFixDelta: true, fixDeltaPath: null }), 1));
-  assert.match(text, /worker fix applied/);
-  assert.doesNotMatch(text, / · /);
-});
-
-test('renderReviewAttempt appends the diff path when present', () => {
-  const text = litText(
-    renderReviewAttempt(
-      attempt({ hasFixDelta: true, fixDeltaPath: 'artifacts/review-loop-2/fix-delta.diff' }),
-      1,
-    ),
-  );
-  assert.match(text, /worker fix applied · artifacts\/review-loop-2\/fix-delta\.diff/);
-});
-
-test('renderReviewAttempt omits the worker-fix line when there is no fixDelta', () => {
-  const text = litText(renderReviewAttempt(attempt({ hasFixDelta: false }), 0));
+test('the shared round shows reviewer, mode, start, duration and exact finding location', () => {
+  const text = litText(renderReviewAttempt(round(), -1));
+  for (const label of [
+    'Round 2',
+    'codex',
+    'gpt-6.1-sol',
+    'WARM',
+    'order.ts:462',
+    'Missing fill',
+    'Severity not recorded',
+  ])
+    assert.ok(text.includes(label), label);
   assert.doesNotMatch(text, /worker fix applied/);
 });
 
-test('renderReviewAttempt renders loop number and unresolved count', () => {
+test('a fix keeps its SHA and diffstat while missing resolution and duration remain explicit', () => {
   const text = litText(
-    renderReviewAttempt(attempt({ loopNumber: 1, verdict: 'issues', unresolvedCount: 8 }), 0),
+    renderReviewAttempt(
+      round({ hasFix: true, fixRange: 'aaaaaaa → bbbbbbb', fixStat: '2 files · +3 −1' }),
+      0,
+    ),
   );
-  assert.match(text, /Review attempt 1/);
-  assert.match(text, /8 unresolved/);
+  assert.match(text, /Fix before round 2/);
+  assert.match(text, /2 files/);
+  assert.match(text, /Fix duration not recorded/);
+  assert.match(text, /Resolved findings: Not recorded/);
+});
+
+test('the recorded diff action opens the existing artifact viewer', () => {
+  const opened: string[] = [];
+  const view = renderReviewAttempt(
+    round({ fixDiffPath: 'artifacts/round-2/fix.diff' }),
+    0,
+    (path) => opened.push(path),
+  );
+  const clicks = litBindings(view, '@click=');
+  assert.equal(clicks.length, 1);
+  const click = clicks[0];
+  assert.equal(typeof click, 'function');
+  if (typeof click === 'function') click();
+  assert.deepEqual(opened, ['artifacts/round-2/fix.diff']);
 });
