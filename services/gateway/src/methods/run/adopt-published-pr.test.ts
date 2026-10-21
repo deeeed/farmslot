@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import {
   adoptedPublicationTarget,
+  FLOW_STEPS,
   PUBLICATION_ADOPTION_ACTION,
   type Run,
   type RunAdoptPublishedPrParams,
@@ -28,10 +29,13 @@ const { latestResolvedHumanGateDecision, isReplayableResolvedHumanGateDecision }
   await import('../../run-engine/decision-replay.js');
 const { assertPublicationFinalization } =
   await import('../../run-engine/publication-finalization.js');
-const { resetPublishGateApprovalForReplay } = await import('./replay-step.js');
+const { resetPublishGateApprovalForReplay, runReplayStep } = await import('./replay-step.js');
 const { buildCIWatchChainedRunParams } = await import('../../run-engine/ci-watch-chain.js');
 const { reviewPRIdentity } = await import('../../review/session-mode.js');
 const { initPrLinkage } = await import('../../integrations/pr-linkage.js');
+const { withRunTransition } = await import('../../run-lifecycle/transition-coordinator.js');
+const { isTerminalTeardownInFlight } =
+  await import('../../run-engine/terminal-teardown-registry.js');
 const { refreshPublishedEvidence } =
   await import('../../run-completion/published-evidence-refresh.js');
 const { runCompletionPipeline, prepareCompletionPackage, publishCompletionPackage } =
@@ -151,6 +155,194 @@ function dependencies(overrides: Partial<Dependencies> = {}): Dependencies {
     ...overrides,
   };
 }
+
+function settledFixture(t: test.TestContext): Run {
+  const original = fixture(t);
+  return updateRun(original.id, {
+    status: 'reconciling',
+    error: 'Reviewer completed with an invalid result artifact: result is missing',
+    decisions: [],
+    steps: FLOW_STEPS[original.flowType].map((name) => ({
+      name,
+      status: name === 'finalize' || name === 'ci-watch' ? 'skipped' : 'done',
+    })),
+  });
+}
+
+test('merged publication settles a reconciled run with no remaining gate or execution steps', async (t) => {
+  const run = settledFixture(t);
+  const before = structuredClone(run);
+  const github = dependencies().github!;
+  const result = await runAdoptPublishedPr(
+    request(run),
+    noop,
+    dependencies({
+      github: async (args, options) => {
+        const response = await github(args, options);
+        if (args.some((arg) => arg.endsWith('/commits'))) return response;
+        return {
+          ...response,
+          stdout: JSON.stringify({
+            ...JSON.parse(response.stdout),
+            state: 'closed',
+            merged_at: '2026-10-21T07:38:00Z',
+          }),
+        };
+      },
+      continuationRefusals: async () => [],
+    }),
+  );
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.error, undefined);
+  assert.ok(result.run.completedAt);
+  assert.equal(result.continuation, 'resumed');
+  assert.equal(result.receipt.observedState, 'merged');
+  assert.equal(result.receipt.priorGate?.decisionId, undefined);
+  assert.deepEqual(result.run.steps, before.steps);
+  assert.deepEqual(result.run.decisions, before.decisions);
+  assert.deepEqual(result.run.agentContexts, before.agentContexts);
+  assert.deepEqual(
+    result.run.engineState?.publishGate?.reviews,
+    before.engineState?.publishGate?.reviews,
+  );
+  assert.equal(result.run.engineState?.generation, before.engineState?.generation);
+  assert.equal(result.run.engineState?.operatorForceCompleted, undefined);
+});
+
+test('settled adoption still refuses active work and never restarts incomplete steps', async (t) => {
+  const progressing = settledFixture(t);
+  const refused = await runAdoptPublishedPr(request(progressing), noop, dependencies());
+  assert.equal(refused.continuation, 'refused');
+  assert.equal(refused.refusals[0].code, 'run-work-progressing');
+  assert.equal(refused.run.status, 'reconciling');
+  assert.ok(refused.run.error);
+  assert.ok(refused.run.prNumber);
+  for (const status of ['pending', 'running', 'failed', 'skipped'] as const) {
+    const run = settledFixture(t);
+    updateRun(run.id, {
+      steps: run.steps.map((step) => (step.name === 'review' ? { ...step, status } : step)),
+    });
+    const before = structuredClone(run.steps);
+    const result = await runAdoptPublishedPr(
+      request(run),
+      noop,
+      dependencies({ continuationRefusals: async () => [] }),
+    );
+    assert.equal(result.continuation, 'waiting');
+    assert.equal(result.run.status, 'reconciling');
+    assert.ok(result.run.error);
+    assert.deepEqual(result.run.steps, before);
+  }
+});
+
+test(
+  'completion publishes durably before unlocked slot release and adoption retry stays idempotent',
+  { timeout: 4000 },
+  async (t) => {
+    const run = settledFixture(t);
+    updateRun(run.id, { slotId: 'fixture-slot' });
+    let releases = 0;
+    const deps = dependencies({
+      continuationRefusals: async () => [],
+      releaseSlot: async (completed) => {
+        releases += 1;
+        assert.equal(completed.status, 'done');
+        const durable = JSON.parse(
+          await readFile(path.join(runsDirectory(), `${run.id}.json`), 'utf8'),
+        );
+        assert.equal(durable.status, 'done');
+        assert.equal(durable.error, undefined);
+        // This would deadlock if teardown still held the machine/run keys.
+        await withRunTransition(run.id, async () => {});
+        throw new Error('Fixture slot release unavailable');
+      },
+    });
+    const first = await runAdoptPublishedPr(request(run), noop, deps);
+    assert.equal(first.run.status, 'done');
+    assert.equal(isTerminalTeardownInFlight('fixture-slot'), false);
+    assert.equal(first.refusals[0].code, 'publication-continuation-effect-failed');
+    assert.match(first.refusals[0].message, /slot-release: Fixture slot release unavailable/);
+    const completedAt = first.run.completedAt;
+    const second = await runAdoptPublishedPr(request(run), noop, deps);
+    assert.deepEqual(second.receipt, first.receipt);
+    assert.equal(second.run.completedAt, completedAt);
+    assert.equal(second.run.prPublications?.length, 1);
+    assert.equal(releases, 1);
+  },
+);
+
+test(
+  'adoption fences supported replay until deferred terminal cleanup settles',
+  { timeout: 4000 },
+  async (t) => {
+    for (const beforeCleanup of [false, true]) {
+      const run = settledFixture(t);
+      updateRun(run.id, { slotId: 'fixture-slot' });
+      const generation = run.engineState?.generation;
+      let entered!: () => void;
+      let release!: () => void;
+      let planned!: () => void;
+      let releasePlanning!: () => void;
+      const enteredRelease = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const releaseBarrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const enteredPlanning = new Promise<void>((resolve) => {
+        planned = resolve;
+      });
+      const planningBarrier = new Promise<void>((resolve) => {
+        releasePlanning = resolve;
+      });
+      t.after(release);
+      t.after(releasePlanning);
+      const replay = () =>
+        runReplayStep(
+          { runId: run.id, stepName: 'review', triggeredBy: 'operator', skipPrepare: true },
+          noop,
+          {
+            startEngine: async () => {},
+            ...(beforeCleanup
+              ? {
+                  afterSlotPlanning: async () => {
+                    planned();
+                    await planningBarrier;
+                  },
+                }
+              : {}),
+          },
+        );
+      const alreadyPlanning = beforeCleanup ? replay() : null;
+      if (beforeCleanup) await enteredPlanning;
+      const adopting = runAdoptPublishedPr(
+        request(run),
+        noop,
+        dependencies({
+          continuationRefusals: async () => [],
+          releaseSlot: async () => {
+            entered();
+            await releaseBarrier;
+            return { released: true };
+          },
+        }),
+      );
+      try {
+        await enteredRelease;
+        releasePlanning();
+        await assert.rejects(alreadyPlanning ?? replay(), /terminal cleanup/);
+        assert.equal(isTerminalTeardownInFlight('fixture-slot'), true);
+        assert.equal(run.status, 'done');
+        assert.equal(run.engineState?.generation, generation);
+      } finally {
+        releasePlanning();
+        release();
+        await adopting;
+      }
+      assert.equal(isTerminalTeardownInFlight('fixture-slot'), false);
+    }
+  },
+);
 
 test('adopted publication remains fulfilled after gate replay without restoring package approval', async (t) => {
   const run = fixture(t);
