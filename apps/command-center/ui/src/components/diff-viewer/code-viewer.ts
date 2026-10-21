@@ -225,6 +225,7 @@ export class CodeViewer extends LitElement {
   private _resizeObserver?: ResizeObserver;
   private _decorations: monaco.editor.IEditorDecorationsCollection | undefined;
   private _commentDecorations: monaco.editor.IEditorDecorationsCollection | undefined;
+  private _revealDecorations: monaco.editor.IEditorDecorationsCollection | undefined;
   private _commentBodies: RootPart[] = [];
   private _viewZoneIds: string[] = [];
   private _viewZoneDomNodes: HTMLElement[] = [];
@@ -277,6 +278,8 @@ export class CodeViewer extends LitElement {
 
     this._applyDecorations();
     this._applyCommentDecorations();
+    this._applyCommentZones();
+    this._revealRequestedLine();
 
     // Intercept "Go to Definition" / "Open Editor" — route to our file opening logic
     registerEditorOpener(this);
@@ -320,10 +323,7 @@ export class CodeViewer extends LitElement {
         this._applyCommentDecorations();
         this._applyCommentZones();
         // Re-apply reveal after model change
-        if (this.revealLine > 0) {
-          this._editor.revealLineInCenter(this.revealLine);
-          this._editor.setPosition({ lineNumber: this.revealLine, column: 1 });
-        }
+        this._revealRequestedLine();
       }
     }
     if (changed.has('changedLines')) {
@@ -333,16 +333,31 @@ export class CodeViewer extends LitElement {
       this._applyCommentDecorations();
       this._applyCommentZones();
     }
-    if (changed.has('revealLine') && this.revealLine > 0 && this._editor) {
-      this._editor.revealLineInCenter(this.revealLine);
-      this._editor.setPosition({ lineNumber: this.revealLine, column: 1 });
-    }
+    if (changed.has('revealLine')) this._revealRequestedLine();
     if (changed.has('readOnly') && this._editor) {
       this._editor.updateOptions({ readOnly: this.readOnly });
     }
     if (changed.has('diagnostics') || changed.has('filePath') || changed.has('content')) {
       this._applyDiagnosticMarkers();
     }
+  }
+
+  private _revealRequestedLine() {
+    if (!this._editor || !monacoApi) return;
+    if (this.revealLine <= 0) {
+      this._revealDecorations?.clear();
+      return;
+    }
+    const decorations: monaco.editor.IModelDeltaDecoration[] = [
+      {
+        range: new monacoApi.Range(this.revealLine, 1, this.revealLine, 1),
+        options: { isWholeLine: true, className: 'cv-selected-line' },
+      },
+    ];
+    if (this._revealDecorations) this._revealDecorations.set(decorations);
+    else this._revealDecorations = this._editor.createDecorationsCollection(decorations);
+    this._editor.revealLineInCenter(this.revealLine);
+    this._editor.setPosition({ lineNumber: this.revealLine, column: 1 });
   }
 
   override disconnectedCallback() {
@@ -655,6 +670,9 @@ export class CodeViewer extends LitElement {
         /* Comment line decorations */
         .cv-comment-line {
           background: rgba(99, 102, 241, 0.06) !important;
+        }
+        .cv-selected-line {
+          background: rgba(99, 102, 241, 0.2) !important;
         }
         .cv-comment-glyph {
           background: ${colors.accent};
