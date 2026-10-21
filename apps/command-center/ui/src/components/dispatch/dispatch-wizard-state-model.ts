@@ -1,5 +1,5 @@
 import type { DispatchCandidatesResult, FlowType, Run, SlotStatus } from '@farmslot/protocol';
-import { isActiveListRun } from '@farmslot/protocol';
+import { hasUnsettledRunExecution } from '@farmslot/protocol';
 
 import { candidateDispatchable, pressureOverrideAvailable } from './dispatch-wizard-selectors.js';
 
@@ -170,7 +170,7 @@ export function findActiveRunConflict(
       (candidate.ticketOrPr === ticket ||
         Boolean(input.normalizedTicket && candidate.ticketOrPr === input.normalizedTicket)) &&
       candidate.project === input.project &&
-      isActiveListRun(candidate),
+      hasUnsettledRunExecution(candidate),
   );
   return run ? { id: run.id, status: run.status } : null;
 }

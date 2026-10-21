@@ -6,6 +6,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Person claim confirmations can retain bound review-finding settlement references. Shared review policy counts qualified evidence findings as settled while preserving the original review verdict and code findings.
 
+## 0.62.0 - 2026-10-21
+
+- Failed runs stay in Active until archived, even after their resources are released. Gateway, Command Center and Companion share this rule; done and cancelled runs stay out. `hasUnsettledRunExecution` preserves the execution checks for PR ownership, work graphs, family workflow outcomes and dispatch conflicts.
+
 ## 0.61.0 - 2026-10-21
 
 - A review lineage no longer needs a PR (ADR-063 Amendment 5): `ReviewContinuationContext` makes `repository`/`prNumber` optional and adds the run `familyId`. `ReviewSessionTrace.fallback` (`ReviewSessionFallback`) records why a re-review ran a delta-scoped COLD and the ranges it compared, and `AgentContext.reviewFallback` keeps it for a reattach after a restart, with the new `reviewed-head-not-ancestor` refusal reason. `ReadyGatePayload.reviewLineageOptions` (`ReviewLineageOption`) lists the lineages a gate Request Review can continue and whether each session is available.

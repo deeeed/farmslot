@@ -22,6 +22,7 @@ import { makeVars } from '../runners/test-fixtures.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
+import { reviewFinalSnapshotMatchesPreparedPackage } from './gate-policy.js';
 import {
   appendRecoveredContinuationAttempt,
   buildRecoveredReview,
@@ -845,6 +846,79 @@ test('delivery-failed reviewer can recover from a later fresh complete signal', 
 test('restart recovery uses the reviewer-owned artifact scope instead of review-array length', () => {
   assert.equal(recoveredReviewArtifactScope({ artifactScope: 'review-7' }, 'review-2'), 'review-7');
   assert.equal(recoveredReviewArtifactScope({}, 'review-2'), 'review-2');
+});
+
+test('restart recovery preserves a warm delta after the lineage first reviewed cold', () => {
+  const previousHead = 'b'.repeat(40);
+  const pkg = makeReadyGatePackage({
+    headSha: 'c'.repeat(40),
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'origin/main',
+      baseSha: 'a'.repeat(40),
+      headSha: 'c'.repeat(40),
+      diffHash: 'full-contribution',
+      capturedAt: '2026-07-16T10:30:00.000Z',
+    },
+  });
+  const previous: ReviewStatus = {
+    id: 'review-7',
+    source: 'human-gate',
+    loopNumber: 1,
+    mode: 'cold',
+    verdict: 'issues',
+    unresolvedCount: 1,
+    reviewedHeadSha: previousHead,
+    reviewerSessionId: 'retained-session',
+    session: {
+      mode: 'cold',
+      continuity: 'fresh',
+      reviewId: 'review-7',
+      sessionId: 'retained-session',
+      lastReviewedHeadSha: previousHead,
+    },
+  };
+  const run = makeRun({ engineState: { publishGate: { reviews: [previous] } } });
+  const ctx = reviewerContext({
+    status: 'complete',
+    artifactScope: 'review-7',
+    reviewId: 'review-7',
+    reviewLoopNumber: 2,
+    runnerSessionId: 'retained-session',
+    attemptStartedAt: '2026-07-16T10:30:00.000Z',
+  });
+  const params = {
+    run,
+    ctx,
+    signal: terminalSignal(),
+    feedback: { verdict: 'pass' as const, issues: [] },
+    reviewSnapshot: { ...pkg.reviewSnapshot!, baseSha: previousHead, diffHash: 'reviewed-delta' },
+    reviewedPackage: pkg,
+  };
+  const recovered = buildRecoveredReview(params);
+  assert.ok(recovered);
+  assert.equal(recovered.mode, 'warm');
+  assert.equal(recovered.attempts?.[0]?.mode, 'warm');
+  assert.equal(recovered.session?.continuity, 'resumed');
+  assert.equal(recovered.session?.lastReviewedHeadSha, previousHead);
+  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(recovered, pkg), true);
+
+  const fallback = buildRecoveredReview({
+    ...params,
+    ctx: {
+      ...ctx,
+      runnerSessionId: 'fresh-session',
+      reviewFallback: {
+        reason: 'missing-session',
+        detail: 'Retained session unavailable',
+        comparedRanges: [`${previousHead}..${pkg.headSha}`],
+      },
+    },
+  });
+  assert.ok(fallback);
+  assert.equal(fallback.mode, 'cold');
+  assert.equal(fallback.session?.continuity, 'fresh');
+  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(fallback, pkg), true);
 });
 
 test('buildRecoveredReview preserves the reviewer-owned artifact scope as the review id', () => {

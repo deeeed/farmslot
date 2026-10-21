@@ -154,7 +154,7 @@ export function buildRunFamilyReadinessSummaries(runs: Run[]): RunFamilyReadines
   return [...grouped.entries()]
     .map(([familyId, familyRuns]) => {
       const latest = latestRun(familyRuns);
-      // A failed run that still holds its resources is active, as in every run list.
+      // An unarchived failed run still needs attention, as in every run list.
       const activeRunCount = familyRuns.filter(isActiveListRun).length;
       const terminalRunCount = familyRuns.length - activeRunCount;
       const failedRunCount = familyRuns.filter(

@@ -43,6 +43,8 @@ const runs = [
   run('blocked', { status: 'blocked', slotId: 'macwork-mm-1' }),
   run('held', { status: 'failed', slotId: 'macwork-mm-pixel6', steps: refusedCompletion }),
   run('failed', { status: 'failed', slotId: 'mini-mm-2' }),
+  run('failed-without-resources', { status: 'failed' }),
+  run('archived-failure', { status: 'failed', archivedAt: '2026-10-21T00:00:00Z' }),
   run('done', { status: 'done', slotId: 'macwork-mm-3' }),
   run('cancelled', { status: 'cancelled' }),
   run('created', { status: 'created', project: 'core-farm' }),
@@ -109,6 +111,8 @@ test('Command Center and Companion list the same active runs', () => {
     'blocked',
     'created',
     'demo',
+    'failed',
+    'failed-without-resources',
     'found',
     'held',
     'review',
@@ -137,6 +141,6 @@ test('Command Center and Companion apply the same filters to the run list', () =
       );
     }
   }
-  assert.deepEqual(commandCenter('active', { machines: ['mini'] }), ['found']);
+  assert.deepEqual(commandCenter('active', { machines: ['mini'] }), ['failed', 'found']);
   assert.deepEqual(commandCenter('all', { machines: ['mini'] }), ['failed', 'found']);
 });

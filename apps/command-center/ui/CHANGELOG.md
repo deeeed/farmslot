@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Failed runs stay in Active until archived, including failures without resources. A settled failure still allows a new dispatch.
 - The run canvas marks the current fix worker or reviewer as the only running node, with elapsed time and an activity header. Completed reviews are marked done; node details stay within their bounds or tooltips. Ordinary review flows retain their real running node.
 
 - A gate that is not ready shows What's blocking publish at the top, with one plain action per blocker: Skip this criterion… (a criterion with a missing, weak or failed verdict), Accept findings and publish… (opens the accept form with its reason), Give it another round (spent review rounds; asks what the next round should check). Mark untestable is now Skip this criterion… everywhere, with a styled reason sheet and a clear Skip AC-n confirm instead of a raw button and textarea. A criterion's state (Needs a check, Proven, Issue) reads as a status badge rather than a button.

@@ -127,7 +127,7 @@ test('filterRunList applies family, project, tab, status, flow, lane, and search
   );
 });
 
-test('filterRunList active tab keeps failed runs that hold resources; history keeps terminal runs', () => {
+test('filterRunList active tab keeps unarchived failed runs; history keeps terminal runs', () => {
   const active = run('active', { status: 'monitoring' });
   const held = run('held', {
     status: 'failed',
@@ -140,7 +140,7 @@ test('filterRunList active tab keeps failed runs that hold resources; history ke
     filter({ runs: [active, held, failed, done], tab: 'active', statusFilter: 'done' }).map(
       (item) => item.id,
     ),
-    ['active', 'held'],
+    ['active', 'held', 'failed'],
   );
   assert.deepEqual(
     filter({ runs: [active, held, failed, done], tab: 'history' }).map((item) => item.id),

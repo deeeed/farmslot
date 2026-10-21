@@ -29,7 +29,7 @@ import {
   ACCOUNT_SESSION_CONTROL,
   buildGatewayPairingQrPayload,
   Events,
-  isActiveListRun,
+  hasUnsettledRunExecution,
   isTerminalRunStatus,
   Methods,
   personSessionCaption,
@@ -1505,8 +1505,9 @@ export class FarmApp extends LitElement {
       if (selected) return selected;
     }
     return (
-      this.runs.find((candidate) => candidate.slotId === slotId && isActiveListRun(candidate)) ??
-      null
+      this.runs.find(
+        (candidate) => candidate.slotId === slotId && hasUnsettledRunExecution(candidate),
+      ) ?? null
     );
   }
 

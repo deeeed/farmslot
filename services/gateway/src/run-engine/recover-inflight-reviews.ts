@@ -421,7 +421,22 @@ export function buildRecoveredReview(params: {
     REQUESTED_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id,
   );
   const previous = priorReviews.find((review) => review.id === reviewId);
-  const mode = ctx.reviewFallback ? 'cold' : resolveReviewMode({ explicitMode: previous?.mode });
+  const retainedHead = previous?.reviewedHeadSha ?? previous?.reviewSnapshot?.headSha;
+  // A new WARM launch can follow a COLD verdict. Its own retained session,
+  // loop and captured base identify the continuation, not the older row's mode.
+  const resumed =
+    previous &&
+    !!ctx.runnerSessionId &&
+    ctx.runnerSessionId === previous.reviewerSessionId &&
+    !!retainedHead &&
+    reviewSnapshot?.baseSha === retainedHead &&
+    (ctx.reviewLoopNumber ?? 0) >
+      Math.max(previous.loopNumber, ...(previous.attempts ?? []).map((entry) => entry.loopNumber));
+  const mode = ctx.reviewFallback
+    ? 'cold'
+    : resumed
+      ? 'warm'
+      : resolveReviewMode({ explicitMode: previous?.mode });
   const session =
     previous?.session && ctx.runnerSessionId && reviewSnapshot
       ? {
@@ -433,7 +448,7 @@ export function buildRecoveredReview(params: {
           lastReviewedHeadSha:
             (mode === 'warm' ? reviewSnapshot.baseSha : reviewSnapshot.headSha) ?? undefined,
           ...(mode === 'warm' ? { priorRunId: run.id, priorSessionId: ctx.runnerSessionId } : {}),
-          ...(ctx.reviewFallback ? { fallback: ctx.reviewFallback } : {}),
+          fallback: ctx.reviewFallback,
         }
       : previous?.session;
   const reviewResult: ReviewResult = {
