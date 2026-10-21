@@ -2302,6 +2302,60 @@ function preparedGatePackage(): PrepareCompletionPackageResult {
   };
 }
 
+for (const interrupted of [false, true])
+  test(`retained same-head findings reach the gate without ${interrupted ? 'retrying an interrupted' : 'starting an automatic'} review`, async (t) => {
+    const issues = [
+      { file: 'evidence-manifest.json', description: 'AC-1 needs person acceptance' },
+    ];
+    const reviews: ReviewStatus[] = [
+      {
+        id: 'pipeline-review-retained',
+        source: 'pipeline',
+        mode: 'warm',
+        loopNumber: 1,
+        verdict: 'failed',
+        unresolvedCount: 1,
+        issues,
+        attempts: [
+          {
+            mode: 'warm',
+            loopNumber: 2,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues,
+            reviewSnapshot: {
+              source: 'local-git',
+              headSha: 'c'.repeat(40),
+              capturedAt: '2026-10-21T02:39:11Z',
+            },
+          },
+        ],
+      },
+    ];
+    if (interrupted)
+      reviews.push({
+        id: 'review-interrupted',
+        source: 'dispatch',
+        mode: 'cold',
+        loopNumber: 2,
+        verdict: 'failed',
+        unresolvedCount: 0,
+      });
+    const run = await staleReceiptGateRun(t, 'RETAINED-FINDING', [claudeColdRow], reviews);
+    let gates = 0;
+    await executeHumanGateStep(run.id, {
+      ...restartReplayContext(),
+      executePublishGateReviewPlan: async () =>
+        assert.fail('retained findings require a person decision, not another review'),
+      executeReadyGate: async () => {
+        gates++;
+        return 'approve-publish';
+      },
+    });
+    assert.equal(gates, 1);
+    assert.deepEqual(getRun(run.id)!.engineState?.publishGate?.reviews, reviews);
+  });
+
 test('gate re-entry with a refused re-run row and a stale CI receipt reaches the gate wait', async (t) => {
   // The refused re-run left its row persisted; a restart and Retry Gate re-enter with it.
   const run = await staleReceiptGateRun(

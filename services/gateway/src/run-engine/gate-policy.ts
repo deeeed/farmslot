@@ -34,6 +34,7 @@ export { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
 
 import { REQUESTED_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
 import type { ReviewResult } from '../review/orchestrator.js';
+import { preserveUnchangedReviewFindings } from '../review/retained-findings.js';
 import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import { resolveSelectedEvidenceRef } from '../run-completion/evidence-paths.js';
 import { assertPublicationEvidenceSelection } from '../run-completion/publication-evidence-policy.js';
@@ -394,9 +395,12 @@ export function buildPublishGateReviewStatus({
     startedAt: attempts[0]?.startedAt,
     completedAt: finalAttempt.completedAt ?? new Date().toISOString(),
   };
-  const capped = stampReviewRetryCap(status, reviewResult.maxRetries);
+  const capped = stampReviewRetryCap(
+    preserveUnchangedReviewFindings(status),
+    reviewResult.maxRetries,
+  );
   if (!reviewedPackage) return capped;
-  const finalReviewedHeadSha = status.reviewSnapshot?.headSha ?? null;
+  const finalReviewedHeadSha = capped.reviewSnapshot?.headSha ?? null;
   const reviewedPackageHeadSha = reviewedPackage.headSha ?? null;
   // A review loop can legitimately find issues, let the worker fix them, and
   // then pass a re-review on a new HEAD. In that case the overall review

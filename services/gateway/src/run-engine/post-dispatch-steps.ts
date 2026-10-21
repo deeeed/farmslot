@@ -10,7 +10,6 @@ import {
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
   isReviewValidationDepth,
-  latestReview,
   PipelineSteps,
   type ReadyGatePrPackage,
   reviewPolicySatisfied,
@@ -25,6 +24,7 @@ import {
 import {
   executionModelFromSelection,
   parseReviewSelection,
+  publicationReviewBlockingReason,
   resolveReviewDispatchDefaults,
   resolveReviewMode,
   reviewContextFromRequest,
@@ -928,7 +928,11 @@ export async function rerunReviewIfReviewedInputsChanged(
   const reviewedPackage = await readReadyGatePreparedPackage(latest);
   // Findings awaiting a fix come first: Continue Fixing re-reviews after the fix, and a review
   // now would spend the round on the same code (ADR-063 Amendment 4).
-  if (await gateReviewContinuationForRun(latest, reviewedPackage?.headSha)) return false;
+  if (
+    publicationReviewBlockingReason(latest, reviewedPackage) ||
+    (await gateReviewContinuationForRun(latest, reviewedPackage?.headSha))
+  )
+    return false;
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — evidence or HEAD changed since the last review; running review again`,
   );
@@ -1173,10 +1177,9 @@ export async function executeHumanGateStep(
           })
         : [];
       const reviewsForInitial = beforeInitialPlan.engineState?.publishGate?.reviews ?? [];
-      const latestExtraReview = latestReview(reviewsForInitial);
-      const latestHasOpenFindings =
-        latestExtraReview?.verdict === 'issues' &&
-        Math.max(latestExtraReview.unresolvedCount ?? 0, latestExtraReview.issues?.length ?? 0) > 0;
+      const latestHasOpenFindings = Boolean(
+        publicationReviewBlockingReason(beforeInitialPlan, { headSha: gateHeadSha }),
+      );
       const persistedReviewPolicy = beforeInitialPlan.engineState?.publishGate?.reviewPolicy;
       const replayProjectVars =
         (unconsumedReviewDecision && persistedReviewPolicy?.requestedBy !== 'dispatch') ||
