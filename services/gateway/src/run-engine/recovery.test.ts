@@ -894,6 +894,74 @@ function publicationReviewRecoveryDeps(
   return { deps, calls };
 }
 
+test('restart re-enters a resolved monitor handoff instead of completing its running step', async () => {
+  // d82738b5: the person continued monitoring, SIGNAL still said running at
+  // checklist step 4, and restart advanced MONITOR with no completion output.
+  for (const status of ['reconciling', 'blocked'] as const) {
+    const monitorIndex = FLOW_STEPS.dev.indexOf('monitor');
+    const run = minimalActiveRun({
+      id: 'running-monitor-recovery',
+      slotId: 'fixture-slot',
+      flowType: 'dev',
+      status,
+      ticketOrPr: 'RECOVERY-MONITOR',
+      familyRootTicketOrPr: 'RECOVERY-MONITOR',
+      taskFile: 'tasks/monitor/TASK.md',
+      steps: FLOW_STEPS.dev.map(
+        (name, index): RunStep => ({
+          name,
+          status: index < monitorIndex ? 'done' : index === monitorIndex ? 'running' : 'pending',
+          ...(name === 'monitor' ? { startedAt: '2026-10-20T17:56:36.281Z' } : {}),
+        }),
+      ),
+      decisions: [
+        {
+          id: 'extended-monitor',
+          type: 'monitor_interactive_handoff',
+          title: 'Continue monitoring',
+          description: 'Worker has not finished',
+          actions: [{ id: 'continue', label: 'Continue monitoring', style: 'primary' }],
+          createdAt: '2026-10-20T20:56:56.673Z',
+          resolvedAt: '2026-10-21T00:39:52.828Z',
+          resolvedAction: 'continue',
+        },
+      ],
+      agentContexts: [
+        {
+          id: 'dev',
+          role: 'dev',
+          label: 'Worker',
+          status: 'working',
+          runId: 'running-monitor-recovery',
+          slotId: 'fixture-slot',
+          signalAttemptId: 'running-attempt',
+          runnerSessionId: 'retained-worker',
+        },
+      ],
+    });
+    const before = structuredClone(run);
+    const { deps } = publicationReviewRecoveryDeps(run);
+    const started: Array<{ status: Run['status']; steps: RunStep[] }> = [];
+    deps.updateRun = (_id, patch) => {
+      Object.assign(run, patch);
+    };
+    deps.updateRunStep = (_id, name, patch) => {
+      Object.assign(run.steps.find((step) => step.name === name)!, patch);
+    };
+    deps.reconstructStepOutputs = () => null;
+    deps.startRun = async () => {
+      started.push({ status: run.status, steps: structuredClone(run.steps) });
+    };
+
+    await recoverActiveRuns(deps);
+
+    assert.deepEqual(started, [{ status: 'monitoring', steps: before.steps }]);
+    assert.deepEqual(run.steps, before.steps);
+    assert.deepEqual(run.decisions, before.decisions);
+    assert.deepEqual(run.agentContexts, before.agentContexts);
+  }
+});
+
 test('startup clears a stale live-watcher recovery marker before skipping a paused run', async () => {
   const run = minimalActiveRun({
     status: 'paused',

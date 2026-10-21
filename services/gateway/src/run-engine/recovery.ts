@@ -878,7 +878,11 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       }
 
       const runningStep = run.steps.find((s) => s.status === 'running');
-      if (runningStep) {
+      if (runningStep?.name === S.MONITOR) {
+        // Resolving a monitor wait continues observation, not the worker's task.
+        // The monitor owns terminal SIGNAL validation, including after restart.
+        deps.updateRun(run.id, { status: 'monitoring' });
+      } else if (runningStep) {
         console.log(
           `[run-engine] run ${run.id.slice(0, 8)} — blocked with 0 unresolved decisions, advancing past ${runningStep.name}`,
         );
