@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Verify exact reviewed line selection for line comments using the shared source context.
+
 - Open the current worker or reviewer directly from the run header. Terminal requests retain the exact actor binding; finished runs show a disabled action and reason. Worktree terminals reuse the existing terminal screen.
 - Publication blockers show finding details and inline actions from the shared gate model. WARM locks retained reviewer settings and refuses unavailable sessions. Evidence judgments stay pending until the gateway responds.
 - Run pipelines and run-detail headers share the current worker/reviewer activity with Command Center, including the review round and elapsed time.

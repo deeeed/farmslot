@@ -372,7 +372,118 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
   });
 }
 
-if (phase === 'prepare-worktree-terminal') {
+if (phase === 'setup-line-comments') {
+  // Immutable local source and saved findings. No reviewer, terminal or publication is started.
+  execFileSync(process.execPath, [fileURLToPath(import.meta.url), 'setup-actions'], {
+    cwd: root,
+    stdio: 'pipe',
+  });
+  const owned = readState();
+  await stopFixture();
+  const git = (args, input) =>
+    execFileSync('git', ['-C', owned.fixture, ...args], {
+      encoding: 'utf8',
+      ...(input === undefined ? {} : { input }),
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Fixture',
+        GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+        GIT_COMMITTER_NAME: 'Fixture',
+        GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+      },
+    }).trim();
+  const empty = git(['mktree'], '');
+  const base = git(['commit-tree', empty, '-m', 'fixture base']);
+  const content =
+    Array.from(
+      { length: 500 },
+      (_, index) => `export const sourceLine${index + 1} = ${index + 1};`,
+    ).join('\n') + '\n';
+  const other =
+    Array.from(
+      { length: 24 },
+      (_, index) => `export const otherLine${index + 1} = ${index + 1};`,
+    ).join('\n') + '\n';
+  const blob = git(['hash-object', '-w', '--stdin'], content);
+  const otherBlob = git(['hash-object', '-w', '--stdin'], other);
+  const tree = git(
+    ['mktree'],
+    `100644 blob ${blob}\tmobileInfrastructure.ts\n100644 blob ${otherBlob}\tother.ts\n`,
+  );
+  const head = git(['commit-tree', tree, '-p', base, '-m', 'fixture reviewed source']);
+  git(['update-ref', 'refs/heads/line-comment-proof', head]);
+  git(['symbolic-ref', 'HEAD', 'refs/heads/line-comment-proof']);
+  const file = path.join(owned.fixture, 'runs', `${requestRunId}.json`);
+  const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const result = {
+    reviewMd: 'Fixture review with exact-line findings.',
+    recommendation: 'COMMENT',
+    lineComments: [
+      {
+        path: 'mobileInfrastructure.ts',
+        line: 462,
+        body: 'Fixture finding at line 462',
+        severity: 'suggestion',
+      },
+      {
+        path: 'mobileInfrastructure.ts',
+        line: 479,
+        body: 'Fixture finding at line 479',
+        severity: 'nitpick',
+      },
+      {
+        path: 'other.ts',
+        line: 12,
+        body: 'Fixture finding in the other file',
+        severity: 'comment',
+      },
+    ],
+    reviewSnapshot: {
+      source: 'github-pr',
+      baseRef: base,
+      baseSha: base,
+      headRef: 'line-comment-proof',
+      headSha: head,
+      diffPath: 'inputs/diff.txt',
+      diffHash: 'line-comment-fixture',
+      diffStat: { files: 2, additions: 524, deletions: 0 },
+      capturedAt: new Date().toISOString(),
+    },
+  };
+  run.status = 'human-gating';
+  run.flowType = 'review-pr';
+  run.autoRecoveryDisabled = true;
+  run.branch = 'line-comment-proof';
+  run.agentContexts = [];
+  run.engineState = {};
+  run.reviewResult = result;
+  run.decisions = [
+    {
+      id: 'line-comment-proof-gate',
+      type: 'engine_review_posting',
+      title: 'Review findings',
+      description: '',
+      actions: [],
+      createdAt: new Date().toISOString(),
+      payload: { kind: 'review', prNumber: null, repo: null, ...result },
+    },
+  ];
+  writeJson(file, run);
+  startGateway(owned.fixture, owned.port);
+  await waitFor(
+    'the reviewed source fixture serves its run',
+    () => rpc('run.get', { runId: run.id }).run,
+    30000,
+  );
+  const source = rpc('git.show', {
+    slotId: run.slotId,
+    ref: head,
+    path: 'mobileInfrastructure.ts',
+  });
+  assert.equal(source.content.split('\n')[461], 'export const sourceLine462 = 462;');
+  evidence('line-comment-fixture', { runId: run.id, slotId: run.slotId, head, base });
+  console.log(JSON.stringify({ runId: run.id, head }));
+} else if (phase === 'prepare-worktree-terminal') {
   const owned = readState();
   await stopFixture(true);
   const workspaceId = `terminal-proof-${randomUUID().slice(0, 8)}`;

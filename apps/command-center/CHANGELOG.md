@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add a connected review-workspace probe for exact line-comment reveal, highlight and inline comment display.
+
 - Add terminal-entry proof for exact reviewer pane navigation and finished-run availability.
 - Add a publication-gate probe for inline finding actions, retained WARM settings and touch-sized controls without submitting a review.
 - Add a live canvas probe for the current actor, elapsed time, completed rounds and bounded labels.
