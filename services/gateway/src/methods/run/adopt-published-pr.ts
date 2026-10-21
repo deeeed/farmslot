@@ -26,6 +26,7 @@ import {
   routeTerminalRunTransition,
 } from '../../run-lifecycle/terminal-transition.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
+import type { RunTransitionEffectOutcome } from '../../run-lifecycle/transition-router.js';
 import { getRun, getRunWithArchived, persistRunNow } from '../../runs/store.js';
 import { withRunSources } from '../../sources/runtime.js';
 
@@ -109,6 +110,18 @@ function unavailableReadiness(error: unknown): RunGatePrerequisiteReason[] {
       message: `Readiness could not be evaluated: ${(error as Error).message}`,
     },
   ];
+}
+
+function continuationEffectRefusals(
+  effects: RunTransitionEffectOutcome[],
+): RunGatePrerequisiteReason[] {
+  return effects
+    .filter((effect) => effect.status === 'failed')
+    .map((effect) => ({
+      code: 'publication-continuation-effect-failed',
+      prerequisite: 'lifecycle',
+      message: `${effect.name}: ${effect.detail}`,
+    }));
 }
 
 export async function runAdoptPublishedPr(
@@ -356,13 +369,7 @@ export async function runAdoptPublishedPr(
         ...result,
         run: transition.run,
         continuation: 'resumed' as const,
-        refusals: transition.effects
-          .filter((effect) => effect.status === 'failed')
-          .map((effect) => ({
-            code: 'publication-continuation-effect-failed',
-            prerequisite: 'lifecycle' as const,
-            message: `${effect.name}: ${effect.detail}`,
-          })),
+        refusals: continuationEffectRefusals(transition.effects),
       };
     }
     if (!receipt!.priorGate?.decisionId) return result;
@@ -387,15 +394,6 @@ export async function runAdoptPublishedPr(
   return {
     ...result,
     run: getRun(initial.id) ?? result.run,
-    refusals: [
-      ...result.refusals,
-      ...effects
-        .filter((effect) => effect.status === 'failed')
-        .map((effect) => ({
-          code: 'publication-continuation-effect-failed',
-          prerequisite: 'lifecycle' as const,
-          message: `${effect.name}: ${effect.detail}`,
-        })),
-    ],
+    refusals: [...result.refusals, ...continuationEffectRefusals(effects)],
   };
 }
