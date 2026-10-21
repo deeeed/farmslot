@@ -47,6 +47,7 @@ import {
   HUMAN_GATE_DECISION_TYPE,
 } from '../../lib/gate-review';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
+import { requestAnotherReviewRound } from '../../lib/review-budget';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
@@ -378,6 +379,15 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         try {
           await requestClaimUntestableOverride(client, run.id, decision, model, claimId, reason);
           await refresh('claim override');
+        } catch (error) {
+          setLoadError(error instanceof Error ? error.message : String(error));
+        }
+      },
+      giveAnotherRound: async (brief: string) => {
+        if (!client || !run || !decision) return;
+        try {
+          await requestAnotherReviewRound(client, run.id, decision, brief);
+          await refresh('review budget extension');
         } catch (error) {
           setLoadError(error instanceof Error ? error.message : String(error));
         }

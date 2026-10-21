@@ -213,6 +213,7 @@ export function publicationGatePanelStyles(scope = 'ready-workspace') {
       padding: ${spacing.md} ${spacing.lg}; border-top: 1px solid var(--gate-border);
       position: sticky; bottom: 0; z-index: 2; display: grid; gap: ${spacing.lg}; flex-shrink: 0; font-size: ${fonts.sizeMd}; line-height: 1.4;
     }
+    ready-workspace .publication-gate:has(.gate-attestation) { position: static; }
     @media (prefers-color-scheme: light) { ready-workspace .publication-gate { ${publicationGateCssVariables('light')} } }
     ready-workspace .publication-gate h3, ready-workspace .publication-gate p { margin: 0; }
     ready-workspace .publication-gate h3 { font-size: ${fonts.sizeSm}; margin-bottom: ${spacing.sm}; }

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   type AcceptanceVerdict,
   acceptanceVerdictLabel,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   EVIDENCE_ATTESTATION_ACTION,
   type RecipeRepairScope,
   renderAcceptanceCoverage,
@@ -14,12 +15,17 @@ import {
 } from '@farmslot/protocol';
 
 import {
+  type AcceptanceClaimRow,
   acceptanceClaimRows,
+  anotherReviewRoundParams,
+  anotherReviewRoundView,
   humanGateBlockingReason,
+  publicationGateBlockers,
   type PublicationGateClaim,
   publicationGateCriteria,
   publicationGateView,
   publicationReviewBlockingReason,
+  untestableOverrideView,
 } from '../src/publication-gate.js';
 
 const evidenceOnly: RunGateReadiness = {
@@ -677,5 +683,103 @@ test('an open gate shows the reason a person can act on, not a fix it does not o
   assert.match(
     publicationGateView({ run, readiness, actions: gate.actions }).status,
     /Fix and pass/,
+  );
+});
+
+test('skipping a criterion is one action and needs a written reason', () => {
+  const empty = untestableOverrideView('AC-3', '  ');
+  assert.equal(empty.action, 'Skip this criterion…');
+  assert.equal(empty.confirm, 'Skip AC-3');
+  assert.equal(empty.canConfirm, false);
+  assert.equal(untestableOverrideView('AC-3', 'No testnet market shows it').canConfirm, true);
+});
+
+test('what blocks publish: one plain action per criterion, findings and spent rounds', () => {
+  const claim = (id: string, state: string, verdict: AcceptanceVerdict): AcceptanceClaimRow => ({
+    id,
+    text: `${id} text`,
+    state,
+    tone: 'issue',
+    detail: '',
+    pending: false,
+    source: {
+      id,
+      text: `${id} text`,
+      status: { id, text: `${id} text`, verdict, evidence: [], recipeNodes: [] },
+    },
+  });
+  const readiness: RunGateReadiness = {
+    state: 'not-ready',
+    identity: { runId: 'r1', generation: 1 },
+    reasons: [
+      {
+        code: 'acceptance-incomplete',
+        prerequisite: 'acceptance',
+        message: 'The registered acceptance criteria have missing or disallowed verdicts.',
+      },
+      { code: 'review-fix-required', prerequisite: 'review', message: 'Review found 3 issues.' },
+      {
+        code: 'deterministic-not-passed',
+        prerequisite: 'deterministic',
+        message: 'CI parity failed.',
+      },
+    ],
+  };
+  const blockers = publicationGateBlockers({
+    view: {
+      claims: [
+        claim('AC-1', 'Proven', 'proven'),
+        claim('AC-2', 'Untestable', 'untestable'),
+        claim('AC-3', 'Missing', 'missing'),
+      ],
+      acceptFindings: {
+        id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
+        label: 'Accept findings',
+        style: 'secondary',
+      },
+    },
+    readiness,
+    // The gate lets a person skip any registered criterion; only blocking ones are listed.
+    canSkip: () => true,
+    budget: { remaining: 0, used: 3, limit: 3 },
+  });
+  assert.deepEqual(
+    blockers.map((blocker) => [blocker.message, blocker.action?.label ?? null]),
+    [
+      ['AC-3 · Missing: AC-3 text', 'Skip this criterion…'],
+      ['Review found 3 issues.', 'Accept findings and publish…'],
+      ['CI parity failed.', null],
+      ['No review rounds left (3 of 3 used).', 'Give it another round'],
+    ],
+  );
+  assert.equal(anotherReviewRoundView({ used: 3, limit: 3 }, '').canConfirm, false);
+  // A ready or resolved gate lists nothing.
+  assert.deepEqual(
+    publicationGateBlockers({
+      view: { claims: [], acceptFindings: null },
+      readiness: { ...readiness, state: 'ready' },
+      canSkip: () => true,
+    }),
+    [],
+  );
+});
+
+test('another review round raises the limit by one, idempotent per gate and limit', () => {
+  assert.deepEqual(
+    anotherReviewRoundParams({
+      runId: 'r1',
+      decisionId: 'd1',
+      budget: { limit: 3 },
+      headSha: 'abc',
+      brief: '  the open findings ',
+    }),
+    {
+      runId: 'r1',
+      requestId: 'extend-review-budget:d1:3',
+      expectedLimit: 3,
+      limit: 4,
+      headSha: 'abc',
+      scopeBrief: 'the open findings',
+    },
   );
 });

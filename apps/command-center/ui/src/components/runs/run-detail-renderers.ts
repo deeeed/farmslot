@@ -32,7 +32,7 @@ import {
   runOutputCloseUnavailableReason,
   runRecoveryHints,
 } from '@farmslot/protocol';
-import { runResultsSummary } from '@farmslot/review-dispatch';
+import { runActivityView, runResultsSummary } from '@farmslot/review-dispatch';
 
 import '../slot-view/worker-session-history.js';
 import '../shared/workspace-pin.js';
@@ -496,7 +496,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   }
   const r = ctx.run;
   const sc = runStatusColor(r.status);
-  const activityLabel = deriveRunLifecycleView(r).activityLabel;
+  const activityLabel = runActivityView(r)?.label ?? deriveRunLifecycleView(r).activityLabel;
   const disposition = dispositionLabel(r.metrics.disposition);
   const suggestedComparePartner = pickComparisonPartner(r, ctx.siblings);
   // ctx.siblings excludes the current run, so add it back when it is itself a

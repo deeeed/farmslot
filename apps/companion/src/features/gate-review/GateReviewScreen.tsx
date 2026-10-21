@@ -22,6 +22,7 @@ import {
 import { baseStyles } from '../../lib/theme';
 
 import { GateActions, GateReviewVerdicts, GateSummaryCard } from './components/gate-review-panels';
+import { GateBlockers } from './components/GateBlockers';
 import { GateReviewSkeleton } from './components/GateReviewSkeleton';
 import { gateReviewStyles as styles } from './styles/gate-review.styles';
 import type { GateReviewActions, GateReviewScreenState } from './use-gate-review-controller';
@@ -38,6 +39,7 @@ export function GateReviewScreen({
 }) {
   const [tab, setTab] = useState<string>('evidence');
   const [judging, setJudging] = useState(false);
+  const [acceptingDecisionId, setAcceptingDecisionId] = useState<string | null>(null);
   const appearance = useColorScheme();
   const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
   const [focusClaim, setFocusClaim] = useState<{ claimId: string }>();
@@ -83,6 +85,20 @@ export function GateReviewScreen({
       ]}
     >
       {viewModel.error ? <Text style={styles.error}>{viewModel.error}</Text> : null}
+      <GateBlockers
+        run={viewModel.run}
+        decision={viewModel.decision}
+        actions={viewModel.actions}
+        evidenceModel={acceptance.evidenceModel}
+        reviewer={acceptance.reviewer}
+        busy={judging || viewModel.sendingActionId !== null}
+        onSkip={actions.markUntestable}
+        acceptingFindings={acceptingDecisionId === viewModel.decision.id}
+        onAcceptFindingsChange={(accepting) =>
+          setAcceptingDecisionId(accepting ? viewModel.decision.id : null)
+        }
+        onAnotherRound={actions.giveAnotherRound}
+      />
       <View
         accessibilityRole="tablist"
         style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12 }}
@@ -226,6 +242,8 @@ export function GateReviewScreen({
           }}
           attestationReason={viewModel.attestationReason}
           onAttestationReason={actions.setAttestationReason}
+          acceptingFindings={acceptingDecisionId === viewModel.decision.id}
+          onAcceptFindings={() => setAcceptingDecisionId(viewModel.decision.id)}
         />
       </View>
     </View>

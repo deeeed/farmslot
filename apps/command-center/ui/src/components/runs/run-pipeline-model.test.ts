@@ -37,6 +37,44 @@ function makeRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
+test('a publication fix has one current worker node instead of the enclosing gate', () => {
+  const run = makeRun({
+    status: 'fixing',
+    statusChangedAt: '2026-10-21T01:03:40.000Z',
+    reviewRoundAdmissions: Array.from({ length: 10 }, (_, index) => `round-${index}`),
+    steps: [
+      { name: 'review', status: 'done' },
+      { name: 'complete', status: 'done' },
+      {
+        name: 'human-gate',
+        status: 'running',
+        detail: 'Reviewer found 2 issue(s); worker applying fixes (1/3)...',
+      },
+      { name: 'finalize', status: 'pending' },
+    ],
+    agentContexts: [
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'Review fix',
+        status: 'working',
+        runId: 'run-1',
+        slotId: 'slot-1',
+        updatedAt: '2026-10-21T01:03:52.000Z',
+        attemptStartedAt: '2026-10-21T01:03:52.000Z',
+      },
+    ],
+    engineState: { publishGate: { reviews: [] } },
+  });
+  assert.equal(currentPipelineNodeId(run), 'post-gate-publication-review-fix');
+  const layout = computeLayout(run);
+  assert.deepEqual(
+    layout.nodes.filter((node) => node.step.status === 'running').map((node) => node.id),
+    ['post-gate-publication-review-fix'],
+  );
+  assert.equal(run.steps.find((step) => step.name === 'human-gate')?.status, 'running');
+});
+
 test('computeLayout inserts publication review plan nodes without mutating host state', () => {
   const baseRun = makeRun({
     steps: [

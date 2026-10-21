@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Share the current run activity, worker/reviewer node, review round, attempt start time and visible step states between Command Center and Companion.
+
+- `publicationGateBlockers` lists what blocks publish at a gate that is not ready, one plain action each: `Skip this criterion…` for a criterion with a missing, weak or failed verdict, `Accept findings and publish…` for open review findings, `Give it another round` for spent review rounds; other readiness reasons are listed as worded. `untestableOverrideView` (the untestable override, now worded as skipping the criterion; the protocol action stays `mark-untestable`), `anotherReviewRoundView` and `anotherReviewRoundParams` (an idempotent `run.extendReviewBudget` request) give both clients the same copy and rules.
 - `publicationGateView` offers accepting the open review findings (`acceptFindings`, with `findings`) while they block every other publish approval, and asks for the reason when `acceptingFindings` is set. `reviewFixInProgress(run)` and `reviewFindingEntries(reviews)`, the review entries the publication block counts, are exported.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

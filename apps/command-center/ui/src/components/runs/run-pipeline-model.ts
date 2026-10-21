@@ -5,6 +5,7 @@ import {
   type RunStep,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
+import { runActivityView } from '@farmslot/review-dispatch';
 
 import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
 import {
@@ -127,6 +128,8 @@ export function currentPipelineNodeId(run: Run | undefined): string | null {
   if (isBlockedAtOpenHumanGate(run)) {
     return 'human-gate';
   }
+  const activity = runActivityView(run);
+  if (activity) return activity.nodeId;
   if (isPublicationReviewProgressActive(run)) {
     return 'human-gate';
   }
@@ -150,6 +153,7 @@ export function selectedStepShowsLiveTaskProgress(
   stepName: string | undefined,
 ): boolean {
   if (!stepName) return false;
+  if (run && runActivityView(run)?.nodeId === stepName) return true;
   if (stepName === 'monitor') return true;
   if (stepName === 'review') return isReviewProgressActive(run);
   if (stepName === 'ci-watch') return isInlineCiFixActiveFromOutputs(ciWatchOutputsForRun(run));
@@ -327,7 +331,9 @@ export interface PipelineLayout {
 }
 
 export function computeLayout(run: Run): PipelineLayout {
-  const { flowType, steps } = run;
+  const { flowType } = run;
+  const activity = runActivityView(run);
+  const steps = activity?.steps ?? run.steps;
   const positions = LAYOUTS[flowType] ?? LAYOUTS['fix-bug'];
   const preGateReviewPlan = publicationReviewPlanNodes(run, 'pre-gate');
   const postGateReviewPlan = publicationReviewPlanNodes(run, 'post-gate');
@@ -491,6 +497,14 @@ export function computeLayout(run: Run): PipelineLayout {
     }
   }
 
+  // Synthetic summaries do not become a second running activity.
+  if (activity) {
+    for (const node of nodes) {
+      if (node.step.status === 'running' && node.id !== activity.nodeId)
+        node.step = { ...node.step, status: 'pending' };
+    }
+  }
+
   // Arrows between consecutive rendered nodes
   const arrows: ArrowDef[] = [];
   for (let i = 0; i < nodes.length - 1; i++) {
@@ -574,8 +588,7 @@ function publicationReviewPlanNodes(
   phase: 'pre-gate' | 'post-gate',
 ): PublicationReviewPlanNode[] {
   if (run.flowType !== 'fix-bug' && run.flowType !== 'dev') return [];
-  const publishGate = run.engineState?.publishGate;
-  if (!publishGate) return [];
+  const publishGate: PublishGate = run.engineState?.publishGate ?? {};
   const reviewPolicy = recordValue(publishGate.reviewPolicy);
   const requestedBy = reviewPolicy?.requestedBy === 'human-gate' ? 'human-gate' : 'dispatch';
   const minimum = Number(reviewPolicy?.minimumReviews ?? 1);
@@ -682,7 +695,20 @@ function publicationReviewPlanNodes(
     nodesByOrder.set(activeReview.order, activeReview);
   }
 
-  return [...nodesByOrder.values()].sort((a, b) => a.order - b.order).slice(0, 5);
+  const activity = runActivityView(run);
+  const nodes = [...nodesByOrder.values()].sort((a, b) => a.order - b.order).slice(0, 5);
+  if (activity?.phase !== phase) return nodes;
+  const history = nodes.filter((node) => node.step.status !== 'running');
+  return [
+    ...history,
+    {
+      id: activity.nodeId,
+      order: Math.max(0, ...history.map((node) => node.order)) + 1,
+      label: activity.nodeLabel,
+      meta: activity.detail,
+      step: activity.step,
+    },
+  ];
 }
 
 function reviewStartedAt(

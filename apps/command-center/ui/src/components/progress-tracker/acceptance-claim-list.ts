@@ -96,8 +96,9 @@ export function acceptanceClaimListStyles() {
     .gate-claim-text summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; min-height: 44px; align-content: center; }
     .gate-claim-text[open] summary { display: block; -webkit-line-clamp: unset; }
     .gate-claim-text p { margin: 0; padding: 4px 0; }
-    .acceptance-claim-list .gate-state { color: var(--gate-text); font-size: inherit; border: 1px solid var(--gate-border); border-radius: ${radii.sm}; padding: ${spacing.sm} ${spacing.md}; white-space: nowrap; background: var(--gate-surface); text-transform: none; }
-    ${['proven', 'verified', 'checked', 'issue', 'pending', 'untestable'].map((tone) => `.acceptance-claim-list .gate-state[data-state="${tone}"] { color: var(--gate-${tone}); background: var(--gate-${tone}Surface); border-color: currentColor; }`).join('')}
+    .acceptance-claim-list .gate-state { display: inline-flex; align-items: center; gap: 6px; justify-self: start; color: var(--gate-text); font-size: ${fonts.sizeSm}; font-weight: 600; border: 0; border-radius: 999px; padding: 2px 10px; white-space: nowrap; background: var(--gate-surface); text-transform: none; cursor: default; }
+    .acceptance-claim-list .gate-state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    ${['proven', 'verified', 'checked', 'issue', 'pending', 'untestable'].map((tone) => `.acceptance-claim-list .gate-state[data-state="${tone}"] { color: var(--gate-${tone}); background: var(--gate-${tone}Surface); }`).join('')}
     .acceptance-claim-list .gate-state[data-state="checked"] { animation: gate-checked 0.25s ease-out; }
     @keyframes gate-checked { from { opacity: 0.5; transform: translateY(3px); } to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) { .acceptance-claim-list .gate-state { animation: none !important; } }
