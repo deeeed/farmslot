@@ -327,6 +327,7 @@ const styles = StyleSheet.create({
   field: { flex: 1, gap: spacing.sm },
   choice: {
     minHeight: 44,
+    minWidth: 44,
     justifyContent: 'center',
     borderColor: colors.bgCardHover,
     borderWidth: 1,
