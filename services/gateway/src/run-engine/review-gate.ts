@@ -59,6 +59,7 @@ import { refreshRunGateReadiness } from './gate-prerequisites.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { copyWorkerArtifacts, readReviewArtifacts } from './review-artifacts.js';
 import { completedReviewSessionTrace } from './review-result.js';
+import { runSupersededSince } from './run-generation.js';
 import { readTaskArtifactText } from './task-artifacts.js';
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -122,6 +123,7 @@ export async function publishPinnedReview({
 
 export async function executeReviewGate(runId: string): Promise<void> {
   const current = getRun(runId)!;
+  const generation = current.engineState?.generation ?? 0;
 
   // 1. Copy artifacts from worker
   await copyWorkerArtifacts(runId);
@@ -296,6 +298,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
     actions,
     reviewPayload,
   );
+  if (actionId === 'abort' || runSupersededSince(getRun(runId), generation)) return;
   const resolvedDecision = findLatestResolvedDecision(getRun(runId)!.decisions, 'review_posting');
   // Capture fingerprinted fields before subsequent awaits or worker artifact reads.
   const acceptedPayload = structuredClone(

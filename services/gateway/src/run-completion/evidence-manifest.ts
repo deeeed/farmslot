@@ -7,9 +7,11 @@ import {
   type EvidenceManifestVideo,
   isRunArtifactImagePath,
   isRunArtifactMediaPath,
+  RECIPE_CLAIM_VERDICTS,
 } from '@farmslot/protocol';
 
 import { evidenceKeyVariants } from './evidence-paths.js';
+import { publicationDetails } from './publication-details.js';
 
 export type {
   EvidenceManifest,
@@ -407,11 +409,15 @@ export function buildEvidenceSection(
   artifactUrls: Map<string, string>,
 ): string | null {
   const lines: string[] = [];
-  if (manifest.summary) lines.push(manifest.summary.trim(), '');
+  // The engine's pre-review status list is superseded by the Visual judgments table.
+  const summary = manifest.summary?.trim();
+  const engineStatuses = summary?.split(';').every((entry) => {
+    const match = /^\s*[^:\s]+:\s*(\S+)\s*$/.exec(entry);
+    return match && RECIPE_CLAIM_VERDICTS.some((verdict) => verdict === match[1]);
+  });
 
   const pairs = manifest.before_after_pairs ?? [];
   const standalone = manifest.standalone ?? [];
-  const screenshotsPreferred = !manifestPrefersVideo(manifest);
 
   const fileUsage = new Map<string, number>();
   const bumpUsage = (f?: string) => {
@@ -432,8 +438,33 @@ export function buildEvidenceSection(
     }
     return undefined;
   };
+  const representatives = new Map<string, { label: string; url: string }>();
+  const representative = (
+    entry: EvidenceManifestPair | EvidenceManifestStandalone,
+    file?: string,
+  ) => {
+    if (!file || !isRunArtifactImagePath(file)) return;
+    const url = urlFor(file);
+    if (!url) return;
+    for (const claim of entry.covers ?? []) {
+      if (!representatives.has(claim)) representatives.set(claim, { label: entry.label, url });
+    }
+  };
+  for (const pair of pairs) {
+    representative(
+      pair,
+      pair.after && isRunArtifactImagePath(pair.after) && urlFor(pair.after)
+        ? pair.after
+        : pair.before,
+    );
+  }
+  for (const shot of standalone) representative(shot, shot.file);
+  const media = (file: string, url: string, label: string) =>
+    isRunArtifactImagePath(file)
+      ? `<img src="${url}" alt="${label}" width="320" />`
+      : `<a href="${url}">${label}</a>`;
 
-  if (screenshotsPreferred && (pairs.length || standalone.length)) {
+  if (pairs.length || standalone.length) {
     // Before/after pairs: side-by-side HTML table for clean comparison
     if (pairs.length > 0) {
       const pairRows = pairs
@@ -450,8 +481,8 @@ export function buildEvidenceSection(
             return [
               labelCell,
               `<tr>`,
-              `<td align="center" valign="top" width="50%"><em>Before</em><br/><img src="${beforeUrl}" alt="before" width="320" /></td>`,
-              `<td align="center" valign="top" width="50%"><em>After</em><br/><img src="${afterUrl}" alt="after" width="320" /></td>`,
+              `<td align="center" valign="top" width="50%"><em>Before</em><br/>${media(pair.before!, beforeUrl, 'before')}</td>`,
+              `<td align="center" valign="top" width="50%"><em>After</em><br/>${media(pair.after!, afterUrl, 'after')}</td>`,
               `</tr>`,
             ].join('\n');
           }
@@ -459,7 +490,7 @@ export function buildEvidenceSection(
           const which = beforeUrl ? 'Before' : 'After';
           return [
             labelCell,
-            `<tr><td colspan="2" align="center" valign="top"><em>${which}</em><br/><img src="${url}" alt="${which.toLowerCase()}" width="320" /></td></tr>`,
+            `<tr><td colspan="2" align="center" valign="top"><em>${which}</em><br/>${media((beforeUrl ? pair.before : pair.after)!, url, which.toLowerCase())}</td></tr>`,
           ].join('\n');
         })
         .filter(Boolean);
@@ -534,6 +565,16 @@ export function buildEvidenceSection(
     }
   }
 
-  const rendered = lines.join('\n').trim();
+  const gallery = lines.join('\n').trim();
+  const rendered = [
+    !engineStatuses ? summary : undefined,
+    ...[...representatives].map(
+      ([claim, shot]) =>
+        `<p><strong>${claim}: ${shot.label}</strong><br/><img src="${shot.url}" alt="${shot.label}" width="320" /></p>`,
+    ),
+    gallery ? publicationDetails(gallery) : undefined,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
   return rendered || null;
 }

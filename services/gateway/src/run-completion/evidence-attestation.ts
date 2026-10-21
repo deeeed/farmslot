@@ -14,6 +14,7 @@ import { validatePackageApprovalSelection } from '../run-engine/gate-policy.js';
 import { buildReviewSummary } from '../run-engine/gate-summary.js';
 
 import { replaceMarkdownSection } from './publication-artifacts.js';
+import { withPublicationReceipt } from './publication-details.js';
 
 export function assertEvidenceAttestationReceipt(
   run: Run,
@@ -52,6 +53,14 @@ export function withPublicationProvenance(run: Run, body: string): string {
   const decision = latestResolvedHumanGateDecision(run.decisions, true);
   const prepared = decision?.payload?.kind === 'ready' ? decision.payload.prPackage : undefined;
   if (prepared) {
+    // Older published bodies kept these generated receipts outside the gallery.
+    for (const heading of [
+      'Publication approval',
+      'Accepted review findings',
+      'Evidence policy attestation',
+    ]) {
+      body = replaceMarkdownSection(body, `## ${heading}`, null);
+    }
     const approval = decision?.publicationApproval;
     const plain = (value: string) =>
       value
@@ -75,13 +84,13 @@ export function withPublicationProvenance(run: Run, body: string): string {
           JSON.stringify(prepared.claimOverrideReceiptIds ?? []))
     )
       throw new Error('The publication approver receipt does not bind the frozen package.');
-    body = replaceMarkdownSection(
-      body,
-      '## Publication approval',
+    const sections = [
+      '### Publication approval',
+      '',
       approval
         ? `${plain(approval.displayName)} · ${approval.subjectKind} · ${plain(approval.principalId)} · ${approval.approvedAt}\nPackage: \`${approval.packageHash}\`. Visual receipts: ${approval.visualJudgmentReceiptIds.map(plain).join(', ') || 'none'}.`
         : 'Not recorded.',
-    );
+    ];
     const accepted = approval?.acceptedFindings;
     if (accepted) {
       if (!approval.approver || !approval.reason || !approval.headSha)
@@ -99,7 +108,7 @@ export function withPublicationProvenance(run: Run, body: string): string {
             `- ${plain(finding.file)}${finding.line ? `:${finding.line}` : ''}: ${plain(finding.description)} (review ${plain(finding.reviewId)})`,
         ),
       ].join('\n');
-      body = replaceMarkdownSection(body, '## Accepted review findings', section).trimEnd() + '\n';
+      sections.push('', '### Accepted review findings', '', section);
     }
     const receipt = assertEvidenceAttestationReceipt(run, decision, prepared);
     if (receipt) {
@@ -115,10 +124,9 @@ export function withPublicationProvenance(run: Run, body: string): string {
         '',
         'Original evidence and verdicts are retained. Integrity, source, CI and review checks remain required.',
       ].join('\n');
-      body =
-        replaceMarkdownSection(body, '## Evidence policy attestation', section).trimEnd() + '\n';
+      sections.push('', '### Evidence policy attestation', '', section);
     }
-    body = body.trimEnd() + '\n';
+    body = withPublicationReceipt(body, sections.join('\n')).trimEnd() + '\n';
   }
   const noReviewNotice = [
     '<!-- farmslot-code-review:start -->',

@@ -1405,6 +1405,7 @@ export async function executeReadyGate(
           prior.payload.prPackage?.packageHash === preparedPackage?.packageHash),
     }));
 
+  if (actionId === 'abort' || runSupersededSince(getRun(runId), generation)) return 'abort';
   const afterDecisionRun = getRun(runId)!;
   // Bind to the latest decision matching the action we just resolved — not an
   // older review request (e.g. first loop claude when the operator just asked
