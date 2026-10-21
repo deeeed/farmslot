@@ -516,6 +516,46 @@ test('unchanged-head PASS retains findings; a PASS on the fixed head clears them
   );
 });
 
+test('a passing continuation settles its own earlier findings after an evidence-only fix', () => {
+  const snapshot = {
+    source: 'local-git' as const,
+    headSha: 'same-head',
+    capturedAt: '2026-10-21T15:44:20.525Z',
+  };
+  const review: ReviewStatus = {
+    id: 'pipeline-review',
+    source: 'pipeline',
+    mode: 'warm',
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    reviewedHeadSha: 'same-head',
+    reviewSnapshot: snapshot,
+    attempts: [
+      {
+        mode: 'cold',
+        loopNumber: 1,
+        verdict: 'issues',
+        unresolvedCount: 1,
+        issues: [{ file: 'artifacts/recipe.json', description: 'Compare original values.' }],
+        reviewSnapshot: snapshot,
+      },
+      {
+        mode: 'warm',
+        loopNumber: 2,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        reviewSnapshot: snapshot,
+      },
+    ],
+  };
+  const run = {
+    status: 'human-gating' as const,
+    engineState: { publishGate: { reviews: [review] } },
+  };
+  assert.equal(publicationReviewBlockingReason(run, { headSha: 'same-head' }), undefined);
+});
+
 const repairScope: RecipeRepairScope = {
   schemaVersion: 1,
   repairId: 'repair-1',
