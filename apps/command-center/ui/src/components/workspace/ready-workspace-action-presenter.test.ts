@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import { type GitBranchDiffFile, Methods, type RunDecision } from '@farmslot/protocol';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { FakeControllerHost } from '../../testing/fake-controller-host.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
@@ -184,6 +185,30 @@ function submittingPresenter(): Presenter {
 const timedOut = async (): Promise<never> => {
   throw new GatewayRequestTimeoutError('Request run.resolveDecision timed out after 600000ms');
 };
+
+test('review setup stays open while submitting and after a retained-session refusal', async () => {
+  let reply!: () => void;
+  resolveReply = () => new Promise((resolve) => (reply = () => resolve({})));
+  const view = submittingPresenter();
+  Object.assign(view, {
+    _reviewModalOpen: true,
+    _reviewPicker: new ReviewDispatchViewModel({ context: { allowedActions: ['request-review'] } }),
+  });
+  const submitting = view._submitReviewRequest();
+  assert.equal(view._reviewModalOpen, true);
+  reply();
+  await submitting;
+  assert.equal(view._reviewModalOpen, false);
+
+  resolveReply = async () => {
+    throw new Error('Retained session cannot be resumed');
+  };
+  gatewayDecision = { id: 'gate' };
+  Object.assign(view, { _acting: false, _reviewModalOpen: true });
+  await view._submitReviewRequest();
+  assert.equal(view._reviewModalOpen, true);
+  assert.match(view._actionMessage, /Retained session cannot be resumed/);
+});
 
 test('a decision waits for the gateway answer over a long window', async () => {
   resolveReply = async () => ({});

@@ -10,6 +10,7 @@
 // gateway (loopback-only, unauthenticated), start the app on it, and read its persisted state.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,8 +21,9 @@ import { openSimulatorDevClient } from './simulator-dev-client.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const proofDir = path.join(root, 'temp/companion-gate-review-proof');
-const statePath = path.join(proofDir, 'state.json');
+const statePath = path.join(proofDir, 'proof-state.json');
 const gatewayLogPath = path.join(proofDir, 'gateway.log');
+const proofSecretPath = path.join(proofDir, 'service-secret');
 const project = 'companion-proof';
 // One registered slot per fixture run: a slot's task is its active run's.
 const SLOTS = {
@@ -63,12 +65,20 @@ function gatewayGateActions(reviews) {
     import { reviewPolicySatisfied } from './packages/protocol/src/runs/review-policy.ts';
     const { policy, reviews } = JSON.parse(process.argv[1]);
     const reviewSatisfied = reviewPolicySatisfied(policy, reviews);
-    process.stdout.write(JSON.stringify(publicationGateDecisionActions({ reviewSatisfied, reviews: reviews })));
+    const preparedPackage = { headSha: '1'.repeat(40), reviewPolicy: policy };
+    process.stdout.write(JSON.stringify(publicationGateDecisionActions({ reviewSatisfied, reviews, preparedPackage })));
   `;
   return JSON.parse(
     execFileSync(
-      path.join(root, 'node_modules/.bin/tsx'),
-      ['-e', script, JSON.stringify({ policy: REVIEW_POLICY, reviews: reviews })],
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '-e',
+        script,
+        JSON.stringify({ policy: REVIEW_POLICY, reviews: reviews }),
+      ],
       { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     ),
   );
@@ -101,7 +111,16 @@ function rpc(method, params = {}) {
         cwd: root,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, FARMSLOT_GATEWAY: `ws://127.0.0.1:${state.port}` },
+        env: {
+          ...process.env,
+          FARMSLOT_GATEWAY: `ws://127.0.0.1:${state.port}`,
+          ...(fs.existsSync(proofSecretPath)
+            ? {
+                FARMSLOT_HOME: path.join(state.fixture, 'home'),
+                FARMSLOT_GATEWAY_PROFILE: 'proof',
+              }
+            : {}),
+        },
       },
     ),
   );
@@ -118,18 +137,29 @@ function seedFixtureGateway(port) {
     simulator,
     bundleId,
     profile: {
-      id: FIXTURE_PROFILE_ID,
+      id: fs.existsSync(proofSecretPath)
+        ? `${FIXTURE_PROFILE_ID}-${readState().pid}`
+        : FIXTURE_PROFILE_ID,
       name: 'Gate review fixture',
       url: `ws://127.0.0.1:${port}`,
       kind: 'lan',
-      authMode: 'none',
+      ...(fs.existsSync(proofSecretPath)
+        ? { authMode: 'token', presetSecret: fs.readFileSync(proofSecretPath, 'utf8').trim() }
+        : { authMode: 'none' }),
     },
   });
 }
 
-async function stopFixture() {
+async function stopFixture(keepTerminals = false) {
   if (!fs.existsSync(statePath)) return;
-  const { pid } = readState();
+  const { pid, terminalSession, workspaceTerminalSession } = readState();
+  for (const session of keepTerminals
+    ? []
+    : [terminalSession, workspaceTerminalSession].filter(Boolean)) {
+    const stopped = spawnSync('tmux', ['kill-session', '-t', session], { encoding: 'utf8' });
+    if (stopped.status !== 0 && !/can't find session|no server running/i.test(stopped.stderr))
+      throw new Error(`Owned terminal fixture did not stop: ${stopped.stderr}`);
+  }
   try {
     process.kill(-pid, 'SIGTERM');
   } catch (error) {
@@ -182,7 +212,16 @@ function startGateway(fixture, port) {
     },
   });
   gateway.unref();
-  writeJson(statePath, { fixture, port, pid: gateway.pid });
+  const owned = fs.existsSync(statePath) ? readState() : {};
+  writeJson(statePath, {
+    fixture,
+    port,
+    pid: gateway.pid,
+    ...(owned.terminalSession ? { terminalSession: owned.terminalSession } : {}),
+    ...(owned.workspaceTerminalSession
+      ? { workspaceTerminalSession: owned.workspaceTerminalSession }
+      : {}),
+  });
 }
 
 /** How many times the Companion has authenticated to the fixture gateway, from the gateway's log. */
@@ -210,7 +249,7 @@ function appConnected() {
 
 /** A task dir whose ledger records `proven` for the first `provenCount` criteria only. */
 function seedTask(fixture, name, provenCount) {
-  const taskDir = path.join(fixture, 'projects', project, 'tasks/dev', name);
+  const taskDir = path.join(fixture, '.task/dev', name);
   const recordedAt = new Date().toISOString();
   fs.mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
   fs.writeFileSync(path.join(taskDir, 'TASK.md'), `# ${name}\n`);
@@ -278,7 +317,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
     ticketOrPr: 'FIXTURE-GATE-REVIEW',
     slotId: SLOTS[id],
     branch: 'feat/fixture-gate-review',
-    taskFile,
+    taskFile: path.relative(fixture, taskFile),
     createdByPrincipalId: 'test-automation',
     steps: [],
     metrics: {},
@@ -333,7 +372,270 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
   });
 }
 
-if (phase === 'setup') {
+if (phase === 'setup-line-comments') {
+  // Immutable local source and saved findings. No reviewer, terminal or publication is started.
+  execFileSync(process.execPath, [fileURLToPath(import.meta.url), 'setup-actions'], {
+    cwd: root,
+    stdio: 'pipe',
+  });
+  const owned = readState();
+  await stopFixture();
+  const git = (args, input) =>
+    execFileSync('git', ['-C', owned.fixture, ...args], {
+      encoding: 'utf8',
+      ...(input === undefined ? {} : { input }),
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Fixture',
+        GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+        GIT_COMMITTER_NAME: 'Fixture',
+        GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+      },
+    }).trim();
+  const empty = git(['mktree'], '');
+  const base = git(['commit-tree', empty, '-m', 'fixture base']);
+  const content =
+    Array.from(
+      { length: 500 },
+      (_, index) => `export const sourceLine${index + 1} = ${index + 1};`,
+    ).join('\n') + '\n';
+  const other =
+    Array.from(
+      { length: 24 },
+      (_, index) => `export const otherLine${index + 1} = ${index + 1};`,
+    ).join('\n') + '\n';
+  const blob = git(['hash-object', '-w', '--stdin'], content);
+  const otherBlob = git(['hash-object', '-w', '--stdin'], other);
+  const tree = git(
+    ['mktree'],
+    `100644 blob ${blob}\tmobileInfrastructure.ts\n100644 blob ${otherBlob}\tother.ts\n`,
+  );
+  const head = git(['commit-tree', tree, '-p', base, '-m', 'fixture reviewed source']);
+  git(['update-ref', 'refs/heads/line-comment-proof', head]);
+  git(['symbolic-ref', 'HEAD', 'refs/heads/line-comment-proof']);
+  const file = path.join(owned.fixture, 'runs', `${requestRunId}.json`);
+  const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const result = {
+    reviewMd: 'Fixture review with exact-line findings.',
+    recommendation: 'COMMENT',
+    lineComments: [
+      {
+        path: 'mobileInfrastructure.ts',
+        line: 462,
+        body: 'Fixture finding at line 462',
+        severity: 'suggestion',
+      },
+      {
+        path: 'mobileInfrastructure.ts',
+        line: 479,
+        body: 'Fixture finding at line 479',
+        severity: 'nitpick',
+      },
+      {
+        path: 'other.ts',
+        line: 12,
+        body: 'Fixture finding in the other file',
+        severity: 'comment',
+      },
+    ],
+    reviewSnapshot: {
+      source: 'github-pr',
+      baseRef: base,
+      baseSha: base,
+      headRef: 'line-comment-proof',
+      headSha: head,
+      diffPath: 'inputs/diff.txt',
+      diffHash: 'line-comment-fixture',
+      diffStat: { files: 2, additions: 524, deletions: 0 },
+      capturedAt: new Date().toISOString(),
+    },
+  };
+  run.status = 'human-gating';
+  run.flowType = 'review-pr';
+  run.autoRecoveryDisabled = true;
+  run.branch = 'line-comment-proof';
+  run.agentContexts = [];
+  run.engineState = {};
+  run.reviewResult = result;
+  run.decisions = [
+    {
+      id: 'line-comment-proof-gate',
+      type: 'engine_review_posting',
+      title: 'Review findings',
+      description: '',
+      actions: [],
+      createdAt: new Date().toISOString(),
+      payload: { kind: 'review', prNumber: null, repo: null, ...result },
+    },
+  ];
+  writeJson(file, run);
+  startGateway(owned.fixture, owned.port);
+  await waitFor(
+    'the reviewed source fixture serves its run',
+    () => rpc('run.get', { runId: run.id }).run,
+    30000,
+  );
+  const source = rpc('git.show', {
+    slotId: run.slotId,
+    ref: head,
+    path: 'mobileInfrastructure.ts',
+  });
+  assert.equal(source.content.split('\n')[461], 'export const sourceLine462 = 462;');
+  evidence('line-comment-fixture', { runId: run.id, slotId: run.slotId, head, base });
+  console.log(JSON.stringify({ runId: run.id, head }));
+} else if (phase === 'prepare-worktree-terminal') {
+  const owned = readState();
+  await stopFixture(true);
+  const workspaceId = `terminal-proof-${randomUUID().slice(0, 8)}`;
+  const workspaceTerminalSession = `review-${workspaceId}`;
+  writeJson(statePath, { ...owned, workspaceTerminalSession });
+  try {
+    execFileSync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      workspaceTerminalSession,
+      "printf 'TERMINAL PROOF WORKTREE\\n'; exec sleep 1800",
+    ]);
+    execFileSync('tmux', [
+      'set-option',
+      '-t',
+      workspaceTerminalSession,
+      '@farmslot-review-workspace',
+      workspaceId,
+    ]);
+    const file = path.join(owned.fixture, 'runs', `${bypassRunId}.json`);
+    const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const taskPath = path.dirname(path.resolve(owned.fixture, run.taskFile));
+    const runtime = path.join(taskPath, 'inputs/runtime/node_modules/@farmslot');
+    fs.mkdirSync(runtime, { recursive: true });
+    fs.symlinkSync(path.join(root, 'packages/agent-runtime'), path.join(runtime, 'agent-runtime'));
+    run.status = 'monitoring';
+    run.transport = 'tmux';
+    run.flowType = 'review-pr';
+    run.autoRecoveryDisabled = true;
+    run.slotId = null;
+    run.decisions = [];
+    run.reviewWorkspace = {
+      workspaceId,
+      machine: `${project}-node`,
+      executionNodeId: 'local',
+      checkoutPath: owned.fixture,
+      taskPath,
+      artifactPath: path.join(taskPath, 'artifacts'),
+    };
+    run.agentContexts = [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Worktree reviewer',
+        status: 'working',
+        runId: run.id,
+        slotId: null,
+        runner: 'scripted',
+        promptDeliveryStartedAt: new Date().toISOString(),
+        target: { session: workspaceTerminalSession, target: workspaceTerminalSession },
+      },
+    ];
+    writeJson(file, run);
+    startGateway(owned.fixture, owned.port);
+    await waitFor(
+      'the worktree fixture serves its run',
+      () => rpc('run.get', { runId: run.id }).run,
+      30000,
+    );
+    const snapshot = rpc('terminal.snapshot', { slotId: '', runId: run.id, lines: 20 });
+    assert(snapshot.lines.some((line) => line.includes('TERMINAL PROOF WORKTREE')));
+    evidence('worktree-terminal-target', {
+      runId: run.id,
+      session: workspaceTerminalSession,
+      node: `${project}-node`,
+    });
+  } catch (error) {
+    await stopFixture();
+    throw error;
+  }
+} else if (phase === 'setup-terminal') {
+  // Reuse the isolated gateway/profile setup. This phase creates no model session or review.
+  execFileSync(process.execPath, [fileURLToPath(import.meta.url), 'setup-actions'], {
+    cwd: root,
+    stdio: 'pipe',
+  });
+  const owned = readState();
+  await stopFixture();
+  const terminalSession = `companion-terminal-proof-${randomUUID().slice(0, 8)}`;
+  // Require the existing server; never start or stop a tmux server for proof.
+  execFileSync('tmux', ['list-sessions'], { stdio: 'pipe' });
+  try {
+    execFileSync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      terminalSession,
+      '-n',
+      'dev',
+      "printf 'TERMINAL PROOF WORKER\\n'; exec sleep 1800",
+    ]);
+    writeJson(statePath, { ...owned, terminalSession });
+    execFileSync('tmux', [
+      'new-window',
+      '-d',
+      '-t',
+      terminalSession,
+      '-n',
+      'rev-proof-3',
+      "printf 'TERMINAL PROOF REVIEWER\\n'; exec sleep 1800",
+    ]);
+    const poolFile = path.join(owned.fixture, 'pool', `${project}.json`);
+    const pool = JSON.parse(fs.readFileSync(poolFile, 'utf8'));
+    pool.schema_version = 2;
+    pool.slots.find((slot) => slot.id === SLOTS[requestRunId]).session = terminalSession;
+    writeJson(poolFile, pool);
+    const file = path.join(owned.fixture, 'runs', `${requestRunId}.json`);
+    const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+    run.status = 'monitoring';
+    run.readOnly = false;
+    run.transport = 'tmux';
+    run.decisions = [];
+    run.steps = [{ name: 'review', status: 'running' }];
+    run.agentContexts = ['dev', 'rev-proof-3'].map((window) => ({
+      id: window,
+      role: window === 'dev' ? 'dev' : 'review',
+      label: window,
+      status: 'working',
+      runId: run.id,
+      slotId: run.slotId,
+      runner: 'scripted',
+      target: { session: terminalSession, window, target: `${terminalSession}:${window}.0` },
+    }));
+    writeJson(file, run);
+    const finishedFile = path.join(owned.fixture, 'runs', `${issuesRunId}.json`);
+    const finished = JSON.parse(fs.readFileSync(finishedFile, 'utf8'));
+    finished.status = 'done';
+    finished.decisions = [];
+    writeJson(finishedFile, finished);
+    startGateway(owned.fixture, owned.port);
+    await waitFor(
+      'the terminal fixture serves its active run',
+      () => rpc('run.get', { runId: run.id }).run,
+      30000,
+    );
+    evidence('terminal-target', {
+      runId: run.id,
+      slotId: run.slotId,
+      contextId: 'rev-proof-3',
+      role: 'review',
+      session: terminalSession,
+      window: 'rev-proof-3',
+      node: pool.machine,
+      finishedRunId: issuesRunId,
+    });
+    console.log(JSON.stringify({ runId: run.id, finishedRunId: issuesRunId, slotId: run.slotId }));
+  } catch (error) {
+    await stopFixture();
+    throw error;
+  }
+} else if (phase === 'setup' || phase === 'setup-actions') {
   // A failed earlier attempt leaves its gateway and fixture behind; replace both.
   await stopFixture();
   fs.rmSync(proofDir, { recursive: true, force: true });
@@ -415,8 +717,126 @@ if (phase === 'setup') {
     title: 'feat(companion): fixture shared review request',
     claude: {},
   });
+  if (phase === 'setup-actions') {
+    // Setup-time fixture only. Never submit a review or publish from this proof.
+    const file = path.join(fixture, 'runs', `${requestRunId}.json`);
+    const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const decision = run.decisions[0];
+    const payload = decision.payload;
+    // A terminal reference keeps this display fixture immutable during live inspection.
+    // It cannot dispatch, refresh a source checkout or publish.
+    run.status = 'failed';
+    run.readOnly = true;
+    const reviewId = `pipeline-review-${requestRunId}`;
+    const finding = {
+      reviewId,
+      file: 'evidence-manifest.json',
+      line: 33,
+      description: 'AC-1 needs a resulting position. The submitted order rests.',
+    };
+    const review = {
+      ...payload.reviews[0],
+      id: reviewId,
+      model: 'gpt-6.1-sol',
+      verdict: 'issues',
+      unresolvedCount: 1,
+      issues: [finding],
+      session: {
+        reviewId,
+        runner: 'codex',
+        model: 'gpt-6.1-sol',
+        sessionId: 'fixture-retained-session',
+        continuity: 'fresh',
+        lastReviewedHeadSha: '1111111111111111111111111111111111111111',
+      },
+    };
+    payload.reviews = [review];
+    run.engineState.publishGate.reviews = [review];
+    run.autoRecoveryDisabled = true;
+    decision.actions = gatewayGateActions([review]);
+    payload.reviewLineageOptions = [
+      {
+        context: { familyId: requestRunId, reviewId },
+        runner: 'codex',
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+        reviewedAt: review.completedAt,
+      },
+    ];
+    payload.reviewRoundBudget = {
+      used: 2,
+      limit: 5,
+      remaining: 3,
+      label: 'Review rounds 2/5',
+      noVerdict: 0,
+      noVerdictLimit: 3,
+    };
+    payload.gateReadiness = {
+      state: 'not-ready',
+      identity: { runId: requestRunId, generation: 1 },
+      reasons: [
+        {
+          code: 'review-fix-required',
+          prerequisite: 'review',
+          message: 'Review found 1 issue. Fix and pass review before publishing.',
+          allowedReviewOverrides: ['approve-publish-unresolved'],
+        },
+        {
+          code: 'review-result-required',
+          prerequisite: 'review',
+          message:
+            'Required current-head reviews need valid structured result artifacts for this package.',
+        },
+      ],
+      findings: [finding],
+      findingsDigest: 'fixture-findings',
+    };
+    writeJson(file, run);
+  }
+  if (phase === 'setup-actions') {
+    // Modern clients require an explicit service login, rather than a solo-mode person.
+    const home = path.join(fixture, 'home');
+    execFileSync(
+      process.execPath,
+      [
+        path.join(root, 'packages/cli/bin/farmslot.mjs'),
+        'credential',
+        'issue',
+        '--principal',
+        'gate-actions-proof',
+        '--subject',
+        'service',
+        '--role',
+        'admin',
+        '--scope',
+        'global',
+        '--offline',
+        '--secret-file',
+        proofSecretPath,
+      ],
+      { cwd: root, env: { ...process.env, FARMSLOT_HOME: home }, stdio: 'pipe' },
+    );
+    writeJson(path.join(home, 'gateways.json'), {
+      active: 'proof',
+      gateways: {
+        proof: {
+          url: `ws://127.0.0.1:${port}`,
+          authMode: 'token',
+          secret: fs.readFileSync(proofSecretPath, 'utf8').trim(),
+        },
+      },
+    });
+  }
   startGateway(fixture, port);
   const seeded = await waitFor('the fixture gateway serves the gate', () => gate(), 60000);
+  if (phase === 'setup-actions') {
+    const ready = gate(requestRunId, requestDecisionId);
+    assert.equal(ready.resolvedAt, undefined);
+    assert.equal(ready.payload.reviewLineageOptions[0].runner, 'codex');
+    evidence('gate-actions-before', ready);
+    console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, runId: requestRunId }));
+    process.exit(0);
+  }
   assert.equal(seeded?.type, 'engine_human_gate');
   assert.equal(seeded.resolvedAt, undefined);
   const progress = rpc('task.progress', { slotId: SLOTS[runId], runId });
@@ -445,6 +865,55 @@ if (phase === 'setup') {
   );
   evidence('gate-before', { gate: seeded, acceptance: progress.acceptanceStatus, issues });
   console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, runId, issuesRunId }));
+} else if (phase === 'verify-warm-refusal') {
+  const { fixture, port } = readState();
+  await stopFixture();
+  const file = path.join(fixture, 'runs', `${requestRunId}.json`);
+  const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // Setup before starting the isolated gateway. The missing retained session must refuse
+  // the request before any reviewer can start; orchestration also remains disabled.
+  run.readOnly = false;
+  run.status = 'human-gating';
+  writeJson(file, run);
+  startGateway(fixture, port);
+  await waitFor('the fixture gateway starts', () => rpc('fleet.status'), 30000);
+  let refusal;
+  try {
+    rpc('run.resolveDecision', {
+      runId: requestRunId,
+      decisionId: requestDecisionId,
+      actionId: 'request-review',
+      selectionData: {
+        reviewRequest: {
+          runner: 'codex',
+          model: 'gpt-6.1-sol',
+          effort: 'high',
+          mode: 'warm',
+          context: {
+            reviewLineages: [
+              { familyId: requestRunId, reviewId: `pipeline-review-${requestRunId}` },
+            ],
+          },
+        },
+      },
+    });
+  } catch (error) {
+    refusal = String(error.stderr);
+  }
+  assert.match(refusal ?? '', /WARM review refused.*no verified retained session/);
+  const after = rpc('run.get', { runId: requestRunId }).run;
+  assert.equal(
+    after.decisions.find((entry) => entry.id === requestDecisionId).resolvedAt,
+    undefined,
+  );
+  assert.deepEqual(after.reviewRoundAdmissions, run.reviewRoundAdmissions);
+  assert.equal((after.agentContexts ?? []).filter((entry) => entry.role === 'review').length, 0);
+  evidence('warm-refusal', {
+    refusal,
+    unresolved: true,
+    newReviewers: 0,
+    admissionsUnchanged: true,
+  });
 } else if (phase === 'relaunch') {
   // Start from a fresh app process so a screen left open by an earlier attempt cannot take input.
   assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');

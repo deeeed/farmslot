@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Methods, type ReviewGatePayload } from '@farmslot/protocol';
+import { Methods, reviewedFindingContext, type ReviewGatePayload } from '@farmslot/protocol';
 
 import { loadReviewFindingSource, reviewFindingSourceRequest } from './review-curation';
 
@@ -68,4 +68,48 @@ test('missing reviewed files fail without a mutable-workspace fallback', async (
     /Object unavailable/,
   );
   assert.equal(calls, 1);
+});
+
+test('selecting a line 462 finding uses the shared exact source-line context', () => {
+  const linePayload: ReviewGatePayload = {
+    kind: 'review',
+    prNumber: null,
+    repo: null,
+    recommendation: 'COMMENT',
+    reviewMd: '',
+    reviewSnapshot: {
+      source: 'github-pr',
+      baseRef: 'main',
+      baseSha: 'b'.repeat(40),
+      headRef: 'feature',
+      headSha: 'a'.repeat(40),
+      diffPath: 'inputs/diff.txt',
+      diffHash: 'fixture',
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+      capturedAt: '2026-10-21T00:00:00Z',
+    },
+    lineComments: [
+      {
+        path: 'mobileInfrastructure.ts',
+        line: 462,
+        severity: 'suggestion',
+        body: 'Check the resulting position',
+      },
+    ],
+  };
+  const finding = linePayload.lineComments[0];
+  assert.deepEqual(reviewFindingSourceRequest('review-run', null, linePayload, 0), {
+    slotId: '',
+    runId: 'review-run',
+    ref: 'a'.repeat(40),
+    path: finding.path,
+  });
+  const content = Array.from({ length: 500 }, (_, index) => `source line ${index + 1}`).join('\n');
+  const context = reviewedFindingContext(content, finding.line);
+  assert.deepEqual(
+    context.lines.filter((line) => line.target),
+    [{ number: 462, text: 'source line 462', target: true }],
+  );
+  assert.equal(context.lines[0].number, 458);
+  assert.equal(context.lines.at(-1)?.number, 466);
 });

@@ -180,7 +180,7 @@ test('review overrides waive only their owning review policy, never checks or li
   }
 });
 
-test('a passing fix/review loop consumes its final artifact and rejects a missing final result', async (t) => {
+test('an evidence-only WARM fix uses its final pass artifact and still requires that result', async (t) => {
   const prepared = makeReadyGatePackage({
     reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
   });
@@ -188,15 +188,33 @@ test('a passing fix/review loop consumes its final artifact and rejects a missin
     'artifacts/review-1/loop-1/review-result.json',
     'artifacts/review-1/loop-2/review-result.json',
   ];
+  const head = prepared.headSha;
+  assert.ok(head);
+  const delta = {
+    ...prepared.reviewSnapshot!,
+    baseSha: head,
+    diffHash: createHash('sha256').update('').digest('hex'),
+    diffStat: { files: 0, additions: 0, deletions: 0 },
+  };
   const review: ReviewStatus = {
     id: 'review-1',
     source: 'human-gate',
-    mode: 'cold',
+    mode: 'warm',
+    session: {
+      mode: 'warm',
+      reviewId: 'review-1',
+      continuity: 'resumed',
+      priorSessionId: 'session-1',
+      sessionId: 'session-1',
+      lastReviewedHeadSha: head,
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+    },
     loopNumber: 1,
     reviewerSessionId: 'session-1',
     reviewedHeadSha: prepared.headSha,
     reviewedReviewSubjectHash: prepared.reviewSubjectHash,
-    reviewSnapshot: prepared.reviewSnapshot,
+    reviewSnapshot: delta,
     verdict: 'pass',
     unresolvedCount: 0,
     artifactPaths: paths,
@@ -206,13 +224,18 @@ test('a passing fix/review loop consumes its final artifact and rejects a missin
         loopNumber: 1,
         verdict: 'issues',
         unresolvedCount: 1,
+        issues: [
+          { file: 'artifacts/recipe.json', description: 'Evidence must compare original values.' },
+        ],
+        reviewSnapshot: prepared.reviewSnapshot,
         artifactPaths: [paths[0]],
       },
       {
-        mode: 'cold',
+        mode: 'warm',
         loopNumber: 2,
         verdict: 'pass',
         unresolvedCount: 0,
+        reviewSnapshot: delta,
         artifactPaths: [paths[1]],
       },
     ],
@@ -264,7 +287,7 @@ test('a passing fix/review loop consumes its final artifact and rejects a missin
     source: 'pipeline',
     runner: 'claude',
     artifactPaths: [pipelinePath],
-    attempts: [{ ...review.attempts![1], artifactPaths: [pipelinePath] }],
+    attempts: [review.attempts![0], { ...review.attempts![1], artifactPaths: [pipelinePath] }],
   };
   const retained = makeRun({
     id: randomUUID(),
@@ -301,6 +324,67 @@ function pendingReadyDecision(): RunDecision {
     },
   };
 }
+
+test('an exhausted fix gate does not recommend a continuation it cannot resolve', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'GATE-ACTION-PARITY' });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const prepared = makeReadyGatePackage();
+  const review: ReviewStatus = {
+    id: 'exhausted-dispatch',
+    source: 'dispatch',
+    mode: 'warm',
+    loopNumber: 2,
+    verdict: 'issues',
+    unresolvedCount: 2,
+    reviewedHeadSha: prepared.headSha,
+    retryCount: 2,
+    maxRetries: 2,
+    maxRetriesExhausted: true,
+    issues: [
+      { file: 'src/feature.ts', description: 'First retained finding' },
+      { file: 'src/feature.ts', description: 'Second retained finding' },
+    ],
+  };
+  const decision = pendingReadyDecision();
+  decision.actions = [
+    { id: 'approve-publish', label: 'Publish', style: 'primary' },
+    { id: 'hold', label: 'Hold', style: 'secondary' },
+    { id: 'request-review', label: 'Request review', style: 'secondary' },
+  ];
+  assert.equal(decision.payload?.kind, 'ready');
+  if (decision.payload?.kind !== 'ready') throw new Error('Expected ready fixture');
+  decision.payload.prPackage = prepared;
+  updateRun(run.id, {
+    status: 'blocked',
+    decisions: [decision],
+    engineState: { publishGate: { reviews: [review] } },
+    // The overall round budget still has room; the per-review fix cap is spent.
+    reviewRoundAdmissions: ['used-1', 'used-2', 'used-3'],
+  });
+  const before = structuredClone(run);
+  const refreshed = await refreshRunGateReadiness(run, {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewedInputsAwaitingReview: async () => null,
+  });
+  const gate = refreshed.decisions[0];
+  assert.equal(gate.payload?.kind, 'ready');
+  if (gate.payload?.kind !== 'ready') throw new Error('Expected ready gate');
+  const reason = gate.payload.gateReadiness?.reasons.find(
+    (entry) => entry.code === 'review-fix-required',
+  );
+  assert.ok(reason);
+  assert.equal(reason.actionId, undefined);
+  assert.deepEqual(
+    gate.actions.map(({ id }) => id),
+    ['hold', 'request-review'],
+  );
+  assert.deepEqual(refreshed.engineState, before.engineState);
+  assert.deepEqual(refreshed.reviewRoundAdmissions, before.reviewRoundAdmissions);
+  assert.deepEqual(gate.payload.prPackage, prepared);
+});
 
 test('late runner observations remove advancement and a later idle receipt restores the original action', async (t) => {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'GATE-REFRESH' });

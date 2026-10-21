@@ -19,9 +19,12 @@ import {
   isValidEvidenceAttestationReason,
   latestReview,
   openHumanGateDecision,
+  openReviewFindingCount,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   type ReviewAttempt,
+  reviewFindingsSatisfied,
+  type ReviewIssue,
   type ReviewLineageOption,
   type ReviewRoundBudget,
   type ReviewStatus,
@@ -186,13 +189,25 @@ export interface ReviewFindingEntry {
 }
 
 /**
- * Every entry that reported findings. The publication block counts them at the head, and
+ * Entries with findings still open. The publication block counts them at the head, and
  * accepting findings accepts exactly theirs (ADR-065 Amendment 8).
  */
 export function reviewFindingEntries(reviews: readonly ReviewStatus[]): ReviewFindingEntry[] {
-  return reviews.flatMap((review) =>
-    [...(review.attempts ?? []), review].flatMap((entry) => {
-      const findings = Math.max(entry.unresolvedCount ?? 0, entry.issues?.length ?? 0);
+  return reviews.flatMap((review) => {
+    // A passing continuation settles this lineage's earlier findings, including
+    // evidence-only fixes at the same head. Other review rows keep their findings.
+    const final = review.attempts?.at(-1);
+    if (
+      review.verdict === 'pass' &&
+      review.unresolvedCount === 0 &&
+      final?.verdict === 'pass' &&
+      final.reviewSnapshot?.source !== 'unavailable' &&
+      final.reviewSnapshot?.headSha &&
+      final.reviewSnapshot.headSha === (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)
+    )
+      return [];
+    return [...(review.attempts ?? []), review].flatMap((entry) => {
+      const findings = openReviewFindingCount(review, entry);
       return entry.verdict === 'issues' && findings > 0
         ? [
             {
@@ -206,8 +221,8 @@ export function reviewFindingEntries(reviews: readonly ReviewStatus[]): ReviewFi
             },
           ]
         : [];
-    }),
-  );
+    });
+  });
 }
 
 export function reviewFixInProgress(run: Pick<Run, 'status' | 'agentContexts'>): boolean {
@@ -239,7 +254,7 @@ export function publicationReviewBlockingReason(
       if (head && issueHead === head) currentHeadFindings = Math.max(currentHeadFindings, findings);
     }
     if (
-      review.verdict === 'pass' &&
+      reviewFindingsSatisfied(review) &&
       (!prepared || (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha) === prepared.headSha)
     )
       count = 0;
@@ -358,6 +373,19 @@ export function publicationGateView(input: PublicationGateInput) {
                   : input.blockedReason || 'Publication prerequisites are not satisfied.'
                 : '');
   const reasonRequired = approval?.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION || accepting;
+  const primaryActionIds = new Set(['request-review', 'send-feedback']);
+  const remainingActions = actions.filter(
+    (action) =>
+      action.id !== normal?.id &&
+      action.id !== offeredAttestation?.id &&
+      action.id !== sendBack?.id,
+  );
+  const reviewIssues: readonly ReviewIssue[] =
+    input.readiness?.findings ??
+    input.run?.engineState?.publishGate?.reviews?.flatMap((review) =>
+      review.verdict === 'issues' ? (review.issues ?? []) : [],
+    ) ??
+    [];
   return {
     warnings: input.reviewSummary?.noCodeReview ? ['No code review ran'] : [],
     claims,
@@ -382,12 +410,17 @@ export function publicationGateView(input: PublicationGateInput) {
     acceptFindings,
     findings: acceptFindings ? (input.readiness?.findings ?? []) : [],
     refreshRequired,
-    secondaryActions: actions.filter(
-      (action) =>
-        action.id !== normal?.id &&
-        action.id !== offeredAttestation?.id &&
-        action.id !== sendBack?.id,
-    ),
+    reviewIssues,
+    blockerActionIds:
+      input.readiness?.reasons.flatMap((reason) =>
+        reason.code === 'review-fix-required'
+          ? [APPROVE_PUBLISH_UNRESOLVED_ACTION]
+          : reason.code === 'review-result-required'
+            ? ['request-review']
+            : [],
+      ) ?? [],
+    primaryActions: remainingActions.filter((action) => primaryActionIds.has(action.id)),
+    secondaryActions: remainingActions.filter((action) => !primaryActionIds.has(action.id)),
   };
 }
 
@@ -483,13 +516,20 @@ export function anotherReviewRoundParams(input: {
 export type PublicationBlockerAction =
   | { kind: 'skip-criterion'; claimId: string; label: string }
   | { kind: 'accept-findings'; label: string }
+  | { kind: 'see-findings'; label: string }
+  | { kind: 'request-review'; label: string }
+  | { kind: 'review-evidence'; claimId: string; label: string }
   | { kind: 'another-round'; label: string };
 
+export interface PublicationBlockerFinding extends ReviewIssue {
+  summary: string;
+}
 /** One reason the gate cannot publish, with the one plain action that clears it, if any. */
 export interface PublicationBlocker {
   key: string;
   message: string;
-  action?: PublicationBlockerAction;
+  findings: readonly PublicationBlockerFinding[];
+  actions: readonly PublicationBlockerAction[];
 }
 
 /**
@@ -513,7 +553,7 @@ function blocksPublish(claim: AcceptanceClaimRow): boolean {
  * gate words it. Presentation only: the gateway still owns every action.
  */
 export function publicationGateBlockers(input: {
-  view: Pick<PublicationGateView, 'acceptFindings' | 'claims'>;
+  view: Pick<PublicationGateView, 'acceptFindings' | 'claims' | 'reviewIssues' | 'primaryActions'>;
   readiness?: RunGateReadiness;
   gate?: GateDecisionFields | null;
   resolved?: boolean;
@@ -529,11 +569,14 @@ export function publicationGateBlockers(input: {
   const blockers: PublicationBlocker[] = skippable.map((claim) => ({
     key: `criterion:${claim.id}`,
     message: `${claim.id} · ${claim.state}: ${claim.text}`,
-    action: {
-      kind: 'skip-criterion',
-      claimId: claim.id,
-      label: untestableOverrideView(claim.id, '').action,
-    },
+    findings: [],
+    actions: [
+      {
+        kind: 'skip-criterion',
+        claimId: claim.id,
+        label: untestableOverrideView(claim.id, '').action,
+      },
+    ],
   }));
   const skipped = new Set(skippable.map((claim) => claim.id));
   const reasons = input.gate ? gateDisplayReasons(input.gate) : readiness.reasons;
@@ -542,22 +585,69 @@ export function publicationGateBlockers(input: {
     if (reason.code === 'acceptance-incomplete' && skipped.size) continue;
     if (reason.reference && skipped.has(reason.reference)) continue;
     if (blockers.some((blocker) => blocker.message === reason.message)) continue;
+    const findings =
+      reason.code === 'review-fix-required'
+        ? input.view.reviewIssues.map((finding) => {
+            const firstLine = finding.description.trim().split(/\r?\n/)[0] ?? '';
+            return {
+              ...finding,
+              summary: firstLine.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() ?? firstLine,
+            };
+          })
+        : [];
+    const actions: PublicationBlockerAction[] = [];
+    if (findings.length)
+      actions.push({
+        kind: 'see-findings',
+        label: findings.length === 1 ? 'See finding' : 'See findings',
+      });
+    if (reason.code === 'review-fix-required' && input.view.acceptFindings)
+      actions.push({
+        kind: 'accept-findings',
+        label: findings.length === 1 ? 'Accept finding…' : 'Accept findings…',
+      });
+    const request = input.view.primaryActions.find(
+      (action) => action.id === 'request-review' && !action.disabledReason,
+    );
+    if (reason.code === 'review-result-required' && request && input.budget?.remaining !== 0)
+      actions.push({
+        kind: 'request-review',
+        label: input.budget
+          ? `Request review (round ${input.budget.used + 1} of ${input.budget.limit})`
+          : 'Request review',
+      });
+    if (reason.code === 'evidence-policy-unsatisfied') {
+      const claim = input.view.claims.find((entry) => entry.pending || entry.judgment?.reviewKind);
+      if (claim)
+        actions.push({
+          kind: 'review-evidence',
+          claimId: claim.id,
+          label: `Review ${claim.id} evidence`,
+        });
+    }
     blockers.push({
       key: `reason:${reason.code}:${reason.reference ?? blockers.length}`,
-      message: reason.message,
-      ...(reason.code === 'review-fix-required' && input.view.acceptFindings
-        ? { action: { kind: 'accept-findings', label: 'Accept findings and publish…' } }
-        : {}),
+      message:
+        reason.code === 'review-result-required'
+          ? 'The current version needs a review'
+          : reason.code === 'review-fix-required' && findings.length
+            ? `Review found ${findings.length} issue${findings.length === 1 ? '' : 's'}`
+            : reason.message,
+      findings,
+      actions,
     });
   }
   if (input.budget?.remaining === 0)
     blockers.push({
       key: 'budget',
       message: `No review rounds left (${input.budget.used} of ${input.budget.limit} used).`,
-      action: {
-        kind: 'another-round',
-        label: anotherReviewRoundView(input.budget, '').action,
-      },
+      findings: [],
+      actions: [
+        {
+          kind: 'another-round',
+          label: anotherReviewRoundView(input.budget, '').action,
+        },
+      ],
     });
   return blockers;
 }

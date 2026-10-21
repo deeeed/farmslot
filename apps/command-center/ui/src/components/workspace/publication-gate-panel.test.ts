@@ -59,3 +59,39 @@ test('a gate with checked review findings asks for a reason before accepting and
   assert.match(reasoned, /Publishing accepts the open review findings\./);
   assert.match(reasoned, /Accept Review Findings and Publish/);
 });
+
+test('review and feedback are visible primary actions; inline blockers suppress the repeated footer', () => {
+  const input: Parameters<typeof renderPublicationGatePanel>[0] = {
+    actions: [
+      { id: 'request-review', label: 'Request review', style: 'primary' },
+      { id: 'send-feedback', label: 'Send back to agent', style: 'primary' },
+      { id: 'hold', label: 'Hold', style: 'secondary' },
+    ],
+    readiness: {
+      state: 'not-ready',
+      identity: { runId: 'run', generation: 1 },
+      reasons: [
+        {
+          code: 'review-result-required',
+          prerequisite: 'review',
+          message: 'Current-head review required.',
+        },
+      ],
+    },
+    busy: false,
+    pendingConfirm: null,
+    reviewDisabled: false,
+    changeReason: () => undefined,
+    chooseAttestation: () => undefined,
+    chooseAcceptFindings: () => undefined,
+    invoke: () => undefined,
+    requestReview: () => undefined,
+  };
+  const panel = litText(renderPublicationGatePanel(input));
+  const more = panel.indexOf('<details class="gate-more-actions"');
+  assert.ok(more > panel.indexOf('Request review'));
+  assert.ok(more > panel.indexOf('Send back to agent'));
+  const inline = litText(renderPublicationGatePanel({ ...input, inlineBlockers: true }));
+  assert.doesNotMatch(inline, /Current-head review required|Request review/);
+  assert.match(inline, /Send back to agent/);
+});

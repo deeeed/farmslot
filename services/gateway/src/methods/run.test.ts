@@ -68,6 +68,83 @@ const acceptorAuthority = {
     personSessionId: 'acceptor-session',
   }),
 };
+test('a human-gate WARM request refuses a lost retained session before consuming the gate', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'review-warm-refusal',
+    ticketOrPr: 'MANUAL-WARM-REFUSAL',
+    runner: 'codex',
+    transport: 'tmux',
+  });
+  const decision: RunDecision = {
+    id: 'warm-refusal',
+    type: 'engine_human_gate',
+    title: 'Review',
+    description: '',
+    actions: [{ id: 'request-review', label: 'Review', style: 'primary' }],
+    createdAt: new Date().toISOString(),
+  };
+  const reviewId = 'pipeline-review-retained';
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [decision],
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: reviewId,
+            source: 'pipeline',
+            runner: 'codex',
+            model: 'gpt-6.1-sol',
+            effort: 'high',
+            mode: 'cold',
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            reviewerSessionId: 'lost-session',
+            reviewedHeadSha: 'a'.repeat(40),
+            completedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    },
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed' });
+    await deleteRun(run.id);
+  });
+  const effects: string[] = [];
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'request-review',
+        selectionData: {
+          reviewRequest: {
+            runner: 'codex',
+            model: 'gpt-6.1-sol',
+            effort: 'high',
+            mode: 'warm',
+            context: { reviewLineages: [{ familyId: run.familyId, reviewId }] },
+          },
+        },
+      },
+      () => effects.push('broadcast'),
+      {
+        assertReviewLaunchAllowed: async () => {
+          effects.push('launch');
+          throw new Error('unexpected launch');
+        },
+      },
+    ),
+    /WARM review refused.*no verified retained session/,
+  );
+  assert.deepEqual(effects, []);
+  assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+  assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length ?? 0, 0);
+});
 test('run creation holds its task directory against retention until it registers or refuses', async (t) => {
   const taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-admission-'));
   t.after(() => rmSync(taskDir, { recursive: true, force: true }));

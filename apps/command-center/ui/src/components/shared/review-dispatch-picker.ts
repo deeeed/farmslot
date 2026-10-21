@@ -269,6 +269,7 @@ export class ReviewDispatchPicker extends LitElement {
     return html`<div class="rows">
       ${vm.rows.map((row, index) => {
         const selected = row.selection;
+        const executionDisabled = this.disabled || vm.executionLocked(row.id);
         const runner = vm.catalog.runners.find((option) => option.id === selected.runner);
         const efforts = vm.effortChoices(row.id);
         const models = vm.modelPickerState(row.id, this.modelFilters[row.id]);
@@ -284,7 +285,7 @@ export class ReviewDispatchPicker extends LitElement {
               ),
               value: selected.runner,
               testId: 'review-dispatch-runner',
-              disabled: this.disabled,
+              disabled: executionDisabled,
               onSelect: (value) =>
                 this.change(() => {
                   this.modelFilters = { ...this.modelFilters, [row.id]: '' };
@@ -302,7 +303,7 @@ export class ReviewDispatchPicker extends LitElement {
                     aria-label="Filter models"
                     placeholder="Filter models…"
                     .value=${this.modelFilters[row.id] ?? ''}
-                    ?disabled=${this.disabled}
+                    ?disabled=${executionDisabled}
                     @input=${(event: Event) => {
                       this.modelFilters = {
                         ...this.modelFilters,
@@ -321,7 +322,7 @@ export class ReviewDispatchPicker extends LitElement {
                 },
                 value: selected.model ?? '',
                 testId: 'review-dispatch-model',
-                disabled: this.disabled,
+                disabled: executionDisabled,
                 onSelect: (value) =>
                   this.change(() => {
                     this.otherModels = { ...this.otherModels, [row.id]: false };
@@ -335,7 +336,7 @@ export class ReviewDispatchPicker extends LitElement {
                       class="choice-button ${showOtherModel ? 'active' : ''}"
                       data-testid="review-dispatch-other-model"
                       aria-expanded=${String(showOtherModel)}
-                      ?disabled=${this.disabled}
+                      ?disabled=${executionDisabled}
                       @click=${() => {
                         this.otherModels = {
                           ...this.otherModels,
@@ -351,7 +352,7 @@ export class ReviewDispatchPicker extends LitElement {
                             data-testid="review-dispatch-custom-model"
                             .value=${selected.model ?? ''}
                             placeholder="Model ID"
-                            ?disabled=${this.disabled}
+                            ?disabled=${executionDisabled}
                             @change=${(event: Event) =>
                               this.change(() =>
                                 vm.setModel(
@@ -378,7 +379,7 @@ export class ReviewDispatchPicker extends LitElement {
                 ),
                 value: selected.effort ?? '',
                 testId: 'review-dispatch-effort',
-                disabled: this.disabled || efforts.every((effort) => effort.value === null),
+                disabled: executionDisabled || efforts.every((effort) => effort.value === null),
                 onSelect: (value) => this.change(() => vm.setEffort(row.id, value || null)),
               })}
             </div>

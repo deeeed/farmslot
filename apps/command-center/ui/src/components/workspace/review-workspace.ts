@@ -19,6 +19,7 @@ import {
   buildRunResolveDecisionParams,
   Events,
   Methods,
+  reviewedFindingContext,
   reviewPostingFingerprint,
   reviewPostRecommendation,
 } from '@farmslot/protocol';
@@ -1005,7 +1006,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     // to ensure code-viewer has processed the content update first
     await this.updateComplete;
     requestAnimationFrame(() => {
-      this._revealLine = c.line;
+      this._revealLine =
+        reviewedFindingContext(this._commentFileContent, c.line).lines.find((line) => line.target)
+          ?.number ?? 0;
     });
   }
 

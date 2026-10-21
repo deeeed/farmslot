@@ -703,3 +703,42 @@ test('a superseded person refresh cannot cross a selected service profile', asyn
     else Reflect.deleteProperty(globalThis, 'WebSocket');
   }
 });
+
+test('a slow visual judgment remains pending until its response or disconnection', async (t) => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
+  Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: Socket });
+  const { GatewayClient } = await import('./gateway-client');
+  const client = new GatewayClient('ws://localhost:19777', { token: 'fixture-person' });
+  t.after(() => {
+    client.disconnect();
+    if (original) Object.defineProperty(globalThis, 'WebSocket', original);
+  });
+  client.connect();
+  const socket = Socket.sockets.at(-1)!;
+  socket.open();
+  socket.response(socket.sent[0].id, auth('fixture-person', 'farm'));
+  await settle();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let settled = false;
+  const pending = client.request(Methods.RUN_REVIEW_VISUAL_CLAIM, { runId: 'fixture-run' }, null);
+  void pending.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  t.mock.timers.tick(20_000);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(settled, false);
+  socket.response(socket.sent.at(-1)!.id, { receipt: 'saved-once' });
+  assert.deepEqual(await pending, { receipt: 'saved-once' });
+  const interrupted = assert.rejects(
+    client.request(Methods.RUN_REVIEW_VISUAL_CLAIM, {}, null),
+    /disconnected/i,
+  );
+  client.disconnect();
+  await interrupted;
+});

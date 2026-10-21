@@ -5,7 +5,7 @@ import type {
   Run,
   SlotStatus,
 } from '@farmslot/protocol';
-import { isActiveListRun, taskTitleText } from '@farmslot/protocol';
+import { hasUnsettledRunExecution, taskTitleText } from '@farmslot/protocol';
 
 export type DispatchCandidate = DispatchCandidatesResult['candidates'][number];
 export type NudgeIntent = 'nudge' | 'fresh';
@@ -137,7 +137,7 @@ export function slotSummaryLabel(input: {
   const run = input.runs.find(
     (candidate) =>
       candidate.id === slot.currentRunId ||
-      (candidate.slotId === slot.slot && isActiveListRun(candidate)) ||
+      (candidate.slotId === slot.slot && hasUnsettledRunExecution(candidate)) ||
       (candidate.slotId === slot.slot &&
         candidate.taskFile &&
         slot.taskFile &&

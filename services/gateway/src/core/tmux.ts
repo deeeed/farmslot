@@ -60,22 +60,26 @@ export function shellQuote(value: string): string {
  * known the window is selected in the same command, otherwise the operator
  * lands on whatever window the session last had focused.
  */
-export function tmuxAttachCommandForTarget(session: string, windowTarget?: string | null): string {
-  const attach = `tmux attach -t ${shellQuote(`=${session}`)}`;
+export function tmuxAttachCommandForTarget(
+  session: string,
+  windowTarget?: string | null,
+  binary = 'tmux',
+): string {
+  const executable = binary === 'tmux' ? binary : shellQuote(binary);
+  const attach = `${executable} attach -t ${shellQuote(`=${session}`)}`;
   const target = windowTarget?.trim();
   if (!target || target === session) return attach;
-  // An exact `%N` addresses one pane. `select-window` alone would land the
-  // operator on the window's ACTIVE pane, which in a split is not necessarily
-  // the pane that owns the session — so select the pane first. tmux resolves
-  // the pane's own window from the pane id, so one target serves both.
-  if (/^%\d+$/.test(target)) {
+  // `%N` and `session:window.N` address a pane. Select its window and pane:
+  // selecting only the pane leaves an inactive window off screen, while
+  // selecting only the window can land on another pane in a split.
+  if (/^%\d+$|\.\d+$/.test(target)) {
     return [
-      `tmux select-window -t ${shellQuote(target)}`,
+      `${executable} select-window -t ${shellQuote(target)}`,
       `select-pane -t ${shellQuote(target)}`,
       `attach -t ${shellQuote(`=${session}`)}`,
     ].join(' \\; ');
   }
-  return `tmux select-window -t ${shellQuote(target)} \\; attach -t ${shellQuote(`=${session}`)}`;
+  return `${executable} select-window -t ${shellQuote(target)} \\; attach -t ${shellQuote(`=${session}`)}`;
 }
 
 /**

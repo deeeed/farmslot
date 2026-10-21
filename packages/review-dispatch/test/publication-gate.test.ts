@@ -199,7 +199,7 @@ test('CI and integrity blockers cannot turn into an attestation form', () => {
   assert.equal(view.approval, null);
 });
 
-test('normal approval follows readiness; hold and review remain secondary', () => {
+test('normal approval follows readiness; review is primary and hold stays secondary', () => {
   const actions = [
     { id: 'approve-publish', label: 'Approve publish', style: 'primary' as const },
     { id: 'hold', label: 'Hold', style: 'secondary' as const },
@@ -209,7 +209,11 @@ test('normal approval follows readiness; hold and review remain secondary', () =
   assert.ok(view.blockedReason);
   assert.deepEqual(
     view.secondaryActions.map((action) => action.id),
-    ['hold', 'request-review'],
+    ['hold'],
+  );
+  assert.deepEqual(
+    view.primaryActions.map((action) => action.id),
+    ['request-review'],
   );
   const ready = publicationGateView({
     actions,
@@ -512,6 +516,46 @@ test('unchanged-head PASS retains findings; a PASS on the fixed head clears them
   );
 });
 
+test('a passing continuation settles its own earlier findings after an evidence-only fix', () => {
+  const snapshot = {
+    source: 'local-git' as const,
+    headSha: 'same-head',
+    capturedAt: '2026-10-21T15:44:20.525Z',
+  };
+  const review: ReviewStatus = {
+    id: 'pipeline-review',
+    source: 'pipeline',
+    mode: 'warm',
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    reviewedHeadSha: 'same-head',
+    reviewSnapshot: snapshot,
+    attempts: [
+      {
+        mode: 'cold',
+        loopNumber: 1,
+        verdict: 'issues',
+        unresolvedCount: 1,
+        issues: [{ file: 'artifacts/recipe.json', description: 'Compare original values.' }],
+        reviewSnapshot: snapshot,
+      },
+      {
+        mode: 'warm',
+        loopNumber: 2,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        reviewSnapshot: snapshot,
+      },
+    ],
+  };
+  const run = {
+    status: 'human-gating' as const,
+    engineState: { publishGate: { reviews: [review] } },
+  };
+  assert.equal(publicationReviewBlockingReason(run, { headSha: 'same-head' }), undefined);
+});
+
 const repairScope: RecipeRepairScope = {
   schemaVersion: 1,
   repairId: 'repair-1',
@@ -727,6 +771,8 @@ test('what blocks publish: one plain action per criterion, findings and spent ro
   };
   const blockers = publicationGateBlockers({
     view: {
+      reviewIssues: [],
+      primaryActions: [],
       claims: [
         claim('AC-1', 'Proven', 'proven'),
         claim('AC-2', 'Untestable', 'untestable'),
@@ -744,10 +790,10 @@ test('what blocks publish: one plain action per criterion, findings and spent ro
     budget: { remaining: 0, used: 3, limit: 3 },
   });
   assert.deepEqual(
-    blockers.map((blocker) => [blocker.message, blocker.action?.label ?? null]),
+    blockers.map((blocker) => [blocker.message, blocker.actions[0]?.label ?? null]),
     [
       ['AC-3 · Missing: AC-3 text', 'Skip this criterion…'],
-      ['Review found 3 issues.', 'Accept findings and publish…'],
+      ['Review found 3 issues.', 'Accept findings…'],
       ['CI parity failed.', null],
       ['No review rounds left (3 of 3 used).', 'Give it another round'],
     ],
@@ -756,7 +802,7 @@ test('what blocks publish: one plain action per criterion, findings and spent ro
   // A ready or resolved gate lists nothing.
   assert.deepEqual(
     publicationGateBlockers({
-      view: { claims: [], acceptFindings: null },
+      view: { claims: [], acceptFindings: null, reviewIssues: [], primaryActions: [] },
       readiness: { ...readiness, state: 'ready' },
       canSkip: () => true,
     }),
@@ -850,4 +896,50 @@ test('a Request Review reads the lineages its ready gate listed', async () => {
   assert.deepEqual(gateReviewLineageOptions({ decisions: [ready] }, 'gate'), [option]);
   assert.equal(gateReviewLineageOptions({ decisions: [ready] }, 'other'), undefined);
   assert.equal(gateReviewLineageOptions(null), undefined);
+});
+
+test('each review blocker carries plain copy and its offered action', () => {
+  const readiness: RunGateReadiness = {
+    state: 'not-ready',
+    identity: { runId: 'run-4190', generation: 3 },
+    reasons: [
+      { code: 'review-fix-required', prerequisite: 'review', message: 'Review found 1 issue.' },
+      {
+        code: 'review-result-required',
+        prerequisite: 'review',
+        message:
+          'Required current-head reviews need valid structured result artifacts for this package.',
+      },
+    ],
+    findings: [
+      {
+        reviewId: 'pipeline-review',
+        file: 'evidence-manifest.json',
+        line: 33,
+        description: 'AC-1 needs a resulting position. The submitted order rests.',
+      },
+    ],
+  };
+  const view = publicationGateView({
+    readiness,
+    actions: [{ id: 'request-review', label: 'Request Review', style: 'primary' }],
+  });
+  const blockers = publicationGateBlockers({
+    view,
+    readiness,
+    canSkip: () => false,
+    budget: { used: 2, limit: 5, remaining: 3 },
+  });
+  assert.equal(blockers[0].message, 'Review found 1 issue');
+  assert.match(blockers[0].findings[0].summary, /AC-1 needs a resulting position/);
+  assert.deepEqual(
+    blockers[0].actions.map((action) => action.kind),
+    ['see-findings'],
+  );
+  assert.equal(blockers[1].message, 'The current version needs a review');
+  assert.deepEqual(blockers[1].actions, [
+    { kind: 'request-review', label: 'Request review (round 3 of 5)' },
+  ]);
+  assert.equal(view.primaryActions[0].id, 'request-review');
+  assert.deepEqual(view.secondaryActions, []);
 });

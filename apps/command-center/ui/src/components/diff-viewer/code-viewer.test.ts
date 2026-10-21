@@ -1,0 +1,143 @@
+import assert from 'node:assert/strict';
+import { registerHooks } from 'node:module';
+import { after, mock, test } from 'node:test';
+
+import type { PRReviewThread } from '@farmslot/protocol';
+
+const frames: FrameRequestCallback[] = [];
+for (const [name, value] of Object.entries({
+  self: globalThis,
+  requestAnimationFrame: (callback: FrameRequestCallback) => frames.push(callback),
+  ResizeObserver: class {
+    observe() {}
+    disconnect() {}
+  },
+})) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, name);
+  Object.defineProperty(globalThis, name, { value, configurable: true });
+  after(() => {
+    if (previous) Object.defineProperty(globalThis, name, previous);
+    else Reflect.deleteProperty(globalThis, name);
+  });
+}
+
+class Range {
+  constructor(
+    public startLineNumber: number,
+    public startColumn: number,
+    public endLineNumber: number,
+    public endColumn: number,
+  ) {}
+}
+const positions: Array<{ lineNumber: number; column: number }> = [];
+const revealed: number[] = [];
+const decorated: Array<{ range: Range; options: { className?: string } }> = [];
+const editor = {
+  createDecorationsCollection: (entries: typeof decorated) => {
+    decorated.push(...entries);
+    return { set() {}, clear() {} };
+  },
+  onMouseDown() {},
+  onDidLayoutChange: () => ({ dispose() {} }),
+  revealLineInCenter: (line: number) => revealed.push(line),
+  setPosition: (next: { lineNumber: number; column: number }) => {
+    positions.push(next);
+  },
+};
+// Styles do not affect editor selection, and Node cannot load Vite's CSS import.
+const css = registerHooks({
+  load(url, context, next) {
+    if (url.includes('/monaco-editor/min/vs/editor/editor.main.css'))
+      return { format: 'module', source: '', shortCircuit: true };
+    return next(url, context);
+  },
+});
+after(() => css.deregister());
+const defaults = { setDiagnosticsOptions() {} };
+mock.module('monaco-editor/esm/vs/language/typescript/monaco.contribution', {
+  namedExports: { typescriptDefaults: defaults, javascriptDefaults: defaults },
+});
+mock.module('monaco-editor', {
+  namedExports: {
+    Range,
+    Uri: { parse: (value: string) => value },
+    languages: { registerLinkProvider() {} },
+    editor: { createModel() {}, create: () => editor, defineTheme() {}, registerEditorOpener() {} },
+  },
+});
+mock.module('../../utils/shadow-css.js', { namedExports: { adoptDocumentCss() {} } });
+mock.module('../../utils/markdown.js', {
+  namedExports: { renderMarkdown: (text: string) => text },
+});
+mock.module('../shared/gateway-media-src.js', { namedExports: { gatewayMediaHtml() {} } });
+const { CodeViewer } = await import('./code-viewer.js');
+
+interface Viewer {
+  revealLine: number;
+  _editor?: typeof editor;
+  updated(changed: Map<string, unknown>): void;
+  firstUpdated(): Promise<void>;
+}
+
+test('a line comment selected before Monaco loads reveals its exact line and inline thread', async () => {
+  // Only the editor boundary is fake. Exercise the production lazy init and update order.
+  const viewer = Object.create(CodeViewer.prototype) as Viewer;
+  let zones = 0;
+  const threads: PRReviewThread[] = [
+    {
+      id: 'finding-462',
+      path: 'mobileInfrastructure.ts',
+      line: 462,
+      resolved: false,
+      outdated: false,
+      comments: [
+        {
+          id: 1,
+          body: 'Check the resulting position',
+          author: 'reviewer',
+          createdAt: '2026-10-21T00:00:00Z',
+          updatedAt: '2026-10-21T00:00:00Z',
+        },
+      ],
+    },
+  ];
+  Object.assign(viewer, {
+    requestUpdate() {},
+    querySelector: () => ({}),
+    content: Array.from({ length: 500 }, (_, index) => `source line ${index + 1}`).join('\n'),
+    language: 'typescript',
+    filename: 'mobileInfrastructure.ts',
+    filePath: 'mobileInfrastructure.ts',
+    changedLines: [],
+    commentThreads: threads,
+    showComments: true,
+    revealLine: 462,
+    _applyCommentZones(this: Viewer) {
+      if (this._editor) zones++;
+    },
+  });
+  const ready = viewer.firstUpdated();
+  viewer.updated(
+    new Map<string, unknown>([
+      ['revealLine', 0],
+      ['commentThreads', []],
+    ]),
+  );
+  assert.equal(positions.length, 0, 'selection arrived while the editor was still loading');
+  await ready;
+  frames.shift()?.(0);
+  assert.deepEqual(positions.at(-1), { lineNumber: 462, column: 1 });
+  assert.deepEqual(revealed, [462]);
+  assert.ok(
+    decorated.some(
+      (entry) =>
+        entry.range.startLineNumber === 462 && entry.options.className === 'cv-selected-line',
+    ),
+    'the comment line is highlighted',
+  );
+  assert.equal(zones, 1, 'the inline comment is applied when the editor becomes ready');
+
+  viewer.revealLine = 479;
+  viewer.updated(new Map<string, unknown>([['revealLine', 462]]));
+  assert.equal(positions.at(-1)?.lineNumber, 479, 'later comments in the same file still reveal');
+});

@@ -32,7 +32,7 @@ import {
   runOutputCloseUnavailableReason,
   runRecoveryHints,
 } from '@farmslot/protocol';
-import { runActivityView, runResultsSummary } from '@farmslot/review-dispatch';
+import { runActivityView, runResultsSummary, runTerminalView } from '@farmslot/review-dispatch';
 
 import '../slot-view/worker-session-history.js';
 import '../shared/workspace-pin.js';
@@ -47,6 +47,7 @@ import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import type { EvidenceReviewerView } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem, LightboxSelection } from '../shared/media-lightbox-types.js';
 import { renderRunTitle } from '../shared/run-title.js';
+import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 
 import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
 import { runSourceLinks, ticketUrlForRun } from './family-observability-link-model.js';
@@ -524,6 +525,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const engine = resolveRunEngine(r);
   const boundSlotId = resolveRunSlotId(r);
   const terminalUnavailable = reviewTerminalUnavailableReason(r);
+  const terminal = runTerminalView(r, ctx._showTerminal ? ctx._terminalContextId : undefined);
   // ADR-054 `free-slot`: while the park record holds the release, the slot row
   // belongs to dispatch, not to this run. `isSlotFreedByPark` ignores `phase`,
   // and cancel deliberately skips slot release for a park-freed run, so this
@@ -1259,29 +1261,54 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
       ? nothing
       : ctx._renderRunEvidence(r)}
-    ${boundSlotId || (r.reviewWorkspace && !terminalUnavailable)
+    ${boundSlotId || terminal.context?.nativeSession || (r.reviewWorkspace && !terminalUnavailable)
       ? html`
-          <button
-            data-testid="run-terminal-toggle"
-            class="terminal-toggle ${ctx._showTerminal ? 'active' : ''}"
-            @click=${() => {
-              ctx.toggleTerminal();
-            }}
-          >
-            ${ctx._showTerminal ? '- Hide' : '+ Show'}
-            ${boundSlotId
-              ? `Terminal (${boundSlotId})`
-              : `${r.transport === 'native' ? 'Worktree shell' : 'Reviewer terminal'} (${r.reviewWorkspace!.machine})`}
-          </button>
+          ${terminal.context?.nativeSession && terminal.target?.slotId && !terminal.disabledReason
+            ? html`<a
+                class="terminal-toggle"
+                href=${slotViewHash({
+                  slotId: terminal.target.slotId,
+                  runId: r.id,
+                  contextId: terminal.context.id,
+                })}
+                >${terminal.label}</a
+              >`
+            : html`
+                <button
+                  data-testid="run-terminal-toggle"
+                  class="terminal-toggle ${ctx._showTerminal ? 'active' : ''}"
+                  ?disabled=${Boolean(terminal.disabledReason) && !ctx._showTerminal}
+                  title=${terminal.disabledReason ?? ''}
+                  @click=${() => {
+                    ctx.toggleTerminal();
+                  }}
+                >
+                  ${ctx._showTerminal ? '- Hide' : '+ Show'}
+                  ${terminal.context?.nativeSession
+                    ? 'Conversation'
+                    : boundSlotId
+                      ? `Terminal (${terminal.target?.slotId ?? boundSlotId})`
+                      : `${r.transport === 'native' ? 'Worktree shell' : 'Reviewer terminal'} (${r.reviewWorkspace!.machine})`}
+                </button>
+              `}
+          ${terminal.disabledReason
+            ? html`<span role="status">${terminal.disabledReason}</span>`
+            : nothing}
           ${ctx._showTerminal
             ? html`
                 <div class="terminal-section">
-                  <terminal-view
-                    .slotId=${boundSlotId ?? ''}
-                    .runId=${r.id}
-                    .contextId=${ctx._terminalContextId}
-                    .role=${ctx._terminalRole}
-                  ></terminal-view>
+                  ${terminal.context?.nativeSession
+                    ? html`<native-worker-history
+                        .contexts=${[terminal.context]}
+                      ></native-worker-history>`
+                    : html`
+                        <terminal-view
+                          .slotId=${terminal.target?.slotId ?? boundSlotId ?? ''}
+                          .runId=${r.id}
+                          .contextId=${terminal.target?.contextId ?? ctx._terminalContextId}
+                          .role=${terminal.target?.role ?? ctx._terminalRole}
+                        ></terminal-view>
+                      `}
                 </div>
               `
             : nothing}

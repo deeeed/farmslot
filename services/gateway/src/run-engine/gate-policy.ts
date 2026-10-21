@@ -16,6 +16,7 @@ import {
   type ReadyGatePrPackage,
   type ReviewAttempt,
   type ReviewDiffSnapshot,
+  reviewFindingsSatisfied,
   reviewFixRetriesExhausted,
   type ReviewPolicy,
   reviewPolicySatisfied,
@@ -612,7 +613,7 @@ export function reviewFinalSnapshotMatchesPreparedPackage(
   review: ReviewStatus,
   preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot'>,
 ): boolean {
-  if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
+  if (!reviewFindingsSatisfied(review)) return false;
   const snapshot = review.reviewSnapshot;
   if (!snapshot || snapshot.source === 'unavailable') return false;
   if (!preparedPackage.headSha || snapshot.headSha !== preparedPackage.headSha) return false;
@@ -942,7 +943,7 @@ function reviewCertifiesPreparedPackage(
   preparedPackage: ReadyGatePrPackage,
 ): boolean {
   if (!isQualifyingReview(review)) return false;
-  if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
+  if (!reviewFindingsSatisfied(review)) return false;
   return publicationReviewMatchesPreparedPackage(review, preparedPackage);
 }
 

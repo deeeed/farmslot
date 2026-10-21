@@ -401,8 +401,28 @@ async function commitRunEvidenceReceipt<R extends RunEvidenceReceipt>(
     await assertCurrent(run);
     receipt = build(run);
     const prior: readonly RunEvidenceReceipt[] = run[field] ?? [];
-    if (prior.some((entry) => entry.id === receipt!.id)) return;
-    const receipts = [...prior, receipt];
+    const existing = prior.find((entry) => entry.id === receipt!.id);
+    if (existing) {
+      if (field !== 'visualJudgmentReceipts' || !('moments' in existing) || !('moments' in receipt))
+        return;
+      const { settledReviewFindings: previous, ...original } = existing;
+      const { settledReviewFindings: next, ...proposed } = receipt;
+      if (!isDeepStrictEqual(original, proposed))
+        throw new Error('A retained person judgment cannot be rewritten during settlement');
+      if (isDeepStrictEqual(previous, next)) return;
+      if (
+        (existing.kind ?? 'person-reviewed') !== 'person-reviewed' ||
+        existing.verdict !== 'confirmed'
+      )
+        throw new Error('Only a person confirmation can settle review findings');
+      if (
+        previous?.some((entry) => !next?.some((candidate) => isDeepStrictEqual(entry, candidate)))
+      )
+        throw new Error('A retained finding settlement cannot be removed');
+    }
+    const receipts = existing
+      ? prior.map((entry) => (entry.id === receipt!.id ? receipt! : entry))
+      : [...prior, receipt];
     const snapshot: Run = { ...run, [field]: receipts };
     if (outputReceiptIds) {
       const ids = outputReceiptIds(snapshot);

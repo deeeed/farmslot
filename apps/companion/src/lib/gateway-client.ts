@@ -51,7 +51,7 @@ type ConnectionCallback = (state: ConnectionState) => void;
 interface PendingRequest {
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
   includeResourceState?: boolean;
   cleanup?: () => void;
 }
@@ -394,7 +394,7 @@ export class GatewayClient {
   async request<T = unknown>(
     method: string,
     params?: unknown,
-    timeout = DEFAULT_TIMEOUT,
+    timeout: number | null = DEFAULT_TIMEOUT,
     options?: ResourceReadOptions,
   ): Promise<T> {
     if (options?.signal?.aborted) throw new Error('Resource read aborted');
@@ -433,13 +433,13 @@ export class GatewayClient {
   private async requestRaw<T = unknown>(
     method: string,
     params?: unknown,
-    timeout = DEFAULT_TIMEOUT,
+    timeout: number | null = DEFAULT_TIMEOUT,
     options?: ResourceReadOptions,
   ): Promise<T> {
     if (options?.signal?.aborted) throw new Error('Resource read aborted');
     const generation = this.generation;
     if (!isAuthenticationEntry(method) && this.state !== 'connected') {
-      await this.waitForConnected(timeout, options?.signal);
+      await this.waitForConnected(timeout ?? DEFAULT_TIMEOUT, options?.signal);
     }
 
     if (generation !== this.generation) throw new Error('Gateway identity changed before request');
@@ -462,11 +462,14 @@ export class GatewayClient {
         cleanup();
         reject(new Error('Resource read aborted'));
       };
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        cleanup();
-        reject(new Error(`Request ${method} timed out after ${timeout}ms`));
-      }, timeout);
+      const timer =
+        timeout === null
+          ? undefined
+          : setTimeout(() => {
+              this.pending.delete(id);
+              cleanup();
+              reject(new Error(`Request ${method} timed out after ${timeout}ms`));
+            }, timeout);
 
       this.pending.set(id, {
         resolve: resolve as (v: unknown) => void,

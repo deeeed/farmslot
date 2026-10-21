@@ -6,12 +6,27 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot bindings, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire.
 - Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
+- A validated WARM pass after evidence-only fixes satisfies the publication gate at the same code head; earlier findings stay in review history without blocking it again.
+
+- Restart recovery resumes a monitor whose operator wait was resolved, preserving its running step until the monitor validates worker completion.
+
+- Opening a running review's terminal selects its exact tmux window and pane before streaming, so the worker window cannot replace the reviewer buffer.
+- Gate blockers recommend only actions offered by that same gate. An exhausted fix loop no longer advertises a continuation that resolution refuses.
+
+- Adopting a published PR completes a reconciled run whose work and gate are already settled, clearing its stale error without replaying work. Progress, source and slot-ownership checks still apply.
+
+- Human-gate WARM requests refuse an unavailable retained session before consuming the gate or admitting a review round.
+- A person's bound claim confirmation settles that claim's evidence-only review findings and preserves review validity during package refresh. Restart recovery collects a newer warm attempt's own result instead of marking it complete from an older lineage result.
+
+- Keep every unarchived failed run in `run.list` Active results, including failures without resources, while preserving released PR execution ownership and settled workflow outcomes.
 
 - Completed terminal reviews can reach their posting gate: single-pane review sessions resolve exactly, and hookless reviewers prove idle from the native rollout held open by their current process.
 
 - A blocked worker fix that changed no code keeps the last same-head review findings visible at publication. Gate recovery and evidence refresh wait for the person's decision instead of starting another review. A stopped reviewer returns its failure without an automatic replacement.
 - An operator WARM delta request resumes its stopped, refunded reviewer attempt after infrastructure recovery, using the same session and admission receipt. A later validated result supersedes the refund. Previously only fix-loop continuations recovered that attempt, so another gate request could launch a fresh COLD fallback.
 - Ticket-derived PR titles preserve leading acronyms and identifiers such as `ORDER_SIZE_MIN` and `API`; only an ordinary capitalized word is lowercased.
+
+- Resuming a paused worker continues its exact retained session with a task instruction, without opening a session picker. Missing worker bindings refuse input before engine advancement.
 
 - Operator WARM re-reviews use the same delta fallback as automatic re-reviews, and can adopt a legacy reviewer session from its validated result and artifact scope. A failed attempt before inspection keeps the earlier baseline. Seen on TAT-4158, whose verified session was refused as missing.
 

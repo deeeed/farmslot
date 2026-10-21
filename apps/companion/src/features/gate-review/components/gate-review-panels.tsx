@@ -165,6 +165,7 @@ export function GateActions({
   readiness,
   onFocusClaim,
   showClaims = true,
+  inlineBlockers = false,
   loading = false,
   disabled = false,
   reviewDisabled = false,
@@ -173,6 +174,7 @@ export function GateActions({
 }: {
   run?: Run | null;
   showClaims?: boolean;
+  inlineBlockers?: boolean;
   loading?: boolean;
   disabled?: boolean;
   reviewDisabled?: boolean;
@@ -204,6 +206,7 @@ export function GateActions({
   const [acceptingDecisionId, setAcceptingDecisionId] = useState<string | null>(null);
   const [judging, setJudging] = useState(false);
   const [moreActions, setMoreActions] = useState(false);
+  const [reviewingRequest, setReviewingRequest] = useState(false);
   if (decision.resolvedAt) {
     return (
       <View style={styles.resolvedCard} testID="companion-gate-review-resolved">
@@ -229,6 +232,7 @@ export function GateActions({
     acceptingFindings: acceptingFindings ?? acceptingDecisionId === decision.id,
   });
   const accepting = view.approval?.id === view.acceptFindings?.id && Boolean(view.acceptFindings);
+  const handled = (id: string) => inlineBlockers && view.blockerActionIds.includes(id);
   const declaredRows = publicationGateCriteria(
     decision.payload?.kind === 'ready' ? decision.payload : undefined,
   ).length;
@@ -256,6 +260,15 @@ export function GateActions({
           testID="companion-publish-gate-review"
           action="request-review"
           actionLabel={action.label}
+          triggerLabel={action.label}
+          open={reviewingRequest}
+          onOpenChange={(open) => {
+            setReviewingRequest(open);
+            if (open) {
+              setAttestingDecisionId(null);
+              setAcceptingDecisionId(null);
+            }
+          }}
           onInvoke={(_id, payload) => onResolve(guarded, { reviewRequest: payload })}
         />
       );
@@ -291,19 +304,26 @@ export function GateActions({
         { backgroundColor: palette.background, borderColor: palette.border },
       ]}
     >
-      <Text
-        testID="companion-gate-review-approve-reason"
-        accessibilityRole="header"
-        accessibilityLabel={view.status}
-        numberOfLines={2}
-        style={[gateStyles.status, { color: palette.text }]}
-      >
-        {judging
-          ? 'Saving judgment and refreshing…'
-          : sendingActionId === 'refresh-package'
-            ? 'Refreshing…'
-            : view.status}
-      </Text>
+      {!inlineBlockers ||
+      !view.blockedReason ||
+      judging ||
+      sendingActionId ||
+      accepting ||
+      attestingDecisionId === decision.id ? (
+        <Text
+          testID="companion-gate-review-approve-reason"
+          accessibilityRole="header"
+          accessibilityLabel={view.status}
+          numberOfLines={2}
+          style={[gateStyles.status, { color: palette.text }]}
+        >
+          {judging
+            ? 'Saving judgment and refreshing…'
+            : sendingActionId === 'refresh-package'
+              ? 'Refreshing…'
+              : view.status}
+        </Text>
+      ) : null}
       {view.warnings.map((warning) => (
         <Text
           key={warning}
@@ -409,8 +429,29 @@ export function GateActions({
           </Pressable>
         ) : null}
         {view.sendBack ? renderAction(view.sendBack, true, false) : null}
-        {view.approval ? renderAction(view.approval, true) : null}
-        {view.attestation || view.acceptFindings || view.secondaryActions.length ? (
+        {view.approval &&
+        (!inlineBlockers || !view.blockedReason || accepting || attestingDecisionId === decision.id)
+          ? renderAction(view.approval, true)
+          : null}
+        {view.primaryActions
+          .filter((action) => !handled(action.id))
+          .map((action) => renderAction(action))}
+        {view.acceptFindings && !accepting && !handled(view.acceptFindings.id) ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityHint={view.acceptFindings.description}
+            testID="companion-gate-review-accept-findings"
+            style={gateStyles.button}
+            onPress={() => {
+              setReviewingRequest(false);
+              if (onAcceptFindings) onAcceptFindings();
+              else setAcceptingDecisionId(decision.id);
+            }}
+          >
+            <Text style={{ color: palette.text }}>{view.acceptFindings.label}</Text>
+          </Pressable>
+        ) : null}
+        {view.attestation || view.secondaryActions.length ? (
           <Pressable
             style={gateStyles.button}
             accessibilityRole="button"
@@ -431,19 +472,6 @@ export function GateActions({
                 onPress={() => setAttestingDecisionId(decision.id)}
               >
                 <Text style={{ color: palette.text }}>Attest evidence</Text>
-              </Pressable>
-            ) : null}
-            {view.acceptFindings && !accepting ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityHint={view.acceptFindings.description}
-                testID="companion-gate-review-accept-findings"
-                style={gateStyles.button}
-                onPress={() =>
-                  onAcceptFindings ? onAcceptFindings() : setAcceptingDecisionId(decision.id)
-                }
-              >
-                <Text style={{ color: palette.text }}>{view.acceptFindings.label}</Text>
               </Pressable>
             ) : null}
             {view.secondaryActions.map((action) => renderAction(action))}

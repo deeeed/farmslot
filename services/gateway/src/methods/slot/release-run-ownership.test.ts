@@ -154,7 +154,11 @@ test('markCompletionFailureDiscarded settles a refused completion once, keeping 
   const outputs = getRun(run.id)!.steps.find((step) => step.name === 'complete')!.outputs!;
   assert.deepEqual(outputs.gatePrerequisiteRefusal, { reason: 'no receipt' });
   assert.equal(typeof outputs.gatePrerequisiteDiscardedAt, 'string');
-  assert.equal(isActiveListRun(getRun(run.id)!), false);
+  assert.equal(
+    isActiveListRun(getRun(run.id)!),
+    true,
+    'release keeps the failure visible until archive',
+  );
   assert.deepEqual(events, ['run.updated']);
 
   await markCompletionFailureDiscarded(run.id, (event) => events.push(event));

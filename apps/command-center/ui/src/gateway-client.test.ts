@@ -528,3 +528,45 @@ test('a request the gateway never answers rejects as a typed timeout', async (t)
       error.message === 'Request run.get timed out after 20ms',
   );
 });
+
+test('a pending judgment waits past the ordinary deadline for the server result', async (t) => {
+  const fake = installFakeGateway(t);
+  const { GatewayClient } = await import('./gateway-client.js');
+  const client = new GatewayClient();
+  t.after(() => client.disconnect());
+  const connected = new Promise<void>((resolve) =>
+    client.onConnectionChange((state) => {
+      if (state === 'connected') resolve();
+    }),
+  );
+  await client.setAuthCredentials({ token: 'pending-judgment-fixture' });
+  client.connect();
+  await connected;
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let settled = false;
+  const request = client.request(
+    'run.reviewVisualClaim',
+    { runId: 'fixture-run' },
+    { timeout: null },
+  );
+  void request.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  t.mock.timers.tick(20_000);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(settled, false, 'the server is still refreshing the package');
+  fake.respond('run.reviewVisualClaim', { receipt: 'saved-once' });
+  assert.deepEqual(await request, { receipt: 'saved-once' });
+  const interrupted = assert.rejects(
+    client.request('pending.work', {}, { timeout: null }),
+    /disconnected/i,
+  );
+  client.disconnect();
+  await interrupted;
+});

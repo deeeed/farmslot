@@ -26,6 +26,7 @@ export * from './runs/publish-approval.js';
 export * from './runs/recovery-hints.js';
 export * from './runs/review-chain.js';
 export * from './runs/review-curation.js';
+export * from './runs/review-findings.js';
 export * from './runs/review-policy.js';
 export * from './runs/review-retries.js';
 export * from './runs/run-family-groups.js';

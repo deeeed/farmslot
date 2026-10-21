@@ -1,4 +1,5 @@
 import type { AgentRole, TmuxWorkerRef } from '@farmslot/protocol';
+import { runTerminalTargetMatches, runTerminalTargetParams } from '@farmslot/review-dispatch';
 
 export interface TerminalTargetState {
   slotId: string;
@@ -93,12 +94,7 @@ export function terminalTargetParams(state: TerminalTargetState) {
   // Without `bareSession: true` the gateway resolves slot-only requests through the still-
   // active blocked run's primary role, leaving the postmortem terminal effectively read-only.
   if (state.postmortem) return { slotId: state.slotId, bareSession: true as const };
-  return {
-    slotId: state.slotId,
-    ...(state.runId ? { runId: state.runId } : {}),
-    ...(state.role ? { role: state.role } : {}),
-    ...(state.contextId ? { contextId: state.contextId } : {}),
-  };
+  return runTerminalTargetParams({ ...state, role: state.role || undefined });
 }
 
 export function terminalMatchesTarget(
@@ -106,13 +102,11 @@ export function terminalMatchesTarget(
   payload: TerminalTargetPayload,
 ): boolean {
   if (state.worker) return workerRefsMatch(payload.worker, state.worker);
-  if (!state.slotId && state.runId) return !payload.slotId && payload.runId === state.runId;
-  if (!payload.slotId || payload.slotId !== state.slotId) return false;
-  if (state.postmortem) return true;
-  if (state.runId && (!('runId' in payload) || payload.runId !== state.runId)) return false;
-  if (state.contextId && payload.contextId && payload.contextId !== state.contextId) return false;
-  if (state.role && payload.role && payload.role !== state.role) return false;
-  return true;
+  if (state.postmortem && state.slotId) return payload.slotId === state.slotId;
+  return runTerminalTargetMatches(
+    { ...state, role: state.role || undefined },
+    { ...payload, runId: payload.runId ?? undefined },
+  );
 }
 
 export function terminalTargetChanged(

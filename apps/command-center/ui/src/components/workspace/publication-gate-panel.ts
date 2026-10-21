@@ -1,6 +1,10 @@
 import { html, nothing } from 'lit';
 
-import { type PublicationGateInput, publicationGateView } from '@farmslot/review-dispatch';
+import {
+  type PublicationGateAction,
+  type PublicationGateInput,
+  publicationGateView,
+} from '@farmslot/review-dispatch';
 import { publicationGateCssVariables, skeletonTokens } from '@farmslot/theme';
 
 import '../shared/skeleton.js';
@@ -19,6 +23,7 @@ export interface PublicationGatePanelInput extends PublicationGateInput {
   loadError?: string;
   retry?: () => void;
   showClaims?: boolean;
+  inlineBlockers?: boolean;
   feedback?: import('@farmslot/review-dispatch').VisualJudgmentFeedback;
   reviewReason?: (id: string) => string;
   changeReviewReason?: (id: string, reason: string) => void;
@@ -37,6 +42,22 @@ export interface PublicationGatePanelInput extends PublicationGateInput {
 export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
   const view = publicationGateView(input);
   const disabled = input.busy || Boolean(input.pausedReason);
+  const handled = (id: string) => input.inlineBlockers && view.blockerActionIds.includes(id);
+  const renderAction = (action: PublicationGateAction) =>
+    html`<button
+      class="gate-secondary"
+      type="button"
+      data-action=${action.id}
+      data-testid=${action.id === 'request-review' ? 'rdy-request-review' : nothing}
+      title=${action.description ?? ''}
+      ?disabled=${disabled ||
+      Boolean(action.disabledReason) ||
+      (action.id === 'request-review' && input.reviewDisabled)}
+      @click=${() =>
+        action.id === 'request-review' ? input.requestReview() : input.invoke(action.id)}
+    >
+      ${input.pendingConfirm === action.id ? `Confirm ${action.label}?` : action.label}
+    </button>`;
   return html`<section
     class="publication-gate"
     aria-label="Publication decision"
@@ -93,26 +114,34 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
     ${input.resolved
       ? nothing
       : html`<section class="gate-actions" aria-label="Publication actions">
-          <p class="gate-status" role=${input.loadError ? 'alert' : 'status'}>
-            ${input.pausedReason
-              ? html`<span class="gate-status-message">${input.pausedReason}</span
-                  >${input.pausedRetry
-                    ? html`<button class="gate-secondary" @click=${input.pausedRetry}>
-                        Retry
-                      </button>`
-                    : nothing}`
-              : input.loadError
-                ? html`<span class="gate-read-error" title=${input.loadError}
-                      >Evidence unavailable</span
-                    ><button class="gate-secondary" @click=${input.retry}>Retry</button>`
-                : input.loading
-                  ? html`<farm-skeleton width="42%"></farm-skeleton>`
-                  : input.busy
-                    ? input.feedback
-                      ? 'Saving judgment and refreshing…'
-                      : 'Submitting…'
-                    : view.status}
-          </p>
+          ${!input.inlineBlockers ||
+          input.busy ||
+          input.loading ||
+          input.loadError ||
+          input.pausedReason ||
+          input.acceptingFindings ||
+          input.attesting
+            ? html`<p class="gate-status" role=${input.loadError ? 'alert' : 'status'}>
+                ${input.pausedReason
+                  ? html`<span class="gate-status-message">${input.pausedReason}</span
+                      >${input.pausedRetry
+                        ? html`<button class="gate-secondary" @click=${input.pausedRetry}>
+                            Retry
+                          </button>`
+                        : nothing}`
+                  : input.loadError
+                    ? html`<span class="gate-read-error" title=${input.loadError}
+                          >Evidence unavailable</span
+                        ><button class="gate-secondary" @click=${input.retry}>Retry</button>`
+                    : input.loading
+                      ? html`<farm-skeleton width="42%"></farm-skeleton>`
+                      : input.busy
+                        ? input.feedback
+                          ? 'Saving judgment and refreshing…'
+                          : 'Submitting…'
+                        : view.status}
+              </p>`
+            : nothing}
           ${view.refreshRequired && input.refreshPackage
             ? html`<button
                 class="gate-primary"
@@ -135,7 +164,11 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                 ${input.busy ? 'Sending…' : view.sendBack.label}
               </button>`
             : nothing}
-          ${view.approval
+          ${view.approval &&
+          (!input.inlineBlockers ||
+            !view.blockedReason ||
+            input.acceptingFindings ||
+            input.attesting)
             ? html`<button
                 class="gate-primary"
                 data-testid="gate-approve"
@@ -155,19 +188,23 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                     : (view.approval?.label ?? 'Approve publish')}
               </button>`
             : nothing}
-          ${view.attestation || view.acceptFindings || view.secondaryActions.length
+          ${view.primaryActions.filter((action) => !handled(action.id)).map(renderAction)}
+          ${view.acceptFindings &&
+          view.approval?.id !== view.acceptFindings.id &&
+          !handled(view.acceptFindings.id)
+            ? html`<button
+                class="gate-secondary"
+                data-testid="gate-accept-findings"
+                ?disabled=${disabled}
+                title=${view.acceptFindings.description ?? ''}
+                @click=${input.chooseAcceptFindings}
+              >
+                ${view.acceptFindings.label}
+              </button>`
+            : nothing}
+          ${view.attestation || view.secondaryActions.length
             ? html`<details class="gate-more-actions">
                 <summary>More actions</summary>
-                ${view.acceptFindings && view.approval?.id !== view.acceptFindings.id
-                  ? html`<button
-                      class="gate-secondary"
-                      data-testid="gate-accept-findings"
-                      title=${view.acceptFindings.description ?? ''}
-                      @click=${input.chooseAcceptFindings}
-                    >
-                      ${view.acceptFindings.label}
-                    </button>`
-                  : nothing}
                 ${view.attestation && !input.attesting
                   ? html`<button
                       class="gate-secondary"
@@ -177,27 +214,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                       Attest evidence
                     </button>`
                   : nothing}
-                ${view.secondaryActions.map(
-                  (action) =>
-                    html`<button
-                      class="gate-secondary"
-                      type="button"
-                      data-action=${action.id}
-                      data-testid=${action.id === 'request-review' ? 'rdy-request-review' : nothing}
-                      title=${action.description ?? ''}
-                      ?disabled=${disabled ||
-                      Boolean(action.disabledReason) ||
-                      (action.id === 'request-review' && input.reviewDisabled)}
-                      @click=${() =>
-                        action.id === 'request-review'
-                          ? input.requestReview()
-                          : input.invoke(action.id)}
-                    >
-                      ${input.pendingConfirm === action.id
-                        ? `Confirm ${action.label}?`
-                        : action.label}
-                    </button>`,
-                )}
+                ${view.secondaryActions.map(renderAction)}
               </details>`
             : nothing}
         </section>`}

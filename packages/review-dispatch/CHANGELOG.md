@@ -4,6 +4,19 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.11.1 - 2026-10-22
+
+- A passing review continuation settles its own earlier findings after evidence-only fixes, without requiring another review or changing the retained history.
+
+## 0.11.0 - 2026-10-21
+
+- Share run terminal actor selection and target identity between Command Center and Companion, including finished-run availability.
+
+## 0.10.1 - 2026-10-21
+
+- Publication blockers carry finding summaries and inline actions. WARM review choices inherit and lock the retained runner, model and effort, and refuse unavailable sessions.
+- Publication blockers exclude evidence findings settled by a qualified person claim confirmation, while retaining code findings and the original review provenance.
+
 ## 0.10.0 - 2026-10-21
 
 - Share the current run activity, worker/reviewer node, review round, attempt start time and visible step states between Command Center and Companion; ordinary review flows keep their actual review step as the running node.

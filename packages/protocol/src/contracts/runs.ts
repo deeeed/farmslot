@@ -233,19 +233,26 @@ export function isSettledCompletionFailure(
   );
 }
 
-/**
- * A run every active run list shows: nonterminal, or failed while it still holds
- * its resources (a refused completion not yet discarded or archived). The
- * gateway's `run.list` `active` filter, Command Center and Companion all use
- * this rule.
- */
-export function isActiveListRun(
+/** Execution can settle before an unarchived failure leaves the Active list. */
+export function hasUnsettledRunExecution(
   run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps' | 'archivedAt'>>,
 ): boolean {
   return (
     !isTerminalRunStatus(run.status) ||
     (isCompletionPrerequisiteFailure(run) && !isSettledCompletionFailure(run))
   );
+}
+
+/**
+ * A run every active run list shows: nonterminal, or failed and not archived.
+ * Failures stay visible until someone archives them, even after resources are
+ * released. The gateway's `run.list` `active` filter, Command Center and
+ * Companion all use this rule.
+ */
+export function isActiveListRun(
+  run: Pick<Run, 'status'> & Partial<Pick<Run, 'steps' | 'archivedAt'>>,
+): boolean {
+  return !isTerminalRunStatus(run.status) || (run.status === 'failed' && !run.archivedAt);
 }
 
 export type RunStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
@@ -748,6 +755,8 @@ export interface ReviewStatus {
   /** Transport/lifecycle explanation when a review did not complete normally. */
   reason?: string;
   issues?: ReviewIssue[];
+  /** Qualified projection from person receipts; never a replacement review verdict. */
+  settledFindings?: import('../recipe/claim-reviews.js').ReviewFindingSettlement[];
   validationDepth?: ReviewValidationDepth;
   usage?: RunnerSessionUsage;
   feedbackSent?: boolean;

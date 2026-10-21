@@ -7,6 +7,48 @@ import {
   shouldUseBareTerminalSessionForRun,
 } from './terminal-target';
 
+test('opening a run reviewer keeps its exact context for subscribe, input and resize', () => {
+  const selected = {
+    slotId: 'review-slot',
+    runId: 'run-1',
+    contextId: 'rev-proof-3',
+    role: 'review' as const,
+    bareSession: false,
+  };
+  assert.deepEqual(buildCompanionTerminalTarget(selected), {
+    slotId: 'review-slot',
+    runId: 'run-1',
+    contextId: 'rev-proof-3',
+    role: 'review',
+  });
+});
+
+test('an explicit reviewer pin cannot become a bare slot and rejects other actor events', () => {
+  const target = buildCompanionTerminalTarget({
+    slotId: 'review-slot',
+    runId: 'run-1',
+    contextId: 'rev-proof-3',
+    role: 'review',
+    bareSession: true,
+  });
+  assert.equal(target.bareSession, undefined);
+  assert.equal(matchesCompanionTerminalTarget({ ...target }, target), true);
+  assert.equal(matchesCompanionTerminalTarget({ ...target, contextId: 'worker' }, target), false);
+  assert.equal(matchesCompanionTerminalTarget({ ...target, runId: 'other-run' }, target), false);
+  assert.equal(matchesCompanionTerminalTarget({ ...target, role: 'dev' }, target), false);
+});
+
+test('an allocated worktree terminal retains its run without a slot or bare-session fallback', () => {
+  const target = buildCompanionTerminalTarget({
+    slotId: '',
+    runId: 'worktree-run',
+    bareSession: true,
+  });
+  assert.deepEqual(target, { slotId: '', runId: 'worktree-run' });
+  assert.equal(matchesCompanionTerminalTarget({ slotId: '', runId: 'worktree-run' }, target), true);
+  assert.equal(matchesCompanionTerminalTarget({ slotId: '', runId: 'other-run' }, target), false);
+});
+
 test('shouldUseBareTerminalSessionForRun keeps active run targets scoped by run id', () => {
   assert.equal(
     shouldUseBareTerminalSessionForRun({

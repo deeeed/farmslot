@@ -62,9 +62,9 @@ test('a family counts active runs with the run-list active rule', () => {
   });
   const failed = makeRun({ id: 'failed', status: 'failed', updatedAt: '2026-04-15T01:00:00.000Z' });
   const summary = buildFamilyStateSummary([held, failed]);
-  assert.equal(summary?.activeRunCount, 1);
+  assert.equal(summary?.activeRunCount, 2);
   assert.equal(summary?.workflowState, 'active');
-  assert.equal(buildFamilyStateSummary([failed])?.activeRunCount, 0);
+  assert.equal(buildFamilyStateSummary([failed])?.activeRunCount, 1);
 });
 
 test('closing partial or failed execution does not complete a family', () => {

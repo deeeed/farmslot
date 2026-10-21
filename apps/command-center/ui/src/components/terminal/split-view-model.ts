@@ -7,7 +7,7 @@ import type {
   TmuxWorkerWatchEntry,
   TmuxWorkerWatchItem,
 } from '@farmslot/protocol';
-import { isActiveListRun } from '@farmslot/protocol';
+import { hasUnsettledRunExecution } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
 
@@ -52,7 +52,7 @@ export function selectWorkspaceRuns(runs: readonly Run[], filters: GlobalFilters
       (run) =>
         run.reviewWorkspace &&
         !run.reviewWorkspace.cleanedAt &&
-        isActiveListRun(run) &&
+        hasUnsettledRunExecution(run) &&
         (!filters.projects.length || filters.projects.includes(run.project)) &&
         (!filters.machines.length || filters.machines.includes(run.reviewWorkspace.machine)),
     )
@@ -233,20 +233,20 @@ function activeRunForSlot(
 ): Run | null {
   let best: Run | null = null;
   for (const run of runs) {
-    if (run.slotId !== slot.slot || !isActiveListRun(run)) continue;
+    if (run.slotId !== slot.slot || !hasUnsettledRunExecution(run)) continue;
     if (!best || compareTerminalRuns(run, best) > 0) best = run;
   }
   if (best) return best;
 
   if (slot.currentRunId) {
     const linked = runsById.get(slot.currentRunId);
-    if (linked && isActiveListRun(linked)) return linked;
+    if (linked && hasUnsettledRunExecution(linked)) return linked;
   }
 
   for (const context of slot.agentContexts ?? []) {
     if (!context.runId) continue;
     const contextRun = runsById.get(context.runId);
-    if (!contextRun || !isActiveListRun(contextRun)) continue;
+    if (!contextRun || !hasUnsettledRunExecution(contextRun)) continue;
     if (!best || compareTerminalRuns(contextRun, best) > 0) best = contextRun;
   }
   return best;
@@ -255,12 +255,12 @@ function activeRunForSlot(
 export function slotHasActiveRunTerminal(slot: SlotStatus, runsById: Map<string, Run>): boolean {
   if (slot.currentRunId) {
     const run = runsById.get(slot.currentRunId);
-    if (run) return isActiveListRun(run);
+    if (run) return hasUnsettledRunExecution(run);
   }
   for (const context of slot.agentContexts ?? []) {
     if (!context.runId) continue;
     const run = runsById.get(context.runId);
-    if (run && isActiveListRun(run)) return true;
+    if (run && hasUnsettledRunExecution(run)) return true;
   }
   return slot.lifecycle === 'busy' && slot.phase === 'working';
 }

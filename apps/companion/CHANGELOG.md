@@ -7,10 +7,13 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback and verified identity handling. Sources, run collections, full run details, diff and artifact contexts, family views, saved reviews and decision workspaces share live observations; saved results show their age and actions wait for current reads. Requires a new native build with Expo SQLite.
 - Add reproducible client-store baseline recipes with a dev-only native startup and websocket byte counter.
 
+- Verify exact reviewed line selection for line comments using the shared source context.
+
+- Open the current worker or reviewer directly from the run header. Terminal requests retain the exact actor binding; finished runs show a disabled action and reason. Worktree terminals reuse the existing terminal screen.
+- Publication blockers show finding details and inline actions from the shared gate model. WARM locks retained reviewer settings and refuses unavailable sessions. Evidence judgments stay pending until the gateway responds.
 - Run pipelines and run-detail headers share the current worker/reviewer activity with Command Center, including the review round and elapsed time.
 
 - The gate review and the decision workspace's gate show What's blocking publish at the top, with the same one-action-per-blocker list as desktop: Skip this criterion…, Accept findings and publish…, Give it another round. Mark untestable is now Skip this criterion…, with a styled reason sheet and a clear confirm. A criterion's state reads as a status badge rather than a button. Blockers, tabs and expanded reason sheets scroll together so long lists keep the publication footer reachable.
-- The gate's Request Review keeps each row runner's latest validated lineage WARM with its model and effort. When its session is unavailable, a fresh session reviews only the changes; review results show the reason and compared ranges.
 - The gate review offers Accept Review Findings and Publish when the gateway allows it: it lists the open findings and asks for the reason before sending.
 - Run detail, the gate review, the decision workspace's prerequisites and the evidence view show the reason a person can act on, for example `Review rounds spent: 4 issues open`, instead of 'Fix and pass review' when fixing is not offered.
 - A run waiting at its open human gate shows `Needs your decision` with the gate's readiness reason in the runs list badge, the mini pipeline and the run header, and the run detail pipeline no longer marks its gate blocked.

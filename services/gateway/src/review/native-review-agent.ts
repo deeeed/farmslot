@@ -161,7 +161,7 @@ const REFUSED_APPROVALS =
  * an unconfirmed stop is reported, not raised: its binding stays held, and the next
  * reuse of the slot stops it (retireNativeWorkersForSlot).
  */
-async function stopSettledReviewer(runId: string, contextId: string): Promise<void> {
+export async function stopSettledReviewer(runId: string, contextId: string): Promise<void> {
   const context = getRun(runId)?.agentContexts?.find((candidate) => candidate.id === contextId);
   if (!context) return;
   try {
