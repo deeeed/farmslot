@@ -907,6 +907,26 @@ export type GatePrerequisiteAssertion = (
   ...params: Parameters<typeof assertRunGateReady>
 ) => Promise<RunGateReadiness | void>;
 
+/** A prerequisite remedy is actionable only when the same gate offers it. */
+export function projectRunGateActions(
+  definitions: DecisionAction[],
+  readiness: RunGateReadiness,
+): { actions: DecisionAction[]; readiness: RunGateReadiness } {
+  const actions = gateActionsForReadiness(definitions, readiness);
+  const offered = new Set(actions.map(({ id }) => id));
+  return {
+    actions,
+    readiness: {
+      ...readiness,
+      reasons: readiness.reasons.map((reason) => {
+        if (!reason.actionId || offered.has(reason.actionId)) return reason;
+        const { actionId: _unavailable, ...blocker } = reason;
+        return blocker;
+      }),
+    },
+  };
+}
+
 /** Definitions remain on the existing decision so a later receipt can restore its actions. */
 export function runGateDefinitionActions(decision: RunDecision): DecisionAction[] {
   const actions = Array.isArray(decision.context?.gateActions)
@@ -937,14 +957,19 @@ export async function refreshRunGateReadiness(
     pending.map(async (decision) => {
       const payload = decision.payload!;
       const prepared = payload.kind === 'ready' ? (payload.prPackage ?? null) : null;
-      const { readiness, acceptance, reviews } = await collectRunGateAssessment(run, prepared, {
+      const {
+        readiness: assessment,
+        acceptance,
+        reviews,
+      } = await collectRunGateAssessment(run, prepared, {
         ...overrides,
         progress: async () => progress,
       });
       const definitions = runGateDefinitionActions(decision);
+      const { actions, readiness } = projectRunGateActions(definitions, assessment);
       return {
         ...decision,
-        actions: gateActionsForReadiness(definitions, readiness),
+        actions,
         context: { ...decision.context, gateActions: definitions },
         // The projection lives on the decision only; task and engine ledgers stay unchanged.
         payload: {

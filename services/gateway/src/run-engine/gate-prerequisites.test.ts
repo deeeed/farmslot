@@ -302,6 +302,67 @@ function pendingReadyDecision(): RunDecision {
   };
 }
 
+test('an exhausted fix gate does not recommend a continuation it cannot resolve', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'GATE-ACTION-PARITY' });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const prepared = makeReadyGatePackage();
+  const review: ReviewStatus = {
+    id: 'exhausted-dispatch',
+    source: 'dispatch',
+    mode: 'warm',
+    loopNumber: 2,
+    verdict: 'issues',
+    unresolvedCount: 2,
+    reviewedHeadSha: prepared.headSha,
+    retryCount: 2,
+    maxRetries: 2,
+    maxRetriesExhausted: true,
+    issues: [
+      { file: 'src/feature.ts', description: 'First retained finding' },
+      { file: 'src/feature.ts', description: 'Second retained finding' },
+    ],
+  };
+  const decision = pendingReadyDecision();
+  decision.actions = [
+    { id: 'approve-publish', label: 'Publish', style: 'primary' },
+    { id: 'hold', label: 'Hold', style: 'secondary' },
+    { id: 'request-review', label: 'Request review', style: 'secondary' },
+  ];
+  assert.equal(decision.payload?.kind, 'ready');
+  if (decision.payload?.kind !== 'ready') throw new Error('Expected ready fixture');
+  decision.payload.prPackage = prepared;
+  updateRun(run.id, {
+    status: 'blocked',
+    decisions: [decision],
+    engineState: { publishGate: { reviews: [review] } },
+    // The overall round budget still has room; the per-review fix cap is spent.
+    reviewRoundAdmissions: ['used-1', 'used-2', 'used-3'],
+  });
+  const before = structuredClone(run);
+  const refreshed = await refreshRunGateReadiness(run, {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewedInputsAwaitingReview: async () => null,
+  });
+  const gate = refreshed.decisions[0];
+  assert.equal(gate.payload?.kind, 'ready');
+  if (gate.payload?.kind !== 'ready') throw new Error('Expected ready gate');
+  const reason = gate.payload.gateReadiness?.reasons.find(
+    (entry) => entry.code === 'review-fix-required',
+  );
+  assert.ok(reason);
+  assert.equal(reason.actionId, undefined);
+  assert.deepEqual(
+    gate.actions.map(({ id }) => id),
+    ['hold', 'request-review'],
+  );
+  assert.deepEqual(refreshed.engineState, before.engineState);
+  assert.deepEqual(refreshed.reviewRoundAdmissions, before.reviewRoundAdmissions);
+  assert.deepEqual(gate.payload.prPackage, prepared);
+});
+
 test('late runner observations remove advancement and a later idle receipt restores the original action', async (t) => {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'GATE-REFRESH' });
   t.after(() => deleteTestRunIfPresent(run.id));
