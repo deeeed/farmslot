@@ -15,5 +15,5 @@ export async function recordVisualClaimReview(
   if (!client || !model) throw new Error('The evidence review is unavailable.');
   const params = model.visualReviewRequest(claimId, client.authenticatedPrincipal, verdict, reason);
   if (params.runId !== runId) throw new Error('The run changed. Refresh the evidence.');
-  return client.request<RunReviewVisualClaimResult>(Methods.RUN_REVIEW_VISUAL_CLAIM, params);
+  return client.request<RunReviewVisualClaimResult>(Methods.RUN_REVIEW_VISUAL_CLAIM, params, null);
 }

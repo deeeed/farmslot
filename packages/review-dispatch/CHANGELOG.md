@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Publication blockers carry finding summaries and inline actions. WARM review choices inherit and lock the retained runner, model and effort, and refuse unavailable sessions.
 - Publication blockers exclude evidence findings settled by a qualified person claim confirmation, while retaining code findings and the original review provenance.
 
 ## 0.10.0 - 2026-10-21

@@ -6,6 +6,8 @@
 
 import type { TestContext } from 'node:test';
 
+import type { RequestFrame } from '@farmslot/protocol';
+
 export interface FakeGatewaySocket {
   readyState: number;
 }
@@ -17,6 +19,8 @@ export interface FakeGateway {
   readonly tokens: unknown[];
   /** Browser localStorage contents. */
   readonly store: Map<string, string>;
+  readonly requests: RequestFrame[];
+  respond(method: string, payload: unknown): void;
   /** Leave `auth.connect` unanswered, as a gateway restarting mid-handshake does. */
   holdAuth: boolean;
   /** Principal id that the next `auth.connect` reply carries. */
@@ -43,6 +47,12 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
     sockets,
     tokens: [],
     store: new Map<string, string>(),
+    requests: [],
+    respond: (method, payload) => {
+      const request = [...fake.requests].reverse().find((frame) => frame.method === method);
+      if (!request) throw new Error(`No pending ${method} request`);
+      sockets.at(-1)!.respond(request.id, payload);
+    },
     holdAuth: false,
     principalId,
     restart: () => sockets.at(-1)!.gatewayRestart(),
@@ -61,9 +71,13 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
       });
     }
     send(text: string) {
-      const request = JSON.parse(text);
+      const request: RequestFrame = JSON.parse(text);
+      fake.requests.push(request);
       if (request.method !== 'auth.connect') return;
-      fake.tokens.push(request.params?.token);
+      const params = request.params;
+      fake.tokens.push(
+        params && typeof params === 'object' && 'token' in params ? params.token : undefined,
+      );
       if (fake.holdAuth) return;
       queueMicrotask(() =>
         this.dispatchEvent(
@@ -89,6 +103,13 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
     }
     close() {
       this.readyState = 3;
+    }
+    respond(id: string, payload: unknown) {
+      this.dispatchEvent(
+        new MessageEvent('message', {
+          data: JSON.stringify({ type: 'res', id, ok: true, payload }),
+        }),
+      );
     }
     gatewayRestart() {
       this.readyState = 3;

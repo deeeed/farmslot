@@ -37,7 +37,7 @@ import {
   Methods,
   sortRunsForFamilyView,
 } from '@farmslot/protocol';
-import { pendingOutputReview } from '@farmslot/review-dispatch';
+import { pendingOutputReview, type VisualJudgmentFeedback } from '@farmslot/review-dispatch';
 
 import './native-worker-history.js';
 import './failure-triage-panel.js';
@@ -177,6 +177,7 @@ export class RunDetail extends RunDetailState {
   @state() private _recordedEvidence: RunRecipeRunsForRunResult['recordedEvidence'] = undefined;
   @state() private _visualReviewReasons: Record<string, string> = {};
   @state() private _visualReviewBusy = false;
+  @state() private _visualReviewFeedback?: VisualJudgmentFeedback;
   @state() private _visualReviewMessage = '';
   private _visualReviewScope = '';
   private _evidenceGroupId: string | null = null;
@@ -202,6 +203,7 @@ export class RunDetail extends RunDetailState {
         this._visualReviewScope = scope;
         this._visualReviewReasons = {};
         this._visualReviewMessage = '';
+        if (!this._visualReviewBusy) this._visualReviewFeedback = undefined;
       }
       this.evidenceModel = createEvidenceReviewModel({
         context: output ? 'gate' : 'run-detail',
@@ -340,6 +342,8 @@ export class RunDetail extends RunDetailState {
     const prev = this.run;
     const wasHydrating = this._hydrating;
     if (this.runId !== this._lastRequestedRunId) {
+      this._visualReviewBusy = false;
+      this._visualReviewFeedback = undefined;
       this._verifiedRunSnapshot = null;
       this._lastRequestedRunId = this.runId;
       // Copied/error/liveness state belongs to the run it was fetched for.
@@ -1323,6 +1327,8 @@ export class RunDetail extends RunDetailState {
     const run = this.run;
     if (!model || !run || this._visualReviewBusy) return;
     this._visualReviewBusy = true;
+    this._visualReviewMessage = '';
+    this._visualReviewFeedback = { claimId, phase: 'saving' };
     try {
       const request = model.visualReviewRequest(
         claimId,
@@ -1337,15 +1343,20 @@ export class RunDetail extends RunDetailState {
       );
       if (request.runId !== run.id)
         throw new Error('The evidence selection changed. Refresh the run.');
-      await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, request);
+      await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, request, { timeout: null });
       if (this.run?.id !== run.id) return;
+      this._visualReviewFeedback = { claimId, phase: 'refreshing' };
       await this.fetchRun(run.id);
       await this._refreshRecipeRunsForRun(this.run ?? run, { force: true });
+      if (this.run?.id !== run.id) return;
       this._visualReviewMessage = 'Visual judgment recorded.';
+      this._visualReviewFeedback = undefined;
     } catch (error) {
+      if (this.run?.id !== run.id) return;
       this._visualReviewMessage = error instanceof Error ? error.message : String(error);
+      this._visualReviewFeedback = { claimId, phase: 'error', message: this._visualReviewMessage };
     } finally {
-      this._visualReviewBusy = false;
+      if (this.run?.id === run.id) this._visualReviewBusy = false;
     }
   }
 
@@ -1379,6 +1390,7 @@ export class RunDetail extends RunDetailState {
       model,
       reviewer: gateway.authenticatedPrincipal,
       reviewing: this._visualReviewBusy,
+      feedback: this._visualReviewFeedback,
       reviewReason: (id) => this._visualReviewReasons[id] ?? '',
       changeReviewReason: (id, reason) => {
         this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };

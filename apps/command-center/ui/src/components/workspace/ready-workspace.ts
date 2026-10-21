@@ -21,7 +21,6 @@ import {
 import {
   acceptanceClaimRows,
   anotherReviewRoundParams,
-  type PublicationBlocker,
   publicationGateBlockers,
   publicationGateCriteria,
   publicationGateView,
@@ -391,9 +390,18 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       sheet: this._blockerSheet,
       budget: payload.reviewRoundBudget,
       busy: this._acting || this._actionsPaused,
-      choose: (blocker: PublicationBlocker) => {
-        const action = blocker.action;
-        if (!action) return;
+      choose: (action) => {
+        if (action.kind === 'request-review') {
+          this._blockerSheet = null;
+          this._acceptingFindingsDecisionId = null;
+          this._openReviewRequestModal();
+          return;
+        }
+        if (action.kind === 'review-evidence') {
+          this.openEvidenceReview(action.claimId);
+          return;
+        }
+        if (action.kind === 'see-findings') return;
         if (action.kind === 'accept-findings') {
           this._blockerSheet = null;
           this._acceptingFindingsDecisionId = this.decision?.id ?? null;
@@ -442,7 +450,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
           : this._visualReviewReasons[claimId],
       );
       if (params.runId !== this.runId) throw new Error('The run changed. Refresh the evidence.');
-      await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params);
+      await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params, { timeout: null });
       this._visualJudgmentFeedback = { claimId, phase: 'refreshing' };
       await this._loadReviewEvidence(true);
       this._visualJudgmentFeedback = undefined;
@@ -630,6 +638,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       open: this._reviewModalOpen,
       viewModel: this._reviewPicker,
       acting: this._acting || this._actionsPaused,
+      message: this._actionMessage,
       close: () => this._closeReviewRequestModal(),
       changed: () => this.requestUpdate(),
       submit: () => this._submitReviewRequest(),

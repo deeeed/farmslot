@@ -25,6 +25,9 @@ export function ReviewDispatchPicker({
   onInvoke,
   renderRowResources,
   discover = true,
+  triggerLabel,
+  open,
+  onOpenChange,
 }: {
   model: ReviewDispatchViewModel;
   disabled?: boolean;
@@ -36,14 +39,40 @@ export function ReviewDispatchPicker({
   onInvoke?: (action: ReviewDispatchAction, payload: ReviewRequestPayload) => void;
   renderRowResources?: (row: ReviewDispatchRow, index: number) => React.ReactNode;
   discover?: boolean;
+  triggerLabel?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const { error, change } = useReviewDispatchCatalog(model, onChange, discover);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const expanded = open ?? ownOpen;
+  const changeOpen = (value: boolean) => {
+    setOwnOpen(value);
+    onOpenChange?.(value);
+  };
+  const { error, change } = useReviewDispatchCatalog(
+    model,
+    onChange,
+    discover && (!triggerLabel || expanded),
+  );
   const [otherModels, setOtherModels] = useState<Record<string, boolean>>({});
   const [modelFilters, setModelFilters] = useState<Record<string, string>>({});
+  if (triggerLabel && !expanded)
+    return (
+      <Choice
+        label={triggerLabel}
+        testID={`${testID}-open`}
+        disabled={disabled}
+        onPress={() => changeOpen(true)}
+      />
+    );
   return (
-    <View style={styles.picker} testID={testID}>
+    <View style={[styles.picker, triggerLabel ? { width: '100%' } : undefined]} testID={testID}>
+      {triggerLabel ? (
+        <Choice label="Close review setup" disabled={disabled} onPress={() => changeOpen(false)} />
+      ) : null}
       {model.rows.map((row, index) => {
         const runner = model.catalog.runners.find((entry) => entry.id === row.selection.runner);
+        const executionDisabled = disabled || model.executionLocked(row.id);
         const customKey = `${row.id}:${row.selection.runner}`;
         const models = model.modelPickerState(row.id, modelFilters[customKey]);
         const showOtherModel = Boolean(otherModels[customKey] || models.customModel);
@@ -81,7 +110,7 @@ export function ReviewDispatchPicker({
                   label={runner.label ?? runner.id}
                   testID={`${testID}-runner-${index}-${runner.id}`}
                   selected={row.selection.runner === runner.id}
-                  disabled={disabled}
+                  disabled={executionDisabled}
                   onPress={() => change(() => model.setRunner(row.id, runner.id))}
                 />
               ))}
@@ -96,7 +125,7 @@ export function ReviewDispatchPicker({
                     placeholder="Filter models"
                     placeholderTextColor={colors.textMuted}
                     value={modelFilters[customKey] ?? ''}
-                    editable={!disabled}
+                    editable={!executionDisabled}
                     onChangeText={(value) =>
                       setModelFilters((current) => ({ ...current, [customKey]: value }))
                     }
@@ -107,7 +136,7 @@ export function ReviewDispatchPicker({
                     label={`Runner default: ${runner?.defaultModel ?? 'automatic'}`}
                     testID={`${testID}-model-${index}-default`}
                     selected={row.selection.model === null}
-                    disabled={disabled}
+                    disabled={executionDisabled}
                     onPress={() =>
                       change(() => {
                         setOtherModels((current) => ({ ...current, [customKey]: false }));
@@ -121,7 +150,7 @@ export function ReviewDispatchPicker({
                       label={choice.label ?? choice.id}
                       testID={`${testID}-model-${index}-${choice.id}`}
                       selected={row.selection.model === choice.id}
-                      disabled={disabled}
+                      disabled={executionDisabled}
                       onPress={() =>
                         change(() => {
                           setOtherModels((current) => ({ ...current, [customKey]: false }));
@@ -136,7 +165,7 @@ export function ReviewDispatchPicker({
                     label="Other model"
                     testID={`${testID}-other-model-${index}`}
                     selected={showOtherModel}
-                    disabled={disabled}
+                    disabled={executionDisabled}
                     onPress={() =>
                       setOtherModels((current) => ({
                         ...current,
@@ -152,7 +181,7 @@ export function ReviewDispatchPicker({
                     value={row.selection.model ?? ''}
                     placeholder="Runner default or model id"
                     placeholderTextColor={colors.textMuted}
-                    editable={!disabled}
+                    editable={!executionDisabled}
                     autoCapitalize="none"
                     autoCorrect={false}
                     onChangeText={(value) => change(() => model.setModel(row.id, value || null))}
@@ -168,7 +197,7 @@ export function ReviewDispatchPicker({
                       label={choice.label}
                       testID={`${testID}-effort-${index}-${choice.value ?? 'default'}`}
                       selected={row.selection.effort === choice.value}
-                      disabled={disabled}
+                      disabled={executionDisabled}
                       onPress={() => change(() => model.setEffort(row.id, choice.value))}
                     />
                   ))}
@@ -191,14 +220,25 @@ export function ReviewDispatchPicker({
                     />
                   ))}
                 </View>
-                {row.selection.mode === 'warm' && row.context && (
-                  <Text style={styles.help} testID={`${testID}-lineage-${index}`}>
-                    Review lineage{' '}
-                    {row.context.repository
-                      ? `${row.context.repository}#${row.context.prNumber} / `
-                      : ''}
-                    {row.context.reviewId}
-                  </Text>
+                {row.selection.mode === 'warm' && (
+                  <View style={styles.row} testID={`${testID}-lineage-${index}`}>
+                    <Text style={styles.label}>Retained review</Text>
+                    {(
+                      model.context.reviewLineages ??
+                      model.context.reviewContext?.reviewLineages ??
+                      []
+                    ).map((context) =>
+                      context ? (
+                        <Choice
+                          key={context.reviewId}
+                          label={context.reviewId}
+                          selected={row.context?.reviewId === context.reviewId}
+                          disabled={disabled}
+                          onPress={() => change(() => model.setReviewContext(row.id, context))}
+                        />
+                      ) : null,
+                    )}
+                  </View>
                 )}
                 {row.note ? (
                   <Text style={styles.help} testID={`${testID}-note-${index}`}>
@@ -207,7 +247,7 @@ export function ReviewDispatchPicker({
                 ) : null}
                 <Text style={styles.help}>
                   {row.selection.mode === 'warm'
-                    ? "Continue this review's session for changes since its last reviewed head. If it is unavailable, a fresh session reviews those changes."
+                    ? "Continue this review's session for changes since its last reviewed head. An unavailable session cannot be resumed."
                     : 'Create a fresh reviewer session for the complete PR diff.'}
                 </Text>
               </>
@@ -286,6 +326,9 @@ const styles = StyleSheet.create({
   modelEffort: { flexDirection: 'row', gap: spacing.md },
   field: { flex: 1, gap: spacing.sm },
   choice: {
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: 'center',
     borderColor: colors.bgCardHover,
     borderWidth: 1,
     borderRadius: radii.md,

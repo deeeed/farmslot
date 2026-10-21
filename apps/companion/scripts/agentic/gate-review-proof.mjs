@@ -22,6 +22,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.
 const proofDir = path.join(root, 'temp/companion-gate-review-proof');
 const statePath = path.join(proofDir, 'state.json');
 const gatewayLogPath = path.join(proofDir, 'gateway.log');
+const proofSecretPath = path.join(proofDir, 'service-secret');
 const project = 'companion-proof';
 // One registered slot per fixture run: a slot's task is its active run's.
 const SLOTS = {
@@ -63,12 +64,20 @@ function gatewayGateActions(reviews) {
     import { reviewPolicySatisfied } from './packages/protocol/src/runs/review-policy.ts';
     const { policy, reviews } = JSON.parse(process.argv[1]);
     const reviewSatisfied = reviewPolicySatisfied(policy, reviews);
-    process.stdout.write(JSON.stringify(publicationGateDecisionActions({ reviewSatisfied, reviews: reviews })));
+    const preparedPackage = { headSha: '1'.repeat(40), reviewPolicy: policy };
+    process.stdout.write(JSON.stringify(publicationGateDecisionActions({ reviewSatisfied, reviews, preparedPackage })));
   `;
   return JSON.parse(
     execFileSync(
-      path.join(root, 'node_modules/.bin/tsx'),
-      ['-e', script, JSON.stringify({ policy: REVIEW_POLICY, reviews: reviews })],
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '-e',
+        script,
+        JSON.stringify({ policy: REVIEW_POLICY, reviews: reviews }),
+      ],
       { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     ),
   );
@@ -101,7 +110,16 @@ function rpc(method, params = {}) {
         cwd: root,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, FARMSLOT_GATEWAY: `ws://127.0.0.1:${state.port}` },
+        env: {
+          ...process.env,
+          FARMSLOT_GATEWAY: `ws://127.0.0.1:${state.port}`,
+          ...(fs.existsSync(proofSecretPath)
+            ? {
+                FARMSLOT_HOME: path.join(state.fixture, 'home'),
+                FARMSLOT_GATEWAY_PROFILE: 'proof',
+              }
+            : {}),
+        },
       },
     ),
   );
@@ -118,11 +136,15 @@ function seedFixtureGateway(port) {
     simulator,
     bundleId,
     profile: {
-      id: FIXTURE_PROFILE_ID,
+      id: fs.existsSync(proofSecretPath)
+        ? `${FIXTURE_PROFILE_ID}-${readState().pid}`
+        : FIXTURE_PROFILE_ID,
       name: 'Gate review fixture',
       url: `ws://127.0.0.1:${port}`,
       kind: 'lan',
-      authMode: 'none',
+      ...(fs.existsSync(proofSecretPath)
+        ? { authMode: 'token', presetSecret: fs.readFileSync(proofSecretPath, 'utf8').trim() }
+        : { authMode: 'none' }),
     },
   });
 }
@@ -210,7 +232,7 @@ function appConnected() {
 
 /** A task dir whose ledger records `proven` for the first `provenCount` criteria only. */
 function seedTask(fixture, name, provenCount) {
-  const taskDir = path.join(fixture, 'projects', project, 'tasks/dev', name);
+  const taskDir = path.join(fixture, '.task/dev', name);
   const recordedAt = new Date().toISOString();
   fs.mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
   fs.writeFileSync(path.join(taskDir, 'TASK.md'), `# ${name}\n`);
@@ -278,7 +300,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
     ticketOrPr: 'FIXTURE-GATE-REVIEW',
     slotId: SLOTS[id],
     branch: 'feat/fixture-gate-review',
-    taskFile,
+    taskFile: path.relative(fixture, taskFile),
     createdByPrincipalId: 'test-automation',
     steps: [],
     metrics: {},
@@ -333,7 +355,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
   });
 }
 
-if (phase === 'setup') {
+if (phase === 'setup' || phase === 'setup-actions') {
   // A failed earlier attempt leaves its gateway and fixture behind; replace both.
   await stopFixture();
   fs.rmSync(proofDir, { recursive: true, force: true });
@@ -415,8 +437,126 @@ if (phase === 'setup') {
     title: 'feat(companion): fixture shared review request',
     claude: {},
   });
+  if (phase === 'setup-actions') {
+    // Setup-time fixture only. Never submit a review or publish from this proof.
+    const file = path.join(fixture, 'runs', `${requestRunId}.json`);
+    const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const decision = run.decisions[0];
+    const payload = decision.payload;
+    // A terminal reference keeps this display fixture immutable during live inspection.
+    // It cannot dispatch, refresh a source checkout or publish.
+    run.status = 'failed';
+    run.readOnly = true;
+    const reviewId = `pipeline-review-${requestRunId}`;
+    const finding = {
+      reviewId,
+      file: 'evidence-manifest.json',
+      line: 33,
+      description: 'AC-1 needs a resulting position. The submitted order rests.',
+    };
+    const review = {
+      ...payload.reviews[0],
+      id: reviewId,
+      model: 'gpt-6.1-sol',
+      verdict: 'issues',
+      unresolvedCount: 1,
+      issues: [finding],
+      session: {
+        reviewId,
+        runner: 'codex',
+        model: 'gpt-6.1-sol',
+        sessionId: 'fixture-retained-session',
+        continuity: 'fresh',
+        lastReviewedHeadSha: '1111111111111111111111111111111111111111',
+      },
+    };
+    payload.reviews = [review];
+    run.engineState.publishGate.reviews = [review];
+    run.autoRecoveryDisabled = true;
+    decision.actions = gatewayGateActions([review]);
+    payload.reviewLineageOptions = [
+      {
+        context: { familyId: requestRunId, reviewId },
+        runner: 'codex',
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+        reviewedAt: review.completedAt,
+      },
+    ];
+    payload.reviewRoundBudget = {
+      used: 2,
+      limit: 5,
+      remaining: 3,
+      label: 'Review rounds 2/5',
+      noVerdict: 0,
+      noVerdictLimit: 3,
+    };
+    payload.gateReadiness = {
+      state: 'not-ready',
+      identity: { runId: requestRunId, generation: 1 },
+      reasons: [
+        {
+          code: 'review-fix-required',
+          prerequisite: 'review',
+          message: 'Review found 1 issue. Fix and pass review before publishing.',
+          allowedReviewOverrides: ['approve-publish-unresolved'],
+        },
+        {
+          code: 'review-result-required',
+          prerequisite: 'review',
+          message:
+            'Required current-head reviews need valid structured result artifacts for this package.',
+        },
+      ],
+      findings: [finding],
+      findingsDigest: 'fixture-findings',
+    };
+    writeJson(file, run);
+  }
+  if (phase === 'setup-actions') {
+    // Modern clients require an explicit service login, rather than a solo-mode person.
+    const home = path.join(fixture, 'home');
+    execFileSync(
+      process.execPath,
+      [
+        path.join(root, 'packages/cli/bin/farmslot.mjs'),
+        'credential',
+        'issue',
+        '--principal',
+        'gate-actions-proof',
+        '--subject',
+        'service',
+        '--role',
+        'admin',
+        '--scope',
+        'global',
+        '--offline',
+        '--secret-file',
+        proofSecretPath,
+      ],
+      { cwd: root, env: { ...process.env, FARMSLOT_HOME: home }, stdio: 'pipe' },
+    );
+    writeJson(path.join(home, 'gateways.json'), {
+      active: 'proof',
+      gateways: {
+        proof: {
+          url: `ws://127.0.0.1:${port}`,
+          authMode: 'token',
+          secret: fs.readFileSync(proofSecretPath, 'utf8').trim(),
+        },
+      },
+    });
+  }
   startGateway(fixture, port);
   const seeded = await waitFor('the fixture gateway serves the gate', () => gate(), 60000);
+  if (phase === 'setup-actions') {
+    const ready = gate(requestRunId, requestDecisionId);
+    assert.equal(ready.resolvedAt, undefined);
+    assert.equal(ready.payload.reviewLineageOptions[0].runner, 'codex');
+    evidence('gate-actions-before', ready);
+    console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, runId: requestRunId }));
+    process.exit(0);
+  }
   assert.equal(seeded?.type, 'engine_human_gate');
   assert.equal(seeded.resolvedAt, undefined);
   const progress = rpc('task.progress', { slotId: SLOTS[runId], runId });
@@ -445,6 +585,55 @@ if (phase === 'setup') {
   );
   evidence('gate-before', { gate: seeded, acceptance: progress.acceptanceStatus, issues });
   console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, runId, issuesRunId }));
+} else if (phase === 'verify-warm-refusal') {
+  const { fixture, port } = readState();
+  await stopFixture();
+  const file = path.join(fixture, 'runs', `${requestRunId}.json`);
+  const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // Setup before starting the isolated gateway. The missing retained session must refuse
+  // the request before any reviewer can start; orchestration also remains disabled.
+  run.readOnly = false;
+  run.status = 'human-gating';
+  writeJson(file, run);
+  startGateway(fixture, port);
+  await waitFor('the fixture gateway starts', () => rpc('fleet.status'), 30000);
+  let refusal;
+  try {
+    rpc('run.resolveDecision', {
+      runId: requestRunId,
+      decisionId: requestDecisionId,
+      actionId: 'request-review',
+      selectionData: {
+        reviewRequest: {
+          runner: 'codex',
+          model: 'gpt-6.1-sol',
+          effort: 'high',
+          mode: 'warm',
+          context: {
+            reviewLineages: [
+              { familyId: requestRunId, reviewId: `pipeline-review-${requestRunId}` },
+            ],
+          },
+        },
+      },
+    });
+  } catch (error) {
+    refusal = String(error.stderr);
+  }
+  assert.match(refusal ?? '', /WARM review refused.*no verified retained session/);
+  const after = rpc('run.get', { runId: requestRunId }).run;
+  assert.equal(
+    after.decisions.find((entry) => entry.id === requestDecisionId).resolvedAt,
+    undefined,
+  );
+  assert.deepEqual(after.reviewRoundAdmissions, run.reviewRoundAdmissions);
+  assert.equal((after.agentContexts ?? []).filter((entry) => entry.role === 'review').length, 0);
+  evidence('warm-refusal', {
+    refusal,
+    unresolved: true,
+    newReviewers: 0,
+    admissionsUnchanged: true,
+  });
 } else if (phase === 'relaunch') {
   // Start from a fresh app process so a screen left open by an earlier attempt cannot take input.
   assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Human-gate WARM requests refuse an unavailable retained session before consuming the gate or admitting a review round.
 - A person's bound claim confirmation settles that claim's evidence-only review findings and preserves review validity during package refresh. Restart recovery collects a newer warm attempt's own result instead of marking it complete from an older lineage result.
 
 - Keep every unarchived failed run in `run.list` Active results, including failures without resources, while preserving released PR execution ownership and settled workflow outcomes.
