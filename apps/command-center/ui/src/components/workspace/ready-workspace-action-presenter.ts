@@ -755,6 +755,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         defaults: this._reviewPicker.context.defaults,
       },
     });
+    this._actionMessage = '';
     this._reviewModalOpen = true;
     this._syncViewStateToHash();
   }
@@ -765,10 +766,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   async _submitReviewRequest() {
-    if (!this._reviewPicker.canInvoke('request-review')) return;
+    if (this._acting || !this._reviewPicker.canInvoke('request-review')) return;
     const reviewRequest = this._reviewPicker.toRequestPayload();
-    this._closeReviewRequestModal();
-    await this._resolve('request-review', { reviewRequest });
+    const applied = await this._resolve('request-review', { reviewRequest });
+    if (applied) this._closeReviewRequestModal();
   }
 
   async _resolve(actionId: string, extraSelectionData: Record<string, unknown> = {}) {
@@ -837,7 +838,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         ? 'Review requested; preparing the reviewer.'
         : readyDecisionSuccessMessage(approving);
       this._actionTone = 'success';
-      return;
+      return true;
     }
     this._acting = false;
     if (!(failure instanceof GatewayRequestTimeoutError)) {

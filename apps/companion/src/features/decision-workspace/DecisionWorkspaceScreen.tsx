@@ -311,6 +311,11 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     const routeFallbackRunId = routeParamString(routeRunId).trim();
     return decisionRunId(decision) ?? (routeFallbackRunId ? routeFallbackRunId : null);
   }, [decision, routeRunId]);
+  const focusGateClaim = (claimId: string) => {
+    if (!sourceRunId || !decision) return;
+    const href = gateReviewHref(sourceRunId, decision.id);
+    router.push({ ...href, params: { ...href.params, ac: claimId } });
+  };
   const decisionWithRunContext = useMemo(
     () => enrichDecisionWithRunContext(decision, sourceRun),
     [decision, sourceRun],
@@ -1884,6 +1889,11 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                     evidenceModel={humanGate.acceptance.evidenceModel}
                     reviewer={humanGate.acceptance.reviewer}
                     busy={!client}
+                    reviewPicker={reviewPicker}
+                    onRequestReview={(reviewRequest) =>
+                      resolveAction('request-review', { reviewRequest })
+                    }
+                    onReviewEvidence={focusGateClaim}
                     onSkip={(claimId, reason) =>
                       gateBlockerAction((gate, runId) => {
                         const model = humanGate.acceptance.evidenceModel;
@@ -1910,6 +1920,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                     }
                   />
                   <GateActions
+                    inlineBlockers
                     run={sourceRun}
                     loading={humanGate.acceptance.loading}
                     decision={decision}
@@ -1951,13 +1962,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                         ? decision.payload.gateReadiness
                         : undefined
                     }
-                    onFocusClaim={(id) =>
-                      sourceRunId &&
-                      router.push({
-                        ...gateReviewHref(sourceRunId, decision.id),
-                        params: { ...gateReviewHref(sourceRunId, decision.id).params, ac: id },
-                      })
-                    }
+                    onFocusClaim={focusGateClaim}
                     attestationReason={attestationReason}
                     onAttestationReason={(text) =>
                       setEvidenceReason({ decisionId: decision.id, text })

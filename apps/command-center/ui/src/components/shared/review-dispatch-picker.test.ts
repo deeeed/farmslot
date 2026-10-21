@@ -228,7 +228,7 @@ test('CC and Companion render runner/model/effort controls only in their shared 
   );
 });
 
-test('a gate row with an unavailable session stays WARM and explains its fresh-session delta', () => {
+test('a gate row with an unavailable session stays visible in WARM and explains its refusal', () => {
   const picker = new ReviewDispatchPicker();
   picker.review = true;
   picker.viewModel = new ReviewDispatchViewModel({
@@ -251,6 +251,7 @@ test('a gate row with an unavailable session stays WARM and explains its fresh-s
   assert.equal(picker.viewModel.rows[0]?.selection.mode, 'warm');
   assert.match(
     rendered,
-    /data-testid="review-dispatch-note">Review changes in a fresh session: the retained reviewer belongs to a different slot/,
+    /data-testid="review-dispatch-note">Cannot resume this review: the retained reviewer belongs to a different slot/,
   );
+  assert.equal(picker.viewModel.canInvoke('request-review'), false);
 });

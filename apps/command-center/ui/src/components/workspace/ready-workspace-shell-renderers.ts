@@ -71,6 +71,7 @@ export function renderReadyTopBar(input: {
       gate: input.decision,
       actions,
       showClaims: input.showClaims,
+      inlineBlockers: input.payload.gateReadiness?.state === 'not-ready',
       feedback: input.feedback,
       loading: input.loading,
       loadError: input.loadError,

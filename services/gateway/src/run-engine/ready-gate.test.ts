@@ -768,7 +768,7 @@ test('a gate plan continues a pipeline lineage by its lineage id, under the row 
       ['failed', undefined],
     ],
   );
-  // Reopening Request Review keeps the lineage WARM and explains its delta fallback.
+  // Reopening Request Review keeps the lineage visible and refuses unavailable WARM.
   const lineageOptions = await reviewLineageOptionsForRun(
     getRun(run.id)!,
     getAllRuns(),
@@ -788,19 +788,24 @@ test('a gate plan continues a pipeline lineage by its lineage id, under the row 
     context: { allowedActions: ['request-review'], lineageOptions, defaults: { runner: 'codex' } },
   });
   assert.equal(picker.rows[0].selection.mode, 'warm');
-  assert.match(picker.rows[0].note ?? '', /fresh session: the reviewId has no verified/);
+  assert.match(
+    picker.rows[0].note ?? '',
+    /Cannot resume this review: the reviewId has no verified/,
+  );
+  assert.throws(() => picker.toRequestPayload(), /Cannot resume this review/);
+  picker.setMode(picker.rows[0].id, 'cold');
   const request = picker.toRequestPayload();
   assert.deepEqual(request.context, {
     reviewLineages: [{ familyId: run.familyId, reviewId: lineageId }],
   });
-  // Executing that WARM request keeps the earlier baseline and findings, on the same row.
+  // Only an explicit COLD choice can launch a new reviewer, on the same lineage row.
   await executePublishGateReviewPlan(run.id, 'slot-1', picker.toSequence(), 'human-gate', {
     ...dependencies,
     reviewSequenceContext: request.context,
   });
   assert.deepEqual(
     [launches.at(-1)?.mode, launches.at(-1)?.reviewId, launches.at(-1)?.artifactScope],
-    ['warm', lineageId, rowId],
+    ['cold', lineageId, rowId],
   );
   assert.deepEqual(
     rows().map((review) => [review.id, review.verdict, review.session?.reviewId]),
