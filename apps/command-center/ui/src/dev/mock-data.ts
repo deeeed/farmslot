@@ -1548,11 +1548,6 @@ export function mockPipelineRuns(): Run[] {
             { id: 'hold', label: 'Hold', style: 'secondary' },
             { id: 'send-feedback', label: 'Send Feedback', style: 'secondary' },
             { id: 'request-review', label: 'Request Review', style: 'secondary' },
-            {
-              id: 'request-external-review',
-              label: 'Request Review',
-              style: 'secondary',
-            },
           ],
           createdAt: new Date(now - 2 * 60000).toISOString(),
           payload: {

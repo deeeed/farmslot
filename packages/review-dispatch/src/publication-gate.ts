@@ -13,6 +13,7 @@ import {
   type DecisionAction,
   evidenceAttestationAvailable,
   type GateDecisionFields,
+  gateDisplayReasons,
   gateWaitReason,
   isPublishApprovalAction,
   isValidEvidenceAttestationReason,
@@ -22,9 +23,11 @@ import {
   type ReadyGatePrPackage,
   type ReviewAttempt,
   type ReviewLineageOption,
+  type ReviewRoundBudget,
   type ReviewStatus,
   type ReviewSummary,
   type Run,
+  type RunExtendReviewBudgetParams,
   type RunGateReadiness,
   SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
@@ -394,6 +397,169 @@ export function visualPrevalidationLabel(
   row?: Pick<EvidenceReviewJudgmentRow, 'prevalidation'>,
 ): string {
   return `Agent review · ${row?.prevalidation ? (row.prevalidation.verdict === 'confirmed' ? 'Looks right' : 'Issue') : 'Not recorded'}`;
+}
+
+/**
+ * How desktop and Companion skip a criterion: the untestable override (ADR-062
+ * Amendment 4) with its required written reason. The protocol action stays
+ * `mark-untestable`.
+ */
+export interface UntestableOverrideView {
+  /** Opens the reason sheet. */
+  action: string;
+  title: string;
+  hint: string;
+  reasonLabel: string;
+  placeholder: string;
+  confirm: string;
+  cancel: string;
+  /** The override needs a written reason. */
+  canConfirm: boolean;
+}
+
+export function untestableOverrideView(claimId: string, reason: string): UntestableOverrideView {
+  return {
+    action: 'Skip this criterion…',
+    title: `Skip ${claimId}`,
+    hint: 'It is recorded as untestable, never as proven. Reviewers see your reason.',
+    reasonLabel: 'Why it cannot be tested',
+    placeholder: 'What blocks a real proof of this criterion',
+    confirm: `Skip ${claimId}`,
+    cancel: 'Cancel',
+    canConfirm: reason.trim().length > 0,
+  };
+}
+
+/** How desktop and Companion grant one more review round (`run.extendReviewBudget`). */
+export interface AnotherReviewRoundView {
+  action: string;
+  title: string;
+  hint: string;
+  reasonLabel: string;
+  placeholder: string;
+  confirm: string;
+  cancel: string;
+  /** The extension needs a written scope for the next round. */
+  canConfirm: boolean;
+}
+
+export function anotherReviewRoundView(
+  budget: Pick<ReviewRoundBudget, 'used' | 'limit'>,
+  brief: string,
+): AnotherReviewRoundView {
+  return {
+    action: 'Give it another round',
+    title: 'Give it another review round',
+    hint: `${budget.used} of ${budget.limit} rounds used. One more lets the agent fix the findings and review again.`,
+    reasonLabel: 'What the next round should check',
+    placeholder: 'For example: the open findings, and nothing else',
+    confirm: 'Give it another round',
+    cancel: 'Cancel',
+    canConfirm: brief.trim().length > 0,
+  };
+}
+
+/**
+ * The `run.extendReviewBudget` request for one more round on this gate. The request id
+ * names the gate and the limit it raises, so a retried press cannot grant two rounds.
+ */
+export function anotherReviewRoundParams(input: {
+  runId: string;
+  decisionId: string;
+  budget: Pick<ReviewRoundBudget, 'limit'>;
+  headSha: string;
+  brief: string;
+}): RunExtendReviewBudgetParams {
+  return {
+    runId: input.runId,
+    requestId: `extend-review-budget:${input.decisionId}:${input.budget.limit}`,
+    expectedLimit: input.budget.limit,
+    limit: input.budget.limit + 1,
+    headSha: input.headSha,
+    scopeBrief: input.brief.trim(),
+  };
+}
+
+export type PublicationBlockerAction =
+  | { kind: 'skip-criterion'; claimId: string; label: string }
+  | { kind: 'accept-findings'; label: string }
+  | { kind: 'another-round'; label: string };
+
+/** One reason the gate cannot publish, with the one plain action that clears it, if any. */
+export interface PublicationBlocker {
+  key: string;
+  message: string;
+  action?: PublicationBlockerAction;
+}
+
+/**
+ * A criterion that blocks publish: its verdict is missing, weak or failed. One that
+ * waits for a person's check has its own Looks right / Issue; a code-review criterion
+ * blocks only when the review failed it.
+ */
+function blocksPublish(claim: AcceptanceClaimRow): boolean {
+  const status = claim.source?.status;
+  if (claim.pending || status?.verdict === 'proven' || status?.verdict === 'untestable')
+    return false;
+  if (status?.verdict === 'awaiting-review') return false;
+  if (status?.proofMode === 'review') return status.verdict === 'failed';
+  return true;
+}
+
+/**
+ * What blocks publish, for the top of the gate on desktop and Companion. A criterion
+ * the gate lets a person skip, open review findings the gate lets them accept, and
+ * spent review rounds each get one action; any other readiness reason is listed as the
+ * gate words it. Presentation only: the gateway still owns every action.
+ */
+export function publicationGateBlockers(input: {
+  view: Pick<PublicationGateView, 'acceptFindings' | 'claims'>;
+  readiness?: RunGateReadiness;
+  gate?: GateDecisionFields | null;
+  resolved?: boolean;
+  /** The criteria the gate lets a person skip: the evidence model's override candidates. */
+  canSkip: (claimId: string) => boolean;
+  budget?: Pick<ReviewRoundBudget, 'remaining' | 'used' | 'limit'>;
+}): PublicationBlocker[] {
+  const readiness = input.readiness;
+  if (input.resolved || !readiness || readiness.state === 'ready') return [];
+  const skippable = input.view.claims.filter(
+    (claim) => blocksPublish(claim) && input.canSkip(claim.id),
+  );
+  const blockers: PublicationBlocker[] = skippable.map((claim) => ({
+    key: `criterion:${claim.id}`,
+    message: `${claim.id} · ${claim.state}: ${claim.text}`,
+    action: {
+      kind: 'skip-criterion',
+      claimId: claim.id,
+      label: untestableOverrideView(claim.id, '').action,
+    },
+  }));
+  const skipped = new Set(skippable.map((claim) => claim.id));
+  const reasons = input.gate ? gateDisplayReasons(input.gate) : readiness.reasons;
+  for (const reason of reasons) {
+    // The criteria rows above say which criteria, and how to clear each one.
+    if (reason.code === 'acceptance-incomplete' && skipped.size) continue;
+    if (reason.reference && skipped.has(reason.reference)) continue;
+    if (blockers.some((blocker) => blocker.message === reason.message)) continue;
+    blockers.push({
+      key: `reason:${reason.code}:${reason.reference ?? blockers.length}`,
+      message: reason.message,
+      ...(reason.code === 'review-fix-required' && input.view.acceptFindings
+        ? { action: { kind: 'accept-findings', label: 'Accept findings and publish…' } }
+        : {}),
+    });
+  }
+  if (input.budget?.remaining === 0)
+    blockers.push({
+      key: 'budget',
+      message: `No review rounds left (${input.budget.used} of ${input.budget.limit} used).`,
+      action: {
+        kind: 'another-round',
+        label: anotherReviewRoundView(input.budget, '').action,
+      },
+    });
+  return blockers;
 }
 
 /** The same evidence-first navigation on desktop and Companion. */

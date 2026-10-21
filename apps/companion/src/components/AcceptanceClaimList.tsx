@@ -36,12 +36,15 @@ function ClaimState({
       accessibilityLabel={[claim.state, claim.detail].filter(Boolean).join('. ')}
       style={{
         opacity,
+        // A status, not a control: a tinted pill with no outline.
         color: palette[claim.tone],
         backgroundColor: palette[`${claim.tone}Surface`],
-        borderColor: palette[claim.tone],
-        borderWidth: 1,
-        borderRadius: 6,
-        padding: 6,
+        borderRadius: 999,
+        overflow: 'hidden',
+        paddingHorizontal: 10,
+        paddingVertical: 2,
+        fontWeight: '600',
+        alignSelf: 'flex-start',
       }}
     >
       {claim.state}

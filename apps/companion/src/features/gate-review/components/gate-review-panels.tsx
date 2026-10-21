@@ -168,6 +168,8 @@ export function GateActions({
   loading = false,
   disabled = false,
   reviewDisabled = false,
+  acceptingFindings,
+  onAcceptFindings,
 }: {
   run?: Run | null;
   showClaims?: boolean;
@@ -192,6 +194,9 @@ export function GateActions({
   actions: GateReviewAction[];
   sendingActionId: string | null;
   onResolve: (action: GateReviewAction, selectionData?: Record<string, unknown>) => void;
+  /** Set by a host that starts accepting the findings elsewhere (the blocker list). */
+  acceptingFindings?: boolean;
+  onAcceptFindings?: () => void;
 }) {
   const appearance = useColorScheme();
   const viewport = useWindowDimensions();
@@ -221,7 +226,7 @@ export function GateActions({
       decision.payload?.kind === 'ready' ? decision.payload.gateSummary?.review : undefined,
     attestationReason,
     attesting: attestingDecisionId === decision.id,
-    acceptingFindings: acceptingDecisionId === decision.id,
+    acceptingFindings: acceptingFindings ?? acceptingDecisionId === decision.id,
   });
   const accepting = view.approval?.id === view.acceptFindings?.id && Boolean(view.acceptFindings);
   const declaredRows = publicationGateCriteria(
@@ -434,7 +439,9 @@ export function GateActions({
                 accessibilityHint={view.acceptFindings.description}
                 testID="companion-gate-review-accept-findings"
                 style={gateStyles.button}
-                onPress={() => setAcceptingDecisionId(decision.id)}
+                onPress={() =>
+                  onAcceptFindings ? onAcceptFindings() : setAcceptingDecisionId(decision.id)
+                }
               >
                 <Text style={{ color: palette.text }}>{view.acceptFindings.label}</Text>
               </Pressable>

@@ -45,7 +45,8 @@ export const runPipelineStyles = css`
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .pipeline-svg {

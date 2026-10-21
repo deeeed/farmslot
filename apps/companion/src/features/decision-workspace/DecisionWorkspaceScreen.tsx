@@ -28,6 +28,7 @@ import {
   reviewChainForRun,
   reviewRoundBudgetLabel,
   type Run,
+  type RunDecision,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
   type RuntimePosturePreviewResult,
@@ -87,6 +88,7 @@ import {
 import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
+import { requestAnotherReviewRound } from '../../lib/review-budget';
 import {
   canResolveWithPostureChoice,
   initialRunPostureGateState,
@@ -134,6 +136,7 @@ import {
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
 import { GateActions, GateReviewEntryCard } from '../gate-review/components/gate-review-panels';
+import { GateBlockers } from '../gate-review/components/GateBlockers';
 import { GateReviewSkeleton } from '../gate-review/components/GateReviewSkeleton';
 import { PlanningChoices } from '../planning/PlanningControls';
 import { ReviewDispatchPicker } from '../review-dispatch/ReviewDispatchPicker';
@@ -353,6 +356,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const runPosture = runPostureStatus.state?.posture;
   // The gate review's publish guard applies here too: this tab sends the same actions.
   const humanGate = useHumanGateGuard(client, sourceRun, decision);
+  const [acceptingGateId, setAcceptingGateId] = useState<string | null>(null);
   const supersedingResultId = supersedingResultDecisionId(decision, sourceRun);
   useEffect(() => {
     if (supersedingResultId) router.setParams({ decisionId: supersedingResultId });
@@ -657,6 +661,19 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       refreshDecision();
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
+    }
+  };
+  /** The gate's blocker actions: skip a criterion, or give it one more review round. */
+  const gateBlockerAction = async (
+    send: (gate: RunDecision, runId: string) => Promise<unknown>,
+  ) => {
+    if (!client || !sourceRun || !decision) return;
+    try {
+      await send(decision, sourceRun.id);
+      refreshDecision();
+      await refreshSourceRun('gate blocker action');
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
     }
   };
   const resolveAction = useCallback(
@@ -1859,57 +1876,97 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           ) : (
             <>
               {humanGate ? (
-                <GateActions
-                  run={sourceRun}
-                  loading={humanGate.acceptance.loading}
-                  decision={decision}
-                  actions={humanGate.actions.map((action) =>
-                    action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
-                    !decisionWithRunContext?.runMeta
-                      ? { ...action, disabledReason: 'Run context is unavailable.' }
-                      : action,
-                  )}
-                  disabled={!client}
-                  reviewDisabled={reviewBudget?.remaining === 0}
-                  sendingActionId={null}
-                  reviewPicker={reviewPicker}
-                  claims={humanGate.acceptance.evidenceModel?.claims}
-                  judgmentRows={humanGate.acceptance.evidenceModel?.judgmentRows(
-                    humanGate.acceptance.reviewer,
-                  )}
-                  onRecordVisualReview={humanGate.acceptance.recordVisualReview}
-                  onRefreshPackage={() => {
-                    if (!client || !sourceRunId) return;
-                    void client
-                      .request('run.refreshPublishPackage', {
-                        runId: sourceRunId,
-                        decisionId: decision.id,
+                <>
+                  <GateBlockers
+                    run={sourceRun}
+                    decision={decision}
+                    actions={humanGate.actions}
+                    evidenceModel={humanGate.acceptance.evidenceModel}
+                    reviewer={humanGate.acceptance.reviewer}
+                    busy={!client}
+                    onSkip={(claimId, reason) =>
+                      gateBlockerAction((gate, runId) => {
+                        const model = humanGate.acceptance.evidenceModel;
+                        if (!client || !model) throw new Error('The gate evidence is unavailable.');
+                        return requestClaimUntestableOverride(
+                          client,
+                          runId,
+                          gate,
+                          model,
+                          claimId,
+                          reason,
+                        );
                       })
-                      .then(() => {
-                        refreshDecision();
-                        return refreshSourceRun('package refresh');
+                    }
+                    acceptingFindings={acceptingGateId === decision.id}
+                    onAcceptFindingsChange={(accepting) =>
+                      setAcceptingGateId(accepting ? decision.id : null)
+                    }
+                    onAnotherRound={(brief) =>
+                      gateBlockerAction((gate, runId) => {
+                        if (!client) throw new Error('Not connected to the gateway.');
+                        return requestAnotherReviewRound(client, runId, gate, brief);
                       })
-                      .catch((failure) =>
-                        setError(failure instanceof Error ? failure.message : String(failure)),
-                      );
-                  }}
-                  pendingVisualClaimIds={humanGate.acceptance.evidenceModel?.pendingVisualClaimIds}
-                  readiness={
-                    decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined
-                  }
-                  onFocusClaim={(id) =>
-                    sourceRunId &&
-                    router.push({
-                      ...gateReviewHref(sourceRunId, decision.id),
-                      params: { ...gateReviewHref(sourceRunId, decision.id).params, ac: id },
-                    })
-                  }
-                  attestationReason={attestationReason}
-                  onAttestationReason={(text) =>
-                    setEvidenceReason({ decisionId: decision.id, text })
-                  }
-                  onResolve={(action, selection) => resolveAction(action.id, selection)}
-                />
+                    }
+                  />
+                  <GateActions
+                    run={sourceRun}
+                    loading={humanGate.acceptance.loading}
+                    decision={decision}
+                    actions={humanGate.actions.map((action) =>
+                      action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+                      !decisionWithRunContext?.runMeta
+                        ? { ...action, disabledReason: 'Run context is unavailable.' }
+                        : action,
+                    )}
+                    disabled={!client}
+                    reviewDisabled={reviewBudget?.remaining === 0}
+                    sendingActionId={null}
+                    reviewPicker={reviewPicker}
+                    claims={humanGate.acceptance.evidenceModel?.claims}
+                    judgmentRows={humanGate.acceptance.evidenceModel?.judgmentRows(
+                      humanGate.acceptance.reviewer,
+                    )}
+                    onRecordVisualReview={humanGate.acceptance.recordVisualReview}
+                    onRefreshPackage={() => {
+                      if (!client || !sourceRunId) return;
+                      void client
+                        .request('run.refreshPublishPackage', {
+                          runId: sourceRunId,
+                          decisionId: decision.id,
+                        })
+                        .then(() => {
+                          refreshDecision();
+                          return refreshSourceRun('package refresh');
+                        })
+                        .catch((failure) =>
+                          setError(failure instanceof Error ? failure.message : String(failure)),
+                        );
+                    }}
+                    pendingVisualClaimIds={
+                      humanGate.acceptance.evidenceModel?.pendingVisualClaimIds
+                    }
+                    readiness={
+                      decision.payload?.kind === 'ready'
+                        ? decision.payload.gateReadiness
+                        : undefined
+                    }
+                    onFocusClaim={(id) =>
+                      sourceRunId &&
+                      router.push({
+                        ...gateReviewHref(sourceRunId, decision.id),
+                        params: { ...gateReviewHref(sourceRunId, decision.id).params, ac: id },
+                      })
+                    }
+                    attestationReason={attestationReason}
+                    onAttestationReason={(text) =>
+                      setEvidenceReason({ decisionId: decision.id, text })
+                    }
+                    onResolve={(action, selection) => resolveAction(action.id, selection)}
+                    acceptingFindings={acceptingGateId === decision.id}
+                    onAcceptFindings={() => setAcceptingGateId(decision.id)}
+                  />
+                </>
               ) : decision.payload?.kind === 'result-decision' ? (
                 <ResultDecisionPanel
                   view={resultDecisionView({ id: decision.id, payload: decision.payload })}

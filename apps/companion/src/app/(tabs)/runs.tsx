@@ -233,15 +233,7 @@ function RunCard({
             <Text style={baseStyles.textMuted}>{formatDuration(run.metrics.durationMs)}</Text>
           )}
         </View>
-        {(run.steps ?? []).length > 0 && (
-          <RunPipelineMini
-            steps={run.steps}
-            runStatus={run.status}
-            waitingForOperator={run.waitingForOperator}
-            error={run.error}
-            decisions={run.decisions}
-          />
-        )}
+        {(run.steps ?? []).length > 0 && <RunPipelineMini run={run} />}
         {primaryVisualPair ? (
           <View style={styles.runComparePreview}>
             <BeforeAfterPreview

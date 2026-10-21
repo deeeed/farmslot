@@ -1,13 +1,15 @@
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 import { publicationGatePanelStyles } from './publication-gate-panel.js';
+import { readyBlockersStyles } from './ready-workspace-blockers.js';
 import { readyWorkspaceReviewModalStyles } from './ready-workspace-review-modal-styles.js';
 
 export function readyWorkspaceLightStyles(): string {
   return `
       ${publicationGatePanelStyles()}
+      ${readyBlockersStyles()}
       ready-workspace {
-        display: flex; flex-direction: column; height: 100%;
+        display: flex; flex-direction: column; height: 100%; overflow: auto;
         font-family: ${fonts.mono}; font-size: ${fonts.sizeSm};
         color: ${colors.textPrimary}; background: ${colors.bgBase};
       }

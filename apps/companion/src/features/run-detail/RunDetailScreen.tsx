@@ -29,6 +29,7 @@ import {
 import {
   humanGateBlockingReason,
   pendingOutputReview,
+  runActivityView,
   runResultsSummary,
 } from '@farmslot/review-dispatch';
 
@@ -678,7 +679,7 @@ export default function RunDetailScreen() {
             </View>
             <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>
               <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1}>
-                {lifecycle.activityLabel ?? lifecycle.label}
+                {runActivityView(run)?.label ?? lifecycle.activityLabel ?? lifecycle.label}
               </Text>
             </View>
           </View>
@@ -1171,9 +1172,7 @@ export default function RunDetailScreen() {
             />
             {(run.steps ?? []).length > 0 && (
               <RunPipelineFull
-                steps={run.steps}
-                runStatus={run.status}
-                decisions={run.decisions}
+                run={run}
                 onStepPress={(_name, i) =>
                   setExpandedStep((current) => {
                     const key = `${run.steps[i].name}-${i}`;
