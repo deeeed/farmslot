@@ -28,6 +28,7 @@ import {
   reviewRetryCapReason,
   reviewRetryCount,
   type ReviewSelection,
+  type ReviewSessionTrace,
   type ReviewStatus,
   type Run,
   type RunDecision,
@@ -43,6 +44,7 @@ import {
 import { getProjectField, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { shellQuote } from '../core/tmux.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import {
   invalidateArtifactTextCache,
@@ -55,6 +57,7 @@ import {
   inferReviewSourceKind,
   REQUESTED_REVIEW_SOURCE,
   REVIEW_SOURCES,
+  reviewSourceKindForId,
 } from '../quality/review-sources.js';
 import {
   type ReviewFixSignalReader,
@@ -62,6 +65,7 @@ import {
 } from '../review/fix-settlement.js';
 import {
   executeReview as executeReviewDefault,
+  reReviewMode,
   type ReviewResult,
 } from '../review/orchestrator.js';
 import {
@@ -69,7 +73,13 @@ import {
   reviewNoVerdictCapReason,
 } from '../review/review-round-budget.js';
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
-import { reviewPRIdentity } from '../review/session-mode.js';
+import {
+  assertLineageBelongsToRun,
+  latestReviewOfLineage,
+  reReviewOfStatus,
+  reviewLineageId,
+  WarmReviewRefusal,
+} from '../review/session-mode.js';
 import { removeSlotFiles } from '../review/snapshots.js';
 import { resolveWorkerTaskDir } from '../review/templates.js';
 import { isTerminalReviewArtifactError } from '../review/terminal-result.js';
@@ -86,7 +96,7 @@ import {
   readyGateCurrentDescription,
 } from '../run-completion/ready-gate-package.js';
 import { runnerDefaultModel } from '../runners/registry.js';
-import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
@@ -147,6 +157,7 @@ import {
 import {
   humanGateReviewPolicy,
   MAX_PUBLISH_GATE_REVIEW_LOOPS,
+  reviewLineageOptionsForRun,
   reviewPlanFromSelection,
 } from './review-plan.js';
 import { runSupersededSince } from './run-generation.js';
@@ -200,7 +211,7 @@ function reviewResultFromInterruptedReview(review: ReviewStatus): ReviewResult {
   return {
     verdict: 'issues',
     mode: review.mode,
-    reviewId: review.id,
+    reviewId: reviewLineageId(review),
     reviewerSessionId: review.reviewerSessionId ?? undefined,
     session: review.session,
     issues: review.issues ?? [],
@@ -256,6 +267,7 @@ async function resumeInterruptedPublicationReviewOnce(
 
   const executeReview = dependencies.executeReview ?? executeReviewDefault;
   let result: ReviewResult;
+  const resumeFromResult = reviewResultFromInterruptedReview(interrupted);
   try {
     result = await executeReview(runId, slotId, {
       reviewRunner: interrupted.runner ?? null,
@@ -264,12 +276,11 @@ async function resumeInterruptedPublicationReviewOnce(
       // Reviews recorded before depth existed ran the live contract; resume them as recorded.
       validationDepth: interrupted.validationDepth ?? 'full-live',
       artifactScope: interrupted.id,
-      reviewId: interrupted.id,
-      // Continue the recorded mode. A cold unpublished review has no PR-bound
-      // warm lineage, but its findings still need delivery and a cold recheck.
-      mode: interrupted.mode ?? 'cold',
+      reviewId: reviewLineageId(interrupted),
+      // ADR-063 Amendment 5: the fix's re-review continues this review's lineage WARM.
+      mode: reReviewMode(resumeFromResult, 'cold'),
       publicationReview: true,
-      resumeFromResult: reviewResultFromInterruptedReview(interrupted),
+      resumeFromResult,
     });
   } catch (error) {
     if (isTerminalReviewArtifactError(error)) throw error;
@@ -360,8 +371,8 @@ async function resumeVisualRepairOnce(
       effort: review.effort ?? null,
       validationDepth: review.validationDepth ?? 'full-live',
       artifactScope: review.id,
-      reviewId: review.id,
-      mode: review.mode ?? 'cold',
+      reviewId: reviewLineageId(review),
+      mode: reReviewMode(reviewResultFromInterruptedReview(review), 'cold'),
       publicationReview: true,
       resumeFromResult: {
         ...reviewResultFromInterruptedReview(review),
@@ -525,15 +536,15 @@ export async function executePublishGateReviewPlan(
     dependencies.reviewSequenceContext ??
     getRun(runId)?.engineState?.publishGate?.reviewSequenceContext;
   if (reviewSequenceContext) parseReviewRequestContext(reviewSequenceContext, boundedPlan.length);
+  const automaticLaunch = dependencies.automaticLaunch ?? source !== 'human-gate';
   for (const planStep of boundedPlan) {
     const launchSnapshot = getRun(runId)!;
     try {
       await assertReviewRoundAvailable(launchSnapshot);
       // Only an operator request launches past the no-verdict cap.
-      const capReason =
-        (dependencies.automaticLaunch ?? source !== 'human-gate')
-          ? await reviewNoVerdictCapReason(launchSnapshot)
-          : undefined;
+      const capReason = automaticLaunch
+        ? await reviewNoVerdictCapReason(launchSnapshot)
+        : undefined;
       if (capReason)
         throw new GatewayMethodError(
           PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,
@@ -553,31 +564,26 @@ export async function executePublishGateReviewPlan(
     // ID + artifact paths flow through REQUESTED_REVIEW_SOURCE so this stream stays
     // namespace-isolated from the worker's review attempts (review-sources.ts).
     const continuation = reviewSequenceContext?.reviewLineages[boundedPlan.indexOf(planStep)];
-    const reviewIdentity = reviewPRIdentity(latestBeforeReview);
-    if (
-      planStep.mode === 'warm' &&
-      continuation &&
-      (!reviewIdentity ||
-        continuation.repository.toLowerCase() !== reviewIdentity.repository.toLowerCase() ||
-        continuation.prNumber !== reviewIdentity.prNumber)
-    )
-      throw new Error(
-        'WARM review unavailable: the lineage context belongs to a different repository/PR',
-      );
+    if (continuation) assertLineageBelongsToRun(continuation, latestBeforeReview);
     if (planStep.mode === 'warm' && !continuation?.reviewId)
       throw new Error(
         'WARM review unavailable: this request row has no reviewId lineage context. Choose a previous review or COLD.',
       );
+    // ADR-063 Amendment 5: a re-review stays in its lineage, WARM or a person's COLD. The
+    // lineage names the reviewer session; the row id names the gate row and its artifacts.
+    const lineageId = continuation?.reviewId;
+    const gateReviews = latestBeforeReview.engineState?.publishGate?.reviews ?? [];
+    const priorReview = lineageId ? latestReviewOfLineage(gateReviews, lineageId) : undefined;
     const reviewId =
-      planStep.mode === 'warm'
-        ? continuation!.reviewId
-        : REQUESTED_REVIEW_SOURCE.artifactRefs(
-            (latestBeforeReview.engineState?.publishGate?.reviews ?? []).length + 1,
-            `${runId}-${randomUUID()}`,
-          ).id;
-    const priorReview = latestBeforeReview.engineState?.publishGate?.reviews?.find(
-      (review) => review.id === reviewId,
-    );
+      priorReview?.id ??
+      (lineageId && reviewSourceKindForId(lineageId)
+        ? lineageId
+        : REQUESTED_REVIEW_SOURCE.artifactRefs(gateReviews.length + 1, `${runId}-${randomUUID()}`)
+            .id);
+    // ADR-063 Amendment 5: an automatic re-review never stops on an unavailable session;
+    // a person's WARM request still sees the refusal.
+    const rereview =
+      automaticLaunch && planStep.mode === 'warm' ? reReviewOfStatus(priorReview) : undefined;
     const execution = executionModelFromSelection(planStep);
     const requestedRunner = execution.runner;
     updateRunStep(runId, S.HUMAN_GATE, {
@@ -595,10 +601,11 @@ export async function executePublishGateReviewPlan(
         effort: execution.effort,
         validationDepth,
         artifactScope: reviewId,
-        reviewId,
-        priorAttempts: planStep.mode === 'warm' ? priorReview?.attempts : undefined,
+        reviewId: lineageId ?? reviewId,
+        priorAttempts: priorReview?.attempts,
         publicationReview: true,
         mode: planStep.mode,
+        ...(rereview ? { rereview } : {}),
         // Configured review steps are true review loops: findings are fed back
         // to the original worker, the worker fixes them, then the same reviewer
         // re-reviews before the next configured reviewer starts.
@@ -615,9 +622,20 @@ export async function executePublishGateReviewPlan(
       console.warn(
         `[run-engine] run ${runId.slice(0, 8)} — ${source} review ${reviewId} unavailable: ${message}`,
       );
+      // No session ran for this request. The row still names its lineage, and its earlier
+      // attempts keep the lineage's validated result, so a later request can continue it.
+      const session: ReviewSessionTrace | undefined = lineageId
+        ? {
+            mode: planStep.mode,
+            continuity: 'refused',
+            reviewId: lineageId,
+            ...(err instanceof WarmReviewRefusal ? { refusalReason: err.reason } : {}),
+          }
+        : undefined;
       reviewResult = {
         mode: planStep.mode,
-        reviewId,
+        reviewId: lineageId ?? reviewId,
+        ...(session ? { session } : {}),
         runner: requestedRunner,
         model: planStep.model ?? undefined,
         effort: planStep.effort,
@@ -626,9 +644,11 @@ export async function executePublishGateReviewPlan(
         retryCount: 0,
         validationDepth,
         attempts: [
+          ...(priorReview?.attempts ?? []),
           {
-            loopNumber: 1,
+            loopNumber: (priorReview?.attempts?.at(-1)?.loopNumber ?? 0) + 1,
             mode: planStep.mode,
+            ...(session ? { session } : {}),
             verdict: 'failed',
             unresolvedCount: 0,
             reason: `review-unavailable: ${message}`,
@@ -1325,6 +1345,23 @@ export async function executeReadyGate(
     ? await currentDescriptionForGate(current, preparedPackage)
     : undefined;
 
+  // ADR-063 Amendment 5: Request Review preselects the lineages it can continue.
+  const reviewLineageOptions = await reviewLineageOptionsForRun(
+    getRun(runId)!,
+    getAllRuns(),
+    preparedPackage?.headSha ?? headSha,
+    async (ancestor, head) => {
+      if (!current.slotId) throw new Error('the run has no slot to compare the reviewed head on');
+      const vars = await loadSlotVars(current.slotId);
+      const result = await execOnSlot(
+        vars,
+        `git merge-base --is-ancestor ${shellQuote(ancestor)} ${shellQuote(head)}`,
+        { timeout: 10_000 },
+      );
+      return result.exitCode === 0;
+    },
+  );
+
   // Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost).
   // Soft branch-freshness fields live on the typed ReadyGatePayload only
   // (not mirrored into the untyped gate-summary extras bag).
@@ -1360,6 +1397,7 @@ export async function executeReadyGate(
       reviewSummary,
       workerLearnings,
       reviewLaunchRejection,
+      reviewLineageOptions,
       ciChecks,
       acceptanceCriteria,
       acceptanceStatus,

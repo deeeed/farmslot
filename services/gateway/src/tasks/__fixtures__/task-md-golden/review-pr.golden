@@ -65,7 +65,7 @@ Read `.sandbox/farmslot-farm/agent/recipe-quality.md` before writing any recipe.
 ## Diff scope
 
 Apply this rule in every self-review, review and review-pr, including paired reviews. Compare every changed file in the whole current contribution against the frozen ticket description and acceptance criteria. Each file must serve an AC or a required test for it.
-Warm reviews keep correctness checks on their saved delta, but still inventory the whole current contribution for scope. Earlier approval does not authorize extra files. Preserve explicit ticket authorizations; do not infer authorization from a previous reviewer, a passing test or a helpful change.
+Warm reviews keep correctness checks on their saved delta, and so does the delta-scoped cold review that runs when a warm reviewer session can't continue; both still inventory the whole current contribution for scope. Earlier approval does not authorize extra files. Preserve explicit ticket authorizations; do not infer authorization from a previous reviewer, a passing test or a helpful change.
 
 BLOCKER unless the ticket explicitly authorizes the change:
 - CI/workflow.

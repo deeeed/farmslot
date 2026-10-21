@@ -8,10 +8,17 @@ import type {
 
 import type { ReviewDispatchSequenceRole } from './types.js';
 
-/** Only retained exact-PR session/head evidence can seed WARM context. */
+/** A lineage is keyed by its PR once there is one, else by its run family, plus `reviewId`. */
+export function reviewLineageKey(context: ReviewContinuationContext): string {
+  return context.repository
+    ? `${context.repository.toLowerCase()}#${context.prNumber}::${context.reviewId}`
+    : `${context.familyId}::${context.reviewId}`;
+}
+
+/** Only retained session/head evidence can seed WARM context; a PR is recorded once present. */
 export function reviewLineagesForRun(
   run:
-    | Pick<Run, 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'>
+    | Pick<Run, 'familyId' | 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'>
     | null
     | undefined,
 ): ReviewContinuationContext[] {
@@ -20,26 +27,25 @@ export function reviewLineagesForRun(
   const add = (trace: ReviewSessionTrace | undefined) => {
     if (
       !trace?.reviewId ||
-      !trace.repository ||
-      !trace.prNumber ||
       !trace.sessionId ||
       !trace.lastReviewedHeadSha ||
       !['fresh', 'resumed'].includes(trace.continuity)
     )
       return;
-    const context = {
-      repository: trace.repository,
-      prNumber: trace.prNumber,
+    // A lineage names its PR once there is one; before that, its run family.
+    const context: ReviewContinuationContext = {
+      ...(trace.repository && trace.prNumber
+        ? { repository: trace.repository, prNumber: trace.prNumber }
+        : { familyId: run.familyId }),
       reviewId: trace.reviewId,
     };
-    lineages.set(
-      `${context.repository.toLowerCase()}#${context.prNumber}:${context.reviewId}`,
-      context,
-    );
+    lineages.set(reviewLineageKey(context), context);
   };
   add(run.reviewResult?.session);
   add(run.repeatReviewContext?.session);
-  for (const review of run.engineState?.publishGate?.reviews ?? []) add(review.session);
+  // A refused request's row runs no session; its earlier attempts keep the lineage's.
+  for (const review of run.engineState?.publishGate?.reviews ?? [])
+    for (const result of [...(review.attempts ?? []), review]) add(result.session);
   for (const decision of run.decisions) {
     if (decision.payload?.kind === 'review') add(decision.payload.session);
     if (decision.payload?.kind === 'ready')
@@ -66,15 +72,16 @@ export function assertWarmReviewContext(
 ): void {
   const used = new Set<string>();
   sequence.forEach((selection, index) => {
-    if (selection.mode !== 'warm') return;
     const lineage = context?.reviewLineages[index];
-    if (!lineage)
+    if (selection.mode === 'warm' && !lineage)
       throw new Error(
-        `WARM review row ${index + 1} requires an unambiguous repository/PR and reviewId lineage. Choose COLD or open a specific review recheck.`,
+        `WARM review row ${index + 1} requires an unambiguous run family or repository/PR and reviewId lineage. Choose COLD or open a specific review recheck.`,
       );
-    const key = `${lineage.repository.toLowerCase()}#${lineage.prNumber}:${lineage.reviewId}`;
+    // A COLD row may continue a lineage too; no two counted rows share one.
+    if (!lineage) return;
+    const key = reviewLineageKey(lineage);
     if (sequenceRole === 'reviews' && used.has(key))
-      throw new Error('A WARM sequence cannot count the same review lineage twice');
+      throw new Error('A review sequence cannot count the same review lineage twice');
     used.add(key);
   });
 }
@@ -88,14 +95,15 @@ export function reviewLineagesForPR(
   const lineages = new Map<string, ReviewContinuationContext>();
   for (const run of runs)
     for (const context of reviewLineagesForRun(run)) {
-      const capturedRepository = context.repository.toLowerCase();
+      const capturedRepository = context.repository?.toLowerCase();
       if (
+        !capturedRepository ||
         context.prNumber !== pr.number ||
         (capturedRepository !== qualified &&
           !(pr.host.toLowerCase() === 'github.com' && capturedRepository === repository))
       )
         continue;
-      lineages.set(`${capturedRepository}#${context.prNumber}:${context.reviewId}`, context);
+      lineages.set(reviewLineageKey(context), context);
     }
   return [...lineages.values()];
 }

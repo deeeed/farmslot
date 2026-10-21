@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot run gate --action request-review` continues the runner's latest available review WARM unless `--review-mode cold` is given, and `farmslot run gate` shows why a review ran a delta-scoped COLD and the ranges it compared.
 - `farmslot run gate <runId> --action approve-publish-unresolved --reason <text>` accepts a gate's open review findings and publishes; `run gate` lists those findings. A missing `--reason` is refused before the request.
 - `farmslot run extend-review-budget` prints the reviewer attempts that ended without a verdict next to the review rounds once there is one.
 

@@ -89,11 +89,9 @@ test('complete replay repairs an unbound warm row from its original pair and cur
   assert.match(fallback?.note ?? '', /Using COLD/);
 });
 
-test('active fix recovery binds verified warm lineage, otherwise records a cold fallback', (t) => {
-  resetWarmReviewerSessionsForTest();
-  t.after(resetWarmReviewerSessionsForTest);
+test('active fix recovery continues its lineage WARM before a PR, never a full-diff COLD', () => {
   const run = makeRun({
-    ticketOrPr: 'example/recovery#42',
+    ticketOrPr: 'PROJ-RECOVERY',
     engineState: {
       publishGate: {
         reviews: [
@@ -128,11 +126,79 @@ test('active fix recovery binds verified warm lineage, otherwise records a cold 
       runnerSessionId: 'retained-session',
     },
   ];
+  // No retained session is registered: an unavailable one runs the delta fallback at launch.
+  const recovered = recoveryReviewPlanForActiveFix(run);
+  assert.deepEqual(recovered, {
+    sequence: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'warm' }],
+    context: { reviewLineages: [{ reviewId: 'lineage', familyId: 'family-1' }] },
+  });
+  assert.deepEqual(
+    recoveryReviewPlanForActiveFix({ ...run, ticketOrPr: 'example/recovery#42' })?.context,
+    {
+      reviewLineages: [{ repository: 'example/recovery', prNumber: 42, reviewId: 'lineage' }],
+    },
+  );
+  // A review without a recorded reviewed head has no lineage to continue: a first pass.
+  delete run.engineState!.publishGate!.reviews![0].reviewedHeadSha;
   assert.equal(recoveryReviewPlanForActiveFix(run)?.sequence[0].mode, 'cold');
-  assert.match(recoveryReviewPlanForActiveFix(run)?.note ?? '', /Using COLD/);
+  assert.match(recoveryReviewPlanForActiveFix(run)?.note ?? '', /first-pass COLD/);
+  run.engineState!.publishGate!.reviews![0].verdict = 'pass';
+  assert.equal(
+    recoveryReviewPlanForActiveFix(run),
+    undefined,
+    'a stale active fix cannot replace remaining reviewers after PASS',
+  );
+});
+
+test('gate lineage options mark which earlier reviews can continue WARM on this run', async (t) => {
+  const { reviewLineageOptionsForRun } = await import('./review-plan.js');
+  resetWarmReviewerSessionsForTest();
+  t.after(resetWarmReviewerSessionsForTest);
+  const run = makeRun({
+    ticketOrPr: 'PROJ-GATE',
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            // A pipeline row wraps its lineage in its own id; the option names the lineage.
+            ...passing('pipeline-review-lineage', 'retained-session'),
+            completedAt: '2026-10-20T01:00:00Z',
+            session: {
+              mode: 'cold',
+              continuity: 'fresh',
+              reviewId: 'lineage',
+              sessionId: 'retained-session',
+              lastReviewedHeadSha: 'head',
+            },
+          },
+          // Never validated: no lineage to continue.
+          { ...passing('failed-review', 'failed-session'), verdict: 'failed' },
+        ],
+      },
+    },
+  });
+  const compared: string[] = [];
+  const descends = async (ancestor: string, head: string) => {
+    compared.push(`${ancestor}..${head}`);
+    return head === 'descendant';
+  };
+  const expected = {
+    context: { reviewId: 'lineage', familyId: 'family-1' },
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    reviewedAt: '2026-10-20T01:00:00Z',
+  };
+  assert.deepEqual(await reviewLineageOptionsForRun(run, [run], 'head', descends), [
+    {
+      ...expected,
+      unavailableReason: 'the reviewId has no verified retained session and reviewed head',
+    },
+  ]);
   registerWarmReviewerSession({
     runId: run.id,
     reviewId: 'lineage',
+    familyId: run.familyId,
     project: run.project,
     ownerPrincipalId: null,
     transport: 'tmux',
@@ -141,8 +207,6 @@ test('active fix recovery binds verified warm lineage, otherwise records a cold 
     runner: 'codex',
     model: 'gpt-6-astra',
     effort: 'high',
-    repository: 'example/recovery',
-    prNumber: 42,
     contextId: 'reviewer',
     windowName: 'reviewer',
     slotId: 'slot-1',
@@ -151,16 +215,21 @@ test('active fix recovery binds verified warm lineage, otherwise records a cold 
     lastLoopNumber: 1,
     lastReviewedHeadSha: 'head',
   });
-  const recovered = recoveryReviewPlanForActiveFix(run);
-  assert.equal(recovered?.sequence[0].mode, 'warm');
-  assert.deepEqual(recovered?.context, {
-    reviewLineages: [{ repository: 'example/recovery', prNumber: 42, reviewId: 'lineage' }],
-  });
-  run.engineState!.publishGate!.reviews![0].verdict = 'pass';
-  assert.equal(
-    recoveryReviewPlanForActiveFix(run),
-    undefined,
-    'a stale active fix cannot replace remaining reviewers after PASS',
+  assert.deepEqual(await reviewLineageOptionsForRun(run, [run], 'head', descends), [expected]);
+  assert.deepEqual(await reviewLineageOptionsForRun(run, [run], 'descendant', descends), [
+    expected,
+  ]);
+  assert.deepEqual(await reviewLineageOptionsForRun(run, [run], 'rebased', descends), [
+    {
+      ...expected,
+      unavailableReason: 'the current head no longer descends from the last reviewed head',
+    },
+  ]);
+  assert.deepEqual(compared, ['head..descendant', 'head..rebased']);
+  // A run rebound to another slot can't continue its reviewer: launch refuses it, so does the gate.
+  assert.deepEqual(
+    await reviewLineageOptionsForRun({ ...run, slotId: 'slot-2' }, [run], 'head', descends),
+    [{ ...expected, unavailableReason: 'the retained reviewer belongs to a different slot' }],
   );
 });
 
@@ -474,8 +543,14 @@ test('WARM preflight continues a tmux reviewer only for its creator generation',
     ];
     return run;
   };
+  // A tmux reviewer continues only on its own slot.
   const current = (generation?: number) => ({
-    ...makeRun({ id: 'current', project: 'project', ticketOrPr: 'owner/repo#42' }),
+    ...makeRun({
+      id: 'current',
+      project: 'project',
+      ticketOrPr: 'owner/repo#42',
+      slotId: 'slot-a',
+    }),
     createdByPrincipalId: 'owner',
     createdByPrincipalGeneration: generation,
   });

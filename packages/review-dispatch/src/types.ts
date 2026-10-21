@@ -1,5 +1,6 @@
 import type {
   ReviewContinuationContext,
+  ReviewLineageOption,
   ReviewMode,
   ReviewRequestContext,
   ReviewSelection,
@@ -56,6 +57,11 @@ export interface ReviewDispatchContext extends ReviewValidationOptions {
   /** Caller-supplied reviewed lineages. They never derive from the selected runner. */
   reviewLineages?: readonly ReviewContinuationContext[];
   reviewContext?: ReviewRequestContext;
+  /**
+   * A gate's continuable lineages (ADR-063 Amendment 5). Each row preselects its runner's
+   * most recent lineage that no earlier row of that runner took.
+   */
+  lineageOptions?: readonly ReviewLineageOption[];
 }
 export interface ReviewDispatchViewModelOptions {
   context: ReviewDispatchContext;
@@ -66,6 +72,8 @@ export interface ReviewDispatchRow {
   id: number;
   selection: Readonly<ReviewSelection>;
   context: Readonly<ReviewContinuationContext> | null;
+  /** Why a row with an earlier lineage was preselected COLD. */
+  note?: string;
 }
 export interface ReviewDispatchEffortChoice {
   value: string | null;

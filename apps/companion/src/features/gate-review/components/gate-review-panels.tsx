@@ -19,6 +19,7 @@ import {
   publicationGateView,
   publicationReviewBlockingReason,
   type ReviewDispatchViewModel,
+  reviewFallbackLine,
 } from '@farmslot/review-dispatch';
 import { gateClaimsHeight, publicationGateColors, skeletonTokens } from '@farmslot/theme';
 
@@ -131,6 +132,14 @@ export function GateReviewVerdicts({ reviews }: { reviews: GateReviewVerdict[] }
               <Text style={styles.verdictRunner}>{review.runner}</Text>
               {review.model ? <Text style={styles.verdictModel}>{review.model}</Text> : null}
               <Text style={[styles.verdictLabel, { color: review.color }]}>{review.label}</Text>
+              {reviewFallbackLine(review.review) ? (
+                <Text
+                  style={styles.verdictModel}
+                  testID={`companion-gate-review-fallback-${review.runner}`}
+                >
+                  {reviewFallbackLine(review.review)}
+                </Text>
+              ) : null}
             </View>
           ))}
         </View>

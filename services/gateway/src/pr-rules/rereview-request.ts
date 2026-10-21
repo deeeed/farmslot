@@ -22,6 +22,7 @@ export interface RereviewTeamCandidate {
 export type RereviewRun = Pick<
   Run,
   | 'id'
+  | 'familyId'
   | 'flowType'
   | 'status'
   | 'project'
