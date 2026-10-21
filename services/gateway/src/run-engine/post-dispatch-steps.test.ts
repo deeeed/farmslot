@@ -1979,6 +1979,63 @@ test('held publication approval reopens only its wait despite persisted review p
   assert.deepEqual(getRun(run.id)!.engineState, before);
 });
 
+test('a failed publication continuation re-presents its gate with prior findings intact', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'CONTINUE-INFRA-FAILURE',
+    runner: 'grok',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: 'continue-slot',
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'review-1',
+            source: 'human-gate',
+            mode: 'warm',
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 3,
+            issues: [1, 2, 3].map((n) => ({ file: 'a.ts', description: `finding ${n}` })),
+            recoveryContinuationPending: true,
+          },
+        ],
+      },
+    },
+    decisions: [
+      {
+        id: 'held',
+        type: 'engine_human_gate',
+        title: 'Gate',
+        description: '',
+        actions: [],
+        createdAt: '2026-10-21T00:00:00Z',
+        resolvedAt: '2026-10-21T00:01:00Z',
+        resolvedAction: 'approve-publish-unresolved',
+        context: { approvalHeldAt: '2026-10-21T00:01:01Z' },
+      },
+    ],
+  });
+  const gateActions = ['continue-review-fix', 'approve-publish'];
+  let continuations = 0;
+  await executeHumanGateStep(run.id, {
+    ...restartReplayContext(),
+    executePublishGateReviewPlan: async () => assert.fail('no replacement review plan'),
+    resumeInterruptedPublicationReviewForRun: async () => {
+      continuations++;
+      return null;
+    },
+    executeReadyGate: async () => gateActions.shift()!,
+  });
+  assert.equal(continuations, 1, 'no automatic infra retry');
+  assert.equal(gateActions.length, 0, 'the recoverable failure re-presents the gate');
+  assert.equal(getRun(run.id)!.engineState!.publishGate!.reviews![0]!.unresolvedCount, 3);
+});
+
 test('Send back delivers through the retained repair step and re-presents the same gate', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

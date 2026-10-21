@@ -1381,15 +1381,11 @@ export async function executeHumanGateStep(
             gateAction,
           );
         }
-        const resumed = await (
+        await (
           context.resumeInterruptedPublicationReviewForRun ?? resumeInterruptedPublicationReview
         )(runId, continuationSlotId);
-        if (!resumed) {
-          throw blockedRunError(
-            'Publication review continuation was requested but no pending findings were found',
-            gateAction,
-          );
-        }
+        // A runner or delivery refusal preserves the findings. Re-present the gate
+        // so recovery can retry after the infrastructure failure is fixed.
         gateAction = await presentReadyGate();
         continue;
       }

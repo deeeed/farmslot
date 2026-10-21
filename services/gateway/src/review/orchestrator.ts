@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import {
   type AgentContext,
+  isPipelineRepairVisualReviewInput,
   isTerminalRunStatus,
   PipelineSteps,
   primaryRoleForFlow,
@@ -98,6 +99,7 @@ import {
 import { initReviewProgress, startProgressWatcher } from './progress.js';
 import {
   liveNativeReviewer,
+  refundedNativeReviewer,
   type ReReviewContinuation,
   reReviewContinuation,
   type ReviewAgentResult,
@@ -213,6 +215,8 @@ export interface ReviewOptions {
 
 /** One pre-charged worker-fix pass; the loop consumes it without another increment. */
 export interface ReservedFixPass {
+  /** Frozen Send back scope; a reviewer of this repair proves its worker pass already ran. */
+  repairId?: string;
   /** Called once the retained worker accepts the reserved fix turn. */
   onDelivered?: () => void;
 }
@@ -352,33 +356,54 @@ async function executeOwnedReview(
     return { skipped: true, reason: 'no-task-dir', retryCount: 0 };
   }
 
+  const retryOf = options.resumeFromResult && reReviewContinuation(options.resumeFromResult);
+  const failed =
+    mode === 'warm' && retryOf
+      ? refundedNativeReviewer(getRun(runId) ?? run, {
+          runner: reviewRunner,
+          model,
+          taskDir,
+          artifactScope,
+          reviewId,
+          effort,
+        })
+      : undefined;
+  const repairInput = failed?.pipelineVisualReviewInput;
+  const ownsRepair =
+    options.reservedFixPass?.repairId &&
+    repairInput &&
+    isPipelineRepairVisualReviewInput(repairInput) &&
+    repairInput.repairId === options.reservedFixPass.repairId;
+  const refunded = !options.reservedFixPass || ownsRepair ? failed : undefined;
   try {
-    const recoveredFixResult = await recoverReviewFixPass({
-      vars,
-      taskDir,
-      slotId,
-      runId,
-      start,
-      reviewRunner,
-      model,
-      effort: effort,
-      workerRunner,
-      maxRetries,
-      reviewTimeoutMs,
-      validationDepth,
-      artifactScope,
-      mode,
-      reviewId,
-      findingsArtifactScope: artifactScope,
-      ...(options.reservedFixPass
-        ? {
-            reservedFixPass: {
-              ...options.reservedFixPass,
-              retryCount: options.resumeFromResult?.retryCount ?? 1,
-            },
-          }
-        : {}),
-    });
+    const recoveredFixResult = refunded
+      ? null
+      : await recoverReviewFixPass({
+          vars,
+          taskDir,
+          slotId,
+          runId,
+          start,
+          reviewRunner,
+          model,
+          effort: effort,
+          workerRunner,
+          maxRetries,
+          reviewTimeoutMs,
+          validationDepth,
+          artifactScope,
+          mode,
+          reviewId,
+          findingsArtifactScope: artifactScope,
+          ...(options.reservedFixPass
+            ? {
+                reservedFixPass: {
+                  ...options.reservedFixPass,
+                  retryCount: options.resumeFromResult?.retryCount ?? 1,
+                },
+              }
+            : {}),
+        });
     if (recoveredFixResult) {
       hasReusableReviewResult =
         recoveredFixResult.verdict === 'pass' || recoveredFixResult.verdict === 'issues';
@@ -391,7 +416,7 @@ async function executeOwnedReview(
       };
     }
 
-    if (options.resumeFromResult) {
+    if (options.resumeFromResult && !refunded) {
       if (
         options.resumeFromResult.verdict !== 'issues' ||
         !options.resumeFromResult.issues?.length
@@ -469,17 +494,19 @@ async function executeOwnedReview(
     debugReviewLog(
       `[review] run ${runId.slice(0, 8)} — spawning review agent (${reviewRunner}/${model}, timeout ${reviewTimeoutMs / 60_000}min)`,
     );
-    const priorAttempts = options.priorAttempts ?? [];
+    const priorAttempts = options.priorAttempts ?? options.resumeFromResult?.attempts ?? [];
     // A restart can re-enter REVIEW while its reviewer still runs. Continue at that reviewer's
     // loop and lineage, which reattaches to it and reuses its round, instead of a fresh pass.
-    const live = options.publicationReview
-      ? undefined
-      : liveNativeReviewer(getRun(runId) ?? run, {
-          runner: reviewRunner,
-          model,
-          taskDir,
-          artifactScope,
-        });
+    const live =
+      refunded ??
+      (options.publicationReview
+        ? undefined
+        : liveNativeReviewer(getRun(runId) ?? run, {
+            runner: reviewRunner,
+            model,
+            taskDir,
+            artifactScope,
+          }));
     const firstLoopNumber = live?.reviewLoopNumber ?? (priorAttempts.at(-1)?.loopNumber ?? 0) + 1;
     // Each loop after the first followed one fix.
     const firstRetryCount = live ? firstLoopNumber - 1 : 0;
@@ -501,7 +528,7 @@ async function executeOwnedReview(
       mode,
       effort,
       live?.reviewId ?? reviewId,
-      options.rereview,
+      refunded && retryOf ? { ...retryOf, retryContextId: refunded.id } : options.rereview,
     );
 
     if (result.incomplete) {

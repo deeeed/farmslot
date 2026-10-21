@@ -64,6 +64,7 @@ import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 import { finishReviewCleanup } from './cleanup.js';
 import { readReviewFeedback } from './feedback.js';
 import { startProgressWatcher } from './progress.js';
+import { reviewContextRoundId } from './review-round-budget.js';
 import { reviewPRIdentity, WarmReviewRefusal } from './session-mode.js';
 import {
   debugReviewLog,
@@ -192,6 +193,8 @@ export interface ReReviewContinuation {
   lastReviewedHeadSha: string;
   /** The earlier findings, given to a fresh session when the retained one can't continue. */
   priorIssues: ReviewIssue[];
+  /** The stopped, refunded attempt explicitly selected by its owning continuation. */
+  retryContextId?: string;
 }
 
 /** A validated result with a recorded reviewed head makes the next review a re-review. */
@@ -350,6 +353,49 @@ export function isLiveNativeReviewer(context: AgentContext, prefix: string): boo
   return (
     context.id.startsWith(prefix) && ['launching', 'working', 'waiting'].includes(context.status)
   );
+}
+
+interface RefundedNativeReviewerParams {
+  runner: string;
+  model: string;
+  taskDir: string;
+  artifactScope?: string | null;
+  reviewId?: string | null;
+  effort?: string | null;
+}
+
+/** A stopped, refunded native attempt can retry its saved conversation without another fix or round. */
+export function refundedNativeReviewer(
+  run: Run,
+  params: RefundedNativeReviewerParams,
+): (AgentContext & { reviewLoopNumber: number; reviewId: string }) | undefined {
+  return [...(run.agentContexts ?? [])]
+    .reverse()
+    .find((context): context is AgentContext & { reviewLoopNumber: number; reviewId: string } => {
+      const roundId = reviewContextRoundId(context);
+      return (
+        context.role === 'review' &&
+        context.status === 'failed' &&
+        typeof context.reviewLoopNumber === 'number' &&
+        typeof context.reviewId === 'string' &&
+        (!params.reviewId || context.reviewId === params.reviewId) &&
+        (context.effort ?? null) === (params.effort?.trim() || null) &&
+        !!context.nativeSession?.acceptedAt &&
+        !!context.nativeSession.closedAt &&
+        !context.nativeSession.releasedAt &&
+        !context.reviewResultValidatedAt &&
+        !!roundId &&
+        !!run.reviewRoundSettlements?.[roundId] &&
+        context.id.startsWith(
+          nativeReviewerContextPrefix({
+            ...params,
+            runId: run.id,
+            generation: run.engineState?.generation ?? 0,
+            loopNumber: context.reviewLoopNumber,
+          }),
+        )
+      );
+    });
 }
 
 /**

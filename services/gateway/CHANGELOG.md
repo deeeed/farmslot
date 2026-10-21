@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Stop native reviewer processes and their children after failed commands; preserve refunded warm attempts and prior findings for an explicit retry after runner recovery. Seen on TAT-4158.
+
 - Human claim overrides refresh and re-present their pending gate automatically, preserving existing reviews when the code and reviewed evidence are unchanged. A failed refresh keeps the saved override for retry. TAT-4158 run 4237202e previously required a manual refresh, whose changed display counts made the same reviewed inputs look stale.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

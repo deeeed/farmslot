@@ -17,6 +17,7 @@ const { NativeWorkerOperationUncertainError } = await import('../runners/native/
 const { PromptDeliveryUncertainError } = await import('../runners/registry.js');
 
 type Ending =
+  | 'command-failed'
   | 'timeout'
   | 'exit'
   | 'incomplete'
@@ -60,7 +61,7 @@ mock.module('../methods/dispatch/slot-file-write.js', {
 mock.module('../run-engine/run-monitor.js', {
   namedExports: {
     probeWorkerSignalForRun: async () =>
-      ending === 'timeout' || ending === 'exit'
+      ending === 'timeout' || ending === 'exit' || ending === 'command-failed'
         ? { ok: false, code: 'missing', message: 'no signal' }
         : { ok: true },
   },
@@ -101,9 +102,11 @@ mock.module('../runners/native/worker-control.js', {
           ? { state: 'closed', processStopped: true, error: 'reviewer process exited' }
           : { state: 'running' },
       commands:
-        ending === 'timeout' || ending === 'exit'
-          ? []
-          : [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }],
+        ending === 'command-failed'
+          ? [{ commandId: binding.commandId, state: 'failed', outcome: 'failed' }]
+          : ending === 'timeout' || ending === 'exit'
+            ? []
+            : [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }],
     }),
   },
 });
@@ -298,4 +301,28 @@ test('a settled reviewer stops its process and keeps its resumable identity', as
   assert.equal((await review(run.id)).verdict, 'issues');
   const budget = await runReviewRoundBudget(getRun(run.id)!);
   assert.deepEqual([budget.used, budget.noVerdict], [1, 0]);
+});
+
+// TAT-4158 4237202e: the failed schema-bound turn left its runner and MCP children alive.
+test('a failed native command stops its still-live process before returning no verdict', async (t) => {
+  ending = 'command-failed';
+  stopped.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id));
+  const reviewer = getRun(run.id)!.agentContexts!.find((context) => context.role === 'review')!;
+  assert.deepEqual(stopped, [reviewer.id]);
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.equal(budget.used, 0, 'a runner failure produces no review round');
+});
+
+test('an unconfirmed failed-command stop keeps the round reserved until cleanup is confirmed', async (t) => {
+  ending = 'command-failed';
+  stopFails = true;
+  t.after(() => {
+    stopFails = false;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /process cleanup is unconfirmed/);
+  assert.equal(getRun(run.id)!.reviewRoundSettlements, undefined);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
 });
