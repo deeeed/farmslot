@@ -475,6 +475,8 @@ export function noChangeRejectionMessage(
     : `No-change result marked blocked; insufficient evidence for ${ticketOrPr}`;
 }
 
+const GATE_REENTRY = 'gate-reentry';
+
 /**
  * A gateway restart kills the engine loop that owned a pending human/review gate
  * decision; re-entering the gate then presents a NEW decision. Any older
@@ -497,10 +499,36 @@ export function supersedeStaleHumanGateDecisions(
       continue;
     decision.resolvedAt = nowIso;
     decision.resolvedAction = 'superseded';
-    decision.context = { ...decision.context, supersededBy: 'gate-reentry' };
+    decision.context = { ...decision.context, supersededBy: GATE_REENTRY };
     superseded += 1;
   }
   return superseded;
+}
+
+/**
+ * Undo `supersedeStaleHumanGateDecisions` for `ids`: a replay that superseded them and
+ * then failed before reviving the run leaves the gate as it was. Returns the new list
+ * and the reopened decisions; a decision since resolved otherwise is left alone.
+ */
+export function reopenSupersededGateDecisions(
+  decisions: RunDecision[],
+  ids: ReadonlySet<string>,
+): { decisions: RunDecision[]; reopened: RunDecision[] } {
+  const reopened: RunDecision[] = [];
+  const next = decisions.map((decision) => {
+    if (
+      !ids.has(decision.id) ||
+      decision.resolvedAction !== 'superseded' ||
+      decision.context?.supersededBy !== GATE_REENTRY
+    )
+      return decision;
+    const { resolvedAt: _resolvedAt, resolvedAction: _resolvedAction, ...open } = decision;
+    const { supersededBy: _supersededBy, ...context } = decision.context;
+    const restored = { ...open, context };
+    reopened.push(restored);
+    return restored;
+  });
+  return { decisions: next, reopened };
 }
 
 export function validatePackageApprovalSelection(
@@ -594,18 +622,28 @@ function reviewSnapshotDiffMatchesPackage(
 ): boolean {
   const preparedSnapshot = preparedPackage.reviewSnapshot;
   if (!preparedSnapshot || preparedSnapshot.source === 'unavailable') return false;
-  if (review?.mode === 'warm') {
-    const session = review.session;
+  const session = review?.session;
+  const deltaFallback = review?.mode === 'cold' ? session?.fallback : undefined;
+  if (review && (review.mode === 'warm' || deltaFallback)) {
+    // A fresh fallback keeps its authorized delta, whose base can differ from
+    // the publication package's full contribution. Its new baseline is head.
+    const rangeMatches = deltaFallback
+      ? !!snapshot.baseSha &&
+        !!snapshot.diffHash &&
+        session?.lastReviewedHeadSha === snapshot.headSha &&
+        deltaFallback.comparedRanges.at(-1) === `${snapshot.baseSha}..${snapshot.headSha}`
+      : snapshot.baseRef === preparedSnapshot.baseRef &&
+        snapshot.baseSha === session?.lastReviewedHeadSha;
     return (
       snapshot.source !== 'unavailable' &&
-      session?.mode === 'warm' &&
-      session.continuity === 'resumed' &&
+      session?.mode === review.mode &&
+      session.continuity === (deltaFallback ? 'fresh' : 'resumed') &&
       session.reviewId === review.id &&
+      !!session.sessionId &&
       session.sessionId === review.reviewerSessionId &&
       !!session.lastReviewedHeadSha &&
-      snapshot.baseRef === preparedSnapshot.baseRef &&
-      snapshot.baseSha === session.lastReviewedHeadSha &&
-      snapshot.headSha === preparedSnapshot.headSha
+      snapshot.headSha === preparedSnapshot.headSha &&
+      rangeMatches
     );
   }
   return (

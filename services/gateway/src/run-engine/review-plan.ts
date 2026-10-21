@@ -6,6 +6,7 @@ import {
   isQualifyingReview,
   parseGitHubRef,
   qualifyingPassingReviews,
+  type ReviewLineageOption,
   type ReviewPolicy,
   type ReviewRequestContext,
   type ReviewSelection,
@@ -26,8 +27,17 @@ import {
 } from '@farmslot/review-dispatch';
 
 import {
+  assertLineageBelongsToRun,
+  lastValidatedReview,
+  latestReviewOfLineage,
+  lineageContextForRun,
+  reReviewOfStatus,
   resolveWarmReviewerSession,
+  reviewerContextMatchesLineage,
+  reviewLineageId,
   reviewPRIdentity,
+  usableRetainedReviewer,
+  warmLineageScope,
   WarmReviewRefusal,
 } from '../review/session-mode.js';
 import { runnerSupportsSessionReload } from '../runners/launch-command.js';
@@ -311,21 +321,19 @@ export function recoveryReviewPlanForActiveFix(run: Run): RecoveryReviewPlan | u
     effort: reviewerContextEffort(reviewer) ?? prior?.effort ?? null,
     mode: 'warm',
   };
-  const identity = reviewPRIdentity(run);
-  const context: ReviewRequestContext | undefined =
-    identity && prior ? { reviewLineages: [{ ...identity, reviewId: prior.id }] } : undefined;
-  try {
-    if (!context)
-      throw new WarmReviewRefusal('missing-session', 'no verified reviewId lineage context');
-    assertWarmReviewRequestAvailable(run, { ...selection, context }, [run]);
-    return { sequence: [selection], context };
-  } catch (error) {
-    if (!(error instanceof WarmReviewRefusal)) throw error;
+  // ADR-063 Amendment 5: the fix's re-review continues its lineage. An unavailable session
+  // runs the delta-scoped COLD fallback when the plan executes, never a full-diff COLD.
+  if (prior && reReviewOfStatus(prior))
     return {
-      sequence: [{ ...selection, mode: 'cold' }],
-      note: `WARM recovery unavailable: ${error.message}. Using COLD review on the same run; prior reviews remain retained.`,
+      sequence: [selection],
+      context: {
+        reviewLineages: [lineageContextForRun(run, reviewLineageId(prior))],
+      },
     };
-  }
+  return {
+    sequence: [{ ...selection, mode: 'cold' }],
+    note: 'The active fix has no reviewed lineage to continue. Using a first-pass COLD review on the same run; prior reviews remain retained.',
+  };
 }
 
 /** Request refusal happens before a parked run is restored or a gate receipt consumed. */
@@ -333,6 +341,7 @@ export function assertWarmReviewRequestAvailable(
   run: Run,
   request: unknown,
   runs: readonly Run[],
+  options: { requireRetainedSession?: boolean } = {},
 ): void {
   const sequence = reviewSequenceFromRequest(request);
   const context = reviewContextFromRequest(request);
@@ -346,30 +355,38 @@ export function assertWarmReviewRequestAvailable(
         'missing-session',
         'the requested row has no reviewId lineage context',
       );
+    assertLineageBelongsToRun(lineage, run);
+    const prior = latestReviewOfLineage(
+      run.engineState?.publishGate?.reviews ?? [],
+      lineage.reviewId,
+    );
+    // Session checks still run at launch. A validated re-review can use their delta fallback.
     if (
-      !identity ||
-      lineage.repository.toLowerCase() !== identity.repository.toLowerCase() ||
-      lineage.prNumber !== identity.prNumber
+      !options.requireRetainedSession &&
+      prior?.runner &&
+      normalizeRunner(prior.runner) === normalizeRunner(row.runner) &&
+      reReviewOfStatus(prior)
     )
-      throw new WarmReviewRefusal(
-        'pr-mismatch',
-        'the requested lineage belongs to a different repository/PR',
-      );
+      continue;
     const nativeOwners = new Set(
       runs
-        .filter((candidate) => {
-          const source = reviewPRIdentity(candidate);
-          return (
+        .filter(
+          (candidate) =>
             candidate.project === run.project &&
-            source?.repository.toLowerCase() === identity.repository.toLowerCase() &&
-            source.prNumber === identity.prNumber
-          );
-        })
+            warmLineageScope(candidate) === warmLineageScope(run),
+        )
         .flatMap(
           (candidate) =>
             candidate.agentContexts?.flatMap((context) =>
               context.role === 'review' &&
-              context.reviewId === lineage.reviewId &&
+              reviewerContextMatchesLineage(
+                context,
+                lineage.reviewId,
+                latestReviewOfLineage(
+                  candidate.engineState?.publishGate?.reviews ?? [],
+                  lineage.reviewId,
+                )?.id,
+              ) &&
               context.nativeSession
                 ? [context.nativeSession.ownerPrincipalId]
                 : [],
@@ -389,13 +406,16 @@ export function assertWarmReviewRequestAvailable(
         'the selected runner cannot reload a reviewer',
       );
     const execution = executionModelFromSelection(row);
+    const ownerPrincipalId =
+      nativeOwner ?? run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null;
+    // A busy reviewer is not unavailable: the launch waits for its turn (ADR-063 Amendment 5).
     const retained = resolveWarmReviewerSession(
       {
         runId: run.id,
         reviewId: lineage.reviewId,
+        familyId: warmLineageScope(run),
         project: run.project,
-        ownerPrincipalId:
-          nativeOwner ?? run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
+        ownerPrincipalId,
         ...(transport === 'tmux'
           ? { ownerPrincipalGeneration: run.createdByPrincipalGeneration }
           : {}),
@@ -405,17 +425,73 @@ export function assertWarmReviewRequestAvailable(
         runner: execution.runner,
         model: execution.model,
         effort: execution.effort,
-        repository: identity.repository,
-        prNumber: identity.prNumber,
+        ...identity,
       },
       runs,
+      { allowBusy: true },
     );
     if (!retained)
       throw new WarmReviewRefusal(
         'missing-session',
         'the reviewId has no verified retained session and reviewed head',
       );
+    // The gate and the request refuse what launch would: the same reviewer checks.
+    usableRetainedReviewer(
+      retained,
+      { ownerPrincipalId, slotId: run.slotId, allowBusy: true },
+      runs,
+    );
   }
+}
+
+/**
+ * The lineages a gate Request Review can continue, with their session's availability on this
+ * run (ADR-063 Amendment 5). The picker keeps validated lineages WARM, with a delta fallback.
+ */
+export async function reviewLineageOptionsForRun(
+  run: Run,
+  runs: readonly Run[],
+  headSha: string | undefined,
+  descends: (ancestor: string, head: string) => Promise<boolean>,
+): Promise<ReviewLineageOption[]> {
+  const latest = new Map<string, ReviewStatus>();
+  for (const review of run.engineState?.publishGate?.reviews ?? [])
+    latest.set(reviewLineageId(review), review);
+  const options: ReviewLineageOption[] = [];
+  for (const [reviewId, review] of latest) {
+    // A refused request keeps its lineage: the earlier validated result names it.
+    const validated = lastValidatedReview(review);
+    if (!review.runner || !validated) continue;
+    const reviewedHeadSha = validated.headSha;
+    const context = lineageContextForRun(run, reviewId);
+    const selection = {
+      runner: normalizeRunner(review.runner),
+      model: review.model ?? null,
+      effort: review.effort ?? null,
+    };
+    let unavailableReason: string | undefined;
+    try {
+      assertWarmReviewRequestAvailable(
+        run,
+        { ...selection, mode: 'warm', context: { reviewLineages: [context] } },
+        runs,
+        { requireRetainedSession: true },
+      );
+      if (headSha && reviewedHeadSha !== headSha && !(await descends(reviewedHeadSha, headSha)))
+        unavailableReason = 'the current head no longer descends from the last reviewed head';
+    } catch (error) {
+      // Any reason this lineage can't be continued is shown to the person, never hidden.
+      if (!(error instanceof Error)) throw error;
+      unavailableReason = error instanceof WarmReviewRefusal ? error.detail : error.message;
+    }
+    options.push({
+      context,
+      ...selection,
+      reviewedAt: review.completedAt ?? review.startedAt ?? '',
+      ...(unavailableReason ? { unavailableReason } : {}),
+    });
+  }
+  return options;
 }
 
 export function assertPrimaryReviewContext(
@@ -444,6 +520,7 @@ export function assertPrimaryReviewContext(
     !pr ||
     bindings.some(
       (binding) =>
+        !binding.repository ||
         binding.repository.toLowerCase() !== pr.repo.toLowerCase() ||
         binding.prNumber !== pr.number,
     )

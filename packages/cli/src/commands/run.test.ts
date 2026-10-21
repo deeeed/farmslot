@@ -283,6 +283,63 @@ test('run gate WARM requires and preserves retained lineage', () => {
   assert.throws(() => buildRunGateParams(run, decision, 'hold', selection), /request-review/);
 });
 
+test('run gate Request Review continues the runner latest validated lineage WARM by default', () => {
+  const option = {
+    context: { reviewId: 'pipeline-review-run', familyId: 'family-1' },
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'high',
+    reviewedAt: '2026-10-20T00:00:00Z',
+  };
+  const gate = (unavailableReason?: string): Run['decisions'][number] => ({
+    id: 'gate-1',
+    type: 'engine_human_gate',
+    title: 'Ready',
+    description: '',
+    createdAt: '2026-10-20T00:00:00Z',
+    actions: [],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+      workerReport: '',
+      branch: 'feature',
+      reviewLineageOptions: [{ ...option, ...(unavailableReason ? { unavailableReason } : {}) }],
+    },
+  });
+  const run = repeatReviewRun();
+  assert.deepEqual(
+    buildRunGateParams(run, gate(), 'request-review', { runner: 'codex' }).selectionData
+      ?.reviewRequest,
+    {
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'high',
+      mode: 'warm',
+      context: { reviewLineages: [option.context] },
+    },
+  );
+  // Unavailable sessions keep WARM/model/effort for delta fallback; explicit COLD still wins.
+  const context = { reviewLineages: [option.context] };
+  assert.deepEqual(
+    buildRunGateParams(
+      run,
+      gate('the retained reviewer belongs to a different slot'),
+      'request-review',
+      {
+        runner: 'codex',
+      },
+    ).selectionData?.reviewRequest,
+    { runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', mode: 'warm', context },
+  );
+  assert.deepEqual(
+    buildRunGateParams(run, gate(), 'request-review', { runner: 'codex', reviewMode: 'cold' })
+      .selectionData?.reviewRequest,
+    { runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', mode: 'cold', context },
+  );
+});
+
 test('run create builds params from a GitHub/Jira ticket source', () => {
   assert.deepEqual(
     buildRunCreateParams({

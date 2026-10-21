@@ -28,6 +28,7 @@ import {
   type RunArtifactBundleRef,
   type RunBundleManifest,
   type RunBundleRetentionPolicy,
+  type RunDecision,
 } from '@farmslot/protocol';
 import {
   listProjectTaskRoots,
@@ -375,6 +376,24 @@ async function reservedMetadataBytes(store: RunBundleStore, exceptRunId?: string
     bytes += reservation.bytes;
   }
   return bytes;
+}
+
+export interface RunBundleReference {
+  ref: RunArtifactBundleRef;
+  /** The decision whose captured snapshot this is; absent for the run's own bundles. */
+  decision?: RunDecision;
+}
+
+/** Every bundle a run references, each decision's with the decision that captured it. */
+export function runBundleRefs(run: Run): RunBundleReference[] {
+  const refs: RunBundleReference[] = [];
+  if (run.artifactBundle) refs.push({ ref: run.artifactBundle });
+  if (run.output?.artifactBundle) refs.push({ ref: run.output.artifactBundle });
+  for (const decision of run.decisions) {
+    const ref = decisionArtifactBundleRef(run, decision.payload);
+    if (ref) refs.push({ ref, decision });
+  }
+  return refs;
 }
 
 /** Resolve target-owned imported bytes without rewriting the receipt's original identity. */
@@ -769,18 +788,17 @@ export async function collectRunBundleGarbage(
         retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
       const active = isActiveListRun(run);
       if (active) activeRuns.add(run.id);
-      retain(run.artifactBundle, active);
-      retain(run.output?.artifactBundle, active);
-      for (const decision of run.decisions) {
+      for (const { ref, decision } of runBundleRefs(run))
         retain(
-          decisionArtifactBundleRef(run, decision.payload),
-          !decision.resolvedAt ||
-            (decision.payload?.kind === 'ready' &&
-              ['published_draft', 'published_ready'].includes(
-                decision.payload.prPackage?.publicationStatus ?? '',
-              )),
+          ref,
+          decision
+            ? !decision.resolvedAt ||
+                (decision.payload?.kind === 'ready' &&
+                  ['published_draft', 'published_ready'].includes(
+                    decision.payload.prPackage?.publicationStatus ?? '',
+                  ))
+            : active,
         );
-      }
     }
     const intentsDir = path.join(store.runsDir, 'bundle-intents');
     await mkdir(intentsDir, { recursive: true });

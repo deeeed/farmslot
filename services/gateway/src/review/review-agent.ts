@@ -64,6 +64,7 @@ import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 import { finishReviewCleanup } from './cleanup.js';
 import { readReviewFeedback } from './feedback.js';
 import { startProgressWatcher } from './progress.js';
+import { reviewContextRoundId } from './review-round-budget.js';
 import { reviewPRIdentity, WarmReviewRefusal } from './session-mode.js';
 import {
   debugReviewLog,
@@ -186,6 +187,63 @@ that range only when the delta invalidates a prior assumption, and explain why i
 `;
 }
 
+/** What an automatic re-review continues (ADR-063 Amendment 5). */
+export interface ReReviewContinuation {
+  /** The lineage's last reviewed head. */
+  lastReviewedHeadSha: string;
+  /** The earlier findings, given to a fresh session when the retained one can't continue. */
+  priorIssues: ReviewIssue[];
+  /** The stopped, refunded attempt explicitly selected by its owning continuation. */
+  retryContextId?: string;
+}
+
+/** A validated result with a recorded reviewed head makes the next review a re-review. */
+export function reReviewContinuation(
+  result: Pick<ReviewAgentResult, 'reviewId' | 'reviewSnapshot'> & { issues?: ReviewIssue[] },
+): ReReviewContinuation | undefined {
+  const head =
+    result.reviewSnapshot?.source === 'unavailable'
+      ? undefined
+      : result.reviewSnapshot?.headSha?.trim();
+  return result.reviewId && head
+    ? { lastReviewedHeadSha: head, priorIssues: result.issues ?? [] }
+    : undefined;
+}
+
+/** The delta-scoped COLD fallback's prompt: the lineage's delta and its earlier findings. */
+export function deltaFallbackReviewScope(params: {
+  reason: string;
+  comparedRanges: string[];
+  rangeDiffPath?: string;
+  deltaUnavailable?: string;
+  priorIssues: ReviewIssue[];
+}): string {
+  const [first, second] = params.comparedRanges;
+  const scope = params.rangeDiffPath
+    ? `The branch was rebased since the last review. Review only the branch's own change at the two heads, as \`git range-diff ${first} ${second}\` compares them (saved at \`${params.rangeDiffPath}\`). In its output \`>\` marks a commit new since the review (inspect it with \`git show\`), \`!\` a rewritten commit with its patch difference, and \`=\` an unchanged one. Changes that came only from the base branch are out of scope.`
+    : params.deltaUnavailable
+      ? `The change since the last reviewed head is unavailable (${params.deltaUnavailable}). Review the branch's whole change \`${first}\`.`
+      : `Review only the change since the last reviewed head: inspect \`${GIT_DIFF_COMMAND} --stat ${first}\` and \`${GIT_DIFF_COMMAND} ${first}\`.`;
+  const findings = params.priorIssues.length
+    ? params.priorIssues
+        .map(
+          (issue) => `- ${issue.file}${issue.line ? `:${issue.line}` : ''}: ${issue.description}`,
+        )
+        .join('\n')
+    : '- none recorded';
+  return `## Delta-scoped review in a fresh session
+
+The reviewer session that reviewed this work can't continue (${params.reason}). This fresh session continues the same review; it is not a new full-branch review.
+
+${scope}
+
+This scope overrides generic full-branch diff instructions below. Keep correctness checks on this delta, and expand beyond it only when the delta invalidates an earlier assumption; explain why in the report.
+
+Earlier findings of this review, to recheck against the delta:
+${findings}
+`;
+}
+
 export function workerFixHandoffScope(params: {
   taskDir: string;
   priorLoopNumber: number;
@@ -295,6 +353,49 @@ export function isLiveNativeReviewer(context: AgentContext, prefix: string): boo
   return (
     context.id.startsWith(prefix) && ['launching', 'working', 'waiting'].includes(context.status)
   );
+}
+
+interface RefundedNativeReviewerParams {
+  runner: string;
+  model: string;
+  taskDir: string;
+  artifactScope?: string | null;
+  reviewId?: string | null;
+  effort?: string | null;
+}
+
+/** A stopped, refunded native attempt can retry its saved conversation without another fix or round. */
+export function refundedNativeReviewer(
+  run: Run,
+  params: RefundedNativeReviewerParams,
+): (AgentContext & { reviewLoopNumber: number; reviewId: string }) | undefined {
+  return [...(run.agentContexts ?? [])]
+    .reverse()
+    .find((context): context is AgentContext & { reviewLoopNumber: number; reviewId: string } => {
+      const roundId = reviewContextRoundId(context);
+      return (
+        context.role === 'review' &&
+        context.status === 'failed' &&
+        typeof context.reviewLoopNumber === 'number' &&
+        typeof context.reviewId === 'string' &&
+        (!params.reviewId || context.reviewId === params.reviewId) &&
+        (context.effort ?? null) === (params.effort?.trim() || null) &&
+        !!context.nativeSession?.acceptedAt &&
+        !!context.nativeSession.closedAt &&
+        !context.nativeSession.releasedAt &&
+        !context.reviewResultValidatedAt &&
+        !!roundId &&
+        !!run.reviewRoundSettlements?.[roundId] &&
+        context.id.startsWith(
+          nativeReviewerContextPrefix({
+            ...params,
+            runId: run.id,
+            generation: run.engineState?.generation ?? 0,
+            loopNumber: context.reviewLoopNumber,
+          }),
+        )
+      );
+    });
 }
 
 /**
@@ -987,6 +1088,7 @@ async function runReviewAgentAttempt(
   mode: ReviewMode = 'cold',
   effort?: string | null,
   reviewId?: string | null,
+  rereview?: ReReviewContinuation | null,
 ): Promise<ReviewAgentResult> {
   if (mode === 'warm' && !reviewId?.trim())
     throw new WarmReviewRefusal(
@@ -1042,6 +1144,7 @@ async function runReviewAgentAttempt(
     mode,
     effort: resolvedEffort,
     reviewId,
+    rereview,
   });
 }
 

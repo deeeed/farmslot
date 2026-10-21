@@ -227,3 +227,30 @@ test('CC and Companion render runner/model/effort controls only in their shared 
     'Use the shared review-dispatch picker instead of independent controls',
   );
 });
+
+test('a gate row with an unavailable session stays WARM and explains its fresh-session delta', () => {
+  const picker = new ReviewDispatchPicker();
+  picker.review = true;
+  picker.viewModel = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['request-review'],
+      defaults: { runner: 'codex' },
+      lineageOptions: [
+        {
+          context: { reviewId: 'pipeline-review-run', familyId: 'family' },
+          runner: 'codex',
+          model: null,
+          effort: null,
+          reviewedAt: '2026-10-20T00:00:00Z',
+          unavailableReason: 'the retained reviewer belongs to a different slot',
+        },
+      ],
+    },
+  });
+  const rendered = markup(picker.render());
+  assert.equal(picker.viewModel.rows[0]?.selection.mode, 'warm');
+  assert.match(
+    rendered,
+    /data-testid="review-dispatch-note">Review changes in a fresh session: the retained reviewer belongs to a different slot/,
+  );
+});

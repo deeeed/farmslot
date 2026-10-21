@@ -88,6 +88,7 @@ import { initPRRuleDispatch, initPRRules } from './methods/pr-rules.js';
 import { initPRMonitorDispatch, initPRMonitoring, monitorsSnapshot } from './methods/pr-watch.js';
 import { resolveCreateSafetyTier } from './methods/run.js';
 import { resumeBlockedRunWhoseWorkerContinued } from './methods/run/replay-step.js';
+import { startRunRetention } from './methods/run/retention.js';
 import {
   getRuntimeCapabilityRegistry,
   initRuntimeCapabilities,
@@ -373,6 +374,7 @@ async function main(): Promise<void> {
   await loadAllRuns();
   await backfillMissingRunLinks(getAllRuns());
   await collectRunArtifactGarbage();
+  startRunRetention(observedBroadcast);
   const prMonitoring = await initPRMonitoring(
     gatewayAuthRuntime,
     broadcastPrincipalEvent,

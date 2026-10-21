@@ -66,10 +66,16 @@ export function reviewLoopNumberFromId(source: ReviewSource, id: string): number
  * bug, not a legacy case to silently bucket.
  */
 export function inferReviewSourceKind(review: { id: string }): ReviewSourceKind {
-  for (const kind of Object.keys(REVIEW_SOURCES) as ReviewSourceKind[]) {
-    if (review.id.startsWith(`${REVIEW_SOURCES[kind].idPrefix}-`)) return kind;
-  }
+  const kind = reviewSourceKindForId(review.id);
+  if (kind) return kind;
   throw new Error(
     `Unknown review id prefix: ${review.id} — must be produced through a ReviewSource`,
+  );
+}
+
+/** The source kind an id names, or undefined for an id no ReviewSource produced. */
+export function reviewSourceKindForId(id: string): ReviewSourceKind | undefined {
+  return (Object.keys(REVIEW_SOURCES) as ReviewSourceKind[]).find((kind) =>
+    id.startsWith(`${REVIEW_SOURCES[kind].idPrefix}-`),
   );
 }

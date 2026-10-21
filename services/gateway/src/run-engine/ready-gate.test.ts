@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
 import {
@@ -8,11 +11,12 @@ import {
   type Run,
   type RunDecision,
 } from '@farmslot/protocol';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import { admitReviewRound, settleReviewRoundNoVerdict } from '../review/review-round-budget.js';
 import { TerminalReviewArtifactError } from '../review/terminal-result.js';
-import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { createRun, getAllRuns, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { resolveEngineDecision, setEngineDecisionRuntime } from './engine-decisions.js';
 import { BlockedRunError } from './errors.js';
@@ -21,9 +25,11 @@ import {
   executeReadyGate,
   freedSlotGateResolutionBlocker,
   localVideoProofWarning,
+  type PublishGateReviewPlanDependencies,
   reconcileReviewLaunchRejectionForCurrentHead,
   resumeInterruptedPublicationReview,
 } from './ready-gate.js';
+import { reviewLineageOptionsForRun } from './review-plan.js';
 import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
 
 test('localVideoProofWarning flags screenshot packages without local video proof', () => {
@@ -41,7 +47,7 @@ test('localVideoProofWarning flags screenshot packages without local video proof
   assert.equal(localVideoProofWarning([{ path: 'artifacts/report.md' }]), null);
 });
 
-test('resumeInterruptedPublicationReview continues the same issues review instead of launching another', async (t) => {
+test('resumeInterruptedPublicationReview continues the same issues review WARM in its lineage', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     mode: 'autonomous',
@@ -58,6 +64,12 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
           {
             reviewerSessionId: 'fixture-session-' + 'review-1',
             reviewedHeadSha: 'fixture-head',
+            reviewSnapshot: {
+              source: 'local-git',
+              baseSha: 'fixture-base',
+              headSha: 'fixture-head',
+              capturedAt: '2026-10-20T00:00:00Z',
+            },
             mode: 'cold' as const,
             id: 'review-1',
             source: 'dispatch',
@@ -93,11 +105,10 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
       executeReview: async (_runId, _slotId, options) => {
         executions += 1;
         assert.ok(options);
-        assert.equal(
-          options.mode,
-          'cold',
-          'an unpublished cold review must not require warm PR lineage',
-        );
+        // ADR-063 Amendment 5: an unpublished COLD first pass is re-reviewed WARM in its lineage.
+        assert.equal(options.mode, 'warm');
+        assert.equal(options.reviewId, 'review-1');
+        assert.equal(options.resumeFromResult?.reviewSnapshot?.headSha, 'fixture-head');
         assert.equal(options.artifactScope, 'review-1');
         assert.equal(options.effort, 'low');
         assert.equal(options.resumeFromResult?.verdict, 'issues');
@@ -631,6 +642,172 @@ test('WARM recheck updates its existing lineage and preserves attempt provenance
   assert.equal(reviews[0].reviewedHeadSha, 'new');
 });
 
+test('a gate plan continues a pipeline lineage by its lineage id, under the row id; a person COLD and a refusal stay in it', async (t) => {
+  const issues = [{ file: 'src/a.ts', line: 2, description: 'Bound the retry' }];
+  // As recorded on bda11b1a: the pipeline row wraps its lineage in its own id.
+  const lineageId = 'rev-claude-native-9e436a666c45-bc5247b7';
+  const rowId = `pipeline-review-${lineageId}`;
+  const taskDir = await mkdtemp(path.join(tmpdir(), 'gate-lineage-'));
+  t.after(() => rm(taskDir, { recursive: true, force: true }));
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-PREPUBLISH',
+    runner: 'codex',
+  });
+  updateRun(run.id, {
+    taskFile: path.join(taskDir, 'TASK.md'),
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: rowId,
+            session: { mode: 'cold', continuity: 'fresh', reviewId: lineageId },
+            source: 'pipeline',
+            runner: 'codex',
+            mode: 'cold',
+            reviewerSessionId: 'retained',
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues,
+            reviewedHeadSha: 'reviewed',
+            reviewSnapshot: {
+              source: 'local-git',
+              capturedAt: '2026-10-20T00:00:00Z',
+              headSha: 'reviewed',
+            },
+          },
+        ],
+      },
+    },
+  });
+  t.after(async () => deleteTestRunIfPresent(run.id));
+  const launches: Array<
+    Parameters<NonNullable<PublishGateReviewPlanDependencies['executeReview']>>[2]
+  > = [];
+  const dependencies: PublishGateReviewPlanDependencies = {
+    assertLaunchAllowed: async () => {},
+    reviewSequenceContext: {
+      reviewLineages: [{ reviewId: lineageId, familyId: run.familyId }],
+    },
+    executeReview: async (_runId, _slotId, options = {}) => {
+      launches.push(options);
+      // As the reviewer does: its session names the lineage it reviewed, its attempt the head.
+      const session = {
+        mode: options.mode ?? 'cold',
+        continuity: options.mode === 'warm' ? ('resumed' as const) : ('fresh' as const),
+        reviewId: options.reviewId ?? undefined,
+        sessionId: `reviewer-${launches.length}`,
+      };
+      const attempt = {
+        mode: session.mode,
+        session,
+        loopNumber: (options.priorAttempts?.length ?? 0) + 1,
+        verdict: 'issues' as const,
+        unresolvedCount: issues.length,
+        issues,
+        reviewSnapshot: {
+          source: 'local-git' as const,
+          capturedAt: '2026-10-20T00:00:00Z',
+          headSha: 'reviewed',
+        },
+      };
+      return {
+        verdict: 'issues',
+        issues,
+        retryCount: 0,
+        session,
+        attempts: [...(options.priorAttempts ?? []), attempt],
+      };
+    },
+  };
+  const plan = (mode: 'warm' | 'cold') => [{ runner: 'codex', model: null, effort: null, mode }];
+  await executePublishGateReviewPlan(run.id, 'slot-1', plan('warm'), 'dispatch', dependencies);
+  assert.equal(launches[0]?.reviewId, lineageId);
+  assert.equal(launches[0]?.artifactScope, rowId);
+  assert.deepEqual(launches[0]?.rereview, { lastReviewedHeadSha: 'reviewed', priorIssues: issues });
+  const rows = () => getRun(run.id)?.engineState?.publishGate?.reviews ?? [];
+  assert.deepEqual(
+    rows().map((review) => review.id),
+    [rowId],
+    'the result updates the lineage row in place',
+  );
+  // A person's COLD stays in the lineage: the same row, a fresh session for its lineage id.
+  await executePublishGateReviewPlan(run.id, 'slot-1', plan('cold'), 'human-gate', dependencies);
+  assert.equal(launches[1]?.mode, 'cold');
+  assert.equal(launches[1]?.reviewId, lineageId);
+  assert.equal(launches[1]?.artifactScope, rowId);
+  assert.deepEqual(
+    rows().map((review) => review.id),
+    [rowId],
+  );
+  // A person's WARM request carries the same verified baseline and findings as automatic rechecks.
+  await executePublishGateReviewPlan(run.id, 'slot-1', plan('warm'), 'human-gate', dependencies);
+  assert.deepEqual(launches[2]?.rereview, { lastReviewedHeadSha: 'reviewed', priorIssues: issues });
+  assert.equal(launches[2]?.mode, 'warm');
+  // A refused handoff ran no session: its row says so, and keeps the lineage's earlier attempts.
+  await executePublishGateReviewPlan(run.id, 'slot-1', plan('warm'), 'human-gate', {
+    ...dependencies,
+    executeReview: async () => {
+      throw new Error('the retained reviewer could not resume: handoff refused');
+    },
+  });
+  const [refused] = rows();
+  assert.deepEqual(
+    [refused.id, refused.verdict, refused.session, refused.reviewerSessionId],
+    [rowId, 'failed', { mode: 'warm', continuity: 'refused', reviewId: lineageId }, null],
+  );
+  assert.equal(refused.reviewedHeadSha, undefined);
+  assert.deepEqual(
+    refused.attempts?.map((attempt) => [attempt.verdict, attempt.session?.sessionId]),
+    [
+      ['issues', 'reviewer-1'],
+      ['issues', 'reviewer-2'],
+      ['issues', 'reviewer-3'],
+      ['failed', undefined],
+    ],
+  );
+  // Reopening Request Review keeps the lineage WARM and explains its delta fallback.
+  const lineageOptions = await reviewLineageOptionsForRun(
+    getRun(run.id)!,
+    getAllRuns(),
+    'reviewed',
+    async () => true,
+  );
+  assert.deepEqual(
+    lineageOptions.map((option) => [option.context, option.unavailableReason]),
+    [
+      [
+        { familyId: run.familyId, reviewId: lineageId },
+        'the reviewId has no verified retained session and reviewed head',
+      ],
+    ],
+  );
+  const picker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['request-review'], lineageOptions, defaults: { runner: 'codex' } },
+  });
+  assert.equal(picker.rows[0].selection.mode, 'warm');
+  assert.match(picker.rows[0].note ?? '', /fresh session: the reviewId has no verified/);
+  const request = picker.toRequestPayload();
+  assert.deepEqual(request.context, {
+    reviewLineages: [{ familyId: run.familyId, reviewId: lineageId }],
+  });
+  // Executing that WARM request keeps the earlier baseline and findings, on the same row.
+  await executePublishGateReviewPlan(run.id, 'slot-1', picker.toSequence(), 'human-gate', {
+    ...dependencies,
+    reviewSequenceContext: request.context,
+  });
+  assert.deepEqual(
+    [launches.at(-1)?.mode, launches.at(-1)?.reviewId, launches.at(-1)?.artifactScope],
+    ['warm', lineageId, rowId],
+  );
+  assert.deepEqual(
+    rows().map((review) => [review.id, review.verdict, review.session?.reviewId]),
+    [[rowId, 'issues', lineageId]],
+  );
+});
+
 function sourceGateFixture(t: TestContext) {
   const run = createRun({
     flowType: 'dev',
@@ -684,6 +861,36 @@ function sourceGateFixture(t: TestContext) {
       return decision;
     },
   };
+}
+
+for (const action of ['abort', 'hold']) {
+  test(`a superseded publication gate stops before applying ${action} effects`, async (t) => {
+    const { run } = sourceGateFixture(t);
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    let afterReplay: Run | undefined;
+    assert.equal(
+      await executeReadyGate(run.id, {
+        ensurePackage: async () => prepared,
+        createDecision: async () => {
+          const latest = getRun(run.id)!;
+          afterReplay = structuredClone(
+            updateRun(run.id, {
+              status: 'blocked',
+              engineState: {
+                ...latest.engineState,
+                generation: (latest.engineState?.generation ?? 0) + 1,
+              },
+            }),
+          );
+          return action;
+        },
+      }),
+      'abort',
+    );
+    assert.deepEqual(getRun(run.id), afterReplay, 'the stale gate cannot mutate replay state');
+  });
 }
 
 for (const action of ['approve-publish', 'approve-publish-unresolved']) {

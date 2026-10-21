@@ -22,6 +22,7 @@ import {
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   type ReviewAttempt,
+  type ReviewLineageOption,
   type ReviewRoundBudget,
   type ReviewStatus,
   type ReviewSummary,
@@ -568,3 +569,33 @@ export const PUBLICATION_GATE_TABS = [
   { id: 'pr-preview', label: 'Package' },
   { id: 'quality', label: 'Checks & history' },
 ] as const;
+
+/** The lineages a ready gate's Request Review can continue, as the gateway listed them. */
+export function gateReviewLineageOptions(
+  run: Pick<Run, 'decisions'> | null | undefined,
+  decisionId?: string | null,
+): readonly ReviewLineageOption[] | undefined {
+  const decision = [...(run?.decisions ?? [])]
+    .reverse()
+    .find((entry) =>
+      decisionId ? entry.id === decisionId : !entry.resolvedAt && entry.payload?.kind === 'ready',
+    );
+  return decision?.payload?.kind === 'ready' ? decision.payload.reviewLineageOptions : undefined;
+}
+
+/**
+ * Why a review ran COLD in a fresh session and the ranges it compared, shown with that
+ * review at the gate (ADR-063 Amendment 5). Null when it never fell back.
+ */
+export function reviewFallbackLine(
+  review: Pick<ReviewStatus, 'session' | 'attempts'>,
+): string | null {
+  const attempt = [...(review.attempts ?? [])].reverse().find((entry) => entry.session?.fallback);
+  const fallback = review.session?.fallback ?? attempt?.session?.fallback;
+  if (!fallback) return null;
+  const ranges = fallback.comparedRanges.map((range) =>
+    range.replace(/[0-9a-f]{40}/gi, (sha) => sha.slice(0, 12)),
+  );
+  const loop = review.session?.fallback || !attempt ? '' : `Round ${attempt.loopNumber} `;
+  return `${loop}Ran COLD in a fresh session: ${fallback.detail}. Compared ${ranges.join(' with ') || 'no recorded range'}.`;
+}

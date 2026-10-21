@@ -451,6 +451,9 @@ export class ReviewDispatchPicker extends LitElement {
                     ? 'Fresh session, whole PR'
                     : 'Retained session, changes since review'}</span
                 >
+                ${row.note
+                  ? html`<span class="hint" data-testid="review-dispatch-note">${row.note}</span>`
+                  : nothing}
               </div>`
             : nothing}
           ${this.review && selected.mode === 'warm'
@@ -481,7 +484,9 @@ export class ReviewDispatchPicker extends LitElement {
                   ).map((context) =>
                     context
                       ? html`<option value=${context.reviewId}>
-                          ${context.repository}#${context.prNumber} · ${context.reviewId}
+                          ${context.repository
+                            ? `${context.repository}#${context.prNumber} · `
+                            : ''}${context.reviewId}
                         </option>`
                       : nothing,
                   )}

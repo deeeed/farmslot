@@ -364,7 +364,11 @@ and task binding. An override means untestable, never proven. It grants neither
 publication approval nor a waiver of integrity or unrelated prerequisites.
 
 The operation leaves the gate unresolved. Receipt changes invalidate prior
-policy evaluation and publication confirmation; refresh/review is required.
+policy evaluation and publication confirmation. The canonical package owner
+refreshes and re-presents a pending publication gate after the receipt is durable.
+An override changes the evidence verdict, not the reviewed code or evidence:
+existing review results remain valid, and no review round is requested or spent.
+Only an actual change to the code or reviewed evidence requires another review.
 Historical/completed runs stay read-only. Failed persistence leaves no effective
 override; retry cannot create an unsigned intermediate verdict.
 

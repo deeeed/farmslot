@@ -57,6 +57,7 @@ import {
   parseReviewSelection,
   parseReviewSequence,
   ReviewDispatchViewModel,
+  reviewFallbackLine,
   reviewLineagesForRun,
 } from '@farmslot/review-dispatch';
 
@@ -129,11 +130,16 @@ export function buildRunGateParams(
 ) {
   let selectionData: Record<string, unknown> | undefined;
   if (actionId === 'request-review') {
+    // The first row preselects its runner's latest available lineage in WARM (ADR-063 Amendment 5).
     const model = new ReviewDispatchViewModel({
       context: {
         allowedActions: ['request-review'],
         allowSequence: true,
         reviewLineages: reviewLineagesForRun(run),
+        ...(decision.payload?.kind === 'ready' && decision.payload.reviewLineageOptions
+          ? { lineageOptions: decision.payload.reviewLineageOptions }
+          : {}),
+        ...(options.runner ? { defaults: { runner: options.runner } } : {}),
         ...(options.reviewContext
           ? { reviewContext: parseReviewRequestContext(JSON.parse(options.reviewContext)) }
           : {}),
@@ -142,7 +148,6 @@ export function buildRunGateParams(
     model.setSequence([
       parseReviewSelection({
         ...model.toSelection(),
-        ...(options.runner ? { runner: options.runner } : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort } : {}),
         ...(options.reviewMode ? { mode: options.reviewMode } : {}),
@@ -879,7 +884,10 @@ export function registerRunCommand(program: Command): void {
     .option('--runner <runner>', 'Review runner for request-review')
     .option('--model <model>', 'Review model for request-review')
     .option('--effort <level>', 'Review reasoning effort for request-review')
-    .option('--review-mode <mode>', 'Review mode: warm or cold (default: cold)')
+    .option(
+      '--review-mode <mode>',
+      "Review mode: warm or cold (default: WARM on the runner's latest available review, else COLD)",
+    )
     .option('--review-sequence <json>', 'Additional ordered review selections as JSON')
     .option('--review-context <json>', 'Retained review lineage context as JSON')
     .option('--slot <id>', 'Slot to bind for --action pick')
@@ -938,6 +946,11 @@ export function registerRunCommand(program: Command): void {
                 output.write(
                   `    ${finding.file}${finding.line ? `:${finding.line}` : ''}  ${finding.description}\n`,
                 );
+              if (d.payload?.kind === 'ready')
+                for (const review of d.payload.reviews ?? []) {
+                  const fallback = reviewFallbackLine(review);
+                  if (fallback) output.write(`  ${review.id}: ${fallback}\n`);
+                }
               for (const a of d.actions ?? []) output.write(`  - ${a.id}  ${a.label}\n`);
             }
           }

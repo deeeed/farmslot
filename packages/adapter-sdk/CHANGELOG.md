@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.1 - 2026-10-21
+
+- Align with `@farmslot/protocol` 0.61.0, `@farmslot/recipe-runner` 0.46.1.
+
 ## 0.25.0 - 2026-10-20
 
 - The evidence review model's gate snapshot takes its next action and requirements from the gate's actionable reasons (`gateWaitReason`, `gateDisplayReasons`), so it no longer recommends a fix the gate does not offer.

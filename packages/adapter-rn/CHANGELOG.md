@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.29.1 - 2026-10-21
+
+- Align with `@farmslot/protocol` 0.61.0, `@farmslot/recipe-runner` 0.46.1, `@farmslot/agent-runtime` 0.37.0.
+
 ## 0.29.0 - 2026-10-20
 
 - The native recipe HUD drops the default RUN badge so the two-line intent gets the full width at 13px/17px, and adds a tiny muted row with the step that just finished (`✓`/`✗`) and `N/M`, within the unchanged 360 by 88 panel. A caller-supplied `text.badge` still renders.

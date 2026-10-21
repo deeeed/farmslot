@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 
+import type { AgentContext, ReviewStatus } from '@farmslot/protocol';
+
 import { makeRun } from '../run-engine/test-fixtures.js';
 
+import { reviewContextRoundId } from './review-round-budget.js';
 import {
   claimWarmReviewerSession,
   invalidateWarmReviewerSessions,
   invalidateWarmReviewerSessionsForSlot,
+  latestReviewOfLineage,
   parseReviewMode,
   persistedWarmReviewerSession,
   registerWarmReviewerSession,
@@ -18,6 +22,7 @@ import {
 
 const scope: WarmReviewerScope = {
   reviewId: 'review-a',
+  familyId: 'family-1',
   project: 'project',
   ownerPrincipalId: null,
   transport: 'tmux',
@@ -63,12 +68,136 @@ test('WARM retains repository/PR identity and last reviewed head across run and 
   assert.ok(claimWarmReviewerSession({ ...scope, repository: 'OWNER/REPO' }));
 });
 
-test('foreign PRs and runners never claim the retained reviewer', () => {
+test('foreign PRs, families and runners never claim the retained reviewer', () => {
   registerWarmReviewerSession(session);
-  assert.equal(claimWarmReviewerSession({ ...scope, repository: 'foreign/repo' }), null);
-  assert.equal(claimWarmReviewerSession({ ...scope, prNumber: 43 }), null);
+  assert.throws(
+    () => claimWarmReviewerSession({ ...scope, repository: 'foreign/repo' }),
+    /pr-mismatch/,
+  );
+  assert.throws(() => claimWarmReviewerSession({ ...scope, prNumber: 43 }), /pr-mismatch/);
   assert.throws(() => claimWarmReviewerSession({ ...scope, runner: 'claude' }), /runner-mismatch/);
   assert.equal(claimWarmReviewerSession({ ...scope, reviewId: 'another-review' }), null);
+  assert.equal(claimWarmReviewerSession({ ...scope, familyId: 'another-family' }), null);
+});
+
+test('a pre-publish run registers its validated reviewer and a WARM re-review continues it', () => {
+  const { repository: _repository, prNumber: _prNumber, ...prePublish } = scope;
+  registerWarmReviewerSession({
+    ...session,
+    ...prePublish,
+    repository: undefined,
+    prNumber: undefined,
+  });
+  assert.equal(claimWarmReviewerSession(prePublish)?.runnerSessionId, session.runnerSessionId);
+  // The lineage continues once the PR opens, and never in another run family.
+  assert.equal(claimWarmReviewerSession(scope)?.runnerSessionId, session.runnerSessionId);
+  assert.equal(claimWarmReviewerSession({ ...prePublish, familyId: 'family-2' }), null);
+  const run = makeRun({
+    id: 'prior-run',
+    project: 'project',
+    status: 'reviewing',
+    slotId: 'slot-a',
+    ticketOrPr: 'PROJ-1',
+  });
+  run.engineState = {
+    publishGate: {
+      reviews: [
+        {
+          id: 'review-a',
+          runner: scope.runner,
+          model: scope.model,
+          mode: 'cold',
+          verdict: 'issues',
+          loopNumber: 1,
+          unresolvedCount: 1,
+          reviewerSessionId: session.runnerSessionId,
+          reviewedHeadSha: session.lastReviewedHeadSha,
+        },
+      ],
+    },
+  };
+  run.agentContexts = [
+    {
+      id: session.contextId,
+      reviewId: scope.reviewId,
+      role: 'review',
+      label: 'Review',
+      runId: 'prior-run',
+      slotId: 'slot-a',
+      runner: scope.runner,
+      model: scope.model,
+      status: 'complete',
+      target: { session: 'tmux', window: session.windowName, target: 'tmux:review' },
+      runnerSessionId: session.runnerSessionId,
+      runnerSessionPath: session.runnerSessionPath,
+      runnerSessionCapturedAt: 'captured',
+      reviewResultValidatedAt: 'validated',
+      taskFile: 'tasks/old/REVIEW.md',
+    },
+  ];
+  resetWarmReviewerSessionsForTest();
+  assert.equal(persistedWarmReviewerSession(prePublish, run)?.lastReviewedHeadSha, '1111111');
+  assert.equal(persistedWarmReviewerSession({ ...prePublish, familyId: 'family-2' }, run), null);
+  // A pipeline row wraps the lineage in its own id; the rebuild matches by lineage.
+  run.engineState.publishGate!.reviews = run.engineState.publishGate!.reviews!.map((review) => ({
+    ...review,
+    id: `pipeline-review-${review.id}`,
+    session: { mode: 'cold' as const, continuity: 'fresh' as const, reviewId: scope.reviewId },
+  }));
+  assert.equal(persistedWarmReviewerSession(prePublish, run)?.lastReviewedHeadSha, '1111111');
+  // A refused request's row ran no session; the rebuild matches its earlier validated attempt.
+  run.engineState.publishGate!.reviews = run.engineState.publishGate!.reviews!.map((review) => ({
+    ...review,
+    verdict: 'failed' as const,
+    unresolvedCount: 0,
+    reviewerSessionId: null,
+    reviewedHeadSha: undefined,
+    session: { mode: 'warm' as const, continuity: 'refused' as const, reviewId: scope.reviewId },
+    attempts: [
+      {
+        mode: 'cold' as const,
+        session: { ...review.session!, sessionId: session.runnerSessionId },
+        loopNumber: 1,
+        verdict: 'issues' as const,
+        unresolvedCount: 1,
+        reviewSnapshot: {
+          source: 'local-git' as const,
+          capturedAt: 'captured',
+          headSha: session.lastReviewedHeadSha,
+        },
+      },
+      { mode: 'warm' as const, loopNumber: 2, verdict: 'failed' as const, unresolvedCount: 0 },
+    ],
+  }));
+  assert.equal(persistedWarmReviewerSession(prePublish, run)?.lastReviewedHeadSha, '1111111');
+});
+
+test('a failed review retires only its own lineage', () => {
+  registerWarmReviewerSession(session);
+  registerWarmReviewerSession({ ...session, reviewId: 'review-b', runnerSessionId: 'session-b' });
+  assert.equal(invalidateWarmReviewerSessions('run-a', 'codex', 'review-a'), 1);
+  assert.equal(claimWarmReviewerSession(scope), null);
+  assert.equal(
+    claimWarmReviewerSession({ ...scope, reviewId: 'review-b' })?.runnerSessionId,
+    'session-b',
+  );
+});
+
+test("a lineage's latest row is found by its lineage id, under any row id", () => {
+  const row = (id: string, reviewId?: string) => ({
+    id,
+    ...(reviewId
+      ? { session: { mode: 'cold' as const, continuity: 'fresh' as const, reviewId } }
+      : {}),
+  });
+  const reviews = [
+    row('pipeline-review-rev-a', 'rev-a'),
+    row('review-2'),
+    row('review-3', 'rev-a'),
+  ];
+  assert.equal(latestReviewOfLineage(reviews, 'rev-a')?.id, 'review-3');
+  assert.equal(latestReviewOfLineage(reviews, 'review-2')?.id, 'review-2');
+  assert.equal(latestReviewOfLineage(reviews, 'pipeline-review-rev-a'), undefined);
 });
 
 test('busy WARM and unsupported model/effort changes visibly refuse', () => {
@@ -210,3 +339,127 @@ test('canonical review identity accepts stored PR links and qualified references
     prNumber: 42,
   });
 });
+
+test('a lineage binds to its run family; review-pr chains keep binding to their PR', async () => {
+  const { warmLineageScope } = await import('./session-mode.js');
+  assert.equal(
+    warmLineageScope(makeRun({ familyId: 'family-a', ticketOrPr: 'owner/repo#42' })),
+    'family-a',
+  );
+  const chain = (familyId: string) =>
+    makeRun({ familyId, flowType: 'review-pr', ticketOrPr: 'Owner/Repo#42' });
+  assert.equal(warmLineageScope(chain('family-a')), 'owner/repo#42');
+  assert.equal(warmLineageScope(chain('family-b')), warmLineageScope(chain('family-a')));
+});
+
+for (const refunded of [false, true])
+  test(`a legacy reviewer adopts its validated baseline after ${refunded ? 'a refunded resume' : 'completion'}`, () => {
+    const nativeScope: WarmReviewerScope = {
+      ...scope,
+      ownerPrincipalId: 'review-owner',
+      transport: 'native',
+    };
+    const review: ReviewStatus = {
+      id: scope.reviewId,
+      source: 'human-gate',
+      runner: scope.runner,
+      model: scope.model,
+      mode: 'cold',
+      loopNumber: 1,
+      verdict: 'issues',
+      unresolvedCount: 1,
+      issues: [{ file: 'a.ts', description: 'earlier finding' }],
+      reviewerSessionId: session.runnerSessionId,
+      reviewedHeadSha: session.lastReviewedHeadSha,
+      reviewSnapshot: {
+        source: 'local-git',
+        baseSha: '0000000',
+        headSha: session.lastReviewedHeadSha,
+        capturedAt: '2026-10-19T00:00:00Z',
+      },
+    };
+    const context: AgentContext = {
+      id: 'legacy-native-reviewer',
+      role: 'review',
+      label: 'Reviewer',
+      runId: 'prior-run',
+      slotId: session.slotId,
+      status: 'complete',
+      runner: scope.runner,
+      model: scope.model,
+      effort: scope.effort,
+      reviewId: 'legacy-native-lineage',
+      artifactScope: review.id,
+      taskFile: 'tasks/legacy/REVIEW.md',
+      runnerSessionId: session.runnerSessionId,
+      nativeSession: {
+        sessionId: 'native-session',
+        ownerPrincipalId: nativeScope.ownerPrincipalId!,
+        executionNodeId: 'local',
+        leaseId: 'lease',
+        generation: 'generation',
+        commandId: 'command',
+        acceptedAt: '2026-10-19T00:00:00Z',
+        launchDigest: 'a'.repeat(64),
+        safetyTier: 'dangerous',
+      },
+    };
+    const run = makeRun({
+      id: context.runId,
+      project: scope.project,
+      familyId: scope.familyId,
+      slotId: context.slotId,
+      ticketOrPr: 'owner/repo#42',
+      engineState: { publishGate: { reviews: [review] } },
+    });
+    run.agentContexts = [context];
+    review.completedAt = '2026-10-19T01:00:00Z';
+    review.attempts = [
+      {
+        mode: 'cold',
+        loopNumber: 1,
+        verdict: 'issues',
+        unresolvedCount: 1,
+        issues: review.issues,
+        reviewSnapshot: review.reviewSnapshot,
+        completedAt: review.completedAt,
+      },
+    ];
+    review.loopNumber = 5;
+    if (refunded) {
+      context.status = 'failed';
+      context.startedAt = '2026-10-19T02:00:00Z';
+      context.reviewLoopNumber = 2;
+      const roundId = reviewContextRoundId(context);
+      assert.ok(roundId);
+      run.reviewRoundSettlements = {
+        [roundId]: { reason: 'No verdict before inspection', at: '2026-10-19T02:01:00Z' },
+      };
+      assert.equal(
+        persistedWarmReviewerSession(nativeScope, { ...run, reviewRoundSettlements: undefined }),
+        null,
+      );
+    }
+    const adopted = persistedWarmReviewerSession(nativeScope, run);
+    assert.equal(adopted?.contextId, context.id);
+    assert.equal(
+      adopted?.lastLoopNumber,
+      1,
+      'failed resumes never replace the last validated artifact baseline',
+    );
+    assert.equal(adopted?.reviewId, review.id);
+    assert.equal(adopted?.runnerSessionId, session.runnerSessionId);
+    assert.equal(adopted?.lastReviewedHeadSha, session.lastReviewedHeadSha);
+    for (const patch of [
+      { artifactScope: 'another-review' },
+      { runnerSessionId: 'another-session' },
+      { nativeSession: { ...context.nativeSession!, ownerPrincipalId: 'another-owner' } },
+    ])
+      assert.equal(
+        persistedWarmReviewerSession(nativeScope, {
+          ...run,
+          agentContexts: [{ ...context, ...patch }],
+        }),
+        null,
+      );
+  });

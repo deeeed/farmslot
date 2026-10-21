@@ -39,6 +39,7 @@ import {
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
+  gateReviewLineageOptions,
   resultDecisionView,
   ReviewDispatchViewModel,
   reviewLineagesForRun,
@@ -227,12 +228,16 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   } | null>(null);
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
   useEffect(() => {
+    // ADR-063 Amendment 5: a gate lists its lineages; rows preselect their runner's latest
+    // available one in WARM.
+    const lineageOptions = gateReviewLineageOptions(sourceRun, resolvedDecisionId);
     reviewPicker.setContext({
       ...reviewPicker.context,
       reviewLineages: reviewLineagesForRun(sourceRun),
-      reviewContext: reviewRequestContextForRun(sourceRun),
+      reviewContext: lineageOptions ? undefined : reviewRequestContextForRun(sourceRun),
+      lineageOptions,
     });
-  }, [reviewPicker, sourceRun]);
+  }, [resolvedDecisionId, reviewPicker, sourceRun]);
   const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
   const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const [loadingDocument, setLoadingDocument] = useState<string | null>(null);

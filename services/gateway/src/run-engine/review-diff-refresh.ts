@@ -44,6 +44,34 @@ async function readSnapshotDiff(
   return (await slotFileExists(vars, remotePath)) ? slotReadFile(vars, remotePath) : undefined;
 }
 
+/** Upgrade only a historical identity whose captured bytes still verify. */
+export async function refreshReviewDiffSnapshot(
+  run: Run,
+  snapshot: ReviewDiffSnapshot,
+  capturedSnapshots: readonly ReviewDiffSnapshot[] = [],
+): Promise<ReviewDiffSnapshot> {
+  if (!snapshot.diffHash) return snapshot;
+  // Package captures have no diffPath. A review of the same immutable range can
+  // supply the bytes, but they must verify against the package's own digest.
+  const candidates = snapshot.diffPath
+    ? [snapshot]
+    : capturedSnapshots.filter(
+        (candidate) =>
+          candidate.source === snapshot.source &&
+          candidate.baseSha === snapshot.baseSha &&
+          candidate.headSha === snapshot.headSha &&
+          candidate.diffPath,
+      );
+  for (const candidate of candidates) {
+    const diff = await readSnapshotDiff(run, candidate);
+    if (diff === undefined) continue;
+    const identity = reviewSnapshotIdentityText(diff, snapshot.untrackedFiles ?? []);
+    const diffHash = verifiedReviewDiffHash(identity, snapshot.diffHash);
+    if (diffHash) return diffHash === snapshot.diffHash ? snapshot : { ...snapshot, diffHash };
+  }
+  return snapshot;
+}
+
 /** Preserve the historical artifacts; reconcile only the gate's snapshot identity. */
 export async function refreshReviewDiffIdentities(
   run: Run,
@@ -52,13 +80,9 @@ export async function refreshReviewDiffIdentities(
   return Promise.all(
     reviews.map(async (review) => {
       const snapshot = review.reviewSnapshot;
-      if (review.verdict !== 'pass' || !snapshot?.diffHash) return review;
-      const diff = await readSnapshotDiff(run, snapshot);
-      if (diff === undefined) return review;
-      const identity = reviewSnapshotIdentityText(diff, snapshot.untrackedFiles ?? []);
-      const diffHash = verifiedReviewDiffHash(identity, snapshot.diffHash);
-      if (!diffHash || diffHash === snapshot.diffHash) return review;
-      return { ...review, reviewSnapshot: { ...snapshot, diffHash } };
+      if (review.verdict !== 'pass' || !snapshot) return review;
+      const refreshed = await refreshReviewDiffSnapshot(run, snapshot);
+      return refreshed === snapshot ? review : { ...review, reviewSnapshot: refreshed };
     }),
   );
 }
