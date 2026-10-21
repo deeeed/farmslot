@@ -180,3 +180,45 @@ test('a runner event still over 1 MiB without its base64 payloads stops the runn
   assert.equal((await exited)?.message, 'Native runner event exceeds 1 MiB');
   assert.deepEqual(messages, []);
 });
+
+test('a large retained thread response resolves without becoming a runner event', async (t) => {
+  let notify!: (message: Record<string, unknown>) => void;
+  const notification = new Promise<Record<string, unknown>>((resolve) => {
+    notify = resolve;
+  });
+  let stopped: boolean | undefined;
+  const child = new JsonLineProcess(
+    process.execPath,
+    [
+      '-e',
+      `require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+        if (!line.trim()) return;
+        const request = JSON.parse(line);
+        const result = {
+          thread: {id: request.params.threadId, turns: [{text: 'x'.repeat(1100000)}]},
+          activePermissionProfile: {id: 'read-only-worker'},
+        };
+        process.stdout.write(JSON.stringify({id:request.id,result})+'\\n');
+        process.stdout.write(JSON.stringify({method:'thread/started',params:{threadId:result.thread.id}})+'\\n');
+      });`,
+    ],
+    { cwd: process.cwd() },
+    notify,
+    (_error, confirmed) => {
+      stopped = confirmed;
+    },
+  );
+  t.after(() => child.close());
+  const result = await child.request('thread/resume', { threadId: 'retained-thread' });
+  assert.deepEqual(result, {
+    thread: { id: 'retained-thread', turns: [{ text: 'x'.repeat(1100000) }] },
+    activePermissionProfile: { id: 'read-only-worker' },
+  });
+  assert.deepEqual(await notification, {
+    method: 'thread/started',
+    params: { threadId: 'retained-thread' },
+  });
+  assert.equal(stopped, undefined);
+  await child.close();
+  assert.equal(stopped, true);
+});

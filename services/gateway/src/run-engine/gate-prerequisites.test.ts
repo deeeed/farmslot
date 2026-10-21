@@ -180,7 +180,7 @@ test('review overrides waive only their owning review policy, never checks or li
   }
 });
 
-test('a passing fix/review loop consumes its final artifact and rejects a missing final result', async (t) => {
+test('an evidence-only WARM fix uses its final pass artifact and still requires that result', async (t) => {
   const prepared = makeReadyGatePackage({
     reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
   });
@@ -188,15 +188,33 @@ test('a passing fix/review loop consumes its final artifact and rejects a missin
     'artifacts/review-1/loop-1/review-result.json',
     'artifacts/review-1/loop-2/review-result.json',
   ];
+  const head = prepared.headSha;
+  assert.ok(head);
+  const delta = {
+    ...prepared.reviewSnapshot!,
+    baseSha: head,
+    diffHash: createHash('sha256').update('').digest('hex'),
+    diffStat: { files: 0, additions: 0, deletions: 0 },
+  };
   const review: ReviewStatus = {
     id: 'review-1',
     source: 'human-gate',
-    mode: 'cold',
+    mode: 'warm',
+    session: {
+      mode: 'warm',
+      reviewId: 'review-1',
+      continuity: 'resumed',
+      priorSessionId: 'session-1',
+      sessionId: 'session-1',
+      lastReviewedHeadSha: head,
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+    },
     loopNumber: 1,
     reviewerSessionId: 'session-1',
     reviewedHeadSha: prepared.headSha,
     reviewedReviewSubjectHash: prepared.reviewSubjectHash,
-    reviewSnapshot: prepared.reviewSnapshot,
+    reviewSnapshot: delta,
     verdict: 'pass',
     unresolvedCount: 0,
     artifactPaths: paths,
@@ -206,13 +224,18 @@ test('a passing fix/review loop consumes its final artifact and rejects a missin
         loopNumber: 1,
         verdict: 'issues',
         unresolvedCount: 1,
+        issues: [
+          { file: 'artifacts/recipe.json', description: 'Evidence must compare original values.' },
+        ],
+        reviewSnapshot: prepared.reviewSnapshot,
         artifactPaths: [paths[0]],
       },
       {
-        mode: 'cold',
+        mode: 'warm',
         loopNumber: 2,
         verdict: 'pass',
         unresolvedCount: 0,
+        reviewSnapshot: delta,
         artifactPaths: [paths[1]],
       },
     ],
@@ -264,7 +287,7 @@ test('a passing fix/review loop consumes its final artifact and rejects a missin
     source: 'pipeline',
     runner: 'claude',
     artifactPaths: [pipelinePath],
-    attempts: [{ ...review.attempts![1], artifactPaths: [pipelinePath] }],
+    attempts: [review.attempts![0], { ...review.attempts![1], artifactPaths: [pipelinePath] }],
   };
   const retained = makeRun({
     id: randomUUID(),

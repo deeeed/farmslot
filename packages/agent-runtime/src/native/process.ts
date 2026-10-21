@@ -126,6 +126,15 @@ export class JsonLineProcess {
         this.beginStop();
         return;
       }
+      // Matched replies can carry retained thread history and do not enter the event journal.
+      if (typeof message.id === 'number' && !message.method && this.pending.has(message.id)) {
+        const request = this.pending.get(message.id)!;
+        clearTimeout(request.timer);
+        this.pending.delete(message.id);
+        if (message.error) request.reject(new Error(JSON.stringify(message.error)));
+        else request.resolve(message.result);
+        return;
+      }
       if (Buffer.byteLength(line) > NATIVE_EVENT_LIMIT) {
         message = withoutBase64Payloads(message) as Record<string, unknown>;
         if (Buffer.byteLength(JSON.stringify(message)) > NATIVE_EVENT_LIMIT) {
@@ -134,20 +143,12 @@ export class JsonLineProcess {
           return;
         }
       }
-      if (typeof message.id === 'number' && !message.method && this.pending.has(message.id)) {
-        const request = this.pending.get(message.id)!;
-        clearTimeout(request.timer);
-        this.pending.delete(message.id);
-        if (message.error) request.reject(new Error(JSON.stringify(message.error)));
-        else request.resolve(message.result);
-      } else {
-        try {
-          onMessage(message);
-        } catch (error) {
-          // A malformed runner event terminates its own session, not the gateway.
-          this.fail(new Error('Native runner protocol event failed', { cause: error }));
-          this.beginStop();
-        }
+      try {
+        onMessage(message);
+      } catch (error) {
+        // A malformed runner event terminates its own session, not the gateway.
+        this.fail(new Error('Native runner protocol event failed', { cause: error }));
+        this.beginStop();
       }
     });
     this.child.on('error', (error) => {

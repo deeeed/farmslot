@@ -338,7 +338,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     interruptKeys: ['C-c'],
-    continueCommand: '/continue',
+    continueCommand: 'Continue the current task from where you left off.',
     contextResetCommand: '/clear',
     persistsSessionFiles: true,
     sessionArchive: 'jsonl',
