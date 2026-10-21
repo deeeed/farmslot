@@ -3,12 +3,13 @@ import path from 'node:path';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { resolveTmuxPaneId, shellQuote } from '../core/tmux.js';
+import { resolveExactTmuxWindowPane, resolveTmuxPaneId, shellQuote } from '../core/tmux.js';
 
 import { claudeHookObservability } from './claude-observability.js';
 import { observedAtFromRecord, readRunnerPaneObservabilityState } from './observability-files.js';
 import type { RunnerObservability, SlotVars } from './observability-types.js';
 import { buildRunnerOpenFileProbeCommand, parseOpenFilePaths } from './process-open-files.js';
+import type { probeRunnerDescendantPid } from './session-process.js';
 
 type CodexPromptProbe =
   | { status: 'matched'; observedAt: number; turnId: string }
@@ -618,6 +619,70 @@ async function readCodexNativeTurnState(vars: SlotVars, sessionId: string, sessi
     : null;
 }
 
+interface CodexProcessTurnReaders {
+  pane: typeof resolveExactTmuxWindowPane;
+  process: typeof probeRunnerDescendantPid;
+  exec: typeof execOnSlot;
+}
+
+/** Hookless read-only reviewers still expose their pane-owned native rollout. */
+export async function readCodexProcessTurnState(
+  vars: SlotVars,
+  target: string,
+  expectedTurnToken?: string,
+  overrides: Partial<CodexProcessTurnReaders> = {},
+) {
+  const source: CodexProcessTurnReaders = {
+    pane: resolveExactTmuxWindowPane,
+    process: async (...args) =>
+      (await import('./session-process.js')).probeRunnerDescendantPid(...args),
+    exec: execOnSlot,
+    ...overrides,
+  };
+  const pane = await source.pane(vars, target);
+  if (!pane) return null;
+  const process = await source.process(vars, pane.panePid, 'codex');
+  if (process.state !== 'present') return null;
+  const open = await source.exec(vars, buildRunnerOpenFileProbeCommand(process.pid), {
+    timeout: 10000,
+  });
+  if (open.exitCode !== 0) return null;
+  const paths = [...new Set(parseOpenFilePaths(open.stdout))].filter((file) =>
+    /\/rollout-[^/]+\.jsonl$/u.test(file),
+  );
+  if (!paths.length) return null;
+  const result = await source.exec(
+    vars,
+    buildCodexSessionBindingProbeCommand(paths, undefined, true),
+    { timeout: 10000 },
+  );
+  if (result.exitCode !== 0) return null;
+  const binding = parseCodexSessionBindingProbe(result.stdout.trim());
+  if (binding.status !== 'matched') return null;
+  if (expectedTurnToken && !expectedTurnToken.startsWith(`${binding.sessionId}:`)) return null;
+  const turn = await source.exec(
+    vars,
+    buildCodexTurnStateProbeCommand(binding.sessionId, binding.sessionPath),
+    { timeout: 10000 },
+  );
+  if (turn.exitCode !== 0) return null;
+  const probe = parseCodexTurnStateProbe(turn.stdout.trim());
+  if (probe.status !== 'matched') return null;
+  const currentPane = await source.pane(vars, target);
+  if (currentPane?.paneId !== pane.paneId || currentPane.panePid !== pane.panePid) return null;
+  const current = await source.process(vars, pane.panePid, 'codex');
+  if (current.state !== 'present' || current.pid !== process.pid) return null;
+  return {
+    value: probe.state,
+    source: 'signal' as const,
+    confidence: 'high' as const,
+    observedAt: probe.observedAt,
+    sessionId: binding.sessionId,
+    turnToken: `${binding.sessionId}:${probe.turnId}`,
+    ...(probe.failure ? { failure: probe.failure } : {}),
+  };
+}
+
 async function readCodexPromptAcceptance(
   vars: SlotVars,
   sessionId: string,
@@ -706,7 +771,7 @@ export const codexSessionObservability: RunnerObservability = {
   },
   async getTurnState(vars, target, expectedTurnToken) {
     const binding = await resolveCodexPaneBinding(vars, target);
-    if (!binding) return null;
+    if (!binding) return readCodexProcessTurnState(vars, target, expectedTurnToken);
     if (expectedTurnToken && !expectedTurnToken.startsWith(`${binding.sessionId}:`)) return null;
     return readCodexNativeTurnState(vars, binding.sessionId, binding.sessionPath);
   },

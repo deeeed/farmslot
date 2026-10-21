@@ -408,7 +408,7 @@ function renderPipelineDecisionDiamond(
 
   return svg`
     <g transform="translate(${cx}, ${cy})"
-       class="${isPending ? 'decision-pending' : ''}"
+       class="pipeline-decision ${isPending ? 'decision-pending' : ''}"
        style="cursor: ${navTarget ? 'pointer' : 'default'}"
        @click=${
          navTarget
@@ -435,10 +435,11 @@ function renderPipelineDecisionDiamond(
           : svg`
         <text y="17" text-anchor="middle" dominant-baseline="central"
               fill="${colors.textMuted}" font-size="7">
-          ${decision.resolvedAction ?? 'resolved'}
+          Done
         </text>
       `
       }
+      <title>${decision.title}${decision.resolvedAction ? ` · ${decision.resolvedAction}` : ''}</title>
     </g>
   `;
 }

@@ -1706,11 +1706,20 @@ test('a description-only edit keeps the review subject; the package hash still c
   );
   assert.notEqual(computeReadyGatePackageHash(edited), computeReadyGatePackageHash(reviewed));
   assert.equal(readyGateReviewSubjectMatches(reviewed, edited), true);
-  // Code drift still counts.
   assert.equal(
     readyGateReviewSubjectMatches(reviewed, {
       ...edited,
       diffStat: { files: 2, additions: 3, deletions: 0 },
+    }),
+    true,
+  );
+  const snapshot = edited.reviewSnapshot;
+  assert.ok(snapshot);
+  // A changed captured patch remains code drift even when its line counts match.
+  assert.equal(
+    readyGateReviewSubjectMatches(reviewed, {
+      ...edited,
+      reviewSnapshot: { ...snapshot, diffHash: 'changed-code-diff' },
     }),
     false,
   );
@@ -1968,6 +1977,63 @@ test('held publication approval reopens only its wait despite persisted review p
   });
   assert.equal(gates, 1);
   assert.deepEqual(getRun(run.id)!.engineState, before);
+});
+
+test('a failed publication continuation re-presents its gate with prior findings intact', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'CONTINUE-INFRA-FAILURE',
+    runner: 'grok',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: 'continue-slot',
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'review-1',
+            source: 'human-gate',
+            mode: 'warm',
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 3,
+            issues: [1, 2, 3].map((n) => ({ file: 'a.ts', description: `finding ${n}` })),
+            recoveryContinuationPending: true,
+          },
+        ],
+      },
+    },
+    decisions: [
+      {
+        id: 'held',
+        type: 'engine_human_gate',
+        title: 'Gate',
+        description: '',
+        actions: [],
+        createdAt: '2026-10-21T00:00:00Z',
+        resolvedAt: '2026-10-21T00:01:00Z',
+        resolvedAction: 'approve-publish-unresolved',
+        context: { approvalHeldAt: '2026-10-21T00:01:01Z' },
+      },
+    ],
+  });
+  const gateActions = ['continue-review-fix', 'approve-publish'];
+  let continuations = 0;
+  await executeHumanGateStep(run.id, {
+    ...restartReplayContext(),
+    executePublishGateReviewPlan: async () => assert.fail('no replacement review plan'),
+    resumeInterruptedPublicationReviewForRun: async () => {
+      continuations++;
+      return null;
+    },
+    executeReadyGate: async () => gateActions.shift()!,
+  });
+  assert.equal(continuations, 1, 'no automatic infra retry');
+  assert.equal(gateActions.length, 0, 'the recoverable failure re-presents the gate');
+  assert.equal(getRun(run.id)!.engineState!.publishGate!.reviews![0]!.unresolvedCount, 3);
 });
 
 test('Send back delivers through the retained repair step and re-presents the same gate', async (t) => {
@@ -2235,6 +2301,60 @@ function preparedGatePackage(): PrepareCompletionPackageResult {
     reviews: [],
   };
 }
+
+for (const interrupted of [false, true])
+  test(`retained same-head findings reach the gate without ${interrupted ? 'retrying an interrupted' : 'starting an automatic'} review`, async (t) => {
+    const issues = [
+      { file: 'evidence-manifest.json', description: 'AC-1 needs person acceptance' },
+    ];
+    const reviews: ReviewStatus[] = [
+      {
+        id: 'pipeline-review-retained',
+        source: 'pipeline',
+        mode: 'warm',
+        loopNumber: 1,
+        verdict: 'failed',
+        unresolvedCount: 1,
+        issues,
+        attempts: [
+          {
+            mode: 'warm',
+            loopNumber: 2,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues,
+            reviewSnapshot: {
+              source: 'local-git',
+              headSha: 'c'.repeat(40),
+              capturedAt: '2026-10-21T02:39:11Z',
+            },
+          },
+        ],
+      },
+    ];
+    if (interrupted)
+      reviews.push({
+        id: 'review-interrupted',
+        source: 'dispatch',
+        mode: 'cold',
+        loopNumber: 2,
+        verdict: 'failed',
+        unresolvedCount: 0,
+      });
+    const run = await staleReceiptGateRun(t, 'RETAINED-FINDING', [claudeColdRow], reviews);
+    let gates = 0;
+    await executeHumanGateStep(run.id, {
+      ...restartReplayContext(),
+      executePublishGateReviewPlan: async () =>
+        assert.fail('retained findings require a person decision, not another review'),
+      executeReadyGate: async () => {
+        gates++;
+        return 'approve-publish';
+      },
+    });
+    assert.equal(gates, 1);
+    assert.deepEqual(getRun(run.id)!.engineState?.publishGate?.reviews, reviews);
+  });
 
 test('gate re-entry with a refused re-run row and a stale CI receipt reaches the gate wait', async (t) => {
   // The refused re-run left its row persisted; a restart and Retry Gate re-enter with it.

@@ -6,6 +6,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM.
 
+- Add a live canvas probe for the current actor, elapsed time, completed rounds and bounded labels.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.15.0 - 2026-10-19

@@ -66,6 +66,7 @@ import {
   persistReviewOutputArtifacts,
   prependReviewerExecutionContract,
   readTerminalReviewSignal,
+  refundedNativeReviewer,
   type ReReviewContinuation,
   type ReviewAgentResult,
   reviewChecklistMarkPrompt,
@@ -77,6 +78,7 @@ import {
 } from './review-agent.js';
 import {
   admitReviewRound,
+  clearReviewRoundSettlement,
   reviewLaunchStartedAt,
   reviewRoundAdmissionId,
   settleReviewRoundNoVerdict,
@@ -106,7 +108,6 @@ import {
   isTerminalReviewArtifactError,
   isUncertainReviewerOperation,
   nativeReviewerFailure,
-  ReviewerExitedError,
   reviewerExitForNativeSnapshot,
   TerminalReviewArtifactError,
   terminalReviewArtifactErrorForCompletion,
@@ -125,7 +126,7 @@ type NativeReviewInput = {
   mode: ReviewMode;
   reviewId?: string | null;
   effort?: string | null;
-  /** An automatic re-review: an unavailable session runs the delta-scoped COLD fallback. */
+  /** A validated re-review: an unavailable session runs the delta-scoped COLD fallback. */
   rereview?: ReReviewContinuation | null;
 };
 
@@ -231,9 +232,23 @@ async function runNativeReviewAttempt(
     artifactScope,
     loopNumber,
   });
-  let context = [...(original.agentContexts ?? [])]
-    .reverse()
-    .find((candidate) => isLiveNativeReviewer(candidate, contextPrefix));
+  const retryContextId = input.mode === 'warm' ? input.rereview?.retryContextId : undefined;
+  const retry = retryContextId
+    ? refundedNativeReviewer(original, {
+        runner,
+        model,
+        taskDir,
+        artifactScope,
+        reviewId: input.reviewId,
+        effort: input.effort,
+      })
+    : undefined;
+  if (retryContextId && retry?.id !== retryContextId)
+    throw new Error('The refunded reviewer attempt changed before its continuation');
+  let context =
+    [...(original.agentContexts ?? [])]
+      .reverse()
+      .find((candidate) => isLiveNativeReviewer(candidate, contextPrefix)) ?? retry;
   const contextId = context?.id ?? `${contextPrefix}-${randomUUID().slice(0, 8)}`;
   const recovering = Boolean(context?.nativeSession);
   const identity = reviewPRIdentity(original);
@@ -262,7 +277,7 @@ async function runNativeReviewAttempt(
   let warmRunId: string | undefined;
   let warm: NonNullable<typeof original.agentContexts>[number] | undefined;
   let fallback = resumeFailure?.refusal;
-  // A person's WARM request shows the reason; an automatic re-review never stops on it.
+  // Every validated re-review keeps its delta when the retained session is unavailable.
   const fallBack = (refusal: WarmReviewRefusal) => {
     if (!input.rereview) throw refusal;
     fallback = refusal;
@@ -629,7 +644,6 @@ async function runNativeReviewAttempt(
         throw reviewerExitForNativeSnapshot(snapshot) ?? new Error(reason);
       }
       if (Date.now() >= deadline) {
-        await cancelNativeWorkerContext(runId, context);
         throw new Error(`Native reviewer did not complete within ${input.reviewTimeoutMs}ms`);
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -688,6 +702,7 @@ async function runNativeReviewAttempt(
     );
     await persistRunNow(getRun(runId)!, 'native reviewer result validated');
     if (feedback.incomplete) await settleReviewRoundNoVerdict(runId, roundId, 'no-feedback-file');
+    else await clearReviewRoundSettlement(runId, roundId);
     await stopSettledReviewer(runId, contextId);
 
     if (retained && context.runnerSessionId !== retained.runnerSessionId)
@@ -798,12 +813,39 @@ async function runNativeReviewAttempt(
         );
       }
     }
+    let stopped = true;
+    if (
+      !isUncertainReviewerOperation(failure) &&
+      context?.nativeSession &&
+      nativeReviewOperationIsCurrent() &&
+      run &&
+      !isTerminalRunStatus(run.status) &&
+      (run.engineState?.generation ?? 0) === generation
+    ) {
+      try {
+        await withNativeReviewMutation(async () => {
+          admit();
+          await cancelNativeWorkerContext(runId, context!);
+        });
+      } catch (stopError) {
+        stopped = false;
+        primaryFailure = new AggregateError(
+          [primaryFailure, stopError],
+          `${failure instanceof Error ? failure.message : String(failure)}; reviewer process cleanup is unconfirmed`,
+          { cause: primaryFailure },
+        );
+      }
+    }
     // Every end here is no-verdict, a superseded attempt included (ADR-063 Amendment 2).
     // An uncertain launch or delivery may still be running a reviewer; its round
     // counts until recovery settles it.
     try {
       // A resume that never started continues as the fallback under this receipt.
-      if (!isUncertainReviewerOperation(failure) && !(failure instanceof NativeReviewResumeFailure))
+      if (
+        stopped &&
+        !isUncertainReviewerOperation(failure) &&
+        !(failure instanceof NativeReviewResumeFailure)
+      )
         await settleReviewRoundNoVerdict(
           runId,
           roundId,
@@ -821,13 +863,6 @@ async function runNativeReviewAttempt(
     await finishReviewCleanup(primaryFailure, [
       () => progress?.stop(),
       () => unwatchContext(vars.slotId, contextId, { expectedRunId: runId }),
-      async () => {
-        if (!(primaryFailure instanceof ReviewerExitedError) || !context?.nativeSession) return;
-        await withNativeReviewMutation(async () => {
-          admit();
-          await cancelNativeWorkerContext(runId, context!);
-        });
-      },
       async () => {
         if (!activeTaskSet || !nativeReviewOperationIsCurrent()) return;
         await withNativeReviewMutation(async () => {

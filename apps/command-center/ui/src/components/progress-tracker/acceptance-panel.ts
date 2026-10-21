@@ -27,11 +27,16 @@ import type {
   AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
 } from '@farmslot/protocol';
-import { acceptanceClaimRows, acceptancePanelPresentation } from '@farmslot/review-dispatch';
+import {
+  acceptanceClaimRows,
+  acceptancePanelPresentation,
+  untestableOverrideView,
+} from '@farmslot/review-dispatch';
 
 import '../shared/proof-step-details.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { reasonSheetStyles, renderReasonSheet } from '../shared/reason-sheet.js';
 
 import {
   type AcceptanceClaimListActions,
@@ -270,6 +275,10 @@ export const acceptancePanelStyles = css`
   button.ac-proof-step:hover .ac-check-intent {
     color: ${unsafeCSS(colors.accent)};
   }
+  .ac-override {
+    margin-top: ${unsafeCSS(spacing.sm)};
+  }
+  ${unsafeCSS(reasonSheetStyles())}
 `;
 
 /** A click on one of a criterion's evidence files: which criterion, its files in order, and which one. */
@@ -497,40 +506,49 @@ function renderRowDetails(
         ? html`<div class="ac-note">Engine verdict: ${criterion.engineVerdict}</div>`
         : nothing}
       ${markUntestable && model?.claimOverrideCandidate(view.id)
-        ? html`<div class="ac-note">
-            <button
-              type="button"
-              data-testid="claim-override-open"
-              @click=${() => editor?.select(view.id)}
-            >
-              Mark untestable
-            </button>
-            ${editor?.claimId === view.id
-              ? html`
-                  <label
-                    >Reason
-                    <textarea
-                      data-testid="claim-override-reason"
-                      aria-label=${`Reason for ${view.id}`}
-                      .value=${editor.reason}
-                      @input=${(event: Event) =>
-                        editor.change((event.target as HTMLTextAreaElement).value)}
-                    ></textarea>
-                  </label>
-                  <button
-                    type="button"
-                    data-testid="claim-override-confirm"
-                    ?disabled=${!editor.reason.trim()}
-                    @click=${() => markUntestable(view.id, editor.reason)}
-                  >
-                    Confirm untestable override
-                  </button>
-                `
-              : nothing}
+        ? html`<div class="ac-override">
+            ${renderUntestableOverride(view.id, editor, markUntestable)}
           </div>`
         : nothing}
     </details>
   `;
+}
+
+/**
+ * Skip a criterion: the untestable override (ADR-062 Amendment 4) with its required
+ * reason, one action that opens the shared reason sheet. Copy and rule are shared with
+ * Companion; the gate's blocker list opens the same sheet.
+ */
+export function renderUntestableOverride(
+  claimId: string,
+  editor: AcceptanceClaimOverrideEditor | undefined,
+  markUntestable: (claimId: string, reason: string) => void,
+) {
+  const open = editor?.claimId === claimId;
+  const view = untestableOverrideView(claimId, open ? editor.reason : '');
+  if (!open)
+    return html`<button
+      type="button"
+      class="gate-secondary"
+      data-testid="claim-override-open"
+      @click=${() => editor?.select(claimId)}
+    >
+      ${view.action}
+    </button>`;
+  return renderReasonSheet({
+    title: view.title,
+    hint: view.hint,
+    label: view.reasonLabel,
+    placeholder: view.placeholder,
+    value: editor.reason,
+    confirmLabel: view.confirm,
+    cancelLabel: view.cancel,
+    canConfirm: view.canConfirm,
+    testId: 'claim-override',
+    change: (reason) => editor.change(reason),
+    confirm: () => markUntestable(claimId, editor.reason),
+    cancel: () => editor.select(null),
+  });
 }
 
 /**

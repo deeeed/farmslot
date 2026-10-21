@@ -593,3 +593,19 @@ test('fresh-session rechecks of one lineage still count only its latest result',
     false,
   );
 });
+
+test('an operator WARM request with a validated lineage and missing session admits only its delta fallback', async () => {
+  const { assertWarmReviewRequestAvailable } = await import('./review-plan.js');
+  const { makeRun } = await import('./test-fixtures.js');
+  const review = passing('legacy-review', 'legacy-session');
+  const run = makeRun({ engineState: { publishGate: { reviews: [review] } } });
+  const request = {
+    ...selection,
+    mode: 'warm' as const,
+    context: {
+      reviewLineages: [{ familyId: run.familyId, reviewId: review.id }],
+    },
+  };
+  assert.doesNotThrow(() => assertWarmReviewRequestAvailable(run, request, [run]));
+  assert.equal(request.mode, 'warm', 'execution records the fallback, not the request');
+});

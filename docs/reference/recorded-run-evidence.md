@@ -633,9 +633,17 @@ appends a new chain entry. No separate task-file write can succeed
 while receipt persistence fails. Readers derive the row after restart.
 
 The operation MUST NOT resolve or publish the gate. Receipt changes invalidate
-cached policy evaluation and publication confirmation. Existing refresh rebuilds
-the gate projection and package identity with the applied receipt IDs; policy and
-final publication recheck the same receipt set. Output review re-presents its
+cached policy evaluation and publication confirmation. After persisting a receipt,
+the existing package refresh owner MUST rebuild and re-present a pending
+publication gate before success. A refresh refusal MUST preserve the receipt and
+return `CLAIM_OVERRIDE_REFRESH_REQUIRED`; retry reuses that receipt. A receipt
+already included in the current package needs no further refresh.
+
+Override-only changes MUST preserve existing review results and MUST NOT request
+or consume a review round. Override receipts and display-only diff counts are
+not review inputs. Actual code, diff or reviewed-evidence changes still invalidate
+the corresponding review. Policy and final publication recheck the same receipt
+set, and human publication confirmation remains required. Output review re-presents its
 unchanged captured inventory plus that projection. A changed closure or selection
 cannot reuse an old receipt, even if claim labels match.
 

@@ -384,6 +384,7 @@ async function resumeVisualRepairOnce(
         recoveryContinuationPending: false,
       },
       reservedFixPass: {
+        repairId: repair.repairId,
         onDelivered: () =>
           updateVisualRepair(runId, repair.repairId, {
             status: 'delivered',
@@ -580,10 +581,8 @@ export async function executePublishGateReviewPlan(
         ? lineageId
         : REQUESTED_REVIEW_SOURCE.artifactRefs(gateReviews.length + 1, `${runId}-${randomUUID()}`)
             .id);
-    // ADR-063 Amendment 5: an automatic re-review never stops on an unavailable session;
-    // a person's WARM request still sees the refusal.
-    const rereview =
-      automaticLaunch && planStep.mode === 'warm' ? reReviewOfStatus(priorReview) : undefined;
+    // Operator and automatic re-reviews share the same session/delta fallback.
+    const rereview = planStep.mode === 'warm' ? reReviewOfStatus(priorReview) : undefined;
     const execution = executionModelFromSelection(planStep);
     const requestedRunner = execution.runner;
     updateRunStep(runId, S.HUMAN_GATE, {

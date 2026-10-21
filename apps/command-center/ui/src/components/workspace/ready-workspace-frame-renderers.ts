@@ -29,6 +29,8 @@ export interface ReadyWorkspaceFrameInput {
   recoveryMessage: string;
   gatewayConnected: boolean;
   renderTopBar: () => TemplateResult;
+  /** What blocks publish, above the tabs. */
+  renderBlockers: () => unknown;
   renderResolvedBanner: () => unknown;
   renderPackagePanel: () => unknown;
   renderReportEvidence?: () => unknown;
@@ -85,7 +87,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
       ${readyWorkspaceLightStyles()}
       ${acceptancePanelStyles.cssText}
     </style>
-    ${input.renderResolvedBanner()}
+    ${input.renderResolvedBanner()} ${input.renderBlockers()}
     <div class="rdy-split">
       ${renderReadyRecoveryOverlay(input)}
       ${packageGate

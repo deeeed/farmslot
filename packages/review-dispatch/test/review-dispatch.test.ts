@@ -436,7 +436,7 @@ test('a lineage before a PR exists is keyed by its run family and stays valid', 
   );
 });
 
-test('a gate request preselects each row runner latest available lineage in WARM, once', () => {
+test('a gate request preselects each row runner latest validated lineage in WARM, once', () => {
   const option = (reviewId: string, runner: string, reviewedAt: string, extra = {}) => ({
     context: { reviewId, familyId: 'family-a' },
     runner,
@@ -476,11 +476,12 @@ test('a gate request preselects each row runner latest available lineage in WARM
   assert.equal(vm.rows[2].selection.mode, 'cold');
   assert.equal(vm.rows[2].context, null);
   assert.equal(vm.rows[2].note, undefined);
-  // An unavailable session preselects COLD and says why; a person may still ask for WARM.
+  // An unavailable session remains WARM, preserving the baseline model and effort for its delta.
   vm.setRunner(vm.rows[2].id, 'claude');
-  assert.equal(vm.rows[2].selection.mode, 'cold');
+  assert.equal(vm.rows[2].selection.mode, 'warm');
+  assert.equal(vm.rows[2].selection.model, 'claude-model-claude');
   assert.match(vm.rows[2].note ?? '', /different slot/);
-  // The COLD row stays in its lineage too (ADR-063 Amendment 5).
+  // The fallback row stays in its lineage too (ADR-063 Amendment 5).
   assert.deepEqual(vm.toRequestPayload().context, {
     reviewLineages: [
       { reviewId: 'latest-codex', familyId: 'family-a' },

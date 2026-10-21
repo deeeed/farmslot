@@ -228,7 +228,7 @@ test('CC and Companion render runner/model/effort controls only in their shared 
   );
 });
 
-test('a gate row whose earlier review cannot continue shows why it is COLD', () => {
+test('a gate row with an unavailable session stays WARM and explains its fresh-session delta', () => {
   const picker = new ReviewDispatchPicker();
   picker.review = true;
   picker.viewModel = new ReviewDispatchViewModel({
@@ -248,9 +248,9 @@ test('a gate row whose earlier review cannot continue shows why it is COLD', () 
     },
   });
   const rendered = markup(picker.render());
-  assert.equal(picker.viewModel.rows[0]?.selection.mode, 'cold');
+  assert.equal(picker.viewModel.rows[0]?.selection.mode, 'warm');
   assert.match(
     rendered,
-    /data-testid="review-dispatch-note">The earlier review can't continue: the retained reviewer belongs to a different slot/,
+    /data-testid="review-dispatch-note">Review changes in a fresh session: the retained reviewer belongs to a different slot/,
   );
 });

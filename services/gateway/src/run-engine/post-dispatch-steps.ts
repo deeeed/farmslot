@@ -10,7 +10,6 @@ import {
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
   isReviewValidationDepth,
-  latestReview,
   PipelineSteps,
   type ReadyGatePrPackage,
   reviewPolicySatisfied,
@@ -25,6 +24,7 @@ import {
 import {
   executionModelFromSelection,
   parseReviewSelection,
+  publicationReviewBlockingReason,
   resolveReviewDispatchDefaults,
   resolveReviewMode,
   reviewContextFromRequest,
@@ -384,6 +384,9 @@ function legacyReviewSubjectMatchesIgnoringNewEvidenceDigests(
   if (reviewedPackage.branch !== preparedPackage.branch) return false;
   if ((reviewedPackage.remoteBranchRef ?? null) !== (preparedPackage.remoteBranchRef ?? null))
     return false;
+  const reviewedDiffHash = reviewedPackage.reviewSnapshot?.diffHash;
+  const preparedDiffHash = preparedPackage.reviewSnapshot?.diffHash;
+  if (reviewedDiffHash && preparedDiffHash && reviewedDiffHash !== preparedDiffHash) return false;
   if (JSON.stringify(reviewedPackage.diffStat) !== JSON.stringify(preparedPackage.diffStat))
     return false;
   if (
@@ -925,7 +928,11 @@ export async function rerunReviewIfReviewedInputsChanged(
   const reviewedPackage = await readReadyGatePreparedPackage(latest);
   // Findings awaiting a fix come first: Continue Fixing re-reviews after the fix, and a review
   // now would spend the round on the same code (ADR-063 Amendment 4).
-  if (await gateReviewContinuationForRun(latest, reviewedPackage?.headSha)) return false;
+  if (
+    publicationReviewBlockingReason(latest, reviewedPackage) ||
+    (await gateReviewContinuationForRun(latest, reviewedPackage?.headSha))
+  )
+    return false;
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — evidence or HEAD changed since the last review; running review again`,
   );
@@ -1170,10 +1177,9 @@ export async function executeHumanGateStep(
           })
         : [];
       const reviewsForInitial = beforeInitialPlan.engineState?.publishGate?.reviews ?? [];
-      const latestExtraReview = latestReview(reviewsForInitial);
-      const latestHasOpenFindings =
-        latestExtraReview?.verdict === 'issues' &&
-        Math.max(latestExtraReview.unresolvedCount ?? 0, latestExtraReview.issues?.length ?? 0) > 0;
+      const latestHasOpenFindings = Boolean(
+        publicationReviewBlockingReason(beforeInitialPlan, { headSha: gateHeadSha }),
+      );
       const persistedReviewPolicy = beforeInitialPlan.engineState?.publishGate?.reviewPolicy;
       const replayProjectVars =
         (unconsumedReviewDecision && persistedReviewPolicy?.requestedBy !== 'dispatch') ||
@@ -1378,15 +1384,11 @@ export async function executeHumanGateStep(
             gateAction,
           );
         }
-        const resumed = await (
+        await (
           context.resumeInterruptedPublicationReviewForRun ?? resumeInterruptedPublicationReview
         )(runId, continuationSlotId);
-        if (!resumed) {
-          throw blockedRunError(
-            'Publication review continuation was requested but no pending findings were found',
-            gateAction,
-          );
-        }
+        // A runner or delivery refusal preserves the findings. Re-present the gate
+        // so recovery can retry after the infrastructure failure is fixed.
         gateAction = await presentReadyGate();
         continue;
       }

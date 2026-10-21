@@ -17,8 +17,8 @@ import {
   failedRunCancelEffects,
   isTerminalRunStatus,
   Methods,
-  runStepDisplayStatus,
 } from '@farmslot/protocol';
+import { runActivityStepStatus, runActivityView } from '@farmslot/review-dispatch';
 
 import '../progress-tracker/progress-tracker.js';
 
@@ -45,6 +45,7 @@ import {
   currentPipelineNodeId,
   effectiveTaskProgressForRun,
   isInlineCiFixActiveFromOutputs,
+  NODE_H,
   pipelineDetachedProgressVisible,
   type PipelineLayout,
 } from './run-pipeline-model.js';
@@ -74,6 +75,7 @@ import {
   renderPublicationReviewLoops,
   renderReviewLoop,
 } from './run-pipeline-svg-renderers.js';
+import { formatElapsed } from './run-utils.js';
 
 @customElement('run-pipeline')
 export class RunPipeline extends LitElement {
@@ -154,16 +156,19 @@ export class RunPipeline extends LitElement {
   }
 
   private _vis(step: RunStep): RunStepDisplayStatus {
-    return runStepDisplayStatus(this.run, step);
+    return runActivityStepStatus(this.run, step);
   }
 
   render() {
     if (!this.run) return nothing;
     const layout = computeLayout(this.run);
+    const activity = runActivityView(this.run);
     const activityLabel =
       this.reasonInHeader && this.run.status === 'blocked'
         ? undefined
-        : deriveRunLifecycleView(this.run).activityLabel;
+        : activity
+          ? `${activity.label}${activity.startedAt ? ` · ${formatElapsed(activity.startedAt)}` : ''}`
+          : deriveRunLifecycleView(this.run).activityLabel;
     const isActive = !isTerminalRunStatus(this.run.status);
     const recovery = this.run.engineState?.publishGate?.reviewRecovery;
     const showRecovery = Boolean(recovery && recovery.status !== 'recovered');
@@ -252,26 +257,38 @@ export class RunPipeline extends LitElement {
       ${renderPipelineDefs()}
       ${renderPipelineLanes(layout)}
       ${layout.arrows.map((a, i) => renderPipelineArrow(a, this._vis(layout.nodes[i].step)))}
-      ${layout.nodes.map((n) =>
-        n.id === 'monitor'
-          ? renderMonitorPipelineNode(n, specialNodeContext)
-          : n.id === 'review'
-            ? renderReviewPipelineNode(n, specialNodeContext)
-            : n.id === 'complete'
-              ? renderCompletePipelineNode(n, specialNodeContext)
-              : n.id === 'package-refresh'
-                ? renderPackageRefreshPipelineNode(n, specialNodeContext)
-                : n.id.includes('publication-review-')
-                  ? renderPublicationReviewPipelineNode(n, specialNodeContext)
-                  : n.id === 'human-gate'
-                    ? renderHumanGatePipelineNode(n, specialNodeContext)
-                    : n.id === 'finalize'
-                      ? renderFinalizePipelineNode(n, specialNodeContext)
-                      : renderDefaultPipelineNode(n, {
-                          run: this.run,
-                          visibleStatus: this._vis(n.step),
-                          onStepSelect: (step) => this._selectStep(step),
-                        }),
+      ${layout.nodes.map(
+        (n) => svg`
+        <g class="pipeline-node" data-node-id=${n.id} data-status=${this._vis(n.step)}>
+          <clipPath id=${`pipeline-clip-${n.id}`}>
+            <rect x=${n.x} y=${n.y} width=${n.w} height=${NODE_H} rx="6"/>
+          </clipPath>
+          <g clip-path=${`url(#pipeline-clip-${n.id})`}>
+          ${
+            n.id === 'monitor'
+              ? renderMonitorPipelineNode(n, specialNodeContext)
+              : n.id === 'review'
+                ? renderReviewPipelineNode(n, specialNodeContext)
+                : n.id === 'complete'
+                  ? renderCompletePipelineNode(n, specialNodeContext)
+                  : n.id === 'package-refresh'
+                    ? renderPackageRefreshPipelineNode(n, specialNodeContext)
+                    : n.id.includes('publication-review-')
+                      ? renderPublicationReviewPipelineNode(n, specialNodeContext)
+                      : n.id === 'human-gate'
+                        ? renderHumanGatePipelineNode(n, specialNodeContext)
+                        : n.id === 'finalize'
+                          ? renderFinalizePipelineNode(n, specialNodeContext)
+                          : renderDefaultPipelineNode(n, {
+                              run: this.run,
+                              visibleStatus: this._vis(n.step),
+                              onStepSelect: (step) => this._selectStep(step),
+                            })
+          }
+          </g>
+          <title>${n.step.detail ?? n.meta ?? n.step.outputs?.reason ?? n.label ?? n.id}</title>
+        </g>
+      `,
       )}
       ${renderReviewLoop(nodeMap, (step) => this._vis(step))}
       ${renderPublicationReviewLoops(layout.nodes, (step) => this._vis(step))}
@@ -288,7 +305,8 @@ export class RunPipeline extends LitElement {
     return {
       run: this.run,
       visibleStatus: (step) => this._vis(step),
-      inlineCiFixActive: this._isInlineCIFixActive(),
+      inlineCiFixActive:
+        this._isInlineCIFixActive() && currentPipelineNodeId(this.run) === 'monitor',
       monitorTaskProgress: this._monitorTaskProgress(),
       reviewTaskProgress: this._reviewTaskProgress(),
       transferProgress: this.transferProgress,

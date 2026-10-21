@@ -6,6 +6,9 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback, verified identity handling and persisted Sources panels that render their age offline with disabled actions and follow live change notifications.
 
+- The run canvas marks the current fix worker or reviewer as the only running node, with elapsed time and an activity header. Completed reviews are marked done; node details stay within their bounds or tooltips. Ordinary review flows retain their real running node.
+
+- A gate that is not ready shows What's blocking publish at the top, with one plain action per blocker: Skip this criterion… (a criterion with a missing, weak or failed verdict), Accept findings and publish… (opens the accept form with its reason), Give it another round (spent review rounds; asks what the next round should check). Mark untestable is now Skip this criterion… everywhere, with a styled reason sheet and a clear Skip AC-n confirm instead of a raw button and textarea. A criterion's state (Needs a check, Proven, Issue) reads as a status badge rather than a button.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.29.0 - 2026-10-21
@@ -103,6 +106,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Show local CI commands, exit codes and execution logs in the publication package.
 - Review and dispatch choices share runner, model, effort and WARM/COLD controls across gates, dispatch, backlog and PR workflows.
 - Share decision candidate selection and improvement Apply routing and validation results with Companion.
+
 - Portable workspace pool policies render as the configured pool and retain their runner/model defaults; machine selection narrows that pool without requiring a literal machine list in the pack.
 - PR previews load explicit task-artifact screenshot links even from older packages with incomplete inventories, and repeated references to one image stay resolvable.
 - Show runner/model/effort as visible shared chips across dispatch, review, backlog launch plans and Eval candidates, with execution options always open.

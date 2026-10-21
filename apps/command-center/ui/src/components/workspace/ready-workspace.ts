@@ -20,7 +20,11 @@ import {
 } from '@farmslot/protocol';
 import {
   acceptanceClaimRows,
+  anotherReviewRoundParams,
+  type PublicationBlocker,
+  publicationGateBlockers,
   publicationGateCriteria,
+  publicationGateView,
   resolveReviewDispatchDefaults,
   type VisualJudgmentFeedback,
 } from '@farmslot/review-dispatch';
@@ -58,6 +62,7 @@ import {
   renderReadyArtifactGroups,
   renderReadySelectedRecipeRunArtifacts,
 } from './ready-workspace-artifact-renderers.js';
+import { type ReadyBlockerSheet, renderReadyBlockers } from './ready-workspace-blockers.js';
 import {
   renderReadyWorkspaceEmpty,
   renderReadyWorkspaceFrame,
@@ -110,6 +115,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _visualReviewReasons: Record<string, string> = {};
   @state() private _attestingDecisionId: string | null = null;
   @state() private _acceptingFindingsDecisionId: string | null = null;
+  /** The reason sheet open in the blocker list, if any. */
+  @state() private _blockerSheet: ReadyBlockerSheet | null = null;
   @state() private _evidenceLoading = true;
   @state() private _evidenceError = '';
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
@@ -290,29 +297,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         },
         markUntestable: this.decision?.resolvedAt
           ? undefined
-          : async (claimId, reason) => {
-              if (!this.decision || this._acting) return;
-              const candidate = model.claimOverrideCandidate(claimId);
-              if (!candidate) return;
-              this._acting = true;
-              try {
-                const request = buildRunDecisionActionRequest({
-                  runId: this.runId,
-                  decision: this.decision,
-                  actionId: MARK_CLAIM_UNTESTABLE_ACTION,
-                  ...candidate,
-                  claimOverrideReason: reason,
-                });
-                await gateway.request(request.method, request.params);
-                await this._loadReviewEvidence(true);
-                this._actionMessage =
-                  'Claim marked untestable. Refresh and review the gate package.';
-              } catch (error) {
-                this._actionMessage = error instanceof Error ? error.message : String(error);
-              } finally {
-                this._acting = false;
-              }
-            },
+          : (claimId, reason) => void this._skipCriterion(claimId, reason),
         evidenceHref: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
         openEvidence: ({ criterion, evidence, index }) => {
           this._lightboxRecipeRunId = this._evidenceRecipeRunId;
@@ -325,6 +310,117 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       },
     );
   }
+  /** Skip a criterion: the gateway records the untestable override with its reason. */
+  private async _skipCriterion(claimId: string, reason: string): Promise<void> {
+    const model = this._evidenceModel;
+    if (!this.decision || !model || this._acting) return;
+    const candidate = model.claimOverrideCandidate(claimId);
+    if (!candidate) return;
+    this._acting = true;
+    try {
+      const request = buildRunDecisionActionRequest({
+        runId: this.runId,
+        decision: this.decision,
+        actionId: MARK_CLAIM_UNTESTABLE_ACTION,
+        ...candidate,
+        claimOverrideReason: reason,
+      });
+      await gateway.request(request.method, request.params);
+      await this._loadReviewEvidence(true);
+      this._claimOverrideId = null;
+      this._claimOverrideReason = '';
+      this._blockerSheet = null;
+      this._actionMessage = `${claimId} skipped as untestable. Refresh the package to publish.`;
+    } catch (error) {
+      this._actionMessage = error instanceof Error ? error.message : String(error);
+    } finally {
+      this._acting = false;
+    }
+  }
+
+  /** One more review round (admin): the gateway raises the run's limit for this head. */
+  private async _giveAnotherRound(payload: ReadyGatePayload, brief: string): Promise<void> {
+    const budget = payload.reviewRoundBudget;
+    const headSha = payload.prPackage?.headSha;
+    if (!budget || !headSha || !this.decision || this._acting) return;
+    this._acting = true;
+    try {
+      await gateway.request(
+        Methods.RUN_EXTEND_REVIEW_BUDGET,
+        anotherReviewRoundParams({
+          runId: this.runId,
+          decisionId: this.decision.id,
+          budget,
+          headSha,
+          brief,
+        }),
+      );
+      this._blockerSheet = null;
+      this._actionMessage =
+        'One more review round granted. Send it back to the agent to fix and review again.';
+    } catch (error) {
+      this._actionMessage = error instanceof Error ? error.message : String(error);
+    } finally {
+      this._acting = false;
+    }
+  }
+
+  /** What blocks publish, at the top of the gate, with one plain action per blocker. */
+  private _renderBlockers(payload: ReadyGatePayload) {
+    const model = this._evidenceModel;
+    const resolved = Boolean(this.decision?.resolvedAt);
+    const controls = this._visualReviewControls();
+    const view = publicationGateView({
+      run: this.run,
+      gate: this.decision,
+      actions: this.decision?.actions ?? [],
+      judgmentRows: controls.judgmentRows,
+      pendingVisualClaimIds: model?.pendingVisualClaimIds,
+      readiness: payload.gateReadiness,
+      resolved,
+    });
+    return renderReadyBlockers({
+      blockers: publicationGateBlockers({
+        view,
+        readiness: payload.gateReadiness,
+        gate: this.decision,
+        resolved,
+        canSkip: (claimId) => Boolean(model?.claimOverrideCandidate(claimId)),
+        budget: payload.reviewRoundBudget,
+      }),
+      sheet: this._blockerSheet,
+      budget: payload.reviewRoundBudget,
+      busy: this._acting || this._actionsPaused,
+      choose: (blocker: PublicationBlocker) => {
+        const action = blocker.action;
+        if (!action) return;
+        if (action.kind === 'accept-findings') {
+          this._blockerSheet = null;
+          this._acceptingFindingsDecisionId = this.decision?.id ?? null;
+          void this.updateComplete.then(() =>
+            this.querySelector<HTMLTextAreaElement>(
+              '[data-testid="accept-findings-reason"]',
+            )?.focus(),
+          );
+        } else {
+          this._acceptingFindingsDecisionId = null;
+          this._blockerSheet =
+            action.kind === 'skip-criterion'
+              ? { kind: 'skip-criterion', claimId: action.claimId, text: '' }
+              : { kind: 'another-round', text: '' };
+        }
+      },
+      changeSheet: (text) => {
+        if (this._blockerSheet) this._blockerSheet = { ...this._blockerSheet, text };
+      },
+      cancelSheet: () => {
+        this._blockerSheet = null;
+      },
+      skip: (claimId, reason) => void this._skipCriterion(claimId, reason),
+      anotherRound: (brief) => void this._giveAnotherRound(payload, brief),
+    });
+  }
+
   private async _recordVisualReview(
     claimId: string,
     verdict: 'confirmed' | 'rejected',
@@ -461,6 +557,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       recoveryMessage: this._recoveryMessage,
       gatewayConnected: gateway.connectionState === 'connected',
       renderTopBar: () => this._renderTopBar(payload),
+      renderBlockers: () => this._renderBlockers(payload),
       renderResolvedBanner: () => this._renderResolvedBanner(payload),
       renderPackagePanel: () => this._renderPackagePanel(payload),
       renderReportEvidence: () => this._renderSelectedRecipeRunArtifacts(payload),
@@ -595,6 +692,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       },
       acceptingFindings: this._acceptingFindingsDecisionId === this.decision?.id,
       chooseAcceptFindings: () => {
+        this._blockerSheet = null;
         this._acceptingFindingsDecisionId = this.decision?.id ?? null;
       },
       setAttestationReason: (value) => this._setEvidenceAttestationReason(value),

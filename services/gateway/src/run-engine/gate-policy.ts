@@ -34,6 +34,7 @@ export { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
 
 import { REQUESTED_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
 import type { ReviewResult } from '../review/orchestrator.js';
+import { preserveUnchangedReviewFindings } from '../review/retained-findings.js';
 import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import { resolveSelectedEvidenceRef } from '../run-completion/evidence-paths.js';
 import { assertPublicationEvidenceSelection } from '../run-completion/publication-evidence-policy.js';
@@ -394,9 +395,12 @@ export function buildPublishGateReviewStatus({
     startedAt: attempts[0]?.startedAt,
     completedAt: finalAttempt.completedAt ?? new Date().toISOString(),
   };
-  const capped = stampReviewRetryCap(status, reviewResult.maxRetries);
+  const capped = stampReviewRetryCap(
+    preserveUnchangedReviewFindings(status),
+    reviewResult.maxRetries,
+  );
   if (!reviewedPackage) return capped;
-  const finalReviewedHeadSha = status.reviewSnapshot?.headSha ?? null;
+  const finalReviewedHeadSha = capped.reviewSnapshot?.headSha ?? null;
   const reviewedPackageHeadSha = reviewedPackage.headSha ?? null;
   // A review loop can legitimately find issues, let the worker fix them, and
   // then pass a re-review on a new HEAD. In that case the overall review
@@ -622,18 +626,28 @@ function reviewSnapshotDiffMatchesPackage(
 ): boolean {
   const preparedSnapshot = preparedPackage.reviewSnapshot;
   if (!preparedSnapshot || preparedSnapshot.source === 'unavailable') return false;
-  if (review?.mode === 'warm') {
-    const session = review.session;
+  const session = review?.session;
+  const deltaFallback = review?.mode === 'cold' ? session?.fallback : undefined;
+  if (review && (review.mode === 'warm' || deltaFallback)) {
+    // A fresh fallback keeps its authorized delta, whose base can differ from
+    // the publication package's full contribution. Its new baseline is head.
+    const rangeMatches = deltaFallback
+      ? !!snapshot.baseSha &&
+        !!snapshot.diffHash &&
+        session?.lastReviewedHeadSha === snapshot.headSha &&
+        deltaFallback.comparedRanges.at(-1) === `${snapshot.baseSha}..${snapshot.headSha}`
+      : snapshot.baseRef === preparedSnapshot.baseRef &&
+        snapshot.baseSha === session?.lastReviewedHeadSha;
     return (
       snapshot.source !== 'unavailable' &&
-      session?.mode === 'warm' &&
-      session.continuity === 'resumed' &&
+      session?.mode === review.mode &&
+      session.continuity === (deltaFallback ? 'fresh' : 'resumed') &&
       session.reviewId === review.id &&
+      !!session.sessionId &&
       session.sessionId === review.reviewerSessionId &&
       !!session.lastReviewedHeadSha &&
-      snapshot.baseRef === preparedSnapshot.baseRef &&
-      snapshot.baseSha === session.lastReviewedHeadSha &&
-      snapshot.headSha === preparedSnapshot.headSha
+      snapshot.headSha === preparedSnapshot.headSha &&
+      rangeMatches
     );
   }
   return (

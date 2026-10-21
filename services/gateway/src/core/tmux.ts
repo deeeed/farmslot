@@ -562,20 +562,27 @@ export async function resolveTmuxPaneId(
 export function selectExactTmuxWindowPane(
   output: string,
   session: string,
-  windowName: string,
+  windowName?: string,
 ): { paneId: string; panePid: string } | null {
+  let selected: { paneId: string; panePid: string } | null = null;
   for (const line of output.split('\n')) {
     const [candidateSession, candidateWindow, paneId, panePid] = line.split('\t');
-    if (candidateSession !== session || candidateWindow !== windowName) continue;
-    return paneId && panePid && /^%\d+$/.test(paneId) && /^\d+$/.test(panePid)
-      ? { paneId, panePid }
-      : null;
+    if (
+      candidateSession !== session ||
+      (windowName !== undefined && candidateWindow !== windowName)
+    )
+      continue;
+    if (!paneId || !panePid || !/^%\d+$/.test(paneId) || !/^\d+$/.test(panePid)) return null;
+    if (windowName !== undefined) return { paneId, panePid };
+    // Session-only review workspaces have one pane. Never guess between siblings.
+    if (selected) return null;
+    selected = { paneId, panePid };
   }
-  return null;
+  return selected;
 }
 
 /**
- * Resolve a persisted `session:window-name` without tmux's prefix matching.
+ * Resolve a persisted window or single-pane session without tmux's prefix matching.
  * A missing `rev-claude` must not silently bind to `rev2-claude` during
  * restart recovery.
  */
@@ -612,9 +619,9 @@ export async function resolveExactTmuxWindowPane(
       : null;
   }
   const separator = target.indexOf(':');
-  if (separator <= 0 || separator === target.length - 1) return null;
-  const session = target.slice(0, separator);
-  const windowName = target.slice(separator + 1);
+  if (!target || separator === 0 || separator === target.length - 1) return null;
+  const session = separator < 0 ? target : target.slice(0, separator);
+  const windowName = separator < 0 ? undefined : target.slice(separator + 1);
   const result = await execOnSlot(
     vars,
     tmuxShellSnippet(

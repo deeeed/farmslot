@@ -357,10 +357,17 @@ export function renderPublicationReviewPipelineNode(
     tone === 'warn' || tone === 'fail' || tone === 'ok'
       ? pipelineToneColor(tone)
       : colors.textSecondary;
+  const completed = !isRunning && !isPending;
+  const findings = step.outputs?.unresolvedCount;
+  const meta = isRunning
+    ? (n.meta ?? step.detail ?? 'Running')
+    : completed
+      ? `✓ Done${typeof findings === 'number' && findings > 0 ? ` · ${findings} findings` : ''}`
+      : (n.meta ?? step.detail ?? '');
   return svg`
     <g class="${isRunning ? 'node-running-anim' : ''}"
        transform="translate(${n.x}, ${n.y})"
-       style="opacity: ${isPending ? 0.72 : 1}; cursor: pointer"
+       style="opacity: ${isRunning ? 1 : completed ? 0.65 : 0.45}; cursor: pointer"
        @click=${() => ctx.onStepSelect(n.step)}>
       <rect width="${n.w}" height="${NODE_H}" rx="6"
             fill="${fillColor}" stroke="${strokeColor}"/>
@@ -377,7 +384,7 @@ export function renderPublicationReviewPipelineNode(
       <text class="node-meta" x="${n.w / 2}" y="27"
             text-anchor="middle" dominant-baseline="central"
             fill="${metaColor}">
-        ${(n.meta ?? step.detail ?? '').slice(0, 22)}
+        ${meta.slice(0, 26)}
       </text>
     </g>
   `;

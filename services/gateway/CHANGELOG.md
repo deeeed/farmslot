@@ -6,6 +6,19 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Add experimental per-resource change notifications and read revision stamps, announce client-store capabilities and principal generations, and move Sources off the fleet event carrier.
 
+- Completed terminal reviews can reach their posting gate: single-pane review sessions resolve exactly, and hookless reviewers prove idle from the native rollout held open by their current process.
+
+- A blocked worker fix that changed no code keeps the last same-head review findings visible at publication. Gate recovery and evidence refresh wait for the person's decision instead of starting another review. A stopped reviewer returns its failure without an automatic replacement.
+- An operator WARM delta request resumes its stopped, refunded reviewer attempt after infrastructure recovery, using the same session and admission receipt. A later validated result supersedes the refund. Previously only fix-loop continuations recovered that attempt, so another gate request could launch a fresh COLD fallback.
+- Ticket-derived PR titles preserve leading acronyms and identifiers such as `ORDER_SIZE_MIN` and `API`; only an ordinary capitalized word is lowercased.
+
+- Operator WARM re-reviews use the same delta fallback as automatic re-reviews, and can adopt a legacy reviewer session from its validated result and artifact scope. A failed attempt before inspection keeps the earlier baseline. Seen on TAT-4158, whose verified session was refused as missing.
+
+- Admit retained passing reviews from delta-scoped fresh-session fallbacks at their recorded scope. TAT-4191's unchanged-head pass was incorrectly compared with the full PR diff and remained blocked after package refresh.
+
+- Stop native reviewer processes and their children after failed commands; preserve refunded warm attempts and prior findings for an explicit retry after runner recovery. Seen on TAT-4158.
+
+- Human claim overrides refresh and re-present their pending gate automatically, preserving existing reviews when the code and reviewed evidence are unchanged. A failed refresh keeps the saved override for retry. TAT-4158 run 4237202e previously required a manual refresh, whose changed display counts made the same reviewed inputs look stale.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.0 - 2026-10-21

@@ -3081,11 +3081,6 @@ All checks passed.`;
         { id: 'hold', label: 'Hold', style: 'secondary' },
         { id: 'send-feedback', label: 'Send Feedback', style: 'secondary' },
         { id: 'request-review', label: 'Request Review', style: 'secondary' },
-        {
-          id: 'request-external-review',
-          label: 'Request Review',
-          style: 'secondary',
-        },
       ],
       createdAt: new Date().toISOString(),
       payload: mockPayload,
@@ -3103,6 +3098,74 @@ All checks passed.`;
           mock-data
           slotId="runner-local-mobile-1"
           branch="fix/proj-2418"
+          runner="claude"
+        ></ready-workspace>
+      </div>
+      <p class="section-label">Ready workspace — what's blocking publish</p>
+      <div
+        style="height: 420px; border: 1px solid ${colors.bgCard}; border-radius: 8px; overflow: hidden; margin-top: 12px"
+      >
+        <ready-workspace
+          runId="mock-run-blocked"
+          .decision=${{
+            ...mockDecision,
+            id: 'mock-ready-blocked-1',
+            actions: [
+              { id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const },
+              { id: 'hold', label: 'Hold', style: 'secondary' as const },
+              {
+                id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
+                label: 'Accept Review Findings and Publish',
+                style: 'danger' as const,
+              },
+            ],
+            payload: {
+              ...mockPayload,
+              prPackage: mockPayload.prPackage && {
+                ...mockPayload.prPackage,
+                headSha: 'abc123def4567890abc123def4567890abc12345',
+              },
+              reviewRoundBudget: {
+                used: 3,
+                limit: 3,
+                remaining: 0,
+                label: 'Review rounds 3/3',
+                noVerdict: 0,
+                noVerdictLimit: 3,
+              },
+              gateReadiness: {
+                state: 'not-ready' as const,
+                identity: { runId: 'mock-run-blocked', generation: 1 },
+                reasons: [
+                  {
+                    code: 'review-fix-required',
+                    prerequisite: 'review' as const,
+                    message: 'Review rounds spent: 2 issues open',
+                    actionId: 'hold',
+                    allowedReviewOverrides: [APPROVE_PUBLISH_UNRESOLVED_ACTION],
+                  },
+                ],
+                findings: [
+                  {
+                    reviewId: 'independent-review-3',
+                    file: 'src/features/OrderBook/OrderBook.css.ts',
+                    line: 59,
+                    description: 'Rows stretch when the book has fewer levels than fit.',
+                  },
+                  {
+                    reviewId: 'independent-review-3',
+                    file: 'temp/tasks/feat/pr-description.md',
+                    line: 9,
+                    description: 'AC-3 claims a refresh cadence the recipe never measured.',
+                  },
+                ],
+                findingsDigest: 'mock-findings-digest',
+              },
+            },
+          }}
+          mock-data
+          slotId="runner-local-mobile-1"
+          branch="feat/tat-4158"
           runner="claude"
         ></ready-workspace>
       </div>
