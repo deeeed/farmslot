@@ -622,18 +622,28 @@ function reviewSnapshotDiffMatchesPackage(
 ): boolean {
   const preparedSnapshot = preparedPackage.reviewSnapshot;
   if (!preparedSnapshot || preparedSnapshot.source === 'unavailable') return false;
-  if (review?.mode === 'warm') {
-    const session = review.session;
+  const session = review?.session;
+  const deltaFallback = review?.mode === 'cold' ? session?.fallback : undefined;
+  if (review && (review.mode === 'warm' || deltaFallback)) {
+    // A fresh fallback keeps its authorized delta, whose base can differ from
+    // the publication package's full contribution. Its new baseline is head.
+    const rangeMatches = deltaFallback
+      ? !!snapshot.baseSha &&
+        !!snapshot.diffHash &&
+        session?.lastReviewedHeadSha === snapshot.headSha &&
+        deltaFallback.comparedRanges.at(-1) === `${snapshot.baseSha}..${snapshot.headSha}`
+      : snapshot.baseRef === preparedSnapshot.baseRef &&
+        snapshot.baseSha === session?.lastReviewedHeadSha;
     return (
       snapshot.source !== 'unavailable' &&
-      session?.mode === 'warm' &&
-      session.continuity === 'resumed' &&
+      session?.mode === review.mode &&
+      session.continuity === (deltaFallback ? 'fresh' : 'resumed') &&
       session.reviewId === review.id &&
+      !!session.sessionId &&
       session.sessionId === review.reviewerSessionId &&
       !!session.lastReviewedHeadSha &&
-      snapshot.baseRef === preparedSnapshot.baseRef &&
-      snapshot.baseSha === session.lastReviewedHeadSha &&
-      snapshot.headSha === preparedSnapshot.headSha
+      snapshot.headSha === preparedSnapshot.headSha &&
+      rangeMatches
     );
   }
   return (
