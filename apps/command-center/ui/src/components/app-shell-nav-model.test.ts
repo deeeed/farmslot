@@ -62,7 +62,7 @@ test('active sidebar runs follow the run list Active tab and cap the list', () =
   const sidebar = activeSidebarRuns(runs, noFilters, [], Number.MAX_SAFE_INTEGER);
   assert.deepEqual(
     sidebar.map((r) => r.id),
-    ['a', 'held', 'e', 'f'],
+    ['a', 'held', 'b', 'e', 'f'],
   );
   assert.deepEqual(
     sidebar.map((r) => r.id),

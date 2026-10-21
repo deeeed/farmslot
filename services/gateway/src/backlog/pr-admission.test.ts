@@ -26,6 +26,7 @@ test('PR execution ownership covers canonical refs and published links without n
   assert.equal(runOwnsPR(run, reference.pr), true);
   assert.equal(runOwnsPR(run, { ...reference.pr, repo: 'owner/other' }), false);
   assert.equal(runOwnsPR({ ...run, status: 'done' }, reference.pr), false);
+  assert.equal(runOwnsPR({ ...run, status: 'failed' }, reference.pr), false);
   assert.equal(
     runOwnsPR(
       {
@@ -51,6 +52,7 @@ test('manual creation cannot overtake automated ownership but unrelated PRs rema
     assertNoAutomatedPRConflict({ ...params, ticketOrPr: 'owner/other#42' }, [run]),
   );
   assert.doesNotThrow(() => assertNoAutomatedPRConflict(params, [{ ...run, status: 'done' }]));
+  assert.doesNotThrow(() => assertNoAutomatedPRConflict(params, [{ ...run, status: 'failed' }]));
   assert.doesNotThrow(() => assertNoAutomatedPRConflict(params, [{ ...run, prWork: undefined }]));
 });
 

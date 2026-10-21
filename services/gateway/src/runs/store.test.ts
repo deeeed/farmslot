@@ -581,7 +581,7 @@ test('listRuns returns every active run without a limit', async (t) => {
   assert.equal(ids.filter((id) => listed.has(id)).length, 501);
 });
 
-test('archiveRun stamps archivedAt before moving terminal runs out of active timelines', async (t) => {
+test('a failed run without resources stays active until archiveRun stamps archivedAt', async (t) => {
   const run = createRun({
     flowType: 'dev',
     project: 'example-mobile-farm',
@@ -592,6 +592,8 @@ test('archiveRun stamps archivedAt before moving terminal runs out of active tim
     completedAt: new Date().toISOString(),
     error: 'superseded baseline',
   });
+  assert.equal(run.slotId, null);
+  assert.equal(listRuns({ active: true, familyId: run.familyId }).runs[0]?.id, run.id);
 
   const archivedPath = path.join(
     os.tmpdir(),
@@ -607,6 +609,7 @@ test('archiveRun stamps archivedAt before moving terminal runs out of active tim
 
   assert.equal(await archiveRun(run.id), true);
   assert.equal(getRun(run.id), undefined);
+  assert.deepEqual(listRuns({ active: true, familyId: run.familyId }).runs, []);
   assert.equal(
     listRuns({ familyId: run.familyId }).runs.some((candidate) => candidate.id === run.id),
     false,

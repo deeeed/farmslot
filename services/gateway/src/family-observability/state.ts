@@ -1,4 +1,9 @@
-import { isActiveListRun, isSuccessfulRun, type Run } from '@farmslot/protocol';
+import {
+  hasUnsettledRunExecution,
+  isActiveListRun,
+  isSuccessfulRun,
+  type Run,
+} from '@farmslot/protocol';
 
 export interface FamilyStateSummary {
   familyId: string;
@@ -53,7 +58,7 @@ export function buildFamilyStateSummary(familyRuns: Run[]): FamilyStateSummary |
     // Any success wins. Closing partial execution is not success.
     // A later failed retry does not invalidate earlier
     // success — the merged PR / delivered fix is the outcome that matters.
-    workflowState: orderedRuns.some(isActiveListRun)
+    workflowState: orderedRuns.some(hasUnsettledRunExecution)
       ? 'active'
       : orderedRuns.some(isSuccessfulRun)
         ? 'complete'

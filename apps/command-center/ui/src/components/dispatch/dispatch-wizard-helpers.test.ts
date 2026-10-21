@@ -192,7 +192,7 @@ test('summarizeComparePickerFamilyLane counts active runs like the run list', ()
   });
   const failed = makeRun({ id: 'failed', lane: 'comparison', variant: 'a', status: 'failed' });
   const fixing = makeRun({ id: 'fixing', lane: 'comparison', variant: 'b', status: 'fixing' });
-  assert.equal(summarizeComparePickerFamilyLane(root, [root, failed, fixing]).activeCount, 2);
+  assert.equal(summarizeComparePickerFamilyLane(root, [root, failed, fixing]).activeCount, 3);
 });
 
 test('comparePickerFamilyChipLabel prefers variant tags on comparison lane', () => {

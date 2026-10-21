@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  hasUnsettledRunExecution,
   isActiveListRun,
   isCompletionPrerequisiteFailure,
   isSettledCompletionFailure,
@@ -67,10 +68,20 @@ test('only a failed completion prerequisite retains ownership; replay and close 
   );
 });
 
-test('active runs are nonterminal runs plus failed runs that still hold resources', () => {
+test('a failed run without retained resources stays active until archived', () => {
+  const failed = makeRun('failed', { status: 'failed' });
+  assert.equal(failed.slotId, null);
+  assert.deepEqual(failed.steps, []);
+  assert.equal(isActiveListRun(failed), true);
+  assert.equal(hasUnsettledRunExecution(failed), false);
+  assert.deepEqual(ids(selectRunList([failed], { scope: 'active' })), ['failed']);
+  assert.equal(isActiveListRun({ ...failed, archivedAt: '2026-10-21T00:00:00Z' }), false);
+});
+
+test('active runs are nonterminal runs plus unarchived failed runs', () => {
   for (const status of ['created', 'monitoring', 'review-failed', 'paused', 'blocked'] as const)
     assert.equal(isActiveListRun({ status }), true, status);
-  for (const status of ['done', 'failed', 'cancelled'] as const)
+  for (const status of ['done', 'cancelled'] as const)
     assert.equal(isActiveListRun({ status }), false, status);
   assert.equal(isActiveListRun({ status: 'failed', steps: refusedCompletion }), true);
 });
@@ -93,7 +104,9 @@ test('a refused completion is settled once its workspace is discarded or the run
     }),
     true,
   );
-  assert.equal(isActiveListRun({ status: 'failed', steps: discarded }), false);
+  assert.equal(isActiveListRun({ status: 'failed', steps: discarded }), true);
+  assert.equal(hasUnsettledRunExecution({ status: 'failed', steps: refusedCompletion }), true);
+  assert.equal(hasUnsettledRunExecution({ status: 'failed', steps: discarded }), false);
   assert.equal(
     isActiveListRun({
       status: 'failed',
@@ -128,7 +141,7 @@ test('selectRunList scopes keep input order', () => {
     makeRun('done', { status: 'done' }),
   ];
 
-  assert.deepEqual(ids(selectRunList(runs, { scope: 'active' })), ['blocked', 'held']);
+  assert.deepEqual(ids(selectRunList(runs, { scope: 'active' })), ['blocked', 'held', 'failed']);
   assert.deepEqual(ids(selectRunList(runs, { scope: 'history' })), ['held', 'failed', 'done']);
   assert.deepEqual(ids(selectRunList(runs, { scope: 'all' })), [
     'blocked',
