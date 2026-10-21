@@ -1,16 +1,14 @@
-import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
   deriveRunLifecycleView,
-  type RunDecision,
-  type RunStatus,
+  type Run,
   type RunStep,
   runStepDisplayDetail,
   type RunStepDisplayStatus,
-  runStepDisplayStatus,
-  type WorkerOperatorWait,
 } from '@farmslot/protocol';
+import { runActivityStepStatus, runActivityView } from '@farmslot/review-dispatch';
 
 import { colors, fonts, spacing } from '../lib/theme';
 
@@ -48,25 +46,24 @@ function stepDuration(step: RunStep): string | null {
   return formatStepDuration(Math.max(0, Date.now() - startedAt));
 }
 
-export function RunPipelineMini({
-  steps,
-  runStatus,
-  waitingForOperator,
-  error,
-  decisions,
-}: {
-  steps: RunStep[];
-  runStatus?: RunStatus;
-  waitingForOperator?: WorkerOperatorWait;
-  error?: string;
-  decisions?: RunDecision[];
-}) {
+function usePipelineClock(running: boolean) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => tick((value) => value + 1), 1000);
+    return () => clearInterval(timer);
+  }, [running]);
+}
+
+export function RunPipelineMini({ run }: { run: Run }) {
+  const { steps, status: runStatus } = run;
+  const activity = runActivityView(run);
+  usePipelineClock(Boolean(activity));
   const isCancelled = runStatus === 'cancelled';
-  const visible = steps.filter((s) => s.status !== 'skipped');
+  const visible = (activity?.steps ?? steps).filter((s) => s.status !== 'skipped');
   if (visible.length === 0) return null;
 
-  const run = runStatus ? { status: runStatus, steps, error, decisions } : undefined;
-  const eff = (s: RunStep) => (run ? runStepDisplayStatus(run, s) : s.status);
+  const eff = (s: RunStep) => runActivityStepStatus(run, s);
   const runningIdx = visible.findIndex((s) => eff(s) === 'running');
   const nextIdx = visible.findIndex((s) => eff(s) === 'pending');
   const labelIdx = runningIdx >= 0 ? runningIdx : nextIdx >= 0 ? nextIdx : visible.length - 1;
@@ -78,14 +75,12 @@ export function RunPipelineMini({
   const hasFailed = visible.some((s) => eff(s) === 'failed');
   const blocked = visible.find((s) => eff(s) === 'blocked');
   const shown = blocked ?? active;
-  const detail = shown && run ? runStepDisplayDetail(run, shown) : active?.detail;
+  const detail = shown ? runStepDisplayDetail(run, shown) : active?.detail;
   const duration = active ? stepDuration(active) : null;
   const label = isCancelled
     ? 'cancelled'
-    : ((runStatus
-        ? deriveRunLifecycleView({ status: runStatus, waitingForOperator, error, decisions })
-            .activityLabel
-        : undefined) ??
+    : ((activity ? `${activity.label}${duration ? ` · ${duration}` : ''}` : undefined) ??
+      deriveRunLifecycleView(run).activityLabel ??
       (allDone
         ? 'done'
         : hasFailed
@@ -128,7 +123,7 @@ export function RunPipelineMini({
           {label}
         </Text>
         {/* A blocked run's label already carries its reason. */}
-        {!allDone && !isCancelled && detail && !label.includes(detail) ? (
+        {!activity && !allDone && !isCancelled && detail && !label.includes(detail) ? (
           <Text style={miniStyles.detail} numberOfLines={2}>
             {detail}
           </Text>
@@ -139,21 +134,19 @@ export function RunPipelineMini({
 }
 
 export function RunPipelineFull({
-  steps,
-  runStatus,
-  decisions,
+  run,
   onStepPress,
 }: {
-  steps: RunStep[];
-  runStatus?: RunStatus;
-  decisions?: RunDecision[];
+  run: Run;
   onStepPress?: (stepName: string, index: number) => void;
 }) {
-  const visible = steps.filter((s) => s.status !== 'skipped');
+  const { steps } = run;
+  const activity = runActivityView(run);
+  usePipelineClock(Boolean(activity));
+  const visible = (activity?.steps ?? steps).filter((s) => s.status !== 'skipped');
   if (visible.length === 0) return null;
 
-  const eff = (s: RunStep) =>
-    runStatus ? runStepDisplayStatus({ status: runStatus, steps, decisions }, s) : s.status;
+  const eff = (s: RunStep) => runActivityStepStatus(run, s);
 
   return (
     <ScrollView
@@ -165,6 +158,7 @@ export function RunPipelineFull({
         const vis = eff(step);
         const color = stepColor(vis);
         const prevDone = i > 0 && eff(visible[i - 1]) === 'done';
+        const ownerName = step.name === activity?.nodeId ? activity.ownerStepName : step.name;
         return (
           <React.Fragment key={`${step.name}-${i}`}>
             {i > 0 && (
@@ -181,7 +175,16 @@ export function RunPipelineFull({
             )}
             <Pressable
               style={fullStyles.stepColumn}
-              onPress={onStepPress ? () => onStepPress(step.name, i) : undefined}
+              accessibilityLabel={step.name === activity?.nodeId ? activity.label : step.name}
+              onPress={
+                onStepPress
+                  ? () =>
+                      onStepPress(
+                        ownerName,
+                        steps.findIndex((owner) => owner.name === ownerName),
+                      )
+                  : undefined
+              }
             >
               <View
                 style={[
@@ -191,7 +194,11 @@ export function RunPipelineFull({
                   vis === 'running' && fullStyles.dotRunning,
                 ]}
               >
-                <Text style={fullStyles.dotIcon}>{stepDotIcon(vis)}</Text>
+                {vis === 'running' ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={fullStyles.dotIcon}>{stepDotIcon(vis)}</Text>
+                )}
               </View>
               <Text
                 style={[
@@ -200,12 +207,12 @@ export function RunPipelineFull({
                 ]}
                 numberOfLines={1}
               >
-                {shortName(step.name)}
+                {step.name === activity?.nodeId ? activity.nodeLabel : shortName(step.name)}
               </Text>
-              {step.durationMs != null && step.durationMs > 0 ? (
-                <Text style={fullStyles.duration}>{formatStepDuration(step.durationMs)}</Text>
-              ) : vis === 'running' ? (
-                <Text style={[fullStyles.duration, { color: '#3b82f6' }]}>…</Text>
+              {stepDuration(step) ? (
+                <Text style={[fullStyles.duration, vis === 'running' && { color: '#3b82f6' }]}>
+                  {stepDuration(step)}
+                </Text>
               ) : null}
             </Pressable>
           </React.Fragment>

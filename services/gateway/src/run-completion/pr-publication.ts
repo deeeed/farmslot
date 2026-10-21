@@ -16,6 +16,7 @@ import { loadProjectVars } from '../core/config.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { formatPrTitleSuffix } from '../tasks/writer.js';
 
+import { lowercaseLeadingTitleWord } from './pr-title.js';
 import { localPrBodyPathResidues } from './publication-artifacts.js';
 import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
 
@@ -339,10 +340,7 @@ export async function updatePRTitle(run: Run, ciRepo: string, prNumber: number):
   const scope = pv?.projectJson.ci?.default_scope || '';
   const scopePart = scope ? `(${scope})` : '';
   const titleSuffix = formatPrTitleSuffix(pv?.projectJson.ci?.pr_title_suffix);
-  // Use ticket title, lowercased first char, strip trailing period
-  let desc = run.ticketData.title;
-  desc = desc.charAt(0).toLowerCase() + desc.slice(1);
-  desc = desc.replace(/\.$/, '');
+  const desc = lowercaseLeadingTitleWord(run.ticketData.title).replace(/\.$/, '');
   const newTitle = `${commitType}${scopePart}: ${desc}${titleSuffix}`;
   assertPublicationTextSafe(newTitle);
 

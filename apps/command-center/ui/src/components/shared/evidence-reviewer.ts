@@ -130,10 +130,21 @@ export class EvidenceReviewer extends LitElement {
     .state {
       grid-column: 2 / -1;
       justify-self: start;
-      padding: 0 6px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 1px 8px;
       font-size: 11px;
-      border: 1px solid currentColor;
+      font-weight: 600;
       border-radius: 999px;
+      background: color-mix(in srgb, currentColor 14%, transparent);
+    }
+    .state::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
     }
     .state[data-tone='pending'] {
       color: ${unsafeCSS(colors.statusWarn)};

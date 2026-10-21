@@ -383,6 +383,13 @@ export function refundedNativeReviewer(
         !context.reviewResultValidatedAt &&
         !!roundId &&
         !!run.reviewRoundSettlements?.[roundId] &&
+        !run.agentContexts?.some(
+          (later) =>
+            later.role === 'review' &&
+            later.reviewId === context.reviewId &&
+            !!later.reviewResultValidatedAt &&
+            later.reviewResultValidatedAt > (context.startedAt ?? ''),
+        ) &&
         context.id.startsWith(
           nativeReviewerContextPrefix({
             ...params,

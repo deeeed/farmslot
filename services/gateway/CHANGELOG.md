@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - A blocked worker fix that changed no code keeps the last same-head review findings visible at publication. Gate recovery and evidence refresh wait for the person's decision instead of starting another review. A stopped reviewer returns its failure without an automatic replacement.
+- An operator WARM delta request resumes its stopped, refunded reviewer attempt after infrastructure recovery, using the same session and admission receipt. A later validated result supersedes the refund. Previously only fix-loop continuations recovered that attempt, so another gate request could launch a fresh COLD fallback.
+- Ticket-derived PR titles preserve leading acronyms and identifiers such as `ORDER_SIZE_MIN` and `API`; only an ordinary capitalized word is lowercased.
 
 - Operator WARM re-reviews use the same delta fallback as automatic re-reviews, and can adopt a legacy reviewer session from its validated result and artifact scope. A failed attempt before inspection keeps the earlier baseline. Seen on TAT-4158, whose verified session was refused as missing.
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type {
   EvidenceReviewArtifact,
@@ -11,12 +11,13 @@ import type {
   AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
 } from '@farmslot/protocol';
-import { acceptanceClaimRows } from '@farmslot/review-dispatch';
+import { acceptanceClaimRows, untestableOverrideView } from '@farmslot/review-dispatch';
 
 import { acceptanceLedgerView } from '../lib/task-progress-view';
 import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
 
 import { AcceptanceClaimList } from './AcceptanceClaimList';
+import { ReasonSheet } from './ReasonSheet';
 import { Skeleton, SkeletonError } from './Skeleton';
 
 interface TaskAcceptancePanelProps {
@@ -258,39 +259,18 @@ function TaskAcceptanceContent({
                   </Text>
                 ) : null}
                 {onMarkUntestable && evidenceModel?.claimOverrideCandidate(criterion.id) ? (
-                  <View>
-                    <Pressable
-                      accessibilityRole="button"
-                      style={styles.touchAction}
-                      onPress={() => {
-                        setOverrideClaim(criterion.id);
-                        setOverrideReason('');
-                      }}
-                    >
-                      <Text style={styles.evidence}>Mark untestable</Text>
-                    </Pressable>
-                    {overrideClaim === criterion.id ? (
-                      <View>
-                        <TextInput
-                          accessibilityLabel={`Reason for ${criterion.id}`}
-                          testID="companion-claim-override-reason"
-                          style={styles.text}
-                          value={overrideReason}
-                          onChangeText={setOverrideReason}
-                          placeholder="Written reason"
-                        />
-                        <Pressable
-                          accessibilityRole="button"
-                          style={styles.touchAction}
-                          testID="companion-claim-override-confirm"
-                          disabled={!overrideReason.trim()}
-                          onPress={() => onMarkUntestable(criterion.id, overrideReason)}
-                        >
-                          <Text style={styles.evidence}>Confirm untestable override</Text>
-                        </Pressable>
-                      </View>
-                    ) : null}
-                  </View>
+                  <SkipCriterion
+                    claimId={criterion.id}
+                    open={overrideClaim === criterion.id}
+                    reason={overrideReason}
+                    onOpen={() => {
+                      setOverrideClaim(criterion.id);
+                      setOverrideReason('');
+                    }}
+                    onChange={setOverrideReason}
+                    onCancel={() => setOverrideClaim(null)}
+                    onConfirm={() => onMarkUntestable(criterion.id, overrideReason)}
+                  />
                 ) : null}
                 {review?.timing && review?.timing !== 'measured' ? (
                   <Text style={baseStyles.textMuted}>{review?.timing}</Text>
@@ -381,6 +361,46 @@ function TaskAcceptanceContent({
   );
 }
 
+/** Skip a criterion: one action, then the shared reason sheet (the untestable override). */
+function SkipCriterion(props: {
+  claimId: string;
+  open: boolean;
+  reason: string;
+  onOpen: () => void;
+  onChange: (reason: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const view = untestableOverrideView(props.claimId, props.open ? props.reason : '');
+  if (!props.open)
+    return (
+      <Pressable
+        accessibilityRole="button"
+        testID="companion-claim-override-open"
+        style={styles.skipAction}
+        onPress={props.onOpen}
+      >
+        <Text style={styles.skipLabel}>{view.action}</Text>
+      </Pressable>
+    );
+  return (
+    <ReasonSheet
+      title={view.title}
+      hint={view.hint}
+      label={view.reasonLabel}
+      placeholder={view.placeholder}
+      value={props.reason}
+      confirmLabel={view.confirm}
+      cancelLabel={view.cancel}
+      canConfirm={view.canConfirm}
+      testID="companion-claim-override"
+      onChange={props.onChange}
+      onConfirm={props.onConfirm}
+      onCancel={props.onCancel}
+    />
+  );
+}
+
 const styles = StyleSheet.create({
   panel: {
     marginTop: spacing.sm,
@@ -421,6 +441,20 @@ const styles = StyleSheet.create({
     minHeight: 44,
     minWidth: 44,
     justifyContent: 'center',
+  },
+  skipAction: {
+    minHeight: 44,
+    alignSelf: 'flex-start',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    borderColor: colors.bgCardHover,
+    backgroundColor: colors.bgSurface,
+  },
+  skipLabel: {
+    color: colors.textPrimary,
+    fontWeight: '600',
   },
   row: {
     gap: 2,
