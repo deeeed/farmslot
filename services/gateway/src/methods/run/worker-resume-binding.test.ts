@@ -95,7 +95,7 @@ mock.module('../../runners/registry.js', {
     },
   },
 });
-const { createRun, deleteRun, getRun, updateRun, updateRunStep } =
+const { createRun, deleteRun, getRun, persistRunNow, updateRun, updateRunStep } =
   await import('../../runs/store.js');
 const { runResumeTransitionLocked } = await import('./lifecycle-control.js');
 
@@ -104,6 +104,8 @@ async function pausedWorker(t: TestContext) {
   const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'RESUME-BOUND' });
   t.after(async () => {
     updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    // Drain queued writes before deleting the run and its temporary home.
+    await persistRunNow(run, 'resume binding test teardown');
     await deleteRun(run.id);
   });
   const sessionId = '00000000-0000-4000-8000-000000000007';
