@@ -586,7 +586,7 @@ test('GC releases terminal and deleted run reservations while retaining active a
   assert.deepEqual(await readdir(path.join(f.store.root, 'reservations')), [`${active.id}.json`]);
 });
 
-test('GC keeps the reservation of a failed run that still holds its resources', async (t) => {
+test('GC keeps unarchived failed run reservations with or without resources', async (t) => {
   const f = await fixture(t);
   const held: Run = {
     ...f.run,
@@ -602,7 +602,10 @@ test('GC keeps the reservation of a failed run that still holds its resources', 
   await reserveRunBundleMetadata(f.store, 'held-run');
   await reserveRunBundleMetadata(f.store, 'settled-run');
   await collectRunBundleGarbage(f.store);
-  assert.deepEqual(await readdir(path.join(f.store.root, 'reservations')), ['held-run.json']);
+  assert.deepEqual((await readdir(path.join(f.store.root, 'reservations'))).sort(), [
+    'held-run.json',
+    'settled-run.json',
+  ]);
 });
 
 test('GC releases the reservation of a refused completion once it is archived', async (t) => {

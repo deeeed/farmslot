@@ -200,8 +200,8 @@ test('snapshot marks each run active with the run-list rule', async () => {
   ]);
   assert.deepEqual(Object.fromEntries(snapshot.runs.map((run) => [run.runId, run.active])), {
     held: true,
-    failed: false,
-    discarded: false,
+    failed: true,
+    discarded: true,
     archived: false,
   });
 });
