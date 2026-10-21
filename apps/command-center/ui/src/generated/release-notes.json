@@ -1,8 +1,11 @@
 {
-  "version": "0.28.0",
-  "date": "2026-10-20",
+  "version": "0.29.0",
+  "date": "2026-10-21",
   "items": [
-    "Gates show the reason you can act on, such as `Review rounds spent: 4 issues open`, instead of 'Fix and pass review'",
-    "A run waiting at its human gate shows `Needs your decision`, with the gate's reason in the run header"
+    "Re-reviews continue their previous reviewer session when available; the gate shows why a fresh review is needed.",
+    "The publication gate can accept open review findings with a written reason.",
+    "Evidence opens in a full-screen review with criterion clips, proof details, zoom and shareable links.",
+    "Run files have a searchable browser and preview, and the workspace keeps its last snapshot while reconnecting.",
+    "Gate decisions wait for the gateway and reconcile a lost or late reply before offering another action."
   ]
 }
