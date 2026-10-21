@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.9.1 - 2026-10-21
+
+- Gate requests keep a validated lineage in WARM when its session is unavailable, with its earlier model and effort, and explain that a fresh session will review only the changes.
+
 ## 0.9.0 - 2026-10-21
 
 - Align with `@farmslot/protocol` 0.61.0, `@farmslot/adapter-sdk` 0.25.1.

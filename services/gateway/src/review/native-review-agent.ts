@@ -126,7 +126,7 @@ type NativeReviewInput = {
   mode: ReviewMode;
   reviewId?: string | null;
   effort?: string | null;
-  /** An automatic re-review: an unavailable session runs the delta-scoped COLD fallback. */
+  /** A validated re-review: an unavailable session runs the delta-scoped COLD fallback. */
   rereview?: ReReviewContinuation | null;
 };
 
@@ -277,7 +277,7 @@ async function runNativeReviewAttempt(
   let warmRunId: string | undefined;
   let warm: NonNullable<typeof original.agentContexts>[number] | undefined;
   let fallback = resumeFailure?.refusal;
-  // A person's WARM request shows the reason; an automatic re-review never stops on it.
+  // Every validated re-review keeps its delta when the retained session is unavailable.
   const fallBack = (refusal: WarmReviewRefusal) => {
     if (!input.rereview) throw refusal;
     fallback = refusal;

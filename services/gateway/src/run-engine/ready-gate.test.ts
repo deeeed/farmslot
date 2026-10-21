@@ -742,9 +742,9 @@ test('a gate plan continues a pipeline lineage by its lineage id, under the row 
     rows().map((review) => review.id),
     [rowId],
   );
-  // A person's WARM request carries no fallback: an unavailable session refuses.
+  // A person's WARM request carries the same verified baseline and findings as automatic rechecks.
   await executePublishGateReviewPlan(run.id, 'slot-1', plan('warm'), 'human-gate', dependencies);
-  assert.equal(launches[2]?.rereview, undefined);
+  assert.deepEqual(launches[2]?.rereview, { lastReviewedHeadSha: 'reviewed', priorIssues: issues });
   assert.equal(launches[2]?.mode, 'warm');
   // A refused handoff ran no session: its row says so, and keeps the lineage's earlier attempts.
   await executePublishGateReviewPlan(run.id, 'slot-1', plan('warm'), 'human-gate', {
@@ -768,7 +768,7 @@ test('a gate plan continues a pipeline lineage by its lineage id, under the row 
       ['failed', undefined],
     ],
   );
-  // Reopening Request Review lists the lineage, unavailable, and preselects COLD in it.
+  // Reopening Request Review keeps the lineage WARM and explains its delta fallback.
   const lineageOptions = await reviewLineageOptionsForRun(
     getRun(run.id)!,
     getAllRuns(),
@@ -787,20 +787,20 @@ test('a gate plan continues a pipeline lineage by its lineage id, under the row 
   const picker = new ReviewDispatchViewModel({
     context: { allowedActions: ['request-review'], lineageOptions, defaults: { runner: 'codex' } },
   });
-  assert.equal(picker.rows[0].selection.mode, 'cold');
-  assert.match(picker.rows[0].note ?? '', /can't continue: the reviewId has no verified/);
+  assert.equal(picker.rows[0].selection.mode, 'warm');
+  assert.match(picker.rows[0].note ?? '', /fresh session: the reviewId has no verified/);
   const request = picker.toRequestPayload();
   assert.deepEqual(request.context, {
     reviewLineages: [{ familyId: run.familyId, reviewId: lineageId }],
   });
-  // Executing that COLD request stays in the lineage, on the same row.
+  // Executing that WARM request keeps the earlier baseline and findings, on the same row.
   await executePublishGateReviewPlan(run.id, 'slot-1', picker.toSequence(), 'human-gate', {
     ...dependencies,
     reviewSequenceContext: request.context,
   });
   assert.deepEqual(
     [launches.at(-1)?.mode, launches.at(-1)?.reviewId, launches.at(-1)?.artifactScope],
-    ['cold', lineageId, rowId],
+    ['warm', lineageId, rowId],
   );
   assert.deepEqual(
     rows().map((review) => [review.id, review.verdict, review.session?.reviewId]),
