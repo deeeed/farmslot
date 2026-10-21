@@ -45,7 +45,6 @@ export function handleSlotViewHashChange(view: SlotView): void {
     ) {
       // File restoration can synchronously sync the URL. Retire the old run
       // first so it cannot replace the newly requested task with its own ID.
-      view._linkedRunRefreshToken = Symbol('run-navigation');
       view._linkedRun = null;
     }
     // Hydrate URL-pinned history state BEFORE _refreshLinkedRun fires

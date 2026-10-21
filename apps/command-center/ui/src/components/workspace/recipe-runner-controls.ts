@@ -58,6 +58,7 @@ export class RecipeRunnerControls extends LitElement {
   @property() targetPlatform = '';
   @property({ type: Boolean }) showArtifactAction = false;
   @property({ type: Boolean }) disabled = false;
+  @property({ attribute: false }) beforeRun?: () => void;
 
   @state() private _running = false;
   /** The machine's devices, or null until the first read answers. */
@@ -143,8 +144,9 @@ export class RecipeRunnerControls extends LitElement {
   }
 
   async run() {
-    if (this._running) return;
+    if (this._running || this.disabled) return;
     await this.updateComplete;
+    if (this.disabled) return;
     const panel = this.querySelector<RecipeOutputPanel>('recipe-output-panel');
     if (!panel) return;
     this._setRunning(true);
@@ -160,9 +162,10 @@ export class RecipeRunnerControls extends LitElement {
   }
 
   private async _copyCommand() {
-    if (!this.runId || !this.slotId) return;
+    if (!this.runId || !this.slotId || this.disabled) return;
     this._copyError = '';
     try {
+      this.beforeRun?.();
       const params: RecipeCommandParams = { runId: this.runId, slotId: this.slotId };
       if (this.recipeArtifactPath) params.recipeArtifactPath = this.recipeArtifactPath;
       if (this.recipeRunId) params.recipeRunId = this.recipeRunId;
@@ -403,6 +406,8 @@ export class RecipeRunnerControls extends LitElement {
         </div>
         <div style="flex-basis:100%; margin-top:${spacing.xs};">
           <recipe-output-panel
+            .disabled=${this.disabled}
+            .beforeRun=${this.beforeRun}
             runId=${this.runId}
             slotId=${this.slotId}
             recipeArtifactPath=${this.recipeArtifactPath}

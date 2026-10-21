@@ -6,17 +6,17 @@ platform proof below is pending.
 
 ## Current query owners
 
-| Query                              | Dependencies                          | Persistence             | Current consumers                                                                                                    |
-| ---------------------------------- | ------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `sources.status`                   | `sources/farm`                        | 2 MB                    | Sources controllers in Command Center and Companion                                                                  |
-| `run.list`                         | `runs/farm`                           | 20 MB across variants   | Browser active/history/tag/family lists; native active and explicit history collections                              |
-| `run.get`                          | `run/{runId}`, `runs/farm`            | 50 entries, 20 MB total | Browser detail/comparison/family; native detail, diff, artifact viewer, family, gates, decisions and saved review    |
-| `decision.list`                    | `decisions/farm`                      | 10 MB across variants   | Browser inbox; native inbox, decision workspace and gate action guards                                               |
-| `run.recipeRunsForRun`             | `run/{runId}`, `artifacts/{runId}`    | Memory                  | Browser run detail; native run detail, diff, frozen artifact viewer, decision workspace and gate acceptance evidence |
-| `family.observability.get`         | `family/{familyId}`, `decisions/farm` | Memory                  | Browser comparison and family view; native family workspace                                                          |
-| `run.slotHistory` | `runs/farm`, `slots/farm` | Memory | Browser slot history |
-| `run.forSlot`, `run.recipeRunsForSlot` | `runs/farm`, `slot/{slotId}` | Memory | Registered after binding-writer coverage; remaining consumers need migration |
-| `run.tags.list` | `runs/farm` | Memory | Browser tag filters |
+| Query                                  | Dependencies                          | Persistence             | Current consumers                                                                                                                 |
+| -------------------------------------- | ------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `sources.status`                       | `sources/farm`                        | 2 MB                    | Sources controllers in Command Center and Companion                                                                               |
+| `run.list`                             | `runs/farm`                           | 20 MB across variants   | Browser active/history/tag/family lists; native active and explicit history collections                                           |
+| `run.get`                              | `run/{runId}`, `runs/farm`            | 50 entries, 20 MB total | Browser detail/comparison/family; native detail, diff, artifact viewer, family, gates, decisions and saved review                 |
+| `decision.list`                        | `decisions/farm`                      | 10 MB across variants   | Browser inbox; native inbox, decision workspace and gate action guards                                                            |
+| `run.recipeRunsForRun`                 | `run/{runId}`, `artifacts/{runId}`    | Memory                  | Browser run detail and SlotView; native run detail, diff, frozen artifact viewer, decision workspace and gate acceptance evidence |
+| `family.observability.get`             | `family/{familyId}`, `decisions/farm` | Memory                  | Browser comparison and family view; native family workspace                                                                       |
+| `run.slotHistory`                      | `runs/farm`, `slots/farm`             | Memory                  | Browser slot history                                                                                                              |
+| `run.forSlot`, `run.recipeRunsForSlot` | `runs/farm`, `slot/{slotId}`          | Memory                  | Browser SlotView selection through `run.forSlot`; `run.recipeRunsForSlot` consumers remain to migrate                             |
+| `run.tags.list`                        | `runs/farm`                           | Memory                  | Browser tag filters                                                                                                               |
 
 The protocol registry is `packages/protocol/src/client-cache/registry.ts`. Parameters form
 part of query identity. Native active/history/decision deadlines remain 20/60/30 seconds;
@@ -46,6 +46,8 @@ history remains explicit and bounded to 80 rows until the version-list migration
 
 | Browser slot history | Independent history reads on open/retry and local result copies | Shared history observation, binding/membership dependencies, saved age and current-input prepare checks | Focused history3/3 and three exact-restoration controls pass; current/read-error/offline/refused screenshots inspected. Combined r23 failed on a matching native OPFS crash and is excluded |
 
+| Browser SlotView run and recipe inventory | Trimmed list-row adoption, direct run.get/run.forSlot/recipe reads, run/state-event refreshes, mirror post-command reads and the 1.5-second recipe settle timer | Shared slot-run, pinned full-run and per-run recipe observations; current-input mutation guards and explicit artifact sync | Focused slot-run proof3/3; notification and readiness controls fail intended assertions, restore exactly and recover3/3; recorded combined browser43/43, all24criteria and eleven browser phases |
+
 Explicit mutations such as refreshing a publication package retain their command owners.
 They do not adopt returned run data. A shared observation supplies the resulting state.
 Local age clocks repaint saved timestamps without issuing network reads.
@@ -65,25 +67,25 @@ The browser family proof checks the actual SQLite timestamp before closing its d
 
 ## Run writer coverage
 
-| Writer                       | Notification owner                                               | Covered behavior                                                            |
-| ---------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Run persistence and deletion | `services/gateway/src/runs/store.ts`, `resources/run-changes.ts` | Run, collection, decision, family and artifact dependencies                 |
-| Worker decision files        | `observability/fleet-monitor.ts`                                 | Creation, content change, removal and read failure/recovery                 |
-| File decision resolution     | `methods/decisions.ts`, file-decision owner                      | Physical deletion before acknowledgement; failures propagate                |
-| Artifact acquisition         | `run-completion/artifact-mirror.ts`                              | Actual copy/prune/pointer changes notify; unchanged acquisitions stay quiet |
-| Feedback consumption         | `intelligence/feedback-ledger.ts`                                | Inbox and retrospective derivations change after consumption                |
-| PR monitor observations      | `pr-monitoring/store.ts`                                         | Run-derived monitor decisions invalidate when their inputs change           |
-| Slot binding and membership | `core/state.ts`, `fleet/state.ts`, `resources/slot-run-bindings.ts` | Direct/CAS/claim/mark/transition/reset/rewrite commits and external file changes invalidate affected slot and run projections; failed reads stay visible |
-| Inbox expiry                 | `runs/decision-inbox.ts`, resource deadline owner                | Existing 48-hour expiry invalidates the inbox without rewriting the run     |
+| Writer                       | Notification owner                                                  | Covered behavior                                                                                                                                         |
+| ---------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run persistence and deletion | `services/gateway/src/runs/store.ts`, `resources/run-changes.ts`    | Run, collection, decision, family and artifact dependencies                                                                                              |
+| Worker decision files        | `observability/fleet-monitor.ts`                                    | Creation, content change, removal and read failure/recovery                                                                                              |
+| File decision resolution     | `methods/decisions.ts`, file-decision owner                         | Physical deletion before acknowledgement; failures propagate                                                                                             |
+| Artifact acquisition         | `run-completion/artifact-mirror.ts`                                 | Actual copy/prune/pointer changes notify; unchanged acquisitions stay quiet                                                                              |
+| Feedback consumption         | `intelligence/feedback-ledger.ts`                                   | Inbox and retrospective derivations change after consumption                                                                                             |
+| PR monitor observations      | `pr-monitoring/store.ts`                                            | Run-derived monitor decisions invalidate when their inputs change                                                                                        |
+| Slot binding and membership  | `core/state.ts`, `fleet/state.ts`, `resources/slot-run-bindings.ts` | Direct/CAS/claim/mark/transition/reset/rewrite commits and external file changes invalidate affected slot and run projections; failed reads stay visible |
+| Inbox expiry                 | `runs/decision-inbox.ts`, resource deadline owner                   | Existing 48-hour expiry invalidates the inbox without rewriting the run                                                                                  |
 
 Gateway writer tests and the real-endpoint run recipe support these rows. They do not
 establish coverage for unmigrated cross-family inputs.
 
 ## Remaining acceptance
 
-- Migrate remaining browser workspace/slot/dispatch readers, complete the combined proof after diagnosing the native OPFS crash, and finish the
+- Migrate remaining browser workspace/dispatch readers and complete the current SlotView combined proof, and finish the
   remaining native slot/terminal/visual-review/conversation readers; artifact reader component evidence is recorded.
-- Migrate the remaining consumers of `run.forSlot` and `run.recipeRunsForSlot`; binding writers and dependencies now have isolated tests and live browser history evidence.
+- Migrate the remaining consumers of `run.forSlot` and `run.recipeRunsForSlot`; binding writers and dependencies now have isolated tests, live browser history and SlotView evidence.
 - Finish native context recipes and negative controls, then the browser, desktop,
   iOS and Android authority/profile and connected-stale command matrix.
 - Re-measure reconnect bytes and time against the baseline.

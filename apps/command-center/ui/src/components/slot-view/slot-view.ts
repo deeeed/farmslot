@@ -101,7 +101,6 @@ import { saveLayout } from './slot-view-layout.js';
 import {
   applySlotViewLinkedRun,
   clearSelectedSlotViewAgentContextForSlot,
-  refreshSlotViewLinkedRun,
   requestedSlotViewRunFromUrl,
 } from './slot-view-linked-run-effects.js';
 import {
@@ -160,6 +159,7 @@ import {
   openSlotViewBranchDiffFile,
   slotViewCommentThreadsForFile,
 } from './slot-view-review-effects.js';
+import { SlotViewRunQueries } from './slot-view-run-queries.js';
 import {
   executeSlotViewSearch,
   handleSlotViewDiagnosticNavigate,
@@ -219,6 +219,7 @@ import {
 
 @customElement('slot-view')
 export class SlotView extends SlotViewRecipePresenter {
+  readonly _runQueries = new SlotViewRunQueries(this);
   /** The editor's diff tab; opened from the tree and search too, so it filters itself. */
   readonly _testFilter = new DiffTestFilterController(this, {
     patterns: () => this._branchDiffTestPatterns,
@@ -251,8 +252,21 @@ export class SlotView extends SlotViewRecipePresenter {
     return requestedSlotViewRunFromUrl();
   }
 
-  async _refreshLinkedRun(prevRunStatus: string | null): Promise<string | null> {
-    return refreshSlotViewLinkedRun(this, prevRunStatus);
+  async _refreshLinkedRun(_prevRunStatus: string | null): Promise<string | null> {
+    return this._runQueries.sync();
+  }
+
+  _requireCurrentRun(): Run {
+    return this._runQueries.requireRun();
+  }
+  _requireCurrentRecipes(): Run {
+    return this._runQueries.requireRecipes();
+  }
+  _captureRunScope(): () => boolean {
+    return this._runQueries.capture();
+  }
+  _retryRunReads(): Promise<void> {
+    return this._runQueries.retry();
   }
 
   _onHashChange = () => {
@@ -280,6 +294,7 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   updated(changed: Map<string, unknown>) {
+    if (changed.has('slotId') || changed.has('_slot')) this._runQueries.sync();
     handleSlotViewUpdated(this, changed);
   }
 

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback and verified identity handling. Sources, run lists, load-run dialogs and slot history, full run details, comparisons, family views and decision inboxes retain saved observations offline with their age, disable stale actions and follow live change notifications. Missing run details evict their saved copy, and recipe inventories update when mirrored artifacts arrive.
+- Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback and verified identity handling. Sources, run lists, load-run dialogs, slot history and workspace run context, full run details, comparisons, family views and decision inboxes retain saved observations offline with their age, disable stale actions and follow live change notifications. Missing run details evict their saved copy, and recipe inventories update when mirrored artifacts arrive.
 
 - Selecting a review line comment reveals and highlights its exact source line with the inline comment, including while the editor loads.
 

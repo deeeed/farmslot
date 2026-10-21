@@ -94,6 +94,10 @@
     {
       "id": "browser-store-navigation",
       "claim": "Real back/forward-cache navigation retires the SQLite worker, then reopens it and reauthenticates before current data renders, preserving saved runs and database integrity."
+    },
+    {
+      "id": "browser-shared-slot-run",
+      "claim": "SlotView observes its actual full run and recipe inventory, follows external writes and mirror acquisition, preserves saved facts after read failure and cold offline launch, and requires current reads before sync without replaying commands."
     }
   ],
   "workflow": {
@@ -427,6 +431,22 @@
         "match": "\"navigationStoreLifecycle\":true",
         "intent": "Require actual back/forward-cache restoration and fresh authenticated SQLite query ownership.",
         "proves": ["browser-store-navigation"],
+        "next": "slot-run-web"
+      },
+      "slot-run-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs slot-run-web",
+        "timeout_ms": 240000,
+        "intent": "Observe actual slot run and recipe queries through readable artifact acquisition, external tags, binding read failure, cold offline state and reconnect.",
+        "next": "slot-run-proof"
+      },
+      "slot-run-proof": {
+        "action": "assert_output",
+        "source": "slot-run-web",
+        "stream": "stdout",
+        "match": "\"coldSlotFullRun\":true",
+        "intent": "Require canonical render inputs, actual recipe arrival, guarded commands and the exact saved run timestamp after an offline reload.",
+        "proves": ["browser-shared-slot-run"],
         "next": "done"
       }
     }

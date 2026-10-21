@@ -294,13 +294,15 @@ export function renderRecipeEvidenceSection(
                         data-testid="slot-recipe-refresh-mirror"
                         class="sv-action-btn"
                         style="padding:2px 8px; font-size:${fonts.sizeXs};"
-                        ?disabled=${view._mirrorRefreshing}
+                        ?disabled=${view._mirrorRefreshing ||
+                        view._runActionsBlocked ||
+                        !view._recipeRunsCurrent}
                         title="Re-sync artifacts from slot disk → orchestrator mirror"
                         @click=${() => void view._refreshArtifactMirror()}
                       >
                         ${view._mirrorRefreshing
                           ? 'Syncing…'
-                          : view._mirrorRefreshFeedback || 'Refresh mirror'}
+                          : view._mirrorRefreshFeedback || 'Sync artifacts'}
                       </button>
                     `
                   : nothing}
@@ -542,6 +544,13 @@ function renderRecipeHostBody(
             <div style="margin-bottom:${spacing.sm};">
               <recipe-runner-controls
                 id="sv-recipe-runner-controls"
+                .disabled=${view._runActionsBlocked || !view._recipeRunsCurrent}
+                .beforeRun=${() => {
+                  if (view._requireCurrentRecipes().id !== recipeHost.runId)
+                    throw new Error(
+                      'The recipe run changed. Review its current evidence before replaying.',
+                    );
+                }}
                 runId=${recipeHost.runId}
                 slotId=${view.slotId}
                 recipeArtifactPath=${selectedDependencyArtifactPath}
@@ -551,9 +560,6 @@ function renderRecipeHostBody(
                 .recordVideo=${view._recipeRunnerUiOptions.recordVideo}
                 ?showPlayback=${view._recipeRunnerUiOptions.showPlayback}
                 ?showArtifactAction=${view._recipeRunnerUiOptions.showArtifactAction}
-                @running-change=${(event: CustomEvent<boolean>) => {
-                  if (!event.detail) void view._refreshLinkedRun(view._linkedRun?.status ?? null);
-                }}
                 @recipe-complete=${(event: CustomEvent<RecipeCompleteDetail>) => {
                   view._handleRecipeExecutionComplete(event.detail);
                 }}
@@ -878,7 +884,12 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
     recipeExecutionOverlay: view._renderRecipeExecutionOverlay(
       drawerMode === 'recipe' ? recipeHost : readyDecision || reviewDecision ? null : recipeHost,
     ),
-    bodyContent,
+    bodyContent: html`${view._recipeRunsError
+      ? html`<div role="alert" data-slot-recipe-read-error>
+          ${view._recipeRunsError}
+          <button @click=${() => void view._retryRunReads()}>Retry</button>
+        </div>`
+      : nothing}${bodyContent}`,
     onResizeStart: (event) => view._onResizeStart('review', event),
     onToggleFullWidth: () => {
       view._reviewFullWidth = !view._reviewFullWidth;

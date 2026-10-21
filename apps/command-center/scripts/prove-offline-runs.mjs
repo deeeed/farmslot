@@ -33,6 +33,7 @@ assert(
     'load-modal-web',
     'history-web',
     'store-navigation-web',
+    'slot-run-web',
   ].includes(phase),
   'Select a run proof phase',
 );
@@ -1501,6 +1502,222 @@ if (phase === 'history-web') {
           await writeFile(fixture.runFile, runBytes);
         });
     }
+  }
+  process.exit(0);
+}
+
+if (phase === 'slot-run-web') {
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  const { runId, slotId } = fixture;
+  const original = (await rpc('run.get', { runId })).run;
+  assert.equal(original.readOnly, false);
+  assert.equal(original.taskFile, fixture.taskFile);
+  assert.equal(original.slotId, slotId);
+  for (const directory of [fixture.taskDir, fixture.workerTaskDir])
+    assert((await realpath(directory)).startsWith(`${home}/`));
+  const recipeFile = path.join(fixture.workerTaskDir, 'artifacts/recipe.json');
+  let originalRecipe;
+  try {
+    originalRecipe = await readFile(recipeFile);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  const statusFile = path.join(root, '.farm-status.json');
+  const originalStatus = await readFile(statusFile, 'utf8');
+  const statusCommit = async (content) => {
+    const temporary = `${statusFile}.${randomUUID()}.tmp`;
+    await writeFile(temporary, content);
+    await rename(temporary, statusFile);
+  };
+  const artifacts =
+    process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR ?? path.join(home, 'slot-run-proof', randomUUID());
+  await mkdir(artifacts, { recursive: true });
+  const cdp = async (...args) => {
+    const { stdout } = await execute(
+      process.execPath,
+      [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+      { timeout: 60000, maxBuffer: 1024 * 1024 },
+    );
+    return JSON.parse(stdout);
+  };
+  const route = `slot/${slotId}`;
+  const base = new URL(process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`);
+  assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
+  base.searchParams.set('slot-run-proof', randomUUID());
+  base.hash = `${route}?runId=${runId}`;
+  const snapshot = () =>
+    cdp(
+      'eval',
+      route,
+      '--file',
+      path.join(root, 'apps/command-center/scripts/probes/offline-slot-run.js'),
+    );
+  const until = async (ready, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await snapshot();
+      if (ready(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const tag = `offline-slot-${randomUUID().slice(0, 16)}`;
+  let seeded = false;
+  let cold;
+  let savedAt;
+  try {
+    await cdp('goto', base.href);
+    await cdp('focus', route);
+    const initial = await until(
+      (value) =>
+        value.runId === runId &&
+        value.runCanonical &&
+        value.recipesCanonical &&
+        value.runCurrent &&
+        value.recipesCurrent &&
+        !value.contextBlocked,
+      'The real slot view must render its canonical full run and recipe observations',
+    );
+    assert(initial.titleRendered);
+    assert.deepEqual(initial.reads.slot.query.params, { slotId });
+    assert.deepEqual(initial.reads.pinned.query.params, { runId });
+    assert.deepEqual(initial.reads.recipes.query.params, { runId });
+    await writeFile(
+      recipeFile,
+      JSON.stringify({
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        title: 'Private slot store proof',
+        workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'pass' } } },
+      }),
+    );
+    seeded = true;
+    const sync = await rpc('run.refreshMirror', { runId });
+    assert.equal(sync.ok, true, sync.reason);
+    const arrived = await until(
+      (value) =>
+        value.runCanonical &&
+        value.recipesCanonical &&
+        value.recipesCurrent &&
+        value.recipeGroups.some((group) => group.recipe) &&
+        value.mirrorDisabled === false,
+      'Actual recipe acquisition must update the visible slot inventory and sync action without a panel refresh',
+    );
+    await rpc('run.tags.set', { runId, tags: [...(original.tags ?? []), tag] });
+    await until(
+      (value) => value.runCanonical && value.runCurrent && value.tags?.includes(tag),
+      'An external run writer must update the canonical run rendered by SlotView',
+    );
+    await cdp('screenshot', route, path.join(artifacts, 'slot-run-current.png'));
+    await cdp('click', route, 'slot-view [data-testid="slot-recipe-refresh-mirror"]');
+    await until(
+      (value) => !value.mirrorBusy && /Synced|Up to date/.test(value.mirrorFeedback),
+      'The current real artifact sync command must finish without an independent run reread',
+    );
+    try {
+      await statusCommit('{unreadable');
+      await until(
+        (value) =>
+          value.runCanonical &&
+          value.titleRendered &&
+          value.runError &&
+          value.errorRendered &&
+          value.actionsBlocked &&
+          value.mirrorDisabled,
+        'A slot binding read failure must retain rendered facts, show its error and disable commands',
+      );
+      await cdp('screenshot', route, path.join(artifacts, 'slot-run-read-error.png'));
+    } finally {
+      await statusCommit(originalStatus);
+    }
+    await until(
+      (value) =>
+        value.runCurrent && value.recipesCurrent && !value.contextBlocked && !value.mirrorDisabled,
+      'Readable binding recovery must revalidate the shared observations',
+    );
+    await withOwnedGatewayOffline(async () => {
+      const stale = await until(
+        (value) =>
+          value.reads.pinned.status === 'stale' &&
+          value.runCanonical &&
+          value.titleRendered &&
+          value.actionsBlocked &&
+          value.mirrorDisabled &&
+          !value.mirrorBusy,
+        'Disconnect must preserve the canonical slot run and disable artifact sync',
+      );
+      savedAt = stale.reads.pinned.observedAt;
+      await until(
+        (value) => value.freshness && value.freshness !== stale.freshness,
+        'Saved slot-run age must repaint without rereading',
+      );
+      const deadline = Date.now() + 15000;
+      let stored;
+      do {
+        stored = await cdp(
+          'eval',
+          route,
+          '--file',
+          path.join(root, 'apps/command-center/scripts/probes/offline-slot-run-store.js'),
+        );
+        if (stored.storedObservedAt === savedAt) break;
+        await delay(50);
+      } while (Date.now() < deadline);
+      assert.equal(stored.storedObservedAt, savedAt);
+      await cdp('screenshot', route, path.join(artifacts, 'slot-run-stale.png'));
+      base.searchParams.set('cold-slot-run', randomUUID());
+      await cdp('goto', base.href);
+      await cdp('focus', route);
+      cold = await until(
+        (value) =>
+          value.runId === runId &&
+          value.runCanonical &&
+          value.titleRendered &&
+          value.reads.pinned.status === 'stale' &&
+          value.actionsBlocked,
+        'A cold offline slot route must render its actual saved full run with commands disabled',
+      );
+      assert.equal(cold.reads.pinned.observedAt, savedAt);
+      await cdp('screenshot', route, path.join(artifacts, 'slot-run-cold.png'));
+    });
+    const current = await until(
+      (value) =>
+        value.runCurrent &&
+        value.recipesCurrent &&
+        value.runCanonical &&
+        value.recipesCanonical &&
+        !value.contextBlocked &&
+        value.mirrorDisabled === false,
+      'Reconnect must reread current run and inventory without replaying artifact sync',
+    );
+    assert.equal(current.mirrorFeedback, '');
+    assert.equal(current.mirrorBusy, false);
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        action: phase,
+        slotRunObservations: true,
+        actualRecipeMirrorArrival: arrived.recipeGroups.length,
+        slotRunReadFailure: true,
+        coldSlotFullRun: true,
+        sqliteObservedAt: savedAt,
+        commandsNotReplayed: true,
+        screenshots: artifacts,
+        coldFleetAndInventoryPersistenceNotClaimed: true,
+      }),
+    );
+  } finally {
+    await statusCommit(originalStatus);
+    if (seeded) {
+      if (originalRecipe) await writeFile(recipeFile, originalRecipe);
+      else await rm(recipeFile);
+      await rpc('run.refreshMirror', { runId });
+    }
+    await rpc('run.tags.set', { runId, tags: original.tags ?? [] });
+    base.hash = 'runs';
+    await cdp('goto', base.href);
   }
   process.exit(0);
 }

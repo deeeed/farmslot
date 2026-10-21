@@ -589,7 +589,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                             ? html`
                                 <button
                                   class="sv-run-action muted"
-                                  ?disabled=${view._tmuxRestoreRunning || view._isRecoveryBlocked}
+                                  ?disabled=${view._tmuxRestoreRunning || view._runActionsBlocked}
                                   @click=${() => view._restoreTmuxWorker()}
                                 >
                                   ${view._tmuxRestoreRunning
@@ -598,7 +598,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                 </button>
                                 <button
                                   class="sv-run-action muted"
-                                  ?disabled=${view._tmuxRestoreRunning || view._isRecoveryBlocked}
+                                  ?disabled=${view._tmuxRestoreRunning || view._runActionsBlocked}
                                   @click=${() => view._reloadWorkerSession()}
                                 >
                                   ${view._tmuxRestoreRunning

@@ -17,22 +17,27 @@ export async function copySlotViewRecipeCommand(
   recipeArtifactPath = '',
   useSelectedRecipeRun = false,
 ): Promise<void> {
-  if (!view._linkedRun) return;
-  const params = buildRecipeActionRequestParams({
-    runId: view._linkedRun.id,
-    slotId: view.slotId,
-    recipeArtifactPath: recipeArtifactPath || undefined,
-    selectedRun: useSelectedRecipeRun ? view._selectedRecipeRun() : null,
-  });
+  if (!view._linkedRun || view._runActionsBlocked || !view._recipeRunsCurrent) return;
+  let current = () => view.isConnected;
   try {
+    const run = view._requireCurrentRecipes();
+    current = view._captureRunScope();
+    const params = buildRecipeActionRequestParams({
+      runId: run.id,
+      slotId: view.slotId,
+      recipeArtifactPath: recipeArtifactPath || undefined,
+      selectedRun: useSelectedRecipeRun ? view._selectedRecipeRun() : null,
+    });
     const result = await gateway.request<RecipeCommandResult>(Methods.RECIPE_COMMAND, params);
+    if (!current()) return;
     await navigator.clipboard.writeText(result.command);
+    if (!current()) return;
     view._recipeCommandFeedback = 'copied';
     setTimeout(() => {
-      if (view._recipeCommandFeedback === 'copied') view._recipeCommandFeedback = '';
+      if (current() && view._recipeCommandFeedback === 'copied') view._recipeCommandFeedback = '';
     }, 1500);
   } catch (error) {
-    console.error('Failed to copy recipe command', error);
+    if (current()) view._runCommandError = error instanceof Error ? error.message : String(error);
   }
 }
 
@@ -42,6 +47,15 @@ export function startSlotViewRecipeExecution(
   recipeArtifactPath = '',
   useSelectedRecipeRun = false,
 ): void {
+  if (view._runActionsBlocked || !view._recipeRunsCurrent) return;
+  let current: () => boolean;
+  try {
+    view._requireCurrentRecipes();
+    current = view._captureRunScope();
+  } catch (error) {
+    view._runCommandError = error instanceof Error ? error.message : String(error);
+    return;
+  }
   view._recipeExecutionLabel = label;
   view._recipeExecutionArtifactPath = recipeArtifactPath;
   view._recipeExecutionRecipeRunId = useSelectedRecipeRun
@@ -55,6 +69,7 @@ export function startSlotViewRecipeExecution(
   view._syncUrlState();
   requestAnimationFrame(async () => {
     await view.updateComplete;
+    if (!current()) return;
     const runner = view.renderRoot.querySelector<RecipeRunnerControls>(
       '#sv-recipe-runner-controls',
     );
@@ -64,6 +79,7 @@ export function startSlotViewRecipeExecution(
     }
     view._recipeExecutionOpen = true;
     await view.updateComplete;
+    if (!current()) return;
     void view.renderRoot.querySelector<RecipeOutputPanel>('#sv-recipe-overlay-runner')?.rerun();
   });
 }
@@ -84,14 +100,5 @@ export function handleSlotViewRecipeExecutionComplete(
   view._reviewDrawerMode = 'recipe';
   view._dismissedReviewDrawerKey = '';
   view._reviewPanelOpen = true;
-  void view._refreshLinkedRun(view._linkedRun?.status ?? null);
   view._syncUrlState();
-  // The runner writes artifacts just before emitting completion; refresh once
-  // more after the filesystem mirror has had a moment to observe them. The
-  // pending id check below makes stale delayed refreshes no-op after rapid reruns.
-  setTimeout(() => {
-    if (view._pendingRecipeRunSelectionId === completedRecipeRunId) {
-      void view._refreshLinkedRun(view._linkedRun?.status ?? null);
-    }
-  }, 1500);
 }

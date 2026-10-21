@@ -1,24 +1,18 @@
-import type { Run, RunForSlotResult, RunGetResult } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import type { Run } from '@farmslot/protocol';
 
-import { gateway } from '../../gateway-client.js';
-import { getRunForSlot, getState } from '../../state.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
 import {
   isSlotViewContextPinUnresolved,
-  selectSlotViewLinkedRun,
   shouldPreserveSlotViewCachedNullRun,
   type SlotViewLinkedRunSource,
   slotViewLinkedRunTransition,
-  slotViewNeedsDirectRunFetch,
 } from './slot-view-linked-run-model.js';
 import { loadSlotViewGitFileContent } from './slot-view-live-effects.js';
 import {
   branchDiffKey,
   parseBranchDiffKey,
-  slotBoundRunIdForSlot,
   slotViewPendingReviewSnapshot,
 } from './slot-view-model.js';
 import { getSlotViewHashParam, requestedRunFromHash } from './slot-view-url-state.js';
@@ -198,68 +192,4 @@ export function clearSelectedSlotViewAgentContextForSlot(view: SlotView): void {
 
 export function requestedSlotViewRunFromUrl(): string | null {
   return requestedRunFromHash();
-}
-
-export async function refreshSlotViewLinkedRun(
-  view: SlotView,
-  prevRunStatus: string | null,
-): Promise<string | null> {
-  const requestedRunId = requestedSlotViewRunFromUrl();
-  const requestedContextId = getSlotViewHashParam('contextId');
-  const refreshToken = Symbol('linked-run-refresh');
-  view._linkedRunRefreshToken = refreshToken;
-  const slotBoundRunId = slotBoundRunIdForSlot(
-    view.slotId,
-    view._slot?.currentRunId,
-    getState().fleet?.slots,
-  );
-  let cachedRun = getRunForSlot(view.slotId, requestedRunId);
-  let nextPrevRunStatus = applySlotViewLinkedRun(view, cachedRun, prevRunStatus, 'cache');
-  void view._refreshRecipeRuns(cachedRun);
-  if (!view._isLive || gateway.connectionState !== 'connected') return nextPrevRunStatus;
-
-  try {
-    if (slotViewNeedsDirectRunFetch(requestedRunId, cachedRun, requestedContextId)) {
-      try {
-        const direct = await gateway.request<RunGetResult>(Methods.RUN_GET, {
-          runId: requestedRunId,
-        });
-        if (refreshToken !== view._linkedRunRefreshToken) return nextPrevRunStatus;
-        const directRun = direct.run;
-        if (directRun && (directRun.slotId === view.slotId || directRun.id === slotBoundRunId)) {
-          cachedRun = directRun;
-          nextPrevRunStatus = applySlotViewLinkedRun(view, cachedRun, nextPrevRunStatus, 'rpc');
-          void view._refreshRecipeRuns(cachedRun);
-        }
-      } catch (err) {
-        // A URL can outlive a run snapshot. The selector below keeps explicit
-        // context pins unresolved instead of redirecting their input to another run.
-        console.warn(
-          '[slot-view] requested run refresh failed; falling back to slot selector:',
-          err instanceof Error ? err.message : String(err),
-        );
-      }
-    }
-
-    const result = await gateway.request<RunForSlotResult>(Methods.RUN_FOR_SLOT, {
-      slotId: view.slotId,
-    });
-    if (refreshToken !== view._linkedRunRefreshToken) return nextPrevRunStatus;
-    const nextRun = selectSlotViewLinkedRun({
-      requestedContextId,
-      slotId: view.slotId,
-      requestedRunId,
-      slotBoundRunId,
-      cachedRun,
-      rpcRun: result.run,
-    });
-    nextPrevRunStatus = applySlotViewLinkedRun(view, nextRun, nextPrevRunStatus, 'rpc');
-    void view._refreshRecipeRuns(nextRun);
-  } catch (err) {
-    console.warn(
-      '[slot-view] linked run refresh failed; using state cache:',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-  return nextPrevRunStatus;
 }

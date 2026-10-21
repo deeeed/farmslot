@@ -46,12 +46,8 @@ export function connectSlotView(view: SlotView): void {
     if (state.fleet) view._requestSlotSwitcherUpdate(state.fleet.slots);
   });
 
-  // Track linked run for this slot
-  let prevRunStatus: string | null = null;
   const updateLinkedRun = () => {
-    void view._refreshLinkedRun(prevRunStatus).then((nextStatus) => {
-      prevRunStatus = nextStatus;
-    });
+    view._runQueries.sync();
   };
 
   view._unsubSlot = gateway.subscribe(Events.SLOT_CHANGED, (payload: unknown) => {
@@ -85,10 +81,6 @@ export function connectSlotView(view: SlotView): void {
   });
 
   updateLinkedRun();
-  view._unsubRunUpdated = gateway.subscribe(Events.RUN_UPDATED, updateLinkedRun);
-  view._unsubRunCreated = gateway.subscribe(Events.RUN_CREATED, updateLinkedRun);
-  // Also re-check when initial state loads (runs arrive after slot-view mounts)
-  view._unsubStateChange = subscribe(updateLinkedRun);
 
   // Task progress (structured)
   view._unsubTaskProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
@@ -115,9 +107,6 @@ export function disconnectSlotView(view: SlotView): void {
   view._unsubSlot?.();
   view._unsubState?.();
   view._unsubConn?.();
-  view._unsubRunUpdated?.();
-  view._unsubRunCreated?.();
-  view._unsubStateChange?.();
   view._unsubTaskProgress?.();
   view._unsubResourceStatus?.();
   view._unsubPrepareTracker?.();

@@ -42,6 +42,8 @@ export class RecipeOutputPanel extends LitElement {
   @property() slotId = '';
   @property() recipeArtifactPath = '';
   @property() recipeRunId = '';
+  @property({ type: Boolean }) disabled = false;
+  @property({ attribute: false }) beforeRun?: () => void;
   /** Device-identity key the re-target field edits (ADR-054 item 3). */
   @property() targetKey = 'simulator';
   /** Device identity to re-target this rerun at; empty means the slot's own. */
@@ -67,7 +69,7 @@ export class RecipeOutputPanel extends LitElement {
   }
 
   async rerun() {
-    if (this._starting || this._output?.running || !this.slotId) return;
+    if (this._starting || this._output?.running || !this.slotId || this.disabled) return;
     this._starting = true;
 
     // Clean up any previous subscriptions
@@ -141,6 +143,7 @@ export class RecipeOutputPanel extends LitElement {
     this.dispatchEvent(new CustomEvent('running-change', { detail: true }));
 
     try {
+      this.beforeRun?.();
       const params: RecipeRerunParams = { runId: this.runId, slotId: this.slotId };
       const retarget = recipeRerunTarget(this.targetKey, this.targetValue, this.targetPlatform);
       if (retarget.error) throw new Error(retarget.error);
