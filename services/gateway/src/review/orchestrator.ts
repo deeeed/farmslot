@@ -356,7 +356,11 @@ async function executeOwnedReview(
     return { skipped: true, reason: 'no-task-dir', retryCount: 0 };
   }
 
-  const retryOf = options.resumeFromResult && reReviewContinuation(options.resumeFromResult);
+  // Gate requests carry the validated delta as rereview; fix-loop continuations
+  // carry their earlier result. Both must recover the same refunded attempt.
+  const retryOf =
+    options.rereview ??
+    (options.resumeFromResult && reReviewContinuation(options.resumeFromResult));
   const failed =
     mode === 'warm' && retryOf
       ? refundedNativeReviewer(getRun(runId) ?? run, {
