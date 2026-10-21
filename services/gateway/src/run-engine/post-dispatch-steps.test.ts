@@ -1706,11 +1706,20 @@ test('a description-only edit keeps the review subject; the package hash still c
   );
   assert.notEqual(computeReadyGatePackageHash(edited), computeReadyGatePackageHash(reviewed));
   assert.equal(readyGateReviewSubjectMatches(reviewed, edited), true);
-  // Code drift still counts.
   assert.equal(
     readyGateReviewSubjectMatches(reviewed, {
       ...edited,
       diffStat: { files: 2, additions: 3, deletions: 0 },
+    }),
+    true,
+  );
+  const snapshot = edited.reviewSnapshot;
+  assert.ok(snapshot);
+  // A changed captured patch remains code drift even when its line counts match.
+  assert.equal(
+    readyGateReviewSubjectMatches(reviewed, {
+      ...edited,
+      reviewSnapshot: { ...snapshot, diffHash: 'changed-code-diff' },
     }),
     false,
   );

@@ -13,7 +13,51 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from './ready-gate-package.js';
 import { makeRun } from './test-fixtures.js';
-const { retainRunFixture } = await import('../run-engine/test-fixtures.js');
+const { makeReadyGatePackage, retainRunFixture } = await import('../run-engine/test-fixtures.js');
+
+test('human overrides and refreshed display counts keep the same reviewed code and evidence', () => {
+  const before = makeReadyGatePackage({
+    evidenceManifest: [
+      { path: 'artifacts/proof.webp', purpose: 'screenshot', sha256: 'same-proof' },
+    ],
+    selectedEvidenceKeys: ['artifacts/proof.webp'],
+  });
+  const snapshot = before.reviewSnapshot;
+  assert.ok(snapshot);
+  const after = {
+    ...before,
+    claimOverrideReceiptIds: ['human-override'],
+    diffStat: { files: 1, additions: 136, deletions: 31 },
+    reviewSnapshot: { ...snapshot, diffStat: { files: 1, additions: 136, deletions: 31 } },
+  };
+  assert.notEqual(computeReadyGatePackageHash(before), computeReadyGatePackageHash(after));
+  assert.notEqual(
+    computeReadyGatePackageInputHash(before),
+    computeReadyGatePackageInputHash(after),
+  );
+  const reviewed = computeReadyGateReviewSubjectHash(before);
+  assert.equal(reviewed, computeReadyGateReviewSubjectHash(after));
+  assert.notEqual(
+    reviewed,
+    computeReadyGateReviewSubjectHash({ ...after, headSha: 'changed-code' }),
+  );
+  assert.notEqual(
+    reviewed,
+    computeReadyGateReviewSubjectHash({
+      ...after,
+      reviewSnapshot: { ...after.reviewSnapshot, diffHash: 'changed-code-diff' },
+    }),
+  );
+  assert.notEqual(
+    reviewed,
+    computeReadyGateReviewSubjectHash({
+      ...after,
+      evidenceManifest: [
+        { path: 'artifacts/proof.webp', purpose: 'screenshot', sha256: 'changed-proof' },
+      ],
+    }),
+  );
+});
 
 test('ready package hashes separate artifact identity from review subject', () => {
   const base = {

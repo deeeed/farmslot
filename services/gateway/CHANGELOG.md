@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Human claim overrides refresh and re-present their pending gate automatically, preserving existing reviews when the code and reviewed evidence are unchanged. A failed refresh keeps the saved override for retry. TAT-4158 run 4237202e previously required a manual refresh, whose changed display counts made the same reviewed inputs look stale.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.0 - 2026-10-21
