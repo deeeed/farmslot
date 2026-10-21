@@ -21,6 +21,7 @@ export function preserveUnchangedReviewFindings(review: ReviewStatus): ReviewSta
     .find((attempt) => attempt.verdict === 'pass' || attempt.verdict === 'issues');
   if (
     prior?.verdict !== 'issues' ||
+    !prior.completedAt ||
     !prior.issues?.length ||
     prior.reviewSnapshot?.headSha !== delta.fixHeadSha
   )
@@ -38,6 +39,7 @@ export function preserveUnchangedReviewFindings(review: ReviewStatus): ReviewSta
       prior.session?.sessionId ?? prior.usage?.runnerSessionId ?? review.reviewerSessionId,
     validationDepth: prior.validationDepth ?? review.validationDepth,
     usage: prior.usage ?? review.usage,
+    completedAt: prior.completedAt,
     taskProgressArtifactPath: prior.taskProgressArtifactPath ?? review.taskProgressArtifactPath,
   };
 }

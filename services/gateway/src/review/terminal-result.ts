@@ -55,20 +55,6 @@ export function isUncertainReviewerOperation(error: unknown): boolean {
   );
 }
 
-/** Cleanup has settled before retrying; all other failures retain their existing handling. */
-export async function withReviewerRelaunch<T>(
-  review: () => Promise<T>,
-  onRelaunch: (error: ReviewerExitedError) => void | Promise<void>,
-): Promise<T> {
-  try {
-    return await review();
-  } catch (error) {
-    if (!(error instanceof ReviewerExitedError)) throw error;
-    await onRelaunch(error);
-    return review();
-  }
-}
-
 export function isTerminalReviewArtifactError(
   error: unknown,
 ): error is TerminalReviewArtifactError {
@@ -97,11 +83,18 @@ import type { NativeSessionReadResult, ReviewStatus } from '@farmslot/protocol';
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { PromptDeliveryUncertainError } from '../runners/registry.js';
 
-/** The final native attempt is the sole structured verdict used for publication. */
+/** Read the attempt whose verdict is projected; a later blocked fix is audit history. */
 export function reviewResultArtifactPath(
-  review: Pick<ReviewStatus, 'attempts' | 'artifactPaths'>,
+  review: Pick<ReviewStatus, 'attempts' | 'artifactPaths' | 'completedAt'>,
 ): string | undefined {
-  return (review.attempts?.at(-1)?.artifactPaths ?? review.artifactPaths)
+  const attempt =
+    (review.completedAt
+      ? review.attempts
+          ?.slice()
+          .reverse()
+          .find((entry) => entry.completedAt === review.completedAt)
+      : undefined) ?? review.attempts?.at(-1);
+  return (attempt?.artifactPaths ?? review.artifactPaths)
     ?.slice()
     .reverse()
     .find(

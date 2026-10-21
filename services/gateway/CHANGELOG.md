@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- A blocked worker fix that changed no code keeps the last same-head review findings visible at publication. Gate recovery and evidence refresh wait for the person's decision instead of starting or retrying an automatic review of that unchanged head.
+- A blocked worker fix that changed no code keeps the last same-head review findings visible at publication. Gate recovery and evidence refresh wait for the person's decision instead of starting another review. A stopped reviewer returns its failure without an automatic replacement.
 
 - Operator WARM re-reviews use the same delta fallback as automatic re-reviews, and can adopt a legacy reviewer session from its validated result and artifact scope. A failed attempt before inspection keeps the earlier baseline. Seen on TAT-4158, whose verified session was refused as missing.
 

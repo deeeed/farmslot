@@ -1,12 +1,11 @@
 // review/review-agent.ts — launch and collect the independent review runner.
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type AgentContext,
   allocateReviewerContext,
-  isTerminalRunStatus,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
   type ReviewIssue,
@@ -35,7 +34,6 @@ import {
   throwIfTmuxQueryTimedOut,
   tmuxShellSnippet,
 } from '../core/tmux.js';
-import { runSupersededSince } from '../run-engine/run-generation.js';
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { readNativeWorkerSnapshot } from '../runners/native/worker-control.js';
 import {
@@ -81,7 +79,6 @@ import {
   ReviewerExitedError,
   TerminalReviewArtifactError,
   terminalReviewArtifactErrorForCompletion,
-  withReviewerRelaunch,
 } from './terminal-result.js';
 
 /** Progress mark writes status "running"; only terminal worker signals count as done. */
@@ -1011,70 +1008,6 @@ async function recoverRunningReviewAgent(params: {
 }
 
 export async function runReviewAgent(
-  ...args: Parameters<typeof runReviewAgentAttempt>
-): Promise<ReviewAgentResult> {
-  const runId = args[5];
-  const generation = getRun(runId)?.engineState?.generation ?? 0;
-  const deadline = Date.now() + args[6];
-  return withReviewerRelaunch(
-    () => runReviewAgentAttempt(...args),
-    async (error) => {
-      const current = getRun(runId);
-      if (
-        !current ||
-        runSupersededSince(current, generation) ||
-        isTerminalRunStatus(current.status)
-      )
-        throw error;
-      const context = [...(current.agentContexts ?? [])]
-        .reverse()
-        .find(
-          (item) => item.role === 'review' && item.runner === args[1] && item.status === 'failed',
-        );
-      if (!context?.taskFile || !context.signalFile) throw error;
-      const [vars, , , taskDir, , , , loopNumber, , artifactScope] = args;
-      const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
-      const destination = slotTaskRelPath(vars, taskDir, `${artifactDir}/stopped-${randomUUID()}`);
-      const files = [
-        [context.taskFile, 'review.md'],
-        [context.signalFile, 'review-signal.json'],
-        [taskDirRelPath(taskDir, reviewerFeedbackRelPath(context.id)), 'review-feedback.md'],
-        [taskDirRelPath(taskDir, reviewerResultRelPath(context.id)), 'review-result.json'],
-        [taskDirRelPath(taskDir, `${artifactDir}/review.diff`), 'review.diff'],
-        [taskDirRelPath(taskDir, `${artifactDir}/review-diff-stat.json`), 'review-diff-stat.json'],
-      ];
-      const archived = await execOnSlot(
-        vars,
-        [
-          `mkdir -p ${shellQuote(destination)}`,
-          ...files.map(([source, name]) => {
-            const from = shellQuote(path.posix.resolve(vars.remoteRepo, source!));
-            return `if [ -f ${from} ]; then cp ${from} ${shellQuote(`${destination}/${name}`)}; fi`;
-          }),
-        ].join(' && '),
-        { timeout: 10_000 },
-      );
-      if (archived.exitCode !== 0)
-        throw new AggregateError(
-          [error, new Error(archived.stderr || archived.stdout)],
-          'Stopped reviewer evidence could not be preserved',
-        );
-      const fresh = getRun(runId);
-      if (!fresh || runSupersededSince(fresh, generation) || isTerminalRunStatus(fresh.status))
-        throw error;
-      args[6] = deadline - Date.now();
-      if (args[6] <= 0)
-        throw new Error(`${error.message}; review deadline expired before relaunch`, {
-          cause: error,
-        });
-      console.warn(
-        `[review] run ${runId.slice(0, 8)}: ${error.message}; relaunching reviewer once`,
-      );
-    },
-  );
-}
-
-async function runReviewAgentAttempt(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
   model: string,

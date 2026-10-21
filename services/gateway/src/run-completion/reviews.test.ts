@@ -6,6 +6,10 @@ import test from 'node:test';
 
 import type { ReviewAttempt, ReviewStatus } from '@farmslot/protocol';
 
+import { lastValidatedReview } from '../review/session-mode.js';
+import { reviewResultArtifactPath } from '../review/terminal-result.js';
+import { reviewsWithValidResults } from '../run-engine/gate-prerequisites.js';
+
 import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 import { makeRun } from './test-fixtures.js';
 
@@ -27,6 +31,7 @@ test('an unchanged blocked fix retains its last reviewed findings and snapshot',
         sessionId: 'original-session',
       },
       completedAt: '2026-10-21T02:52:07Z',
+      artifactPaths: ['artifacts/pipeline-review-loop-2/review-result.json'],
     },
     {
       mode: 'cold',
@@ -42,6 +47,7 @@ test('an unchanged blocked fix retains its last reviewed findings and snapshot',
         capturedAt: '2026-10-21T02:54:20Z',
       },
       completedAt: '2026-10-21T02:54:20Z',
+      artifactPaths: ['artifacts/pipeline-review-loop-3/fix-delta.diff'],
     },
   ];
   for (const persisted of [false, true]) {
@@ -54,6 +60,7 @@ test('an unchanged blocked fix retains its last reviewed findings and snapshot',
       issues,
       attempts,
       completedAt: attempts[1].completedAt,
+      artifactPaths: attempts.flatMap((attempt) => attempt.artifactPaths ?? []),
     };
     const run = makeRun({
       taskFile: undefined,
@@ -72,6 +79,19 @@ test('an unchanged blocked fix retains its last reviewed findings and snapshot',
     assert.equal(review.reviewerSessionId, 'original-session');
     assert.deepEqual(review.issues, issues);
     assert.deepEqual(review.attempts, attempts, 'the blocked fix remains audit history');
+    assert.equal(lastValidatedReview(review)?.loopNumber, 2);
+    assert.equal(
+      reviewResultArtifactPath(review),
+      'artifacts/pipeline-review-loop-2/review-result.json',
+    );
+    run.engineState!.publishGate!.reviews = [review];
+    assert.deepEqual(
+      await reviewsWithValidResults(run, async (_run, artifact) => {
+        assert.equal(artifact, 'artifacts/pipeline-review-loop-2/review-result.json');
+        return JSON.stringify({ schemaVersion: 1, verdict: 'issues', issues });
+      }),
+      [review],
+    );
   }
 });
 
