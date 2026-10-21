@@ -3,7 +3,13 @@ import test from 'node:test';
 import { URL } from 'node:url';
 
 import { Events, Methods } from '@farmslot/protocol';
+import {
+  createGatewayResourceCache,
+  type ResourceQuery,
+  resourceQuery,
+} from '@farmslot/protocol/client-cache';
 
+import { ResourceCacheConformanceTransport } from '../../../../packages/protocol/src/client-cache/conformance';
 import { recordVisualClaimReview } from '../lib/visual-claim-review';
 
 import { mountHook } from './hook-harness.fixtures';
@@ -19,12 +25,48 @@ const progress = { acceptanceCriteria: [], acceptanceStatus: { schemaVersion: 2,
 /** Execute the actual hook with deterministic React scheduling and a read-only transport stub. */
 function mount(request: (method: string) => Promise<unknown>) {
   let connection: number | null = 1;
-  const client = { request, subscribe: () => () => undefined, authenticatedPrincipal: null };
+  const transport = new ResourceCacheConformanceTransport({
+    gatewayUrl: 'ws://acceptance.invalid/',
+  });
+  transport.setConnection({ connected: true, id: 1 });
+  transport.request = async <T>(method: Parameters<typeof resourceQuery>[0], params: unknown) => ({
+    data: (method === Methods.RUN_GET ? { run } : await request(method)) as T,
+    resourceState: {
+      epoch: 'conformance-epoch',
+      dependencies: resourceQuery(method, params).dependencies.map((key) => ({ key, revision: 0 })),
+    },
+  });
+  const cache = createGatewayResourceCache({ transport });
+  const observers = new Map<string, () => void>();
+  const client = {
+    request,
+    subscribe: () => () => undefined,
+    authenticatedPrincipal: null,
+    connectionState: 'connected',
+  };
   const hook = mountHook<[typeof client, RunAcceptanceSource]>(
     new URL('./useRunAcceptance.ts', import.meta.url),
     'useRunAcceptance',
     {
       '@farmslot/protocol': { Methods, Events },
+      '@farmslot/protocol/client-cache': { resourceQuery },
+      './useResourceQuery': {
+        useResourceQuery<T>(query: ResourceQuery<T> | undefined) {
+          if (!query) return { status: 'loading' };
+          if (!observers.has(query.id))
+            observers.set(
+              query.id,
+              cache.observe(query, () => {}),
+            );
+          return cache.read(query);
+        },
+      },
+      '../lib/resource-cache': { getResourceCache: () => cache },
+      '../lib/run-collections': {
+        assertNativeRunReady: () => {
+          throw new Error('No command expected in acceptance-read tests');
+        },
+      },
       '@farmslot/adapter-sdk/evidence': {
         createEvidenceReviewModel: () => null,
         runEvidencePending: () => false,
@@ -52,8 +94,14 @@ function mount(request: (method: string) => Promise<unknown>) {
     },
     setConnected(connected: boolean) {
       connection = connected ? 1 : null;
+      client.connectionState = connected ? 'connected' : 'disconnected';
+      transport.setConnection({ connected, id: connected ? 2 : 1 });
     },
-    cleanup: hook.cleanup,
+    async cleanup() {
+      hook.cleanup();
+      for (const stop of observers.values()) stop();
+      await cache.dispose();
+    },
   };
 }
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -100,7 +148,11 @@ test('cold Retry shows loading until the unchanged run acceptance read arrives',
   assert.equal(reads, 2);
   finish(progress);
   await settle();
-  assert.equal(evidenceReads, 1);
+  assert.equal(
+    evidenceReads,
+    2,
+    'Explicit Retry rereads the shared evidence query as well as criteria',
+  );
   assert.equal(mounted.render().error, null);
   assert.notEqual(mounted.render().view, null);
 });
@@ -274,11 +326,21 @@ test('a failed evidence refresh preserves the retained selection until a success
   mounted.render();
   await settle();
   const waiting = mounted.render();
-  assert.equal(waiting.evidenceError, failed.evidenceError);
+  assert.equal(
+    waiting.evidenceError,
+    null,
+    'Explicit Retry clears the shared read error while retaining its saved evidence',
+  );
+  assert.equal(
+    waiting.commandsReady,
+    false,
+    'Saved evidence cannot authorize a command during Retry',
+  );
   assert.equal(waiting.recipeRunId, 'retained-execution');
   assert.equal(waiting.evidenceLoading, false);
   finish({ recipeRuns: [], selectedRecipeRunId: 'refreshed-execution' });
   await settle();
   assert.equal(mounted.render().evidenceError, null);
   assert.equal(mounted.render().recipeRunId, 'refreshed-execution');
+  assert.equal(mounted.render().commandsReady, true);
 });
