@@ -15,10 +15,76 @@ mock.module('./gate-prerequisites.js', {
 });
 // Its transitive callers loaded the original before the owner-reader mock.
 const freshEngine = './engine-decisions.js?attestation-replay';
-const { createEngineDecision } = await import(freshEngine);
+const { createEngineDecision, resolveEngineDecision } = await import(freshEngine);
 const { publicationGateDecisionActions } = await import('./gate-policy.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { makeReadyGatePackage, deleteTestRunIfPresent } = await import('./test-fixtures.js');
+
+test(
+  'new gate remedies use the offered actions without changing the assessment or definitions',
+  { timeout: 3000 },
+  async (t) => {
+    for (const continuing of [false, true]) {
+      const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'GATE-PARITY' });
+      t.after(() => deleteTestRunIfPresent(run.id));
+      const actions = [
+        { id: 'hold', label: 'Hold', style: 'secondary' as const },
+        ...(continuing
+          ? [{ id: 'continue-review-fix', label: 'Continue fixing', style: 'primary' as const }]
+          : []),
+      ];
+      checked = {
+        state: 'not-ready',
+        identity: { runId: run.id, generation: 0 },
+        reasons: [
+          {
+            code: 'review-fix-required',
+            prerequisite: 'review',
+            message: 'Review found 2 issues. Fix and pass review before publishing.',
+            actionId: 'continue-review-fix',
+          },
+        ],
+      };
+      const original = structuredClone(checked);
+      const waiter = createEngineDecision(
+        run.id,
+        'human_gate',
+        'Publish',
+        actions,
+        {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          workerReport: 'done',
+          branch: 'feature',
+          diffStat: { files: 0, additions: 0, deletions: 0 },
+        },
+        { readProgress: async () => ({ kind: 'idle' }) },
+      );
+      let gateId: string | undefined;
+      try {
+        const deadline = Date.now() + 1000;
+        while (!getRun(run.id)?.decisions.length) {
+          if (Date.now() > deadline) throw new Error('Fixture gate did not open');
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        const gate = getRun(run.id)!.decisions[0];
+        gateId = gate.id;
+        if (gate.payload?.kind !== 'ready') throw new Error('Expected ready gate');
+        assert.equal(
+          gate.payload.gateReadiness?.reasons[0].actionId,
+          continuing ? 'continue-review-fix' : undefined,
+        );
+        assert.deepEqual(gate.actions, actions);
+        assert.deepEqual(gate.context?.gateActions, actions);
+        assert.deepEqual(checked, original);
+      } finally {
+        if (gateId) resolveEngineDecision(gateId, 'hold');
+        await waiter;
+      }
+    }
+  },
+);
 
 test(
   'restart replay consumes one attested approval and refuses a missing receipt',
