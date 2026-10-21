@@ -144,8 +144,11 @@ describe('claude runner', () => {
     assert.equal(runnerNeedsPostLaunchPrompt('claude'), true);
   });
 
-  it('has /continue as continue command', () => {
-    assert.equal(runnerContinueCommand('claude'), '/continue');
+  it('continues the live task with natural language instead of a session command', () => {
+    assert.equal(
+      runnerContinueCommand('claude'),
+      'Continue the current task from where you left off.',
+    );
   });
 
   it('accepts fable without making it the default model', () => {
@@ -1577,10 +1580,10 @@ describe('persistsSessionFiles capability', () => {
 
 describe('tmux-interaction helpers — unknown runner isolation', () => {
   // Unknown runners must not inherit Claude's tmux semantics (interactive
-  // prompts, nudges, post-launch prompt, /continue command, process matchers).
+  // prompts, nudges, post-launch prompt, continuation input, process matchers).
   // Callers rely on these booleans to decide whether to send mid-session
   // input; returning Claude's values for an unknown runner would send
-  // `/continue` and similar Claude-specific strings to an unrelated TUI.
+  // task continuations to an unrelated TUI.
   it('runnerSupportsInteractivePrompt returns false for unknown runners', () => {
     assert.equal(runnerSupportsInteractivePrompt('aider'), false);
     assert.equal(runnerSupportsInteractivePrompt('future-runner'), false);

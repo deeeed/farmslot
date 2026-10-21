@@ -776,11 +776,21 @@ async function nudgeResumedMonitor(existing: Run, emit: Emit): Promise<void> {
     await resumeNativeWorker(existing.id);
     return;
   }
+  const runner = normalizeRunner(existing.metrics.runner);
+  const nudge = runnerContinueCommand(runner);
+  if (!nudge) return;
+  const retainedSession = resolveRunRetainedSessionBinding(
+    existing,
+    selectAgentContext(existing, { role: 'primary' }),
+  );
+  if (!retainedSession.binding)
+    throw new Error(
+      `Run ${existing.id} has no verified worker session binding; restore its bound worker before resuming`,
+    );
   try {
     const { loadSlotVars } = await import('../../core/config.js');
     const vars = await loadSlotVars(existing.slotId);
-    // Preserve the pre-retained-binding resume behavior: a missing or ambiguous
-    // context must not prevent the base worker session from being nudged.
+    // Input remains bound to the run's saved worker, including an already live process.
     const target = await resolveTmuxSession(existing.slotId, vars);
     const { stdout } = await execOnSlot(
       vars,
@@ -791,13 +801,7 @@ async function nudgeResumedMonitor(existing: Run, emit: Emit): Promise<void> {
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean);
-    const runner = normalizeRunner(existing.metrics.runner);
-    const retainedSession = resolveRunRetainedSessionBinding(
-      existing,
-      selectAgentContext(existing, { role: 'primary' }),
-    );
-    const nudge = runnerContinueCommand(runner);
-    if (nudge && (isRunnerPaneRetired(runner) || runnerPaneLooksIdle(lines, runner))) {
+    if (isRunnerPaneRetired(runner) || runnerPaneLooksIdle(lines, runner)) {
       const sent = await sendRunnerInstructionSafely(
         vars,
         target,
