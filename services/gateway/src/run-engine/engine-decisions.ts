@@ -6,7 +6,6 @@ import {
   type DecisionAction,
   Events,
   type EvidenceManifestEntry,
-  gateActionsForReadiness,
   isPrerequisiteGatePayload,
   isTerminalRunStatus,
   type PRReviewOptions,
@@ -44,7 +43,11 @@ import {
   latestResolvedHumanGateDecision,
 } from './decision-replay.js';
 import { hasValidPrNumber } from './gate-policy.js';
-import { assertAcceptedFindingsCurrent, collectRunGateReadiness } from './gate-prerequisites.js';
+import {
+  assertAcceptedFindingsCurrent,
+  collectRunGateReadiness,
+  projectRunGateActions,
+} from './gate-prerequisites.js';
 import { assertPrimaryReviewContext } from './review-plan.js';
 import { runSupersededSince } from './run-generation.js';
 
@@ -727,12 +730,14 @@ export async function createEngineDecision(
   }
   let readiness: RunGateReadiness | undefined;
   if (isPrerequisiteGatePayload(payload)) {
-    readiness = await collectRunGateReadiness(
+    const assessment = await collectRunGateReadiness(
       run,
       payload.kind === 'ready' ? (payload.prPackage ?? null) : null,
     );
+    const projection = projectRunGateActions(actions, assessment);
+    readiness = projection.readiness;
+    actions = projection.actions;
     payload = { ...payload, gateReadiness: readiness };
-    actions = gateActionsForReadiness(actions, readiness);
     if (runSupersededSince(getRun(runId), generation))
       throw new Error(`Run ${runId.slice(0, 8)} changed during gate evaluation`);
   }
