@@ -1,4 +1,5 @@
 import type {
+  AgentContext,
   NativeSessionInfo,
   NativeWorkerControlTarget,
   NativeWorkerSessionBinding,
@@ -43,9 +44,12 @@ export function nativeWorkerViewControl(
 }
 
 /** Overview controls open the current primary task; archived attempts keep explicit links. */
-export function nativeRunConversationParams(run: Run): Record<string, string> | undefined {
+export function nativeRunConversationParams(
+  run: Run,
+  selected?: AgentContext | null,
+): Record<string, string> | undefined {
   const contexts = (run.agentContexts ?? []).filter((context) => context.nativeSession);
-  const context = contexts.find((item) => item.role === 'primary') ?? contexts[0];
+  const context = selected ?? contexts.find((item) => item.role === 'primary') ?? contexts[0];
   const binding = context?.nativeSession;
   if (!context || !binding) return undefined;
   return {

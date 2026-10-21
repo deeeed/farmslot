@@ -31,6 +31,7 @@ import {
   pendingOutputReview,
   runActivityView,
   runResultsSummary,
+  runTerminalView,
 } from '@farmslot/review-dispatch';
 
 import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
@@ -95,6 +96,7 @@ import { ReviewPublication } from '../workspace-shared/ReviewPublication';
 
 import { InteractiveOperatorPacketsPanel } from './components/InteractiveOperatorPacketsPanel';
 import {
+  CockpitTile,
   decisionPresentationForRun,
   DecisionSummaryCard,
   MetricItem,
@@ -661,6 +663,28 @@ export default function RunDetailScreen() {
   );
 
   const reviewStatus = humanGateBlockingReason(run);
+  const terminal = runTerminalView(run);
+  const openTerminal = () => {
+    if (terminal.disabledReason) return;
+    if (terminal.context?.nativeSession) {
+      const params = nativeRunConversationParams(run, terminal.context);
+      if (params) router.push({ pathname: '/native', params });
+      return;
+    }
+    if (!terminal.target) return;
+    router.push({
+      pathname: terminal.target.slotId
+        ? '/workspace/slot/[slotId]/terminal'
+        : '/run-terminal/[runId]',
+      params: {
+        ...terminal.target,
+        ...targetRouteContext('terminal'),
+        details: '1',
+        ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+        ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+      },
+    });
+  };
 
   return (
     <View style={baseStyles.container}>
@@ -685,6 +709,19 @@ export default function RunDetailScreen() {
           </View>
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
           {run.summary && <RunTitle style={baseStyles.textSecondary} title={run.summary} />}
+          <CockpitTile
+            testID="companion-run-open-terminal"
+            label={terminal.label}
+            value={
+              terminal.disabledReason ??
+              (terminal.target?.slotId ||
+                terminal.context?.nativeSession?.executionNodeId ||
+                run.reviewWorkspace?.machine ||
+                'Current session')
+            }
+            disabled={Boolean(terminal.disabledReason)}
+            onPress={openTerminal}
+          />
           {run.qa && (
             <Text style={baseStyles.textSecondary} testID="companion-run-qa-profile">
               QA profile: {run.qa.profile.title} ({run.qa.profile.id})
@@ -839,26 +876,9 @@ export default function RunDetailScreen() {
                 },
               });
             }}
-            terminalLabel={run.transport === 'native' ? 'Conversation' : 'Terminal'}
-            onOpenTerminal={() => {
-              if (run.transport === 'native') {
-                const params = nativeRunConversationParams(run);
-                if (params) router.push({ pathname: '/native', params });
-                return;
-              }
-              if (!run.slotId) return;
-              router.push({
-                pathname: '/workspace/slot/[slotId]/terminal',
-                params: {
-                  slotId: run.slotId,
-                  ...targetRouteContext('terminal'),
-                  runId: run.id,
-                  details: '1',
-                  recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                  artifact: focusedArtifactPath,
-                },
-              });
-            }}
+            terminalLabel={terminal.label}
+            terminalDisabledReason={terminal.disabledReason}
+            onOpenTerminal={openTerminal}
             onOpenFamily={() => {
               if (!run.familyId) return;
               router.push({
@@ -992,27 +1012,8 @@ export default function RunDetailScreen() {
                   })
                 : undefined
             }
-            terminalLabel={run.transport === 'native' ? 'Conversation' : 'Terminal'}
-            onOpenTerminal={() =>
-              run.transport === 'native'
-                ? (() => {
-                    const params = nativeRunConversationParams(run);
-                    if (params) router.push({ pathname: '/native', params });
-                  })()
-                : run.slotId
-                  ? router.push({
-                      pathname: '/workspace/slot/[slotId]/terminal',
-                      params: {
-                        slotId: run.slotId,
-                        ...targetRouteContext('terminal'),
-                        runId: run.id,
-                        details: '1',
-                        ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
-                        ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
-                      },
-                    })
-                  : undefined
-            }
+            terminalLabel={terminal.label}
+            onOpenTerminal={openTerminal}
             onOpenSlot={() =>
               run.slotId
                 ? router.push({
@@ -1233,33 +1234,6 @@ export default function RunDetailScreen() {
             ))}
           </View>
         ) : null}
-
-        {reviewPackageActiveTab === 'timeline' &&
-          run.transport !== 'native' &&
-          run.slotId &&
-          !isTerminalRunStatus(run.status) && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Worker Terminal</Text>
-              <Pressable
-                style={styles.terminalButton}
-                onPress={() =>
-                  router.push({
-                    pathname: '/workspace/slot/[slotId]/terminal',
-                    params: {
-                      slotId: run.slotId!,
-                      ...targetRouteContext('terminal'),
-                      runId: run.id,
-                      details: '1',
-                      ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
-                      ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
-                    },
-                  })
-                }
-              >
-                <Text style={styles.terminalButtonText}>Observe / reply to {run.slotId}</Text>
-              </Pressable>
-            </View>
-          )}
 
         {error && <Text style={styles.errorText}>{error}</Text>}
 

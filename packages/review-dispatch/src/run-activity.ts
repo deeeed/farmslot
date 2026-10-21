@@ -1,12 +1,16 @@
 import {
   type AgentContext,
+  type AgentRole,
   deriveRunLifecycleView,
   isBlockedAtOpenHumanGate,
   isTerminalRunStatus,
+  primaryRoleForFlow,
+  resolveRunSlotId,
   type Run,
   type RunStep,
   type RunStepDisplayStatus,
   runStepDisplayStatus,
+  type SlotAgentTargetParams,
 } from '@farmslot/protocol';
 
 /** An open blocked gate waits for a person; its recorded running step is not a running actor. */
@@ -35,18 +39,98 @@ export interface RunActivityView {
   steps: RunStep[];
 }
 
-function liveReviewActor(run: Run): AgentContext | undefined {
+function liveReviewActor(
+  run: Run,
+  roles: readonly AgentRole[] = ['review', 'review-fix'],
+): AgentContext | undefined {
   return (run.agentContexts ?? [])
     .filter(
       (context) =>
-        ['review', 'review-fix'].includes(context.role) &&
-        ['working', 'launching'].includes(context.status),
+        roles.includes(context.role) && ['working', 'launching'].includes(context.status),
     )
     .sort((left, right) =>
       (right.attemptStartedAt ?? right.startedAt ?? '').localeCompare(
         left.attemptStartedAt ?? left.startedAt ?? '',
       ),
     )[0];
+}
+
+/** Both run views open the same current actor; the gateway resolves its exact node and pane. */
+export function runTerminalView(run: Run, contextId?: string) {
+  const contexts = run.agentContexts ?? [];
+  if (contextId && !contexts.some((entry) => entry.id === contextId))
+    return {
+      label: 'Open terminal',
+      disabledReason: 'This session is no longer available.',
+      target: null,
+      context: null,
+    };
+  let context =
+    (contextId ? contexts.find((entry) => entry.id === contextId) : undefined) ??
+    liveReviewActor(run, ['review', 'review-fix', 'ci-fix']) ??
+    contexts.find((entry) => entry.role === primaryRoleForFlow(run.flowType)) ??
+    contexts.find((entry) => entry.role === 'primary');
+  const owner = context?.nativeSessionOwner;
+  if (owner)
+    context =
+      contexts.find(
+        (entry) =>
+          entry.id === owner.contextId &&
+          entry.nativeSession?.sessionId === owner.sessionId &&
+          entry.nativeSession.leaseId === owner.leaseId,
+      ) ?? context;
+  const slotId = context?.slotId ?? resolveRunSlotId(run);
+  const target: ReturnType<typeof runTerminalTargetParams> | null = slotId
+    ? runTerminalTargetParams({
+        slotId,
+        runId: run.id,
+        role: context?.role ?? primaryRoleForFlow(run.flowType),
+        ...(context ? { contextId: context.id } : {}),
+      })
+    : run.reviewWorkspace && !run.reviewWorkspace.cleanedAt
+      ? { slotId: '', runId: run.id }
+      : null;
+  const disabledReason = isTerminalRunStatus(run.status)
+    ? 'This run is finished.'
+    : context?.nativeSessionOwner && !context.nativeSession
+      ? 'No conversation is bound to this run.'
+      : !target && !context?.nativeSession
+        ? 'No terminal is bound to this run.'
+        : null;
+  return {
+    label: context?.nativeSession ? 'Open conversation' : 'Open terminal',
+    disabledReason,
+    target,
+    context: context ?? null,
+  };
+}
+
+/** Keep the same actor binding for subscription, input, resize and snapshots on both clients. */
+export function runTerminalTargetParams({
+  slotId,
+  runId,
+  role,
+  contextId,
+}: SlotAgentTargetParams): Pick<SlotAgentTargetParams, 'slotId' | 'runId' | 'role' | 'contextId'> {
+  return {
+    slotId,
+    ...(runId ? { runId } : {}),
+    ...(role ? { role } : {}),
+    ...(contextId ? { contextId } : {}),
+  };
+}
+
+export function runTerminalTargetMatches(
+  target: SlotAgentTargetParams,
+  payload: Partial<Pick<SlotAgentTargetParams, 'slotId' | 'runId' | 'role' | 'contextId'>>,
+): boolean {
+  if (!target.slotId)
+    return Boolean(target.runId && !payload.slotId && payload.runId === target.runId);
+  if (payload.slotId !== target.slotId) return false;
+  if (target.runId && payload.runId !== target.runId) return false;
+  if (target.contextId && payload.contextId && payload.contextId !== target.contextId) return false;
+  if (target.role && payload.role && payload.role !== target.role) return false;
+  return true;
 }
 
 /** Presentation only: the gateway's run status and actor records determine what is running. */

@@ -1,8 +1,10 @@
-import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import { isTerminalRunStatus, type Run, type SlotAgentTargetParams } from '@farmslot/protocol';
+import { runTerminalTargetMatches, runTerminalTargetParams } from '@farmslot/review-dispatch';
 
-export interface CompanionTerminalTargetParams {
-  slotId: string;
-  runId?: string;
+export interface CompanionTerminalTargetParams extends Pick<
+  SlotAgentTargetParams,
+  'slotId' | 'runId' | 'role' | 'contextId'
+> {
   bareSession?: true;
 }
 
@@ -26,19 +28,23 @@ export function buildCompanionTerminalTarget({
   bareSession,
   runId,
   slotId,
+  contextId,
+  role,
 }: {
   slotId: string;
   runId?: string | null;
   bareSession: boolean;
+  contextId?: string;
+  role?: SlotAgentTargetParams['role'];
 }): CompanionTerminalTargetParams {
-  if (bareSession) return { slotId, bareSession: true };
-  return { slotId, ...(runId ? { runId } : {}) };
+  if (bareSession && slotId && !contextId && !role) return { slotId, bareSession: true };
+  return runTerminalTargetParams({ slotId, runId: runId ?? undefined, contextId, role });
 }
 
 export function matchesCompanionTerminalTarget(
-  payload: { slotId?: string; runId?: string },
+  payload: Partial<Pick<SlotAgentTargetParams, 'slotId' | 'runId' | 'role' | 'contextId'>>,
   target: CompanionTerminalTargetParams,
 ): boolean {
-  if (payload.slotId !== target.slotId) return false;
-  return target.bareSession === true || !target.runId || payload.runId === target.runId;
+  if (target.bareSession) return payload.slotId === target.slotId;
+  return runTerminalTargetMatches(target, payload);
 }
