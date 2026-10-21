@@ -85,6 +85,7 @@ import {
   readGatewayAuth,
   resolveGatewayConnectionSource,
 } from '../gateway-url.js';
+import { getResourceWorkspaceAccess, subscribeResourceCache } from '../resource-cache.js';
 import {
   type AppState,
   getState,
@@ -280,6 +281,7 @@ export class FarmApp extends LitElement {
   @state() private onboardingConnectInput = '';
   @state() private onboardingError = '';
   private unsub?: () => void;
+  private unsubResourceCache?: () => void;
   private sidebarResizeStartX = 0;
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
   private tmuxWorkerRefreshTimer?: ReturnType<typeof setInterval>;
@@ -339,6 +341,10 @@ export class FarmApp extends LitElement {
     }, UPDATE_POLL_MS);
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
+    this.unsubResourceCache = subscribeResourceCache(() => {
+      this.parseHash();
+      this.requestUpdate();
+    });
     this.maybeOpenWhatsNew();
   }
 
@@ -363,6 +369,7 @@ export class FarmApp extends LitElement {
     this.unsubTmuxWorkerUpdated?.();
     this.unsubConnForUpdate?.();
     this.unsub?.();
+    this.unsubResourceCache?.();
   }
 
   private onPinnedSlotsChanged = () => {
@@ -752,7 +759,9 @@ export class FarmApp extends LitElement {
   private get shownWorkspaceAccess(): 'farm' | 'native' | 'none' {
     const s = getState();
     if (s.connection === 'connected') return gateway.workspaceAccess;
-    return s.connection === 'auth_required' ? 'none' : s.workspaceAccess;
+    if (s.connection === 'auth_required') return 'none';
+    const remembered = getResourceWorkspaceAccess();
+    return remembered === 'none' ? s.workspaceAccess : remembered;
   }
 
   private parseHash() {

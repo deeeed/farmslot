@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Add the experimental ADR-071 resource query cache and store seam, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases.
+- Add the experimental ADR-071 resource query cache and store seam, persisted Sources observations, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

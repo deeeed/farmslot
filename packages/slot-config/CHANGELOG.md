@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Verify shared source trees once per status read while retaining every receipt and fresh drift checks on later reads and executions.
+
 - Expose provider CLI checks through a standalone entry that does not require a checkout.
 
 - Detect pinned provider CLI drift across shell paths, distinguish timed-out probes from version mismatches, and verify exact-version global rollout.

@@ -253,12 +253,28 @@ export class SourceMaterializer {
   }
 
   async verify(lock: SourceLock): Promise<SourceMaterialization> {
+    return this.verifyMaterialization(lock, new Map());
+  }
+
+  private async verifyMaterialization(
+    lock: SourceLock,
+    verifiedTrees: Map<string, Promise<boolean>>,
+  ): Promise<SourceMaterialization> {
     const stored = await this.readReceipt(lock);
     for (const entry of lock.entries) {
-      const expected = this.sourceRoot(entry);
-      await this.volume.verify(this.mount(entry));
-      if ((await sourceTreeIdentity(expected, entry.objectFormat)) !== entry.treeDigest)
-        throw new Error(`Source drift: ${entry.sourceId}`);
+      const key = this.sourceKey(entry);
+      let checked = verifiedTrees.get(key);
+      if (!checked) {
+        checked = (async () => {
+          await this.volume.verify(this.mount(entry));
+          return (
+            (await sourceTreeIdentity(this.sourceRoot(entry), entry.objectFormat)) ===
+            entry.treeDigest
+          );
+        })();
+        verifiedTrees.set(key, checked);
+      }
+      if (!(await checked)) throw new Error(`Source drift: ${entry.sourceId}`);
     }
     return stored;
   }
@@ -362,12 +378,15 @@ export class SourceMaterializer {
       files = [];
     }
     const materializations: SourceNodeStatus['materializations'] = [];
+    // Historical receipts often share a protected tree. Each read verifies that tree once,
+    // while still validating every receipt; the next read and every execution start fresh.
+    const verifiedTrees = new Map<string, Promise<boolean>>();
     for (const file of files.filter((name) => /^[0-9a-f]{64}\.json$/.test(name))) {
       const stored = JSON.parse(
         await readFile(path.join(this.root, 'receipts', file), 'utf8'),
       ) as SourceMaterialization;
       try {
-        const verified = await this.verify(stored.lock);
+        const verified = await this.verifyMaterialization(stored.lock, verifiedTrees);
         materializations.push({
           lockDigest: stored.lock.digest,
           sources: verified.receipt.sources,

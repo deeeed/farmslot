@@ -2,7 +2,14 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { PanResponder, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,10 +27,16 @@ import { RecipeBridgeProvider } from '../farmslot';
 import { observeLocalStoreProof } from '../farmslot/local-store-proof';
 import { observeOfflineClientCacheProof } from '../farmslot/offline-client-cache-proof';
 import { observeOfflineClientStoreBaseline } from '../farmslot/offline-client-store-baseline';
+import { observeSourcesCacheProof } from '../farmslot/sources-cache-proof';
 import { initNotifications } from '../lib/notifications';
-import { initializeNativeResourceCache } from '../lib/resource-cache';
+import {
+  getResourceWorkspaceKey,
+  initializeNativeResourceCache,
+  subscribeResourceCache,
+} from '../lib/resource-cache';
 import { isStoreScreenshotMode, seedStoreScreenshotMode } from '../lib/store-screenshot-mode';
 import { colors } from '../lib/theme';
+import { useWorkspaceRenderAccess } from '../lib/use-workspace-render-access';
 import { buildWorkspaceCopilotDraftForRoute } from '../lib/workspace-copilot';
 import { useAttentionPrefsStore } from '../store/attention-prefs';
 import { useConnectionStore } from '../store/connection';
@@ -38,8 +51,14 @@ const COPILOT_FAB_POSITION_STORAGE_KEY = '@farmslot:copilotFabPosition';
 export default function RootLayout() {
   const init = useConnectionStore((s) => s.init);
   const access = useConnectionStore((s) => s.workspaceAccess);
+  const renderAccess = useWorkspaceRenderAccess();
   const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
-  const farm = isStoreScreenshotMode || access === 'farm';
+  const workspaceKey = useSyncExternalStore(
+    subscribeResourceCache,
+    getResourceWorkspaceKey,
+    getResourceWorkspaceKey,
+  );
+  const farm = isStoreScreenshotMode || renderAccess === 'farm';
   const initTerminalPrefs = useTerminalPrefsStore((s) => s.init);
   const initAttentionPrefs = useAttentionPrefsStore((s) => s.init);
 
@@ -57,19 +76,19 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (
-      farm &&
+      access === 'farm' &&
       !isStoreScreenshotMode &&
       (!__DEV__ || process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE !== '1')
     )
       initNotifications();
-  }, [farm]);
+  }, [access]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <WorkspaceProviders farm={farm} key={authorityEpoch}>
+      <WorkspaceProviders key={workspaceKey ?? authorityEpoch}>
         <StatusBar style="light" />
         {farm ? <GlobalFilterCoordinator /> : null}
-        {farm && !isStoreScreenshotMode ? (
+        {access === 'farm' && !isStoreScreenshotMode ? (
           <>
             <PRPushRegistration />
             <WhatsNewMonitor />
@@ -85,10 +104,10 @@ export default function RootLayout() {
         >
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="connection" options={{ title: 'Gateway connection' }} />
-          <Stack.Protected guard={farm || access === 'none'}>
+          <Stack.Protected guard={farm || renderAccess === 'none'}>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           </Stack.Protected>
-          <Stack.Protected guard={farm || access === 'native'}>
+          <Stack.Protected guard={farm || renderAccess === 'native'}>
             <Stack.Screen name="native" options={{ title: 'Conversations' }} />
           </Stack.Protected>
           <Stack.Protected guard={farm}>
@@ -226,13 +245,14 @@ export default function RootLayout() {
   );
 }
 
-function WorkspaceProviders({ farm, children }: { farm: boolean; children: React.ReactNode }) {
-  return farm ? (
+function WorkspaceProviders({ children }: { children: React.ReactNode }) {
+  return (
     <RecipeBridgeProvider
       bridgeName="@farmslot/companion"
       observeUi={
         __DEV__
           ? async (refs) =>
+              (await observeSourcesCacheProof(refs)) ??
               (await observeLocalStoreProof(refs)) ??
               (await observeOfflineClientCacheProof(refs)) ??
               observeOfflineClientStoreBaseline(refs)
@@ -241,8 +261,6 @@ function WorkspaceProviders({ farm, children }: { farm: boolean; children: React
     >
       {children}
     </RecipeBridgeProvider>
-  ) : (
-    <>{children}</>
   );
 }
 

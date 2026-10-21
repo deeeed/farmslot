@@ -20,7 +20,6 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 
-import { sourceChangeFeedFor } from '../features/sources/source-change-feed';
 import { currentFarmConnection } from '../lib/connection-authority';
 import {
   type ConnectionHealthState,
@@ -187,7 +186,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       const auth =
         !signedOut && activeProfile ? await authCredentialsForProfile(activeProfile) : {};
       const client = new GatewayClient(url, auth);
-      sourceChangeFeedFor(client);
       const session =
         !signedOut && activeProfile ? await readGatewayProfilePersonSession(activeProfile) : null;
 

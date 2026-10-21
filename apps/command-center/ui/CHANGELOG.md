@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback, verified identity handling and negotiated Sources change notifications.
+- Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback, verified identity handling and persisted Sources panels that render their age offline with disabled actions and follow live change notifications.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

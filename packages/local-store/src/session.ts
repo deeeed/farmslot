@@ -25,6 +25,8 @@ export interface StoredResourceCacheOptions {
   identities: ResourceIdentityStorage;
   openStore(metadata: ResourceStoreMetadata): Promise<ResourceStore>;
   onNotice?(notice: string | undefined): void;
+  /** Previously verified scope for offline rendering only, never command authorization. */
+  onIdentity?(identity: ResourceStoreIdentity | undefined): void;
 }
 
 const revocations = new Set<ResourceConnectionReason>([
@@ -41,6 +43,7 @@ export function createStoredResourceCache(
   const initial = options.snapshot();
   if (!initial.gatewayUrl) throw new Error('Select a gateway before opening a resource cache');
   let remembered: ResourceStoreIdentity | undefined;
+  let volatileIdentity: ResourceStoreIdentity | undefined;
   let identityVersion = 0;
   let revoked = false;
   let disposed = false;
@@ -68,7 +71,7 @@ export function createStoredResourceCache(
         };
       },
     },
-    () => ({ ...options.snapshot(), lastVerified: remembered }),
+    () => ({ ...options.snapshot(), lastVerified: remembered ?? volatileIdentity }),
   );
 
   function save(identity: ResourceStoreIdentity | undefined): void {
@@ -99,13 +102,24 @@ export function createStoredResourceCache(
         deletedIdentities.set(resourceStoreScopeId(remembered.metadata.scope), remembered);
       revoked = true;
       remembered = undefined;
+      volatileIdentity = undefined;
       identityVersion++;
       save(undefined);
     } else if (state.connected && state.authentication) {
-      remembered = resourceIdentityFromConnection(transport.getConnection());
+      const connection = transport.getConnection();
+      remembered = resourceIdentityFromConnection(connection);
+      // A verified legacy scope still owns its memory data through a network outage.
+      // Only the complete identity above is written for persistent cold startup.
+      volatileIdentity = connection.authority
+        ? {
+            authMode: connection.authMode,
+            metadata: { scope: connection.scope, authority: connection.authority },
+          }
+        : undefined;
       identityVersion++;
       save(remembered);
     }
+    options.onIdentity?.(remembered);
   }
   // Identity bookkeeping runs before the cache receives the socket's authority notification.
   const stopIdentity = client.onConnectionChange(rememberCurrent);
@@ -135,6 +149,7 @@ export function createStoredResourceCache(
     }
     if (disposed) return;
     if (identityVersion === loadVersion) remembered = saved;
+    options.onIdentity?.(remembered);
     for (const listener of metadataListeners) listener();
   });
   // Keep the rejected readiness promise for openStore; also show failure when no query is observed yet.
@@ -164,8 +179,10 @@ export function createStoredResourceCache(
         if (remembered)
           deletedIdentities.set(resourceStoreScopeId(remembered.metadata.scope), remembered);
         remembered = undefined;
+        volatileIdentity = undefined;
         save(undefined);
       }
+      options.onIdentity?.(undefined);
       disposed = true;
       stopIdentity();
       await Promise.all([cache.dispose(reason), identityReady, writeTail]);

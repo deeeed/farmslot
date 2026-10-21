@@ -1,11 +1,16 @@
-import type {
-  GatewayResourceCache,
-  ResourceClientConnection,
-  ResourceConnectionInputs,
-  ResourceConnectionReason,
-  ResourceStore,
-  ResourceStoreMetadata,
+import {
+  canonicalResourceJson,
+  type GatewayResourceCache,
+  normalizeResourceStoreScope,
+  type ResourceClientConnection,
+  type ResourceConnectionInputs,
+  type ResourceConnectionReason,
+  type ResourceStore,
+  type ResourceStoreIdentity,
+  type ResourceStoreMetadata,
+  resourceStoreScopeId,
 } from '@farmslot/protocol/client-cache';
+import { workspaceAccessFromAuth } from '@farmslot/protocol/rpc/auth';
 
 import { createStoredResourceCache, type ResourceIdentityStorage } from './session.js';
 
@@ -30,6 +35,8 @@ interface OwnedCache {
   key: string;
   input: ResourceCacheOwnerInput;
   identity?: string;
+  renderIdentity?: ResourceStoreIdentity;
+  authentication?: ResourceConnectionInputs['authentication'];
   cache: GatewayResourceCache;
 }
 
@@ -51,6 +58,43 @@ export class ResourceCacheOwner {
 
   get cache(): GatewayResourceCache | undefined {
     return this.owned?.cache;
+  }
+  /** Navigation may show retained data; RPC authorization still uses the live client. */
+  get renderIdentity(): ResourceStoreIdentity | undefined {
+    return this.owned?.renderIdentity;
+  }
+  /** A verified live reply may support in-memory rendering without a persistable generation. */
+  get renderMetadata(): ResourceStoreMetadata | undefined {
+    const owned = this.owned;
+    const auth = owned?.authentication;
+    if (!owned || !auth) return owned?.renderIdentity?.metadata;
+    return {
+      scope: normalizeResourceStoreScope({
+        gatewayUrl: owned.input.connection.gatewayUrl,
+        profileId: owned.input.connection.profileId,
+        ...(auth.authMode === 'none'
+          ? {}
+          : {
+              principalId: auth.principal?.id,
+              principalGeneration: auth.principal?.generation,
+            }),
+      }),
+      authority: {
+        roles: auth.principal?.roles ?? [],
+        workspaceAccess: workspaceAccessFromAuth(auth),
+      },
+    };
+  }
+  /** Stable through transport loss; changes only when the rendered owner's scope or roles change. */
+  get renderKey(): string | undefined {
+    const metadata = this.renderMetadata;
+    if (!metadata) return undefined;
+    return canonicalResourceJson({
+      authMode: this.owned?.authentication?.authMode ?? this.owned?.renderIdentity?.authMode,
+      scope: resourceStoreScopeId(metadata.scope),
+      access: metadata.authority.workspaceAccess,
+      roles: [...new Set(metadata.authority.roles.map(canonicalResourceJson))].sort(),
+    });
   }
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -121,6 +165,7 @@ export class ResourceCacheOwner {
     if (this.owned) {
       this.owned.input = input;
       if (identity !== undefined) this.owned.identity = identity;
+      if (auth) this.owned.authentication = auth;
       return;
     }
     const before = this.retirement;
@@ -131,6 +176,7 @@ export class ResourceCacheOwner {
       key,
       input,
       identity,
+      authentication: auth,
       get cache() {
         return cache;
       },
@@ -156,6 +202,10 @@ export class ResourceCacheOwner {
         return this.options.openStore(metadata, onNotice);
       },
       onNotice,
+      onIdentity: (value) => {
+        owned.renderIdentity = value;
+        if (this.owned === owned) this.notify();
+      },
     });
     this.owned = owned;
     this.options.onNotice(undefined);

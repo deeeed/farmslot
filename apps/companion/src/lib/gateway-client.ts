@@ -14,11 +14,12 @@ import {
   type ResponseFrame,
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
-import type {
-  ResourceConnectionReason,
-  ResourceReadMethod,
-  ResourceReadOptions,
-  ResourceReadResult,
+import {
+  type ResourceConnectionReason,
+  type ResourceReadMethod,
+  type ResourceReadOptions,
+  type ResourceReadResult,
+  resourceReadTimeout,
 } from '@farmslot/protocol/client-cache';
 
 import { gatewaySupportsPing } from './gateway-connection-test';
@@ -417,10 +418,15 @@ export class GatewayClient {
     params: unknown,
     signal?: AbortSignal,
   ): Promise<ResourceReadResult<T>> {
-    return this.request<ResourceReadResult<T>>(method, params, DEFAULT_TIMEOUT, {
-      includeResourceState: true,
-      signal,
-    });
+    return this.request<ResourceReadResult<T>>(
+      method,
+      params,
+      resourceReadTimeout(method) ?? DEFAULT_TIMEOUT,
+      {
+        includeResourceState: true,
+        signal,
+      },
+    );
   }
 
   private async requestRaw<T = unknown>(

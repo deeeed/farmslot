@@ -1,0 +1,202 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native Sources notifications and cold offline startup",
+  "description": "Run on the owned iOS simulator and Android emulator, using an isolated authenticated dev stack and the source offline-proof. Set FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, FARMSLOT_CDP_PORT for the open browser settings, GATEWAY_PORT, METRO_PORT, FARMSLOT_OFFLINE_PROOF=1 and the owned native device selectors. The cold-start helper checks gateway ownership, restarts the actual native process while offline and always restores the gateway. The owned project must include source proof-pack with a materializable pack; set FARMSLOT_SOURCE_SYNC_RECEIPT to a private receipt evidence file.",
+  "proofTargets": [
+    {
+      "id": "source-notification",
+      "claim": "A second client pin and unpin update the open production Sources panel through notifications without Refresh.",
+      "proofMode": "state"
+    },
+    {
+      "id": "cold-offline",
+      "claim": "A new app process with the gateway stopped renders saved Sources with the same observation time and stale age, with all source actions disabled."
+    },
+    {
+      "id": "restart",
+      "claim": "A gateway restart retains the saved observation until a current read becomes ready, without replaying a source mutation."
+    },
+    {
+      "id": "source-sync",
+      "claim": "A real pack sync and subsequent node receipt update the mounted Sources panel with a receipt verified after the sync started.",
+      "proofMode": "state"
+    },
+    {
+      "id": "same-epoch-reconnect",
+      "claim": "A same-epoch reconnect retains exact stale Sources data and observation time until a current read becomes ready.",
+      "proofMode": "state"
+    }
+  ],
+  "workflow": {
+    "entry": "settings",
+    "nodes": {
+      "settings": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-local-store.mjs settings",
+        "intent": "Open the real settings Sources panel.",
+        "next": "settings-tab"
+      },
+      "pin": {
+        "action": "command",
+        "cmd": "node ../command-center/scripts/prove-offline-sources.mjs pin offline-proof test-branch",
+        "timeout_ms": 300000,
+        "intent": "Commit a pin from a second real authenticated client.",
+        "next": "pin-visible"
+      },
+      "pin-visible": {
+        "action": "ui.wait_for",
+        "test_id": "sources-line",
+        "text_contains": ["offline-proof test-branch (farm pin)"],
+        "timeout_ms": 120000,
+        "intent": "Require the native production panel to follow resource.changed without Refresh.",
+        "proves": ["source-notification"],
+        "next": "pin-capture",
+        "expected": "visible"
+      },
+      "unpin": {
+        "action": "command",
+        "cmd": "node ../command-center/scripts/prove-offline-sources.mjs unpin offline-proof",
+        "timeout_ms": 300000,
+        "intent": "Commit an unpin through the gateway.",
+        "next": "unpin-visible"
+      },
+      "unpin-visible": {
+        "action": "ui.wait_for",
+        "test_id": "sources-line",
+        "text_contains": ["offline-proof main"],
+        "timeout_ms": 120000,
+        "intent": "Require the open native panel to observe the committed main selection.",
+        "proves": ["source-notification"],
+        "next": "sync",
+        "expected": "visible"
+      },
+      "offline": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-sources.mjs cold-offline",
+        "timeout_ms": 300000,
+        "intent": "Cold-start offline, verify retained Sources, then restore the owned gateway.",
+        "next": "offline-proof"
+      },
+      "offline-proof": {
+        "action": "assert_output",
+        "source": "offline",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require saved data, stale age, disabled actions and recovery without replay.",
+        "proves": ["cold-offline", "restart"],
+        "next": "recovered"
+      },
+      "recovered": {
+        "action": "ui.wait_for",
+        "test_id": "sources-line",
+        "text_contains": ["offline-proof main"],
+        "timeout_ms": 120000,
+        "intent": "Require the recovered panel to remain visible.",
+        "next": "capture",
+        "expected": "visible"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/sources-recovered.png",
+        "intent": "Record the actual Sources screen after cold offline recovery.",
+        "covers": ["source-notification", "cold-offline", "restart"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "settings-visible": {
+        "action": "ui.wait_for",
+        "test_id": "sources-line",
+        "expected": "visible",
+        "timeout_ms": 120000,
+        "intent": "Sources shows its current selection before an external pin changes it.",
+        "next": "baseline-main"
+      },
+      "details": {
+        "action": "ui.press",
+        "test_id": "sources-details-toggle",
+        "intent": "Open source details before the external mutation updates them.",
+        "next": "pin"
+      },
+      "baseline-main": {
+        "action": "command",
+        "cmd": "node ../command-center/scripts/prove-offline-sources.mjs unpin offline-proof",
+        "timeout_ms": 300000,
+        "intent": "Establish main before testing the external branch transition.",
+        "next": "baseline-visible"
+      },
+      "baseline-visible": {
+        "action": "ui.wait_for",
+        "test_id": "sources-line",
+        "text_contains": ["offline-proof main"],
+        "expected": "visible",
+        "timeout_ms": 120000,
+        "intent": "The native panel shows main before another client pins test-branch.",
+        "next": "details"
+      },
+      "pin-capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/source-pinned.png",
+        "intent": "Record the native branch observed after the external pin.",
+        "covers": ["source-notification"],
+        "next": "unpin"
+      },
+      "sync": {
+        "action": "command",
+        "cmd": "node ../command-center/scripts/prove-offline-sources.mjs sync proof-pack offline-client-store",
+        "timeout_ms": 300000,
+        "intent": "Run real pack materialization on the owned node and observe its later receipt.",
+        "next": "sync-proof"
+      },
+      "sync-proof": {
+        "action": "assert_output",
+        "source": "sync",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require the real endpoint and production-cache assertions to pass.",
+        "proves": ["source-sync"],
+        "next": "receipt"
+      },
+      "receipt": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-sources.mjs receipt",
+        "timeout_ms": 300000,
+        "intent": "Require the native production panel to observe the new node receipt.",
+        "next": "receipt-proof"
+      },
+      "receipt-proof": {
+        "action": "assert_output",
+        "source": "receipt",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require the real endpoint and production-cache assertions to pass.",
+        "proves": ["source-sync"],
+        "next": "reconnect"
+      },
+      "reconnect": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-sources.mjs reconnect",
+        "timeout_ms": 300000,
+        "intent": "Reconnect the actual native client and observe unchanged-epoch stale retention.",
+        "next": "reconnect-proof"
+      },
+      "reconnect-proof": {
+        "action": "assert_output",
+        "source": "reconnect",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require the real endpoint and production-cache assertions to pass.",
+        "proves": ["same-epoch-reconnect"],
+        "next": "offline"
+      },
+      "settings-tab": {
+        "action": "ui.press",
+        "test_id": "companion-tab-settings",
+        "intent": "Select Settings after the device transport opens the app.",
+        "next": "settings-visible"
+      }
+    }
+  }
+}

@@ -16,6 +16,35 @@ import {
   GATEWAY_TOKEN_STORAGE_KEY,
 } from './gateway-url.js';
 
+test(
+  'shared Sources reads survive slow receipt verification while ordinary reads still time out',
+  { timeout: 4000 },
+  async (t) => {
+    const fake = installFakeGateway(t);
+    const { GatewayClient, gateway } = await import('./gateway-client.js');
+    const client = new GatewayClient('ws://localhost:1234/ws', { token: 'proof' });
+    t.after(() => {
+      client.disconnect();
+      gateway.disconnect();
+    });
+    client.connect();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const socket = fake.sockets.at(-1)!;
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const sources = client.requestResource('sources.status', {}).then(
+      (value) => ({ value }),
+      (error: Error) => ({ error }),
+    );
+    const sourcesId = socket.sent.at(-1)!.id;
+    const runs = assert.rejects(client.requestResource('run.list', {}), /timed out/);
+    t.mock.timers.tick(31_000);
+    const resourceState = { epoch: 'test', dependencies: [] };
+    socket.response(sourcesId, { configured: true }, resourceState);
+    await runs;
+    assert.deepEqual(await sources, { value: { data: { configured: true }, resourceState } });
+  },
+);
+
 for (const code of ['TIMEOUT', 'AUTH_FAILED']) {
   test(`browser reconnect ${code} ${code === 'TIMEOUT' ? 'preserves' : 'deletes'} cached observations`, async (t) => {
     const fake = installFakeGateway(t);

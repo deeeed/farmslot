@@ -1091,28 +1091,31 @@ export class ConfigPanel extends LitElement {
     return this.renderProjectContent(project);
   }
 
-  render() {
-    if (this._loading)
-      return html`<div class="cp-empty" style=${configPanelLoadingStyle}>Loading config...</div>`;
+  private renderSources() {
+    return this._selection?.kind !== 'flows'
+      ? html`<source-status-panel
+          .context=${{
+            target:
+              this._selection?.kind === 'pool'
+                ? { scope: 'node', targetId: this._selection.machine }
+                : { scope: 'farm', targetId: 'farm' },
+            actions: ['sync', 'pin', 'unpin'],
+          }}
+        ></source-status-panel>`
+      : nothing;
+  }
 
+  render() {
     return html`
-      ${renderConfigPanelStyles()} ${this.renderSidebar()}
+      ${renderConfigPanelStyles()} ${this._loading ? nothing : this.renderSidebar()}
       <div
         class="cp-content"
         style="${this._selection?.kind === 'flows' ? 'padding:0; overflow:hidden;' : ''}"
       >
-        ${this.renderContent()}
-        ${this._selection?.kind !== 'flows'
-          ? html`<source-status-panel
-              .context=${{
-                target:
-                  this._selection?.kind === 'pool'
-                    ? { scope: 'node', targetId: this._selection.machine }
-                    : { scope: 'farm', targetId: 'farm' },
-                actions: ['sync', 'pin', 'unpin'],
-              }}
-            ></source-status-panel>`
-          : nothing}
+        ${this._loading
+          ? html`<div class="cp-empty" style=${configPanelLoadingStyle}>Loading config...</div>`
+          : this.renderContent()}
+        ${this.renderSources()}
       </div>
     `;
   }

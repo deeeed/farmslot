@@ -5,6 +5,7 @@ import type { AppStateStatus } from 'react-native';
 
 import {
   createSourceCommandClient,
+  Events,
   type GatewayAuthConnectResult,
   Methods,
   type ResponseFrame,
@@ -14,6 +15,7 @@ import {
   createGatewayResourceCache,
   createMemoryResourceStore,
   createResourceCacheTransport,
+  type GatewayResourceCache,
   resourceQuery,
 } from '@farmslot/protocol/client-cache';
 
@@ -88,6 +90,39 @@ function auth(
   };
 }
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test(
+  'shared Sources reads survive slow receipt verification while ordinary reads still time out',
+  { timeout: 4000 },
+  async (t) => {
+    const original = globalThis.WebSocket;
+    globalThis.WebSocket = Socket as unknown as typeof WebSocket;
+    const { GatewayClient } = await import('./gateway-client');
+    const client = new GatewayClient('ws://localhost:19777', { token: 'admin' });
+    try {
+      client.connect();
+      const socket = Socket.sockets.at(-1)!;
+      socket.open();
+      socket.response(socket.sent[0].id, auth('admin', 'farm'));
+      await settle();
+      t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+      const sources = client.requestResource('sources.status', {}).then(
+        (value) => ({ value }),
+        (error: Error) => ({ error }),
+      );
+      const sourcesId = socket.sent.at(-1)!.id;
+      const runs = assert.rejects(client.requestResource('run.list', {}), /timed out/);
+      t.mock.timers.tick(31_000);
+      const resourceState = { epoch: 'test', dependencies: [] };
+      socket.response(sourcesId, { configured: true }, resourceState);
+      await runs;
+      assert.deepEqual(await sources, { value: { data: { configured: true }, resourceState } });
+    } finally {
+      client.disconnect();
+      globalThis.WebSocket = original;
+    }
+  },
+);
 
 for (const code of ['TIMEOUT', 'AUTH_FAILED']) {
   test(`native reconnect ${code} ${code === 'TIMEOUT' ? 'preserves' : 'deletes'} cached observations`, async () => {
@@ -341,26 +376,52 @@ test('native stale source rejection releases editing and prepares a fresh comman
   globalThis.WebSocket = Socket as unknown as typeof WebSocket;
   const { GatewayClient } = await import('./gateway-client');
   const client = new GatewayClient('ws://localhost:19777');
+  let cache: GatewayResourceCache | undefined;
+  const stamp = (revision = 0) => ({
+    epoch: 'native-source-test',
+    dependencies: [{ key: { family: 'sources' as const, scope: 'farm' as const }, revision }],
+  });
   try {
     client.connect();
     const socket = Socket.sockets.at(-1)!;
     socket.open();
-    socket.response(socket.sent[0].id, auth('admin', 'farm'));
+    const authenticated = auth('admin', 'farm');
+    authenticated.principal!.generation = 0;
+    authenticated.capabilities.resourceChanges = {
+      version: 1,
+      epoch: 'native-source-test',
+      versionLists: false,
+    };
+    socket.response(socket.sent[0].id, authenticated);
     await settle();
+    cache = createGatewayResourceCache({
+      transport: createResourceCacheTransport(client, () => ({
+        id: client.connectionGeneration,
+        connected: client.connectionState === 'connected',
+        gatewayUrl: client.gatewayUrl,
+        authentication: client.authenticatedConnection,
+      })),
+    });
     const controller = new SourceStatusController(
-      createSourceCommandClient((method, params) => client.request(method, params)),
+      createSourceCommandClient(
+        (method, params) => client.request(method, params),
+        () => cache,
+      ),
       {
         connectionKey: 'farm',
         target: { scope: 'farm', targetId: 'farm' },
         actions: ['pin'],
       },
+      cache,
     );
     const refresh = controller.refresh();
-    socket.response(socket.sent.at(-1)!.id, sourceStatusFixture());
+    await settle();
+    socket.response(socket.sent.at(-1)!.id, sourceStatusFixture(), stamp());
     await refresh;
     controller.select({ sourceId: 'pack', selection: 'branch', ref: 'experiment' });
     const stale = controller.apply('pin', 'pack');
-    socket.response(socket.sent.at(-1)!.id, sourceStatusFixture());
+    await settle();
+    socket.response(socket.sent.at(-1)!.id, sourceStatusFixture(), stamp());
     await settle();
     const oldCommand = socket.sent.at(-1)!;
     assert.equal(oldCommand.method, Methods.SOURCES_PIN);
@@ -377,12 +438,14 @@ test('native stale source rejection releases editing and prepares a fresh comman
 
     const freshStatus = { ...sourceStatusFixture(), pinRevision: 3 };
     const refreshed = controller.refresh();
-    socket.response(socket.sent.at(-1)!.id, freshStatus);
+    await settle();
+    socket.response(socket.sent.at(-1)!.id, freshStatus, stamp());
     await refreshed;
     assert(controller.getSnapshot().operationError?.includes('Source pins changed'));
     controller.select({ sourceId: 'pack', selection: 'branch', ref: 'experiment/fresh' });
     const fresh = controller.apply('pin', 'pack');
-    socket.response(socket.sent.at(-1)!.id, freshStatus);
+    await settle();
+    socket.response(socket.sent.at(-1)!.id, freshStatus, stamp());
     await settle();
     const freshCommand = socket.sent.at(-1)!;
     assert.equal(freshCommand.method, Methods.SOURCES_PIN);
@@ -392,14 +455,27 @@ test('native stale source rejection releases editing and prepares a fresh comman
     assert.equal(freshParams.expectedPinRevision, 3);
     assert.equal(freshParams.ref, 'experiment/fresh');
     socket.response(freshCommand.id, { operationId: freshParams.operationId });
+    await fresh;
+    assert.equal(
+      socket.sent.at(-1)!.method,
+      Methods.SOURCES_PIN,
+      'A command acknowledgement does not start a settle read',
+    );
+    socket.event(Events.RESOURCE_CHANGED, {
+      version: 1,
+      epoch: 'native-source-test',
+      changes: [{ key: { family: 'sources', scope: 'farm' }, revision: 1, kind: 'updated' }],
+    });
     await settle();
     assert.equal(socket.sent.at(-1)!.method, Methods.SOURCES_STATUS);
-    socket.response(socket.sent.at(-1)!.id, freshStatus);
-    await fresh;
+    socket.response(socket.sent.at(-1)!.id, freshStatus, stamp(1));
+    await settle();
     assert.equal(controller.getSnapshot().operationError, undefined);
     assert.equal(controller.getSnapshot().pending, undefined);
     assert.equal(controller.getSnapshot().canEdit, true);
+    controller.dispose();
   } finally {
+    await cache?.dispose();
     client.disconnect();
     globalThis.WebSocket = originalSocket;
   }

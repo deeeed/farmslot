@@ -18,10 +18,11 @@ import {
   signOutAccount,
   workspaceAccessFromAuth,
 } from '@farmslot/protocol';
-import type {
-  ResourceConnectionReason,
-  ResourceReadMethod,
-  ResourceReadResult,
+import {
+  type ResourceConnectionReason,
+  type ResourceReadMethod,
+  type ResourceReadResult,
+  resourceReadTimeout,
 } from '@farmslot/protocol/client-cache';
 
 import {
@@ -741,6 +742,7 @@ export class GatewayClient {
     signal?: AbortSignal,
   ): Promise<ResourceReadResult<T>> {
     return this.request<ResourceReadResult<T>>(method, params, {
+      timeout: resourceReadTimeout(method) ?? DEFAULT_TIMEOUT,
       includeResourceState: true,
       signal,
     });

@@ -1,3 +1,4 @@
+import { type GatewayResourceCache, resourceQuery } from '../client-cache/index.js';
 import { Methods } from '../rpc/registry.js';
 import type {
   SourcesPinParams,
@@ -62,15 +63,35 @@ export function sourceStatusParamsForTarget(
   return params;
 }
 
+/** One registered query supplies source observations and command preconditions in both UIs. */
+export function sourceStatusQuery(params: SourcesStatusParams = {}) {
+  return resourceQuery<SourcesStatusResult>(Methods.SOURCES_STATUS, params);
+}
+
 function newOperationId(): string {
   return `sources-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 /** Existing authenticated transports own connectivity. This client never resolves refs. */
 export class SourceCommandClient {
-  constructor(private readonly request: SourceRpcRequest) {}
+  constructor(
+    private readonly request: SourceRpcRequest,
+    private readonly resourceCache?: () => GatewayResourceCache | undefined,
+  ) {}
 
-  status(params: SourcesStatusParams = {}): Promise<SourcesStatusResult> {
+  async status(params: SourcesStatusParams = {}): Promise<SourcesStatusResult> {
+    if (this.resourceCache) {
+      const cache = this.resourceCache();
+      if (!cache) throw new Error('Wait for source facts from the selected gateway.');
+      const state = await cache.retry(sourceStatusQuery(params));
+      if (state.status !== 'ready' || !state.data)
+        throw Object.assign(
+          new Error(state.error?.message ?? 'Connect to refresh source facts before this action.'),
+          { code: state.error?.code ?? 'RESOURCE_STALE' },
+        );
+      return state.data;
+    }
+    // CLI commands remain direct readers; only the two UI clients supply the shared cache.
     return this.request(Methods.SOURCES_STATUS, params);
   }
 
@@ -147,6 +168,9 @@ export class SourceCommandClient {
   }
 }
 
-export function createSourceCommandClient(request: SourceRpcRequest): SourceCommandClient {
-  return new SourceCommandClient(request);
+export function createSourceCommandClient(
+  request: SourceRpcRequest,
+  resourceCache?: () => GatewayResourceCache | undefined,
+): SourceCommandClient {
+  return new SourceCommandClient(request, resourceCache);
 }

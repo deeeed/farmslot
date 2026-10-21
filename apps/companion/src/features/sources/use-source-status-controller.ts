@@ -7,11 +7,14 @@ import {
   type SourceStatusViewContext,
 } from '@farmslot/protocol';
 
-import { useConnectedTransport } from '../../hooks/useConnectedTransport';
+import { observeSourcesController } from '../../farmslot/sources-cache-proof';
 import { currentFarmConnection } from '../../lib/connection-authority';
+import {
+  getResourceCache,
+  getResourceWorkspaceKey,
+  subscribeResourceCache,
+} from '../../lib/resource-cache';
 import { useConnectionStore } from '../../store/connection';
-
-import { sourceChangeFeedFor } from './source-change-feed';
 
 export function useSourceStatusController(
   context: SourceStatusViewContext,
@@ -20,7 +23,12 @@ export function useSourceStatusController(
 ) {
   const client = useConnectionStore((state) => state.client);
   const profileId = useConnectionStore((state) => state.activeProfileId);
-  const generation = useConnectedTransport();
+  const cache = useSyncExternalStore(subscribeResourceCache, getResourceCache, getResourceCache);
+  const workspaceKey = useSyncExternalStore(
+    subscribeResourceCache,
+    getResourceWorkspaceKey,
+    getResourceWorkspaceKey,
+  );
   const callback = useRef(onSelectionsChange);
   callback.current = onSelectionsChange;
   const stateCallback = useRef(onSelectionStateChange);
@@ -34,36 +42,32 @@ export function useSourceStatusController(
           const result = await client.request<T>(method, params, 120_000);
           if (!current()) throw new Error('Source connection changed before acknowledgement.');
           return result;
-        }),
+        }, getResourceCache),
         { actions: [] },
       ),
     [client],
   );
   const connectedContext = {
     ...context,
-    connectionKey: `${profileId}|${client?.authenticatedPrincipal?.id ?? ''}`,
+    connectionKey:
+      workspaceKey ??
+      JSON.stringify([
+        profileId,
+        client?.gatewayUrl,
+        client?.authenticatedPrincipal?.id,
+        client?.authenticatedPrincipal?.generation,
+      ]),
   };
   const key = JSON.stringify(connectedContext);
   const contextRef = useRef(connectedContext);
-  const lastTransport = useRef<{
-    controller: SourceStatusController;
-    generation: number | null;
-  } | null>(null);
   contextRef.current = connectedContext;
-  // Attached before the first read so that read records the revision it covers.
-  useEffect(
-    () => (client ? controller.attachFeed(sourceChangeFeedFor(client)) : undefined),
-    [controller, client],
-  );
   useEffect(() => {
-    const changed = controller.setContext(contextRef.current);
-    const transportChanged =
-      lastTransport.current?.controller !== controller ||
-      lastTransport.current.generation !== generation;
-    lastTransport.current = { controller, generation };
-    if ((changed || transportChanged) && generation !== null && client?.workspaceAccess === 'farm')
-      void controller.refresh();
-  }, [controller, key, generation, client]);
+    controller.bind(contextRef.current, getResourceCache());
+  }, [controller, key, cache]);
+  useEffect(() => () => controller.dispose(), [controller]);
+  useEffect(() => {
+    if (__DEV__) return observeSourcesController(controller);
+  }, [controller]);
   useEffect(() => {
     let previous = controller.getSnapshot().selections;
     return controller.subscribe(() => {
@@ -80,5 +84,11 @@ export function useSourceStatusController(
     controller.getSnapshot,
     controller.getSnapshot,
   );
-  return { viewModel, controller, visible: client?.workspaceAccess === 'farm' };
+  return {
+    viewModel,
+    controller,
+    visible:
+      client?.workspaceAccess === 'farm' ||
+      (client?.connectionState !== 'connected' && viewModel.view !== undefined),
+  };
 }

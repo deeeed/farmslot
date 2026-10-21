@@ -78,6 +78,129 @@ function fixture() {
 }
 
 test(
+  'a legacy non-persistable connection keeps its memory observation on transport loss',
+  { timeout: 2000 },
+  async () => {
+    const source = fixture();
+    const authentication = auth('old');
+    delete authentication.principal!.generation;
+    let input: ResourceConnectionInputs = {
+      id: 1,
+      connected: true,
+      gatewayUrl: url,
+      authentication,
+    };
+    const cache = createStoredResourceCache({
+      client: source.client,
+      snapshot: () => input,
+      identities: { load: async () => null, save: async () => {} },
+      openStore: async () => {
+        assert.fail('A missing generation must never open persistent storage');
+      },
+    });
+    const stop = cache.observe(query, () => {});
+    try {
+      assert.equal((await cache.retry(query)).status, 'ready');
+      input = { id: 2, connected: false, gatewayUrl: url };
+      source.emit();
+      assert.equal(cache.read(query).status, 'stale');
+      assert.equal(cache.read(query).data?.value, 'live');
+    } finally {
+      stop();
+      await cache.dispose();
+    }
+  },
+);
+
+test(
+  'remembered render scope clears synchronously on revocation and follows live access',
+  { timeout: 2000 },
+  async () => {
+    const source = fixture();
+    const owner = new ResourceCacheOwner({
+      identities: () => ({ load: async () => JSON.stringify(saved), save: async () => {} }),
+      openStore: async () => createMemoryResourceStore(),
+      onNotice() {},
+      onError(error) {
+        throw error;
+      },
+    });
+    let input = { id: 0, connected: false, gatewayUrl: url } as ResourceConnectionInputs;
+    const loaded = new Promise<void>((resolve) => {
+      const stop = owner.subscribe(() => {
+        if (owner.renderIdentity) {
+          stop();
+          resolve();
+        }
+      });
+    });
+    try {
+      owner.update({ client: source.client, connection: input });
+      await loaded;
+      assert.equal(owner.renderIdentity?.metadata.authority.workspaceAccess, 'farm');
+      assert.equal(source.reads, 0, 'Rendering saved scope must not authorize an RPC');
+      const offlineKey = owner.renderKey;
+      input = { id: 1, connected: true, gatewayUrl: url, authentication: auth('old') };
+      owner.update({ client: source.client, connection: input });
+      source.emit();
+      assert.equal(
+        owner.renderKey,
+        offlineKey,
+        'Verifying the same owner must preserve its rendered workspace',
+      );
+      const native = auth('old');
+      native.capabilities.workspaceAccess = 'native';
+      input = { id: 1, connected: true, gatewayUrl: url, authentication: native };
+      owner.update({ client: source.client, connection: input });
+      source.emit();
+      assert.equal(owner.renderIdentity?.metadata.authority.workspaceAccess, 'native');
+      assert.notEqual(owner.renderKey, offlineKey);
+      owner.update({
+        client: source.client,
+        connection: { ...input, reason: 'credential-refused' },
+      });
+      assert.equal(owner.renderIdentity, undefined);
+      assert.equal(owner.cache, undefined);
+    } finally {
+      await owner.dispose();
+    }
+  },
+);
+
+test(
+  'a delayed identity load cannot reopen rendering after offline sign-out',
+  { timeout: 2000 },
+  async () => {
+    const source = fixture();
+    let release!: (value: string) => void;
+    const load = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    const owner = new ResourceCacheOwner({
+      identities: () => ({ load: () => load, save: async () => {} }),
+      openStore: async () => createMemoryResourceStore(),
+      onNotice() {},
+      onError(error) {
+        throw error;
+      },
+    });
+    const input = {
+      client: source.client,
+      connection: { id: 0, connected: false, gatewayUrl: url },
+    };
+    owner.update(input);
+    owner.update({ ...input, signedOut: true });
+    assert.equal(owner.renderIdentity, undefined);
+    assert.equal(owner.renderKey, undefined);
+    release(JSON.stringify(saved));
+    await owner.dispose();
+    assert.equal(owner.renderIdentity, undefined);
+    assert.equal(owner.cache, undefined);
+    assert.equal(source.reads, 0);
+  },
+);
+
+test(
   'offline startup waits for remembered identity and hydrates stale data without a socket read',
   { timeout: 2000 },
   async () => {
@@ -89,6 +212,76 @@ test(
     const loaded = new Promise<string>((resolve) => {
       release = resolve;
     });
+
+    for (const generation of [0, undefined]) {
+      test(
+        `render identity survives transport loss without granting live access, generation ${generation}`,
+        { timeout: 2000 },
+        async () => {
+          const source = fixture();
+          const owner = new ResourceCacheOwner({
+            identities: () => ({ load: async () => null, save: async () => {} }),
+            openStore: async () => createMemoryResourceStore(),
+            onNotice() {},
+            onError(error) {
+              throw error;
+            },
+          });
+          const original = auth('old');
+          original.principal!.generation = generation;
+          original.principal!.roles = [
+            { role: 'admin', scope: { kind: 'global' } },
+            { role: 'operator', scope: { kind: 'global' } },
+          ];
+          try {
+            owner.update({
+              client: source.client,
+              connection: { id: 1, connected: true, gatewayUrl: url, authentication: original },
+            });
+            const key = owner.renderKey;
+            assert(key);
+            owner.update({
+              client: source.client,
+              connection: { id: 2, connected: false, gatewayUrl: url },
+            });
+            source.emit();
+            assert.equal(owner.renderKey, key);
+            assert.equal(owner.renderMetadata?.authority.workspaceAccess, 'farm');
+            assert.equal(source.reads, 0);
+            const equivalent = structuredClone(original);
+            equivalent.principal!.roles = [...original.principal!.roles]
+              .reverse()
+              .concat(original.principal!.roles);
+            owner.update({
+              client: source.client,
+              connection: { id: 3, connected: true, gatewayUrl: url, authentication: equivalent },
+            });
+            source.emit();
+            assert.equal(
+              owner.renderKey,
+              key,
+              'Role ordering and duplicates do not change authority',
+            );
+            const replacement = structuredClone(original);
+            replacement.principal!.generation = 2;
+            owner.update({
+              client: source.client,
+              connection: { id: 4, connected: true, gatewayUrl: url, authentication: replacement },
+            });
+            source.emit();
+            assert.notEqual(owner.renderKey, key, 'A different generation remounts the workspace');
+            owner.update({
+              client: source.client,
+              connection: { id: 4, connected: false, gatewayUrl: url },
+              signedOut: true,
+            });
+            assert.equal(owner.renderKey, undefined);
+          } finally {
+            await owner.dispose();
+          }
+        },
+      );
+    }
     const cache = createStoredResourceCache({
       client: source.client,
       snapshot: () => ({ id: 0, connected: false, gatewayUrl: url }),

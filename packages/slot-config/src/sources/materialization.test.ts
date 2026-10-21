@@ -45,6 +45,7 @@ class FixtureGit extends SourceGitStore {
 
 class FixtureVolume implements SourceVolume {
   publications = 0;
+  verifications = 0;
   protected = true;
   failPublication = false;
   async publish(tree: string, image: string, mount: string): Promise<void> {
@@ -63,10 +64,51 @@ class FixtureVolume implements SourceVolume {
     }
   }
   async verify(mount: string): Promise<void> {
+    this.verifications++;
     if (!(await readdir(mount)).includes('tree')) throw new SourceVolumeMissing('volume missing');
     if (!this.protected) throw new Error('source volume is writable');
   }
 }
+
+test('status verifies shared trees once per read while checking every receipt and later drift', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'source-status-shared-tree-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { lock, materializer, volume } = await fixture(root);
+  const first = await materializer.materialize(lock);
+  const { digest: _digest, ...content } = lock;
+  const secondContent = { ...content, generation: lock.generation + 1 };
+  const secondLock = { ...secondContent, digest: sourceLockDigest(secondContent) };
+  const second = await materializer.materialize(secondLock);
+  volume.verifications = 0;
+  const status = await materializer.status();
+  assert.equal(status.materializations.length, 2);
+  assert(status.materializations.every((entry) => !entry.drift.length && entry.verifiedAt));
+  assert.equal(volume.verifications, 1, 'Two receipts share the same protected source tree');
+  await materializer.status();
+  assert.equal(volume.verifications, 2, 'A new read must verify the tree again');
+  const corrupt = structuredClone(second);
+  corrupt.receipt.nodeId = 'another-node';
+  await writeFile(second.receiptPath, JSON.stringify(corrupt));
+  const refused = await materializer.status();
+  assert.match(
+    refused.materializations.find((entry) => entry.lockDigest === secondLock.digest)!.drift[0],
+    /receipt does not match/,
+  );
+  assert.equal(
+    refused.materializations.find((entry) => entry.lockDigest === lock.digest)!.drift.length,
+    0,
+  );
+  await writeFile(second.receiptPath, JSON.stringify(second));
+  await writeFile(path.join(first.roots.demo, 'extra.txt'), 'unexpected source bytes');
+  volume.verifications = 0;
+  const drifted = await materializer.status();
+  assert(
+    drifted.materializations.every((entry) => entry.drift.some((reason) => /drift/.test(reason))),
+  );
+  assert.equal(volume.verifications, 1);
+  await assert.rejects(materializer.verify(lock), /drift/);
+  assert.equal(volume.verifications, 2, 'Execution verification must not reuse a status check');
+});
 
 async function fixture(
   root: string,

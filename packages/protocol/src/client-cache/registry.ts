@@ -5,6 +5,8 @@ import { canonicalResourceJson, type ResourceKey } from './keys.js';
 export interface ResourceQueryDefinition {
   persisted: boolean;
   maxBytes: number;
+  /** Preserve a migrated read's existing transport timeout when it differs from the default. */
+  timeoutMs?: number;
   /** Becomes true only when the slice's writers and read stamps are implemented. */
   live: boolean;
   dependencies(params: unknown): ResourceKey[];
@@ -20,8 +22,9 @@ function requiredId(params: unknown, field: string): string {
 /** Closed to runtime registration. Each migration changes its owning definition here. */
 export const RESOURCE_QUERY_DEFINITIONS = {
   [Methods.SOURCES_STATUS]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
+    timeoutMs: 120_000,
     live: true,
     dependencies: () => [{ family: 'sources', scope: 'farm' }],
   },
@@ -52,6 +55,12 @@ export const RESOURCE_QUERY_DEFINITIONS = {
 } satisfies Record<string, ResourceQueryDefinition>;
 
 export type ResourceReadMethod = keyof typeof RESOURCE_QUERY_DEFINITIONS;
+
+export function resourceReadTimeout(method: ResourceReadMethod): number | undefined {
+  const definition: ResourceQueryDefinition = RESOURCE_QUERY_DEFINITIONS[method];
+  return definition.timeoutMs;
+}
+
 declare const queryData: unique symbol;
 
 export interface ResourceQuery<T = unknown> {

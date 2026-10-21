@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback, verified identity handling and negotiated Sources change notifications. Requires a new native build with Expo SQLite.
+- Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback, verified identity handling and persisted Sources panels that render their age offline with disabled actions and follow live change notifications. Requires a new native build with Expo SQLite.
 
 - Add reproducible client-store baseline recipes with a dev-only native startup and websocket byte counter.
 

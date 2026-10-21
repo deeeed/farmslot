@@ -60,6 +60,12 @@ export function initializeResourceCache(): void {
 export function getResourceCache(): GatewayResourceCache | undefined {
   return owner.cache;
 }
+export function getResourceWorkspaceAccess(): 'farm' | 'native' | 'none' {
+  return owner.renderIdentity?.metadata.authority.workspaceAccess ?? 'none';
+}
+export function getResourceWorkspaceKey(): string | undefined {
+  return owner.renderKey;
+}
 export function getResourceStoreNotice(): string | undefined {
   return owner.cache ? notice : undefined;
 }
