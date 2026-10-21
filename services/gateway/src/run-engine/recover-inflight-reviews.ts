@@ -370,6 +370,11 @@ export function reviewerContextIsSettled(
   return hasLaterSettledReview(reviews, recordedIndex);
 }
 
+function lastReviewAttemptLoop(review: Pick<ReviewStatus, 'attempts'>): number {
+  // The row's loopNumber numbers review requests; attempts number their own loops.
+  return Math.max(1, ...(review.attempts ?? []).map((attempt) => attempt.loopNumber));
+}
+
 /**
  * Build the `ReviewStatus` for a recovered reviewer, or `null` when
  * the reviewer has not actually finished (no fresh terminal signal or completed
@@ -430,8 +435,7 @@ export function buildRecoveredReview(params: {
     ctx.runnerSessionId === previous.reviewerSessionId &&
     !!retainedHead &&
     reviewSnapshot?.baseSha === retainedHead &&
-    (ctx.reviewLoopNumber ?? 0) >
-      Math.max(previous.loopNumber, ...(previous.attempts ?? []).map((entry) => entry.loopNumber));
+    (ctx.reviewLoopNumber ?? 0) > lastReviewAttemptLoop(previous);
   const mode = ctx.reviewFallback
     ? 'cold'
     : resumed
@@ -1138,10 +1142,7 @@ export function appendRecoveredContinuationAttempt(
 ): ReviewStatus {
   const prior = existing.attempts ?? [];
   const fresh = recovered.attempts?.at(-1);
-  if (
-    fresh &&
-    fresh.loopNumber > Math.max(existing.loopNumber, ...prior.map((attempt) => attempt.loopNumber))
-  )
+  if (fresh && fresh.loopNumber > lastReviewAttemptLoop(existing))
     return applyReviewRetryCap(
       {
         ...recovered,

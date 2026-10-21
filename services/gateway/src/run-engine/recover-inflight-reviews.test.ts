@@ -848,7 +848,7 @@ test('restart recovery uses the reviewer-owned artifact scope instead of review-
   assert.equal(recoveredReviewArtifactScope({}, 'review-2'), 'review-2');
 });
 
-test('restart recovery preserves a warm delta after the lineage first reviewed cold', () => {
+test('restart recovery uses attempt ordinals in a later requested review', () => {
   const previousHead = 'b'.repeat(40);
   const pkg = makeReadyGatePackage({
     headSha: 'c'.repeat(40),
@@ -862,18 +862,19 @@ test('restart recovery preserves a warm delta after the lineage first reviewed c
     },
   });
   const previous: ReviewStatus = {
-    id: 'review-7',
+    id: 'review-2',
     source: 'human-gate',
-    loopNumber: 1,
+    loopNumber: 2,
     mode: 'cold',
     verdict: 'issues',
     unresolvedCount: 1,
     reviewedHeadSha: previousHead,
     reviewerSessionId: 'retained-session',
+    attempts: [{ loopNumber: 1, mode: 'cold', verdict: 'issues', unresolvedCount: 1 }],
     session: {
       mode: 'cold',
       continuity: 'fresh',
-      reviewId: 'review-7',
+      reviewId: 'review-2',
       sessionId: 'retained-session',
       lastReviewedHeadSha: previousHead,
     },
@@ -881,8 +882,8 @@ test('restart recovery preserves a warm delta after the lineage first reviewed c
   const run = makeRun({ engineState: { publishGate: { reviews: [previous] } } });
   const ctx = reviewerContext({
     status: 'complete',
-    artifactScope: 'review-7',
-    reviewId: 'review-7',
+    artifactScope: 'review-2',
+    reviewId: 'review-2',
     reviewLoopNumber: 2,
     runnerSessionId: 'retained-session',
     attemptStartedAt: '2026-07-16T10:30:00.000Z',
@@ -902,6 +903,16 @@ test('restart recovery preserves a warm delta after the lineage first reviewed c
   assert.equal(recovered.session?.continuity, 'resumed');
   assert.equal(recovered.session?.lastReviewedHeadSha, previousHead);
   assert.equal(reviewFinalSnapshotMatchesPreparedPackage(recovered, pkg), true);
+  const appended = appendRecoveredContinuationAttempt(
+    { ...previous, maxRetriesExhausted: true },
+    recovered,
+  );
+  assert.equal(appended.loopNumber, 2, 'the aggregate review row ordinal stays unchanged');
+  assert.deepEqual(
+    appended.attempts?.map((attempt) => attempt.loopNumber),
+    [1, 2],
+  );
+  assert.deepEqual(appended.attempts?.[0], previous.attempts?.[0]);
 
   const fallback = buildRecoveredReview({
     ...params,
