@@ -10,6 +10,7 @@
 // gateway (loopback-only, unauthenticated), start the app on it, and read its persisted state.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +21,7 @@ import { openSimulatorDevClient } from './simulator-dev-client.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const proofDir = path.join(root, 'temp/companion-gate-review-proof');
-const statePath = path.join(proofDir, 'state.json');
+const statePath = path.join(proofDir, 'proof-state.json');
 const gatewayLogPath = path.join(proofDir, 'gateway.log');
 const proofSecretPath = path.join(proofDir, 'service-secret');
 const project = 'companion-proof';
@@ -149,9 +150,16 @@ function seedFixtureGateway(port) {
   });
 }
 
-async function stopFixture() {
+async function stopFixture(keepTerminals = false) {
   if (!fs.existsSync(statePath)) return;
-  const { pid } = readState();
+  const { pid, terminalSession, workspaceTerminalSession } = readState();
+  for (const session of keepTerminals
+    ? []
+    : [terminalSession, workspaceTerminalSession].filter(Boolean)) {
+    const stopped = spawnSync('tmux', ['kill-session', '-t', session], { encoding: 'utf8' });
+    if (stopped.status !== 0 && !/can't find session|no server running/i.test(stopped.stderr))
+      throw new Error(`Owned terminal fixture did not stop: ${stopped.stderr}`);
+  }
   try {
     process.kill(-pid, 'SIGTERM');
   } catch (error) {
@@ -204,7 +212,16 @@ function startGateway(fixture, port) {
     },
   });
   gateway.unref();
-  writeJson(statePath, { fixture, port, pid: gateway.pid });
+  const owned = fs.existsSync(statePath) ? readState() : {};
+  writeJson(statePath, {
+    fixture,
+    port,
+    pid: gateway.pid,
+    ...(owned.terminalSession ? { terminalSession: owned.terminalSession } : {}),
+    ...(owned.workspaceTerminalSession
+      ? { workspaceTerminalSession: owned.workspaceTerminalSession }
+      : {}),
+  });
 }
 
 /** How many times the Companion has authenticated to the fixture gateway, from the gateway's log. */
@@ -355,7 +372,159 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
   });
 }
 
-if (phase === 'setup' || phase === 'setup-actions') {
+if (phase === 'prepare-worktree-terminal') {
+  const owned = readState();
+  await stopFixture(true);
+  const workspaceId = `terminal-proof-${randomUUID().slice(0, 8)}`;
+  const workspaceTerminalSession = `review-${workspaceId}`;
+  writeJson(statePath, { ...owned, workspaceTerminalSession });
+  try {
+    execFileSync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      workspaceTerminalSession,
+      "printf 'TERMINAL PROOF WORKTREE\\n'; exec sleep 1800",
+    ]);
+    execFileSync('tmux', [
+      'set-option',
+      '-t',
+      workspaceTerminalSession,
+      '@farmslot-review-workspace',
+      workspaceId,
+    ]);
+    const file = path.join(owned.fixture, 'runs', `${bypassRunId}.json`);
+    const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const taskPath = path.dirname(path.resolve(owned.fixture, run.taskFile));
+    const runtime = path.join(taskPath, 'inputs/runtime/node_modules/@farmslot');
+    fs.mkdirSync(runtime, { recursive: true });
+    fs.symlinkSync(path.join(root, 'packages/agent-runtime'), path.join(runtime, 'agent-runtime'));
+    run.status = 'monitoring';
+    run.transport = 'tmux';
+    run.flowType = 'review-pr';
+    run.autoRecoveryDisabled = true;
+    run.slotId = null;
+    run.decisions = [];
+    run.reviewWorkspace = {
+      workspaceId,
+      machine: `${project}-node`,
+      executionNodeId: 'local',
+      checkoutPath: owned.fixture,
+      taskPath,
+      artifactPath: path.join(taskPath, 'artifacts'),
+    };
+    run.agentContexts = [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Worktree reviewer',
+        status: 'working',
+        runId: run.id,
+        slotId: null,
+        runner: 'scripted',
+        promptDeliveryStartedAt: new Date().toISOString(),
+        target: { session: workspaceTerminalSession, target: workspaceTerminalSession },
+      },
+    ];
+    writeJson(file, run);
+    startGateway(owned.fixture, owned.port);
+    await waitFor(
+      'the worktree fixture serves its run',
+      () => rpc('run.get', { runId: run.id }).run,
+      30000,
+    );
+    const snapshot = rpc('terminal.snapshot', { slotId: '', runId: run.id, lines: 20 });
+    assert(snapshot.lines.some((line) => line.includes('TERMINAL PROOF WORKTREE')));
+    evidence('worktree-terminal-target', {
+      runId: run.id,
+      session: workspaceTerminalSession,
+      node: `${project}-node`,
+    });
+  } catch (error) {
+    await stopFixture();
+    throw error;
+  }
+} else if (phase === 'setup-terminal') {
+  // Reuse the isolated gateway/profile setup. This phase creates no model session or review.
+  execFileSync(process.execPath, [fileURLToPath(import.meta.url), 'setup-actions'], {
+    cwd: root,
+    stdio: 'pipe',
+  });
+  const owned = readState();
+  await stopFixture();
+  const terminalSession = `companion-terminal-proof-${randomUUID().slice(0, 8)}`;
+  // Require the existing server; never start or stop a tmux server for proof.
+  execFileSync('tmux', ['list-sessions'], { stdio: 'pipe' });
+  try {
+    execFileSync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      terminalSession,
+      '-n',
+      'dev',
+      "printf 'TERMINAL PROOF WORKER\\n'; exec sleep 1800",
+    ]);
+    writeJson(statePath, { ...owned, terminalSession });
+    execFileSync('tmux', [
+      'new-window',
+      '-d',
+      '-t',
+      terminalSession,
+      '-n',
+      'rev-proof-3',
+      "printf 'TERMINAL PROOF REVIEWER\\n'; exec sleep 1800",
+    ]);
+    const poolFile = path.join(owned.fixture, 'pool', `${project}.json`);
+    const pool = JSON.parse(fs.readFileSync(poolFile, 'utf8'));
+    pool.schema_version = 2;
+    pool.slots.find((slot) => slot.id === SLOTS[requestRunId]).session = terminalSession;
+    writeJson(poolFile, pool);
+    const file = path.join(owned.fixture, 'runs', `${requestRunId}.json`);
+    const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+    run.status = 'monitoring';
+    run.readOnly = false;
+    run.transport = 'tmux';
+    run.decisions = [];
+    run.steps = [{ name: 'review', status: 'running' }];
+    run.agentContexts = ['dev', 'rev-proof-3'].map((window) => ({
+      id: window,
+      role: window === 'dev' ? 'dev' : 'review',
+      label: window,
+      status: 'working',
+      runId: run.id,
+      slotId: run.slotId,
+      runner: 'scripted',
+      target: { session: terminalSession, window, target: `${terminalSession}:${window}.0` },
+    }));
+    writeJson(file, run);
+    const finishedFile = path.join(owned.fixture, 'runs', `${issuesRunId}.json`);
+    const finished = JSON.parse(fs.readFileSync(finishedFile, 'utf8'));
+    finished.status = 'done';
+    finished.decisions = [];
+    writeJson(finishedFile, finished);
+    startGateway(owned.fixture, owned.port);
+    await waitFor(
+      'the terminal fixture serves its active run',
+      () => rpc('run.get', { runId: run.id }).run,
+      30000,
+    );
+    evidence('terminal-target', {
+      runId: run.id,
+      slotId: run.slotId,
+      contextId: 'rev-proof-3',
+      role: 'review',
+      session: terminalSession,
+      window: 'rev-proof-3',
+      node: pool.machine,
+      finishedRunId: issuesRunId,
+    });
+    console.log(JSON.stringify({ runId: run.id, finishedRunId: issuesRunId, slotId: run.slotId }));
+  } catch (error) {
+    await stopFixture();
+    throw error;
+  }
+} else if (phase === 'setup' || phase === 'setup-actions') {
   // A failed earlier attempt leaves its gateway and fixture behind; replace both.
   await stopFixture();
   fs.rmSync(proofDir, { recursive: true, force: true });
