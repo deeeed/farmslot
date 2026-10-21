@@ -6,6 +6,7 @@ import type { AgentContext, Run } from '@farmslot/protocol';
 // mock.module replaces a module wholesale, so the real namespaces are spread in
 // and only the slot, run-store and process probes these tests drive are faked.
 import * as realCore from '../core/index.js';
+import * as realTmux from '../core/tmux.js';
 import * as realRunStore from '../runs/store.js';
 
 import * as realSessionLifecycle from './session-lifecycle.js';
@@ -32,6 +33,7 @@ let onPreserve: (() => void) | null;
 let onProbe: (() => void) | null;
 let slotRow: Record<string, unknown>;
 let parkedStops: number;
+let parkedTargets: string[];
 let runArchived: boolean;
 
 mock.module('../core/index.js', {
@@ -74,6 +76,17 @@ mock.module('../runs/store.js', {
     getRunWithArchived: async () => run,
   },
 });
+mock.module('../core/tmux.js', {
+  namedExports: {
+    ...realTmux,
+    resolveExactTmuxWindowPane: async (_vars: unknown, target: string) => {
+      const found = [...panes].find(
+        ([, pane]) => `${pane.session}:${pane.window ?? 'dev'}` === target,
+      );
+      return found ? { paneId: found[0], panePid: found[1].panePid } : null;
+    },
+  },
+});
 mock.module('./session-process.js', {
   namedExports: {
     ...realSessionProcess,
@@ -90,6 +103,9 @@ mock.module('./session-lifecycle.js', {
     stopRunnerForPark: async (options: realSessionLifecycle.StopRunnerForParkOptions) => {
       await options.beforeExit?.();
       parkedStops++;
+      parkedTargets.push(options.recoveryHandle.target.paneId);
+      const pane = panes.get(options.recoveryHandle.target.paneId);
+      if (pane) pane.runnerLive = false;
       return { ok: true, status: 'already-stopped', residualRunner: 'stopped' };
     },
   },
@@ -137,6 +153,7 @@ function tat4091Run(publicationStatus?: Publication, runner = 'codex'): Run {
 function setup(publicationStatus?: Publication, runner = 'codex'): void {
   slotRow = { current_run_id: RUN_ID, slot_epoch: 1 };
   parkedStops = 0;
+  parkedTargets = [];
   runArchived = false;
   run = tat4091Run(publicationStatus, runner);
   // The reviewer pane already closed; the idle dev worker still holds the slot.
@@ -168,6 +185,46 @@ test('a deferred cleanup owner stops its retained exact saved worker', async () 
   assert.equal(await stopRunOwnedTmuxWorkers(run), null);
   assert.equal(parkedStops, 1);
   assert.ok(commands.some((command) => /display-message -p -t '?%75/.test(command)));
+});
+
+test('a finished worker with a saved conversation recovers its named pane and leaves the operator shell alone', async () => {
+  setup();
+  slotRow = { current_run_id: null, cleanup_run_id: RUN_ID, slot_epoch: 1 };
+  const worker = run.agentContexts![0];
+  worker.id = 'fix-bug';
+  worker.role = 'fix-bug';
+  worker.runner = 'claude';
+  worker.target = { session: 'mmt-3', window: 'bugfix', pane: null, target: 'mmt-3:bugfix' };
+  worker.runnerSessionId = 'finished-conversation';
+  worker.runnerSessionPath = '/sessions/finished-conversation.jsonl';
+  run.agentContexts = [worker, { ...worker, id: 'review-fix', role: 'review-fix' }];
+  panes.get('%75')!.window = 'bugfix';
+  panes.set('%40', {
+    session: 'mmt-3',
+    window: 'shell',
+    panePid: '4000',
+    runnerPid: '',
+    runnerLive: false,
+    exitsOnRequest: false,
+  });
+
+  assert.equal(await stopRunOwnedTmuxWorkers(run), null);
+  assert.deepEqual(parkedTargets, ['%75']);
+  assert.ok(!commands.some((command) => command.includes("-t '%40'")));
+  assert.equal(worker.target.paneId, undefined, 'recovery does not rewrite retained run evidence');
+});
+
+test('a recovered historical pane rechecks the retained binding before stopping', async () => {
+  setup();
+  const worker = run.agentContexts![0];
+  worker.target = { session: 'mmt-3', window: 'dev', pane: null, target: 'mmt-3:dev' };
+  worker.runnerSessionId = 'finished-conversation';
+  worker.runnerSessionPath = '/sessions/finished-conversation.jsonl';
+  onProbe = () => {
+    worker.runnerSessionId = 'replacement-conversation';
+  };
+  await assert.rejects(stopRunOwnedTmuxWorkers(run), /ownership changed before stop/);
+  assert.deepEqual(parkedTargets, []);
 });
 
 test('an archived deferred owner revalidates its saved worker before exit', async () => {

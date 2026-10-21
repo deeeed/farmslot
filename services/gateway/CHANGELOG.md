@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Use the shared review artifact directory resolver so live history reads the same round snapshots the engine writes.
+- Finished runs can clean up a worker whose pane ID was lost by verifying its saved conversation in the recorded window.
+
 - A validated WARM pass after evidence-only fixes satisfies the publication gate at the same code head; earlier findings stay in review history without blocking it again.
 
 - Restart recovery resumes a monitor whose operator wait was resolved, preserving its running step until the monitor validates worker completion.
