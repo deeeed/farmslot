@@ -14,11 +14,14 @@ import { AppUpdatesMonitor } from '../components/AppUpdatesMonitor';
 import { FallbackHeaderBack } from '../components/FallbackHeaderBack';
 import { GlobalFilterCoordinator } from '../components/GlobalFilterCoordinator';
 import { PRPushRegistration } from '../components/PRPushRegistration';
+import { ResourceStoreNotice } from '../components/ResourceStoreNotice';
 import { WhatsNewMonitor } from '../components/WhatsNewMonitor';
 import { RecipeBridgeProvider } from '../farmslot';
+import { observeLocalStoreProof } from '../farmslot/local-store-proof';
 import { observeOfflineClientCacheProof } from '../farmslot/offline-client-cache-proof';
 import { observeOfflineClientStoreBaseline } from '../farmslot/offline-client-store-baseline';
 import { initNotifications } from '../lib/notifications';
+import { initializeNativeResourceCache } from '../lib/resource-cache';
 import { isStoreScreenshotMode, seedStoreScreenshotMode } from '../lib/store-screenshot-mode';
 import { colors } from '../lib/theme';
 import { buildWorkspaceCopilotDraftForRoute } from '../lib/workspace-copilot';
@@ -41,6 +44,7 @@ export default function RootLayout() {
   const initAttentionPrefs = useAttentionPrefsStore((s) => s.init);
 
   useEffect(() => {
+    const stopResourceCache = isStoreScreenshotMode ? () => {} : initializeNativeResourceCache();
     if (isStoreScreenshotMode) {
       seedStoreScreenshotMode();
     } else {
@@ -48,6 +52,7 @@ export default function RootLayout() {
     }
     void initTerminalPrefs();
     void initAttentionPrefs();
+    return stopResourceCache;
   }, [init, initAttentionPrefs, initTerminalPrefs]);
 
   useEffect(() => {
@@ -213,6 +218,7 @@ export default function RootLayout() {
             <Stack.Screen name="diff/slot/[slotId]" options={{ headerShown: false }} />
           </Stack.Protected>
         </Stack>
+        {!isStoreScreenshotMode ? <ResourceStoreNotice /> : null}
         {!isStoreScreenshotMode ? <AppEnvironmentIndicator /> : null}
         {farm && !isStoreScreenshotMode ? <FloatingCopilotButton /> : null}
       </WorkspaceProviders>
@@ -227,6 +233,7 @@ function WorkspaceProviders({ farm, children }: { farm: boolean; children: React
       observeUi={
         __DEV__
           ? async (refs) =>
+              (await observeLocalStoreProof(refs)) ??
               (await observeOfflineClientCacheProof(refs)) ??
               observeOfflineClientStoreBaseline(refs)
           : undefined

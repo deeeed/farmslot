@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow SQLite WebAssembly storage in the embedded Command Center.
+
 - Verify person and service sign-ins before saving, and keep person access tokens in memory.
 
 - Remove the retired checkout auth-file prerequisite from validation instructions.

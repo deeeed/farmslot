@@ -1,0 +1,74 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native resource store in the platform cache directory",
+  "description": "Run on the owned iOS simulator and Android emulator with a SQLite-enabled dev build. Verifies the real app store and reruns portable conformance through the actual Expo SQLite adapter in an isolated proof database.",
+  "proofTargets": [
+    {
+      "id": "native-store",
+      "claim": "The app opens its resource database under the platform cache directory and SQLite integrity is valid."
+    },
+    {
+      "id": "native-conformance",
+      "claim": "The actual Expo SQLite adapter passes all eighteen portable store/cache conformance cases."
+    }
+  ],
+  "workflow": {
+    "entry": "store",
+    "nodes": {
+      "store": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-local-store.mjs status",
+        "timeout_ms": 90000,
+        "intent": "Read the actual app's SQLite cache location, schema and integrity.",
+        "next": "store-proof"
+      },
+      "store-proof": {
+        "action": "assert_output",
+        "source": "store",
+        "stream": "stdout",
+        "match": "\"integrity\":\"ok\"",
+        "intent": "Require a valid persistent database in the OS cache directory.",
+        "proves": ["native-store"],
+        "next": "conformance"
+      },
+      "conformance": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-local-store.mjs conformance",
+        "timeout_ms": 90000,
+        "intent": "Run the exported contract against real native SQL in a separate proof database.",
+        "next": "conformance-proof"
+      },
+      "conformance-proof": {
+        "action": "assert_output",
+        "source": "conformance",
+        "stream": "stdout",
+        "match": "\"checks\":18",
+        "intent": "Require every native conformance check to pass.",
+        "proves": ["native-conformance"],
+        "next": "settings"
+      },
+      "settings": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-local-store.mjs settings",
+        "intent": "Open the actual app settings for the storage notice check.",
+        "next": "no-fallback"
+      },
+      "no-fallback": {
+        "action": "ui.wait_for",
+        "test_id": "resource-store-notice",
+        "expected": "absent",
+        "timeout_ms": 30000,
+        "intent": "A successful native store does not show the memory fallback notice.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/local-store-settings.png",
+        "intent": "Record the connected native app after storage proof.",
+        "covers": ["native-store"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -163,6 +163,10 @@ export class GatewayClient {
     return this.state;
   }
 
+  get gatewayUrl(): string {
+    return this.url;
+  }
+
   get gatewayPingSupported(): boolean | null {
     return this.pingSupported;
   }

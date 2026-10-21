@@ -2,6 +2,7 @@ import { type GatewayAuthConnectResult, workspaceAccessFromAuth } from '../rpc/a
 import { Events } from '../transport/events.js';
 
 import type { ResourceReadMethod } from './registry.js';
+import { type ResourceStoreIdentity, resourceStoreScopeId } from './store.js';
 import type {
   ResourceCacheConnection,
   ResourceCacheTransport,
@@ -28,6 +29,8 @@ export interface ResourceConnectionInputs {
   gatewayUrl: string;
   profileId?: string;
   authentication?: GatewayAuthConnectResult;
+  /** Used only while disconnected or before auth; a live reply always replaces it. */
+  lastVerified?: ResourceStoreIdentity;
   reason?: ResourceConnectionReason;
 }
 
@@ -39,15 +42,25 @@ export function createResourceCacheTransport(
   function getConnection(): ResourceCacheConnection {
     const state = snapshot();
     const auth = state.authentication;
+    const saved =
+      !auth &&
+      state.lastVerified &&
+      resourceStoreScopeId({
+        gatewayUrl: state.lastVerified.metadata.scope.gatewayUrl,
+        profileId: state.lastVerified.metadata.scope.profileId,
+      }) === resourceStoreScopeId({ gatewayUrl: state.gatewayUrl, profileId: state.profileId })
+        ? state.lastVerified
+        : undefined;
     return {
       id: state.id,
       connected: state.connected,
       foreground: state.foreground,
-      authMode: auth?.authMode ?? 'token',
+      authMode: auth?.authMode ?? saved?.authMode ?? 'token',
       scope: {
+        ...saved?.metadata.scope,
         gatewayUrl: state.gatewayUrl,
         profileId: state.profileId,
-        ...(auth?.authMode !== 'none'
+        ...(auth && auth.authMode !== 'none'
           ? { principalId: auth?.principal?.id, principalGeneration: auth?.principal?.generation }
           : {}),
       },
@@ -59,7 +72,9 @@ export function createResourceCacheTransport(
             },
             capabilities: auth.capabilities,
           }
-        : {}),
+        : saved
+          ? { authority: saved.metadata.authority }
+          : {}),
     };
   }
   return {

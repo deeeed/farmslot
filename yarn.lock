@@ -4876,6 +4876,7 @@ __metadata:
   resolution: "@farmslot/command-center-ui@workspace:apps/command-center/ui"
   dependencies:
     "@farmslot/adapter-sdk": "workspace:*"
+    "@farmslot/local-store": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/review-dispatch": "workspace:*"
     "@farmslot/theme": "workspace:*"
@@ -4990,6 +4991,28 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@farmslot/local-store@workspace:*, @farmslot/local-store@workspace:packages/local-store":
+  version: 0.0.0-use.local
+  resolution: "@farmslot/local-store@workspace:packages/local-store"
+  dependencies:
+    "@farmslot/protocol": "workspace:*"
+    "@sqlite.org/sqlite-wasm": "npm:3.54.1-build1"
+    "@types/node": "npm:^22.0.0"
+    eslint: "npm:^10.3.0"
+    prettier: "npm:^3.8.3"
+    tsx: "npm:^4.19.0"
+    typescript: "npm:^5.6.0"
+  peerDependencies:
+    expo-file-system: ~57.0.1
+    expo-sqlite: ~57.0.1
+  peerDependenciesMeta:
+    expo-file-system:
+      optional: true
+    expo-sqlite:
+      optional: true
+  languageName: unknown
+  linkType: soft
+
 "@farmslot/mobile@workspace:apps/companion":
   version: 0.0.0-use.local
   resolution: "@farmslot/mobile@workspace:apps/companion"
@@ -5000,6 +5023,7 @@ __metadata:
     "@expo/vector-icons": "npm:^15.0.3"
     "@farmslot/adapter-rn": "workspace:*"
     "@farmslot/adapter-sdk": "workspace:*"
+    "@farmslot/local-store": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
     "@farmslot/review-dispatch": "workspace:*"
@@ -5032,6 +5056,7 @@ __metadata:
     expo-screen-orientation: "npm:~57.0.1"
     expo-secure-store: "npm:~57.0.1"
     expo-splash-screen: "npm:~57.0.5"
+    expo-sqlite: "npm:~57.0.1"
     expo-status-bar: "npm:~57.0.1"
     expo-system-ui: "npm:~57.0.2"
     expo-updates: "npm:~57.0.12"
@@ -7225,6 +7250,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@sqlite.org/sqlite-wasm@npm:3.54.1-build1":
+  version: 3.54.1-build1
+  resolution: "@sqlite.org/sqlite-wasm@npm:3.54.1-build1"
+  checksum: 10c0/c4fa84f8d8b0ea670b2483db20678b8d479a6386467e9546c8bbc2a3e69e5eecfbcfaec7e65c084d3ca689f68992a22d30a1c7fee829a13f3c53283761adfd59
+  languageName: node
+  linkType: hard
+
 "@svgr/babel-plugin-add-jsx-attribute@npm:8.0.0":
   version: 8.0.0
   resolution: "@svgr/babel-plugin-add-jsx-attribute@npm:8.0.0"
@@ -9262,6 +9294,13 @@ __metadata:
   bin:
     autoprefixer: bin/autoprefixer
   checksum: 10c0/3e1a7bb65ef3a44925d19fd18cbb96a9a73ef1a8bfaa134bc131743787a8983045d6e756cff0204d37c34a52cfc86d79182f444c221b631401f79d7873ae97a8
+  languageName: node
+  linkType: hard
+
+"await-lock@npm:^2.2.2":
+  version: 2.2.2
+  resolution: "await-lock@npm:2.2.2"
+  checksum: 10c0/bedf00dad44c6325a655bf3bd523ab9e1ce41023da6a8c379990c76ac1d942ac7e5301627ab84ba37917ab5247506ba429b7f6e4bf77074093f255571b9ad5ee
   languageName: node
   linkType: hard
 
@@ -13239,6 +13278,19 @@ __metadata:
   peerDependencies:
     expo: "*"
   checksum: 10c0/f7822358e938f66cbe20f9ebf2d817a87fd8a8a622ba34ab62e4972d703c8e735060b5407686ac7e8a83df8db900ad43cab3c0bdbfdf3cfe0910602b6f6da52f
+  languageName: node
+  linkType: hard
+
+"expo-sqlite@npm:~57.0.1":
+  version: 57.0.4
+  resolution: "expo-sqlite@npm:57.0.4"
+  dependencies:
+    await-lock: "npm:^2.2.2"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/8c0c064f6413c01a2db728b361aae856272fdd719437cbbf54a549ade0f331668c015e67b1f8d8596765913ea8ba6100f25f2f001e3058c2dc0ab1a214a1e5f1
   languageName: node
   linkType: hard
 

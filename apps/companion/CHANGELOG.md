@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Preserve resource revision metadata for the shared client cache and consume negotiated Sources change notifications.
+- Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback, verified identity handling and negotiated Sources change notifications. Requires a new native build with Expo SQLite.
 
 - Add reproducible client-store baseline recipes with a dev-only native startup and websocket byte counter.
 

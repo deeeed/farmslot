@@ -1,4 +1,4 @@
-import type { GatewayWorkspaceAccess } from '../rpc/auth.js';
+import type { GatewayAuthMode, GatewayWorkspaceAccess } from '../rpc/auth.js';
 import type { RoleBinding } from '../rpc/principal.js';
 
 import { canonicalResourceJson } from './keys.js';
@@ -18,6 +18,12 @@ export interface ResourceStoreAuthority {
 export interface ResourceStoreMetadata {
   scope: ResourceStoreScope;
   authority: ResourceStoreAuthority;
+}
+
+/** Last verified identity only, without credentials, for opening an offline profile. */
+export interface ResourceStoreIdentity {
+  authMode: GatewayAuthMode;
+  metadata: ResourceStoreMetadata;
 }
 
 export interface StoredResourceQueryInfo {

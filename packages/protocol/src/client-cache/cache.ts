@@ -30,6 +30,7 @@ interface QueryEntry {
   listeners: Set<(state: ResourceQueryState) => void>;
   hydration: Promise<void>;
   hydrated: boolean;
+  hydrationSerial: number;
   queued: boolean;
   serial: number;
   unknownGeneration: number;
@@ -126,7 +127,7 @@ export function createGatewayResourceCache(
   }
 
   function notify(entry: QueryEntry): void {
-    entry.state = { ...entry.state, ...(storageNotice ? { storageNotice } : {}) };
+    entry.state = { ...entry.state, storageNotice };
     for (const listener of entry.listeners) listener(entry.state);
   }
 
@@ -170,6 +171,7 @@ export function createGatewayResourceCache(
       // Data stays in memory; retain both failures in the visible storage notice.
       storageNotice += `; ${queryError(closeError).message}`;
     }
+    options.onStorageNotice?.(storageNotice);
     for (const entry of entries.values()) notify(entry);
   }
 
@@ -184,10 +186,37 @@ export function createGatewayResourceCache(
           ? await options.openStore(next)
           : createMemoryResourceStore(),
       );
+      const stored = await store.getMetadata();
+      if (
+        stored &&
+        (resourceStoreScopeId(stored.scope) !== resourceStoreScopeId(next.scope) ||
+          !sameResourceAuthority(stored.authority, next.authority))
+      ) {
+        retiringStore = true;
+        try {
+          await store.deleteAll();
+        } finally {
+          retiringStore = false;
+        }
+        await store.close();
+        replaceStore(
+          options.openStore && canPersist(nextConnection)
+            ? await options.openStore(next)
+            : createMemoryResourceStore(),
+        );
+      }
+      if (store.persistent) {
+        storageNotice = undefined;
+        options.onStorageNotice?.(undefined);
+      } else if (options.openStore && !canPersist(nextConnection)) {
+        storageNotice = 'Offline data will not survive a restart with this gateway version.';
+        options.onStorageNotice?.(storageNotice);
+      }
     } catch (error) {
       await recoverStore(error);
     }
     needsStore = false;
+    for (const entry of entries.values()) if (entry.state.status !== 'ready') hydrateEntry(entry);
   }
 
   function schedule(entry: QueryEntry): void {
@@ -263,7 +292,8 @@ export function createGatewayResourceCache(
           deletionRequired ||
           store.deleted ||
           switchingProfile ||
-          (next.connected && (storedScopeChanged || storedAuthorityChanged))
+          ((next.connected || next.authority !== undefined) &&
+            (storedScopeChanged || storedAuthorityChanged))
         ) {
           storeVersion++;
           for (const entry of entries.values()) invalidate(entry, true);
@@ -288,13 +318,16 @@ export function createGatewayResourceCache(
           replaceStore(createMemoryResourceStore());
           for (const entry of entries.values()) invalidate(entry, true);
         }
-        if (next.connected && nextMetadata && !revoke) {
-          if (needsStore) await openFreshStore(nextMetadata, next);
-          metadata = nextMetadata;
-          try {
-            await store.setMetadata(metadata);
-          } catch (error) {
-            await recoverStore(error);
+        if (nextMetadata && !revoke) {
+          if (needsStore && (next.connected || canPersist(next)))
+            await openFreshStore(nextMetadata, next);
+          if (next.connected) {
+            metadata = nextMetadata;
+            try {
+              await store.setMetadata(metadata);
+            } catch (error) {
+              await recoverStore(error);
+            }
           }
         }
         if (disposed || ticket !== version) return;
@@ -365,6 +398,7 @@ export function createGatewayResourceCache(
       listeners: new Set(),
       hydration: Promise.resolve(),
       hydrated: false,
+      hydrationSerial: 0,
       queued: false,
       serial: 0,
       unknownGeneration: 0,
@@ -372,8 +406,18 @@ export function createGatewayResourceCache(
       dirty: true,
     };
     entries.set(query.id, entry);
+    hydrateEntry(entry);
+    return entry;
+  }
+
+  function hydrateEntry(entry: QueryEntry): void {
+    const query = entry.query;
+    const hydrationSerial = ++entry.hydrationSerial;
+    entry.hydrated = false;
     entry.hydration = (async () => {
       await barrier;
+      if (disposed || entry.hydrationSerial !== hydrationSerial || entries.get(query.id) !== entry)
+        return;
       const ticket = version;
       const incarnation = storeVersion;
       const readingStore = store;
@@ -385,6 +429,7 @@ export function createGatewayResourceCache(
           entries.get(query.id) === entry &&
           ticket === version &&
           incarnation === storeVersion &&
+          entry.hydrationSerial === hydrationSerial &&
           entry.state.status !== 'ready' &&
           saved &&
           saved.bytes <= query.maxBytes
@@ -395,11 +440,12 @@ export function createGatewayResourceCache(
       } catch (error) {
         await recoverStore(error, readingStore);
       } finally {
-        entry.hydrated = true;
-        prune();
+        if (entry.hydrationSerial === hydrationSerial) {
+          entry.hydrated = true;
+          prune();
+        }
       }
     })();
-    return entry;
   }
 
   function stampCovers(entry: QueryEntry, stamp: ResourceReadStamp | undefined): boolean {

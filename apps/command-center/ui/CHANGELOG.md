@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Preserve resource revision metadata for the shared client cache and consume negotiated Sources change notifications.
+- Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback, verified identity handling and negotiated Sources change notifications.
 
 - The publication gate offers Accept Review Findings and Publish under More actions when the gateway allows it: it lists the open findings and asks for the reason before publishing.
 - Active-development baseline; add user-facing changes here before release or package publication.

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@farmslot/adapter-sdk": "workspace:*",
+    "@farmslot/local-store": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/theme": "workspace:*",

@@ -212,6 +212,10 @@ function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: str
 
 export class GatewayClient {
   private resourceReason?: ResourceConnectionReason;
+  private resourceSocketId = 0;
+  get resourceConnectionId(): number {
+    return this.resourceSocketId;
+  }
   get resourceConnectionReason() {
     return this.resourceReason;
   }
@@ -468,6 +472,7 @@ export class GatewayClient {
     this.teardownSocket();
 
     this.authBlocked = false;
+    this.resourceSocketId++;
     this.setState('connecting');
 
     const ws = new WebSocket(this.url);
@@ -689,7 +694,7 @@ export class GatewayClient {
     this.backoff = 1000;
     this.lastAuthError = null;
     this.authBlocked = false;
-    this.setState('connected');
+    this.setState('connected', undefined, true);
   }
 
   reconnect(): void {
@@ -874,8 +879,12 @@ export class GatewayClient {
     }
   }
 
-  private setState(s: ConnectionState, reason?: ResourceConnectionReason): void {
-    if (this.state === s && this.resourceReason === reason) return;
+  private setState(
+    s: ConnectionState,
+    reason?: ResourceConnectionReason,
+    authorityChanged = false,
+  ): void {
+    if (this.state === s && this.resourceReason === reason && !authorityChanged) return;
     this.resourceReason = reason;
     this.state = s;
     for (const cb of this.connSubs) {

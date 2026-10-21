@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- Add reproducible client-store startup, reconnect and gate-diff measurements, plus live shared-cache validation over the browser's authenticated connection.
+- Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

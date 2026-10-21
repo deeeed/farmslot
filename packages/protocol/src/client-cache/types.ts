@@ -70,6 +70,7 @@ export interface ResourceCacheTransport {
 }
 
 export interface GatewayResourceCacheOptions {
+  onStorageNotice?: (notice: string | undefined) => void;
   transport: ResourceCacheTransport;
   store?: ResourceStore;
   /** Reopens a fresh scoped incarnation after authority deletion or a profile switch. */
