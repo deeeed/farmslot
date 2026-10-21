@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import * as pty from 'node-pty';
 
 import { SSH_CONNECT_OPTIONS, SSH_INTERACTIVE_CONNECT_OPTIONS } from '../core/ssh-options.js';
-import { shellQuote } from '../core/tmux.js';
+import { shellQuote, tmuxAttachCommandForTarget } from '../core/tmux.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -336,10 +336,7 @@ function attachPty(
   let args: string[];
   if (sshTarget) {
     cmd = 'ssh';
-    const selectCommand = selectTarget
-      ? `tmux select-pane -t ${shellQuote(selectTarget)} || tmux select-window -t ${shellQuote(selectTarget)}; `
-      : '';
-    const remoteScript = `${selectCommand}tmux attach-session -t ${shellQuote(attachSession)}`;
+    const remoteScript = `exec ${tmuxAttachCommandForTarget(attachSession, selectTarget)}`;
     args = [
       '-t',
       ...SSH_INTERACTIVE_CONNECT_OPTIONS,
@@ -354,10 +351,7 @@ function attachPty(
   } else {
     if (selectTarget) {
       cmd = 'zsh';
-      args = [
-        '-lc',
-        `${shellQuote(tmuxPath)} select-pane -t ${shellQuote(selectTarget)} || ${shellQuote(tmuxPath)} select-window -t ${shellQuote(selectTarget)}; exec ${shellQuote(tmuxPath)} attach-session -t ${shellQuote(attachSession)}`,
-      ];
+      args = ['-lc', `exec ${tmuxAttachCommandForTarget(attachSession, selectTarget, tmuxPath)}`];
     } else {
       cmd = tmuxPath;
       args = ['attach-session', '-t', attachSession];

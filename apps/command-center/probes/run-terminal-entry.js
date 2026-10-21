@@ -48,6 +48,26 @@ if (
   snapshot.lines.some((line) => line.includes('TERMINAL PROOF WORKER'))
 )
   throw new Error('Terminal snapshot did not come from the exact reviewer pane');
+// The actor label and snapshot can be correct while PTY attachment shows a different window.
+let rendered = '';
+let stable = 0;
+while (Date.now() < deadline && stable < 3) {
+  const editor = terminal._terminal;
+  const buffer = editor?.buffer.active;
+  rendered = buffer
+    ? Array.from(
+        { length: editor.rows },
+        (_, index) => buffer.getLine(buffer.viewportY + index)?.translateToString(true) ?? '',
+      ).join('\n')
+    : '';
+  stable =
+    rendered.includes(worktree ? 'TERMINAL PROOF WORKTREE' : 'TERMINAL PROOF REVIEWER') &&
+    !rendered.includes('TERMINAL PROOF WORKER')
+      ? stable + 1
+      : 0;
+  if (stable < 3) await new Promise((resolve) => setTimeout(resolve, 100));
+}
+if (stable < 3) throw new Error(`Rendered terminal is not the selected actor: ${rendered}`);
 const fleet = await gateway.request('fleet.status');
 const slot = fleet.fleet.slots.find((entry) => entry.slot === params.slotId);
 const context = worktree
@@ -61,5 +81,7 @@ return {
   window: context.target.window,
   reviewerMarkerFound: true,
   workerMarkerFound: false,
+  renderedReviewerMarkerFound: true,
+  renderedWorkerMarkerFound: false,
   inputSent: false,
 };

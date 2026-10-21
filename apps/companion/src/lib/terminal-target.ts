@@ -48,3 +48,11 @@ export function matchesCompanionTerminalTarget(
   if (target.bareSession) return payload.slotId === target.slotId;
   return runTerminalTargetMatches(target, payload);
 }
+
+export function targetWarningForRun(run: Run, slotId: string): string | null {
+  if (!slotId && run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) return null;
+  const warnings: string[] = [];
+  if (run.slotId && run.slotId !== slotId) warnings.push(`run moved to ${run.slotId}`);
+  if (!run.slotId) warnings.push('run has no active slot');
+  return warnings.length ? `Target warning: ${warnings.join(', ')}` : null;
+}

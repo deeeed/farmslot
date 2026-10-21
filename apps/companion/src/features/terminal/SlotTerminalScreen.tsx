@@ -90,6 +90,7 @@ import {
   type CompanionTerminalTargetParams,
   matchesCompanionTerminalTarget,
   shouldUseBareTerminalSessionForRun,
+  targetWarningForRun,
 } from '../../lib/terminal-target';
 import { baseStyles, colors, spacing } from '../../lib/theme';
 import {
@@ -178,14 +179,6 @@ function formatSnapshotTime(timestamp: number | null): string {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function targetWarningForRun(run: Run, slotId: string): string | null {
-  if (!slotId && run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) return null;
-  const warnings: string[] = [];
-  if (run.slotId && run.slotId !== slotId) warnings.push(`run moved to ${run.slotId}`);
-  if (!run.slotId) warnings.push('run has no active slot');
-  return warnings.length ? `Target warning: ${warnings.join(', ')}` : null;
 }
 
 function routeParamString(value: string | string[] | undefined): string {
