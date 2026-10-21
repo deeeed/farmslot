@@ -98,6 +98,7 @@ export async function runReviewVisualClaim(
       'reviewedFiles',
       'delegation',
       'projectPolicy',
+      'settledReviewFindings',
     ].some((key) => key in params)
   )
     throw new Error('Reviewer, time, delegation and reviewed evidence are gateway-owned.');
@@ -222,5 +223,8 @@ export async function runReviewVisualClaim(
     emit,
     refreshPackage: dependencies.refreshPackage,
   });
-  return { run: updated, receipt };
+  return {
+    run: updated,
+    receipt: updated.visualJudgmentReceipts?.find((entry) => entry.id === receipt.id) ?? receipt,
+  };
 }

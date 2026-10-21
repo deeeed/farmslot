@@ -4,7 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A person's bound claim confirmation settles that claim's evidence-only review findings and preserves review validity during package refresh. Restart recovery collects a newer warm attempt's own result instead of marking it complete from an older lineage result.
+
 - Keep every unarchived failed run in `run.list` Active results, including failures without resources, while preserving released PR execution ownership and settled workflow outcomes.
+
 - Completed terminal reviews can reach their posting gate: single-pane review sessions resolve exactly, and hookless reviewers prove idle from the native rollout held open by their current process.
 
 - A blocked worker fix that changed no code keeps the last same-head review findings visible at publication. Gate recovery and evidence refresh wait for the person's decision instead of starting another review. A stopped reviewer returns its failure without an automatic replacement.

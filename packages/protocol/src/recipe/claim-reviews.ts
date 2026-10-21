@@ -138,6 +138,20 @@ export interface RecipeVisualJudgmentReceipt extends Omit<
   pipeline?: PipelineVisualReviewerBinding;
   /** New captures retain the same winner in current and frozen projections. */
   precedence?: 'person-first-v1';
+  /** Gateway-qualified evidence findings settled by this person's claim decision. */
+  settledReviewFindings?: ReviewFindingReference[];
+}
+
+export interface ReviewFindingReference {
+  findingId: string;
+  reviewId: string;
+  headSha: string;
+}
+
+/** A projection keeps its original verdict and points back to the person receipt. */
+export interface ReviewFindingSettlement extends ReviewFindingReference {
+  receiptId: string;
+  claimId: string;
 }
 
 /**

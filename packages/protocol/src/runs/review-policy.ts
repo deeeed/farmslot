@@ -1,5 +1,7 @@
 import type { ReadyGatePayload, ReviewPolicy, ReviewStatus } from '../contracts/runs.js';
 
+import { openReviewFindingCount, reviewFindingsSatisfied } from './review-findings.js';
+
 export function defaultReviewPolicy(existing?: ReviewPolicy | null): ReviewPolicy {
   return {
     minimumReviews: Math.max(0, existing?.minimumReviews ?? 1),
@@ -21,10 +23,7 @@ export function isQualifyingReview(review: ReviewStatus): boolean {
 
 /** Retrying a session replaces its verdict, including a later failure on the same head. */
 export function qualifyingPassingReviews(reviews: ReviewStatus[]): ReviewStatus[] {
-  return qualifyingReviewSessions(
-    reviews,
-    (review) => review.verdict === 'pass' && review.unresolvedCount === 0,
-  );
+  return qualifyingReviewSessions(reviews, reviewFindingsSatisfied);
 }
 
 /** Completed review inputs, including real findings that an operator may explicitly accept. */
@@ -102,7 +101,7 @@ export function reviewSourceLabel(review: Pick<ReviewStatus, 'source'>): string 
 }
 
 function reviewIsPassing(review: ReviewStatus): boolean {
-  return review.verdict === 'pass' && review.unresolvedCount === 0;
+  return reviewFindingsSatisfied(review);
 }
 
 function reviewHead(review: ReviewStatus): string | null | undefined {
@@ -127,12 +126,13 @@ export function classifyReviewFreshness(
 ): ReviewFreshnessDisplay {
   const sourceLabel = reviewSourceLabel(review);
   const passing = reviewIsPassing(review);
-  if (review.unresolvedCount > 0) {
+  const unresolved = openReviewFindingCount(review);
+  if (unresolved > 0) {
     return {
       review,
       reason: 'unresolved-findings',
       label: `${sourceLabel} has unresolved findings`,
-      detail: `${review.unresolvedCount} unresolved finding${review.unresolvedCount === 1 ? '' : 's'}`,
+      detail: `${unresolved} unresolved finding${unresolved === 1 ? '' : 's'}`,
       stale: false,
       passing,
     };
@@ -268,7 +268,7 @@ export function summarizeReviewCounts(payload: ReadyGatePayload): ReviewGateCoun
     freshPassingReviews: freshPassing.length,
     trustedPassingReviews: sessionIds.size,
     staleIgnoredReviews: freshness.filter((entry) => entry.stale).length,
-    unresolvedFindings: reviews.reduce((sum, review) => sum + review.unresolvedCount, 0),
+    unresolvedFindings: reviews.reduce((sum, review) => sum + openReviewFindingCount(review), 0),
     freshness,
   };
 }

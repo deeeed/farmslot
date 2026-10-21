@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Person claim confirmations can retain bound review-finding settlement references. Shared review policy counts qualified evidence findings as settled while preserving the original review verdict and code findings.
 
 ## 0.62.0 - 2026-10-21
 

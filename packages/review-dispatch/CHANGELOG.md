@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Publication blockers exclude evidence findings settled by a qualified person claim confirmation, while retaining code findings and the original review provenance.
 
 ## 0.10.0 - 2026-10-21
 
