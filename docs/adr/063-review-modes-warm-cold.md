@@ -375,3 +375,94 @@ There is no new action, status, field or RPC:
 - it re-presents a pending gate after `run.extendReviewBudget`.
 
 The CLI, Command Center and Companion already render the action and the budget.
+
+## Amendment 5: a re-review continues the reviewer session that already reviewed the work, 2026-10-20
+
+**Status:** Accepted (lead, 2026-10-20).
+**Related:** Amendment 1 (scoped budget extensions), Amendment 2 (no-verdict attempts), Amendment 3 (the pipeline review runs row 1), Amendment 4 (unresolved code findings at the publish gate).
+**Specification:** on acceptance, [Session and range](../reference/review-modes-warm-cold.md#session-and-range) and [Mode resolution](../reference/review-modes-warm-cold.md#mode-resolution) are updated to match, together with the required evidence list and the [Diff scope](../reference/review-modes-warm-cold.md#diff-scope) rule, which applies the WARM delta rule to the delta-scoped COLD fallback.
+**Changes:**
+
+This amendment replaces these accepted texts.
+
+From the Decision and Security and data handling:
+
+- the mode table's session and range entries ("Reuse the previous review session of the same repository/PR"; "The whole PR diff");
+- "scoped to that PR rather than the current run ID or worker runner";
+- "A missing, foreign, busy or incompatible session never silently turns WARM into COLD. Show the reason and let the operator wait or choose COLD.";
+- "Model/effort changes follow the runner's session capabilities", for re-reviews;
+- "bound to repository/PR" and "The WARM key is repository/PR plus `reviewId`";
+- "Verify PR ownership … before WARM delivery", which now applies once the run has a PR.
+
+From the specification:
+
+- the first three bullets of Session and range (full-diff COLD, the PR-bound WARM binding, the visible refusal or wait state);
+- "A model/effort change is allowed only when the session adapter supports it", for re-reviews;
+- the Mode resolution rule that "an unavailable selected WARM mode MUST still be refused", for automatic re-reviews;
+- the required "unavailable-WARM refusal" evidence, which becomes delta-scoped fallback evidence.
+
+Every other verification and admission requirement stays in force.
+
+### Decision
+
+**A re-review defaults to WARM.** A re-review checks work that an earlier review of the same lineage already reviewed. It continues that review's retained reviewer session, with the same runner. It reviews the change from that review's last reviewed head to the current head, with the earlier findings in view. A lineage qualifies only when it has a validated earlier review result and a recorded reviewed head; otherwise its next review is a first pass. The WARM default applies to every re-review:
+
+- the automatic re-review after a worker fix, in the review loop and after a restart;
+- Continue Fixing and Send back;
+- a gate Request Review that continues a lineage;
+- the gate's re-review of changed inputs.
+
+**First passes keep their scope.** A review's first pass creates its session in the mode its row selects, COLD by default, and reviews the whole diff. Its re-reviews default to WARM.
+
+**Asking for COLD.** A re-review runs COLD only when a person selects COLD for it: COLD in the gate's Request Review picker, or `--review-mode cold` on the gate request. A COLD a person asks for creates a fresh session, reviews the whole diff and stays in the lineage. That session becomes the lineage's retained session. These select only a review's first pass:
+
+- a sequence row's stored mode;
+- `Run.reviewMode`;
+- PR options;
+- the project `review.mode`.
+
+`resolveReviewMode` keeps its precedence for first passes.
+
+**A re-review continues its review's lineage.** A re-review keeps the `reviewId` of the review whose work it checks, and never starts a new lineage. Its result updates that lineage's result. For each requested row, a gate Request Review preselects the run family's most recent lineage reviewed by that row's runner, in WARM, with that lineage's model and effort. The picker preselects WARM only for a lineage whose session is available for this run, as defined below, and only for one row per lineage. A later row with the same runner takes that runner's next most recent lineage, or is new and defaults to COLD. Otherwise it preselects COLD and shows why. A row whose runner has no earlier lineage is new and defaults to COLD. The re-review of changed inputs continues the lineage of the row the pipeline review ran (Amendment 3). The pipeline lineage is identified by the pipeline result's `session.reviewId`.
+
+**The binding key works before a PR exists.** The WARM key is the run family plus the durable `reviewId` lineage. Once the run has a PR, the PR must match too. A lineage started before the PR existed continues after the PR opens. A lineage never continues in a run of another family.
+
+**A retained session whose process ended is resumed** from its saved runner session, the same way a worker resumes. A busy session isn't unavailable: the re-review waits for its current turn. A retained session is unavailable only when:
+
+- its session record is missing, or the runner can't resume it on this slot under the same result contract;
+- the requested model or effort differs from the session's recorded model or effort;
+- another lineage holds it;
+- the current head no longer descends from the lineage's last reviewed head.
+
+**An unavailable session never stops an automatic re-review.** The re-review runs COLD in a fresh session, scoped to the lineage's delta, with the earlier findings in its prompt. Like a WARM re-review, it keeps correctness checks on that delta. That fresh session becomes the lineage's retained session. The same applies when a resume fails to start: the same attempt runs the delta-scoped COLD under its admitted receipt. The review records why it ran COLD and the ranges it compared, and the gate shows both with that review.
+
+The delta is the change since the lineage's last reviewed head. After a rebase, it compares the branch's own change at both heads (`git range-diff`): the reviewed head against its merge-base with the base branch, and the current head against its current merge-base. Changes that came only from the base branch are left out.
+
+**A person's request.** An explicit WARM request whose session is unavailable shows the reason and offers COLD, as today.
+
+**Unchanged:**
+
+- admission limits, the round budget and the no-verdict cap still stop automatic launches, and settlements and restart receipt reuse work as before (Amendments 1 and 2);
+- a re-review spends one round, and its result updates the lineage like any recheck;
+- runner diversity is still never a rule;
+- `run rereview` and PR-rule review-pr chains keep their own continuation rules.
+
+### Rationale and consequences
+
+On TAT-4145 run bda11b1a, all 12 reviewer attempts ran COLD on the full diff:
+
+- **COLD by default.** The automatic re-review, Continue Fixing and the gate's re-review of changed inputs all default to COLD.
+- **WARM needed a PR.** A run before publication has none, so its lineage context couldn't be built. The one path that asked for WARM, restart recovery of an active fix pass, was refused and fell back to a full-diff COLD.
+- **A new lineage each time.** Each gate Request Review and each re-review of changed inputs started a new lineage.
+
+Each attempt reviewed the whole diff in a fresh session, so it could raise new findings on code that earlier rounds had accepted. Continuing the session that raised the findings lets the reviewer check them against the fix, with the context it already built. When that session can't continue, a delta-scoped review still checks only the change, and the run keeps moving.
+
+### Public surface
+
+There is no new action or RPC. `@farmslot/protocol` changes in one release with the packages that depend on it: a review's lineage context no longer requires a PR number, and the review record gains its fallback reason and compared ranges. Behaviour changes:
+
+- WARM lineage resolution accepts a run family before a PR exists;
+- the re-review paths default to WARM in their review's lineage;
+- the gate's Request Review preselects the row runner's latest lineage in WARM;
+- an automatic re-review whose session is unavailable runs a delta-scoped COLD review;
+- the review records the fallback reason and its compared ranges, and the gate shows them with that review in the CLI, Command Center and Companion.

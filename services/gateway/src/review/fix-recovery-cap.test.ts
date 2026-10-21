@@ -50,6 +50,8 @@ const {
   settleReviewRoundNoVerdict,
 } = await import('./review-round-budget.js');
 const { isLiveNativeReviewer, nativeReviewerContextPrefix } = await import('./review-agent.js');
+const { claimWarmReviewerSession, registerWarmReviewerSession, resetWarmReviewerSessionsForTest } =
+  await import('./session-mode.js');
 const { rewriteStatusFile } = await import('../core/state.js');
 const { REVIEW_FIX_CHECKLIST_TARGET, taskDirRelPath } =
   await import('../tasks/checklist-target.js');
@@ -260,4 +262,158 @@ test('a REVIEW re-entry with all rounds admitted reattaches to the running re-re
   assert.equal(result.retryCount, 1);
   assert.equal('maxRetriesExhausted' in result && result.maxRetriesExhausted, true);
   assert.match(result.reason ?? '', /The five review rounds are spent/);
+});
+
+test('a fix recovered after a restart is re-reviewed WARM in the pipeline lineage at its next loop', async (t) => {
+  // TAT-4145 bda11b1a: the recovered re-review ran loop 2 in a new lineage, so it reviewed
+  // the whole diff COLD. It continues the pipeline review that raised the findings instead.
+  const run = createRun({
+    project,
+    flowType: 'dev',
+    mode: 'interactive',
+    ticketOrPr: 'RECOVERED-FIX-LINEAGE',
+    runner: 'claude',
+    slotId: vars.slotId,
+  });
+  const slotRow = (rows: Record<string, unknown>[]) =>
+    rewriteStatusFile((current) => ({
+      ...current,
+      slots: [...(current?.slots ?? []).filter((entry) => entry.slot !== vars.slotId), ...rows],
+    }));
+  const inputs: NativeReviewInput[] = [];
+  t.after(async () => {
+    nativeReviewer = async () => ({ verdict: 'pass', issues: [] });
+    await slotRow([]);
+    await deleteTestRunIfPresent(run.id);
+  });
+  nativeReviewer = async (input) => {
+    inputs.push(input);
+    return { verdict: 'pass', issues: [] };
+  };
+  await slotRow([{ slot: vars.slotId, current_run_id: run.id }]);
+  const checklist = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist);
+  const signal = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal);
+  await mkdir(path.join(repo, taskDir), { recursive: true });
+  await writeFile(path.join(repo, checklist), '## Issues\n\n- **a.ts:1** — fix the finding\n');
+  await writeFile(
+    path.join(repo, signal),
+    JSON.stringify({
+      status: 'complete',
+      timestamp: new Date().toISOString(),
+      attemptId: 'fix-attempt',
+    }),
+  );
+  const pipeline = `pipeline-review-${run.id}`;
+  updateRun(run.id, {
+    status: 'reviewing',
+    taskFile: path.join(config.getOrchestratorTaskRoot(project, projectJson), 'review', 'TASK.md'),
+    agentContexts: [
+      {
+        id: 'pipeline-reviewer',
+        role: 'review',
+        label: 'Claude reviewer',
+        status: 'complete',
+        runId: run.id,
+        slotId: vars.slotId,
+        runner: 'claude',
+        artifactScope: null,
+        reviewLoopNumber: 3,
+        reviewId: pipeline,
+      },
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'Fix',
+        status: 'working',
+        runId: run.id,
+        slotId: vars.slotId,
+        runner: 'claude',
+        taskFile: checklist,
+        signalFile: signal,
+        artifactScope: null,
+        deliveryBaselineRef: 'reviewed-head',
+        signalAttemptId: 'fix-attempt',
+        attemptStartedAt: new Date(Date.now() - 60_000).toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  });
+
+  const result = await executeReview(run.id, vars.slotId, {
+    reviewRunner: 'claude',
+    validationDepth: 'static-code',
+  });
+
+  assert.equal(result.verdict, 'pass');
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0]!.loopNumber, 4);
+  assert.equal(inputs[0]!.mode, 'warm');
+  assert.equal(inputs[0]!.reviewId, pipeline);
+  assert.deepEqual(inputs[0]!.rereview, {
+    lastReviewedHeadSha: 'reviewed-head',
+    priorIssues: [{ file: 'a.ts', line: 1, description: 'fix the finding' }],
+  });
+});
+
+test('a failed review through executeReview retires only its own lineage', async (t) => {
+  // Its native reviewer already retires its own lineage; the review's own cleanup retired them all.
+  const run = createRun({
+    project,
+    flowType: 'dev',
+    mode: 'interactive',
+    ticketOrPr: 'FAILED-REVIEW-LINEAGE',
+    runner: 'claude',
+    slotId: vars.slotId,
+  });
+  t.after(async () => {
+    nativeReviewer = async () => ({ verdict: 'pass', issues: [] });
+    resetWarmReviewerSessionsForTest();
+    await deleteTestRunIfPresent(run.id);
+  });
+  updateRun(run.id, {
+    status: 'reviewing',
+    taskFile: path.join(config.getOrchestratorTaskRoot(project, projectJson), 'review', 'TASK.md'),
+  });
+  const retained = (reviewId: string) => ({
+    runId: run.id,
+    reviewId,
+    familyId: run.familyId,
+    project,
+    ownerPrincipalId: null,
+    transport: 'native' as const,
+    taskDir,
+    artifactScope: null,
+    runner: 'claude',
+    model: 'opus',
+    effort: null,
+    contextId: `${reviewId}-context`,
+    windowName: reviewId,
+    slotId: vars.slotId,
+    runnerSessionId: `${reviewId}-session`,
+    runnerSessionPath: null,
+    lastLoopNumber: 1,
+    lastReviewedHeadSha: 'reviewed',
+  });
+  registerWarmReviewerSession(retained('lineage-a'));
+  registerWarmReviewerSession(retained('lineage-b'));
+  nativeReviewer = async () => {
+    throw new Error('the reviewer launch failed');
+  };
+
+  await assert.rejects(
+    executeReview(run.id, vars.slotId, {
+      reviewRunner: 'claude',
+      model: 'opus',
+      validationDepth: 'static-code',
+      mode: 'cold',
+      reviewId: 'lineage-a',
+    }),
+    /the reviewer launch failed/,
+  );
+
+  assert.equal(claimWarmReviewerSession(retained('lineage-a')), null);
+  assert.equal(
+    claimWarmReviewerSession(retained('lineage-b'))?.runnerSessionId,
+    'lineage-b-session',
+  );
 });

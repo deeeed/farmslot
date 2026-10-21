@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- The gate's Request Review preselects each row runner's latest available review in WARM and says why a row stays COLD. The review timeline shows why a review ran a delta-scoped COLD and the ranges it compared.
 - The publication gate offers Accept Review Findings and Publish under More actions when the gateway allows it: it lists the open findings and asks for the reason before publishing.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Run detail's All files opens the criterion's gallery in run detail, also on a run with a gate, and the gallery replaces the review in the link, so a reload or a shared link opens the gallery. A review opens on its evidence's own recording when the opened video comes from another recipe run (run detail's recording on a gate), so step markers match.

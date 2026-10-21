@@ -11,7 +11,7 @@ import {
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, type ExecResult } from '../core/exec.js';
 import { reviewDiffHash } from '../core/review-diff-identity.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
@@ -392,6 +392,109 @@ export async function captureReviewSnapshot(
       return { snapshot, artifactPaths: [] };
     }
   }
+}
+
+/** A lineage's change since its last reviewed head (ADR-063 Amendment 5). */
+export interface ReviewDelta {
+  /** `last..head`; after a rebase, the two `mergeBase..head` ranges `git range-diff` compared. */
+  comparedRanges: string[];
+  /** The `git range-diff` output, present only after a rebase. */
+  rangeDiff?: string;
+}
+
+/**
+ * The delta a re-review checks. While the current head descends from the reviewed head it is
+ * `last..head`. After a rebase it compares the branch's own change at both heads, each against
+ * its merge-base with the base branch, so changes that came only from the base are left out.
+ */
+export async function reviewDeltaSinceReviewedHead(
+  exec: (command: string) => Promise<ExecResult>,
+  params: { lastReviewedHeadSha: string; headSha: string; baseRef: string },
+): Promise<ReviewDelta> {
+  const { lastReviewedHeadSha: last, headSha: head, baseRef } = params;
+  if (
+    (await exec(`git merge-base --is-ancestor ${shellQuote(last)} ${shellQuote(head)}`))
+      .exitCode === 0
+  )
+    return { comparedRanges: [`${last}..${head}`] };
+  const mergeBase = async (sha: string) => {
+    const result = await exec(`git merge-base ${shellQuote(baseRef)} ${shellQuote(sha)}`);
+    const base = result.stdout.trim();
+    if (result.exitCode !== 0 || !/^[0-9a-f]{7,40}$/i.test(base))
+      throw new Error(
+        `${sha} has no merge-base with ${baseRef}: ${result.stderr || result.stdout}`,
+      );
+    return base;
+  };
+  const comparedRanges = [`${await mergeBase(last)}..${last}`, `${await mergeBase(head)}..${head}`];
+  const rangeDiff = await exec(
+    `git range-diff --no-color ${comparedRanges.map(shellQuote).join(' ')}`,
+  );
+  if (rangeDiff.exitCode !== 0)
+    throw new Error(`git range-diff failed: ${rangeDiff.stderr || rangeDiff.stdout}`);
+  return { comparedRanges, rangeDiff: rangeDiff.stdout };
+}
+
+/**
+ * The delta-scoped COLD fallback's range: the immutable snapshot of the delta, plus the
+ * range-diff after a rebase. A delta that can't be computed reviews the branch's whole
+ * change, and says so.
+ */
+export async function captureReviewDeltaSnapshot(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+  loopNumber: number,
+  artifactScope: string | null | undefined,
+  range: { lastReviewedHeadSha: string; baseRef?: string },
+): Promise<{
+  snapshot: ReviewDiffSnapshot;
+  artifactPaths: string[];
+  comparedRanges: string[];
+  rangeDiffPath?: string;
+  deltaUnavailable?: string;
+}> {
+  const exec = (command: string) =>
+    execOnSlot(vars, command, { timeout: 30_000, maxBuffer: REVIEW_DIFF_MAX_BUFFER });
+  const head = await exec('git rev-parse HEAD');
+  const headSha = head.stdout.trim();
+  if (head.exitCode !== 0 || !/^[0-9a-f]{7,40}$/i.test(headSha))
+    throw new Error(`Review head is unavailable: ${head.stderr || head.stdout}`);
+  const { baseRef } = await resolveReviewContext(vars, range.baseRef);
+  let delta: ReviewDelta;
+  let deltaUnavailable: string | undefined;
+  try {
+    delta = await reviewDeltaSinceReviewedHead(exec, {
+      lastReviewedHeadSha: range.lastReviewedHeadSha,
+      headSha,
+      baseRef,
+    });
+  } catch (error) {
+    // The reviewed head left the repository: the fallback still runs, on the whole change.
+    deltaUnavailable = (error as Error).message;
+    const base = await exec(`git merge-base ${shellQuote(baseRef)} ${shellQuote(headSha)}`);
+    if (base.exitCode !== 0) throw error;
+    delta = { comparedRanges: [`${base.stdout.trim()}..${headSha}`] };
+  }
+  const current = delta.comparedRanges.at(-1)!;
+  const captured = await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope, {
+    baseRef: range.baseRef,
+    committedBaseSha: current.slice(0, current.indexOf('..')),
+    committedHeadSha: headSha,
+  });
+  if (delta.rangeDiff === undefined)
+    return {
+      ...captured,
+      comparedRanges: delta.comparedRanges,
+      ...(deltaUnavailable ? { deltaUnavailable } : {}),
+    };
+  const rangeDiffPath = `${reviewArtifactDir(loopNumber, artifactScope)}/review-range-diff.txt`;
+  await writeLargeTextFileOnSlot(vars, `${taskDir}/${rangeDiffPath}`, delta.rangeDiff);
+  return {
+    ...captured,
+    artifactPaths: [...captured.artifactPaths, rangeDiffPath],
+    comparedRanges: delta.comparedRanges,
+    rangeDiffPath,
+  };
 }
 
 export async function captureFixDeltaSnapshot(

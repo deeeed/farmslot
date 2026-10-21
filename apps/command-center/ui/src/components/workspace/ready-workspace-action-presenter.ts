@@ -750,6 +750,8 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         allowedActions: ['request-review'],
         allowSequence: true,
         reviewLineages: reviewLineagesForRun(this.run),
+        // ADR-063 Amendment 5: rows preselect their runner's latest available lineage in WARM.
+        lineageOptions: this._payload?.reviewLineageOptions,
         defaults: this._reviewPicker.context.defaults,
       },
     });

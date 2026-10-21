@@ -36,7 +36,7 @@ import {
   runReviewRetryLoop,
   shouldSkipForDisabledReviewConfig,
 } from './orchestrator.js';
-import type { ReviewAgentResult } from './review-agent.js';
+import type { ReReviewContinuation, ReviewAgentResult } from './review-agent.js';
 import { admitReviewRound, settleReviewRoundNoVerdict } from './review-round-budget.js';
 
 test('deferred handoffs name a missing prior-task receipt instead of claiming worker activity', async (t) => {
@@ -1092,6 +1092,8 @@ interface ScriptedDepsOptions {
   feedbackErrors?: Array<Error | undefined>;
   fixDeltaFiles?: number;
   fixDeltaUnavailable?: boolean;
+  /** Re-reviews return their lineage and reviewed head, as the reviewer does. */
+  lineage?: boolean;
 }
 
 interface CallLog {
@@ -1105,6 +1107,8 @@ interface CallLog {
   artifactScopes: Array<string | null | undefined>;
   modes: Array<string | undefined>;
   reviewEfforts: Array<string | null | undefined>;
+  reviewIds: Array<string | null | undefined>;
+  rereviews: Array<ReReviewContinuation | null | undefined>;
   progressDetails: string[];
 }
 
@@ -1120,6 +1124,8 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: ReviewRetryDeps; calls: C
     artifactScopes: [],
     modes: [],
     reviewEfforts: [],
+    reviewIds: [],
+    rereviews: [],
     progressDetails: [],
   };
   let reviewIdx = 0;
@@ -1207,10 +1213,14 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: ReviewRetryDeps; calls: C
       artifactScope,
       mode,
       effort,
+      reviewId,
+      rereview,
     ) => {
       calls.artifactScopes.push(artifactScope);
       calls.modes.push(mode);
       calls.reviewEfforts.push(effort);
+      calls.reviewIds.push(reviewId);
+      calls.rereviews.push(rereview);
       calls.reviewAgent += 1;
       const scripted = opts.reviewVerdicts[reviewIdx] ?? 'issues';
       reviewIdx += 1;
@@ -1223,6 +1233,16 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: ReviewRetryDeps; calls: C
       return {
         verdict,
         ...(incomplete ? { incomplete: true } : {}),
+        ...(opts.lineage
+          ? {
+              reviewId: reviewId ?? undefined,
+              reviewSnapshot: {
+                source: 'local-git' as const,
+                headSha: `reviewed-head-${loopNumber}`,
+                capturedAt: completedAt,
+              },
+            }
+          : {}),
         issues: verdict === 'pass' ? [] : ISSUES,
         timeline: [
           {
@@ -2167,26 +2187,43 @@ test('runReviewRetryLoop: records worker-fix timeline segment before re-review',
   assert.equal(typeof result.timeline?.[1]?.durationMs, 'number');
 });
 
-test('runReviewRetryLoop threads mode into every re-review launch', async () => {
-  // The retry loop is the code that actually relaunches reviewers, so it must
-  // forward the resolved policy to runReviewAgent — and default to
-  // warm-per-reviewer when the caller omits it — or re-reviews rebuild the
-  // whole review from scratch after every worker fix.
-  const warm = buildDeps({
-    reviewVerdicts: ['pass'],
-    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+test('runReviewRetryLoop re-reviews WARM in the lineage that raised the findings', async () => {
+  // ADR-063 Amendment 5 (TAT-4145 bda11b1a): a COLD first pass's re-reviews after each fix
+  // continue its lineage WARM from its last reviewed head, with its findings for a fallback.
+  const lineage = buildDeps({
+    reviewVerdicts: ['issues', 'pass'],
+    fixSignals: [
+      { status: 'complete', timestamp: new Date().toISOString() },
+      { status: 'complete', timestamp: new Date().toISOString() },
+    ],
+    lineage: true,
   });
   await runReviewRetryLoop({
     ...baseArgs,
-    maxRetries: 1,
-    reviewResult: { verdict: 'issues', issues: ISSUES },
+    maxRetries: 2,
+    reviewResult: {
+      verdict: 'issues',
+      issues: ISSUES,
+      reviewId: 'pipeline-review-run',
+      reviewSnapshot: {
+        source: 'local-git',
+        headSha: 'reviewed-head-1',
+        capturedAt: new Date().toISOString(),
+      },
+    },
     retryCount: 0,
-    mode: 'warm',
-    deps: warm.deps,
+    deps: lineage.deps,
   });
-  assert.deepEqual(warm.calls.modes, ['warm']);
+  assert.deepEqual(lineage.calls.modes, ['warm', 'warm']);
+  assert.deepEqual(lineage.calls.reviewIds, ['pipeline-review-run', 'pipeline-review-run']);
+  assert.deepEqual(lineage.calls.rereviews, [
+    { lastReviewedHeadSha: 'reviewed-head-1', priorIssues: ISSUES },
+    { lastReviewedHeadSha: 'reviewed-head-2', priorIssues: ISSUES },
+  ]);
 
-  const dflt = buildDeps({
+  // A result without a recorded reviewed head has no lineage to continue: the
+  // re-review is a first pass in the loop's mode.
+  const firstPass = buildDeps({
     reviewVerdicts: ['pass'],
     fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
   });
@@ -2195,9 +2232,10 @@ test('runReviewRetryLoop threads mode into every re-review launch', async () => 
     maxRetries: 1,
     reviewResult: { verdict: 'issues', issues: ISSUES },
     retryCount: 0,
-    deps: dflt.deps,
+    deps: firstPass.deps,
   });
-  assert.deepEqual(dflt.calls.modes, ['cold']);
+  assert.deepEqual(firstPass.calls.modes, ['cold']);
+  assert.deepEqual(firstPass.calls.rereviews, [undefined]);
 });
 
 test('retryDeferredFixDelivery adopts the re-resolved pane when the stored target is dead', async () => {

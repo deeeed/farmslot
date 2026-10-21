@@ -193,13 +193,21 @@ export function ReviewDispatchPicker({
                 </View>
                 {row.selection.mode === 'warm' && row.context && (
                   <Text style={styles.help} testID={`${testID}-lineage-${index}`}>
-                    Review lineage {row.context.repository}#{row.context.prNumber} /{' '}
+                    Review lineage{' '}
+                    {row.context.repository
+                      ? `${row.context.repository}#${row.context.prNumber} / `
+                      : ''}
                     {row.context.reviewId}
                   </Text>
                 )}
+                {row.note ? (
+                  <Text style={styles.help} testID={`${testID}-note-${index}`}>
+                    {row.note}
+                  </Text>
+                ) : null}
                 <Text style={styles.help}>
                   {row.selection.mode === 'warm'
-                    ? "Reuse this PR's verified reviewer session for changes since its last reviewed head. An unavailable session requires waiting or choosing COLD."
+                    ? "Continue this review's verified reviewer session for changes since its last reviewed head. An unavailable session requires waiting or choosing COLD."
                     : 'Create a fresh reviewer session for the complete PR diff.'}
                 </Text>
               </>

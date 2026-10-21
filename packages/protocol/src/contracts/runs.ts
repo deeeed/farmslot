@@ -432,11 +432,28 @@ export interface ReviewSelection {
 /** Ordered reviewer selections. Array order is the execution order. */
 export type ReviewSequence = ReviewSelection[];
 
-/** Trusted request provenance, separate from the four configurable choices. */
+/**
+ * Trusted request provenance, separate from the four configurable choices. A lineage is
+ * keyed by its run family and `reviewId`; the PR is checked once both sides have one.
+ */
 export interface ReviewContinuationContext {
-  repository: string;
-  prNumber: number;
+  repository?: string;
+  prNumber?: number;
   reviewId: string;
+  /** Run family the lineage belongs to; it never continues in another family. */
+  familyId?: string;
+}
+
+/** A review lineage a gate request can continue, as the gateway sees it (ADR-063 Amendment 5). */
+export interface ReviewLineageOption {
+  context: ReviewContinuationContext;
+  runner: string;
+  model: string | null;
+  effort: string | null;
+  /** When the lineage last reviewed. */
+  reviewedAt: string;
+  /** Why its retained session can't continue on this run; absent when it can. */
+  unavailableReason?: string;
 }
 
 /** Context rows align with the complete sequence, including the first request row. */
@@ -484,7 +501,19 @@ export type ReviewSessionRefusalReason =
   | 'missing-session'
   | 'missing-reviewed-head'
   | 'session-busy'
-  | 'session-unavailable';
+  | 'session-unavailable'
+  | 'reviewed-head-not-ancestor';
+
+/** Why a re-review ran COLD in a fresh session, and the ranges it compared (ADR-063 Amendment 5). */
+export interface ReviewSessionFallback {
+  reason: ReviewSessionRefusalReason;
+  detail: string;
+  /**
+   * `lastReviewedHead..currentHead`. After a rebase, the branch's own change at both
+   * heads (`mergeBase..head`), compared with `git range-diff`.
+   */
+  comparedRanges: string[];
+}
 
 export interface ReviewSessionTrace {
   mode: ReviewMode;
@@ -501,6 +530,8 @@ export interface ReviewSessionTrace {
   priorSessionId?: string;
   sessionId?: string;
   refusalReason?: ReviewSessionRefusalReason;
+  /** Set when a re-review's retained session was unavailable and it ran a delta-scoped COLD. */
+  fallback?: ReviewSessionFallback;
 }
 
 /** Frozen summary for one run in a repeated-PR review chain. */
@@ -1078,6 +1109,8 @@ export interface ReadyGatePayload {
   currentDescription?: { title: string; body: string; publishedAt?: string };
   reviewPolicy?: ReviewPolicy;
   reviews?: ReviewStatus[];
+  /** Lineages a Request Review can continue, most recent first, with their session's availability. */
+  reviewLineageOptions?: ReviewLineageOption[];
   reviewLaunchRejection?: PublicationReviewLaunchRejection;
   gatePolicy?: GatePolicy;
   /** Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost). */
