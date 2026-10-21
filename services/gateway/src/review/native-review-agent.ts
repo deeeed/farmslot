@@ -7,6 +7,7 @@ import {
   type ReviewSessionFallback,
   type ReviewValidationDepth,
 } from '@farmslot/protocol';
+import { reviewArtifactDir } from '@farmslot/review-dispatch';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
@@ -101,7 +102,6 @@ import {
   durationBetween,
   readPersistedReviewSnapshot,
   removeSlotFiles,
-  reviewArtifactDir,
 } from './snapshots.js';
 import { expandReviewTemplate } from './templates.js';
 import {

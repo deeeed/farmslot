@@ -39,7 +39,7 @@ export interface RunActivityView {
   steps: RunStep[];
 }
 
-function liveReviewActor(
+export function runReviewActivityContext(
   run: Run,
   roles: readonly AgentRole[] = ['review', 'review-fix'],
 ): AgentContext | undefined {
@@ -67,7 +67,7 @@ export function runTerminalView(run: Run, contextId?: string) {
     };
   let context =
     (contextId ? contexts.find((entry) => entry.id === contextId) : undefined) ??
-    liveReviewActor(run, ['review', 'review-fix', 'ci-fix']) ??
+    runReviewActivityContext(run, ['review', 'review-fix', 'ci-fix']) ??
     contexts.find((entry) => entry.role === primaryRoleForFlow(run.flowType)) ??
     contexts.find((entry) => entry.role === 'primary');
   const owner = context?.nativeSessionOwner;
@@ -145,7 +145,7 @@ export function runActivityView(run: Run): RunActivityView | null {
   if (!owner) return null;
   const actor =
     ['review', 'human-gate'].includes(owner.name) || ['fixing', 'reviewing'].includes(run.status)
-      ? liveReviewActor(run)
+      ? runReviewActivityContext(run)
       : undefined;
   const kind = actor
     ? actor.role === 'review-fix'

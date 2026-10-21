@@ -17,7 +17,7 @@ import {
   type RunnerSessionUsage,
   type WorkerSignalChecklistTiming,
 } from '@farmslot/protocol';
-import { executionModelFromSelection } from '@farmslot/review-dispatch';
+import { executionModelFromSelection, reviewArtifactDir } from '@farmslot/review-dispatch';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
@@ -68,7 +68,6 @@ import {
   debugReviewLog,
   durationBetween,
   readPersistedReviewSnapshot,
-  reviewArtifactDir,
   waitForSessionTranscriptToSettle,
 } from './snapshots.js';
 import { reviewerFeedbackRelPath } from './template-paths.js';

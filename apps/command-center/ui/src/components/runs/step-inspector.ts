@@ -1,23 +1,37 @@
 import { html, nothing } from 'lit';
+import { state } from 'lit/decorators.js';
 import { customElement } from 'lit/decorators.js';
 
 import {
   type FamilyObservabilityArtifact,
+  type FsReadResult,
+  Methods,
   resolveRunSlotId,
   type RunStep,
   runStepDisplayDetail,
   runStepDisplayStatus,
   staticReviewReplayBlock,
 } from '@farmslot/protocol';
+import {
+  loadReviewHistoryArtifacts,
+  type ReviewHistoryArtifacts,
+  reviewHistoryIdentity,
+  reviewHistoryView,
+} from '@farmslot/review-dispatch';
 
 import '../shared/media-lightbox.js';
+import '../shared/diff-viewer-modal.js';
 import '../shared/step-artifacts.js';
 import '../shared/slot-prepare-options.js';
 import '../progress-tracker/progress-tracker.js';
 
+import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
+import { currentRecoveryEpoch, isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 import { SubtaskOpenState } from '../progress-tracker/subtask-block.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
+import { runArtifactApiPath } from '../workspace/workspace-artifacts.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
 import { isRunWorking, locateStepArtifact } from './run-detail-model.js';
@@ -42,13 +56,11 @@ import {
   LIST_KEYS,
   LOG_KEYS,
   OUTPUT_KEYS,
-  reviewLoopAttempts,
   reviewRequestHref,
   stepArtifactsForRunStep,
   stepArtifactUrl,
   type StepCostInfo,
   stepDurationLabel,
-  stepHasReviewLoop,
   stepQueueTimingRows,
 } from './step-inspector-model.js';
 import { renderReviewAttempt } from './step-inspector-review-renderer.js';
@@ -337,22 +349,147 @@ export class StepInspector extends StepInspectorState {
     `;
   }
 
+  @state() private _historyArtifacts: ReviewHistoryArtifacts = {};
+  private _historyIdentity = '';
+  @state() private _historyLoading = false;
+  @state() private _historyDiff: {
+    path: string;
+    text: string;
+    runId: string;
+    epoch: number;
+  } | null = null;
+
+  private async _loadHistory(force = false) {
+    const run = this.run;
+    if (!run || !this.step?.name.includes('review')) return;
+    const epoch = currentRecoveryEpoch();
+    const identity = `${epoch}:${reviewHistoryIdentity(run)}`;
+    if (!force && identity === this._historyIdentity) return;
+    this._historyIdentity = identity;
+    this._historyArtifacts = {};
+    this._historyLoading = true;
+    const artifacts = await loadReviewHistoryArtifacts(
+      run,
+      async (path) => {
+        const response = await gatewayHttpFetch(runArtifactApiPath(run.id, { path }));
+        if (response.status === 404) return null;
+        if (!response.ok) throw new Error(`Artifact HTTP ${response.status}`);
+        return response.text();
+      },
+      async (params) => {
+        if (!isRecoveryEpochCurrent(epoch)) throw new Error('Farm connection changed');
+        return (await gateway.request<FsReadResult>(Methods.FS_READ, params)).content;
+      },
+    );
+    if (
+      this.isConnected &&
+      isRecoveryEpochCurrent(epoch) &&
+      this.run?.id === run.id &&
+      this._historyIdentity === identity
+    ) {
+      this._historyArtifacts = artifacts;
+      this._historyLoading = false;
+    }
+  }
+
   private _renderReviewLoopSummary(step: RunStep) {
-    if (!stepHasReviewLoop(step)) return nothing;
-    const out = (step.outputs ?? {}) as Record<string, unknown>;
-    const timeline = Array.isArray(out.timeline) ? (out.timeline as Record<string, unknown>[]) : [];
-    const attempts = reviewLoopAttempts(step);
-    return html`
-      <div class="section-title">Review Loop</div>
-      <div class="review-loop">
-        ${timeline.length
-          ? html`<div class="review-loop-segments">
-              ${timeline.map((segment) => this._renderReviewTimelineSegment(segment))}
-            </div>`
-          : nothing}
-        ${attempts.map((attempt, index) => renderReviewAttempt(attempt, index))}
+    if (!step.name.includes('review') || !this.run) return nothing;
+    const currentIdentity = `${currentRecoveryEpoch()}:${reviewHistoryIdentity(this.run)}`;
+    const history = reviewHistoryView(
+      this.run,
+      this._historyIdentity === currentIdentity ? this._historyArtifacts : {},
+    );
+    if (!history.roundCount && !history.segments.length && !history.chain.length) return nothing;
+    const openArtifact = (path: string) => {
+      if (!this.run) return;
+      const content = this._historyArtifacts[path]?.content;
+      if (content !== undefined) {
+        this._historyDiff = {
+          path,
+          text: content,
+          runId: this.run.id,
+          epoch: currentRecoveryEpoch(),
+        };
+        return;
+      }
+      const artifact: FamilyObservabilityArtifact = {
+        runId: this.run.id,
+        familyId: this.run.familyId,
+        path,
+        purpose: 'diff',
+        source: 'artifact-manifest',
+      };
+      this._onStepArtifactClick(
+        new CustomEvent('step-artifact-click', { detail: { artifacts: [artifact], index: 0 } }),
+      );
+    };
+    return html`<section data-testid="review-history">
+      <div class="section-title">
+        Review history · ${history.summary}
+        <button @click=${() => this._loadHistory(true)}>Refresh history</button>
       </div>
-    `;
+      ${this._historyLoading
+        ? html`<div class="review-loop-meta">Loading recorded round details…</div>`
+        : nothing}
+      ${history.segments.length
+        ? html`<div class="review-loop-segments">
+            ${history.segments.map((segment) => this._renderReviewTimelineSegment(segment))}
+          </div>`
+        : nothing}
+      ${history.chain.length
+        ? html`<details>
+            <summary>Review generations · ${history.chain.length}</summary>
+            ${history.chain.map(
+              (entry) =>
+                html`<div class="review-loop-row">
+                  <div>
+                    <strong>Generation ${entry.generation} · ${entry.verdict}</strong>
+                    <div>
+                      ${entry.runner ?? 'Unknown runner'} / ${entry.model ?? 'default'} ·
+                      ${entry.mode.toUpperCase()} · ${entry.validationDepth}
+                    </div>
+                    <div>${entry.range} · session ${entry.continuity}</div>
+                    ${entry.diffPath
+                      ? html`<a
+                          href=${`#run/${entry.runId}?tab=files&file=${encodeURIComponent(entry.diffPath)}`}
+                          >Open generation diff</a
+                        >`
+                      : nothing}
+                  </div>
+                </div>`,
+            )}
+          </details>`
+        : nothing}
+      ${history.checks.map(
+        (check) =>
+          html`<div class="review-loop">
+            <div>${check.runner} / ${check.model} · ${check.source}</div>
+            ${check.stale
+              ? html`<div>This review no longer matches the current package.</div>`
+              : nothing}
+            ${check.continuation ? html`<div>${check.continuation}</div>` : nothing}
+            ${check.rounds.map((round, index) =>
+              renderReviewAttempt(
+                round,
+                index === check.rounds.length - 1 && round.verdict !== 'pass' ? -1 : index,
+                openArtifact,
+              ),
+            )}
+          </div>`,
+      )}
+      <diff-viewer-modal
+        .open=${Boolean(
+          this._historyDiff &&
+          this._historyDiff.runId === this.run.id &&
+          this._historyDiff.epoch === currentRecoveryEpoch(),
+        )}
+        .title=${this._historyDiff?.path ?? 'Fix changes'}
+        .diffText=${this._historyDiff?.text ?? ''}
+        @diff-modal-close=${() => {
+          this._historyDiff = null;
+        }}
+      ></diff-viewer-modal>
+    </section>`;
   }
 
   private _renderReviewTimelineSegment(segment: Record<string, unknown>) {
@@ -419,6 +556,7 @@ export class StepInspector extends StepInspectorState {
       if (el) el.scrollTop = el.scrollHeight;
     }
     this._syncTickTimer();
+    void this._loadHistory();
     const pollCount = (this.step?.outputs as Record<string, unknown> | undefined)?.pollCount;
     if (this.run) {
       this._ciPoke.observePoll(this.run.id, typeof pollCount === 'number' ? pollCount : null);
@@ -445,6 +583,7 @@ export class StepInspector extends StepInspectorState {
       this._tickTimer = null;
     }
     this._ciPoke.dispose();
+    this._historyIdentity = '';
   }
 
   private _renderLogPaths(key: string, value: unknown) {

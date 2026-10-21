@@ -29,7 +29,7 @@ import {
   type Run,
   type WorkerSignal,
 } from '@farmslot/protocol';
-import { resolveReviewMode } from '@farmslot/review-dispatch';
+import { resolveReviewMode, reviewArtifactDir } from '@farmslot/review-dispatch';
 
 import { upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
@@ -50,7 +50,7 @@ import {
   settleReviewRoundNoVerdict,
 } from '../review/review-round-budget.js';
 import { recordReviewedInputs } from '../review/reviewed-inputs.js';
-import { readPersistedReviewSnapshot, reviewArtifactDir } from '../review/snapshots.js';
+import { readPersistedReviewSnapshot } from '../review/snapshots.js';
 import { getReviewConfig } from '../review/templates.js';
 import {
   isSuccessfulTerminalReviewSignal,

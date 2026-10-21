@@ -17,6 +17,7 @@ import {
   liveGateParkView,
   Methods,
   type RecipeRunArtifactGroup,
+  reviewChainForRun,
   type Run,
   type RunRecipeRunsForRunResult,
   type RunRecordedEvidenceReview,
@@ -95,6 +96,7 @@ import { readReviewRun } from '../workspace-shared/review-publication-action';
 import { ReviewPublication } from '../workspace-shared/ReviewPublication';
 
 import { InteractiveOperatorPacketsPanel } from './components/InteractiveOperatorPacketsPanel';
+import { ReviewHistoryPanel } from './components/ReviewHistoryPanel';
 import {
   CockpitTile,
   decisionPresentationForRun,
@@ -776,6 +778,11 @@ export default function RunDetailScreen() {
 
         <RunPosturePanel state={runPosture} gatePark={liveGateParkView(run)} />
         <ReviewPublication run={run} context="saved" />
+        <ReviewHistoryPanel
+          run={run}
+          chain={reviewChainForRun(run)}
+          onOpenArtifact={(path) => openRunEvidenceArtifact(path)}
+        />
 
         {reviewPackageActiveTab === 'evidence' && focusedArtifactPath ? (
           <RunFocusedArtifactCard

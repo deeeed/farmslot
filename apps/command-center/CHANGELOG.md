@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add connected review-history proof for round details and recorded fix diffs.
+
 - Add a connected review-workspace probe for exact line-comment reveal, highlight and inline comment display.
 
 - Add terminal-entry proof for exact reviewer pane navigation and finished-run availability.
