@@ -4,6 +4,11 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.37.1 - 2026-10-22
+
+- Saved-session resume accepts large retained-thread replies separately from the bounded event journal.
+- Align with `@farmslot/protocol` 0.63.0.
+
 ## 0.37.0 - 2026-10-21
 
 - Align with `@farmslot/protocol` 0.61.0, `@farmslot/adapter-sdk` 0.25.1.
