@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.11.0 - 2026-10-21
+
 - Share run terminal actor selection and target identity between Command Center and Companion, including finished-run availability.
 
 ## 0.10.1 - 2026-10-21
