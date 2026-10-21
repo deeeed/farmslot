@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ReadyGatePayload, ReviewStatus } from '../src/contracts/runs.js';
-import { reviewRequirementDisplay } from '../src/runs/review-policy.js';
+import { reviewFindingId } from '../src/runs/review-findings.js';
+import { reviewPolicySatisfied, reviewRequirementDisplay } from '../src/runs/review-policy.js';
 
 const payload = (): ReadyGatePayload => ({
   kind: 'ready',
@@ -23,6 +24,51 @@ const payload = (): ReadyGatePayload => ({
       reviewedHeadSha: 'b'.repeat(40),
     },
   ],
+});
+
+test('person-settled evidence findings satisfy review policy without changing the recorded verdict', () => {
+  const issue = {
+    file: 'artifacts/evidence-manifest.json',
+    description: 'AC-1 needs a visual decision.',
+  };
+  const review: ReviewStatus = {
+    id: 'review',
+    source: 'pipeline',
+    mode: 'warm',
+    loopNumber: 1,
+    reviewerSessionId: 'session',
+    reviewedHeadSha: 'head',
+    verdict: 'issues',
+    unresolvedCount: 1,
+    issues: [issue],
+    settledFindings: [
+      {
+        reviewId: 'review',
+        headSha: 'head',
+        claimId: 'AC-1',
+        findingId: reviewFindingId('review', 'head', issue),
+        receiptId: 'person-receipt',
+      },
+    ],
+  };
+  const policy = { minimumReviews: 1, requestedBy: 'dispatch' as const };
+  assert.equal(reviewPolicySatisfied(policy, [review]), true);
+  assert.equal(review.verdict, 'issues');
+  assert.deepEqual(review.issues, [issue]);
+  assert.equal(
+    reviewPolicySatisfied(policy, [{ ...review, reviewedHeadSha: 'other-head' }]),
+    false,
+  );
+  assert.equal(
+    reviewPolicySatisfied(policy, [
+      {
+        ...review,
+        unresolvedCount: 2,
+        issues: [issue, { file: 'src/orders.ts', description: 'AC-1 submits the wrong quantity.' }],
+      },
+    ]),
+    false,
+  );
 });
 
 test('zero required reviews remain satisfied with failed historical attempts', () => {

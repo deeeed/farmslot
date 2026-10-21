@@ -91,6 +91,49 @@ digest. The publication approval records the accepted findings and digest, the
 reason, the package head and the approver, and the published PR body discloses
 them under "Accepted review findings".
 
+### Claim confirmation and retained review findings
+
+A qualified person `confirmed` visual receipt MUST settle only findings bound
+to that claim's evidence at the reviewed head. The receipt MUST retain stable
+finding IDs, their review IDs and head, alongside its existing person, claim,
+execution and closure identities. Review verdicts, issue text and attempts MUST
+remain unchanged. Readiness and review-policy counts MUST exclude these settled
+findings and retain every code-defect or ambiguously bound finding.
+
+The gateway MUST qualify the finding's evidence location and claim binding
+against the captured source and original review. Mentioning an AC in a code
+finding does not qualify it. A later rejected judgment, different evidence
+closure, different claim execution or different reviewed head MUST NOT inherit
+the settlement. Services and pipeline judgments cannot create person settlement.
+
+Qualification uses the original finding's primary location: the engine evidence
+manifest or selected media under its captured execution root. The finding MUST
+reference exactly one declared claim and MUST NOT cite a source-code defect.
+The independent native result for that review lineage, reviewer session and
+head MUST bind a rejection of the same claim, execution and evidence closure.
+Its recorded context, generation, lease and command MUST agree. Missing or
+ambiguous qualification leaves the finding open; no new model judgment is used.
+
+`RecipeVisualJudgmentReceipt.settledReviewFindings` contains
+`ReviewFindingReference` rows with `findingId`, `reviewId` and `headSha`.
+`reviewFindingId` is the canonical recipe-document digest of the review ID,
+head, original file, line or null, and description. The qualified shared view
+uses `ReviewStatus.settledFindings`, adding `receiptId` and `claimId` to each
+reference. These derived rows MUST be requalified from the original receipts
+and evidence, never accepted as imported approval authority.
+
+The existing judgment commit and package-refresh path MUST record settlement
+references. Refresh MAY qualify an existing person receipt without recording a
+new judgment. When only human judgments or overrides changed, refresh MUST
+preserve review validity and MAY repair the retained result's registration for
+unchanged code and reviewed evidence. It MUST NOT request a review, consume or
+extend a round, or rewrite the result as a passing review. Changed code or
+reviewed evidence retains the normal review policy.
+
+Recovery MUST distinguish a newer attempt from an older terminal result in the
+same review lineage. It MUST collect the newer attempt's own terminal artifacts
+and native command outcome, without launching a replacement review.
+
 Inspection, hold, evidence selection/judgments, review requests and authorized
 fix/recovery actions MUST remain usable as appropriate. A `collecting` gate may
 gather the visual judgments and reviewer artifacts it still needs. It MUST NOT

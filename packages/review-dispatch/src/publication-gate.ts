@@ -19,9 +19,11 @@ import {
   isValidEvidenceAttestationReason,
   latestReview,
   openHumanGateDecision,
+  openReviewFindingCount,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   type ReviewAttempt,
+  reviewFindingsSatisfied,
   type ReviewIssue,
   type ReviewLineageOption,
   type ReviewRoundBudget,
@@ -193,7 +195,7 @@ export interface ReviewFindingEntry {
 export function reviewFindingEntries(reviews: readonly ReviewStatus[]): ReviewFindingEntry[] {
   return reviews.flatMap((review) =>
     [...(review.attempts ?? []), review].flatMap((entry) => {
-      const findings = Math.max(entry.unresolvedCount ?? 0, entry.issues?.length ?? 0);
+      const findings = openReviewFindingCount(review, entry);
       return entry.verdict === 'issues' && findings > 0
         ? [
             {
@@ -240,7 +242,7 @@ export function publicationReviewBlockingReason(
       if (head && issueHead === head) currentHeadFindings = Math.max(currentHeadFindings, findings);
     }
     if (
-      review.verdict === 'pass' &&
+      reviewFindingsSatisfied(review) &&
       (!prepared || (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha) === prepared.headSha)
     )
       count = 0;

@@ -24,6 +24,7 @@ import {
   type ReadyGatePrPackage,
   reasonWithoutRemedy,
   registeredAcceptanceCriteria,
+  reviewFindingIsSettled,
   type ReviewStatus,
   type Run,
   type RunDecision,
@@ -102,6 +103,7 @@ import {
   reviewCommitFromMarkdown,
   reviewRecommendationFromMarkdown,
 } from './review-artifacts.js';
+import { projectClaimFindingSettlements } from './review-finding-settlements.js';
 import { runSupersededSince } from './run-generation.js';
 import { readTaskArtifactText } from './task-artifacts.js';
 import { visualRepairEvidenceReasons } from './visual-repair.js';
@@ -432,6 +434,7 @@ async function acceptableHeadFindings(
     if (!result || result.incomplete || result.verdict !== 'issues' || result.issues.length < count)
       return undefined;
     for (const issue of result.issues) {
+      if (reviewFindingIsSettled(review, entry, issue)) continue;
       const key = JSON.stringify([review.id, issue.file, issue.line ?? null, issue.description]);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -458,7 +461,25 @@ export async function collectRunGateAssessment(
   preparedPackage: ReadyGatePrPackage | null,
   overrides: Partial<GatePrerequisiteReaders> = {},
   phase: 'publication' | 'post-publication' = 'publication',
-): Promise<{ readiness: RunGateReadiness; acceptance?: AcceptanceStatusLedger }> {
+): Promise<{
+  readiness: RunGateReadiness;
+  acceptance?: AcceptanceStatusLedger;
+  reviews?: ReviewStatus[];
+}> {
+  // Receipt-derived decorations are display data, never imported authority.
+  if (run.engineState?.publishGate?.reviews?.some((review) => review.settledFindings?.length))
+    run = {
+      ...run,
+      engineState: {
+        ...run.engineState,
+        publishGate: {
+          ...run.engineState.publishGate,
+          reviews: run.engineState.publishGate.reviews.map(
+            ({ settledFindings: _settled, ...review }) => review,
+          ),
+        },
+      },
+    };
   const publicationFulfilled =
     phase === 'post-publication' && Boolean(run.engineState?.publishGate?.humanPublicationAdoption);
   if (phase === 'post-publication' && !publicationFulfilled)
@@ -536,7 +557,7 @@ export async function collectRunGateAssessment(
     });
   }
   // One structured-result read serves the review prerequisite and `review` claims.
-  const validInputs =
+  let validInputs =
     !publicationFulfilled && preparedPackage
       ? await reviewsWithValidResults(run, source.reviewResult)
       : [];
@@ -574,6 +595,38 @@ export async function collectRunGateAssessment(
         const evidenceRun = acceptance.inheritedSource?.run ?? run;
         const evidencePackage = acceptance.inheritedSource?.prPackage ?? preparedPackage;
         const inputs = await source.recordedEvidence(evidenceRun, evidencePackage, qa);
+        if (!acceptance.inheritedSource && preparedPackage?.headSha) {
+          const projection = projectClaimFindingSettlements(
+            run,
+            inputs.map((input) => ({ input })),
+            preparedPackage.headSha,
+            run.engineState?.publishGate?.reviews ?? [],
+            new Set(validInputs.map((review) => review.id)),
+          );
+          run = {
+            ...run,
+            engineState: {
+              ...run.engineState,
+              publishGate: {
+                ...run.engineState?.publishGate,
+                reviews: projection.reviews,
+              },
+            },
+          };
+          const validIds = new Set(validInputs.map((review) => review.id));
+          validInputs = projection.reviews.filter((review) => validIds.has(review.id));
+          if (reviewFixReason) {
+            const remaining = publicationReviewBlockingReason(run, preparedPackage);
+            if (!remaining) {
+              reasons.splice(reasons.indexOf(reviewFixReason), 1);
+              reviewFixReason = undefined;
+            } else
+              reviewFixReason.message =
+                reviewFixReason.actionId === 'hold'
+                  ? reasonWithoutRemedy(remaining, true)
+                  : remaining;
+          }
+        }
         const visualPolicy = await readVisualReviewPolicy(evidenceRun);
         const assessed = assessRecordedAcceptance({
           run: evidenceRun,
@@ -780,6 +833,7 @@ export async function collectRunGateAssessment(
         : {}),
     },
     ...(projected ? { acceptance: projected } : {}),
+    ...(preparedPackage ? { reviews: run.engineState?.publishGate?.reviews } : {}),
   };
 }
 
@@ -883,7 +937,7 @@ export async function refreshRunGateReadiness(
     pending.map(async (decision) => {
       const payload = decision.payload!;
       const prepared = payload.kind === 'ready' ? (payload.prPackage ?? null) : null;
-      const { readiness, acceptance } = await collectRunGateAssessment(run, prepared, {
+      const { readiness, acceptance, reviews } = await collectRunGateAssessment(run, prepared, {
         ...overrides,
         progress: async () => progress,
       });
@@ -897,6 +951,7 @@ export async function refreshRunGateReadiness(
           ...payload,
           gateReadiness: readiness,
           ...(payload.kind === 'ready' && acceptance ? { acceptanceStatus: acceptance } : {}),
+          ...(payload.kind === 'ready' && reviews ? { reviews } : {}),
         },
       } as RunDecision;
     }),

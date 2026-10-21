@@ -31,7 +31,7 @@ import {
 import { retainedRunTaskDirectory } from '../run-completion/retained-artifacts.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { readRunProgress, type RunProgressObservation } from '../runners/run-progress.js';
-import { getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { commitRunVisualJudgment, getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import {
   applyBranchFreshnessToReadyGatePayload,
@@ -48,11 +48,13 @@ import {
   reviewFinalSnapshotMatchesPreparedPackage,
   stampPublishGateReviewStatusForPackage,
 } from './gate-policy.js';
-import { refreshRunGateReadiness } from './gate-prerequisites.js';
+import { refreshRunGateReadiness, reviewsWithValidResults } from './gate-prerequisites.js';
 import { buildGateSummary } from './gate-summary.js';
 import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
+import { readGateRecordedEvidenceSources } from './recorded-evidence-sources.js';
 import { refreshReviewDiffIdentities, refreshReviewDiffSnapshot } from './review-diff-refresh.js';
+import { projectClaimFindingSettlements } from './review-finding-settlements.js';
 import { getDiffStat } from './task-artifacts.js';
 import { activeVisualRepair, visualRepairOffered } from './visual-repair.js';
 
@@ -293,7 +295,7 @@ function reviewWasStampedForPackage(
   );
 }
 
-function restampReviewsForRefreshedPackage(
+export function restampReviewsForRefreshedPackage(
   reviews: ReviewStatus[],
   reviewedPackages: Array<ReadyGatePrPackage | undefined>,
   refreshedPackage: ReadyGatePrPackage,
@@ -303,6 +305,11 @@ function restampReviewsForRefreshedPackage(
     const canRestamp =
       review.source === 'dispatch' ||
       review.source === 'human-gate' ||
+      (review.source === 'pipeline' &&
+        !!review.settledFindings?.length &&
+        reviewedPackages.some(
+          (prior) => prior && readyGateReviewSubjectMatches(prior, refreshedPackage),
+        )) ||
       reviewedPackages.some(
         (reviewedPackage) =>
           reviewedPackage &&
@@ -471,8 +478,50 @@ async function refreshPublishPackageTransitionLocked(
         : { ...reviewedPackage, reviewSnapshot: snapshot };
     }),
   );
+  const capturedReviews = (await refreshReviewDiffIdentities(refreshedRun, prepared.reviews)).map(
+    ({ settledFindings: _settled, ...review }) => review,
+  );
+  const valid = await reviewsWithValidResults({
+    ...refreshedRun,
+    artifactBundle: prPackage.artifactBundle ?? refreshedRun.artifactBundle,
+    engineState: {
+      ...refreshedRun.engineState,
+      publishGate: { ...refreshedRun.engineState?.publishGate, reviews: capturedReviews },
+    },
+  });
+  const projection =
+    prPackage.headSha &&
+    valid.some((review) => review.verdict === 'issues') &&
+    refreshedRun.visualJudgmentReceipts?.some(
+      (receipt) =>
+        (receipt.kind ?? 'person-reviewed') === 'person-reviewed' &&
+        receipt.verdict === 'confirmed',
+    )
+      ? projectClaimFindingSettlements(
+          refreshedRun,
+          await readGateRecordedEvidenceSources(refreshedRun, prPackage),
+          prPackage.headSha,
+          capturedReviews,
+          new Set(valid.map((review) => review.id)),
+        )
+      : { reviews: capturedReviews, receipts: [] };
+  for (const receipt of projection.receipts) {
+    if (!receipt.settledReviewFindings?.length) continue;
+    await commitRunVisualJudgment(
+      refreshedRun.id,
+      () => receipt,
+      (current) => {
+        if (
+          (current.engineState?.generation ?? 0) !== generation ||
+          current.slotId !== run.slotId ||
+          current.branch !== run.branch
+        )
+          throw new Error('Run ownership changed during finding settlement');
+      },
+    );
+  }
   const reviews = restampReviewsForRefreshedPackage(
-    await refreshReviewDiffIdentities(refreshedRun, prepared.reviews),
+    projection.reviews,
     reviewedPackages,
     prPackage,
   );

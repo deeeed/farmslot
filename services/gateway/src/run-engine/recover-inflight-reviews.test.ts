@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   type AgentContext,
+  type NativeSessionReadResult,
   type Principal,
   reviewRoundBudgetLabel,
   type ReviewStatus,
@@ -21,6 +22,7 @@ import { makeVars } from '../runners/test-fixtures.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
+import { reviewFinalSnapshotMatchesPreparedPackage } from './gate-policy.js';
 import {
   appendRecoveredContinuationAttempt,
   buildRecoveredReview,
@@ -471,6 +473,195 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
   );
 });
 
+test('a warm attempt is not settled by its lineage result from before that attempt', () => {
+  const context = reviewerContext({
+    status: 'working',
+    artifactScope: 'pipeline-review',
+    attemptStartedAt: '2026-10-21T08:44:08.406Z',
+  });
+  const review: ReviewStatus = {
+    id: 'pipeline-review',
+    source: 'pipeline',
+    mode: 'warm',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    completedAt: '2026-10-21T02:52:07.913Z',
+    attempts: [
+      {
+        loopNumber: 2,
+        mode: 'warm',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        completedAt: '2026-10-21T02:52:07.913Z',
+      },
+      {
+        loopNumber: 3,
+        mode: 'cold',
+        verdict: 'failed',
+        unresolvedCount: 1,
+        completedAt: '2026-10-21T02:54:20.378Z',
+      },
+    ],
+  };
+  assert.equal(reviewerContextIsSettled(context, [review]), false);
+  assert.equal(reviewerContextNeedsRecovery(context, [review]), true);
+  assert.equal(reviewerContextNeedsRecovery({ ...context, status: 'complete' }, [review]), true);
+  const recovered: ReviewStatus = {
+    ...review,
+    completedAt: '2026-10-21T08:50:11.355Z',
+    attempts: [
+      {
+        loopNumber: 4,
+        mode: 'warm',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        startedAt: context.attemptStartedAt,
+        completedAt: '2026-10-21T08:50:11.355Z',
+      },
+    ],
+  };
+  const retained = appendRecoveredContinuationAttempt(
+    { ...review, maxRetries: 2, maxRetriesExhausted: true },
+    recovered,
+  );
+  assert.deepEqual(retained.attempts?.slice(0, 2), review.attempts);
+  assert.equal(retained.attempts?.at(-1)?.loopNumber, 4);
+  assert.equal(retained.completedAt, recovered.completedAt);
+});
+
+test('a falsely complete newer native attempt remains collecting while its own command is running', async (t) => {
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'owner';
+  t.after(() => {
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+  });
+  const vars = makeVars({ remoteRepo: os.tmpdir() });
+  const run = createRun(
+    {
+      project: 'example-mobile-farm',
+      flowType: 'dev',
+      ticketOrPr: 'UNIT-NATIVE-COLLECTION',
+      slotId: vars.slotId,
+    },
+    { nativeOwnerPrincipalId: 'owner' },
+  );
+  const context = reviewerContext({
+    runId: run.id,
+    slotId: vars.slotId,
+    status: 'complete',
+    artifactScope: 'pipeline-review',
+    attemptStartedAt: '2026-10-21T08:44:08.406Z',
+    nativeSession: {
+      sessionId: 'native-session',
+      commandId: 'current-command',
+      generation: 'current-generation',
+      leaseId: 'lease',
+      executionNodeId: 'node',
+      ownerPrincipalId: 'owner',
+    },
+  });
+  t.after(async () => {
+    updateRun(run.id, {
+      agentContexts: [
+        {
+          ...context,
+          nativeSession: { ...context.nativeSession!, closedAt: new Date().toISOString() },
+        },
+      ],
+    });
+    await deleteTestRunIfPresent(run.id);
+  });
+  const review: ReviewStatus = {
+    id: 'pipeline-review',
+    source: 'pipeline',
+    mode: 'warm',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    completedAt: '2026-10-21T02:52:07.913Z',
+  };
+  updateRun(run.id, {
+    agentContexts: [context],
+    engineState: { publishGate: { reviews: [review] } },
+  });
+  const snapshot: NativeSessionReadResult = {
+    session: {
+      id: 'native-session',
+      generation: 'current-generation',
+      hostPid: 10,
+      runner: 'codex',
+      nativeSessionId: 'conversation',
+      ownerPrincipalId: 'owner',
+      executionNodeId: 'node',
+      accountContextId: 'account',
+      cwd: '/tmp/fixture',
+      executable: 'codex',
+      version: 'fixture',
+      mode: 'default',
+      accountMode: 'native',
+      state: 'running',
+      capabilities: {
+        modes: ['default'],
+        streaming: true,
+        tools: true,
+        approvals: false,
+        questions: false,
+        interrupt: true,
+        resume: true,
+      },
+    },
+    events: [],
+    cursor: 0,
+    hasMore: false,
+    pendingRequests: [],
+    commands: [
+      {
+        commandId: 'current-command',
+        generation: 'current-generation',
+        state: 'accepted',
+        submitted: true,
+        accepted: true,
+      },
+    ],
+  };
+  const result = await recoverInflightPublicationReviews(run.id, vars.slotId, {
+    readers: {
+      slot: async () => vars,
+      config: async () => ({ enabled: true }),
+      package: async () => undefined,
+      native: async () => snapshot,
+    },
+  });
+  assert.deepEqual(result.recoveredIds, []);
+  assert.equal(getRun(run.id)!.agentContexts?.[0]?.status, 'working');
+  assert.deepEqual(getRun(run.id)!.engineState?.publishGate?.reviews, [review]);
+  assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length ?? 0, 0);
+
+  let stopped = false;
+  t.mock.module('../runners/native/worker.js', {
+    namedExports: {
+      ...(await import('../runners/native/worker.js')),
+      cancelNativeWorkerContext: async () => {
+        stopped = true;
+      },
+    },
+  });
+  snapshot.commands[0] = { ...snapshot.commands[0]!, state: 'failed', outcome: 'failed' };
+  await recoverInflightPublicationReviews(run.id, vars.slotId, {
+    readers: {
+      slot: async () => vars,
+      config: async () => ({ enabled: true }),
+      package: async () => undefined,
+      native: async () => snapshot,
+    },
+  });
+  assert.equal(stopped, true);
+  assert.equal(getRun(run.id)!.agentContexts?.[0]?.status, 'failed');
+  assert.deepEqual(getRun(run.id)!.engineState?.publishGate?.reviews, [review]);
+});
+
 test('reviewerContextIsSettled terminalizes persisted and superseded reviewer ghosts', () => {
   const working = reviewerContext({
     status: 'working',
@@ -655,6 +846,90 @@ test('delivery-failed reviewer can recover from a later fresh complete signal', 
 test('restart recovery uses the reviewer-owned artifact scope instead of review-array length', () => {
   assert.equal(recoveredReviewArtifactScope({ artifactScope: 'review-7' }, 'review-2'), 'review-7');
   assert.equal(recoveredReviewArtifactScope({}, 'review-2'), 'review-2');
+});
+
+test('restart recovery uses attempt ordinals in a later requested review', () => {
+  const previousHead = 'b'.repeat(40);
+  const pkg = makeReadyGatePackage({
+    headSha: 'c'.repeat(40),
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'origin/main',
+      baseSha: 'a'.repeat(40),
+      headSha: 'c'.repeat(40),
+      diffHash: 'full-contribution',
+      capturedAt: '2026-07-16T10:30:00.000Z',
+    },
+  });
+  const previous: ReviewStatus = {
+    id: 'review-2',
+    source: 'human-gate',
+    loopNumber: 2,
+    mode: 'cold',
+    verdict: 'issues',
+    unresolvedCount: 1,
+    reviewedHeadSha: previousHead,
+    reviewerSessionId: 'retained-session',
+    attempts: [{ loopNumber: 1, mode: 'cold', verdict: 'issues', unresolvedCount: 1 }],
+    session: {
+      mode: 'cold',
+      continuity: 'fresh',
+      reviewId: 'review-2',
+      sessionId: 'retained-session',
+      lastReviewedHeadSha: previousHead,
+    },
+  };
+  const run = makeRun({ engineState: { publishGate: { reviews: [previous] } } });
+  const ctx = reviewerContext({
+    status: 'complete',
+    artifactScope: 'review-2',
+    reviewId: 'review-2',
+    reviewLoopNumber: 2,
+    runnerSessionId: 'retained-session',
+    attemptStartedAt: '2026-07-16T10:30:00.000Z',
+  });
+  const params = {
+    run,
+    ctx,
+    signal: terminalSignal(),
+    feedback: { verdict: 'pass' as const, issues: [] },
+    reviewSnapshot: { ...pkg.reviewSnapshot!, baseSha: previousHead, diffHash: 'reviewed-delta' },
+    reviewedPackage: pkg,
+  };
+  const recovered = buildRecoveredReview(params);
+  assert.ok(recovered);
+  assert.equal(recovered.mode, 'warm');
+  assert.equal(recovered.attempts?.[0]?.mode, 'warm');
+  assert.equal(recovered.session?.continuity, 'resumed');
+  assert.equal(recovered.session?.lastReviewedHeadSha, previousHead);
+  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(recovered, pkg), true);
+  const appended = appendRecoveredContinuationAttempt(
+    { ...previous, maxRetriesExhausted: true },
+    recovered,
+  );
+  assert.equal(appended.loopNumber, 2, 'the aggregate review row ordinal stays unchanged');
+  assert.deepEqual(
+    appended.attempts?.map((attempt) => attempt.loopNumber),
+    [1, 2],
+  );
+  assert.deepEqual(appended.attempts?.[0], previous.attempts?.[0]);
+
+  const fallback = buildRecoveredReview({
+    ...params,
+    ctx: {
+      ...ctx,
+      runnerSessionId: 'fresh-session',
+      reviewFallback: {
+        reason: 'missing-session',
+        detail: 'Retained session unavailable',
+        comparedRanges: [`${previousHead}..${pkg.headSha}`],
+      },
+    },
+  });
+  assert.ok(fallback);
+  assert.equal(fallback.mode, 'cold');
+  assert.equal(fallback.session?.continuity, 'fresh');
+  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(fallback, pkg), true);
 });
 
 test('buildRecoveredReview preserves the reviewer-owned artifact scope as the review id', () => {
