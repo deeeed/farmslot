@@ -16,6 +16,7 @@ import {
 } from '@farmslot/protocol';
 
 import type { ReReviewContinuation } from './review-agent.js';
+import { reviewContextRoundId } from './review-round-budget.js';
 
 export class WarmReviewRefusal extends Error {
   override name = 'WarmReviewRefusal';
@@ -129,6 +130,15 @@ export function reviewLineageId(review: Pick<ReviewStatus, 'id' | 'session'>): s
   return review.session?.reviewId ?? review.id;
 }
 
+/** Older runtime review IDs were aliases; their gateway artifact scope names the row. */
+export function reviewerContextMatchesLineage(
+  context: Pick<AgentContext, 'reviewId' | 'artifactScope'>,
+  reviewId: string,
+  artifactScope = reviewId,
+): boolean {
+  return context.reviewId === reviewId || context.artifactScope === artifactScope;
+}
+
 /** A lineage's latest gate row. */
 export function latestReviewOfLineage<T extends Pick<ReviewStatus, 'id' | 'session'>>(
   reviews: readonly T[],
@@ -145,6 +155,7 @@ export function lastValidatedReview(review: ReviewStatus | undefined):
   | {
       headSha: string;
       issues: ReviewIssue[];
+      loopNumber: number;
       session?: ReviewSessionTrace;
       sessionId?: string | null;
     }
@@ -163,6 +174,11 @@ export function lastValidatedReview(review: ReviewStatus | undefined):
     ? {
         headSha,
         issues: result.issues ?? [],
+        loopNumber:
+          [...(review?.attempts ?? [])]
+            .reverse()
+            .find((attempt) => attempt.completedAt && attempt.completedAt === result.completedAt)
+            ?.loopNumber ?? result.loopNumber,
         session: result.session,
         sessionId:
           result.reviewerSessionId ?? result.usage?.runnerSessionId ?? result.session?.sessionId,
@@ -327,7 +343,7 @@ export function primaryReviewedHeadForSession(
   return matching?.reviewSnapshot?.headSha ?? null;
 }
 
-/** Recover only completed reviewer contexts of the run family with head verdict provenance. */
+/** Recover a validated baseline, including its binding after a refunded resume failed. */
 export function persistedWarmReviewerSession(
   scope: WarmReviewerScope,
   run: Run,
@@ -348,8 +364,20 @@ export function persistedWarmReviewerSession(
     );
   const validated = lastValidatedReview(review);
   if (!run.slotId) return null;
-  const contexts = [...(run.agentContexts ?? [])].reverse().filter(
-    (candidate) =>
+  const contexts = [...(run.agentContexts ?? [])].reverse().filter((candidate) => {
+    // The accepted result binds legacy contexts even before validation timestamps existed.
+    const legacyResult =
+      validated?.sessionId &&
+      candidate.runnerSessionId === validated.sessionId &&
+      candidate.artifactScope === review?.id;
+    const roundId = reviewContextRoundId(candidate);
+    const refunded =
+      candidate.status === 'failed' &&
+      !!roundId &&
+      !!run.reviewRoundSettlements?.[roundId] &&
+      !candidate.reviewResultValidatedAt &&
+      legacyResult;
+    return (
       candidate.role === 'review' &&
       (scope.transport === 'native'
         ? candidate.nativeSession?.ownerPrincipalId === scope.ownerPrincipalId
@@ -357,10 +385,10 @@ export function persistedWarmReviewerSession(
           (run.transport ?? 'tmux') === 'tmux' &&
           (run.createdByPrincipalId ?? null) === scope.ownerPrincipalId &&
           (run.createdByPrincipalGeneration ?? 0) === (scope.ownerPrincipalGeneration ?? 0)) &&
-      candidate.reviewId === scope.reviewId &&
+      reviewerContextMatchesLineage(candidate, scope.reviewId, review?.id) &&
       candidate.runner === scope.runner &&
-      candidate.status === 'complete' &&
-      candidate.reviewResultValidatedAt &&
+      (candidate.status === 'complete' || refunded) &&
+      (candidate.reviewResultValidatedAt || legacyResult) &&
       (candidate.runnerSessionCapturedAt || candidate.nativeSession?.acceptedAt) &&
       candidate.runnerSessionId &&
       (validated
@@ -376,8 +404,9 @@ export function persistedWarmReviewerSession(
       ((candidate.runnerSessionPath && candidate.target?.window) ||
         (candidate.nativeSession &&
           !candidate.nativeSession.releasedAt &&
-          !candidate.nativeSession.recovery)),
-  );
+          !candidate.nativeSession.recovery))
+    );
+  });
   if (new Set(contexts.map((candidate) => candidate.runnerSessionId)).size > 1)
     throw new WarmReviewRefusal('missing-session', 'the reviewId has ambiguous session provenance');
   const context = contexts[0];
@@ -405,7 +434,7 @@ export function persistedWarmReviewerSession(
     slotId: run.slotId,
     runnerSessionId: context.runnerSessionId!,
     runnerSessionPath: context.runnerSessionPath ?? null,
-    lastLoopNumber: context.reviewLoopNumber ?? review?.loopNumber ?? 1,
+    lastLoopNumber: validated?.loopNumber ?? context.reviewLoopNumber ?? review?.loopNumber ?? 1,
     lastReviewedHeadSha: reviewedHeadSha,
     forensicOnly: false,
     busy: false,

@@ -423,7 +423,7 @@ Every other verification and admission requirement stays in force.
 
 `resolveReviewMode` keeps its precedence for first passes.
 
-**A re-review continues its review's lineage.** A re-review keeps the `reviewId` of the review whose work it checks, and never starts a new lineage. Its result updates that lineage's result. For each requested row, a gate Request Review preselects the run family's most recent lineage reviewed by that row's runner, in WARM, with that lineage's model and effort. The picker preselects WARM only for a lineage whose session is available for this run, as defined below, and only for one row per lineage. A later row with the same runner takes that runner's next most recent lineage, or is new and defaults to COLD. Otherwise it preselects COLD and shows why. A row whose runner has no earlier lineage is new and defaults to COLD. The re-review of changed inputs continues the lineage of the row the pipeline review ran (Amendment 3). The pipeline lineage is identified by the pipeline result's `session.reviewId`.
+**A re-review continues its review's lineage.** A re-review keeps the `reviewId` of the review whose work it checks, and never starts a new lineage. Its result updates that lineage's result. For each requested row, a gate Request Review preselects the run family's most recent lineage reviewed by that row's runner, in WARM, with that lineage's model and effort. The picker preselects WARM for a validated lineage, including when its session is unavailable, and only for one row per lineage. A later row with the same runner takes that runner's next most recent lineage, or is new and defaults to COLD. An unavailable session shows why the review will use a fresh session for the delta. A row whose runner has no earlier lineage is new and defaults to COLD. The re-review of changed inputs continues the lineage of the row the pipeline review ran (Amendment 3). The pipeline lineage is identified by the pipeline result's `session.reviewId`.
 
 **The binding key works before a PR exists.** The WARM key is the run family plus the durable `reviewId` lineage. Once the run has a PR, the PR must match too. A lineage started before the PR existed continues after the PR opens. A lineage never continues in a run of another family.
 
@@ -434,11 +434,13 @@ Every other verification and admission requirement stays in force.
 - another lineage holds it;
 - the current head no longer descends from the lineage's last reviewed head.
 
-**An unavailable session never stops an automatic re-review.** The re-review runs COLD in a fresh session, scoped to the lineage's delta, with the earlier findings in its prompt. Like a WARM re-review, it keeps correctness checks on that delta. That fresh session becomes the lineage's retained session. The same applies when a resume fails to start: the same attempt runs the delta-scoped COLD under its admitted receipt. The review records why it ran COLD and the ranges it compared, and the gate shows both with that review.
+**An unavailable session never stops a re-review.** The re-review runs COLD in a fresh session, scoped to the lineage's delta, with the earlier findings in its prompt. Like a WARM re-review, it keeps correctness checks on that delta. That fresh session becomes the lineage's retained session. The same applies when a resume fails to start: the same attempt runs the delta-scoped COLD under its admitted receipt. The review records why it ran COLD and the ranges it compared, and the gate shows both with that review.
 
 The delta is the change since the lineage's last reviewed head. After a rebase, it compares the branch's own change at both heads (`git range-diff`): the reviewed head against its merge-base with the base branch, and the current head against its current merge-base. Changes that came only from the base branch are left out.
 
-**A person's request.** An explicit WARM request whose session is unavailable shows the reason and offers COLD, as today.
+**A person's request.** Operator and person WARM re-reviews use the same delta fallback as automatic re-reviews. An unavailable session never turns such a request into a full-diff review. A legacy completed reviewer may supply the retained baseline when its validated verdict, reviewed head, provider session, owner, family and artifact scope bind it to that lineage. Missing newer validation timestamps or an older runtime review alias alone do not invalidate that provenance. A failed attempt before inspection does not replace that earlier validated baseline. If the binding transferred to that attempt, its gateway-owned no-verdict settlement permits resuming the same provider session from the earlier baseline.
+
+**Clarification, 2026-10-21:** the lead requested this operator fallback and legacy baseline adoption after an unavailable WARM request could only be replaced with a full COLD review.
 
 **Unchanged:**
 
@@ -464,5 +466,5 @@ There is no new action or RPC. `@farmslot/protocol` changes in one release with 
 - WARM lineage resolution accepts a run family before a PR exists;
 - the re-review paths default to WARM in their review's lineage;
 - the gate's Request Review preselects the row runner's latest lineage in WARM;
-- an automatic re-review whose session is unavailable runs a delta-scoped COLD review;
+- any re-review whose session is unavailable runs a delta-scoped COLD review;
 - the review records the fallback reason and its compared ranges, and the gate shows them with that review in the CLI, Command Center and Companion.

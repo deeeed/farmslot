@@ -207,13 +207,13 @@ export class ReviewDispatchViewModel {
       selection: row.selection,
       context: option ? { ...option.context } : null,
       ...(option?.unavailableReason
-        ? { note: `The earlier review can't continue: ${option.unavailableReason}` }
+        ? { note: `Review changes in a fresh session: ${option.unavailableReason}` }
         : {}),
     };
   }
   /**
    * ADR-063 Amendment 5: a row continues its runner's lineage in WARM, with that lineage's
-   * model and effort, when its session is available; otherwise it stays COLD and says why.
+   * model and effort. An unavailable session uses the same delta in a fresh session.
    */
   private preselectedRow(
     row: ReviewDispatchRow,
@@ -231,15 +231,15 @@ export class ReviewDispatchViewModel {
           { catalog: this.catalog },
         ),
       };
-    const available = !linked.note;
     const option = this.lineageOption(index, row.selection.runner)!;
     return {
       ...linked,
       selection: parseReviewSelection(
         {
           ...row.selection,
-          ...(available ? { model: option.model, effort: option.effort } : {}),
-          mode: available ? 'warm' : 'cold',
+          model: option.model,
+          effort: option.effort,
+          mode: 'warm',
           ...patch,
         },
         { catalog: this.catalog },

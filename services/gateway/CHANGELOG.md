@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Operator WARM re-reviews use the same delta fallback as automatic re-reviews, and can adopt a legacy reviewer session from its validated result and artifact scope. A failed attempt before inspection keeps the earlier baseline. Seen on TAT-4158, whose verified session was refused as missing.
+
 - Admit retained passing reviews from delta-scoped fresh-session fallbacks at their recorded scope. TAT-4191's unchanged-head pass was incorrectly compared with the full PR diff and remained blocked after package refresh.
 
 - Stop native reviewer processes and their children after failed commands; preserve refunded warm attempts and prior findings for an explicit retry after runner recovery. Seen on TAT-4158.

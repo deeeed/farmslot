@@ -29,9 +29,11 @@ import {
 import {
   assertLineageBelongsToRun,
   lastValidatedReview,
+  latestReviewOfLineage,
   lineageContextForRun,
   reReviewOfStatus,
   resolveWarmReviewerSession,
+  reviewerContextMatchesLineage,
   reviewLineageId,
   reviewPRIdentity,
   usableRetainedReviewer,
@@ -339,6 +341,7 @@ export function assertWarmReviewRequestAvailable(
   run: Run,
   request: unknown,
   runs: readonly Run[],
+  options: { requireRetainedSession?: boolean } = {},
 ): void {
   const sequence = reviewSequenceFromRequest(request);
   const context = reviewContextFromRequest(request);
@@ -353,6 +356,18 @@ export function assertWarmReviewRequestAvailable(
         'the requested row has no reviewId lineage context',
       );
     assertLineageBelongsToRun(lineage, run);
+    const prior = latestReviewOfLineage(
+      run.engineState?.publishGate?.reviews ?? [],
+      lineage.reviewId,
+    );
+    // Session checks still run at launch. A validated re-review can use their delta fallback.
+    if (
+      !options.requireRetainedSession &&
+      prior?.runner &&
+      normalizeRunner(prior.runner) === normalizeRunner(row.runner) &&
+      reReviewOfStatus(prior)
+    )
+      continue;
     const nativeOwners = new Set(
       runs
         .filter(
@@ -364,7 +379,14 @@ export function assertWarmReviewRequestAvailable(
           (candidate) =>
             candidate.agentContexts?.flatMap((context) =>
               context.role === 'review' &&
-              context.reviewId === lineage.reviewId &&
+              reviewerContextMatchesLineage(
+                context,
+                lineage.reviewId,
+                latestReviewOfLineage(
+                  candidate.engineState?.publishGate?.reviews ?? [],
+                  lineage.reviewId,
+                )?.id,
+              ) &&
               context.nativeSession
                 ? [context.nativeSession.ownerPrincipalId]
                 : [],
@@ -424,7 +446,7 @@ export function assertWarmReviewRequestAvailable(
 
 /**
  * The lineages a gate Request Review can continue, with their session's availability on this
- * run (ADR-063 Amendment 5). The picker preselects WARM only for an available lineage.
+ * run (ADR-063 Amendment 5). The picker keeps validated lineages WARM, with a delta fallback.
  */
 export async function reviewLineageOptionsForRun(
   run: Run,
@@ -439,12 +461,7 @@ export async function reviewLineageOptionsForRun(
   for (const [reviewId, review] of latest) {
     // A refused request keeps its lineage: the earlier validated result names it.
     const validated = lastValidatedReview(review);
-    if (
-      !review.runner ||
-      !validated?.session?.sessionId ||
-      !['fresh', 'resumed'].includes(validated.session.continuity)
-    )
-      continue;
+    if (!review.runner || !validated) continue;
     const reviewedHeadSha = validated.headSha;
     const context = lineageContextForRun(run, reviewId);
     const selection = {
@@ -458,6 +475,7 @@ export async function reviewLineageOptionsForRun(
         run,
         { ...selection, mode: 'warm', context: { reviewLineages: [context] } },
         runs,
+        { requireRetainedSession: true },
       );
       if (headSha && reviewedHeadSha !== headSha && !(await descends(reviewedHeadSha, headSha)))
         unavailableReason = 'the current head no longer descends from the last reviewed head';

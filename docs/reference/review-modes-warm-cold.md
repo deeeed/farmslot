@@ -167,7 +167,7 @@ cap.
   contract, the requested model or effort differs from its recorded one, another
   lineage holds it, or the current head no longer descends from the lineage's
   last reviewed head.
-- An automatic re-review whose session is unavailable, or whose resume fails to
+- A re-review whose session is unavailable, or whose resume fails to
   start, MUST run COLD in a fresh session in the same attempt and under its
   admitted receipt, scoped to the lineage's delta, with the earlier findings in
   its prompt. That session becomes the lineage's retained session. The review's
@@ -178,8 +178,15 @@ cap.
   both heads with `git range-diff`: the reviewed head against its merge-base
   with the base branch, and the current head against its current merge-base.
   Changes that came only from the base branch are left out.
-- A person's explicit WARM request whose session is unavailable MUST show the
-  reason and offer COLD.
+- Operator and person WARM re-reviews MUST use the same delta fallback. An
+  unavailable session MUST NOT turn a re-review into a full-diff review.
+- Legacy completed contexts MAY establish the retained baseline through the
+  validated verdict, reviewed head, matching provider session, owner, family and
+  artifact scope. A missing newer validation timestamp or an older runtime
+  review alias alone MUST NOT invalidate that provenance. An attempt that fails
+  before inspection MUST NOT replace the last validated baseline. A binding
+  transferred to a failed attempt MAY continue that provider session only with
+  its gateway-owned no-verdict settlement and the earlier validated provenance.
 - Passing review eligibility requires its separate session, current reviewed
   head and verdict evidence. Choosing a different runner proves nothing.
 - A retained reviewer is a resumable session identity, not a running process.
@@ -212,15 +219,15 @@ the project `review.mode` select only first passes.
 
 For each requested row, the gate's Request Review preselects the run family's
 most recent lineage reviewed by that row's runner, in WARM, with that lineage's
-model and effort, when its session is available for this run, and only for one
+model and effort, including when its session is unavailable, and only for one
 row per lineage. A later row with the same runner takes that runner's next most
 recent lineage, or is new and defaults to COLD. A row whose lineage is
-unavailable preselects COLD and shows why. The gateway lists the gate's lineages
+unavailable stays WARM and shows why it will review the delta in a fresh session. The gateway lists the gate's lineages
 and their availability in `ReadyGatePayload.reviewLineageOptions`.
 
 Automatic reviews that create a separate new lineage select the shared COLD
-default. An automatic re-review whose session is unavailable runs the
-delta-scoped COLD fallback above; a person's WARM request is refused. Eligibility
+default. A re-review whose session is unavailable runs the delta-scoped COLD
+fallback above, including operator and person WARM requests. Eligibility
 filtering for authorized alternatives remains separate from mode selection and
 cannot downgrade an explicit WARM request.
 
@@ -276,8 +283,8 @@ The duplicate units listed in ADR-063 MUST be removed after their callers move.
 
 Tests and live receipts MUST prove fresh COLD identity/full range, retained WARM
 identity/delta range (including before a PR exists), the delta-scoped COLD
-fallback of an automatic re-review with its recorded reason and compared ranges
-(including a rebased delta), refusal of a person's unavailable WARM request,
+fallback of automatic and person re-reviews with its recorded reason and
+compared ranges, including a rebased delta, legacy baseline adoption,
 runner-choice-independent eligibility, effort preservation and sequence round
 trips. Web/mobile proof
 MUST exercise the shared picker through user input, not injected UI state.
