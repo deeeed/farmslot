@@ -38,6 +38,13 @@ import {
   reviewRequestFromSequence,
 } from './validation.js';
 
+function rankRetainedLineage(a: ReviewLineageOption, b: ReviewLineageOption): number {
+  return (
+    Number(Boolean(a.unavailableReason)) - Number(Boolean(b.unavailableReason)) ||
+    b.reviewedAt.localeCompare(a.reviewedAt)
+  );
+}
+
 /** Platform-neutral picker state. Hosts render and invoke actions; this model owns selections. */
 export class ReviewDispatchViewModel {
   private currentContext: ReviewDispatchContext;
@@ -217,11 +224,7 @@ export class ReviewDispatchViewModel {
       .filter(
         (option) => option.runner === runner && !earlier.includes(reviewLineageKey(option.context)),
       )
-      .sort(
-        (a, b) =>
-          Number(Boolean(a.unavailableReason)) - Number(Boolean(b.unavailableReason)) ||
-          b.reviewedAt.localeCompare(a.reviewedAt),
-      )[0];
+      .sort(rankRetainedLineage)[0];
   }
   private linkedRow(row: ReviewDispatchRow, index: number): ReviewDispatchRow {
     if (!this.preselects)
@@ -347,11 +350,7 @@ export class ReviewDispatchViewModel {
                     reviewLineageKey(row.context) === reviewLineageKey(option.context),
                 ),
             )
-            .sort(
-              (a, b) =>
-                Number(Boolean(a.unavailableReason)) - Number(Boolean(b.unavailableReason)) ||
-                b.reviewedAt.localeCompare(a.reviewedAt),
-            )[0]
+            .sort(rankRetainedLineage)[0]
         : undefined;
     const initial = retained
       ? { ...selection, runner: retained.runner, model: retained.model, effort: retained.effort }

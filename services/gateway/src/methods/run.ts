@@ -2089,7 +2089,9 @@ export async function resolveRunDecision(
     const reviewRequest = params.selectionData?.reviewRequest;
     assertReviewRequestPayload(reviewRequest, { maxRows: 5 });
     await assertReviewRoundAvailable(getRun(params.runId)!);
-    assertWarmReviewRequestAvailable(existing, reviewRequest, getAllRuns());
+    assertWarmReviewRequestAvailable(existing, reviewRequest, getAllRuns(), {
+      requireRetainedSession: true,
+    });
   }
   if (params.actionId === 'post' && decision.payload?.kind === 'review')
     assertReviewCurationFresh(decision.payload, params.selectionData);

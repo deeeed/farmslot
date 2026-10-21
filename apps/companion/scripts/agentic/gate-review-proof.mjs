@@ -585,6 +585,55 @@ if (phase === 'setup' || phase === 'setup-actions') {
   );
   evidence('gate-before', { gate: seeded, acceptance: progress.acceptanceStatus, issues });
   console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, runId, issuesRunId }));
+} else if (phase === 'verify-warm-refusal') {
+  const { fixture, port } = readState();
+  await stopFixture();
+  const file = path.join(fixture, 'runs', `${requestRunId}.json`);
+  const run = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // Setup before starting the isolated gateway. The missing retained session must refuse
+  // the request before any reviewer can start; orchestration also remains disabled.
+  run.readOnly = false;
+  run.status = 'human-gating';
+  writeJson(file, run);
+  startGateway(fixture, port);
+  await waitFor('the fixture gateway starts', () => rpc('fleet.status'), 30000);
+  let refusal;
+  try {
+    rpc('run.resolveDecision', {
+      runId: requestRunId,
+      decisionId: requestDecisionId,
+      actionId: 'request-review',
+      selectionData: {
+        reviewRequest: {
+          runner: 'codex',
+          model: 'gpt-6.1-sol',
+          effort: 'high',
+          mode: 'warm',
+          context: {
+            reviewLineages: [
+              { familyId: requestRunId, reviewId: `pipeline-review-${requestRunId}` },
+            ],
+          },
+        },
+      },
+    });
+  } catch (error) {
+    refusal = String(error.stderr);
+  }
+  assert.match(refusal ?? '', /WARM review refused.*no verified retained session/);
+  const after = rpc('run.get', { runId: requestRunId }).run;
+  assert.equal(
+    after.decisions.find((entry) => entry.id === requestDecisionId).resolvedAt,
+    undefined,
+  );
+  assert.deepEqual(after.reviewRoundAdmissions, run.reviewRoundAdmissions);
+  assert.equal((after.agentContexts ?? []).filter((entry) => entry.role === 'review').length, 0);
+  evidence('warm-refusal', {
+    refusal,
+    unresolved: true,
+    newReviewers: 0,
+    admissionsUnchanged: true,
+  });
 } else if (phase === 'relaunch') {
   // Start from a fresh app process so a screen left open by an earlier attempt cannot take input.
   assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');

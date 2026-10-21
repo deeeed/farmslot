@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Human-gate WARM requests refuse an unavailable retained session before consuming the gate or admitting a review round.
 - Keep every unarchived failed run in `run.list` Active results, including failures without resources, while preserving released PR execution ownership and settled workflow outcomes.
 - Completed terminal reviews can reach their posting gate: single-pane review sessions resolve exactly, and hookless reviewers prove idle from the native rollout held open by their current process.
 

@@ -320,18 +320,19 @@ test('run gate Request Review continues the runner latest validated lineage WARM
       context: { reviewLineages: [option.context] },
     },
   );
-  // Unavailable sessions keep WARM/model/effort for delta fallback; explicit COLD still wins.
+  // Unavailable sessions refuse WARM; explicit COLD still wins.
   const context = { reviewLineages: [option.context] };
-  assert.deepEqual(
-    buildRunGateParams(
-      run,
-      gate('the retained reviewer belongs to a different slot'),
-      'request-review',
-      {
-        runner: 'codex',
-      },
-    ).selectionData?.reviewRequest,
-    { runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', mode: 'warm', context },
+  assert.throws(
+    () =>
+      buildRunGateParams(
+        run,
+        gate('the retained reviewer belongs to a different slot'),
+        'request-review',
+        {
+          runner: 'codex',
+        },
+      ),
+    /Cannot resume this review: the retained reviewer belongs to a different slot/,
   );
   assert.deepEqual(
     buildRunGateParams(run, gate(), 'request-review', { runner: 'codex', reviewMode: 'cold' })
