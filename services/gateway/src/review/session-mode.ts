@@ -364,7 +364,19 @@ export function persistedWarmReviewerSession(
     );
   const validated = lastValidatedReview(review);
   if (!run.slotId) return null;
-  const contexts = [...(run.agentContexts ?? [])].reverse().filter((candidate) => {
+  // Native pipelines validate and persist each attempt before their final review row exists.
+  const pipelineHead = (context: AgentContext): string | null => {
+    const head = context.deliveryBaselineRef?.trim();
+    return scope.transport === 'native' &&
+      run.flowType !== 'review-pr' &&
+      context.slotId === run.slotId &&
+      context.reviewResultValidatedAt &&
+      head &&
+      /^[0-9a-f]{7,40}$/i.test(head)
+      ? head
+      : null;
+  };
+  let contexts = [...(run.agentContexts ?? [])].reverse().filter((candidate) => {
     // The accepted result binds legacy contexts even before validation timestamps existed.
     const legacyResult =
       validated?.sessionId &&
@@ -393,26 +405,35 @@ export function persistedWarmReviewerSession(
       candidate.runnerSessionId &&
       (validated
         ? candidate.runnerSessionId === validated.sessionId
-        : scope.repository &&
-          scope.prNumber &&
-          primaryReviewedHeadForSession(run, {
-            reviewId: scope.reviewId,
-            repository: scope.repository,
-            prNumber: scope.prNumber,
-            runnerSessionId: candidate.runnerSessionId,
-          })) &&
+        : pipelineHead(candidate) ||
+          (scope.repository &&
+            scope.prNumber &&
+            primaryReviewedHeadForSession(run, {
+              reviewId: scope.reviewId,
+              repository: scope.repository,
+              prNumber: scope.prNumber,
+              runnerSessionId: candidate.runnerSessionId,
+            }))) &&
       ((candidate.runnerSessionPath && candidate.target?.window) ||
         (candidate.nativeSession &&
           !candidate.nativeSession.releasedAt &&
           !candidate.nativeSession.recovery))
     );
   });
+  if (!validated && contexts.some(pipelineHead)) {
+    const latest = contexts
+      .map((context) => context.reviewResultValidatedAt ?? '')
+      .sort()
+      .at(-1);
+    contexts = contexts.filter((context) => context.reviewResultValidatedAt === latest);
+  }
   if (new Set(contexts.map((candidate) => candidate.runnerSessionId)).size > 1)
     throw new WarmReviewRefusal('missing-session', 'the reviewId has ambiguous session provenance');
   const context = contexts[0];
   if (!context) return null;
   const reviewedHeadSha =
     validated?.headSha ??
+    pipelineHead(context) ??
     (scope.repository && scope.prNumber
       ? primaryReviewedHeadForSession(run, {
           reviewId: scope.reviewId,

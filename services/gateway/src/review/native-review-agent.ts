@@ -689,6 +689,10 @@ async function runNativeReviewAttempt(
           status: feedback.incomplete ? 'blocked' : 'complete',
           lastSignalAt: completedAt,
           reviewResultValidatedAt: feedback.incomplete ? undefined : completedAt,
+          // Keep the immutable review input with validation until the pipeline row is written.
+          deliveryBaselineRef: feedback.incomplete
+            ? undefined
+            : (reviewSnapshot.snapshot.headSha ?? undefined),
           ...(visualResult ? { pipelineVisualReviewResult: visualResult } : {}),
         },
         {

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Native pipeline re-reviews recover their validated session and reviewed head after gateway restart, before the final publication-review row exists.
+
 - Use the shared review artifact directory resolver so live history reads the same round snapshots the engine writes.
 - Finished runs can clean up a worker whose pane ID was lost by verifying its saved conversation in the recorded window.
 

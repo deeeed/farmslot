@@ -378,6 +378,64 @@ test('a pre-publish reviewer registers its session and the WARM re-review contin
   assert.deepEqual(deltaCaptures, []);
 });
 
+test('a validated pipeline reviewer survives a registry reset before its final review row exists', async (t) => {
+  const run = await prePublishRun(t);
+  const first = await review(run.id);
+  const context = reviewers(run.id)[0]!;
+  assert.ok(context.reviewResultValidatedAt);
+  assert.ok(context.nativeSession?.closedAt);
+  assert.equal(getRun(run.id)!.engineState?.publishGate?.reviews?.length ?? 0, 0);
+  resetWarmReviewerSessionsForTest();
+
+  const second = await reReview(run.id);
+  assert.equal(second.mode, 'warm');
+  assert.equal(second.reviewerSessionId, first.reviewerSessionId);
+  assert.equal(dispatches[1]?.retainedFrom?.contextId, context.id);
+  assert.equal(second.session?.fallback, undefined);
+  assert.deepEqual(deltaCaptures, []);
+});
+
+test('restart continues the latest validated pipeline session after a fresh delta fallback', async (t) => {
+  const run = await prePublishRun(t);
+  const first = await review(run.id);
+  ancestorExitCode = 1;
+  currentHead = 'c'.repeat(40);
+  const second = await reReview(run.id);
+  const latest = reviewers(run.id).at(-1)!;
+  assert.notEqual(second.reviewerSessionId, first.reviewerSessionId);
+  ancestorExitCode = 0;
+  resetWarmReviewerSessionsForTest();
+
+  const third = await reReview(run.id, { loopNumber: 3 });
+  assert.equal(third.mode, 'warm');
+  assert.equal(third.reviewerSessionId, second.reviewerSessionId);
+  assert.equal(dispatches[2]?.retainedFrom?.contextId, latest.id);
+  assert.equal(third.session?.fallback, undefined);
+});
+
+for (const [label, patch] of [
+  ['validation', { reviewResultValidatedAt: undefined }],
+  ['immutable reviewed head', { deliveryBaselineRef: 'main' }],
+  ['slot binding', { slotId: 'another-slot' }],
+] satisfies Array<[string, Partial<AgentContext>]>) {
+  test(`pipeline restart requires ${label} before reusing a reviewer`, async (t) => {
+    const run = await prePublishRun(t);
+    await review(run.id);
+    const context = reviewers(run.id)[0]!;
+    updateRun(run.id, {
+      agentContexts: reviewers(run.id).map((candidate) =>
+        candidate.id === context.id ? { ...candidate, ...patch } : candidate,
+      ),
+    });
+    resetWarmReviewerSessionsForTest();
+
+    const next = await reReview(run.id);
+    assert.equal(next.mode, 'cold');
+    assert.equal(next.session?.fallback?.reason, 'missing-session');
+    assert.equal(dispatches[1]?.retainedFrom, undefined);
+  });
+}
+
 const published = 'owner/repo#42';
 
 test('an automatic re-review with no retained session runs a delta-scoped COLD and records why', async (t) => {
