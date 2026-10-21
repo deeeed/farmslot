@@ -16,6 +16,11 @@ export function runActivityStepStatus(run: Run, step: RunStep): RunStepDisplaySt
     : runStepDisplayStatus(run, step);
 }
 
+/** These flows render publication review rounds separately from their engine steps. */
+export function runUsesPublicationReviewNodes(run: Pick<Run, 'flowType'>): boolean {
+  return run.flowType === 'fix-bug' || run.flowType === 'dev';
+}
+
 /** The current activity and the steps both clients show while it runs. */
 export interface RunActivityView {
   kind: 'worker-fix' | 'review' | 'step';
@@ -68,7 +73,9 @@ export function runActivityView(run: Run): RunActivityView | null {
         ? 'review'
         : 'step';
   const phase =
-    kind !== 'step' && ['review', 'human-gate'].includes(owner.name)
+    runUsesPublicationReviewNodes(run) &&
+    kind !== 'step' &&
+    ['review', 'human-gate'].includes(owner.name)
       ? owner.name === 'human-gate'
         ? 'post-gate'
         : 'pre-gate'

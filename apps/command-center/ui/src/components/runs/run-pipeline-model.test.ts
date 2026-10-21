@@ -535,3 +535,16 @@ test('computeLayout does not keep package-refresh pending on sticky re-review de
   assert.equal(packageRefresh.step.status, 'failed');
   assert.equal(runningReview, undefined);
 });
+
+test('an update-branch review keeps one rendered running node and its current marker', () => {
+  const run = makeRun({
+    flowType: 'update-branch',
+    status: 'reviewing',
+    steps: [{ name: 'review', status: 'running' }],
+  });
+  const layout = computeLayout(run);
+  const running = layout.nodes.filter((node) => node.step.status === 'running');
+  assert.equal(running.length, 1);
+  assert.equal(running[0].id, 'review');
+  assert.equal(currentPipelineNodeId(run), running[0].id);
+});

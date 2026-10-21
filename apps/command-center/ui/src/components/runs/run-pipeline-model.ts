@@ -5,7 +5,7 @@ import {
   type RunStep,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
-import { runActivityView } from '@farmslot/review-dispatch';
+import { runActivityView, runUsesPublicationReviewNodes } from '@farmslot/review-dispatch';
 
 import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
 import {
@@ -587,7 +587,7 @@ function publicationReviewPlanNodes(
   run: Run,
   phase: 'pre-gate' | 'post-gate',
 ): PublicationReviewPlanNode[] {
-  if (run.flowType !== 'fix-bug' && run.flowType !== 'dev') return [];
+  if (!runUsesPublicationReviewNodes(run)) return [];
   const publishGate: PublishGate = run.engineState?.publishGate ?? {};
   const reviewPolicy = recordValue(publishGate.reviewPolicy);
   const requestedBy = reviewPolicy?.requestedBy === 'human-gate' ? 'human-gate' : 'dispatch';

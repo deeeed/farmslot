@@ -118,3 +118,17 @@ test('a blocked open gate has the same waiting state in both clients despite a r
   assert.equal(runActivityView(source), null);
   assert.equal(runActivityStepStatus(source, source.steps[2]), 'blocked');
 });
+
+test('a non-publication flow keeps its actual review step as the current activity', () => {
+  const source = run({
+    flowType: 'update-branch',
+    status: 'reviewing',
+    steps: [{ name: 'review', status: 'running', startedAt: '2026-10-21T01:03:52.000Z' }],
+    agentContexts: [actor('review')],
+  });
+  const view = runActivityView(source)!;
+  assert.equal(view.nodeId, 'review');
+  assert.equal(view.phase, undefined);
+  assert.equal(view.steps.length, 1);
+  assert.equal(view.steps[0].status, 'running');
+});

@@ -85,48 +85,48 @@ export function GateReviewScreen({
       ]}
     >
       {viewModel.error ? <Text style={styles.error}>{viewModel.error}</Text> : null}
-      <GateBlockers
-        run={viewModel.run}
-        decision={viewModel.decision}
-        actions={viewModel.actions}
-        evidenceModel={acceptance.evidenceModel}
-        reviewer={acceptance.reviewer}
-        busy={judging || viewModel.sendingActionId !== null}
-        onSkip={actions.markUntestable}
-        acceptingFindings={acceptingDecisionId === viewModel.decision.id}
-        onAcceptFindingsChange={(accepting) =>
-          setAcceptingDecisionId(accepting ? viewModel.decision.id : null)
-        }
-        onAnotherRound={actions.giveAnotherRound}
-      />
-      <View
-        accessibilityRole="tablist"
-        style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12 }}
-      >
-        {PUBLICATION_GATE_TABS.map((item) => (
-          <Pressable
-            key={item.id}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: tab === item.id }}
-            onPress={() => setTab(item.id)}
-            style={{
-              minHeight: 44,
-              minWidth: 44,
-              padding: 12,
-              borderBottomWidth: tab === item.id ? 2 : 0,
-              borderColor: palette.accent,
-            }}
-          >
-            <Text style={{ color: palette.text }}>{item.label}</Text>
-          </Pressable>
-        ))}
-      </View>
       <ScrollView
         ref={scroll}
         testID="companion-gate-review-content"
         style={{ flex: 1 }}
         contentContainerStyle={styles.scrollContent}
       >
+        <GateBlockers
+          run={viewModel.run}
+          decision={viewModel.decision}
+          actions={viewModel.actions}
+          evidenceModel={acceptance.evidenceModel}
+          reviewer={acceptance.reviewer}
+          busy={judging || viewModel.sendingActionId !== null}
+          onSkip={actions.markUntestable}
+          acceptingFindings={acceptingDecisionId === viewModel.decision.id}
+          onAcceptFindingsChange={(accepting) =>
+            setAcceptingDecisionId(accepting ? viewModel.decision.id : null)
+          }
+          onAnotherRound={actions.giveAnotherRound}
+        />
+        <View
+          accessibilityRole="tablist"
+          style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12 }}
+        >
+          {PUBLICATION_GATE_TABS.map((item) => (
+            <Pressable
+              key={item.id}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: tab === item.id }}
+              onPress={() => setTab(item.id)}
+              style={{
+                minHeight: 44,
+                minWidth: 44,
+                padding: 12,
+                borderBottomWidth: tab === item.id ? 2 : 0,
+                borderColor: palette.accent,
+              }}
+            >
+              <Text style={{ color: palette.text }}>{item.label}</Text>
+            </Pressable>
+          ))}
+        </View>
         {tab === 'pr-preview' ? (
           <GateSummaryCard summary={viewModel.summary} onOpenLog={actions.openLog} />
         ) : null}
