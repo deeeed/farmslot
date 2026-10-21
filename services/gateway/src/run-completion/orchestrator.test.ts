@@ -8,7 +8,7 @@ import type { RawProjectJson } from '../core/config.js';
 import { retainRunFixture } from '../run-engine/test-fixtures.js';
 
 import { buildDraftPrBody } from './draft-pr.js';
-import { buildEvidenceSection } from './evidence-manifest.js';
+import { buildEvidenceSection, type EvidenceManifest } from './evidence-manifest.js';
 import {
   assertDedicatedPrDescription,
   assertReadyGatePackageInputsCurrent,
@@ -32,6 +32,7 @@ import {
   shouldMarkReadyAfterCompletion,
 } from './orchestrator.js';
 import { readCurrentPackageEvidence } from './package-evidence-manifest.js';
+import { writePublicationSelectionSnapshot } from './recorded-publication-evidence.js';
 import { makeRun, manualTicketData } from './test-fixtures.js';
 
 test('monitor repair completion preserves draft publication state', () => {
@@ -684,12 +685,13 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
       '## **Screenshots/Recordings**',
       '',
     ].join('\n');
-    const manifestText = JSON.stringify({
+    const manifest: EvidenceManifest = {
       version: 1,
       preferred_mode: 'screenshots',
       before_after_pairs: [{ label: 'AC1', after: 'after-ac1.png' }],
       videos: { after: 'after.mp4', preferred: false },
-    });
+    };
+    const manifestText = JSON.stringify(manifest);
     await writeFile(taskFile, '# Task\n');
     await writeFile(path.join(artifactsDir, 'after-ac1.png'), imageBytes);
     await writeFile(path.join(artifactsDir, 'debug-after-long.png'), debugImageBytes);
@@ -704,6 +706,7 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
       ticketData: manualTicketData('Implement the order form'),
       taskFile,
     });
+    await writePublicationSelectionSnapshot(root, manifest);
     await retainRunFixture(run);
     const draftBody = await buildDraftPrBody(run, null, [
       { path: 'artifacts/after-ac1.png', purpose: 'screenshot', sizeBytes: imageBytes.length },

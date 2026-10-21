@@ -96,6 +96,57 @@ async function fixture(t: TestContext) {
   return { taskDir, root, run, artifacts, manifest };
 }
 
+test('finished capture registers its generated publication selection before strict reads', async (t) => {
+  const { taskDir } = await fixture(t);
+  const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
+  const { captureRunOutput } = await import('./output.js');
+  const { readCurrentPackageEvidence } = await import('./package-evidence-manifest.js');
+  const { readRetainedRunText, retainedRunArtifactManifest } =
+    await import('./retained-artifacts.js');
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'selection-retention-fixture',
+    ticketOrPr: 'fixture/core#10855',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, {
+    taskFile: path.join(taskDir, 'TASK.md'),
+    status: 'completing',
+    recordedEvidenceContractVersion: 0,
+  });
+  await captureRunOutput(run.id, false, true);
+  const captured = getRun(run.id)!;
+  const evidence = await readCurrentPackageEvidence(captured);
+  const selection = evidence.inventory.find((entry) =>
+    entry.path.startsWith('artifacts/pr-package-evidence/'),
+  );
+  assert.ok(selection);
+  assert.ok(
+    captured.output?.artifactManifest.some((entry) => entry.path === selection.path),
+    'The generated selection belongs to the captured output inventory',
+  );
+  assert.ok(
+    (await retainedRunArtifactManifest(captured)).some((entry) => entry.path === selection.path),
+    'The immutable bundle manifest indexes the generated selection',
+  );
+  assert.equal(
+    digest(Buffer.from(await readRetainedRunText(captured, selection.path))),
+    selection.sha256,
+  );
+  await verifyFrozenPublicationEvidence(captured, evidence.inventory, [
+    'artifacts/recipe-run/proof.png',
+  ]);
+  await captureRunOutput(run.id, false, true);
+  const replayed = getRun(run.id)!;
+  const replayEvidence = await readCurrentPackageEvidence(replayed);
+  await verifyFrozenPublicationEvidence(replayed, replayEvidence.inventory, [
+    'artifacts/recipe-run/proof.png',
+  ]);
+});
+
 test('frozen indexed text is scanned without changing bytes or admitting historical packages', async (t) => {
   const { taskDir, root, run, artifacts, manifest } = await fixture(t);
   // The published all-zero-entropy BIP-39 test vector: checksum-valid, never a wallet.
@@ -498,6 +549,73 @@ async function baselineFixture(t: TestContext, baselineLog?: string) {
     headRoot,
   };
 }
+
+test('a first finished capture uses its new inventory to register same-run baseline selection', async (t) => {
+  const f = await baselineFixture(t);
+  const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
+  const { captureRunOutput } = await import('./output.js');
+  const { readCurrentPackageEvidence } = await import('./package-evidence-manifest.js');
+  const { readRetainedRunText } = await import('./retained-artifacts.js');
+  const run = createRun({ flowType: 'dev', project: 'baseline-proof', ticketOrPr: 'TEST-CAPTURE' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, {
+    taskFile: f.run.taskFile,
+    status: 'completing',
+    branch: f.run.branch,
+    worktreeHeadAtDispatch: f.run.worktreeHeadAtDispatch,
+    recordedEvidenceContractVersion: 1,
+  });
+  assert.equal(getRun(run.id)?.output, undefined);
+  await captureRunOutput(run.id, false, true);
+  const captured = getRun(run.id)!;
+  const current = await readCurrentPackageEvidence(captured);
+  const selection = current.inventory.find((entry) =>
+    entry.path.startsWith('artifacts/pr-package-evidence/'),
+  );
+  assert.ok(selection);
+  assert.equal(
+    digest(Buffer.from(await readRetainedRunText(captured, selection.path))),
+    selection.sha256,
+  );
+});
+
+test('failed output remains retained when the selected recipe manifest is missing', async (t) => {
+  const { taskDir } = await fixture(t);
+  await mkdir(path.join(taskDir, 'artifacts/recipe-runs/missing'), { recursive: true });
+  await writeFile(path.join(taskDir, 'artifacts/report.md'), '# Failed recipe diagnostics\n');
+  await writeFile(
+    path.join(taskDir, 'artifacts/latest-valid-recipe-run.json'),
+    JSON.stringify({ version: 1, relativeArtifactRoot: 'recipe-runs/missing' }),
+  );
+  const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
+  const { captureRunOutput } = await import('./output.js');
+  const { readCurrentPackageEvidence } = await import('./package-evidence-manifest.js');
+  const { readRetainedRunText } = await import('./retained-artifacts.js');
+  const run = createRun({ flowType: 'dev', project: 'raw-capture', ticketOrPr: 'FAILED-CAPTURE' });
+  t.after(async () => {
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, {
+    taskFile: path.join(taskDir, 'TASK.md'),
+    status: 'failed',
+    completedAt: new Date().toISOString(),
+    recordedEvidenceContractVersion: 1,
+  });
+  await captureRunOutput(run.id, false, true);
+  const captured = getRun(run.id)!;
+  assert.equal(
+    await readRetainedRunText(captured, 'artifacts/report.md'),
+    '# Failed recipe diagnostics\n',
+  );
+  await assert.rejects(
+    readCurrentPackageEvidence(captured),
+    (error: unknown) =>
+      error instanceof Error && 'code' in error && error.code === 'evidence-selection-missing',
+  );
+});
 
 test('same-run clean baseline freezes as before evidence without supplying head verdicts', async (t) => {
   const f = await baselineFixture(t);

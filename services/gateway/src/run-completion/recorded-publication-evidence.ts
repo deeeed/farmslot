@@ -32,6 +32,39 @@ import { readRetainedRunText } from './retained-artifacts.js';
 
 const SELECTION_MANIFEST_PATH = 'artifacts/evidence-manifest.json';
 
+export type PublicationSelectionSource = 'capture' | 'retained';
+
+function publicationSelection(manifest: EvidenceManifest): { text: string; artifact: ArtifactRef } {
+  const text = JSON.stringify(manifest);
+  const sha256 = sha256Text(text);
+  return {
+    text,
+    artifact: {
+      path: path.posix.join('artifacts', PUBLICATION_SELECTION_DIR, `${sha256}.json`),
+      purpose: 'evidence-manifest',
+      sizeBytes: Buffer.byteLength(text),
+      sha256,
+    },
+  };
+}
+
+/** The capture writer registers this gateway-owned file before retaining the output. */
+export async function writePublicationSelectionSnapshot(
+  taskDir: string,
+  manifest: EvidenceManifest,
+): Promise<ArtifactRef> {
+  const { text, artifact } = publicationSelection(manifest);
+  const filename = path.join(taskDir, artifact.path);
+  await mkdir(path.dirname(filename), { recursive: true });
+  if (existsSync(filename)) {
+    if ((await readFile(filename, 'utf8')) !== text)
+      throw new Error('Frozen publication selection bytes changed.');
+  } else {
+    await writeFile(filename, text, { flag: 'wx' });
+  }
+  return artifact;
+}
+
 /** Freeze input bytes without making dependency files selectable publication media. */
 export async function recordedPublicationDependencies(
   taskDir: string,
@@ -40,6 +73,7 @@ export async function recordedPublicationDependencies(
   expectedManifest: EvidenceManifest | null | undefined,
   contractVersion = 1,
   baseline?: PublicationBaselineContext,
+  selectionSource: PublicationSelectionSource = 'capture',
 ): Promise<ArtifactRef[]> {
   const source = await resolvePublicationManifest(
     taskDir,
@@ -128,25 +162,18 @@ export async function recordedPublicationDependencies(
         sizeBytes: Buffer.byteLength(bytes),
       });
     }
-    const text = JSON.stringify(source.manifest);
-    const snapshot = path.posix.join(
-      'artifacts',
-      PUBLICATION_SELECTION_DIR,
-      `${sha256Text(text)}.json`,
-    );
-    await mkdir(path.dirname(path.join(taskRoot, snapshot)), { recursive: true });
-    if (existsSync(path.join(taskRoot, snapshot))) {
-      if ((await readFile(path.join(taskRoot, snapshot), 'utf8')) !== text)
-        throw new Error('Frozen publication selection bytes changed.');
-    } else {
-      await writeFile(path.join(taskRoot, snapshot), text, { flag: 'wx' });
-    }
-    entries.set(snapshot, {
-      path: snapshot,
-      purpose: 'evidence-manifest',
-      sizeBytes: Buffer.byteLength(text),
-      sha256: sha256Text(text),
-    });
+    const snapshot =
+      selectionSource === 'capture'
+        ? await writePublicationSelectionSnapshot(taskRoot, source.manifest)
+        : publicationSelection(source.manifest).artifact;
+    if (
+      selectionSource === 'retained' &&
+      !artifacts.some(
+        (artifact) => artifact.path === snapshot.path && artifact.sha256 === snapshot.sha256,
+      )
+    )
+      throw new Error(`Publication selection is not in the captured inventory: ${snapshot.path}`);
+    entries.set(snapshot.path, snapshot);
   }
   return [...entries.values()];
 }
