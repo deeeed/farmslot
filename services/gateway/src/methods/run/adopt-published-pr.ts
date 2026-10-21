@@ -22,6 +22,10 @@ import { findPRNumber, recordRunPRPublication } from '../../integrations/pr-link
 import { adoptedPublicationContinuationRefusals } from '../../run-completion/human-publication.js';
 import { collectRunGateReadiness } from '../../run-engine/gate-prerequisites.js';
 import {
+  beginTerminalTeardown,
+  endTerminalTeardown,
+} from '../../run-engine/terminal-teardown-registry.js';
+import {
   operatorCompletionCollaborators,
   routeTerminalRunTransition,
 } from '../../run-lifecycle/terminal-transition.js';
@@ -253,7 +257,8 @@ export async function runAdoptPublishedPr(
     };
   }
   let completed = false;
-  const result = await withRunTransition<RunAdoptPublishedPrResult>(initial.id, async () => {
+  let teardownSlotId: string | null = null;
+  return withRunTransition<RunAdoptPublishedPrResult>(initial.id, async () => {
     const currentApprover = authorize();
     if (!sameEvidenceAttestationApprover(currentApprover, approver))
       throw new GatewayMethodError(
@@ -332,6 +337,8 @@ export async function runAdoptPublishedPr(
       )
     ) {
       const stepsIdentity = JSON.stringify(afterReadiness.steps);
+      teardownSlotId = afterReadiness.slotId ?? null;
+      if (teardownSlotId) beginTerminalTeardown(teardownSlotId);
       const transition = await routeTerminalRunTransition({
         kind: 'complete',
         runId: afterReadiness.id,
@@ -386,14 +393,22 @@ export async function runAdoptPublishedPr(
       })
     )(run, receipt!.priorGate!.decisionId!);
     return { ...result, continuation: resumed ? 'resumed' : 'waiting' };
-  });
-  if (!completed) return result;
-  // Release can join another machine/run transition; never hold those keys here.
-  const { collectCompletedRunSlotReleaseEffect } = await import('./lifecycle-control.js');
-  const effects = await collectCompletedRunSlotReleaseEffect(result.run, dependencies.releaseSlot);
-  return {
-    ...result,
-    run: getRun(initial.id) ?? result.run,
-    refusals: [...result.refusals, ...continuationEffectRefusals(effects)],
-  };
+  })
+    .then(async (result) => {
+      if (!completed) return result;
+      // Release can join another machine/run transition; never hold those keys here.
+      const { collectCompletedRunSlotReleaseEffect } = await import('./lifecycle-control.js');
+      const effects = await collectCompletedRunSlotReleaseEffect(
+        result.run,
+        dependencies.releaseSlot,
+      );
+      return {
+        ...result,
+        run: getRun(initial.id) ?? result.run,
+        refusals: [...result.refusals, ...continuationEffectRefusals(effects)],
+      };
+    })
+    .finally(() => {
+      if (teardownSlotId) endTerminalTeardown(teardownSlotId);
+    });
 }

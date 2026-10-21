@@ -29,11 +29,13 @@ const { latestResolvedHumanGateDecision, isReplayableResolvedHumanGateDecision }
   await import('../../run-engine/decision-replay.js');
 const { assertPublicationFinalization } =
   await import('../../run-engine/publication-finalization.js');
-const { resetPublishGateApprovalForReplay } = await import('./replay-step.js');
+const { resetPublishGateApprovalForReplay, runReplayStep } = await import('./replay-step.js');
 const { buildCIWatchChainedRunParams } = await import('../../run-engine/ci-watch-chain.js');
 const { reviewPRIdentity } = await import('../../review/session-mode.js');
 const { initPrLinkage } = await import('../../integrations/pr-linkage.js');
 const { withRunTransition } = await import('../../run-lifecycle/transition-coordinator.js');
+const { isTerminalTeardownInFlight } =
+  await import('../../run-engine/terminal-teardown-registry.js');
 const { refreshPublishedEvidence } =
   await import('../../run-completion/published-evidence-refresh.js');
 const { runCompletionPipeline, prepareCompletionPackage, publishCompletionPackage } =
@@ -257,6 +259,7 @@ test(
     });
     const first = await runAdoptPublishedPr(request(run), noop, deps);
     assert.equal(first.run.status, 'done');
+    assert.equal(isTerminalTeardownInFlight('fixture-slot'), false);
     assert.equal(first.refusals[0].code, 'publication-continuation-effect-failed');
     assert.match(first.refusals[0].message, /slot-release: Fixture slot release unavailable/);
     const completedAt = first.run.completedAt;
@@ -265,6 +268,79 @@ test(
     assert.equal(second.run.completedAt, completedAt);
     assert.equal(second.run.prPublications?.length, 1);
     assert.equal(releases, 1);
+  },
+);
+
+test(
+  'adoption fences supported replay until deferred terminal cleanup settles',
+  { timeout: 4000 },
+  async (t) => {
+    for (const beforeCleanup of [false, true]) {
+      const run = settledFixture(t);
+      updateRun(run.id, { slotId: 'fixture-slot' });
+      const generation = run.engineState?.generation;
+      let entered!: () => void;
+      let release!: () => void;
+      let planned!: () => void;
+      let releasePlanning!: () => void;
+      const enteredRelease = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const releaseBarrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const enteredPlanning = new Promise<void>((resolve) => {
+        planned = resolve;
+      });
+      const planningBarrier = new Promise<void>((resolve) => {
+        releasePlanning = resolve;
+      });
+      t.after(release);
+      t.after(releasePlanning);
+      const replay = () =>
+        runReplayStep(
+          { runId: run.id, stepName: 'review', triggeredBy: 'operator', skipPrepare: true },
+          noop,
+          {
+            startEngine: async () => {},
+            ...(beforeCleanup
+              ? {
+                  afterSlotPlanning: async () => {
+                    planned();
+                    await planningBarrier;
+                  },
+                }
+              : {}),
+          },
+        );
+      const alreadyPlanning = beforeCleanup ? replay() : null;
+      if (beforeCleanup) await enteredPlanning;
+      const adopting = runAdoptPublishedPr(
+        request(run),
+        noop,
+        dependencies({
+          continuationRefusals: async () => [],
+          releaseSlot: async () => {
+            entered();
+            await releaseBarrier;
+            return { released: true };
+          },
+        }),
+      );
+      try {
+        await enteredRelease;
+        releasePlanning();
+        await assert.rejects(alreadyPlanning ?? replay(), /terminal cleanup/);
+        assert.equal(isTerminalTeardownInFlight('fixture-slot'), true);
+        assert.equal(run.status, 'done');
+        assert.equal(run.engineState?.generation, generation);
+      } finally {
+        releasePlanning();
+        release();
+        await adopting;
+      }
+      assert.equal(isTerminalTeardownInFlight('fixture-slot'), false);
+    }
   },
 );
 
