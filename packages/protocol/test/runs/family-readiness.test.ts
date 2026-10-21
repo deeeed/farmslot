@@ -48,6 +48,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     summary: overrides.summary,
     reviewTier: overrides.reviewTier,
     completedAt: overrides.completedAt,
+    archivedAt: overrides.archivedAt,
     error: overrides.error,
     monitorState: overrides.monitorState,
   };
@@ -119,7 +120,7 @@ test('family readiness groups by family and computes counts, completion, and lat
   assert.equal(familyA.completionState, 'active');
 });
 
-test('family readiness counts a failed run that still holds its slot as active, not failed', () => {
+test('family readiness counts unarchived failed runs as active, with or without resources', () => {
   const held = makeRun({
     id: 'held',
     status: 'failed',
@@ -132,7 +133,15 @@ test('family readiness counts a failed run that still holds its slot as active, 
   assert.equal(heldOnly.completionPercent, 0);
   assert.equal(heldOnly.completionState, 'active');
 
-  const [settled] = buildRunFamilyReadinessSummaries([makeRun({ id: 'failed', status: 'failed' })]);
+  const failed = makeRun({ id: 'failed', status: 'failed' });
+  const [unarchived] = buildRunFamilyReadinessSummaries([failed]);
+  assert.equal(unarchived.activeRunCount, 1);
+  assert.equal(unarchived.failedRunCount, 0);
+  assert.equal(unarchived.completionState, 'active');
+
+  const [settled] = buildRunFamilyReadinessSummaries([
+    { ...failed, archivedAt: '2026-10-21T00:00:00Z' },
+  ]);
   assert.equal(settled.activeRunCount, 0);
   assert.equal(settled.failedRunCount, 1);
   assert.equal(settled.completionState, 'failed');
@@ -231,6 +240,7 @@ test('eligibility ignores evidence carried by failed siblings — only successfu
       id: 'failed-with-payload',
       familyId: 'fam-mixed',
       status: 'failed',
+      archivedAt: '2026-10-21T00:00:00Z',
       metrics: { nudgeCount: 0, model: null, runner: null, outcome: 'failure' },
       decisions: [
         {

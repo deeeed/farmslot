@@ -289,5 +289,5 @@ test('groupRunsByFamily counts active runs with the run-list active rule', () =>
     run({ id: 'done', parentRunId: 'family-a', status: 'done' }),
   ]);
 
-  assert.equal(group.activeCount, 2);
+  assert.equal(group.activeCount, 3);
 });
