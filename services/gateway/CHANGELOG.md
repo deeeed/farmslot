@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Stop native reviewer processes and their children after failed commands; preserve refunded warm attempts and prior findings for an explicit retry after runner recovery. Seen on TAT-4158.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.0 - 2026-10-21

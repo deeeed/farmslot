@@ -9,6 +9,7 @@ const exec = await import('../core/exec.js');
 const checklist = await import('../tasks/checklist-target.js');
 const snapshots = await import('./snapshots.js');
 const reviewAgent = await import('./review-agent.js');
+const progress = await import('./progress.js');
 const { upsertAgentContext } = await import('../agents/contexts.js');
 const { rewriteStatusFile } = await import('../core/state.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
@@ -29,11 +30,17 @@ let ancestorExitCode = 0;
 /** How a retained reviewer's resume fails before it accepts the prompt. */
 let resumeFailure: 'handoff' | 'delivery' | 'superseded' | null = null;
 let freshSessions = 0;
+let commandFailed = false;
+const resumed: string[] = [];
 const dispatches: Array<{ contextId: string; retainedFrom?: { contextId: string } }> = [];
 const deltaCaptures: string[] = [];
 
 mock.module('../core/config.js', {
-  namedExports: { ...config, loadProjectVars: async () => ({ projectJson: {} }) },
+  namedExports: {
+    ...config,
+    loadProjectVars: async () => ({ projectJson: {} }),
+    loadSlotVars: async () => vars,
+  },
 });
 mock.module('../core/exec.js', {
   namedExports: {
@@ -54,7 +61,12 @@ mock.module('../methods/dispatch/slot-file-write.js', {
   },
 });
 mock.module('../run-engine/run-monitor.js', {
-  namedExports: { probeWorkerSignalForRun: async () => ({ ok: true }) },
+  namedExports: {
+    probeWorkerSignalForRun: async (_runId: string, _slotId: string, context: AgentContext) =>
+      commandFailed || (context.status === 'failed' && !resumed.includes(context.id))
+        ? { ok: false, code: 'missing', message: 'review never started' }
+        : { ok: true },
+  },
 });
 mock.module('../run-engine/stack-base.js', { namedExports: { stackPrBase: async () => null } });
 mock.module('../runners/native/manager.js', { namedExports: { validateNativeRunner: () => {} } });
@@ -66,12 +78,21 @@ mock.module('../runners/native/review-owner.js', {
 });
 mock.module('../runners/native/worker.js', {
   namedExports: {
-    cancelNativeWorkerContext: noop,
+    cancelNativeWorkerContext: async (runId: string, context: AgentContext) => {
+      await upsertAgentContext(runId, 'review', {
+        id: context.id,
+        nativeSession: { ...context.nativeSession!, closedAt: new Date().toISOString() },
+      });
+    },
     dispatchNativeWorker: async (input: {
       runId: string;
       contextId: string;
       retainedFrom?: { runId: string; contextId: string };
     }) => {
+      const existing = getRun(input.runId)!.agentContexts!.find(
+        (context) => context.id === input.contextId,
+      );
+      if (existing?.nativeSession?.acceptedAt && !existing.nativeSession.closedAt) return;
       dispatches.push({ contextId: input.contextId, retainedFrom: input.retainedFrom });
       const source = input.retainedFrom
         ? getRun(input.retainedFrom.runId)!.agentContexts!.find(
@@ -117,12 +138,32 @@ mock.module('../runners/native/worker.js', {
 mock.module('../runners/native/worker-control.js', {
   namedExports: {
     readNativeWorkerSnapshot: async () => ({
-      session: { state: 'running' },
-      commands: [{ commandId: 'review-command', state: 'completed', outcome: 'completed' }],
+      session: { state: commandFailed ? 'idle' : 'running', processStopped: !commandFailed },
+      commands: [
+        {
+          commandId: 'review-command',
+          state: commandFailed ? 'failed' : 'completed',
+          outcome: commandFailed ? 'failed' : 'completed',
+        },
+      ],
     }),
   },
 });
-mock.module('../runners/native/worker-recovery.js', { namedExports: { resumeNativeWorker: noop } });
+mock.module('../runners/native/worker-recovery.js', {
+  namedExports: {
+    resumeNativeWorker: async (runId: string, options: { contextId: string }) => {
+      resumed.push(options.contextId);
+      const context = getRun(runId)!.agentContexts!.find(
+        (entry) => entry.id === options.contextId,
+      )!;
+      await upsertAgentContext(runId, 'review', {
+        id: context.id,
+        status: 'working',
+        nativeSession: { ...context.nativeSession!, closedAt: undefined },
+      });
+    },
+  },
+});
 mock.module('../security/native-worker-owner.js', {
   namedExports: { assertNativeRunOwner: () => {} },
 });
@@ -133,7 +174,7 @@ mock.module('../tasks/checklist-target.js', {
     syncChecklistTargetForRole: noop,
   },
 });
-mock.module('../tasks/watcher.js', { namedExports: { unwatchContext: noop } });
+mock.module('../tasks/watcher.js', { namedExports: { unwatchContext: noop, watchContext: noop } });
 mock.module('./feedback.js', {
   namedExports: {
     readReviewFeedback: async () => ({
@@ -145,7 +186,9 @@ mock.module('./feedback.js', {
 mock.module('./native-reviewer-approvals.js', {
   namedExports: { refuseReviewerApprovals: async () => 0 },
 });
-mock.module('./progress.js', { namedExports: { startProgressWatcher: () => ({ stop() {} }) } });
+mock.module('./progress.js', {
+  namedExports: { ...progress, startProgressWatcher: () => ({ stop() {} }) },
+});
 mock.module('./review-agent.js', {
   namedExports: {
     ...reviewAgent,
@@ -153,7 +196,9 @@ mock.module('./review-agent.js', {
     readTerminalReviewSignal: async () => null,
   },
 });
-mock.module('./reviewed-inputs.js', { namedExports: { noteReviewInputsAtLaunch: noop } });
+mock.module('./reviewed-inputs.js', {
+  namedExports: { noteReviewInputsAtLaunch: noop, recordReviewedInputs: noop },
+});
 mock.module('./snapshots.js', {
   namedExports: {
     ...snapshots,
@@ -202,12 +247,27 @@ mock.module('./snapshots.js', {
   },
 });
 mock.module('./templates.js', {
-  namedExports: { expandReviewTemplate: async () => '# Review\n' },
+  namedExports: {
+    expandReviewTemplate: async () => '# Review\n',
+    expandReviewFixTemplate: async () =>
+      assert.fail('the completed worker fix must not be repeated'),
+    getReviewConfig: async () => ({
+      enabled: true,
+      runner: 'claude',
+      model: 'opus',
+      max_retries: 0,
+    }),
+    resolveWorkerTaskDir: async () => 'tasks/review',
+  },
 });
 
 const { runNativeReviewAgent } = await import('./native-review-agent.js');
+const { executeReview }: typeof import('./orchestrator.js') = await import(
+  new URL('./orchestrator.js?refunded-native-review', import.meta.url).href
+);
 const { resetWarmReviewerSessionsForTest } = await import('./session-mode.js');
-const { reviewLaunchStartedAt, reviewRoundAdmissionId } = await import('./review-round-budget.js');
+const { reviewLaunchStartedAt, reviewRoundAdmissionId, runReviewRoundBudget } =
+  await import('./review-round-budget.js');
 
 /** A run before publication by default; a ticket naming a PR makes it a published run. */
 async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
@@ -215,6 +275,8 @@ async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
   resetWarmReviewerSessionsForTest();
   ancestorExitCode = 0;
+  commandFailed = false;
+  resumed.length = 0;
   resumeFailure = null;
   dispatches.length = 0;
   deltaCaptures.length = 0;
@@ -455,4 +517,36 @@ test('a reviewer still busy at the deadline falls back to the delta', async (t) 
   const result = await reReview(run.id, { reviewTimeoutMs: 300 });
   assert.equal(result.session?.fallback?.reason, 'session-busy');
   assert.equal(result.mode, 'cold');
+});
+
+// A structured failed command is infrastructure failure, not another code verdict.
+test('a failed warm command retries its same session and refunded attempt after recovery', async (t) => {
+  const run = await prePublishRun(t);
+  const first = await review(run.id);
+  commandFailed = true;
+  await assert.rejects(reReview(run.id));
+  const failed = reviewers(run.id).at(-1)!;
+  const admissions = [...getRun(run.id)!.reviewRoundAdmissions!];
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
+  assert.equal(failed.reviewResultValidatedAt, undefined);
+  assert.equal(failed.runnerSessionId, first.reviewerSessionId);
+  // Simulate the runner's auth having recovered and a gateway restart losing its in-memory registry.
+  commandFailed = false;
+  resetWarmReviewerSessionsForTest();
+  const result = await executeReview(run.id, vars.slotId, {
+    reviewRunner: 'claude',
+    model: 'opus',
+    mode: 'warm',
+    reviewId: 'lineage-a',
+    publicationReview: true,
+    validationDepth: 'static-code',
+    resumeFromResult: { ...first, retryCount: 0 },
+  });
+  assert.deepEqual(resumed, [failed.id]);
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.reviewerSessionId, first.reviewerSessionId);
+  assert.equal(result.session?.fallback, undefined);
+  assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, admissions);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 2);
+  assert.equal(reviewers(run.id).length, 2, 'no replacement reviewer context');
 });
