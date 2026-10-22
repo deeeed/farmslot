@@ -12,6 +12,7 @@ import {
   routeNativeWorkerInput,
 } from '../runners/native/worker-input.js';
 import { nativeOwnerCanUseWorkers, requireNativeSessionOwner } from '../security/native-owner.js';
+import { currentSessionOriginator } from '../security/work-originator.js';
 
 import { nativeCatalog } from './native-workspace.js';
 
@@ -20,8 +21,8 @@ export async function nativeSessionRoute(
   value: unknown,
   actingPrincipal: Principal,
 ): Promise<unknown> {
-  const principal = requireNativeSessionOwner();
-  if (actingPrincipal.id !== principal)
+  const originator = currentSessionOriginator();
+  if (originator.kind !== 'principal' || actingPrincipal.id !== originator.principalId)
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
       'Native caller authority does not match its owner',
@@ -36,6 +37,17 @@ export async function nativeSessionRoute(
         'AUTH_FORBIDDEN',
         'Native workspace enrollment does not grant worker controls',
       );
+    if ('launch' in params)
+      throw new GatewayMethodError(
+        'INVALID_PARAMS',
+        'Worker launch settings are supplied by run dispatch',
+      );
+    // Pinned worker routes validate the stored owner and the caller's supervision authority.
+    if (params.worker !== undefined && NATIVE_WORKER_INPUT_METHODS.includes(method))
+      return await routeNativeWorkerInput(method, params);
+    if (params.worker !== undefined && NATIVE_WORKER_READ_METHODS.includes(method))
+      return await routeNativeWorkerRead(method, params);
+    const principal = requireNativeSessionOwner();
     if (
       !allowWorkers &&
       method !== Methods.NATIVE_SESSION_ENSURE &&
@@ -52,15 +64,6 @@ export async function nativeSessionRoute(
           'Native workspace enrollment does not grant worker access',
         );
     }
-    if ('launch' in params)
-      throw new GatewayMethodError(
-        'INVALID_PARAMS',
-        'Worker launch settings are supplied by run dispatch',
-      );
-    if (params.worker !== undefined && NATIVE_WORKER_INPUT_METHODS.includes(method))
-      return await routeNativeWorkerInput(method, params);
-    if (params.worker !== undefined && NATIVE_WORKER_READ_METHODS.includes(method))
-      return await routeNativeWorkerRead(method, params);
     if (method === Methods.NATIVE_SESSION_CATALOG)
       return await nativeCatalog(principal, allowWorkers);
     if (method === Methods.NATIVE_SESSION_LIST && params.executionNodeId === undefined) {
