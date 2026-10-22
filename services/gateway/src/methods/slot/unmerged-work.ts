@@ -165,15 +165,6 @@ export async function assertPrepareCommitsPublished(
 ): Promise<void> {
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const defaultBranch = options.defaultBranch ?? DEFAULT_BRANCH;
-  const status = await exec(vars, `${git} status --porcelain -z --untracked-files=all`);
-  if (status.exitCode !== 0)
-    throw new Error(
-      `Cannot inspect work on ${vars.slotId}; prepare left branches untouched. ${status.stderr || status.stdout}`,
-    );
-  if (hasUserSlotChanges(status.stdout, options.projectJson ?? {}))
-    throw new Error(
-      `Prepare refused on ${vars.slotId}: dirty files would be lost. Commit or preserve them before retrying; no branch was reset or deleted.`,
-    );
   // Keep last-published tips reachable after upstream deletion/squash merge.
   // Already-pruned squash merges are verified by patch or merged-PR identity below.
   const fetch = await exec(vars, `${git} fetch --all --no-prune --no-tags`, { timeout: 120_000 });
@@ -198,14 +189,21 @@ export async function assertPrepareCommitsPublished(
         `Cannot inspect run branch ${branch}; prepare left branches untouched. ${exists.stderr || exists.stdout}`,
       );
   }
+  let acceptedMergedWork = false;
   for (const ref of refs) {
     // Detaching/resetting HEAD cannot lose commits retained by a named branch.
     // The requested branch is checked separately because prepare can move it.
+    const preservedByLocalBranch = ref === 'HEAD' && head.exitCode === 1;
+    const unpushed = await findUnpushedSlotCommits(vars, ref, exec, { preservedByLocalBranch });
+    if (!unpushed.length) continue;
     const commits = await findUnpushedSlotCommits(vars, ref, exec, {
-      preservedByLocalBranch: ref === 'HEAD' && head.exitCode === 1,
+      preservedByLocalBranch,
       patchBase: `origin/${defaultBranch}`,
     });
-    if (!commits.length) continue;
+    if (!commits.length) {
+      acceptedMergedWork = true;
+      continue;
+    }
     const refusal = `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits: ${commits.join('; ')}. Push or preserve them before retrying; no branch was reset or deleted.`;
     if (options.githubRepo) {
       try {
@@ -218,8 +216,10 @@ export async function assertPrepareCommitsPublished(
             exec,
             readMerged,
           )
-        )
+        ) {
+          acceptedMergedWork = true;
           continue;
+        }
       } catch (error) {
         const unknownCommit =
           error instanceof GitHubHttpError &&
@@ -233,6 +233,19 @@ export async function assertPrepareCommitsPublished(
       }
     }
     throw new Error(refusal);
+  }
+  // Only the new merged-work exemption needs this extra protection. Existing
+  // published/start-ref prepares still clean fixture/deps leftovers after all refusals.
+  if (acceptedMergedWork) {
+    const status = await exec(vars, `${git} status --porcelain -z --untracked-files=all`);
+    if (status.exitCode !== 0)
+      throw new Error(
+        `Cannot inspect work on ${vars.slotId}; prepare left branches untouched. ${status.stderr || status.stdout}`,
+      );
+    if (hasUserSlotChanges(status.stdout, options.projectJson ?? {}))
+      throw new Error(
+        `Prepare refused on ${vars.slotId}: dirty files would be lost. Commit or preserve them before retrying; no branch was reset or deleted.`,
+      );
   }
 }
 

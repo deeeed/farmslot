@@ -40,6 +40,7 @@ test(
     const unsafe = path.join(root, 'unsafe');
     const tracked = path.join(root, 'tracked');
     const untracked = path.join(root, 'untracked');
+    const published = path.join(root, 'published');
     const origin = path.join(root, 'origin.git');
     for (const dir of [
       'pool',
@@ -113,7 +114,7 @@ test(
     git(unsafe, 'add', '.');
     git(unsafe, 'commit', '-qm', 'unpublished work');
     const unpublishedHead = git(unsafe, 'rev-parse', 'HEAD');
-    for (const repo of [tracked, untracked]) {
+    for (const repo of [tracked, untracked, published]) {
       git(root, 'clone', '-q', safe, repo);
       configure(repo);
       git(repo, 'remote', 'set-url', 'origin', origin);
@@ -121,11 +122,14 @@ test(
     }
     await writeFile(path.join(tracked, 'fix.txt'), 'operator edit\n');
     await writeFile(path.join(untracked, 'personal-notes.txt'), 'operator notes\n');
+    git(published, 'checkout', '-q', 'main');
+    await writeFile(path.join(published, 'base.txt'), 'leftover setup output\n');
     const slots = [
       { id: 'merged-prepare-safe', repo: safe },
       { id: 'merged-prepare-unsafe', repo: unsafe },
       { id: 'merged-prepare-tracked', repo: tracked },
       { id: 'merged-prepare-untracked', repo: untracked },
+      { id: 'merged-prepare-published', repo: published },
     ];
     await writeFile(
       path.join(root, 'pool/fixture.json'),
@@ -190,7 +194,7 @@ test(
     );
     assert.equal(git(unsafe, 'rev-parse', 'HEAD'), unpublishedHead);
     assert.equal(git(unsafe, 'rev-parse', branch), unpublishedHead);
-    for (const slot of slots.slice(2)) {
+    for (const slot of slots.slice(2, 4)) {
       const run = makeRun(slot.id);
       await assert.rejects(
         fixture.client.call(Methods.SLOT_PREPARE, {
@@ -220,6 +224,16 @@ test(
     assert.equal(git(safe, 'rev-parse', 'HEAD'), mainHead);
     assert.equal(git(safe, 'branch', '--show-current'), 'next-run');
     assert.equal(git(safe, 'rev-parse', branch), publishedHead);
+    const publishedRun = makeRun(slots[4].id);
+    const publishedResult = await fixture.client.call<SlotPrepareResult>(Methods.SLOT_PREPARE, {
+      slotId: slots[4].id,
+      runId: publishedRun.id,
+      branch: 'next-run',
+      prepareProfile: 'core',
+    });
+    assert.equal(publishedResult.prepared, true);
+    assert.equal(git(published, 'rev-parse', 'HEAD'), mainHead);
+    assert.equal(await readFile(path.join(published, 'base.txt'), 'utf8'), 'base\n');
     const tmuxCalls = await readFile(path.join(root, 'tmux-calls'), 'utf8').catch(
       (error: unknown) => {
         if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return '';
@@ -238,6 +252,7 @@ test(
           unpublishedRefusedAndPreserved: unpublishedHead,
           trackedEditRefusedAndPreserved: true,
           untrackedFileRefusedAndPreserved: true,
+          existingPublishedCheckoutCleanupPreserved: true,
           workerOrReviewerStarted: false,
           realTmuxServerStarted: false,
         },

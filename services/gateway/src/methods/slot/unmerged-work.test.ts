@@ -391,6 +391,20 @@ test('prepare accepts a merged multi-commit PR whose individual patches differ f
     },
   );
   assert.equal(git(repo, 'rev-parse', 'HEAD'), merged.headSha);
+
+  writeFileSync(path.join(repo, 'fix.txt'), 'operator work\n');
+  await assert.rejects(
+    assertPrepareCommitsPublished(
+      vars,
+      'next-run',
+      bash,
+      { githubRepo: 'example/project' },
+      async () => [merged],
+    ),
+    /dirty files/,
+  );
+  assert.equal(readFileSync(path.join(repo, 'fix.txt'), 'utf8'), 'operator work\n');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), merged.headSha);
 });
 
 test('merged PR evidence does not authorize unpublished commits after its head', async (t) => {
