@@ -118,6 +118,10 @@
     {
       "id": "browser-review-offline-owner",
       "claim": "A cold offline review renders saved age with actions disabled; a former view command cannot write into its successor, and neither owned fixture decision resolves after reconnect."
+    },
+    {
+      "id": "browser-recipe-start-ownership",
+      "claim": "A real recipe rerun refusal clears parent busy state; an interrupted start retires output ownership with visible uncertain delivery, reconnect leaves replay controls idle, and reopening the review has no former output. Successful recipe streaming remains separate acceptance."
     }
   ],
   "workflow": {
@@ -533,6 +537,22 @@
         "match": "\"reviewOwnerReplyFenced\":true",
         "intent": "Require cold saved facts and owner-bound interrupted command handling.",
         "proves": ["browser-review-offline-owner"],
+        "next": "recipe-owner-web"
+      },
+      "recipe-owner-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs recipe-owner-web",
+        "timeout_ms": 240000,
+        "intent": "Exercise review rerun on the disabled mirror without starting a worker.",
+        "next": "recipe-owner-proof"
+      },
+      "recipe-owner-proof": {
+        "action": "assert_output",
+        "source": "recipe-owner-web",
+        "stream": "stdout",
+        "match": "\"recipeInterruptedOwnerRetired\":true",
+        "intent": "Require visible refusal, retired ownership and idle reopened output.",
+        "proves": ["browser-recipe-start-ownership"],
         "next": "done"
       }
     }

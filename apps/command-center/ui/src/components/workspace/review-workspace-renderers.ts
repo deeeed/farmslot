@@ -229,7 +229,9 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
       overflow-y: auto;
     }
     review-workspace .rw-recipe-output-host {
-      flex-shrink: 0;
+      flex-shrink: 1;
+      min-height: 0;
+      overflow: auto;
       padding: 0 ${spacing.xl} ${spacing.md};
     }
     review-workspace .rw-resize {

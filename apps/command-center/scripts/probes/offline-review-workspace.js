@@ -26,6 +26,24 @@ const buttons = [
   ),
 ];
 const checkbox = view.querySelector('.rw-ci input');
+const recipe = view.querySelector('recipe-output-panel');
+const recipeError = [...(recipe?.querySelectorAll('.recipe-output-scroll > div') ?? [])].find(
+  (element) => element.textContent.trim() === recipe._output?.error,
+);
+const recipeErrorVisible = () => {
+  if (!recipeError || !visible(recipeError)) return false;
+  const rect = recipeError.getBoundingClientRect();
+  let hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  while (hit?.shadowRoot) {
+    const child = hit.shadowRoot.elementFromPoint(
+      rect.x + rect.width / 2,
+      rect.y + rect.height / 2,
+    );
+    if (!child || child === hit) break;
+    hit = child;
+  }
+  return hit === recipeError || recipeError.contains(hit);
+};
 const rect = checkbox?.getBoundingClientRect();
 let hit = rect && document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
 for (let depth = 0; depth < 10 && hit?.shadowRoot; depth++) {
@@ -66,6 +84,17 @@ return {
   },
   paused: view._actionsPaused,
   recovering: view._isRecovering,
+  activeTab: view._activeTab,
+  recipeRunning: view._recipeRunning,
+  recipe: recipe && {
+    runId: recipe.runId,
+    slotId: recipe.slotId,
+    disabled: recipe.disabled,
+    running: recipe.running,
+    output: recipe.textContent.trim(),
+    visible: visible(recipe.querySelector('.recipe-output-scroll')),
+    errorVisible: recipeErrorVisible(),
+  },
   busy: Boolean(view._posting || view._refreshing || view._checkingOut),
   actionError: view._actionError,
   errorRendered: Boolean(view._actionError && view.textContent.includes(view._actionError)),

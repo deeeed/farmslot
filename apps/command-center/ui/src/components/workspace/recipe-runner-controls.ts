@@ -16,6 +16,7 @@ import {
 import './recipe-output-panel.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey, subscribeResourceCache } from '../../resource-cache.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 
@@ -67,6 +68,9 @@ export class RecipeRunnerControls extends LitElement {
   /** True while the operator is typing an identity the picker did not offer. */
   @state() private _typingIdentity = false;
   private _inventoryTimer: ReturnType<typeof setInterval> | null = null;
+  private _scope = '';
+  private _inventoryScope = '';
+  private _stopOwner?: () => void;
   @state() private _copyFeedback = '';
   @state() private _copyError = '';
   private readonly _copyFeedbackTimer = new CopyFeedbackTimer({
@@ -82,27 +86,65 @@ export class RecipeRunnerControls extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    // Read immediately as well as on the interval. Riding on `updated()` seeing
-    // `slotId` meant a disconnect and reconnect with an unchanged slot waited a
-    // full poll period with no device list.
-    void this._loadInventory();
+    this._stopOwner = subscribeResourceCache(() => this._syncView());
+    this._syncView();
+    // Identity sync reads immediately; the existing interval remains for the fleet migration.
     this._inventoryTimer = setInterval(() => void this._loadInventory(), INVENTORY_POLL_MS);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    this._stopOwner?.();
+    this._stopOwner = undefined;
+    this._scope = '';
+    this._inventoryScope = '';
     this._copyFeedbackTimer.clear();
     if (this._inventoryTimer) clearInterval(this._inventoryTimer);
     this._inventoryTimer = null;
   }
 
-  override updated(changed: Map<string, unknown>) {
-    // The inventory is machine-scoped and the slot is what names the machine, so
-    // it is re-read when the slot changes and never before one is set.
-    if (changed.has('slotId')) {
-      this._inventory = null;
-      void this._loadInventory();
+  private _viewScope(): string {
+    return JSON.stringify([
+      getResourceWorkspaceKey(),
+      this.runId,
+      this.slotId,
+      this.recipeArtifactPath,
+      this.recipeRunId,
+    ]);
+  }
+
+  private _syncView(): void {
+    const scope = this._viewScope();
+    if (scope !== this._scope) {
+      this._scope = scope;
+      this._setRunning(false);
+      this._copyError = '';
+      this._copyFeedbackTimer.clear();
     }
+    const inventoryScope = JSON.stringify([getResourceWorkspaceKey(), this.slotId]);
+    if (inventoryScope !== this._inventoryScope) {
+      this._inventoryScope = inventoryScope;
+      this._inventory = null;
+      this._inventoryError = '';
+      if (this.isConnected) void this._loadInventory();
+    }
+  }
+
+  override willUpdate(): void {
+    this._syncView();
+  }
+
+  private _captureView() {
+    const scope = this._viewScope();
+    const connection = gateway.resourceConnectionId;
+    const ownsView = () => this.isConnected && scope === this._viewScope();
+    return {
+      ownsView,
+      current: () =>
+        ownsView() &&
+        gateway.connectionState === 'connected' &&
+        gateway.resourceConnectionId === connection,
+    };
   }
 
   /**
@@ -115,17 +157,25 @@ export class RecipeRunnerControls extends LitElement {
   private async _loadInventory() {
     if (!this.slotId) return;
     const slotId = this.slotId;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    const current = () =>
+      this.isConnected &&
+      this.slotId === slotId &&
+      owner === getResourceWorkspaceKey() &&
+      connection === gateway.resourceConnectionId &&
+      gateway.connectionState === 'connected';
     try {
       const params: DeviceInventoryParams = { slotId };
       const result = await gateway.request<DeviceInventoryResult>(
         Methods.RESOURCE_DEVICE_INVENTORY,
         params,
       );
-      if (this.slotId !== slotId) return;
+      if (!current()) return;
       this._inventory = result;
       this._inventoryError = '';
     } catch (error) {
-      if (this.slotId !== slotId) return;
+      if (!current()) return;
       this._inventory = null;
       this._inventoryError = error instanceof Error ? error.message : String(error);
     }
@@ -144,16 +194,19 @@ export class RecipeRunnerControls extends LitElement {
   }
 
   async run() {
+    this._syncView();
     if (this._running || this.disabled) return;
+    const owner = this._captureView();
     await this.updateComplete;
-    if (this.disabled) return;
+    if (!owner.current() || this.disabled) return;
     const panel = this.querySelector<RecipeOutputPanel>('recipe-output-panel');
     if (!panel) return;
     this._setRunning(true);
     try {
       await panel.rerun();
     } finally {
-      if (!panel.running) this._setRunning(false);
+      if (owner.ownsView() && this.querySelector('recipe-output-panel') === panel && !panel.running)
+        this._setRunning(false);
     }
   }
 
@@ -164,18 +217,21 @@ export class RecipeRunnerControls extends LitElement {
   private async _copyCommand() {
     if (!this.runId || !this.slotId || this.disabled) return;
     this._copyError = '';
+    const owner = this._captureView();
     try {
       this.beforeRun?.();
+      if (!owner.current() || this.disabled) return;
       const params: RecipeCommandParams = { runId: this.runId, slotId: this.slotId };
       if (this.recipeArtifactPath) params.recipeArtifactPath = this.recipeArtifactPath;
       if (this.recipeRunId) params.recipeRunId = this.recipeRunId;
       if (this.playbackSlowMs > 0) params.playbackSlowMs = this.playbackSlowMs;
       if (this.showArtifactAction) params.recordVideo = this.recordVideo;
       const result = await gateway.request<RecipeCommandResult>(Methods.RECIPE_COMMAND, params);
+      if (!owner.current()) return;
       await navigator.clipboard.writeText(result.command);
-      this._copyFeedbackTimer.show(COPY_COMMAND);
+      if (owner.current()) this._copyFeedbackTimer.show(COPY_COMMAND);
     } catch (error) {
-      this._copyError = error instanceof Error ? error.message : String(error);
+      if (owner.current()) this._copyError = error instanceof Error ? error.message : String(error);
     }
   }
 

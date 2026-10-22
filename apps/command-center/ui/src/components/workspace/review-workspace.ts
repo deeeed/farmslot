@@ -129,6 +129,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._diffModalUrl = '';
     this._lightboxOpen = false;
     this._artifactLightboxItems = null;
+    this._recipeRunning = false;
+    this._evidenceOverrides = new Map();
   }
 
   private get _actionsPaused(): boolean {
@@ -981,13 +983,20 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     recipeHost: ReturnType<typeof createReviewWorkspaceRecipeHostEntry>,
   ) {
     if (!recipeHost.outputTarget) return nothing;
+    const owner = this._queries.capture();
     const visible = this._activeTab === 'recipe' || this._recipeRunning;
     return html`
       <div class="rw-recipe-output-host" style="${visible ? '' : 'display:none'}">
         <recipe-output-panel
           runId=${recipeHost.outputTarget.runId}
           slotId=${recipeHost.outputTarget.slotId}
+          .disabled=${this._actionsPaused}
+          .beforeRun=${() => {
+            this._queries.requireDecision();
+            this._queries.requireSlot();
+          }}
           @running-change=${(e: CustomEvent<boolean>) => {
+            if (e.detail ? !owner.current() : !owner.ownsView()) return;
             this._recipeRunning = e.detail;
             if (e.detail) this._setActiveTab('recipe');
           }}

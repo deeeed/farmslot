@@ -8,6 +8,7 @@ import type { RecipeCancelResult, RecipeRerunParams, ScriptActionResult } from '
 import { Events, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey, subscribeResourceCache } from '../../resource-cache.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
 
 import { recipeRerunTarget } from './recipe-rerun-target.js';
@@ -57,11 +58,70 @@ export class RecipeOutputPanel extends LitElement {
   @state() private _output: RecipeOutputState | null = null;
   private _unsubs: Array<() => void> = [];
   private _starting = false;
+  private _scope = '';
+  private _connection = 0;
+  private _request?: object;
+  private _stopOwner?: () => void;
+  private _stopConnection?: () => void;
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this._stopOwner = subscribeResourceCache(() => this._syncScope());
+    this._stopConnection = gateway.onConnectionChange(() => this._syncScope());
+    this._syncScope();
+  }
+
+  private _viewScope(): string {
+    return JSON.stringify([
+      getResourceWorkspaceKey(),
+      this.runId,
+      this.slotId,
+      this.recipeArtifactPath,
+      this.recipeRunId,
+    ]);
+  }
+
+  private _retireOutput(clear: boolean): void {
+    const running = this.running || this._starting;
+    this._request = undefined;
+    this._starting = false;
+    this._unsubs.forEach((stop) => stop());
+    this._unsubs = [];
+    if (clear) this._output = null;
+    else if (running && this._output)
+      this._output = {
+        ...this._output,
+        running: false,
+        error:
+          'Gateway disconnected or connection changed. Check recipe history before replaying; the previous run may still be active.',
+      };
+    if (running) this.dispatchEvent(new CustomEvent('running-change', { detail: false }));
+  }
+
+  private _syncScope(): void {
+    const scope = this._viewScope();
+    if (scope !== this._scope) {
+      this._scope = scope;
+      this._retireOutput(true);
+    } else if (
+      this._request &&
+      (gateway.connectionState !== 'connected' || this._connection !== gateway.resourceConnectionId)
+    ) {
+      this._retireOutput(false);
+    }
+  }
+
+  override willUpdate(): void {
+    this._syncScope();
+  }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this._unsubs.forEach((fn) => fn());
-    this._unsubs = [];
+    this._stopOwner?.();
+    this._stopConnection?.();
+    this._stopOwner = undefined;
+    this._stopConnection = undefined;
+    this._retireOutput(true);
   }
 
   get running(): boolean {
@@ -69,8 +129,28 @@ export class RecipeOutputPanel extends LitElement {
   }
 
   async rerun() {
-    if (this._starting || this._output?.running || !this.slotId || this.disabled) return;
+    this._syncScope();
+    if (
+      !this.isConnected ||
+      gateway.connectionState !== 'connected' ||
+      this._starting ||
+      this._output?.running ||
+      !this.slotId ||
+      this.disabled
+    )
+      return;
+    const request = {};
+    const scope = this._viewScope();
+    const connection = gateway.resourceConnectionId;
+    const owns = () => this.isConnected && this._request === request && this._viewScope() === scope;
+    const current = () =>
+      owns() &&
+      gateway.connectionState === 'connected' &&
+      gateway.resourceConnectionId === connection;
+    this._request = request;
+    this._connection = connection;
     this._starting = true;
+    const params: RecipeRerunParams = { runId: this.runId, slotId: this.slotId };
 
     // Clean up any previous subscriptions
     this._unsubs.forEach((fn) => fn());
@@ -82,6 +162,7 @@ export class RecipeOutputPanel extends LitElement {
     const earlyEvents: Array<{ type: 'output' | 'complete'; data: unknown }> = [];
 
     const handleOutput = (data: { requestId: string; data: string }) => {
+      if (!current()) return;
       if (requestId === null) {
         earlyEvents.push({ type: 'output', data });
         return;
@@ -102,6 +183,7 @@ export class RecipeOutputPanel extends LitElement {
       error?: string;
       artifactRoot?: string;
     }) => {
+      if (!current()) return;
       if (requestId === null) {
         earlyEvents.push({ type: 'complete', data });
         return;
@@ -115,6 +197,7 @@ export class RecipeOutputPanel extends LitElement {
         artifactRoot: data.artifactRoot,
       };
       this.dispatchEvent(new CustomEvent('running-change', { detail: false }));
+      if (!current()) return;
       this.dispatchEvent(
         new CustomEvent<RecipeCompleteDetail>('recipe-complete', {
           detail: {
@@ -127,8 +210,10 @@ export class RecipeOutputPanel extends LitElement {
           composed: true,
         }),
       );
-      this._unsubs.forEach((fn) => fn());
-      this._unsubs = [];
+      if (current()) {
+        this._unsubs.forEach((fn) => fn());
+        this._unsubs = [];
+      }
     };
 
     const unsubOutput = gateway.subscribe(Events.SCRIPT_OUTPUT, handleOutput);
@@ -144,7 +229,11 @@ export class RecipeOutputPanel extends LitElement {
 
     try {
       this.beforeRun?.();
-      const params: RecipeRerunParams = { runId: this.runId, slotId: this.slotId };
+      if (!current()) return;
+      if (this.disabled)
+        throw new Error(
+          'The selected recipe is no longer ready. Review its current inputs before replaying.',
+        );
       const retarget = recipeRerunTarget(this.targetKey, this.targetValue, this.targetPlatform);
       if (retarget.error) throw new Error(retarget.error);
       if (retarget.target) params.target = retarget.target;
@@ -157,6 +246,7 @@ export class RecipeOutputPanel extends LitElement {
         params,
         RECIPE_RERUN_START_TIMEOUT_MS,
       )) as ScriptActionResult;
+      if (!current()) return;
       requestId = result.requestId;
       this._output = {
         requestId,
@@ -178,6 +268,8 @@ export class RecipeOutputPanel extends LitElement {
           );
       }
     } catch (err) {
+      // A retired view cannot display its former request's error.
+      if (!current()) return;
       this._starting = false;
       console.error('Failed to start recipe rerun:', err);
       this._output = {
@@ -190,10 +282,14 @@ export class RecipeOutputPanel extends LitElement {
       this.dispatchEvent(new CustomEvent('running-change', { detail: false }));
       this._unsubs.forEach((fn) => fn());
       this._unsubs = [];
+    } finally {
+      this._syncScope();
+      if (owns()) this._starting = false;
     }
   }
 
   private _requestArtifactView() {
+    this._syncScope();
     if (!this._output?.requestId) return;
     this.dispatchEvent(
       new CustomEvent<RecipeCompleteDetail>('recipe-artifacts-request', {
@@ -210,17 +306,36 @@ export class RecipeOutputPanel extends LitElement {
   }
 
   async cancel() {
-    if (!this._output?.running || !this._output.requestId || !this.slotId) return;
+    this._syncScope();
+    if (
+      !this.isConnected ||
+      gateway.connectionState !== 'connected' ||
+      !this._request ||
+      !this._output?.running ||
+      !this._output.requestId ||
+      !this.slotId
+    )
+      return;
+    const request = this._request;
+    const scope = this._viewScope();
+    const connection = gateway.resourceConnectionId;
+    const target = { slotId: this.slotId, requestId: this._output.requestId };
+    const current = () =>
+      this.isConnected &&
+      this._request === request &&
+      this._viewScope() === scope &&
+      gateway.connectionState === 'connected' &&
+      gateway.resourceConnectionId === connection &&
+      this._output?.requestId === target.requestId;
     try {
-      const result = (await gateway.request(Methods.RECIPE_CANCEL, {
-        slotId: this.slotId,
-        requestId: this._output.requestId,
-      })) as RecipeCancelResult;
+      const result = (await gateway.request(Methods.RECIPE_CANCEL, target)) as RecipeCancelResult;
+      if (!current()) return;
       if (!result.cancelled && result.reason) {
         this._output = { ...this._output, lines: [...this._output.lines, `⚠ ${result.reason}`] };
       }
     } catch (err) {
-      console.error('Failed to cancel recipe:', err);
+      if (current() && this._output)
+        this._output = { ...this._output, error: err instanceof Error ? err.message : String(err) };
     }
   }
 

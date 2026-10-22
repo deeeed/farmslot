@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { access, chmod, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +47,7 @@ assert(
     'dispatch-runs-web',
     'ready-workspace-web',
     'review-workspace-web',
+    'recipe-owner-web',
   ].includes(phase),
   'Select a run proof phase',
 );
@@ -669,6 +680,182 @@ async function detailBrowser(runId) {
     navigate,
     peek: () => cdp('eval', route, '--file', storeProbe),
   };
+}
+
+if (phase === 'recipe-owner-web') {
+  assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  assert((await realpath(fixture.runFile)).startsWith(`${home}/runs/`));
+  const originalBytes = await readFile(fixture.runFile);
+  const originalMode = (await stat(fixture.runFile)).mode & 0o777;
+  const original = (await rpc('run.get', { runId: fixture.runId })).run;
+  assert.equal(original.readOnly, false);
+  assert.equal(original.status, 'done', 'Never activate the reusable mirror run');
+  assert.equal(original.slotId, fixture.slotId);
+  assert.equal(original.decisions.length, 0);
+  const fleet = await rpc('fleet.status');
+  const slot = fleet.fleet.slots.find((entry) => entry.slot === fixture.slotId);
+  assert(slot && !slot.currentRunId && !slot.phase && slot.enabled === false);
+  const proofRun = {
+    ...JSON.parse(originalBytes),
+    // A mismatching branch uses the actual review recovery path without inventing
+    // a HEAD in this intentionally unborn repository. The slot stays unbound.
+    branch: `offline-recipe-owner-${randomUUID()}`,
+    decisions: [
+      {
+        id: randomUUID(),
+        type: 'engine_human_gate',
+        title: 'Private recipe ownership proof',
+        description: 'Terminal owned mirror; backend replay must be refused',
+        createdAt: new Date().toISOString(),
+        actions: [{ id: 'dismiss', label: 'Dismiss', style: 'secondary' }],
+        payload: {
+          kind: 'review',
+          prNumber: null,
+          repo: null,
+          recommendation: 'COMMENT',
+          reviewMd: 'Private recipe ownership proof',
+          lineComments: [],
+          recipeJson: JSON.stringify({
+            title: 'Private refused replay',
+            workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'pass' } } },
+          }),
+        },
+      },
+    ],
+  };
+  const probe = path.join(root, 'apps/command-center/scripts/probes/offline-review-workspace.js');
+  let seeded = false;
+  let browser;
+  let result;
+  try {
+    await withOwnedGatewayOffline(async () => {
+      await writeFile(fixture.runFile, JSON.stringify(proofRun, null, 2));
+      seeded = true;
+    });
+    browser = await detailBrowser(fixture.runId);
+    const { route, cdp, artifacts } = browser;
+    const snapshot = () => cdp('eval', route, '--file', probe);
+    const until = async (predicate, label) => {
+      const deadline = Date.now() + 45000;
+      let value;
+      do {
+        value = await snapshot();
+        if (predicate(value)) return value;
+        await delay(100);
+      } while (Date.now() < deadline);
+      assert.fail(`${label}: ${JSON.stringify(value)}`);
+    };
+    await until(
+      (value) => value.canonical && !value.paused && value.recipe?.runId === fixture.runId,
+      'The actual canonical review must admit its recipe controls',
+    );
+    await cdp('click', route, 'run-detail >>> review-workspace .rw-tab:last-child');
+    await until((value) => value.activeTab === 'recipe', 'Open the actual recipe tab');
+    const replay = 'run-detail >>> review-workspace .rw-recipe-toggle';
+    await cdp('click', route, replay);
+    await until(
+      (value) =>
+        !value.recipeRunning &&
+        /not ready for recipe replay|no admitted source lock/.test(value.recipe?.output),
+      'The backend refusal must be visible and release the actual parent running state',
+    );
+    const message = 'run-detail >>> review-workspace .recipe-output-scroll > div:nth-child(2)';
+    await cdp('click', route, message);
+    await until(
+      (value) => value.recipe?.errorVisible,
+      'The actual refusal must be readable in the viewport',
+    );
+    await writeFile(
+      path.join(artifacts, 'recipe-current-refusal.json'),
+      JSON.stringify(await snapshot(), null, 2),
+    );
+    await cdp('screenshot', route, path.join(artifacts, 'recipe-current-refusal.png'));
+    await withOwnedGatewayOffline(
+      async () => {
+        await until(
+          (value) =>
+            value.paused &&
+            value.recipe?.disabled &&
+            !value.recipe.running &&
+            !value.recipeRunning &&
+            /Check recipe history before replaying/.test(value.recipe.output),
+          'A real interrupted start must retire ownership and visibly report uncertain delivery',
+        );
+        await cdp('click', route, message);
+        await until(
+          (value) => value.recipe?.errorVisible,
+          'The uncertain-delivery message must remain readable',
+        );
+        await writeFile(
+          path.join(artifacts, 'recipe-interrupted-start.json'),
+          JSON.stringify(await snapshot(), null, 2),
+        );
+        await cdp('screenshot', route, path.join(artifacts, 'recipe-interrupted-start.png'));
+      },
+      {
+        beforeStop: async () => {
+          await cdp('click', route, replay);
+          await until(
+            (value) =>
+              value.recipeRunning &&
+              value.recipe?.running &&
+              /Connecting to gateway/.test(value.recipe.output),
+            'Keep the real replay start pending before the owned gateway outage',
+          );
+        },
+      },
+    );
+    const recovered = await until(
+      (value) => !value.paused && !value.recipeRunning && !value.recipe?.running,
+      'Current reconnect reads must not restart the interrupted recipe',
+    );
+    assert.doesNotMatch(recovered.recipe.output, /Recipe replay accepted/);
+    // Navigate using the router, then return to the same canonical fixture.
+    await cdp('eval', route, "location.hash='runs'; return true;");
+    await cdp('eval', 'runs', `location.hash=${JSON.stringify(route)}; return true;`);
+    const reopened = await until(
+      (value) => value.canonical && !value.paused && Boolean(value.recipe),
+      'The reopened review must acquire its own idle output panel',
+    );
+    assert.equal(reopened.recipeRunning, false);
+    assert.equal(reopened.recipe.running, false);
+    assert.equal(reopened.recipe.output, '');
+    const finalRun = (await rpc('run.get', { runId: fixture.runId })).run;
+    assert.equal(finalRun.status, 'done');
+    assert.equal(finalRun.decisions[0].resolvedAt, undefined);
+    const finalSlot = (await rpc('fleet.status')).fleet.slots.find(
+      (entry) => entry.slot === fixture.slotId,
+    );
+    assert.equal(finalSlot.currentRunId, slot.currentRunId);
+    assert.equal(finalSlot.phase, slot.phase);
+    result = {
+      result: 'PASS',
+      action: phase,
+      recipeRefusalVisible: true,
+      recipeInterruptedOwnerRetired: true,
+      recipeReopenedOwnerIdle: true,
+      successfulStreamingProven: false,
+      runId: fixture.runId,
+    };
+  } finally {
+    if (seeded) {
+      await withOwnedGatewayOffline(async () => {
+        await writeFile(fixture.runFile, originalBytes);
+        await chmod(fixture.runFile, originalMode);
+        assert.deepEqual(await readFile(fixture.runFile), originalBytes);
+        assert.equal((await stat(fixture.runFile)).mode & 0o777, originalMode);
+      });
+    }
+    if (browser) {
+      browser.base.hash = 'runs';
+      await browser.cdp('goto', browser.base.href);
+    }
+  }
+  console.log(JSON.stringify(result));
+  process.exit(0);
 }
 
 if (phase === 'review-workspace-web') {
