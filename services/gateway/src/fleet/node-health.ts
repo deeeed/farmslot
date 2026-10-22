@@ -16,6 +16,13 @@ import {
   type NodeSystemMetrics,
   type RecipeRuntimeCapabilityDeclaration,
 } from '@farmslot/protocol';
+import {
+  canonicalResourceJson,
+  type ResourceKey,
+  resourceKeyId,
+} from '@farmslot/protocol/client-cache';
+
+import { resourceRevisions } from '../resources/revisions.js';
 
 import { loadPressureHistory, savePressureHistory } from './pressure-history-store.js';
 import { getCachedFleet } from './state.js';
@@ -24,6 +31,7 @@ const healthMap = new Map<string, MachineHealth>();
 const pressureHistory = new Map<string, NodePressureHistorySample[]>();
 const processInventoryMap = new Map<string, NodeProcessInventory>();
 const processSamplerHealthMap = new Map<string, NodeProcessSamplerHealth>();
+const observationFingerprints = new Map<string, string>();
 /** Machines that have delivered a live sample since this gateway booted.
  * Absent = the ring (if any) was rehydrated from the persisted store. */
 const liveSampleSinceBoot = new Set<string>();
@@ -33,6 +41,36 @@ const PRESSURE_SAMPLE_FUTURE_SKEW_MS = 30_000;
 let pressurePersistTimer: ReturnType<typeof setTimeout> | null = null;
 let localCollectionTimer: ReturnType<typeof setInterval> | null = null;
 let prevCpuTimes: { idle: number; total: number } | null = null;
+
+function publishMachineObservation(machine: string): void {
+  const fingerprint = canonicalResourceJson({
+    health: healthMap.get(machine),
+    pressure: pressureHistory.get(machine),
+    processInventory: processInventoryMap.get(machine),
+    samplerHealth: processSamplerHealthMap.get(machine),
+    live: liveSampleSinceBoot.has(machine),
+  });
+  if (observationFingerprints.get(machine) === fingerprint) return;
+  observationFingerprints.set(machine, fingerprint);
+  const keys = new Map<string, ResourceKey>();
+  const add = (key: ResourceKey) => keys.set(resourceKeyId(key), key);
+  add({ family: 'node', nodeId: machine });
+  add({ family: 'pressure', nodeId: machine });
+  add({ family: 'slots', scope: 'farm' });
+  add({ family: 'slots', scope: 'farm', nodeId: machine });
+  for (const slot of getCachedFleet()?.slots ?? []) {
+    if (slot.machine !== machine) continue;
+    add({ family: 'slot', slotId: slot.slot });
+    if (slot.project) add({ family: 'slots', scope: 'farm', project: slot.project });
+  }
+  for (const key of keys.values()) resourceRevisions.advance(key);
+  const latest = pressureHistory.get(machine)?.at(-1);
+  resourceRevisions.scheduleInvalidation(
+    machine,
+    { family: 'pressure', nodeId: machine },
+    latest ? Date.parse(latest.collectedAt) + DEFAULT_PRESSURE_STALE_AFTER_MS + 1 : undefined,
+  );
+}
 
 // ─── Headroom computation ───
 
@@ -83,6 +121,7 @@ export function updateMachineMetrics(machine: string, metrics: NodeMetricsSample
           ? 'yellow'
           : headroom,
   });
+  publishMachineObservation(machine);
 }
 
 function updateProcessInventory(machine: string, incoming: NodeProcessInventory | undefined): void {
@@ -188,6 +227,7 @@ export function rehydratePressureHistory(): void {
   for (const [machine, samples] of loaded.machines) {
     if (liveSampleSinceBoot.has(machine)) continue;
     pressureHistory.set(machine, samples);
+    publishMachineObservation(machine);
     restored += 1;
   }
   if (restored > 0) {
@@ -258,6 +298,7 @@ export function markMachineOffline(machine: string): void {
   } else {
     healthMap.set(machine, { machine, online: false, headroom: 'red' });
   }
+  publishMachineObservation(machine);
 }
 
 // ─── Mark machine online (agent connected) ───
@@ -278,6 +319,7 @@ export function markMachineOnline(
       headroom: 'green',
     });
   }
+  publishMachineObservation(machine);
 }
 
 // ─── Local metrics collection (for runner-local — no agent needed) ───

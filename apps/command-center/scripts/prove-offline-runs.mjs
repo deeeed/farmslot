@@ -484,11 +484,23 @@ if (phase === 'list-web') {
   process.exit(0);
 }
 
-async function observeResources() {
+async function observeResources({ clientKind = 'ui', token = profile.credential.token } = {}) {
   const socket = new WebSocket(profile.url);
   const changes = [];
   socket.addEventListener('message', ({ data }) => {
     const frame = JSON.parse(data);
+    if (clientKind === 'node' && frame.type === 'req')
+      socket.send(
+        JSON.stringify({
+          type: 'res',
+          id: frame.id,
+          ok: false,
+          error: {
+            code: 'PROOF_UNSUPPORTED',
+            message: 'This observation peer executes no machine commands',
+          },
+        }),
+      );
     if (frame.type === 'event' && frame.event === 'resource.changed')
       changes.push(
         ...frame.payload.changes.map((change) => ({ ...change, receivedAt: Date.now() })),
@@ -546,16 +558,34 @@ async function observeResources() {
       );
     });
     const auth = await request('auth.connect', {
-      clientKind: 'ui',
-      token: profile.credential.token,
+      clientKind,
+      token,
     });
-    assert.equal(auth.capabilities.resourceChanges.version, 1);
+    if (clientKind === 'ui') assert.equal(auth.capabilities.resourceChanges.version, 1);
     return {
       changes,
       epoch: auth.capabilities.resourceChanges.epoch,
       read: request,
       readStamped: (method, params) => request(method, params, true),
       barrier: () => request('gateway.ping'),
+      sendEvent: (event, payload) => socket.send(JSON.stringify({ type: 'event', event, payload })),
+      closeAndWait: () =>
+        new Promise((resolve, reject) => {
+          if (socket.readyState === WebSocket.CLOSED) return resolve();
+          const timer = setTimeout(
+            () => reject(new Error('Observation peer did not close')),
+            10000,
+          );
+          socket.addEventListener(
+            'close',
+            () => {
+              clearTimeout(timer);
+              resolve();
+            },
+            { once: true },
+          );
+          socket.close();
+        }),
       close: () => socket.close(),
     };
   } catch (error) {
@@ -744,8 +774,18 @@ if (phase === 'slot-facts-web') {
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
   };
-  let observed, failure, result;
+  let observed, failure, result, nodePeer, nodePrincipalId, nodeCredentialId;
   const cleanup = [];
+  const retireNodeIdentity = async () => {
+    if (nodeCredentialId) {
+      await observed.read('credential.revoke', { credentialId: nodeCredentialId });
+      nodeCredentialId = undefined;
+    }
+    if (nodePrincipalId) {
+      await observed.read('principal.retire', { principalIds: [nodePrincipalId] });
+      nodePrincipalId = undefined;
+    }
+  };
   try {
     observed = await observeResources();
     await cdp('goto', base.href);
@@ -880,6 +920,87 @@ if (phase === 'slot-facts-web') {
       beforeStatus,
       'Branch overlays do not rewrite status',
     );
+    const machine = (await inspect()).machine;
+    assert(
+      !(await rpc('fleet.status')).fleet.machines?.some(
+        (node) => node.machine === machine && node.online,
+      ),
+      'Fixture machine must have no node',
+    );
+    nodePrincipalId = (
+      await observed.read('principal.create', {
+        subject: { type: 'node', machine, displayName: `offline-node-observation-${randomUUID()}` },
+        roles: [],
+      })
+    ).principal.id;
+    const issued = await observed.read('credential.issue', {
+      principalId: nodePrincipalId,
+      displayName: 'private observation proof',
+    });
+    nodeCredentialId = issued.credential.id;
+    nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
+    const nodeCycles = [];
+    const nodeCycle = async (label, write, verify) => {
+      const since = observed.changes.length;
+      await write();
+      const after = await until(
+        (value) =>
+          value.reads?.slot.status === 'ready' &&
+          value.reads.slot.observedAt > before.reads.slot.observedAt,
+        'A node observation must refetch the existing canonical slot query without Refresh',
+      );
+      const revision = (value) =>
+        value.reads.slot.resourceState.dependencies.find(
+          ({ key }) => key.family === 'slot' && key.slotId === fixture.slotId,
+        ).revision;
+      assert.equal(after.reads.slot.query.id, before.reads.slot.query.id);
+      assert(revision(after) > revision(before), 'Node observation revision must advance');
+      const fleet = (await rpc('fleet.status')).fleet;
+      const health = fleet.machines.find((row) => row.machine === machine);
+      assert(verify(health, fleet.slots[0]), `Node observation ${label} must be readable`);
+      await observed.barrier();
+      const changes = observed.changes.slice(since);
+      for (const family of ['node', 'pressure'])
+        assert(changes.some(({ key }) => key.family === family && key.nodeId === machine));
+      assert(
+        !changes.some(({ key }) => key.family === 'runs'),
+        'Node observations preserve run bindings',
+      );
+      nodeCycles.push({
+        label,
+        revision: revision(after),
+        health,
+        hostLoad: fleet.slots[0].hostLoad,
+      });
+      before = after;
+    };
+    await nodeCycle(
+      'connect',
+      () => nodePeer.read('node.connect', { machine, pid: process.pid, capabilities: [] }),
+      (health) => health?.online === true,
+    );
+    const metrics = {
+      cpuPercent: 23,
+      memoryPercent: 34,
+      memoryUsedGb: 3.4,
+      memoryTotalGb: 10,
+      diskPercent: 45,
+      loadAvg1: 1,
+      loadAvg5: 1.2,
+      collectedAt: new Date().toISOString(),
+    };
+    await nodeCycle(
+      'sample',
+      () => nodePeer.sendEvent('node.metrics', { machine, metrics }),
+      (health, slot) => health?.system?.cpuPercent === 23 && slot.hostLoad?.memoryPercent === 34,
+    );
+    await nodeCycle(
+      'disconnect',
+      () => nodePeer.closeAndWait(),
+      (health, slot) => health?.online === false && slot.hostLoad?.headroom === 'red',
+    );
+    nodePeer = undefined;
+    await retireNodeIdentity();
     assert.deepEqual(await readFile(pool), beforePool);
     assert.equal((await stat(pool)).mode & 0o777, beforePoolMode);
     await writeFile(path.join(artifacts, 'slot-fact-cycles.json'), JSON.stringify(cycles, null, 2));
@@ -887,17 +1008,30 @@ if (phase === 'slot-facts-web') {
       path.join(artifacts, 'branch-overlay-cycles.json'),
       JSON.stringify(branchCycles, null, 2),
     );
+    await writeFile(
+      path.join(artifacts, 'node-observation-cycles.json'),
+      JSON.stringify(nodeCycles, null, 2),
+    );
     result = {
       result: 'PASS',
       slotFactsNotified: true,
       canonicalSlotContextRefetched: true,
       unchangedRunBindingsRetained: true,
       branchOverlayNotifiedAndRead: true,
+      nodeObservationNotifiedAndRead: true,
       wholeFleetMigrationComplete: false,
     };
   } catch (error) {
     failure = error;
   } finally {
+    if (nodePeer || nodePrincipalId || nodeCredentialId) {
+      try {
+        if (nodePeer) await nodePeer.closeAndWait();
+        await retireNodeIdentity();
+      } catch (error) {
+        cleanup.push(error);
+      }
+    }
     if (branchCreated) {
       try {
         assert.equal(await git('rev-parse', proofBranch), originalHead);

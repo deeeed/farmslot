@@ -995,6 +995,8 @@ test('resource.changed uses the key read authorization and read replies carry re
         { key: { family: 'artifacts', runId: 'changed-run' }, revision: 1, kind: 'updated' },
         { key: { family: 'slots', scope: 'farm' }, revision: 1, kind: 'updated' },
         { key: { family: 'slot', slotId: 'changed-slot' }, revision: 1, kind: 'updated' },
+        { key: { family: 'node', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
+        { key: { family: 'pressure', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
       ],
     });
     const frame = await received;
@@ -1011,6 +1013,8 @@ test('resource.changed uses the key read authorization and read replies carry re
       { key: { family: 'artifacts', runId: 'changed-run' }, revision: 1, kind: 'updated' },
       { key: { family: 'slots', scope: 'farm' }, revision: 1, kind: 'updated' },
       { key: { family: 'slot', slotId: 'changed-slot' }, revision: 1, kind: 'updated' },
+      { key: { family: 'node', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
+      { key: { family: 'pressure', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
     ]);
     // This response is a websocket ordering barrier, rather than a fixed absence wait.
     const refusal = await request(denied, Methods.SOURCES_STATUS, {});
@@ -1024,7 +1028,10 @@ test('resource.changed uses the key read authorization and read replies carry re
         {
           version: 1,
           epoch: resourceRevisions.epoch,
-          changes: [{ key: { family: 'runs', scope: 'farm' }, revision: 1, kind: 'updated' }],
+          changes: [
+            { key: { family: 'runs', scope: 'farm' }, revision: 1, kind: 'updated' },
+            { key: { family: 'node', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
+          ],
         },
       ],
     );

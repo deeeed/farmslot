@@ -24,6 +24,12 @@ export function canReadResourceKey(
     case 'slot':
       method = Methods.FLEET_STATUS;
       break;
+    case 'node':
+      method = Methods.NODE_HEALTH;
+      break;
+    case 'pressure':
+      method = Methods.RESOURCE_PRESSURE_SNAPSHOT;
+      break;
     case 'decisions':
     case 'decision':
       method = Methods.DECISION_LIST;

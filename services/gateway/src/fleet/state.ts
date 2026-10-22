@@ -597,6 +597,7 @@ function withFleetOverlays(fleet: FleetStatus): FleetStatus {
     }
     return slot;
   });
+  enrichSlotHostLoad(slots);
   return { ...fleet, slots, machines: getAllMachineHealth() };
 }
 
@@ -606,8 +607,6 @@ function transformFleet(raw: RawStatus): FleetStatus {
     slot.resourceRollup = computeResourceRollup(slot);
     return slot;
   });
-  // Enrich slots with host load from node health
-  enrichSlotHostLoad(slots);
   return {
     checkedAt: raw.checked_at,
     slots,

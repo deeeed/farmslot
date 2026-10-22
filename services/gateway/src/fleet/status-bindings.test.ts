@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import { type FleetStatus, Methods } from '@farmslot/protocol';
+import { DEFAULT_PRESSURE_STALE_AFTER_MS, type FleetStatus, Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'slot-binding-resources-'));
@@ -39,7 +39,12 @@ const state = await import('../core/state.js');
 const { getCachedFleet, loadFleetStatus, onStateChange, startFileWatcher } =
   await import('./state.js');
 const overlays = await import('./state.js');
-const { markMachineOnline } = await import('./node-health.js');
+const {
+  markMachineOnline,
+  markMachineOffline,
+  updateMachineMetrics,
+  getMachinePressureHistoryFreshness,
+} = await import('./node-health.js');
 const { readWithResourceState, resourceRevisions } = await import('../resources/revisions.js');
 await import('../runtime/mock-pty.test-support.js');
 const { runSlotHistory } = await import('../methods/run/slot-history.js');
@@ -163,6 +168,78 @@ test('an overlay write fences an older in-flight status-file observation', async
     release();
     overlays.clearBranchOverlay('proof');
   }
+});
+
+test('node observations invalidate scoped fleet facts after writes and refresh cached host load', async () => {
+  const machine = 'resource-health-node';
+  await state.rewriteStatusFile(() => ({
+    slots: [{ slot: 'proof', machine, project: 'health-project' }],
+  }));
+  await loadFleetStatus(false, true);
+  const node = { family: 'node', nodeId: machine } as const;
+  const pressure = { family: 'pressure', nodeId: machine } as const;
+  const slot = { family: 'slot', slotId: 'proof' } as const;
+  const beforeRuns = resourceRevisions.revision(key);
+  markMachineOnline(machine);
+  assert.equal(resourceRevisions.revision(node), 1);
+  const beforeSlot = resourceRevisions.revision(slot);
+  markMachineOnline(machine);
+  assert.equal(resourceRevisions.revision(node), 1, 'Identical connection stays quiet');
+  const metrics = {
+    cpuPercent: 20,
+    memoryPercent: 30,
+    memoryUsedGb: 3,
+    memoryTotalGb: 10,
+    diskPercent: 40,
+    loadAvg1: 1,
+    loadAvg5: 1,
+    collectedAt: new Date().toISOString(),
+  };
+  updateMachineMetrics(machine, metrics);
+  assert.equal(resourceRevisions.revision(node), 2);
+  assert.equal(resourceRevisions.revision(slot), beforeSlot + 1);
+  assert.equal(getCachedFleet()?.slots[0].hostLoad?.cpuPercent, 20);
+  assert.equal((await loadFleetStatus(false, true)).slots[0].hostLoad?.memoryPercent, 30);
+  const beforePressure = resourceRevisions.revision(pressure);
+  updateMachineMetrics(machine, { ...metrics });
+  assert.equal(resourceRevisions.revision(node), 2, 'An identical sample stays quiet');
+  assert.equal(resourceRevisions.revision(pressure), beforePressure);
+  markMachineOffline(machine);
+  assert.equal(resourceRevisions.revision(node), 3);
+  assert.equal(getCachedFleet()?.slots[0].hostLoad?.headroom, 'red');
+  markMachineOffline(machine);
+  assert.equal(resourceRevisions.revision(node), 3, 'An identical disconnect stays quiet');
+  for (const key of [
+    { family: 'slots', scope: 'farm' },
+    { family: 'slots', scope: 'farm', nodeId: machine },
+    { family: 'slots', scope: 'farm', project: 'health-project' },
+  ] as const)
+    assert(resourceRevisions.revision(key) > 0);
+  assert.equal(resourceRevisions.revision(key), beforeRuns);
+});
+
+test('pressure readers invalidate when the last sample becomes stale without another node write', (t) => {
+  const now = Date.now();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now });
+  const machine = 'pressure-deadline-node';
+  updateMachineMetrics(machine, {
+    cpuPercent: 20,
+    memoryPercent: 30,
+    memoryUsedGb: 3,
+    memoryTotalGb: 10,
+    diskPercent: 40,
+    loadAvg1: 1,
+    loadAvg5: 1,
+    collectedAt: new Date(now).toISOString(),
+  });
+  const key = { family: 'pressure', nodeId: machine } as const;
+  const before = resourceRevisions.revision(key);
+  t.mock.timers.tick(DEFAULT_PRESSURE_STALE_AFTER_MS);
+  assert.equal(getMachinePressureHistoryFreshness(machine).stale, false);
+  assert.equal(resourceRevisions.revision(key), before);
+  t.mock.timers.tick(1);
+  assert.equal(getMachinePressureHistoryFreshness(machine).stale, true);
+  assert.equal(resourceRevisions.revision(key), before + 1);
 });
 
 test('every serialized binding writer publishes only after the committed file is readable', async () => {
