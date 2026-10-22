@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show the same current-checklist progress beneath run pipelines in lists and detail.
+
 - Open every native run conversation beside slot terminals and show open gates, structured review and fix history, and recovered review failures from the shared models.
 
 - Show the existing shared review history panel on run detail while rounds run, as well as at the gate.

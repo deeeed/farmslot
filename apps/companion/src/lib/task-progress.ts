@@ -5,19 +5,12 @@ import {
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import type { ChecklistProgressFallback } from '@farmslot/review-dispatch';
-
-type UnknownRecord = Record<string, unknown>;
-
-function recordValue(value: unknown): UnknownRecord | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as UnknownRecord)
-    : null;
-}
-
-function numberValue(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
+import {
+  type ChecklistProgressFallback,
+  ciFixTaskProgress,
+  effectiveTaskProgressForRun,
+} from '@farmslot/review-dispatch';
+export { effectiveTaskProgressForRun } from '@farmslot/review-dispatch';
 
 export function ciWatchOutputsForRun(run: Run | null | undefined): Record<string, unknown> {
   const step = run?.steps.find((candidate) => candidate.name === 'ci-watch');
@@ -33,44 +26,7 @@ export function isInlineCiFixActiveFromOutputs(out: Record<string, unknown>): bo
 export function buildCiFixTaskProgress(
   run: Run | null | undefined,
 ): TaskProgressStructured | undefined {
-  const progress = recordValue(ciWatchOutputsForRun(run).fixProgress);
-  const total = numberValue(progress?.total);
-  if (!total) return undefined;
-  const completed = numberValue(progress?.completed) ?? 0;
-  const currentLabel = typeof progress?.currentLabel === 'string' ? progress.currentLabel : null;
-  const steps = Array.from({ length: total }, (_, index) => {
-    const oneBased = index + 1;
-    return {
-      index: oneBased,
-      name: oneBased === completed + 1 && currentLabel ? currentLabel : `Step ${oneBased}`,
-      status:
-        oneBased <= completed
-          ? ('done' as const)
-          : oneBased === completed + 1
-            ? ('running' as const)
-            : ('pending' as const),
-    };
-  });
-  return {
-    schema: {
-      flowType: 'ci-watch',
-      title: 'CI fix',
-      totalSteps: total,
-      phases: [{ name: 'CI fix', steps: steps.map(({ index, name }) => ({ index, name })) }],
-    },
-    phases: [{ name: 'CI fix', steps, completedSteps: completed, totalSteps: total }],
-    completedSteps: completed,
-    totalSteps: total,
-    currentPhase: 'CI fix',
-    currentStep: currentLabel,
-  };
-}
-
-export function effectiveTaskProgressForRun(
-  run: Run | null | undefined,
-  taskProgress: TaskProgressStructured | null | undefined,
-): TaskProgressStructured | undefined {
-  return taskProgress ?? buildCiFixTaskProgress(run);
+  return ciFixTaskProgress(ciWatchOutputsForRun(run));
 }
 
 export function activeTaskProgressStepId(

@@ -5,7 +5,12 @@ import {
   type RunStep,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
-import { runActivityView, runUsesPublicationReviewNodes } from '@farmslot/review-dispatch';
+import {
+  ciFixTaskProgress,
+  effectiveTaskProgressForRun,
+  runActivityView,
+  runUsesPublicationReviewNodes,
+} from '@farmslot/review-dispatch';
 
 import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
 import {
@@ -38,43 +43,7 @@ export function isInlineCiFixActiveFromOutputs(out: Record<string, unknown>): bo
   );
 }
 
-export function effectiveTaskProgressForRun(
-  run: Run | undefined,
-  taskProgress: TaskProgressStructured | undefined,
-): TaskProgressStructured | undefined {
-  if (taskProgress) return taskProgress;
-  const progress = recordValue(ciWatchOutputsForRun(run).fixProgress);
-  const total = numberValue(progress?.total);
-  if (!total) return undefined;
-  const completed = numberValue(progress?.completed) ?? 0;
-  const currentLabel = typeof progress?.currentLabel === 'string' ? progress.currentLabel : null;
-  const steps = Array.from({ length: total }, (_, index) => {
-    const oneBased = index + 1;
-    return {
-      index: oneBased,
-      name: oneBased === completed + 1 && currentLabel ? currentLabel : `Step ${oneBased}`,
-      status:
-        oneBased <= completed
-          ? ('done' as const)
-          : oneBased === completed + 1
-            ? ('running' as const)
-            : ('pending' as const),
-    };
-  });
-  return {
-    schema: {
-      flowType: 'ci-watch',
-      title: 'CI fix',
-      totalSteps: total,
-      phases: [{ name: 'CI fix', steps: steps.map(({ index, name }) => ({ index, name })) }],
-    },
-    phases: [{ name: 'CI fix', steps, completedSteps: completed, totalSteps: total }],
-    completedSteps: completed,
-    totalSteps: total,
-    currentPhase: 'CI fix',
-    currentStep: currentLabel,
-  };
-}
+export { effectiveTaskProgressForRun } from '@farmslot/review-dispatch';
 
 export function effectiveTaskProgress(
   run: Run | undefined,
@@ -852,58 +821,8 @@ function arrowPath(src: NodePos, tgt: NodePos): string {
   return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
 }
 
-interface CiFixProgressOutput {
-  completed?: number;
-  total?: number;
-  currentLabel?: string | null;
-}
-
-function readCiFixProgress(value: unknown): CiFixProgressOutput | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const record = value as Record<string, unknown>;
-  return {
-    completed: typeof record.completed === 'number' ? record.completed : undefined,
-    total: typeof record.total === 'number' ? record.total : undefined,
-    currentLabel:
-      typeof record.currentLabel === 'string' || record.currentLabel === null
-        ? record.currentLabel
-        : undefined,
-  };
-}
-
 export function buildCiFixTaskProgress(
   outputs: Record<string, unknown>,
 ): TaskProgressStructured | undefined {
-  const progress = readCiFixProgress(outputs.fixProgress);
-  if (!progress?.total) return undefined;
-  const completed = progress.completed ?? 0;
-  const steps = Array.from({ length: progress.total }, (_, index) => {
-    const oneBased = index + 1;
-    return {
-      index: oneBased,
-      name:
-        oneBased === completed + 1 && progress.currentLabel
-          ? progress.currentLabel
-          : `Step ${oneBased}`,
-      status:
-        oneBased <= completed
-          ? ('done' as const)
-          : oneBased === completed + 1
-            ? ('running' as const)
-            : ('pending' as const),
-    };
-  });
-  return {
-    schema: {
-      flowType: 'ci-watch',
-      title: 'CI fix',
-      totalSteps: progress.total,
-      phases: [{ name: 'CI fix', steps: steps.map(({ index, name }) => ({ index, name })) }],
-    },
-    phases: [{ name: 'CI fix', steps, completedSteps: completed, totalSteps: progress.total }],
-    completedSteps: completed,
-    totalSteps: progress.total,
-    currentPhase: 'CI fix',
-    currentStep: progress.currentLabel ?? null,
-  };
+  return ciFixTaskProgress(outputs);
 }

@@ -8,7 +8,7 @@
 //   node scripts/cdp.mjs focus <hash>                 Front the tab + grant clipboard (probes that click copy buttons).
 //   node scripts/cdp.mjs goto <hash|url> [--new]      Navigate a reused Command Center tab.
 //   node scripts/cdp.mjs login <hash>                 Fill the auth form from an explicit test profile.
-//   node scripts/cdp.mjs screenshot <hash> <path>      Capture a PNG screenshot of a page tab.
+//   node scripts/cdp.mjs screenshot <hash> <path> [--appearance dark|light] [--width N --height N]
 //   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
 //   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
 //   node scripts/cdp.mjs click <hash> <selector>       Click a control, searching shadow roots.
@@ -292,24 +292,51 @@ async function viewportTab(hash, width, height) {
   }
 }
 
-async function screenshotTab(hash, outputPath) {
+async function screenshotTab(hash, outputPath, options) {
+  const { appearance, width, height } = options;
+  if (appearance && !['dark', 'light'].includes(appearance)) die('Use dark or light appearance');
+  if (
+    (width !== undefined || height !== undefined) &&
+    ![width, height].every((value) => Number.isSafeInteger(value) && value > 0)
+  )
+    die('Use positive --width and --height together');
   const tab = await findTab(hash);
   if (!tab) die(`no CDP tab matching hash=${hash || '(any)'}`, 2);
   const { call, close } = await connect(tab.webSocketDebuggerUrl);
-  await call('Page.enable');
-  await call('Runtime.evaluate', {
-    expression: 'document.fonts?.ready ?? Promise.resolve()',
-    awaitPromise: true,
-    returnByValue: true,
-  });
-  const result = await call('Page.captureScreenshot', {
-    format: 'png',
-    captureBeyondViewport: true,
-    fromSurface: true,
-  });
-  close();
-  writeFileSync(outputPath, Buffer.from(result.data, 'base64'));
-  return { path: outputPath };
+  try {
+    await call('Page.enable');
+    if (width !== undefined)
+      await call('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+    if (appearance)
+      await call('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: appearance }],
+      });
+    // Emulation belongs to this CDP connection, so retain it through the capture.
+    await call('Runtime.evaluate', {
+      expression: 'document.fonts?.ready ?? Promise.resolve()',
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    const presentation = await call('Runtime.evaluate', {
+      expression:
+        '({ width: innerWidth, height: innerHeight, appearance: matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark" })',
+      returnByValue: true,
+    });
+    const result = await call('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: true,
+      fromSurface: true,
+    });
+    writeFileSync(outputPath, Buffer.from(result.data, 'base64'));
+    return { path: outputPath, ...presentation.result?.value };
+  } finally {
+    close();
+  }
 }
 
 async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
@@ -637,9 +664,20 @@ try {
       die('usage: cdp.mjs viewport <hash> <width> <height>');
     console.log(JSON.stringify(await viewportTab(hash, Number(width), Number(height)), null, 2));
   } else if (cmd === 'screenshot') {
-    const [hash, outputPath] = rest;
-    if (!hash || !outputPath) die('usage: cdp.mjs screenshot <hash|-|route> <output.png>');
-    const result = await screenshotTab(hash, outputPath);
+    const [hash, outputPath, ...flags] = rest;
+    if (!hash || !outputPath)
+      die(
+        'usage: cdp.mjs screenshot <hash|-|route> <output.png> [--appearance dark|light] [--width N --height N]',
+      );
+    const options = {};
+    for (let i = 0; i < flags.length; i += 2) {
+      const flag = flags[i];
+      const value = flags[i + 1];
+      if (!['--appearance', '--width', '--height'].includes(flag) || !value)
+        die('Invalid screenshot option');
+      options[flag.slice(2)] = flag === '--appearance' ? value : Number(value);
+    }
+    const result = await screenshotTab(hash, outputPath, options);
     console.log(JSON.stringify(result, null, 2));
   } else if (cmd === 'gateway') {
     const [method, paramsJson] = rest;

@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 
 import type {
   PRStatus,
@@ -25,6 +25,11 @@ import {
   slotMachineMap,
   summarizeRunEvidence,
 } from '@farmslot/protocol';
+import {
+  acceptsRunChecklistProgress,
+  ChecklistProgressReads,
+  runChecklistProgressTarget,
+} from '@farmslot/review-dispatch';
 import { projectColor } from '@farmslot/theme';
 
 import './run-pipeline-mini.js';
@@ -52,7 +57,6 @@ import {
 } from '../shared/work-inventory-table.js';
 
 import { familyRunHash } from './family-observability-url-state.js';
-import { isTaskProgressRunActive, shouldAcceptTaskProgressUpdate } from './run-detail-model.js';
 import { standaloneRunDetailHash } from './run-detail-url-state.js';
 import {
   renderRunListManageBar,
@@ -172,7 +176,10 @@ export class RunList extends RunListState {
   private narrowMedia?: MediaQueryList;
   private unsubProgress?: () => void;
   private readonly taskProgressFetches = new Set<string>();
+  @state() private taskProgressErrorsByRun = new Map<string, string>();
   private progressClock?: number;
+  private progressConnection = getState().connection;
+  private readonly checklistReads = new Map<string, ChecklistProgressReads>();
   private readonly onNarrowChange = () => {
     this.narrowViewport = this.narrowMedia?.matches ?? false;
   };
@@ -201,15 +208,21 @@ export class RunList extends RunListState {
       this.fleet = s.fleet;
       this.hydrating = isHydrating(s, 'runs');
       this.bootstrapFailed = s.bootstrapFailed.runs;
+      if (s.connection === 'connected' && this.progressConnection !== 'connected') {
+        this.taskProgressFetches.clear();
+      }
+      this.progressConnection = s.connection;
       void this.fetchInitialTaskProgress(s.runs);
     });
     this.unsubProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
       Events.TASK_PROGRESS_UPDATED,
       (update) => {
         const run = this.runs.find((candidate) => candidate.id === update.runId);
-        if (run && update.progress.structured && shouldAcceptTaskProgressUpdate(run, update)) {
+        if (run && update.progress.structured && acceptsRunChecklistProgress(run, update)) {
+          const key = runChecklistProgressTarget(run)!.key;
+          this.checklistReads.get(key)?.invalidate();
           this.taskProgressByRun = new Map(this.taskProgressByRun).set(
-            run.id,
+            key,
             update.progress.structured,
           );
         }
@@ -237,28 +250,37 @@ export class RunList extends RunListState {
   }
 
   private async fetchInitialTaskProgress(runs: readonly Run[]): Promise<void> {
-    const activeRuns = runs.filter(
-      (run) => run.slotId && isTaskProgressRunActive(run) && !this.taskProgressFetches.has(run.id),
-    );
+    const targets = runs.flatMap((run) => {
+      const target = runChecklistProgressTarget(run);
+      return target && !this.taskProgressFetches.has(target.key) ? [target] : [];
+    });
     await Promise.all(
-      activeRuns.map(async (run) => {
-        this.taskProgressFetches.add(run.id);
+      targets.map(async ({ key, params }) => {
+        this.taskProgressFetches.add(key);
+        let reads = this.checklistReads.get(key);
+        if (!reads) {
+          reads = new ChecklistProgressReads();
+          reads.select(key);
+          this.checklistReads.set(key, reads);
+        }
+        const read = reads.begin(key);
         try {
-          const progress = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-            slotId: run.slotId,
-            runId: run.id,
-          });
-          if (progress.structured) {
-            this.taskProgressByRun = new Map(this.taskProgressByRun).set(
-              run.id,
-              progress.structured,
-            );
+          const progress = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, params);
+          if (reads.isCurrent(read)) {
+            const next = new Map(this.taskProgressByRun);
+            if (progress.structured) next.set(key, progress.structured);
+            else next.delete(key);
+            this.taskProgressByRun = next;
+            const errors = new Map(this.taskProgressErrorsByRun);
+            errors.delete(key);
+            this.taskProgressErrorsByRun = errors;
           }
         } catch (error) {
-          // This optional label can retry later; live task-progress events still update the row.
-          this.taskProgressFetches.delete(run.id);
-          console.warn(
-            `[run-list] task progress fetch failed for ${run.id}:`,
+          if (!reads.isCurrent(read)) return;
+          // No checklist is shown on failure; a later refresh may read it again.
+          this.taskProgressFetches.delete(key);
+          this.taskProgressErrorsByRun = new Map(this.taskProgressErrorsByRun).set(
+            key,
             error instanceof Error ? error.message : String(error),
           );
         }
@@ -865,7 +887,10 @@ export class RunList extends RunListState {
           .run=${run}
           .steps=${run.steps}
           .flowType=${run.flowType}
-          .taskProgress=${this.taskProgressByRun.get(run.id)}
+          .taskProgressError=${this.taskProgressErrorsByRun.get(
+            runChecklistProgressTarget(run)?.key ?? '',
+          )}
+          .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
         ></run-pipeline-mini>
         <span class="pipeline-label">${pipelineLabel}</span>
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
