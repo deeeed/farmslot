@@ -57,6 +57,41 @@ import {
 
 const exec = promisify(execFile);
 
+function compactDiagnostic(value: string): string;
+function compactDiagnostic(value: unknown): unknown;
+function compactDiagnostic(value: unknown): unknown {
+  const json = JSON.stringify(value);
+  const bytes = json === undefined ? 0 : Buffer.byteLength(json);
+  return bytes > 64 * 1024 ? `[native event payload omitted: ${bytes} bytes]` : value;
+}
+
+/** Bound observations without changing command acceptance or authoritative results. */
+function compactEventDiagnostics(event: NativeEventInput): NativeEventInput {
+  if (Buffer.byteLength(JSON.stringify(event)) <= 1024 * 1024) return event;
+  return {
+    ...event,
+    ...(event.text && !event.type.startsWith('command.')
+      ? { text: compactDiagnostic(event.text) }
+      : {}),
+    ...(event.tool
+      ? {
+          tool: {
+            ...event.tool,
+            input: compactDiagnostic(event.tool.input),
+            output: compactDiagnostic(event.tool.output),
+          },
+        }
+      : {}),
+    ...(event.data
+      ? {
+          data: Object.fromEntries(
+            Object.entries(event.data).map(([key, value]) => [key, compactDiagnostic(value)]),
+          ),
+        }
+      : {}),
+  };
+}
+
 export async function resolveNativeExecutable(
   binary: string,
   cwd: string,
@@ -974,6 +1009,7 @@ export class NativeSessionManager {
   }
 
   private append(record: SessionRecord, event: NativeEventInput): void {
+    event = compactEventDiagnostics(event);
     const structuredResult =
       event.type === 'turn.completed' &&
       event.status === 'completed' &&

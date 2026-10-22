@@ -1904,6 +1904,8 @@ export interface SlotRunHistoryEntry {
   status: RunStatus;
   flowType: FlowType;
   ticketOrPr: string;
+  /** Covered Jira key union for compact history clients. */
+  linkedTicketRefs?: string[];
   summary?: string;
   project: string;
   branch: string | null;
@@ -2928,6 +2930,8 @@ export interface Run {
   grade?: RunGrade;
   humanGrade?: HumanGrade;
   links?: RunLink[];
+  /** Operator-added Jira keys only; covered source keys are derived without rewriting ticketData. */
+  linkedTicketRefs?: string[];
   /** Operator-curated labels for demo/review collections. Normalized with normalizeRunTags. */
   tags?: string[];
   summary?: string; // LLM-generated 1-line description

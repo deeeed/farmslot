@@ -92,6 +92,7 @@ test('buildSlotRunHistoryEntry derives recovery paths and current marker', () =>
     status: 'monitoring',
     flowType: 'fix-bug',
     ticketOrPr: 'PROJ-1',
+    linkedTicketRefs: ['PROJ-1'],
     summary: undefined,
     project: 'example-mobile-farm',
     branch: 'fix/history',

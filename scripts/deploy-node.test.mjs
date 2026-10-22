@@ -31,7 +31,17 @@ const readRenderedPlist = (file) =>
 // or the file for a shared one) ends, however that ends.
 const deployFixture = (t, prefix) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => {
+    const pidFile = path.join(root, 'home/tmux-worker.pid');
+    if (fs.existsSync(pidFile)) {
+      try {
+        process.kill(-Number(fs.readFileSync(pidFile, 'utf8')), 'SIGKILL');
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error;
+      }
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   const write = (relative, content, executable = false) => {
     const target = path.join(root, relative);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -438,8 +448,8 @@ elif command.startswith('test -d '): sys.exit(1)
 // left worker-side fixes on whatever revision the CLI was last installed at. The
 // ssh stub runs each remote command locally with HOME at a temp directory, so the
 // snapshot, its links and the worker-shell verify are real files and processes.
-// The tmux stub returns from detached session creation before the worker body.
-// The fixture's poll clock runs the queued body. Each test runs one deploy.
+// The tmux stub stands in for the node user's server: it runs a new session's
+// command in the foreground. Each test runs one deploy.
 const FAKE_CLI = `#!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
@@ -494,25 +504,26 @@ case "$1" in
   new-session)
     for arg; do command=$arg; done
     echo "$command" >> "$HOME/tmux.log"
-    [ -f "$HOME/tmux-hangs" ] || printf '%s' "$command" > "$HOME/tmux-pending"
-    ;;
-  kill-session)
-    echo "$*" >> "$HOME/tmux-kills.log"
-    rm -f "$HOME/tmux-pending"
-    ;;
+    if [ ! -f "$HOME/tmux-hangs" ]; then
+      node - "$command" "$HOME/tmux-worker.pid" <<'SPAWN'
+const { spawn } = require('node:child_process');
+const child = spawn('bash', ['-c', process.argv[2]], { detached: true, stdio: 'ignore' });
+require('node:fs').writeFileSync(process.argv[3], String(child.pid));
+child.unref();
+SPAWN
+    fi ;;
+  kill-session) echo "$*" >> "$HOME/tmux-kills.log" ;;
 esac
 `,
     true,
   );
-  // A verify poll advances the fake detached server, without running its body
-  // inside the separately bounded tmux client. Other sleeps return at once.
+  // Like tmux, new-session returns before its command finishes. Give the CLI the
+  // worker-body timeout rather than the five-second tmux-client timeout.
+  // Deliberately hung fixtures still skip the wait.
   write(
     'bin/sleep',
-    '#!/bin/sh\n' +
-      'if [ "$1" = 0.5 ] && [ -f "$HOME/tmux-pending" ]; then\n' +
-      '  command=$(cat "$HOME/tmux-pending"); rm "$HOME/tmux-pending"\n' +
-      '  exec bash -c "$command"\nfi\n' +
-      '[ "$1" = 0.5 ] && [ -f "$HOME/cli-hangs" ] || exit 0\n' +
+    '#!/bin/sh\n[ "$1" = 0.5 ] && [ ! -f "$HOME/tmux-hangs" ] || exit 0\n' +
+      '[ -f "$HOME/cli-hangs" ] || exec /bin/sleep "$1"\n' +
       'for _ in $(seq 1 100); do [ -s "$HOME/cli-hang.pid" ] && exit 0; /bin/sleep 0.05; done\n',
     true,
   );
@@ -1379,7 +1390,7 @@ for (const [name, explicit, expected, instance, authDefault, captureMode = 'reta
 for (const tmuxServer of [true, false]) {
   test(`deploy-node honors the pool worker profile home (${tmuxServer ? 'tmux' : 'login shell'})`, (t) => {
     const fixture = cliFixture(t, { tmuxServer });
-    if (!tmuxServer) fixture.write('bin/sleep', '#!/bin/sh\nexec /bin/sleep "$@"\n', true);
+    fixture.write('bin/sleep', '#!/bin/sh\nexec /bin/sleep "$@"\n', true);
     const serviceHome = path.join(fixture.home, "service profiles' literal-$value");
     fixture.write(
       'pool/z-configured-worker.json',
@@ -1485,7 +1496,7 @@ for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success'])
           'ws://127.0.0.1:7801',
           fs.readFileSync(path.join(repo, 'scripts/lib/worker-env-prefix.sh'), 'utf8').trimEnd(),
           fs.readFileSync(path.join(repo, 'scripts/lib/tmux-bin.sh'), 'utf8'),
-          '1',
+          phase === 'success' ? '10' : '1',
           'dev',
           '',
           path.join(fixture.root, 'node-bin/node'),
@@ -1508,7 +1519,7 @@ for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success'])
       };
       t.after(stop);
       // A failure ceiling, not a wait: removing the production bound cannot hang the test.
-      const ceiling = setTimeout(stop, 3_000);
+      const ceiling = setTimeout(stop, 15_000);
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', (chunk) => {

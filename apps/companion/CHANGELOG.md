@@ -6,6 +6,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback and verified identity handling. Sources, run collections, full run details, slot workspaces and history, terminal and native-conversation run context, visual-review run context, diff and artifact contexts, family views, saved reviews and decision workspaces share live observations; saved results show their age and actions wait for current reads. Visual feedback retains replies in flight during refresh and prevents resending an accepted draft. Conversation controls keep their exact task binding and preserve unsent answers when a refresh interrupts submission. Idle slot diffs load without a bound run, and retained artifact/diff read failures offer Retry. Requires a new native build with Expo SQLite.
 - Add reproducible client-store baseline recipes with a dev-only native startup and websocket byte counter.
+- Show the same covered Jira tickets in run cards and detail, and find runs by any linked key.
+
 - Show the same current-checklist progress beneath run pipelines in lists and detail.
 
 - Open every native run conversation beside slot terminals and show open gates, structured review and fix history, and recovered review failures from the shared models.

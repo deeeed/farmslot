@@ -38,6 +38,7 @@ import {
 } from '@farmslot/review-dispatch';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
+import { RunLinkedTickets } from '../../components/RunLinkedTickets';
 import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
@@ -647,6 +648,24 @@ export default function RunDetailScreen() {
             </View>
           </View>
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
+          <RunLinkedTickets
+            key={run.id}
+            run={run}
+            disabled={runObservation.status !== 'ready' || connectionStatus !== 'connected'}
+            onSave={
+              client
+                ? async (linkedTicketRefs) => {
+                    if (!currentFarmConnection(client)())
+                      throw new Error('Wait for the current connection before editing tickets.');
+                    assertNativeRunReady(run.id, run);
+                    await client.request(Methods.RUN_LINKED_TICKETS_SET, {
+                      runId: run.id,
+                      linkedTicketRefs,
+                    });
+                  }
+                : undefined
+            }
+          />
           {run.summary && <RunTitle style={baseStyles.textSecondary} title={run.summary} />}
           <CockpitTile
             testID="companion-run-open-terminal"

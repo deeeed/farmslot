@@ -5,6 +5,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Document resource revision stamps and the resource change event in the generated gateway API reference.
+- Document the operator-added linked-ticket metadata method in the gateway API reference.
 
 - The fail-closed run lifecycle reference describes accepting review findings at the publish gate (ADR-065 Amendment 8).
 - The retained run artifacts reference says review metadata includes every publish-gate review's result artifact, whatever started the review.

@@ -995,6 +995,7 @@ export class RunList extends RunListState {
           )}
           .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
         ></run-pipeline-mini>
+        <run-tag-editor kind="tickets" .run=${run}></run-tag-editor>
         <span class="pipeline-label">${pipelineLabel}</span>
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
           ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}

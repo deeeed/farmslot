@@ -318,6 +318,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.getGrade`                          | run              | read-only     | —      | —      | Run GetGrade gateway method.                          |
 | `run.grade`                             | run              | bounded-write | —      | —      | Run Grade gateway method.                             |
 | `run.interactiveDev.resolve`            | run              | high-impact   | —      | —      | Run InteractiveDev Resolve gateway method.            |
+| `run.linkedTickets.set`                 | run              | bounded-write | —      | —      | Run LinkedTickets Set gateway method.                 |
 | `run.list`                              | run              | read-only     | —      | —      | Run List gateway method.                              |
 | `run.overrideClaim`                     | run              | bounded-write | —      | —      | Run OverrideClaim gateway method.                     |
 | `run.pause`                             | run              | lifecycle     | —      | —      | Run Pause gateway method.                             |

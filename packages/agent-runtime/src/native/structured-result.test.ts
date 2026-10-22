@@ -55,8 +55,14 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   const turn='turn-'+m.id,text=m.params.input[0].text;
   send({id:m.id,result:{turn:{id:turn}}});
   send({method:'turn/started',params:{turn:{id:turn}}});
-  send({method:'item/agentMessage/delta',params:{itemId:'stream',delta:JSON.stringify(payload)}});
-  if(text!=='stream-only')send({method:'item/completed',params:{item:{id:'final',type:'agentMessage',phase:text==='commentary'?'commentary':'final_answer',text:text==='prose'?'APPROVE':JSON.stringify(payload)}}});
+  const value=text==='oversized'?{...payload,judgments:[{...payload.judgments[0],reason:'x'.repeat(1100000)}]}:payload;
+  if(text==='oversized'){
+   const item={id:'large-tool',type:'commandExecution',command:'fixture large output',status:'inProgress'};
+   send({method:'item/started',params:{item}});
+   send({method:'item/completed',params:{item:{...item,status:'completed',aggregatedOutput:'x'.repeat(1100000),exitCode:0}}});
+  }
+  send({method:'item/agentMessage/delta',params:{itemId:'stream',delta:JSON.stringify(value)}});
+  if(text!=='stream-only')send({method:'item/completed',params:{item:{id:'final',type:'agentMessage',phase:text==='commentary'?'commentary':'final_answer',text:text==='prose'?'APPROVE':JSON.stringify(value)}}});
   send({method:'turn/completed',params:{turn:{id:turn,status:'completed'}}});
  }
  if(m.type==='control_request')send({type:'control_response',response:{request_id:m.request_id,subtype:'success',response:{}}});
@@ -89,18 +95,46 @@ test('schema-bound native command results survive journal reads without acceptin
   });
   id = session.id;
   assert.ok(session.capabilities.structuredResultSchemas?.includes(PIPELINE_VISUAL_RESULT_SCHEMA));
-  for (const command of ['structured', 'stream-only', 'commentary', 'prose']) {
+  for (const command of ['oversized', 'structured', 'stream-only', 'commentary', 'prose']) {
     await manager.send('owner', id, command, command);
-    await until(() =>
-      manager
-        .read('owner', id!)
-        .commands.some((r) => r.commandId === command && r.state === 'completed'),
-    );
+    await until(() => {
+      const snapshot = manager.read('owner', id!);
+      return (
+        snapshot.session.state === 'failed' ||
+        snapshot.commands.some(
+          (r) => r.commandId === command && ['completed', 'failed', 'unknown'].includes(r.state),
+        )
+      );
+    });
     const receipt: NativeCommandReceipt | undefined = manager
       .read('owner', id)
       .commands.find((r) => r.commandId === command);
     assert.ok(receipt);
-    assert.equal(Boolean(receipt.structuredResult), command === 'structured', command);
+    assert.equal(receipt.state, 'completed', manager.read('owner', id).session.error);
+    assert.equal(
+      Boolean(receipt.structuredResult),
+      command === 'structured' || command === 'oversized',
+      command,
+    );
+    if (command === 'oversized') {
+      assert.deepEqual(receipt.structuredResult?.value, {
+        ...result,
+        judgments: [{ ...result.judgments[0], reason: 'x'.repeat(1100000) }],
+      });
+      const tool: NativeSessionEvent | undefined = manager
+        .read('owner', id)
+        .events.find((event) => event.type === 'tool.completed');
+      assert.ok(tool, 'oversized tool completion must remain visible');
+      assert.equal(tool.nativeId, 'large-tool');
+      assert.equal(tool.tool?.status, 'completed');
+      assert.ok(Buffer.byteLength(JSON.stringify(tool)) < 65536);
+      assert.match(String(tool.tool?.output), /omitted.*bytes/);
+      const delta: NativeSessionEvent | undefined = manager
+        .read('owner', id)
+        .events.find((event) => event.type === 'text.delta');
+      assert.ok(delta);
+      assert.ok(Buffer.byteLength(JSON.stringify(delta)) < 65536);
+    }
   }
   const request = JSON.parse((await readFile(join(cwd, 'requests'), 'utf8')).split('\n')[0]);
   assert.equal(request.outputSchema.additionalProperties, false);
@@ -121,6 +155,10 @@ test('schema-bound native command results survive journal reads without acceptin
     result,
   );
   assert.equal(retained.session.resultSchema, PIPELINE_VISUAL_RESULT_SCHEMA);
+  assert.deepEqual(
+    retained.commands.find((r) => r.commandId === 'oversized')?.structuredResult?.value,
+    { ...result, judgments: [{ ...result.judgments[0], reason: 'x'.repeat(1100000) }] },
+  );
 });
 
 test('provider structured_output is accepted while a result prose field stays unqualified', async (t) => {

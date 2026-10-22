@@ -5,8 +5,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add the experimental ADR-071 resource query cache and store seam, persisted Sources/run/decision observations with shared retention bounds, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases. Accepted observations remain saved when a connection pauses or a view closes. Saved facts hydrate through offline reconnect attempts, while authority changes fence pending storage reads.
+- Add shared linked-ticket lookup and operator ticket metadata on runs without changing frozen task inputs.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.66.0 - 2026-10-23
+
+- Add linked-run ticket metadata, shared lookup and the metadata setter contract.
 
 ## 0.65.0 - 2026-10-23
 

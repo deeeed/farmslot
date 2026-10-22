@@ -21,6 +21,34 @@ acceptance array in source order. Paragraph boundaries exclude unrelated prose.
 Existing structured criteria remain authoritative. Generated TASK.md and
 `inputs/handoff.json` MUST consume that same normalized array.
 
+## Linked run tickets
+
+`Run.linkedTicketRefs` stores operator-added Jira keys only. Metadata edits MUST
+NOT rewrite `ticketData`, task files, package inputs, review state or evidence.
+The shared reader unions the canonical Jira ref, `ticketData.jiraKey`, prefetched
+`ticketData.linkedTickets`, ticket keys in description headings and acceptance
+criterion prefixes, and these operator additions. Keys are uppercase and unique;
+incidental references in description prose are not covered tickets.
+
+Run list/detail in Command Center and Companion MUST show this same union and
+search it through the shared run-list selection. Existing run and family summary
+projections carry the covered-key union so a trimmed summary retains ticket lookup.
+Removing an operator addition MUST NOT remove a key derived from frozen inputs.
+A known Jira browse URL supplies links; a key without a resolved URL stays visible.
+The run's recorded PR link remains available beside its tickets.
+
+### Public surface
+
+`@farmslot/protocol` exports the additive `Run.linkedTicketRefs` contract,
+`normalizeRunLinkedTicketRefs`, `runLinkedTicketRefs` and `runLinkedTicketsView`.
+Command Center and Companion use the same reader and validation. Each platform
+reuses one ticket renderer for run list and detail. The supported admin metadata
+RPC `run.linkedTickets.set { runId, linkedTicketRefs }` replaces only the operator
+additions, persists the run and broadcasts `run.updated`, following `run.tags.set`.
+`RunMethods.setLinkedTickets` names it; CLI callers may use the existing generic
+`farmslot rpc` entry. There is no new worker/harness hook, task input, workflow
+action or wire version. The SDK addition requires a fresh minor package release.
+
 ## Run checklist progress
 
 Command Center and Companion MUST retain the run pipeline and, when its current

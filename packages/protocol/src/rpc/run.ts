@@ -53,6 +53,7 @@ export const RunMethods = {
   bulkDelete: Methods.RUN_BULK_DELETE,
   cleanup: Methods.RUN_CLEANUP,
   setTags: Methods.RUN_TAGS_SET,
+  setLinkedTickets: Methods.RUN_LINKED_TICKETS_SET,
   listTags: Methods.RUN_TAGS_LIST,
   backfillSummaries: Methods.RUN_BACKFILL_SUMMARIES,
   recipeRunsForSlot: Methods.RUN_RECIPE_RUNS_FOR_SLOT,
@@ -921,4 +922,12 @@ export interface RunBundleRetainParams {
 
 export interface RunBundleListParams {
   bundlePath: string;
+}
+
+export interface RunLinkedTicketsSetParams {
+  runId: string;
+  linkedTicketRefs: string[];
+}
+export interface RunLinkedTicketsSetResult {
+  run: Run;
 }

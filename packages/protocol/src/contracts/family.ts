@@ -71,6 +71,8 @@ export interface FamilyObservabilityRunSummary {
   active?: boolean;
   project: string;
   ticketOrPr: string;
+  /** Covered Jira key union, including operator additions. */
+  linkedTicketRefs?: string[];
   branch: string | null;
   prNumber: number | null;
   summary: string | null;
