@@ -1,4 +1,4 @@
-import type { FamilyObservabilityArtifact, ReviewIssue, Run, RunStep } from '@farmslot/protocol';
+import type { FamilyObservabilityArtifact, Run, RunStep } from '@farmslot/protocol';
 import {
   parseGitHubPullUrl,
   parseGitHubRef,
@@ -6,7 +6,6 @@ import {
   runStepQueuedMs,
 } from '@farmslot/protocol';
 
-import { hasMeaningfulReviewFixDelta } from '../../utils/review-gate-display.js';
 import { buildHash } from '../../utils/url-state.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
@@ -70,61 +69,6 @@ export interface StepCostInfo {
   tokens?: string;
   model?: string;
   extra?: string;
-}
-
-export interface ReviewLoopAttempt {
-  loopNumber: number;
-  verdict: string;
-  unresolvedCount: number;
-  issues: ReviewIssue[];
-  completedAt: string;
-  hasFixDelta: boolean;
-  fixDeltaPath: string | null;
-}
-
-/**
- * Steps that emit a per-loop review convergence trace in their outputs. Both
- * the publication-review steps and the review loop write `attempts[]` /
- * `timeline[]` describing each review→fix→re-review iteration.
- */
-export function stepHasReviewLoop(step: RunStep): boolean {
-  if (!step.name.includes('publication-review-') && step.name !== 'review') return false;
-  const out = (step.outputs ?? {}) as Record<string, unknown>;
-  const attempts = Array.isArray(out.attempts) ? out.attempts : [];
-  const timeline = Array.isArray(out.timeline) ? out.timeline : [];
-  return attempts.length > 0 || timeline.length > 0;
-}
-
-/**
- * Normalize the free-form `outputs.attempts` blob into the per-loop rows the
- * inspector renders. review and publication-review share this shape
- * (`loopNumber`, `verdict`, `unresolvedCount`, `issues[]`, optional `fixDelta`).
- */
-export function reviewLoopAttempts(step: RunStep): ReviewLoopAttempt[] {
-  const out = (step.outputs ?? {}) as Record<string, unknown>;
-  const attempts = Array.isArray(out.attempts) ? (out.attempts as Record<string, unknown>[]) : [];
-  return attempts.map((attempt, index) => {
-    const fixDelta =
-      attempt.fixDelta && typeof attempt.fixDelta === 'object'
-        ? (attempt.fixDelta as Record<string, unknown>)
-        : null;
-    const issues = Array.isArray(attempt.issues)
-      ? (attempt.issues as Record<string, unknown>[]).map((issue) => ({
-          file: String(issue.file ?? 'unknown'),
-          line: typeof issue.line === 'number' ? issue.line : undefined,
-          description: String(issue.description ?? ''),
-        }))
-      : [];
-    return {
-      loopNumber: typeof attempt.loopNumber === 'number' ? attempt.loopNumber : index + 1,
-      verdict: typeof attempt.verdict === 'string' ? attempt.verdict : 'pending',
-      unresolvedCount: typeof attempt.unresolvedCount === 'number' ? attempt.unresolvedCount : 0,
-      issues,
-      completedAt: typeof attempt.completedAt === 'string' ? attempt.completedAt : '',
-      hasFixDelta: hasMeaningfulReviewFixDelta(fixDelta),
-      fixDeltaPath: fixDelta && typeof fixDelta.diffPath === 'string' ? fixDelta.diffPath : null,
-    };
-  });
 }
 
 export function stepDurationLabel(step: RunStep, nowMs: number): string {

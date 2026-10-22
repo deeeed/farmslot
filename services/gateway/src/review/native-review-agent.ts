@@ -7,6 +7,7 @@ import {
   type ReviewSessionFallback,
   type ReviewValidationDepth,
 } from '@farmslot/protocol';
+import { reviewArtifactDir } from '@farmslot/review-dispatch';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
@@ -101,7 +102,6 @@ import {
   durationBetween,
   readPersistedReviewSnapshot,
   removeSlotFiles,
-  reviewArtifactDir,
 } from './snapshots.js';
 import { expandReviewTemplate } from './templates.js';
 import {
@@ -689,6 +689,10 @@ async function runNativeReviewAttempt(
           status: feedback.incomplete ? 'blocked' : 'complete',
           lastSignalAt: completedAt,
           reviewResultValidatedAt: feedback.incomplete ? undefined : completedAt,
+          // Keep the immutable review input with validation until the pipeline row is written.
+          deliveryBaselineRef: feedback.incomplete
+            ? undefined
+            : (reviewSnapshot.snapshot.headSha ?? undefined),
           ...(visualResult ? { pipelineVisualReviewResult: visualResult } : {}),
         },
         {

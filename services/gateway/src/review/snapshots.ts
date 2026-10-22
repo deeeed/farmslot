@@ -8,7 +8,7 @@ import {
   type ReviewFixDeltaSnapshot,
   type ReviewMode,
 } from '@farmslot/protocol';
-import { resolveReviewMode } from '@farmslot/review-dispatch';
+import { resolveReviewMode, reviewArtifactDir } from '@farmslot/review-dispatch';
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot, type ExecResult } from '../core/exec.js';
@@ -84,13 +84,6 @@ export function reviewSnapshotIdentityText(
     '',
   ].join('\n');
   return `${diffText}${separator}${manifest}`;
-}
-
-export function reviewArtifactDir(loopNumber: number, artifactScope?: string | null): string {
-  const scope = artifactScope?.trim().replace(/^\/+|\/+$/g, '');
-  if (!scope) return `artifacts/pipeline-review-loop-${loopNumber}`;
-  if (scope.includes('..')) throw new Error(`Invalid review artifact scope: ${artifactScope}`);
-  return `artifacts/${scope}/review-loop-${loopNumber}`;
 }
 
 export function unavailableReviewSnapshot(

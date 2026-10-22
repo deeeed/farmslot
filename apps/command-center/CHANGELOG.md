@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 ## Unreleased
 
 - Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM.
+- Add connected review-history proof for round details and recorded fix diffs.
 
 - Add a connected review-workspace probe for exact line-comment reveal, highlight and inline comment display.
 
