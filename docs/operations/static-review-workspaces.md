@@ -99,6 +99,11 @@ An authenticated owner can retry a requested publication through
 owned publication marker. If the outcome cannot be established, Farmslot reports
 uncertainty and does not post again.
 
+An explicit retry can also register a unique manual review without an engine marker,
+after checking its account, frozen head, exact gated body and every inline finding.
+This adoption records the receipt without posting or changing GitHub's Viewed state.
+A matching manual post blocks automatic posting until explicit reconciliation.
+
 After confirmed publication, the gateway marks the complete reviewed PR diff as
 Viewed using the same GitHub credential. `receipt.viewedFiles` records the reviewed
 head, account, file paths, confirmed marks, outcome and any failure. Slot posting
