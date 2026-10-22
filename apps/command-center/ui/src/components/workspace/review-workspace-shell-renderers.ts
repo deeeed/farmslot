@@ -147,6 +147,7 @@ export function renderReviewTopBar(input: {
   includeEvidence: boolean;
   setIncludeEvidence: (includeEvidence: boolean) => void;
   posting: boolean;
+  postAvailable: boolean;
   recovering: boolean;
   refreshing: boolean;
   proposing: boolean;
@@ -156,6 +157,8 @@ export function renderReviewTopBar(input: {
   proposeImprovement: () => void;
   post: () => void;
   dismiss: () => void;
+  reviewerHref?: string;
+  reviewerUnavailable?: string;
 }) {
   const counts = reviewSeverityCounts(input.comments);
   return html`
@@ -200,6 +203,18 @@ export function renderReviewTopBar(input: {
           `
         : nothing}
       <span class="rw-spacer"></span>
+      ${input.reviewerHref
+        ? html`<a class="rw-action-btn" data-testid="ask-reviewer" href=${input.reviewerHref}
+            >Ask reviewer</a
+          >`
+        : html`<button
+            class="rw-action-btn"
+            data-testid="ask-reviewer"
+            disabled
+            title=${input.reviewerUnavailable ?? 'Reviewer session unavailable'}
+          >
+            Ask reviewer
+          </button>`}
       <button
         class="rw-panel-toggle"
         ?disabled=${input.posting || input.recovering || input.refreshing}
@@ -225,17 +240,21 @@ export function renderReviewTopBar(input: {
               : nothing}
           `
         : nothing}
-      <button
-        class="rw-action-btn ${input.pendingConfirm === 'post' ? 'rw-confirming' : 'rw-btn-post'}"
-        ?disabled=${input.posting || input.recovering}
-        @click=${input.post}
-      >
-        ${input.posting
-          ? 'Posting...'
-          : input.pendingConfirm === 'post'
-            ? `Confirm Post (${input.includedComments})?`
-            : `Post to PR (${input.includedComments})`}
-      </button>
+      ${input.postAvailable
+        ? html`<button
+            class="rw-action-btn ${input.pendingConfirm === 'post'
+              ? 'rw-confirming'
+              : 'rw-btn-post'}"
+            ?disabled=${input.posting || input.recovering || input.refreshing}
+            @click=${input.post}
+          >
+            ${input.posting
+              ? 'Posting...'
+              : input.pendingConfirm === 'post'
+                ? `Confirm Post (${input.includedComments})?`
+                : `Post to PR (${input.includedComments})`}
+          </button>`
+        : nothing}
       <button
         class="rw-action-btn ${input.pendingConfirm === 'dismiss'
           ? 'rw-confirming'

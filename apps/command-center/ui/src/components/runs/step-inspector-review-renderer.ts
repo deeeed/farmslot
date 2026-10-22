@@ -1,77 +1,101 @@
 import { html, nothing } from 'lit';
 
-import type { ReviewHistoryRound } from '@farmslot/review-dispatch';
-
-import { colors } from '../../styles/theme-tokens.js';
+import type {
+  ReviewHistoryFinding,
+  ReviewHistoryFix,
+  ReviewHistoryRound,
+} from '@farmslot/review-dispatch';
 
 import { formatDuration } from './run-utils.js';
 
-/** Platform rendering only. Both clients receive these same recorded round and fix facts. */
 export function renderReviewAttempt(
   round: ReviewHistoryRound,
-  index: number,
-  openArtifact: (path: string) => void = () => undefined,
+  loading: boolean,
+  openArtifact: (path: string) => void,
+  openFinding: (finding: ReviewHistoryFinding) => void,
+  renderSource: (finding: ReviewHistoryFinding) => unknown,
 ): unknown {
-  const color =
-    round.verdict === 'pass'
-      ? colors.statusOk
-      : round.verdict === 'failed'
-        ? colors.statusFail
-        : colors.statusWarn;
+  const running = round.verdict === 'pending';
+  const duration =
+    round.durationMs ??
+    (running && round.startedAt ? Date.now() - Date.parse(round.startedAt) : null);
   return html`<details
     class="review-history-round"
-    ?open=${index === -1}
-    data-round=${round.loopNumber}
+    data-round=${round.roundNumber}
+    data-event=${round.key}
   >
     <summary>
-      <strong>Round ${round.loopNumber}</strong><span style="color:${color}">${round.verdict}</span>
-      <span>${round.runner} / ${round.model}</span>
-      <span>${round.modeLabel}</span>
-      <span
-        >${round.durationMs !== null
-          ? formatDuration(round.durationMs)
-          : 'Duration not recorded'}</span
+      <span class="round-heading"
+        ><strong>Round ${round.roundNumber}</strong>
+        <span class="chip verdict ${round.verdictTone}"
+          >${loading && round.verdict === 'Result not recorded'
+            ? 'Loading result…'
+            : running
+              ? 'Running'
+              : round.verdict}</span
+        >
+      </span>
+      <span class="round-meta"
+        >${round.runner} / ${round.model} <span class="chip">${round.modeLabel}</span></span
       >
+      <span class="round-meta"
+        ><code title=${round.headSha ?? ''}
+          >${round.headSha?.slice(0, 8) ?? (loading ? 'Loading head…' : 'Head pending')}</code
+        >
+        <span
+          >${duration !== null
+            ? `${running ? 'Running · ' : ''}${formatDuration(Math.max(0, duration))}`
+            : loading
+              ? 'Loading timing…'
+              : 'Timing unavailable'}</span
+        >
+      </span>
     </summary>
     <div class="review-history-body">
-      <div>Started ${round.startedAt ?? 'not recorded'} · ${round.unresolvedLabel}</div>
-      ${round.earlierAttempts.map(
-        (attempt) =>
-          html`<div class="review-loop-meta">
-            Earlier attempt: ${attempt.status} · ${attempt.startedAt ?? 'start not recorded'} ·
-            ${attempt.durationMs !== null
-              ? formatDuration(attempt.durationMs)
-              : 'duration not recorded'}
-          </div>`,
-      )}
-      <div>${round.reviewRange} · ${round.validationDepth}</div>
-      ${round.hasFix
-        ? html`<div class="review-loop-fix">
-            Fix before round ${round.loopNumber}: ${round.fixRange ?? 'SHA not recorded'} ·
-            ${round.fixStat ?? 'Diffstat not recorded'} ·
-            ${round.fixDurationMs !== null
-              ? formatDuration(round.fixDurationMs)
-              : 'Fix duration not recorded'}
-            <div>Resolved findings: ${round.resolution}</div>
+      ${round.failureReason
+        ? html`<div class="history-warning" role="status">${round.failureReason}</div>`
+        : nothing}
+      ${round.startedAt
+        ? html`<div class="review-loop-meta">
+            Started ${new Date(round.startedAt).toLocaleString()} · ${round.reviewRange}
           </div>`
         : nothing}
-      ${round.fixRunning
-        ? html`<div class="review-loop-fix">
-            Worker fixing findings · started ${round.activeFixStartedAt ?? 'not recorded'}
-          </div>`
-        : nothing}
-      <div>${round.findingsLabel}</div>
+      ${round.usageLabel ? html`<div class="review-loop-meta">${round.usageLabel}</div>` : nothing}
       ${round.findings.map(
         (finding) =>
-          html`<div class="review-loop-issue">
-            <div class="review-loop-file">
-              ${finding.file}${finding.line ? `:${finding.line}` : ''} · ${finding.severity}
+          html`<article class="review-loop-issue" data-finding=${finding.id}>
+            <div class="finding-heading">
+              <span class="chip severity">${finding.severity}</span
+              ><span class="chip finding-status ${finding.status}">${finding.statusLabel}</span>
             </div>
-            <strong>${finding.title}</strong>${finding.details
-              ? html`<div>${finding.details}</div>`
-              : nothing}
-          </div>`,
+            <button
+              class="finding-location"
+              ?disabled=${!round.headSha || !finding.line}
+              @click=${() => openFinding(finding)}
+            >
+              ${finding.file}${finding.line ? `:${finding.line}` : ''}
+            </button>
+            <div class="finding-text">
+              <strong>${finding.title}</strong>${finding.details
+                ? html`<p>${finding.details}</p>`
+                : nothing}
+            </div>
+            ${renderSource(finding)}
+          </article>`,
       )}
+      ${!round.findings.length
+        ? html`<div class="review-loop-meta">
+            ${loading ? 'Loading recorded findings…' : round.findingsLabel}
+          </div>`
+        : nothing}
+      ${round.diffPath
+        ? html`<button
+            ?disabled=${loading || (round.diffReconstructed && round.diffText === null)}
+            @click=${() => openArtifact(round.diffPath!)}
+          >
+            ${round.diffReconstructed ? 'Frozen commit diff · reconstructed' : 'Reviewed code diff'}
+          </button>`
+        : nothing}
       ${round.timing.length
         ? html`<details>
             <summary>Checklist timing · ${round.timing.length} steps</summary>
@@ -83,25 +107,66 @@ export function renderReviewAttempt(
             )}
           </details>`
         : nothing}
-      ${round.unavailable.length
-        ? html`<div class="review-loop-meta">
-            Some history artifacts are unavailable. Refresh history to try again.
-          </div>`
+      ${!loading && round.unavailable.length
+        ? html`<details class="history-warning">
+            <summary>Some artifacts could not be loaded</summary>
+            ${round.unavailable.map((message) => html`<div>${message}</div>`)}
+          </details>`
         : nothing}
-      <div class="review-history-actions">
-        ${round.diffPath && round.reviewDiffRetained
-          ? html`<button @click=${() => openArtifact(round.diffPath!)}>Reviewed diff</button>`
-          : nothing}
-        ${round.fixDiffPath
-          ? html`<button
-              ?disabled=${Boolean(round.fixDiffError)}
-              title=${round.fixDiffError ?? ''}
-              @click=${() => openArtifact(round.fixDiffPath!)}
-            >
-              Changed files and diff
-            </button>`
-          : nothing}
-      </div>
+    </div>
+  </details>`;
+}
+
+export function renderReviewFix(
+  fix: ReviewHistoryFix,
+  openArtifact: (path: string) => void,
+): unknown {
+  const duration =
+    fix.durationMs ??
+    (fix.running && fix.startedAt ? Date.now() - Date.parse(fix.startedAt) : null);
+  return html`<details class="review-history-fix" data-fix=${fix.key}>
+    <summary>
+      <span class="round-heading"
+        ><strong>${fix.label}</strong
+        ><span class="chip">${fix.running ? 'Running' : 'Complete'}</span></span
+      >
+      <span class="round-meta"
+        >${fix.range ?? 'Worker applying fixes'}${duration !== null
+          ? ` · ${formatDuration(Math.max(0, duration))}`
+          : ''}</span
+      >
+      ${fix.stat ? html`<span class="round-meta">${fix.stat}</span>` : nothing}
+    </summary>
+    <div class="review-history-body">
+      ${fix.reconstructed
+        ? html`<span class="chip">Saved head comparison · committed code</span>`
+        : nothing}
+      ${fix.resolved.length
+        ? html`<strong>Not raised again in the later review</strong>${fix.resolved.map(
+              (finding) =>
+                html`<div class="resolved-finding">
+                  <span class="chip severity">${finding.severity}</span> ${finding.title}
+                </div>`,
+            )}`
+        : html`<div class="review-loop-meta">
+            ${fix.running
+              ? 'Resolution awaits the next review.'
+              : 'No per-finding resolution confirmed yet.'}
+          </div>`}
+      ${fix.files.length
+        ? html`<ul class="fix-files">
+            ${fix.files.map((file) => html`<li><code>${file}</code></li>`)}
+          </ul>`
+        : nothing}
+      ${fix.diffPath
+        ? html`<button
+            ?disabled=${Boolean(fix.diffError) || (fix.reconstructed && fix.diffText === null)}
+            title=${fix.diffError ?? ''}
+            @click=${() => openArtifact(fix.diffPath!)}
+          >
+            Changed files and diff
+          </button>`
+        : nothing}
     </div>
   </details>`;
 }
