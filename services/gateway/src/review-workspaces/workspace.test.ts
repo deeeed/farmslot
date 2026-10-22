@@ -81,7 +81,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
     }).trim();
   git('init');
   writeFileSync(path.join(source, 'source.txt'), 'base\n');
-  writeFileSync(path.join(source, '.gitignore'), 'ignored.tmp\n');
+  writeFileSync(path.join(source, '.gitignore'), 'ignored.tmp\n.agent/\n');
   git('add', '.');
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'base');
   const baseSha = git('rev-parse', 'HEAD');
@@ -210,6 +210,19 @@ test('changed source identity and dirty checkout fail closed without discarding 
   rmSync(unexpected);
   writeFileSync(path.join(f.workspace, 'source', 'ignored.tmp'), 'ignored but valuable');
   assert.throws(() => f.execute('cleanup'), /refusing to discard/);
+});
+
+test('ignored tool runtime state does not block completion of a frozen review checkout', (t) => {
+  const f = fixture(t);
+  f.execute();
+  const runtime = path.join(f.workspace, 'source', '.agent');
+  mkdirSync(runtime);
+  writeFileSync(path.join(runtime, 'tool-state.json'), '{"status":"finished"}\n');
+  const report = path.join(f.workspace, 'task', 'artifacts', 'review.md');
+  writeFileSync(report, 'retained review');
+
+  assert.deepEqual(f.execute('cleanup'), { state: 'cleaned' });
+  assert.equal(readFileSync(report, 'utf8'), 'retained review');
 });
 
 test('node allocation rejects substituted checkout and output directories', (t) => {

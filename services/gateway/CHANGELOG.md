@@ -6,6 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot bindings, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire.
 - Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
+- Complete frozen reviews with ignored tool state under `.agent/`, and register exact manual review posts during explicit reconciliation without posting again.
+
 - Download Jira image attachments into task assets even when supplied ticket data has no screenshot names.
 
 - Read-only reviewers skip repository settings and hooks. A reviewer that starts or finishes after its acknowledgement timeout resumes the original run and review round.
