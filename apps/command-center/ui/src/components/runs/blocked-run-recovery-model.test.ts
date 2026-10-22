@@ -6,7 +6,6 @@ import type { Run, RuntimeCapabilityStatusResult } from '@farmslot/protocol';
 import {
   blockedWorkerOwnsSlot,
   blockedWorkerProofReady,
-  canResumeBlockedWorkerMonitor,
   isRecoverableBlockedWorkerRun,
 } from './blocked-run-recovery-model.js';
 
@@ -21,7 +20,9 @@ const run = {
     {
       name: 'monitor',
       status: 'done',
-      outputs: { workerSignal: { attemptId: 'old', timestamp: '2026-09-23T01:00:00Z' } },
+      outputs: {
+        workerSignal: { status: 'blocked', attemptId: 'old', timestamp: '2026-09-23T01:00:00Z' },
+      },
     },
   ],
   taskFile: '/repo/.sandbox/farmslot-farm/tasks/fix/manual-000110/TASK.md',
@@ -49,92 +50,31 @@ test('recovery follows a blocked worker monitor regardless of project', () => {
   );
 });
 
-test('monitor replay requires a fresh timestamped non-blocked worker signal', () => {
-  const timestamp = '2026-09-23T01:01:00Z';
-  assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'running' }), false);
-  assert.equal(
-    canResumeBlockedWorkerMonitor(run, {
-      attemptId: 'new',
-      timestamp: '2026-09-23T01:00:00Z',
-      status: 'running',
-    }),
-    false,
-  );
-  assert.equal(
-    canResumeBlockedWorkerMonitor(run, { attemptId: 'new', timestamp, status: 'blocked' }),
-    false,
-  );
-  assert.equal(
-    canResumeBlockedWorkerMonitor(run, { attemptId: 'new', timestamp, status: 'running' }),
-    true,
-  );
-  assert.equal(
-    canResumeBlockedWorkerMonitor(run, { attemptId: 'new', timestamp, status: 'complete' }),
-    true,
-  );
-  assert.equal(
-    canResumeBlockedWorkerMonitor(run, {
-      attemptId: 'new',
-      timestamp,
-      status: 'running',
-      contextId: 'other',
-    }),
-    false,
-  );
-  assert.equal(
-    canResumeBlockedWorkerMonitor(run, {
-      attemptId: 'new',
-      timestamp,
-      status: 'running',
-      role: 'review',
-    }),
-    false,
-  );
-  assert.equal(
-    canResumeBlockedWorkerMonitor(
+test('a held review-fix offers recovery even though primary work completed', () => {
+  const heldFix: Run = {
+    ...run,
+    metrics: { ...run.metrics, disposition: 'fixed' },
+    steps: [
+      { name: 'monitor', status: 'done', outputs: { workerSignal: { status: 'complete' } } },
       {
-        ...run,
-        steps: [
-          {
-            name: 'monitor',
-            status: 'done',
-            outputs: { workerSignal: { attemptId: 'old', timestamp: '2026-09-23T01:00:00Z' } },
-          },
-        ],
-      } as Run,
-      { attemptId: 'old', timestamp: '2026-09-23T01:01:00Z', status: 'complete' },
-    ),
-    false,
-  );
+        name: 'review',
+        status: 'done',
+        completedAt: '2026-10-22T07:40:58.688Z',
+        outputs: { verdict: 'blocked', feedbackSent: true },
+      },
+    ],
+  };
+  assert.equal(isRecoverableBlockedWorkerRun(heldFix), true);
+  assert.equal(isRecoverableBlockedWorkerRun({ ...heldFix, status: 'reviewing' }), false);
   assert.equal(
-    canResumeBlockedWorkerMonitor({ ...run, steps: [{ name: 'monitor', status: 'done' }] } as Run, {
-      attemptId: 'new',
-      status: 'running',
+    isRecoverableBlockedWorkerRun({
+      ...heldFix,
+      steps: heldFix.steps.map((step) =>
+        step.name === 'review' ? { ...step, outputs: { verdict: 'blocked' } } : step,
+      ),
     }),
     false,
-  );
-  assert.equal(
-    canResumeBlockedWorkerMonitor(
-      {
-        ...run,
-        steps: [
-          {
-            name: 'monitor',
-            status: 'done',
-            outputs: { workerSignal: { timestamp: '2026-09-23T01:00:00Z' } },
-          },
-        ],
-      } as Run,
-      { timestamp: '2026-09-23T01:01:00Z', status: 'running' },
-    ),
-    false,
-  );
-  assert.equal(
-    canResumeBlockedWorkerMonitor(
-      { ...run, status: 'monitoring' },
-      { attemptId: 'new', status: 'running' },
-    ),
-    false,
+    'a blocked reviewer is not a worker fix waiting to resume',
   );
 });
 

@@ -633,6 +633,15 @@ function executeDeterministicStep(taskDir, checklist, stepNumber) {
     );
   const checkout = deterministicCheckout(taskDir);
   const inputHash = deterministicInputHash(checkout, taskDir);
+  const previous = readDeterministicChecks(taskDir, checklist, { inputHash }).find(
+    (check) => check.stepNumber === stepNumber,
+  );
+  if (previous?.status === 'passed') {
+    console.log(
+      `Deterministic step ${stepNumber} reuses its passing receipt. Log: ${previous.logPath}`,
+    );
+    return true;
+  }
   const logPath = path.posix.join(
     'artifacts',
     'deterministic-checks',

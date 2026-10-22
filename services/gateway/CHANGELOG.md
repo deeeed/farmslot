@@ -6,9 +6,12 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot bindings, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire.
 - Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
+- Resume a blocked review-fix through its held review step and show fresh worker progress without restarting the completed primary worker.
+
 - Resume an accepted publication review request when its lost gate loop is reconciling, preserving its selected reviewer and retained package.
 
 - Validate review recommendations and RIGHT-side inline locations before gates and on refresh.
+- Freeze the pre-fix commit in review-fix and CI-fix checks, including recovery and replay.
 
 - Keep native reviewers running while bound checklist or tool activity progresses, and fail after the configured inactivity window instead of a fixed total-time boundary.
 

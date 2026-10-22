@@ -5,6 +5,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback and verified identity handling. Sources, run lists, load-run dialogs, slot history and workspace run context, publication and review gates, saved reviews, full run details, comparisons and baseline pickers, family views and decision inboxes retain saved observations offline with their age, disable stale actions and follow live change notifications. Review curation survives metadata refreshes; command failures remain visible and interrupted replies keep their original owner. Recipe output stays with its run and invocation; a disconnect reports uncertain delivery before another replay. Missing run details evict their saved copy, and recipe inventories update when mirrored artifacts arrive.
+- Resume the blocked worker through the gateway’s validated recovery action, including held review fixes.
+
 - Show native conversations beside slot terminals, keep open review gates visible, and reuse one structured review and fix timeline throughout run views.
 
 - Show round reviewers, modes, timings, findings and fix deltas on review steps through the shared history model.

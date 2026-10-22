@@ -86,3 +86,17 @@ additive named check snapshot/row types and pure view-model for the gateway and
 both operator clients. Companion uses the existing `force` flag for read-only
 refresh. Harnesses inherit the existing response and context; no RPC, command,
 CLI flag, hook, policy or schema version is added.
+
+## Amendment 2 (2026-10-22): Reuse passing checks and freeze fix scope
+
+**Status:** Accepted (2026-10-22)
+
+### Decision and rationale
+
+Reuse a passing receipt when its frozen command, publishable-input hash and recorded log still validate. Otherwise execute the check. Repeated marks preserve a successful terminal signal. This removes repeated CI runs with identical inputs.
+
+Review-fix and CI-fix roles freeze the engine's pre-fix commit in their CI command as `FARMSLOT_CI_BASE_REF`, including retained delivery and replay. The Terminal pack uses it to select tests for that fix, including committed changes. Normal contribution checks keep their existing base.
+
+### Public surface and consequences
+
+The existing `ci.local_check`, frozen command and schema-version-1 receipt remain the contract. The gateway binds fix context; `@farmslot/agent-runtime` owns validation and reuse, and `@farmslot/recipe-cli` delegates to it. `FARMSLOT_CI_BASE_REF` is consumed by the Terminal pack's CI script. No CLI flag or SDK export is added; harnesses inherit the behavior. The [task directory contract](../reference/task-directory-contract.md#mark-and-receipt-rules) owns the rules.

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Reuse passing CI receipts when a completed task is checked again.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.1 - 2026-10-21

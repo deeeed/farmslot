@@ -22,6 +22,7 @@ import {
   isSettledBlockedRun,
   isSlotFreedByPark,
   isTerminalRunStatus,
+  Methods,
   modeForFlow,
   modelsMatch,
   normalizeRunTags,
@@ -40,6 +41,7 @@ import '../shared/workspace-pin.js';
 import '../shared/cancelled-run-slot-release.js';
 import '../shared/hydrating-placeholder.js';
 
+import { gateway } from '../../gateway-client.js';
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
@@ -1335,7 +1337,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           <blocked-run-recovery
             .run=${r}
             .disabled=${actionsBlocked}
-            .replayMonitor=${() => ctx._onReplayStep('monitor')}
+            .resumeWorker=${async () => {
+              await gateway.request(Methods.RUN_RESUME, { runId: r.id });
+            }}
             .restartWorker=${() => ctx._onReplayStep('find-slot')}
           ></blocked-run-recovery>
         </details>`
