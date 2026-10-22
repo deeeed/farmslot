@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Download Jira image attachments into task assets even when supplied ticket data has no screenshot names.
+
 - Admin people can supervise a pinned native worker after their identity is replaced; the worker keeps its original execution owner.
 
 - Completed reviewers without hooks can reach their posting gate through verified native process state. An explicit publication retry can retain a matching manual review receipt without posting again.
