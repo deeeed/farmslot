@@ -13,7 +13,7 @@ import { GatewayClient } from '../../../../packages/cli/src/gateway-client.ts';
 import { automationGatewayTarget } from '../../../../scripts/lib/gateway-profile.mjs';
 import { createRunReplyProxy } from '../../../../services/gateway/scripts/visual-reply-proxy.mjs';
 
-import { openAndroidUrl } from './simulator-dev-client.mjs';
+import { openAndroidUrl, waitForSimulatorRecipeBridge } from './simulator-dev-client.mjs';
 
 const execute = promisify(execFile);
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
@@ -174,6 +174,13 @@ let proxy,
   originalFailure;
 const cleanupFailures = [];
 try {
+  await waitForSimulatorRecipeBridge({ platform });
+  await open('connection');
+  await until(
+    screen,
+    (value) => value.nodes.some((node) => node.identifier === 'companion-native-connection-screen'),
+    'Open actual connection settings before observing the initial profile',
+  );
   externalConnection = await new GatewayClient({
     url: target.url,
     credential: target.credential,
@@ -202,12 +209,6 @@ try {
     ]);
     reversePort = proxy.port;
   }
-  await open('connection');
-  await until(
-    screen,
-    (value) => value.nodes.some((node) => node.identifier === 'companion-native-connection-screen'),
-    'Open actual connection settings',
-  );
   if (!(await screen()).nodes.some((node) => node.identifier === 'companion-native-profile-name'))
     await press('companion-connection-manual-toggle');
   await fill('companion-native-profile-name', `Offline native ${randomUUID().slice(0, 8)}`);
