@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -146,6 +146,8 @@ test('role cleanup preserves the entire frozen parent contract byte for byte', a
     null,
     undefined,
     'REVIEW-FIX.md',
+    [],
+    'a'.repeat(40),
   );
   const role = JSON.parse(
     await readFile(path.join(root, 'inputs/worker-terminal-contract.REVIEW-FIX.json'), 'utf8'),
@@ -155,7 +157,17 @@ test('role cleanup preserves the entire frozen parent contract byte for byte', a
   assert.equal(role.flowType, 'dev');
   assert.equal(role.deterministicChecks[0].checklist, 'REVIEW-FIX.md');
   assert.equal(await readFile(contractFile, 'utf8'), initialized);
-  assert.equal(role.deterministicChecks[0].command, 'yarn ci:local');
+  const bin = path.join(root, 'bin');
+  await mkdir(bin);
+  await writeFile(path.join(bin, 'yarn'), '#!/bin/sh\nprintf "%s" "$FARMSLOT_CI_BASE_REF"\n');
+  await chmod(path.join(bin, 'yarn'), 0o755);
+  const result = spawnSync('bash', ['-c', role.deterministicChecks[0].command], {
+    cwd: root,
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FARMSLOT_CI_BASE_REF: 'other-base' },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'a'.repeat(40));
 });
 
 test('every nested role inherits only the frozen parent review authority', async (t) => {
