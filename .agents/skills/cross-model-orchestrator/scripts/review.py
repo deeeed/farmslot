@@ -93,6 +93,9 @@ def _prompt(repo, pr, sha, base, number, mode, previous, diff_scope=""):
     )
     if mode == "conflict-only":
         scope = "Review ONLY merge-conflict resolutions in this saved delta."
+    elif mode == "approved-delta":
+        scope = ("WARM: continue your retained PR review session. Review ONLY this saved delta. "
+                 "Verify these new commits are required CI/test fixes; report unrelated changes as scope findings.")
     return f"""You are an independent, read-only PR reviewer. Do not edit repository files or run long validators.
 Your requested review artifact is the only allowed file write.
 PR: {repo}#{pr}
@@ -132,14 +135,20 @@ class ReviewerFailure(RuntimeError):
         self.metadata = metadata
 
 
-def _claim_session(config, reviewer, lane_id, session_id, fields, fresh, prior):
+def _reviewer_binding(fields, lane_id, session_id):
+    return {"repo": fields["repo"], "pr": fields["pr"], "lane": lane_id, "session_id": session_id}
+
+
+def _claim_session(config, reviewer, lane_id, session_id, fields, fresh, prior, *, retained_only=False):
     """A retained session belongs to one canonical PR, even after a config change."""
     path = Path(config["state_dir"]) / "review-sessions.json"
     with path.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         bindings = json.loads(path.read_text()) if path.exists() else {}
         key = f"{reviewer}:{session_id}"
-        current = {"repo": fields["repo"], "pr": fields["pr"], "lane": lane_id, "session_id": session_id}
+        current = _reviewer_binding(fields, lane_id, session_id)
+        if retained_only and prior != current:
+            raise RuntimeError("approved-delta requires the same retained reviewer session")
         owner = bindings.get(key)
         if owner and owner != current:
             raise RuntimeError("reviewer session is already bound to another canonical PR or lane")
@@ -189,12 +198,15 @@ def _lane_reviewer(config, reviewer, prompt_file, cwd, fields, prior):
         initial = lanes.observe(config, lane_id)
         fresh = False
         if initial.get("status") == "missing":
+            if fields.get("mode") == "approved-delta":
+                raise RuntimeError("approved-delta cannot replace a missing reviewer session")
             launched = lanes.launch(config, lane_id, restoring=bool(prior), submit_goal=False)
             fresh = launched.get("status") in {"launched", "restored"} and not launched.get("resume_id")
         item, session_id = _lane_observation(config, lane_id, reviewer)
         if item.get("phase") != "idle":
             raise RuntimeError("reviewer lane must be natively idle before review dispatch")
-        metadata = _claim_session(config, reviewer, lane_id, session_id, fields, fresh, prior)
+        metadata = _claim_session(config, reviewer, lane_id, session_id, fields, fresh, prior,
+                                  retained_only=fields.get("mode") == "approved-delta")
         output = prompt_file.parent / f"{reviewer}.lane-output.md"
         if output.exists():
             raise RuntimeError("this round already has a reviewer lane artifact")
@@ -242,6 +254,21 @@ def _previous(directory, rounds):
             if path.is_file():
                 documents.append(f"Round {item['number']}, {reviewer}:\n{path.read_text()}")
     return "\n\n".join(documents)
+
+
+def _require_retained_reviewers(config, state, cwd, fields):
+    for reviewer in REVIEWERS:
+        lane_id = config.get("reviews", {}).get("lanes", {}).get(reviewer)
+        prior = state.get("reviewer_bindings", {}).get(reviewer)
+        if not lane_id or not prior:
+            raise RuntimeError("approved-delta requires saved retained reviewers in reviews.lanes")
+        lane = lanes.lane_by_id(config, lane_id)
+        if lane["runner"] != reviewer or Path(lane["cwd"]).resolve() != cwd:
+            raise RuntimeError("approved-delta reviewer lane must keep its runner and PR worktree")
+        item, session_id = _lane_observation(config, lane_id, reviewer)
+        current = _reviewer_binding(fields, lane_id, session_id)
+        if prior != current or item.get("phase") != "idle":
+            raise RuntimeError("approved-delta requires the same idle retained reviewer session")
 
 
 def _conflict_manifest(args, state, cwd, sha):
@@ -326,13 +353,16 @@ def _locked_review(config, args, directory):
     if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sha):
         raise RuntimeError("git did not return a full commit SHA")
     conflict_only = args.conflict_only
+    approved_delta = getattr(args, "approved_delta", False)
+    if conflict_only and approved_delta:
+        raise ValueError("--approved-delta cannot be combined with --conflict-only")
     if getattr(args, "conflict_files", None) and not conflict_only:
         raise ValueError("--conflict-files requires --conflict-only")
     if getattr(args, "conflict_base", None) and not conflict_only:
         raise ValueError("--conflict-base requires --conflict-only")
-    if state.get("frozen_sha") and not conflict_only:
+    if state.get("frozen_sha") and not conflict_only and not approved_delta:
         if state["status"] != "frozen" or sha != state["frozen_sha"]:
-            raise RuntimeError("approved PR is frozen; only explicit conflict-only resolution may change its head")
+            raise RuntimeError("approved PR is frozen; use --approved-delta for CI/test fixes or --conflict-only for resolutions")
         _report_status(args.report, args.repo, args.pr, state, directory)
         return state
     if state["round"] >= 5:
@@ -345,6 +375,10 @@ def _locked_review(config, args, directory):
         raise RuntimeError("conflict-only review requires an existing frozen approval")
     if conflict_only and sha == state["frozen_sha"]:
         raise RuntimeError("conflict-only review requires a changed head")
+    if approved_delta and (not state.get("frozen_sha") or not state["rounds"]):
+        raise RuntimeError("approved-delta requires an existing frozen approval")
+    if approved_delta and sha == state["rounds"][-1]["head"]:
+        raise RuntimeError("approved-delta requires a changed head")
     if state["round"] >= 4 and state["status"] == "running":
         # A crash in round 4 must still alarm before round 5 is reserved.
         _report_status(args.report, args.repo, args.pr, state, directory)
@@ -356,13 +390,19 @@ def _locked_review(config, args, directory):
         base = previous["head"] if previous["mode"] == "conflict-only" else state["conflict_manifest"]["baseline"]
     elif state["rounds"]:
         base = state["rounds"][-1]["head"]
-        mode = "delta"
+        mode = "approved-delta" if approved_delta else "delta"
     else:
         base = run(["git", "merge-base", args.base, sha], cwd=cwd).stdout.strip()
         mode = "full"
+    fields = {"repo": args.repo, "pr": str(args.pr), "head": sha, "base": base,
+              "round": str(number), "mode": mode}
+    if approved_delta:
+        run(["git", "merge-base", "--is-ancestor", base, sha], cwd=cwd)
+        if not run(["git", "diff", "--name-only", "-z", base, sha], cwd=cwd).stdout:
+            raise RuntimeError("approved-delta requires changed review inputs")
+        _require_retained_reviewers(config, state, cwd, fields)
     round_dir = directory / f"r{number}"
     round_dir.mkdir()
-    fields = {"repo": args.repo, "pr": str(args.pr), "head": sha, "base": base, "round": str(number)}
     scope_script = Path(__file__).resolve().parents[4] / "packages/agent-runtime/scripts/review-diff-scope.cjs"
     approval_policy = config.get("projects", {}).get(args.repo, {}).get("approvalPolicy", {})
     diff_scope = run(["node", str(scope_script), "packet", str(cwd), args.base, sha, json.dumps(approval_policy)], cwd=cwd).stdout
@@ -432,7 +472,9 @@ def add_parser(subparsers):
     parser.add_argument("--cwd", required=True)
     parser.add_argument("--report", required=True)
     parser.add_argument("--base", default="origin/main")
-    parser.add_argument("--conflict-only", action="store_true", help="review only conflict resolutions after freeze")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--conflict-only", action="store_true", help="review only conflict resolutions after freeze")
+    modes.add_argument("--approved-delta", action="store_true", help="WARM review of CI/test fixes after approval, in retained sessions")
     parser.add_argument("--conflict-files", nargs="+", help="allowed repository-relative conflict paths, saved before review")
     parser.add_argument("--conflict-base", help="saved AUTO_MERGE tree SHA before resolving imported main changes")
 
