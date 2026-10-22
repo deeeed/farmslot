@@ -13,16 +13,25 @@ import { GatewayClient } from '../../../../packages/cli/src/gateway-client.ts';
 import { automationGatewayTarget } from '../../../../scripts/lib/gateway-profile.mjs';
 import { createRunReplyProxy } from '../../../../services/gateway/scripts/visual-reply-proxy.mjs';
 
+import { openAndroidUrl } from './simulator-dev-client.mjs';
+
 const execute = promisify(execFile);
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1');
-assert.equal(process.env.PLATFORM, 'ios', 'Use the explicitly owned iOS proof device');
+const platform = process.env.PLATFORM;
+assert(['ios', 'android'].includes(platform), 'Use an explicitly owned native proof device');
+const deviceId =
+  platform === 'ios'
+    ? process.env.IOS_SIMULATOR
+    : (process.env.ADB_SERIAL ?? process.env.ANDROID_SERIAL);
 assert(
   process.env.FARMSLOT_NATIVE_CONVERSATION_FIXTURE &&
     process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR &&
     process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR &&
-    process.env.IOS_SIMULATOR,
+    deviceId,
 );
+if (platform === 'android')
+  assert(deviceId.startsWith('emulator-') && process.env.FARMSLOT_RECIPE_APP_ID);
 const directory = await realpath(process.env.FARMSLOT_NATIVE_CONVERSATION_FIXTURE);
 const fixture = JSON.parse(await readFile(path.join(directory, 'ready.json'), 'utf8'));
 const credential = (await readFile(fixture.credentialFile, 'utf8')).trim();
@@ -36,11 +45,9 @@ assert(['127.0.0.1', 'localhost'].includes(gateway.hostname));
 const { stdout: pid } = await execute('lsof', ['-t', `-iTCP:${gateway.port}`, '-sTCP:LISTEN']);
 assert.equal(Number(pid.trim()), fixture.gatewayPid);
 const device = createAgentDeviceClient({ stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR });
-const sessions = (await device.sessions.list()).filter(
-  (session) => session.device.id === process.env.IOS_SIMULATOR,
-);
+const sessions = (await device.sessions.list()).filter((session) => session.device.id === deviceId);
 assert.equal(sessions.length, 1);
-const selection = { session: sessions[0].name, platform: 'ios', target: 'mobile' };
+const selection = { session: sessions[0].name, platform, target: 'mobile' };
 const ref = `runs-cache:conversation:${fixture.runId}`;
 const metro = process.env.METRO_PORT;
 assert(/^\d+$/.test(metro ?? ''));
@@ -80,12 +87,15 @@ async function until(read, predicate, label, timeout = 45000) {
 }
 const conversation = () => observe();
 async function open(route) {
-  await execute('xcrun', [
-    'simctl',
-    'openurl',
-    process.env.IOS_SIMULATOR,
-    `farmslot-development:///${route}`,
-  ]);
+  if (platform === 'android') {
+    openAndroidUrl(
+      deviceId,
+      process.env.FARMSLOT_RECIPE_APP_ID,
+      `farmslot-development:///${route}`,
+    );
+    return;
+  }
+  await execute('xcrun', ['simctl', 'openurl', deviceId, `farmslot-development:///${route}`]);
 }
 async function reveal(identifier) {
   for (let i = 0; i < 12; i++) {
@@ -157,6 +167,7 @@ const matches = (value) => {
   );
 };
 let proxy,
+  reversePort,
   originalProfile,
   profileChanged = false,
   result,
@@ -180,6 +191,17 @@ try {
     method: 'run.get',
     armed: false,
   });
+  if (platform === 'android') {
+    await execute('adb', [
+      '-s',
+      deviceId,
+      'reverse',
+      '--no-rebind',
+      `tcp:${proxy.port}`,
+      `tcp:${proxy.port}`,
+    ]);
+    reversePort = proxy.port;
+  }
   await open('connection');
   await until(
     screen,
@@ -425,6 +447,7 @@ try {
   assert.equal(lateTransport.responseDigest, lateTransport.deliveredDigest);
   await capture('native-conversation-removed.png');
   result = {
+    platform,
     nativeConversationShared: true,
     nativeConversationStaleDisabled: true,
     nativeConversationAccepted: true,
@@ -466,6 +489,13 @@ try {
     await proxy?.close();
   } catch (error) {
     cleanupFailures.push(error);
+  }
+  if (reversePort) {
+    try {
+      await execute('adb', ['-s', deviceId, 'reverse', '--remove', `tcp:${reversePort}`]);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
   }
   externalConnection?.close();
 }

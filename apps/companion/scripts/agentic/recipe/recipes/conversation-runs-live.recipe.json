@@ -26,7 +26,7 @@
       "before": {
         "action": "ui.screenshot",
         "path": "screenshots/native-conversation-before.png",
-        "intent": "Open the owned iOS session before the native worker proof.",
+        "intent": "Open the owned native session before the native worker proof.",
         "next": "prove"
       },
       "prove": {
