@@ -234,7 +234,9 @@ async function broadcastTransitionEvent(event: string, payload: unknown): Promis
  * Production collaborators. Slot teardown is imported lazily to keep the
  * `core`/`methods/slot` chain out of the transition module's import graph.
  */
-export function defaultCancelCollaborators(): CancelCollaborators {
+export function defaultCancelCollaborators({
+  keepForReplay = true,
+}: { keepForReplay?: boolean } = {}): CancelCollaborators {
   const cleanup = new Map<
     string,
     { fence: RunSlotCleanupFence; blocker: string | null; succeeded: boolean }
@@ -269,9 +271,9 @@ export function defaultCancelCollaborators(): CancelCollaborators {
       await releaseRunOwnedCapabilities(run);
       const blocker = await slotOwnershipBlocker(run);
       await recordSlotTeardownSkipped(run, blocker ?? survivors);
-      state.blocker = blocker;
+      state.blocker = blocker ?? (keepForReplay ? null : survivors);
       state.succeeded = true;
-      state.fence = await fenceRunSlotCleanup(run, blocker);
+      state.fence = await fenceRunSlotCleanup(run, state.blocker);
     },
     releaseSlot: async (run) => {
       const state = cleanup.get(run.id);
@@ -299,13 +301,13 @@ export function defaultCancelCollaborators(): CancelCollaborators {
             return;
           }
         }
-        // The slot stays the run's for replay; release, delete or archive frees it (ADR-054).
-        const kept = await releaseRunSlotOwnership(run, fence, blocker, { keepForReplay: true });
+        // Keep replay by default; on-demand selection releases the confirmed owned cleanup.
+        const kept = await releaseRunSlotOwnership(run, fence, blocker, { keepForReplay });
         if (blocker) return { skipped: blocker };
         if (!kept) return { skipped: 'Slot ownership changed during cancellation' };
         await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
         console.log(
-          `[run-lifecycle] kept slot ${run.slotId} for cancelled run ${run.id} (replay or release)`,
+          `[run-lifecycle] ${keepForReplay ? 'kept' : 'released'} slot ${run.slotId} for cancelled run ${run.id}`,
         );
       } catch (error) {
         await settleFailedRunSlotCleanup(run, fence, error);

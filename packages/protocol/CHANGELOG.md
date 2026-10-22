@@ -8,6 +8,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.64.1 - 2026-10-22
+
+- Record when another run reclaims a cancelled replay hold so retained replays report why the slot is unavailable.
+
+This SDK patch keeps the node-gateway wire protocol at 0.63.0.
+
 ## 0.64.0 - 2026-10-22
 
 - Share review finding locations by immutable revision and content identity, preserving file and line across comment reordering and link restoration.

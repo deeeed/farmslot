@@ -226,21 +226,49 @@ export function withRunBundleStoreLock<T>(store: RunBundleStore, fn: () => Promi
   return withBundleLock(store, 'bundle-store.lock', fn);
 }
 
+const bundleLockQueues = new Map<string, Promise<unknown>>();
+
 async function withBundleLock<T>(
   store: RunBundleStore,
   name: string,
   fn: () => Promise<T>,
 ): Promise<T> {
   const options = bundleLockOptions(store, name);
-  const release = await lockfile.lock(options.lockfilePath, {
-    ...options,
-    update: 2_000,
-    retries: { retries: 1500, factor: 1, minTimeout: 20, maxTimeout: 50 },
-  });
+  const execute = async () => {
+    let release: () => Promise<void>;
+    try {
+      release = await lockfile.lock(options.lockfilePath, {
+        ...options,
+        update: 2_000,
+        retries: { retries: 1500, factor: 1, minTimeout: 20, maxTimeout: 50 },
+      });
+    } catch (error) {
+      if (!hasCode(error, 'ELOCKED')) throw error;
+      throw Object.assign(
+        new Error(
+          `Run bundle lock retries exhausted: ${options.lockfilePath}; waiting process ${process.pid}`,
+          { cause: error },
+        ),
+        { code: 'ELOCKED', file: options.lockfilePath },
+      );
+    }
+    try {
+      return await fn();
+    } finally {
+      await release();
+    }
+  };
+  // Local work queues behind its owner instead of spending filesystem retries
+  // while that same process captures, repairs or collects another run's bytes.
+  // A failed operation still rejects its caller; the next operation can proceed.
+  const previous = bundleLockQueues.get(options.lockfilePath) ?? Promise.resolve();
+  const pending = previous.then(execute, execute);
+  bundleLockQueues.set(options.lockfilePath, pending);
   try {
-    return await fn();
+    return await pending;
   } finally {
-    await release();
+    if (bundleLockQueues.get(options.lockfilePath) === pending)
+      bundleLockQueues.delete(options.lockfilePath);
   }
 }
 

@@ -67,13 +67,17 @@ const slots: SlotStatus[] = [
   },
 ];
 let run: Run;
+let cancelledHolder: Run | undefined;
+const originalSlots = structuredClone(slots);
+const reclaims: string[] = [];
 let prHead = branch;
 const claims: string[] = [];
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
-    getRun: () => run,
-    getAllRuns: () => [run],
+    getRun: (id: string) =>
+      id === run.id ? run : cancelledHolder?.id === id ? cancelledHolder : undefined,
+    getAllRuns: () => (cancelledHolder ? [run, cancelledHolder] : [run]),
     listRuns: () => ({ runs: [], totalCount: 0 }),
     persistRunNow: async () => {},
     updateRun: (_id: string, patch: Partial<Run>) => Object.assign(run, patch),
@@ -96,6 +100,16 @@ const claim: typeof core.claimSlotStatusIf = async (id, predicate) => {
 mock.module('../core/index.js', {
   namedExports: {
     ...core,
+    readSlotRow: async (id: string) => {
+      const slot = slots.find((entry) => entry.slot === id);
+      return slot
+        ? {
+            current_run_id: slot.currentRunId ?? null,
+            lifecycle: slot.lifecycle,
+            phase: slot.phase,
+          }
+        : null;
+    },
     claimSlotStatusIf: claim,
     updateSlotStatus: async () => {},
   },
@@ -151,17 +165,38 @@ mock.module('../methods/dispatch.js', {
     },
     PressureAdmissionRejectedError: class extends Error {},
     dispatchPreview: async (params: { targetBranch?: string }) => {
-      assert.equal(params.targetBranch, branch);
-      const selected = scoring.findBestSlot(slots, project, { targetBranch: params.targetBranch });
+      if (!run.slotId) assert.equal(params.targetBranch, branch);
+      const selected = run.slotId
+        ? slots.find((slot) => slot.slot === run.slotId)
+        : scoring.findBestSlot(slots, project, { targetBranch: params.targetBranch });
       assert.equal(selected?.slot, 'macpro-mmt-1');
       return { preview: { slotId: selected.slot, runner: 'codex', model: 'gpt-6.1-sol' } };
     },
   },
 });
 const policy = await import('./dispatch-policy.js');
+const reclaim = await import('../run-lifecycle/cancelled-slot-reclaim.js');
+mock.module('../run-lifecycle/cancelled-slot-reclaim.js', {
+  namedExports: {
+    ...reclaim,
+    reclaimCancelledSlot: async (id: string, requester: string) => {
+      const slot = slots.find((entry) => entry.slot === id);
+      if (!slot?.currentRunId || slot.currentRunId !== cancelledHolder?.id) return false;
+      assert.equal(requester, run.id);
+      reclaims.push(id);
+      slot.lifecycle = 'ready';
+      slot.phase = null;
+      slot.currentRunId = null;
+      return true;
+    },
+  },
+});
 const { executeFindSlotStep } = await import('./find-slot-step.js');
 
 function reset(flowType: Run['flowType'], ticketOrPr: string): void {
+  slots.splice(0, slots.length, ...structuredClone(originalSlots));
+  cancelledHolder = undefined;
+  reclaims.length = 0;
   run = makeRun({
     id: 'branch-match-fixture',
     project,
@@ -217,3 +252,25 @@ test('an unresolved PR head still requires a slot choice when every free branch 
   );
   assert.deepEqual(claims, []);
 });
+
+for (const pinned of [true, false]) {
+  test(`production find-slot reclaims a cancelled holder for a ${pinned ? 'pinned' : 'capacity-limited unpinned'} run`, async () => {
+    reset('fix-bug', 'TAT-4137');
+    const slot = slots[0]!;
+    cancelledHolder = makeRun({
+      id: 'cancelled-holder',
+      project,
+      slotId: slot.slot,
+      status: 'cancelled',
+    });
+    slot.lifecycle = 'held';
+    slot.phase = 'occupied';
+    slot.currentRunId = cancelledHolder.id;
+    run.allowedSlots = [slot.slot];
+    if (pinned) run.slotId = slot.slot;
+    const result = await executeFindSlotStep(run.id, run, 0, context);
+    assert.equal(result.outputs?.selectedSlot, slot.slot);
+    assert.deepEqual(reclaims, [slot.slot], 'one demand cleanup');
+    assert.deepEqual(claims, [slot.slot], 'claim uses the post-cleanup fleet');
+  });
+}

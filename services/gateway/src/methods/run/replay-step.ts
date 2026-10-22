@@ -66,6 +66,7 @@ import {
 import { replaySlotCapabilityRequirements } from '../../run-engine/slot-capability-requirements.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import { assertRunNotArchiving, isRunArchivingRefusal } from '../../run-lifecycle/archive-fence.js';
+import { cancelledSlotReplayRefusal } from '../../run-lifecycle/cancelled-slot-reclaim.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
@@ -907,9 +908,24 @@ export async function runReplayStep(
   emit: Emit,
   hooks: RunReplayStepHooks = {},
 ): Promise<RunReplayStepResult> {
+  // Cancelled replay and demand reclamation must admit exactly one owner before
+  // either path awaits cleanup or revives a worker. Blocked-resume callers already
+  // hold their transition and do not enter this cancelled-only bracket.
+  if (getRun(params.runId)?.status === 'cancelled')
+    return withRunTransition(params.runId, () => replayRunStepCoalesced(params, emit, hooks, true));
+  return replayRunStepCoalesced(params, emit, hooks);
+}
+
+async function replayRunStepCoalesced(
+  params: RunReplayStepParams,
+  emit: Emit,
+  hooks: RunReplayStepHooks,
+  machineTransitionHeld = false,
+): Promise<RunReplayStepResult> {
   const run = getRun(params.runId);
   if (run?.reviewWorkspaceTarget) assertNativeRunOwner(run);
-  if (params.stepName !== PS.REVIEW) return replayRunStep(params, emit, hooks);
+  if (params.stepName !== PS.REVIEW)
+    return replayRunStep(params, emit, hooks, undefined, machineTransitionHeld);
   const pending = pendingReviewReplays.get(params.runId);
   if (
     pending &&
@@ -927,7 +943,7 @@ export async function runReplayStep(
     return { run: getRun(params.runId)! };
   }
   const flight: ReviewReplayFlight = { generation: run?.engineState?.generation ?? 0 };
-  const result = replayRunStep(params, emit, hooks, flight);
+  const result = replayRunStep(params, emit, hooks, flight, machineTransitionHeld);
   const entry = { flight, result };
   pendingReviewReplays.set(params.runId, entry);
   const release = () => {
@@ -946,6 +962,7 @@ async function replayRunStep(
   emit: Emit,
   hooks: RunReplayStepHooks = {},
   reviewFlight?: ReviewReplayFlight,
+  machineTransitionHeld = false,
 ): Promise<RunReplayStepResult> {
   if (params.freshDispatch !== undefined && typeof params.freshDispatch !== 'boolean')
     throw new Error('freshDispatch must be a boolean');
@@ -957,6 +974,10 @@ async function replayRunStep(
     throw new Error(`Invalid runReplayStep triggeredBy: ${String(params.triggeredBy)}`);
   }
   const existing = getRun(params.runId);
+  if (existing) {
+    const reclaimed = cancelledSlotReplayRefusal(existing);
+    if (reclaimed) throw new Error(reclaimed);
+  }
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   if (existing.reviewWorkspaceTarget) assertNativeRunOwner(existing);
   const reviewBlock = staticReviewReplayBlock(existing, params);
@@ -1519,7 +1540,7 @@ async function replayRunStep(
           ({ released } = await slotRelease(
             { slotId: existing.slotId, keepWork: true, expectedRunId: params.runId },
             emit,
-            { restartRunId: params.runId },
+            { restartRunId: params.runId, machineTransitionHeld },
           ));
         } catch (error) {
           throw unreleasedPriorSlotError(
@@ -1545,7 +1566,9 @@ async function replayRunStep(
     if (nativeFreshRestart) {
       const { restartNativeWorkerContexts } =
         await import('../../runners/native/worker-restart.js');
-      await restartNativeWorkerContexts(params.runId, assertNativeReplayCurrent);
+      await restartNativeWorkerContexts(params.runId, assertNativeReplayCurrent, {
+        machineTransitionHeld,
+      });
       assertNativeReplayCurrent();
     }
     let replayTaskFile = existing.taskFile ?? null;

@@ -1,5 +1,6 @@
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 
+import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
   runnerPaneContainsInstruction,
   runnerPaneHasQueuedInstruction,
@@ -105,7 +106,10 @@ import {
   readLaunchAckSignalSnapshot,
   type RunnerHandoffAckProbe,
 } from './prompt-delivery-evidence.js';
-import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
+import {
+  buildPiAuthCheckCommand,
+  buildRunnerObservabilityInstallCommand,
+} from './runner-observability.js';
 import {
   claudeSessionUsageProvider,
   codexSessionUsageProvider,
@@ -179,6 +183,8 @@ export interface RunnerGracefulExitCapability {
 }
 
 export interface RunnerDefinition {
+  /** Structured provider authentication check before a worker process is launched. */
+  authCheck?: (vars: SlotVars, model?: string | null) => string;
   /** Structured execution receipts for finite project-owned tasks. */
   taskProgress?: RunnerTaskProgressReader;
   /** Empty-session reservation and explicit resume are available for managed worktree terminals. */
@@ -544,6 +550,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   pi: {
     id: 'pi',
+    authCheck: (vars, model) =>
+      buildPiAuthCheckCommand(vars, resolvePiBinary(vars.piPath), resolvePiModel(model)),
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['pi'],
     headlessPrintFlags: ['-p', '--print'],

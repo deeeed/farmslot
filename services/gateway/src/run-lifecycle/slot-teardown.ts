@@ -22,7 +22,7 @@ import {
 } from '../core/index.js';
 import { slotRealpath } from '../core/slot-io.js';
 import { resolveTmuxSession, tmuxShellSnippet } from '../core/tmux.js';
-import { isActiveSlotHolder } from '../methods/dispatch/slot-scoring.js';
+import { isActiveSlotHolder, slotPinIsRequestOnly } from '../methods/dispatch/slot-scoring.js';
 import { reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
 import {
   findActiveGateHeldRunForSlot,
@@ -115,10 +115,16 @@ export async function fenceRunSlotCleanup(
 }
 
 /** A non-terminal run other than `run` that is bound to the same slot. */
-function findOtherActiveRunOnSlot(run: Run): Run | undefined {
+function findOtherActiveRunOnSlot(
+  run: Run,
+  row: Readonly<Record<string, unknown>> | null,
+): Run | undefined {
   return listRuns().runs.find(
     (candidate) =>
-      candidate.id !== run.id && candidate.slotId === run.slotId && isActiveSlotHolder(candidate),
+      candidate.id !== run.id &&
+      candidate.slotId === run.slotId &&
+      isActiveSlotHolder(candidate) &&
+      !slotPinIsRequestOnly(candidate, row),
   );
 }
 
@@ -141,7 +147,7 @@ export async function slotOwnershipBlocker(run: Run): Promise<string | null> {
   }
   if (!ownsRunSlotCleanup(row, run.id))
     return `Slot belongs to ${owner ?? 'no run'}, not ${run.id}`;
-  const other = findOtherActiveRunOnSlot(run);
+  const other = findOtherActiveRunOnSlot(run, row);
   if (other) return `Another active run ${other.id} uses this slot`;
   return null;
 }
@@ -388,7 +394,10 @@ export async function stopRunOwnedTmuxAndWatches(
   // does, and only while this run still owns the slot at the same epoch.
   let prepareBlocker: string | null = null;
   let browserBlocker: string | null = null;
-  if ((!slot?.handoff_run_id || slot.handoff_run_id === run.id) && !findOtherActiveRunOnSlot(run)) {
+  if (
+    (!slot?.handoff_run_id || slot.handoff_run_id === run.id) &&
+    !findOtherActiveRunOnSlot(run, slot)
+  ) {
     if (blocker && stopUnverifiedWorkers) {
       // Cancel owns its workers through agentContexts, recorded identity or not:
       // stop them the way slot.release does (ADR-054 amendment, 2026-10-19).

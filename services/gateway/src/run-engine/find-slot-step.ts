@@ -74,6 +74,10 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
+import {
+  isCancelledSlotHolder,
+  reclaimCancelledSlot,
+} from '../run-lifecycle/cancelled-slot-reclaim.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import {
   assertNativeProfileSlot,
@@ -518,6 +522,7 @@ export async function previewWhenSlotClaimable<T>(
     now?: () => number;
     sleep?: (ms: number) => Promise<unknown>;
     timeoutMs?: number;
+    reclaimCancelled?: typeof reclaimCancelledSlot;
     wrapWait?: <W>(wait: () => Promise<W>) => Promise<W>;
   } = {},
 ): Promise<T> {
@@ -529,6 +534,7 @@ export async function previewWhenSlotClaimable<T>(
     now = Date.now,
     sleep = delay,
     timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
+    reclaimCancelled = reclaimCancelledSlot,
     wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
   } = deps;
   const assertRunUnchanged = () => {
@@ -539,6 +545,8 @@ export async function previewWhenSlotClaimable<T>(
   const refuse = async (blocker: NonNullable<ReturnType<typeof slotClaimBlocker>>) =>
     slotClaimRefusedError(slotId, await describeSlotClaimBlocker(slotId, blocker, listSlotRuns));
 
+  await reclaimCancelled(slotId, runId);
+  assertRunUnchanged();
   let blocker = blockerOf(await readRow(slotId));
   if (blocker?.kind === 'releasing') {
     // One read decides both whether to wait and whether it counts as queue time.
@@ -759,7 +767,7 @@ export async function executeFindSlotStep(
   // For PR-bound flows the run branch is the PR head. Resolve profile fit before any
   // branch-affinity shortcut so wizard nudge/fresh-reuse paths honor simulator resources
   // the same way the normal slot picker does.
-  const branchFleet = await loadFleetStatus();
+  const branchFleet = await loadFleetStatus(true);
   const targetBranch = await resolveDispatchTargetBranch(
     {
       project: run.project,
@@ -1030,6 +1038,24 @@ export async function executeFindSlotStep(
     return !!selected && !validateSlotForDispatch(slot, fleet.slots, selected);
   };
   const eligibleFreeSlots = freeSlots.filter(isEligibleFreeSlot);
+  if (!run.slotId && eligibleFreeSlots.length === 0) {
+    for (const slot of projectSlots) {
+      if (!isCancelledSlotHolder(slot.currentRunId, runId)) continue;
+      const available = {
+        ...slot,
+        lifecycle: 'ready' as const,
+        phase: null,
+        currentRunId: null,
+        agent: 'idle' as const,
+      };
+      const selected = optionsFor(available);
+      if (!selected || validateSlotForDispatch(available, fleet.slots, selected)) continue;
+      if (await reclaimCancelledSlot(slot.slot, runId)) {
+        // Selection and source/pressure admission must use the post-cleanup fleet.
+        return executeFindSlotStep(runId, getRun(runId) ?? run, generation, context);
+      }
+    }
+  }
   const candidates = freeSlots.slice(0, 10).map((s) => ({
     slotId: s.slot,
     score: isEligibleFreeSlot(s) ? scoreCandidate(s) : -1,

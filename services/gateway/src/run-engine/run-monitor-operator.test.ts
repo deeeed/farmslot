@@ -594,3 +594,27 @@ test(
     assert.match(decision.description, /Monitor note: exceeded 90 minute timeout\./);
   },
 );
+
+// The retained 959d6a73 allocation had a lightweight interactive profile and no
+// worker signal because its instructions explicitly forbade worker-side marks.
+test(
+  'operator-owned lightweight dev waits without a worker mark, nudge or timeout',
+  { timeout: 4000 },
+  async (t) => {
+    const f = await fixture(t, 200_000);
+    await f.writeSignal({ ...f.waiting, waitingForOperator: undefined });
+    updateRun(f.run.id, { mode: 'interactive', devInteractiveProfile: 'lightweight' });
+    let polls = 0;
+    await f.start({
+      workerStatus: async () => {
+        if (++polls > 1) assert.equal(getRun(f.run.id)!.waitingForOperator?.who, 'operator');
+        if (polls === 5) f.controller.abort();
+        return 'working';
+      },
+      violations: async () => assert.fail('operator-driven work must not be classified as stuck'),
+    });
+    assert.equal(getRun(f.run.id)!.metrics.nudgeCount, 0);
+    assert.deepEqual(getRun(f.run.id)!.decisions, []);
+    assert.equal(getRun(f.run.id)!.status, 'monitoring');
+  },
+);

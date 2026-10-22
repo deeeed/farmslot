@@ -1,4 +1,7 @@
 // OpenAI-compatible PI providers (Ollama, LiteLLM, custom router). Fail open.
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const DEFAULT_OLLAMA = '127.0.0.1:11434';
 
@@ -89,4 +92,54 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
     }),
   );
   return resolved.filter(Boolean);
+}
+
+/** Native auth excludes extensions; their authenticated model discovery is the admission check. */
+function nativePiAuth(binary, model, env) {
+  const result = spawnSync(binary, ['auth', 'check', '--model', model, '--json'], {
+    env,
+    encoding: 'utf8',
+    timeout: 25_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    const value = JSON.parse(result.stdout);
+    if (['ready', 'not_ready', 'invalid'].includes(value?.status))
+      return {
+        status:
+          result.status === 0 ? value.status : value.status === 'ready' ? 'invalid' : value.status,
+        reason: [
+          'provider_not_found',
+          'credentials_not_configured',
+          'credential_not_available',
+          'invalid_state',
+        ].includes(value.reason)
+          ? value.reason
+          : undefined,
+      };
+  } catch {
+    // An unsupported runner or failed process can exit before its structured verdict.
+    return { status: 'invalid', reason: 'auth_check_unavailable' };
+  }
+  return { status: 'invalid', reason: 'auth_check_unavailable' };
+}
+
+/** Optional extension discovery never overrides an authenticated native configuration. */
+export async function checkPiProviderAuth(binary, model, env = process.env) {
+  const native = nativePiAuth(binary, model, env);
+  if (native.status === 'ready') return native;
+  const [provider, ...parts] = model.split('/');
+  if (parts.length && listPiProviderSources(env).some((source) => source.id === provider)) {
+    const catalog = await resolvePiProviderCatalog(env);
+    const available = catalog.find((source) => source.id === provider);
+    if (available?.models.some((entry) => entry.id === parts.join('/')))
+      return { status: 'ready', provider };
+  }
+  return native;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const result = await checkPiProviderAuth(process.argv[2], process.argv[3]);
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  process.exitCode = result.status === 'ready' ? 0 : 1;
 }
