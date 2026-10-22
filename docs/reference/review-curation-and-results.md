@@ -24,6 +24,17 @@ unavailable state with retry where applicable. Never label mutable workspace
 content as reviewed source. Another finding/review/connection invalidates pending
 source reads. Loading and errors keep the finding and its selection visible.
 
+Reviewed Git reads MUST drain their output before returning. A source file MUST
+not be truncated to the transport pipe buffer, and an unavailable finding line
+MUST NOT be clamped to the final source line. The viewer labels the reviewed SHA.
+
+Inspection links retain `commentFile`, `commentLine`, `comment` and `commentHead`.
+`comment` is a content-derived finding identity, independent of list order.
+Opening a link restores the file, real line and selected finding after the review
+and source load. A changed review revision or missing finding is explicit and
+never selects a different finding by index. File-tab navigation clears finding
+selection. These parameters inspect saved data and never post or curate findings.
+
 The portable fingerprint identifies the reviewed base/head, diff hash and
 untracked path/blob/mode identities, original
 report, original recommendation and ordered findings. It excludes transient
@@ -76,6 +87,11 @@ validation for the two clients and gateway. Existing request/response methods,
 review result persistence and review-dispatch controls remain the consumers.
 Shared comment identity/grouping, recommendation normalization and serialization
 belong to the same protocol projection, used by both clients. The existing
+`reviewCommentLocation`, `reviewCommentIndex`, `parseReviewCommentLocation` and
+`writeReviewCommentLocation` exports own inspection-link selection for Command
+Center and future Companion link restoration. Existing `VIEW_QUERY_PARAMETERS`
+admits those inspection parameters without accepting credentials or operations.
+The existing
 ADR-063 dispatch picker remains the owner of review-request choices. The saved
 reader retains results after Post, Dismiss or automatic finish.
 No new public command, flag, harness extension or result-store version. The

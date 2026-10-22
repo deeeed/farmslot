@@ -49,7 +49,6 @@ test('a hookless workspace reviewer proves native idle without inventing a posti
       cwd: root,
       startedAt: now,
       status: 'idle',
-      statusUpdatedAt: now,
     }),
   );
   await writeFile(

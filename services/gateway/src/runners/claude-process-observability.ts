@@ -9,7 +9,7 @@ import type { probeRunnerDescendantPid } from './session-process.js';
 export interface ClaudeProcessRegistration {
   sessionId: string;
   status: 'busy' | 'idle';
-  observedAt: number;
+  observedAt: number | null;
 }
 
 /** A pid registration from an earlier process is never current runner evidence. */
@@ -28,12 +28,17 @@ export function claudeProcessRegistration(
     typeof value.sessionId !== 'string' ||
     !/^[a-zA-Z0-9-]+$/.test(value.sessionId) ||
     (value.status !== 'busy' && value.status !== 'idle') ||
-    typeof value.statusUpdatedAt !== 'number' ||
-    !Number.isFinite(value.statusUpdatedAt) ||
-    value.statusUpdatedAt < value.startedAt
+    (value.statusUpdatedAt !== undefined &&
+      (typeof value.statusUpdatedAt !== 'number' ||
+        !Number.isFinite(value.statusUpdatedAt) ||
+        value.statusUpdatedAt < value.startedAt))
   )
     return null;
-  return { sessionId: value.sessionId, status: value.status, observedAt: value.statusUpdatedAt };
+  return {
+    sessionId: value.sessionId,
+    status: value.status,
+    observedAt: typeof value.statusUpdatedAt === 'number' ? value.statusUpdatedAt : null,
+  };
 }
 
 /** Reads only public native session metadata, never runner credentials or output text. */
@@ -62,9 +67,11 @@ try:
     if not paths:
         unavailable()
     transcript = max(paths, key=lambda p: (p.stat().st_mtime_ns, str(p)))
+    observation = {k: record.get(k) for k in ['pid','sessionId','startedAt','status']}
+    observation['statusUpdatedAt'] = record.get('statusUpdatedAt', file.stat().st_mtime_ns / 1000000)
     if json.loads(file.read_text()) != record:
         unavailable()
-    print(json.dumps({'record': {k: record.get(k) for k in ['pid','sessionId','startedAt','status','statusUpdatedAt']}, 'processStartedAt': started, 'sessionPath': str(transcript)}))
+    print(json.dumps({'record': observation, 'processStartedAt': started, 'sessionPath': str(transcript)}))
 except (OSError, ValueError, subprocess.SubprocessError):
     unavailable()
 PY`;
@@ -110,7 +117,7 @@ export async function readClaudeProcessState(
   )
     return null;
   const registration = claudeProcessRegistration(value.record, process.pid, value.processStartedAt);
-  if (!registration) return null;
+  if (!registration || registration.observedAt === null) return null;
   const currentPane = await source.pane(vars, target);
   const current = await source.process(vars, pane.panePid, 'claude');
   if (
@@ -120,5 +127,10 @@ export async function readClaudeProcessState(
     current.pid !== process.pid
   )
     return null;
-  return { ...registration, sessionPath: value.sessionPath, processPid: process.pid };
+  return {
+    ...registration,
+    observedAt: registration.observedAt,
+    sessionPath: value.sessionPath,
+    processPid: process.pid,
+  };
 }

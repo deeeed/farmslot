@@ -31,9 +31,18 @@ test('native registration binds pid generation and an explicit native turn state
     assert.equal(claudeProcessRegistration(value, '42', 900), null);
 });
 
+test('legacy native registration retains identity without claiming a timestamped observation', () => {
+  const { statusUpdatedAt: _timestamp, ...legacy } = registration;
+  assert.deepEqual(claudeProcessRegistration(legacy, '42', 900), {
+    sessionId: 'saved-review',
+    status: 'idle',
+    observedAt: null,
+  });
+});
+
 test('native process observation refuses a pane handoff or a replacement runner after its read', async () => {
   const vars = makeVars();
-  for (const changed of ['none', 'pane', 'process'] as const) {
+  for (const changed of ['none', 'pane', 'process', 'timestamp'] as const) {
     let probes = 0;
     let panes = 0;
     const state = await readClaudeProcessState(vars, 'review', {
@@ -47,7 +56,10 @@ test('native process observation refuses a pane handoff or a replacement runner 
       }),
       exec: async () => ({
         stdout: JSON.stringify({
-          record: registration,
+          record:
+            changed === 'timestamp'
+              ? { pid: 42, sessionId: 'saved-review', startedAt: 1000, status: 'idle' }
+              : registration,
           processStartedAt: 900,
           sessionPath: '/sessions/saved-review.jsonl',
         }),

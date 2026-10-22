@@ -1,4 +1,4 @@
-// setup-line-comments supplies immutable source. Drive rows, then inspect the real Monaco viewport.
+// Drive recorded finding rows, then inspect immutable source, the Monaco viewport and share links.
 function all(root, selector) {
   return [
     ...root.querySelectorAll(selector),
@@ -17,23 +17,17 @@ async function until(read, description) {
   throw new Error(description);
 }
 const workspace = await until(
-  () =>
-    all(document, 'review-workspace').find(
-      (view) => view.runId === 'gate-review-fixture-request-run',
-    ),
-  'Fixture review did not load',
+  () => all(document, 'review-workspace')[0],
+  'Recorded review did not load',
 );
 await until(
-  () => workspace.querySelectorAll('.rw-ci').length === 3 && !workspace._isRecovering,
+  () => workspace.querySelectorAll('.rw-ci').length > 0 && !workspace._isRecovering,
   'Finding rows did not become available',
 );
 const checks = [];
-for (const [index, line, path] of [
-  [0, 462, 'mobileInfrastructure.ts'],
-  [1, 479, 'mobileInfrastructure.ts'],
-  [2, 12, 'other.ts'],
-  [0, 462, 'mobileInfrastructure.ts'],
-]) {
+const indices = [...workspace._comments.map((_, index) => index), 0];
+for (const index of indices) {
+  const { line, path } = workspace._comments[index];
   const row = workspace.querySelectorAll('.rw-ci')[index];
   row.click();
   const value = await until(() => {
@@ -67,9 +61,23 @@ for (const [index, line, path] of [
           visible: true,
           highlighted: true,
           inlineCommentVisible: true,
+          modelLineCount: editor.getModel().getLineCount(),
+          sourceLineCount:
+            viewer.content.split(/\r\n?|\n/).length - (viewer.content.endsWith('\n') ? 1 : 0),
+          sourceBytes: new TextEncoder().encode(viewer.content).length,
+          reviewedHead: workspace._payload.reviewSnapshot.headSha,
+          link: location.href,
         }
       : null;
   }, `Click did not reveal ${path}:${line} with its inline comment`);
+  const params = new URLSearchParams(location.hash.split('?')[1]);
+  if (
+    params.get('commentFile') !== path ||
+    Number(params.get('commentLine')) !== line ||
+    params.get('commentHead') !== workspace._payload.reviewSnapshot.headSha ||
+    !params.get('comment')
+  )
+    throw new Error('Finding click did not record its full URL location');
   checks.push(value);
 }
 workspace.querySelector('code-viewer').scrollIntoView({ block: 'center' });
@@ -78,5 +86,5 @@ return {
   checks,
   actualRowClicks: true,
   source: 'gateway git.show',
-  inputSent: false,
+  publicationSent: false,
 };

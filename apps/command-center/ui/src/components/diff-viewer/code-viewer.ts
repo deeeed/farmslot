@@ -2,7 +2,7 @@ import { html, LitElement, render, type RootPart } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import type * as monaco from 'monaco-editor';
 
-import type { Diagnostic, PRReviewThread } from '@farmslot/protocol';
+import { type Diagnostic, type PRReviewThread, reviewedFindingContext } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
@@ -344,7 +344,7 @@ export class CodeViewer extends LitElement {
 
   private _revealRequestedLine() {
     if (!this._editor || !monacoApi) return;
-    if (this.revealLine <= 0) {
+    if (!reviewedFindingContext(this.content, this.revealLine).available) {
       this._revealDecorations?.clear();
       return;
     }
@@ -444,7 +444,7 @@ export class CodeViewer extends LitElement {
   private _applyCommentDecorations() {
     if (!this._editor || !monacoApi) return;
     const m = monacoApi;
-    const threads = this.commentThreads.filter((t) => t.line !== null);
+    const threads = this._anchoredCommentThreads();
 
     if (threads.length === 0) {
       this._commentDecorations?.clear();
@@ -467,6 +467,13 @@ export class CodeViewer extends LitElement {
     }
   }
 
+  private _anchoredCommentThreads() {
+    return this.commentThreads.filter(
+      (thread) =>
+        thread.line !== null && reviewedFindingContext(this.content, thread.line).available,
+    );
+  }
+
   private _applyCommentZones() {
     if (!this._editor) return;
 
@@ -478,7 +485,7 @@ export class CodeViewer extends LitElement {
     this._viewZoneIds = [];
     this._viewZoneDomNodes = [];
 
-    const threads = this.commentThreads.filter((t) => t.line !== null && t.comments.length > 0);
+    const threads = this._anchoredCommentThreads().filter((thread) => thread.comments.length > 0);
     if (threads.length === 0 || !this.showComments) return;
 
     const { paddingLeft, totalWidth } = this._getWidgetLayout();
