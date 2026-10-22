@@ -1798,11 +1798,20 @@ export function continueResolvedRunDecision(
   setTimeout(() => {
     void (async () => {
       const afterResolve = getRun(params.runId);
+      const reconcilingReviewRequest =
+        afterResolve?.status === 'reconciling' &&
+        afterResolve.decisions.some(
+          (decision) =>
+            decision.id === params.decisionId &&
+            decision.type === 'engine_human_gate' &&
+            isHumanGateReviewRequestAction(decision.resolvedAction) &&
+            typeof decision.context?.reviewRequestConsumedAt !== 'string',
+        );
       if (
         !afterResolve ||
         engineResumed ||
         runSupersededSince(afterResolve, gateGeneration) ||
-        !['blocked', 'human-gating'].includes(afterResolve.status)
+        (!reconcilingReviewRequest && !['blocked', 'human-gating'].includes(afterResolve.status))
       )
         return;
       // ADR-054 `free-slot`: this timer exists to resume a run whose engine loop
