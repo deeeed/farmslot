@@ -210,6 +210,21 @@ idle, complete or blocked state. A pending human choice uses the gate state,
 not blocked. Reviewer failure can coexist with a worker operation: progressing
 worker state wins and review failure stays attached to its review record.
 
+When a delivered review-fix blocks, `run.resume` and worker-signal recovery MUST
+select that fix's context and signal, then reattach the existing review step.
+They MUST NOT replay the completed primary worker's monitor. A fresh running
+attempt MUST be adopted before recovery reads its context, and the run update
+MUST expose the active step. A finished reopened fix retains its checklist,
+signal and findings through replay, including records without a continuation
+flag. Existing attempt, findings-generation, slot-ownership and proof guards
+remain authoritative; a reason's prose is never an authorization signal.
+
+`blockedWorkerRecoveryStep` is exported by `@farmslot/protocol` for the gateway
+and recovery views. Clients use `run.probeWorkerSignal.resumable` and the existing
+`run.resume` action; they do not duplicate signal validation or select replay
+steps. The helper is an additive SDK export and changes no wire version, CLI
+flag or harness extension point.
+
 Late receipts and recovery MUST update the run through the existing lifecycle
 routes so run, backlog/queue/graph and ownership consumers agree. Existing
 settled-blocked archive/release guards MUST refuse uncertain or progressing

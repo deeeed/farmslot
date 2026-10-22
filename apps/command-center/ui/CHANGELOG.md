@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Resume the blocked worker through the gateway’s validated recovery action, including held review fixes.
 - Show native conversations beside slot terminals, keep open review gates visible, and reuse one structured review and fix timeline throughout run views.
 
 - Show round reviewers, modes, timings, findings and fix deltas on review steps through the shared history model.

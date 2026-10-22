@@ -8,6 +8,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.65.0 - 2026-10-22
+
+- Share the held worker recovery step so Resume follows a blocked review-fix without restarting completed primary work.
+
+This SDK release keeps the node-gateway wire protocol at 0.63.0.
+
 ## 0.64.1 - 2026-10-22
 
 - Record when another run reclaims a cancelled replay hold so retained replays report why the slot is unavailable.

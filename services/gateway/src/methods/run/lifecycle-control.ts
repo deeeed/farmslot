@@ -670,15 +670,21 @@ export async function runResumeTransitionLocked(
     // same one without `./mark start`) left a signal the run never read:
     // replay the monitor on it, through the normal artifact checks.
     const check =
-      existing.status === 'blocked' && deps.blockedRunResumableSignal && deps.replayMonitor
+      existing.status === 'blocked' && deps.blockedRunResumableSignal
         ? await deps.blockedRunResumableSignal(existing)
         : null;
-    if (check?.signal && deps.replayMonitor) {
+    if (check?.signal && (check.stepName === 'review' || deps.replayMonitor)) {
       const previousGeneration = existing.engineState?.generation ?? 0;
       console.log(
-        `[run] resume of blocked run ${params.runId.slice(0, 8)}: worker attempt ${check.signal.attemptId} reported ${check.signal.status} after the block; replaying monitor`,
+        `[run] resume of blocked run ${params.runId.slice(0, 8)}: worker attempt ${check.signal.attemptId} reported ${check.signal.status} after the block; replaying ${check.stepName ?? 'monitor'}`,
       );
-      const replayed = await deps.replayMonitor(existing.id);
+      let replayed: Run;
+      if (check.stepName === 'review') {
+        await deps.replayGate(existing.id, 'review');
+        replayed = getRun(existing.id)!;
+      } else {
+        replayed = await deps.replayMonitor!(existing.id);
+      }
       emit(Events.RUN_UPDATED, { run: replayed });
       return {
         run: replayed,
