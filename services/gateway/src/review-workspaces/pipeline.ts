@@ -320,6 +320,104 @@ function hasUncertainReviewOperation(run: Run): boolean {
   );
 }
 
+/** A startup timeout ends observation, not ownership of the admitted reviewer. */
+export function workspaceReviewStartupNeedsRecovery(run: Run): boolean {
+  return (
+    run.flowType === 'review-pr' &&
+    run.transport === 'tmux' &&
+    Boolean(run.reviewWorkspaceTarget && run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) &&
+    ['reconciling', 'reviewing', 'blocked'].includes(run.status) &&
+    !run.decisions.some((decision) => !decision.resolvedAt) &&
+    run.steps.some((step) => step.name === PipelineSteps.DISPATCH && step.status === 'done') &&
+    run.steps.some(
+      (step) =>
+        step.name === PipelineSteps.MONITOR &&
+        step.status === 'done' &&
+        step.detail === 'review-startup-unacknowledged',
+    ) &&
+    [PipelineSteps.HUMAN_GATE, PipelineSteps.COMPLETE].every(
+      (name) => run.steps.find((step) => step.name === name)?.status === 'skipped',
+    ) &&
+    Boolean(
+      run.agentContexts?.some(
+        (context) =>
+          context.id === 'review' && context.target?.session && context.promptDeliveryStartedAt,
+      ),
+    )
+  );
+}
+
+let startupRecoveryInProgress: Promise<void> | undefined;
+
+function canRecoverWorkspaceReviewStartup(run: Run): boolean {
+  return (
+    workspaceReviewStartupNeedsRecovery(run) &&
+    run.autoRecoveryDisabled !== true &&
+    !['disabled', 'manual-in-progress'].includes(run.recoveryProposal?.status ?? '')
+  );
+}
+
+/** Reattach observation to the original attempt, never replay dispatch or send a prompt. */
+export function reconcileReviewWorkspaceStartup(
+  emit: (event: string, payload: unknown) => void,
+  resumeRun: (runId: string) => void,
+): Promise<void> {
+  if (startupRecoveryInProgress) return startupRecoveryInProgress;
+  startupRecoveryInProgress = (async () => {
+    for (const observed of getAllRuns()
+      .filter(canRecoverWorkspaceReviewStartup)
+      .map((run) => structuredClone(run))) {
+      const generation = observed.engineState?.generation ?? 0;
+      const context = observed.agentContexts!.find((entry) => entry.id === 'review')!;
+      const stillCurrent = () => {
+        const current = getRun(observed.id);
+        const candidate = current?.agentContexts?.find((entry) => entry.id === 'review');
+        return (
+          current &&
+          canRecoverWorkspaceReviewStartup(current) &&
+          (current.engineState?.generation ?? 0) === generation &&
+          current.reviewWorkspace?.workspaceId === observed.reviewWorkspace?.workspaceId &&
+          candidate?.promptDeliveryStartedAt === context.promptDeliveryStartedAt &&
+          candidate?.signalAttemptId === context.signalAttemptId &&
+          candidate?.target?.session === context.target?.session
+        );
+      };
+      const signal = await readReviewWorkspaceSignal(observed.id);
+      if (!stillCurrent()) continue;
+      const acceptance = signal ? null : await observeReviewPromptAcceptance(observed);
+      if ((!signal && !acceptance) || !stillCurrent()) continue;
+      // The timeout refunded this admission. Late execution consumes that same round.
+      await clearReviewRoundSettlement(
+        observed.id,
+        monitoredWorkspaceReviewRoundId(observed, generation),
+      );
+      if (!stillCurrent()) continue;
+      const current = getRun(observed.id)!;
+      await persistRunNow(
+        updateRun(current.id, {
+          status: 'monitoring',
+          error: undefined,
+          completedAt: undefined,
+          metrics: { ...current.metrics, outcome: undefined },
+          steps: current.steps.map((step) =>
+            step.name === PipelineSteps.MONITOR ||
+            ((step.name === PipelineSteps.HUMAN_GATE || step.name === PipelineSteps.COMPLETE) &&
+              step.status === 'skipped')
+              ? { ...step, status: 'pending', detail: undefined, completedAt: undefined }
+              : step,
+          ),
+        }),
+        'late reviewer startup acknowledged',
+      );
+      emit(Events.RUN_UPDATED, { run: getRun(current.id) });
+      resumeRun(current.id);
+    }
+  })().finally(() => {
+    startupRecoveryInProgress = undefined;
+  });
+  return startupRecoveryInProgress;
+}
+
 let cleanupInProgress: Promise<void> | undefined;
 
 /** Reconcile interrupted terminal cleanup independently of active-run recovery. */
@@ -333,6 +431,7 @@ export function reconcileReviewWorkspaceCleanup(
         !run.reviewWorkspace ||
         (run.reviewWorkspace.cleanedAt && !hasHeldReviewWorker(run)) ||
         hasUncertainReviewOperation(run) ||
+        workspaceReviewStartupNeedsRecovery(run) ||
         waitingAtReviewGate(run) ||
         !['done', 'failed', 'cancelled', 'blocked'].includes(run.status)
       )
@@ -593,7 +692,7 @@ async function executeOwnedReviewWorkspaceStep(
           });
           if (startup === 'blocked')
             throw new BlockedRunError(
-              'Reviewer has not acknowledged its task. Check workspace trust, sign-in or usage limits, then request a new review with the chosen runner.',
+              'Reviewer has not acknowledged its task. Check its terminal for a startup prompt, sign-in or usage limit. This run will resume when the original reviewer starts or finishes.',
               'review-startup-unacknowledged',
             );
           const status = startup === 'acknowledged' ? 'working' : 'launching';

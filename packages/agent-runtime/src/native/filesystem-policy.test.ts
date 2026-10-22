@@ -100,8 +100,8 @@ test('ordinary app-server conversations preserve hook configuration', async () =
   }
 });
 
-test('stream-json startup hooks are disabled only for source-read-only workers', async () => {
-  for (const readonly of [false, true]) {
+for (const readonly of [false, true]) {
+  test(`stream-json ${readonly ? 'read-only reviews skip project settings and hooks' : 'ordinary workers keep their settings and hooks'}`, async () => {
     const f = await fixture(true);
     let session;
     try {
@@ -117,14 +117,21 @@ test('stream-json startup hooks are disabled only for source-read-only workers',
       );
       const argv: string[] = JSON.parse(await readFile(f.argv, 'utf8'));
       const settings = argv.indexOf('--settings');
-      if (readonly) assert.deepEqual(JSON.parse(argv[settings + 1]), { disableAllHooks: true });
-      else assert.equal(settings, -1);
+      const sources = argv.indexOf('--setting-sources');
+      if (readonly) {
+        assert.notEqual(sources, -1, 'denied PR settings must never be loaded at startup');
+        assert.equal(argv[sources + 1], 'user');
+        assert.deepEqual(JSON.parse(argv[settings + 1]), { disableAllHooks: true });
+      } else {
+        assert.equal(sources, -1);
+        assert.equal(settings, -1);
+      }
     } finally {
       await session?.close();
       await rm(f.root, { recursive: true, force: true });
     }
-  }
-});
+  });
+}
 
 test('filesystem policy requires a known supported native version', () => {
   assert.equal(

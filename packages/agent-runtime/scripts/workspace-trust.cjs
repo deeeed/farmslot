@@ -220,7 +220,17 @@ const reviewConfigurationRootsByRunner = {
   cursor: reviewConfigurationRoots,
 };
 
+// The review sandbox denies repository configuration. Exclude it before Claude
+// tries to read it, rather than prompting on EPERM before accepting the task.
+const claudeReadOnlyReviewArgs = [
+  '--setting-sources',
+  'user',
+  '--settings',
+  '{"disableAllHooks":true}',
+];
+
 module.exports = {
+  claudeReadOnlyReviewArgs,
   reviewConfigurationRootsByRunner,
   codexWorkspaceTrustConfig,
   trustGrokFolders,
