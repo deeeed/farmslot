@@ -89,7 +89,7 @@ CLI flag, hook, policy or schema version is added.
 
 ## Amendment 2 (2026-10-22): Reuse passing checks and freeze fix scope
 
-**Status:** Proposed
+**Status:** Accepted (2026-10-22)
 
 ### Decision and rationale
 
