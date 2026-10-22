@@ -46,6 +46,10 @@ import {
   isIgnoredPoolFile,
   readPoolFiles,
 } from '@farmslot/protocol/node/slot-by-repo';
+import {
+  resolveApprovalPolicy,
+  type ReviewApprovalPolicy,
+} from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { SlotConfigError } from './error.js';
 import { referenceRepoKeysIn, referenceRepoPlaceholder } from './hooks.js';
@@ -212,6 +216,7 @@ export interface SlotVars {
 // ─── Raw project.json shape ───
 
 export interface RawProjectJson {
+  approvalPolicy?: Partial<ReviewApprovalPolicy>;
   recipe?: ProjectConfig['recipe'];
   name?: string;
   repo_url?: string;
@@ -486,6 +491,7 @@ export interface RawProjectJson {
     effort?: string;
     max_retries?: number;
     review_timeout_min?: number;
+    review_inactivity_timeout_min?: number;
     execution_templates?: Record<'static-code' | 'full-live', string>;
     // Initial review is cold; warm rechecks require verified retained PR provenance.
     mode?: ReviewMode;
@@ -841,6 +847,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateRoadmapConfig(projectJson, projectConfig);
   validateScriptedConfig(projectJson, projectConfig);
   validateEvalHarnessesConfig(projectJson, projectConfig);
+  resolveApprovalPolicy(projectJson.approvalPolicy);
   validateReviewConfig(projectJson, projectConfig);
   validatePublicationReviewConfig(projectJson, projectConfig);
   validatePrepareConfig(projectJson, projectConfig);
@@ -1252,6 +1259,7 @@ export function validateReviewConfig(projectJson: RawProjectJson, projectConfig:
     'effort',
     'max_retries',
     'review_timeout_min',
+    'review_inactivity_timeout_min',
     'execution_templates',
     'mode',
   ];
@@ -1262,6 +1270,12 @@ export function validateReviewConfig(projectJson: RawProjectJson, projectConfig:
     );
   if (review.mode !== undefined && !isReviewMode(review.mode))
     throw new Error(`${projectConfig}: review.mode must be warm or cold`);
+  if (
+    review.review_inactivity_timeout_min !== undefined &&
+    (!Number.isFinite(review.review_inactivity_timeout_min) ||
+      review.review_inactivity_timeout_min <= 0)
+  )
+    throw new Error(`${projectConfig}: review.review_inactivity_timeout_min must be positive`);
 }
 
 export function validatePublicationReviewConfig(

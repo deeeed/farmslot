@@ -41,6 +41,15 @@ async function fixture(t: test.TestContext) {
     path.join(dir, 'artifacts/line-comments.json'),
     JSON.stringify([{ path: 'src/a.ts', line: 9, body: 'Cancel the trace', severity: 'must_fix' }]),
   );
+  await writeFile(
+    path.join(dir, 'artifacts/review-result.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      verdict: 'issues',
+      recommendation: 'REQUEST_CHANGES',
+      issues: [{ file: 'src/a.ts', line: 9, description: 'Cancel the trace', severity: 'major' }],
+    }),
+  );
   const run = createRun({
     flowType: 'review-pr',
     project: 'review-result-test',
@@ -106,4 +115,34 @@ test('missing report and failed worker signal cannot become completed review evi
   });
   await assert.rejects(recordArtifactOnlyReviewResult(run.id), /successful worker/);
   assert.equal(getRun(run.id)?.reviewResult, undefined);
+});
+
+test('an artifact-only review cannot approve a legacy finding whose severity was omitted', async (t) => {
+  const { run, dir } = await fixture(t);
+  await writeFile(
+    path.join(dir, 'artifacts/review.md'),
+    'VERDICT: APPROVE\nUnknown finding severity.\n',
+  );
+  await writeFile(
+    path.join(dir, 'artifacts/line-comments.json'),
+    JSON.stringify([{ path: 'src/a.ts', line: 9, body: 'The value is wrong' }]),
+  );
+  await writeFile(
+    path.join(dir, 'artifacts/review-result.json'),
+    JSON.stringify({ schemaVersion: 1, verdict: 'pass', recommendation: 'APPROVE', issues: [] }),
+  );
+  await assert.rejects(recordArtifactOnlyReviewResult(run.id), /require REQUEST_CHANGES/);
+  assert.equal(getRun(run.id)?.reviewResult, undefined);
+});
+
+test('a body-only major remains a blocking recommendation without an inline comment', async (t) => {
+  const { run, dir } = await fixture(t);
+  await writeFile(
+    path.join(dir, 'artifacts/review.md'),
+    'VERDICT: REQUEST_CHANGES\nCancel the trace\n',
+  );
+  await writeFile(path.join(dir, 'artifacts/line-comments.json'), JSON.stringify({ comments: [] }));
+  const result = await recordArtifactOnlyReviewResult(run.id);
+  assert.equal(result.recommendation, 'REQUEST_CHANGES');
+  assert.deepEqual(result.lineComments, []);
 });

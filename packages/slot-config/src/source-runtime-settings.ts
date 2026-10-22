@@ -4,12 +4,13 @@ import path from 'node:path';
 
 import { isRecord, parseProjectVisualClaimReviewPolicy } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { resolveApprovalPolicy } from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { readWorkspaceState, resolveWorkspaceRoot } from './repo-root.js';
 import { projectSourceContext } from './source-binding.js';
 
 export type SourceRuntimeSettings = Partial<
-  Record<'backlog' | 'auto_recovery' | 'visual_claim_review', unknown>
+  Record<'backlog' | 'auto_recovery' | 'visual_claim_review' | 'approvalPolicy', unknown>
 >;
 
 function settingsPath(project: string): string {
@@ -33,7 +34,7 @@ export async function readSourceRuntimeSettings(project: string): Promise<Source
     !isRecord(raw.values) ||
     Object.keys(raw).some((key) => !['schemaVersion', 'project', 'values'].includes(key)) ||
     Object.keys(raw.values).some(
-      (key) => !['backlog', 'auto_recovery', 'visual_claim_review'].includes(key),
+      (key) => !['backlog', 'auto_recovery', 'visual_claim_review', 'approvalPolicy'].includes(key),
     )
   )
     throw new Error('Invalid project runtime settings');
@@ -41,6 +42,8 @@ export async function readSourceRuntimeSettings(project: string): Promise<Source
     raw.values.visual_claim_review = parseProjectVisualClaimReviewPolicy(
       raw.values.visual_claim_review,
     );
+  if (raw.values.approvalPolicy !== undefined)
+    raw.values.approvalPolicy = resolveApprovalPolicy(raw.values.approvalPolicy);
   return raw.values;
 }
 
@@ -58,6 +61,8 @@ export function writeSourceRuntimeSettings(
       normalized.visual_claim_review = parseProjectVisualClaimReviewPolicy(
         normalized.visual_claim_review,
       );
+    if ('approvalPolicy' in normalized)
+      normalized.approvalPolicy = resolveApprovalPolicy(normalized.approvalPolicy);
     const destination = settingsPath(project);
     await mkdir(path.dirname(destination), { recursive: true });
     const current = await readSourceRuntimeSettings(project);

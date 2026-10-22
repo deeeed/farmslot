@@ -334,6 +334,7 @@ export interface ReviewStepInput {
 }
 
 export interface ReviewIssue {
+  severity?: import('../../scripts/review-approval-policy.cjs').ReviewSeverity;
   file: string;
   line?: number;
   description: string;

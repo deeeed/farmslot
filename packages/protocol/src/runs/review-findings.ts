@@ -39,6 +39,8 @@ export function openReviewFindingCount(
   review: ReviewStatus,
   entry: ReviewStatus | ReviewAttempt = review,
 ): number {
+  // A validated pass can retain permitted advisory findings without reopening work.
+  if (entry.verdict === 'pass' && entry.unresolvedCount === 0) return 0;
   const issues = entry.issues ?? [];
   return (
     Math.max(entry.unresolvedCount ?? 0, issues.length) -

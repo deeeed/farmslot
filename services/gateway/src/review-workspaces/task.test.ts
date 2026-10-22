@@ -110,6 +110,7 @@ async function fixture() {
       { machine: 'local', host: 'localhost', sshUser: 'fixture' } as PoolConfig,
     ],
     snapshotRoot: () => path.join(root, 'gateway-snapshots'),
+    readCommentDiff: async () => '@@ -1 +1 @@\n unchanged\n',
   };
   return { root, run, subject, project, deps, task: run.reviewWorkspace!.taskPath };
 }
@@ -159,10 +160,9 @@ test('materialization preserves canonical checklist, freezes offline guidance/pr
         `Reference unplaced: no ${f.run.project} slot on ${f.run.reviewWorkspace!.machine}`,
       ),
     );
-    assert(task.includes('end in APPROVE or REQUEST_CHANGES'));
-    assert(
-      task.includes('Use COMMENT only for a draft PR or an explicitly informational request.'),
-    );
+    assert(task.includes('minor requires COMMENT'));
+    assert(task.includes('more than 3 nits requires COMMENT'));
+    assert(task.includes('out-of-diff notes in the review body'));
     assert.equal(await readFile(path.join(f.task, 'CHECKLIST.md'), 'utf8'), checklist);
     assert.match(await readFile(first.taskFile, 'utf8'), new RegExp(f.subject.headSha));
     assert.deepEqual(
@@ -442,23 +442,19 @@ test('a blocked marker retains its reason only for the accepted reviewer attempt
   });
 });
 
-test('passing static reviews retain four advisory comments without weakening issue matching', () => {
+test('static inline comments retain canonical severities and permit body-only findings', () => {
   const comments = Array.from({ length: 4 }, (_, index) => ({
     path: 'src/file.ts',
     line: index + 1,
     body: `Optional improvement ${index + 1}`,
-    severity: ['minor', 'nit', 'suggestion', 'nitpick'][index],
+    severity: ['blocker', 'major', 'minor', 'nit'][index],
   }));
   const original = structuredClone(comments);
   assert.deepEqual(resolveStaticReviewLineComments('pass', [], comments), original);
   assert.deepEqual(comments, original);
-  assert.deepEqual(
-    resolveStaticReviewLineComments('pass', [], [{ ...comments[0], severity: 'comment' }]),
-    [{ ...comments[0], severity: 'comment' }],
-  );
+
   for (const invalid of [
-    { severity: 'major' },
-    { severity: 'blocker' },
+    { severity: 'suggestion' },
     { severity: 'must_fix' },
     { severity: 'unknown' },
     { severity: ['nit'] },
@@ -474,10 +470,7 @@ test('passing static reviews retain four advisory comments without weakening iss
   }
   const blocking = [{ ...comments[0], severity: 'major' }];
   assert.deepEqual(resolveStaticReviewLineComments('issues', blocking, blocking), blocking);
-  assert.throws(
-    () => resolveStaticReviewLineComments('issues', blocking, []),
-    /line comments disagree/,
-  );
+  assert.deepEqual(resolveStaticReviewLineComments('issues', blocking, []), []);
   assert.throws(
     () => resolveStaticReviewLineComments('issues', blocking, comments),
     /line comments disagree/,

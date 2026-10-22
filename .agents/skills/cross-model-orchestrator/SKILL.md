@@ -93,10 +93,10 @@ VERDICT: APPROVE
 COMMIT: <full SHA>
 ```
 
-Use `REQUEST_CHANGES` for a blocker. Preserve history in `rN/`; coordination JSON and old verdicts
+Follow the [shared approval policy](../../../docs/reference/review-curation-and-results.md#approval-policy). `COMMENT` records concrete asks and cannot approve a merge. Preserve history in `rN/`; coordination JSON and old verdicts
 never authorize merging. Round 1 reviews the full PR. Round 2+ reviews only the saved previous-head
 to current-head delta and named fixes. Preserve settled decisions in each prompt. Do not reopen
-unchanged code except for real funds, credentials, or user-data loss. Nits never block.
+unchanged code except for real funds, credentials, or user-data loss.
 Every blocker needs a realistic failure and a changed file and line. Speculative hardening goes
 under FOLLOW-UPS. Deleted capabilities need a new home or evidence that they have no callers.
 
