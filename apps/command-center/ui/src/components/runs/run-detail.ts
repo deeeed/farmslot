@@ -37,7 +37,12 @@ import {
   Methods,
   sortRunsForFamilyView,
 } from '@farmslot/protocol';
-import { pendingOutputReview, type VisualJudgmentFeedback } from '@farmslot/review-dispatch';
+import {
+  acceptsRunChecklistProgress,
+  pendingOutputReview,
+  runChecklistProgressTarget,
+  type VisualJudgmentFeedback,
+} from '@farmslot/review-dispatch';
 
 import './native-worker-history.js';
 import './failure-triage-panel.js';
@@ -248,7 +253,11 @@ export class RunDetail extends RunDetailState {
           taskProgressUpdateTargetsRun(this.run ?? null, p) &&
           shouldAcceptTaskProgressUpdate(this.run, p)
         ) {
-          this.taskProgress = p.progress.structured;
+          if (this.run && acceptsRunChecklistProgress(this.run, p)) {
+            this._taskProgressRequestSeq++;
+            this._taskProgressLoading = false;
+            this.taskProgress = p.progress.structured;
+          }
           // The ledger rides the same broadcast; absent means the run has none,
           // so it clears rather than keeping a stale panel.
           this.acceptanceStatus = p.progress.acceptanceStatus ?? null;
@@ -439,7 +448,9 @@ export class RunDetail extends RunDetailState {
       this._selectedSlotId = null;
     }
     const activeTaskChanged =
-      prev?.id === this.run?.id && prev?.activeTaskFile !== this.run?.activeTaskFile;
+      prev?.id === this.run?.id &&
+      (prev && runChecklistProgressTarget(prev)?.key) !==
+        (this.run && runChecklistProgressTarget(this.run)?.key);
     if (activeTaskChanged) {
       this._taskProgressRequestSeq++;
       this._taskProgressLoading = false;

@@ -90,3 +90,12 @@ during refresh failures. `refreshReviewGateView` reads the current gate after a
 refused refresh, because that refusal may have committed revised findings.
 `runRecoveredReviewFailures` supplies the same warning and reason to both mini
 pipelines without changing the run's engine state.
+
+`runChecklistProgressView`, `runChecklistProgressTarget` and `acceptsRunChecklistProgress`
+are consumed by Command Center and Companion run lists and detail. They present the
+existing `task.progress` counts and current item, with identity scoped to the active
+checklist and attempt. No run-record or wire fields are added.
+
+Both clients also use `ciFixTaskProgress` / `effectiveTaskProgressForRun` for
+the existing CI-fix fallback. `ChecklistProgressReads` admits current hydration
+responses and preserves newer live updates across reconnects and attempt changes.
