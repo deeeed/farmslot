@@ -381,6 +381,16 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
       min-height: 0;
       height: auto;
     }
+    review-workspace .rw-source-context {
+      flex-shrink: 0;
+      padding: 6px 8px;
+      color: ${colors.textSecondary};
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    review-workspace .rw-source-context button {
+      min-height: 44px;
+    }
     review-workspace .rw-diff-loading,
     review-workspace .rw-diff-empty {
       display: flex;

@@ -32,7 +32,16 @@ class Range {
 const positions: Array<{ lineNumber: number; column: number }> = [];
 const revealed: number[] = [];
 const decorated: Array<{ range: Range; options: { className?: string } }> = [];
+let modelLineCount = 570;
 const editor = {
+  getModel: () => ({ getLineCount: () => modelLineCount }),
+  changeViewZones: (change: (accessor: { removeZone(): void; addZone(): void }) => void) =>
+    change({
+      removeZone() {},
+      addZone() {
+        throw new Error('An invalid line received a view zone');
+      },
+    }),
   createDecorationsCollection: (entries: typeof decorated) => {
     decorated.push(...entries);
     return { set() {}, clear() {} };
@@ -104,7 +113,7 @@ test('a line comment selected before Monaco loads reveals its exact line and inl
   Object.assign(viewer, {
     requestUpdate() {},
     querySelector: () => ({}),
-    content: Array.from({ length: 500 }, (_, index) => `source line ${index + 1}`).join('\n'),
+    content: Array.from({ length: 570 }, (_, index) => `source line ${index + 1}`).join('\n'),
     language: 'typescript',
     filename: 'mobileInfrastructure.ts',
     filePath: 'mobileInfrastructure.ts',
@@ -140,4 +149,46 @@ test('a line comment selected before Monaco loads reveals its exact line and inl
   viewer.revealLine = 479;
   viewer.updated(new Map<string, unknown>([['revealLine', 462]]));
   assert.equal(positions.at(-1)?.lineNumber, 479, 'later comments in the same file still reveal');
+});
+
+test('a finding at 479 cannot be clamped to the end of a 223-line file', () => {
+  modelLineCount = 223;
+  const previousPositions = positions.length;
+  const previousDecorations = decorated.length;
+  const viewer = Object.create(CodeViewer.prototype) as Viewer;
+  Object.assign(viewer, {
+    requestUpdate() {},
+    _editor: editor,
+    revealLine: 479,
+    commentThreads: [
+      {
+        id: 'finding-479',
+        path: 'usePerpsCloseAllCalculations.ts',
+        line: 479,
+        resolved: false,
+        outdated: false,
+        comments: [
+          {
+            id: 2,
+            body: 'Finding at its real line',
+            author: 'reviewer',
+            createdAt: '2026-10-22',
+            updatedAt: '2026-10-22',
+          },
+        ],
+      },
+    ] satisfies PRReviewThread[],
+    showComments: true,
+    _viewZoneIds: [],
+    _viewZoneDomNodes: [],
+    _disposeCommentBodies() {},
+  });
+  viewer.updated(
+    new Map<string, unknown>([
+      ['revealLine', 0],
+      ['commentThreads', []],
+    ]),
+  );
+  assert.equal(positions.length, previousPositions, 'no misleading cursor at line 223');
+  assert.equal(decorated.length, previousDecorations, 'no comment decoration clamped to EOF');
 });

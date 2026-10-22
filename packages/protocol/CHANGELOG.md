@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share review finding locations by immutable revision and content identity, preserving file and line across comment reordering and link restoration.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.63.0 - 2026-10-21

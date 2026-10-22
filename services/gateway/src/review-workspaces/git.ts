@@ -52,7 +52,7 @@ export async function workspaceReviewGit(params: {
 const p=JSON.parse(process.argv[1]);
 if(JSON.stringify(JSON.parse(fs.readFileSync(p.cache+'.json','utf8')))!==JSON.stringify(p.identity))throw Error('Review repository ownership changed');
 const r=cp.spawnSync('git',['--no-pager','--git-dir',p.cache,...p.args],{encoding:'utf8',maxBuffer:10*1024*1024});
-if(r.error)throw r.error;process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1);`;
+if(r.error)throw r.error;process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;`;
       const argv = [
         'node',
         '-e',
