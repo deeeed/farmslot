@@ -1379,8 +1379,7 @@ for (const [name, explicit, expected, instance, authDefault, captureMode = 'reta
 for (const tmuxServer of [true, false]) {
   test(`deploy-node honors the pool worker profile home (${tmuxServer ? 'tmux' : 'login shell'})`, (t) => {
     const fixture = cliFixture(t, { tmuxServer });
-    if (!tmuxServer)
-      fixture.write('bin/sleep', '#!/bin/sh\nexec /bin/sleep "$@"\n', true);
+    if (!tmuxServer) fixture.write('bin/sleep', '#!/bin/sh\nexec /bin/sleep "$@"\n', true);
     const serviceHome = path.join(fixture.home, "service profiles' literal-$value");
     fixture.write(
       'pool/z-configured-worker.json',
