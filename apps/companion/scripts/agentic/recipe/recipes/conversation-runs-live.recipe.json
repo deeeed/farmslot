@@ -31,7 +31,7 @@
       },
       "prove": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-native-conversation-runs.mjs",
+        "cmd": "node --import tsx scripts/agentic/prove-native-conversation-runs.mjs",
         "timeout_ms": 360000,
         "intent": "Drive the real composer and verify run, reply and command ownership.",
         "next": "shared"

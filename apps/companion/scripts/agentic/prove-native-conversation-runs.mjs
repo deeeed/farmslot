@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ import { inspect, promisify } from 'node:util';
 
 import { createAgentDeviceClient } from 'agent-device';
 
+import { GatewayClient } from '../../../../packages/cli/src/gateway-client.ts';
 import { automationGatewayTarget } from '../../../../scripts/lib/gateway-profile.mjs';
 import { createRunReplyProxy } from '../../../../services/gateway/scripts/visual-reply-proxy.mjs';
 
@@ -121,18 +122,14 @@ async function fill(identifier, text, verify = true) {
   );
   await device.interactions.fill({ ...selection, selector: `id="${identifier}"`, text, verify });
 }
-async function rpc(method, params = {}) {
-  const { stdout } = await execute(
-    process.execPath,
-    [
-      path.join(root, 'apps/command-center/scripts/cdp.mjs'),
-      'gateway',
-      method,
-      JSON.stringify(params),
-    ],
-    { timeout: 95000, maxBuffer: 8 * 1024 * 1024 },
+let externalConnection;
+const rpc = (method, params = {}) => externalConnection.call(method, params);
+async function checkpoint(name, facts) {
+  await writeFile(
+    path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, `${name}.json`),
+    `${JSON.stringify({ status: 'checkpoint', runId: fixture.runId, ...facts }, null, 2)}\n`,
+    { flag: 'wx', mode: 0o600 },
   );
-  return JSON.parse(stdout);
 }
 const shots = [];
 async function capture(name) {
@@ -166,6 +163,11 @@ let proxy,
   originalFailure;
 const cleanupFailures = [];
 try {
+  externalConnection = await new GatewayClient({
+    url: target.url,
+    credential: target.credential,
+    timeout: 90000,
+  }).connect();
   const before = await until(
     () => observe('runs-cache:snapshot'),
     (value) => value.connectionProfileId,
@@ -318,6 +320,14 @@ try {
   );
   assert.equal(page.scope.leaseId, fixture.leaseId);
   await capture('native-conversation-accepted.png');
+  await checkpoint('accepted-command', {
+    command: commands[0],
+    receipt: page.commands.find((command) => command.commandId === commands[0].commandId),
+    worker: fixture.worker,
+    refreshTransport,
+    cursor: accepted.conversation.cursor,
+    screenshots: [...shots],
+  });
   const finalToken = `LATE_NATIVE_${randomUUID().replaceAll('-', '')}`;
   await fill('companion-native-draft', `Reply exactly ${finalToken}. Do not use tools.`);
   const beforeLate = await until(
@@ -350,6 +360,34 @@ try {
   );
   const cancelled = await rpc('run.cancel', { runId: fixture.runId });
   assert(!cancelled.effects?.some((effect) => effect.status === 'failed'));
+  // This proof removes a run, not its worktree. Release only this run's claim
+  // through the public API so run.delete need not run destructive storage cleanup.
+  const released = await rpc('slot.release', {
+    slotId: fixture.slotId,
+    expectedRunId: fixture.runId,
+    keepWork: true,
+    killTmux: false,
+    detachRuns: true,
+  });
+  assert(released.released, released.reason);
+  const releasedView = await until(
+    conversation,
+    (value) =>
+      value.conversation?.observation.status === 'ready' &&
+      value.conversation.observation.data?.run.status === 'cancelled' &&
+      !value.conversation.writable,
+    'Retain the cancelled run before its actual deletion',
+  );
+  assert.equal(releasedView.conversation.selection.leaseId, fixture.leaseId);
+  assert.equal(releasedView.conversation.selection.generation, fixture.generation);
+  assert.equal(releasedView.conversation.worker.binding.leaseId, fixture.leaseId);
+  assert.equal(releasedView.conversation.worker.binding.generation, fixture.generation);
+  assert.equal(releasedView.conversation.worker.binding.sessionId, fixture.sessionId);
+  assert.equal(releasedView.conversation.session.id, fixture.sessionId);
+  assert.equal(releasedView.conversation.cursor, frozen.conversation.cursor);
+  assert.equal(releasedView.conversation.eventCount, frozen.conversation.eventCount);
+  assert(!proxy.state().expired, 'Keep the original reply deadline through slot release');
+  await checkpoint('released-before-delete', { released, transport: proxy.state() });
   await rpc('run.delete', { runId: fixture.runId });
   await until(
     conversation,
@@ -429,6 +467,7 @@ try {
   } catch (error) {
     cleanupFailures.push(error);
   }
+  externalConnection?.close();
 }
 if (originalFailure || cleanupFailures.length) {
   const failures = [...(originalFailure ? [originalFailure] : []), ...cleanupFailures].map(
