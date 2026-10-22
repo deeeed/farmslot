@@ -845,6 +845,7 @@ export async function executeDispatchStep(
           providerAccountLabel: forcedLabel,
         },
         collector.emit,
+        { preparationRan: current.engineState?.flags?.skipPrepare !== true },
       );
       if (forcedLabel && slotVars) {
         await hostRecordAccountSuccess({ vars: slotVars, label: forcedLabel });

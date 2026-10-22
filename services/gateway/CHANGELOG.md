@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot facts, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire. Slot changes also invalidate former project and node scopes without refetching unchanged run bindings.
 - Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
+- Preserve the original before-evidence baseline when dispatch replays on an existing checkout without preparation.
 - Persist operator-added run tickets through supported metadata edits and include covered keys in summaries.
 
 - Bound concurrent evidence and progress reads during node recovery, and preserve replayed review slot claims while fleet refresh completes.
