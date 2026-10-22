@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Prepare publication gates from current admitted visual reviews, skipping retained results whose replayed command was released.
 - Preserve the original before-evidence baseline when dispatch replays on an existing checkout without preparation.
 - Persist operator-added run tickets through supported metadata edits and include covered keys in summaries.
 
