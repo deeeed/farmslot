@@ -14,6 +14,7 @@ import {
   loadReviewHistoryArtifacts,
   mergeReviewHistoryArtifacts,
   type ReviewHistoryArtifacts,
+  reviewHistoryCacheScope,
   type ReviewHistoryFinding,
   reviewHistoryIdentity,
   type ReviewHistoryRound,
@@ -41,8 +42,9 @@ export class ReviewHistoryPanel extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.clock = setInterval(() => this.requestUpdate(), 30000);
-    this.unsubscribeConnection = gateway.onConnectionChange(() => {
-      void this._loadHistory(true);
+    this.unsubscribeConnection = gateway.onConnectionChange((state) => {
+      if (state === 'connected') void this._loadHistory(true);
+      else this._historyLoading = false;
     });
   }
   disconnectedCallback() {
@@ -56,7 +58,17 @@ export class ReviewHistoryPanel extends LitElement {
   @state() private _historyArtifacts: ReviewHistoryArtifacts = {};
   private _historyIdentity = '';
   private _historyArtifactScope = '';
+  private _historyPrincipal: string | null = null;
+  private _artifactScope(run: Run) {
+    if (gateway.connectionState === 'connected')
+      this._historyPrincipal = gateway.authenticatedPrincipalId;
+    return reviewHistoryCacheScope(run.id, {
+      gatewayUrl: gateway.gatewayUrl,
+      principalId: this._historyPrincipal,
+    });
+  }
   @state() private _historyLoading = false;
+  @state() private _historyError = '';
   @state() private _historyDiff: {
     path: string;
     text: string;
@@ -66,40 +78,45 @@ export class ReviewHistoryPanel extends LitElement {
 
   private async _loadHistory(force = false) {
     const run = this.run;
-    if (!run) return;
+    if (!run || gateway.connectionState !== 'connected') return;
     const epoch = currentRecoveryEpoch();
     const identity = `${epoch}:${reviewHistoryIdentity(run)}`;
     if (!force && identity === this._historyIdentity) return;
     this._historyIdentity = identity;
-    const scope = `${epoch}:${run.id}`;
+    const scope = this._artifactScope(run);
     if (this._historyArtifactScope !== scope) this._historyArtifacts = {};
     this._historyArtifactScope = scope;
     this._historyLoading = true;
-    const artifacts = await loadReviewHistoryArtifacts(
-      run,
-      async (path) => {
-        const response = await gatewayHttpFetch(runArtifactApiPath(run.id, { path }));
-        if (response.status === 404) return null;
-        if (!response.ok) throw new Error(`Artifact HTTP ${response.status}`);
-        return response.text();
-      },
-      async (params) => {
-        if (!isRecoveryEpochCurrent(epoch)) throw new Error('Farm connection changed');
-        return (await gateway.request<FsReadResult>(Methods.FS_READ, params)).content;
-      },
-      async (params) => {
-        if (!isRecoveryEpochCurrent(epoch)) throw new Error('Farm connection changed');
-        return (await gateway.request<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
-      },
-    );
-    if (
+    const current = () =>
       this.isConnected &&
       isRecoveryEpochCurrent(epoch) &&
       this.run?.id === run.id &&
-      this._historyIdentity === identity
-    ) {
-      this._historyArtifacts = mergeReviewHistoryArtifacts(this._historyArtifacts, artifacts);
-      this._historyLoading = false;
+      this._historyIdentity === identity;
+    this._historyError = '';
+    try {
+      const artifacts = await loadReviewHistoryArtifacts(
+        run,
+        async (path) => {
+          const response = await gatewayHttpFetch(runArtifactApiPath(run.id, { path }));
+          if (response.status === 404) return null;
+          if (!response.ok) throw new Error(`Artifact HTTP ${response.status}`);
+          return response.text();
+        },
+        async (params) => {
+          if (!isRecoveryEpochCurrent(epoch)) throw new Error('Farm connection changed');
+          return (await gateway.request<FsReadResult>(Methods.FS_READ, params)).content;
+        },
+        async (params) => {
+          if (!isRecoveryEpochCurrent(epoch)) throw new Error('Farm connection changed');
+          return (await gateway.request<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
+        },
+      );
+      if (current())
+        this._historyArtifacts = mergeReviewHistoryArtifacts(this._historyArtifacts, artifacts);
+    } catch (error) {
+      if (current()) this._historyError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (this._historyIdentity === identity) this._historyLoading = false;
     }
   }
 
@@ -107,9 +124,7 @@ export class ReviewHistoryPanel extends LitElement {
     if (!this.run) return nothing;
     const history = reviewHistoryView(
       this.run,
-      this._historyArtifactScope === `${currentRecoveryEpoch()}:${this.run.id}`
-        ? this._historyArtifacts
-        : {},
+      this._historyArtifactScope === this._artifactScope(this.run) ? this._historyArtifacts : {},
     );
     if (!history.roundCount && !history.segments.length && !history.chain.length) return nothing;
     const openArtifact = (path: string) => {
@@ -156,6 +171,9 @@ export class ReviewHistoryPanel extends LitElement {
       </div>
       ${this._historyLoading
         ? html`<div class="review-loop-meta">Loading recorded round details…</div>`
+        : nothing}
+      ${this._historyError
+        ? html`<div class="history-warning" role="alert">${this._historyError}</div>`
         : nothing}
       <div class="timeline">
         ${history.events.map((event) =>

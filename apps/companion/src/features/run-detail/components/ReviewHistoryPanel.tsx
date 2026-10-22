@@ -65,6 +65,7 @@ function ReviewRoundCard({
             </Text>
           ) : null}
           {round.failureReason ? <Text style={styles.issues}>{round.failureReason}</Text> : null}
+          {round.usageLabel ? <Text style={styles.meta}>{round.usageLabel}</Text> : null}
           {round.findings.map((finding) => {
             const source =
               history.source?.key === `${round.key}:${finding.id}` ? history.source : undefined;
@@ -229,6 +230,7 @@ export function ReviewHistoryPanel({
           <Text style={styles.diffButtonText}>Refresh</Text>
         </Pressable>
         {history.loading ? <Text style={styles.meta}>Loading recorded round details…</Text> : null}
+        {history.error ? <Text style={styles.issues}>{history.error}</Text> : null}
       </View>
       <View style={styles.timeline}>
         {history.chain

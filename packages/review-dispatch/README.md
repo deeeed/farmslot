@@ -70,7 +70,7 @@ Run `yarn workspace @farmslot/review-dispatch quality`. Build after protocol wit
 
 ## Run views
 
-Command Center and Companion use `nativeWorkerTargets`, `nativeWorkerTabs` and
+Command Center and Companion use `nativeWorkerTargets`, `nativeWorkerTabs`, `slotSessionView` and
 `runReviewerView` for native terminal tabs and the gate's reviewer link. The gateway
 remains authoritative for the pinned session's lease, generation and input owner.
 
@@ -82,6 +82,7 @@ finding identity across severity and line changes. Disappearance from a later
 completed result is shown with that round's provenance, rather than a recorded
 per-finding resolution claim.
 
+`reviewHistoryCacheScope` keeps the same owner cache across transport reconnects.
 `loadReviewHistoryArtifacts` and `mergeReviewHistoryArtifacts` retain known facts
 during refresh failures. `refreshReviewGateView` reads the current gate after a
 refused refresh, because that refusal may have committed revised findings.

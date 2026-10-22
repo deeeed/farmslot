@@ -14,6 +14,7 @@ import {
   reviewResultForRun,
   type ReviewStatus,
   type Run,
+  type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
 import { reviewHistoryTimeline } from './review-history-timeline.js';
@@ -36,6 +37,33 @@ export interface ReviewHistoryArtifact {
   error?: string;
 }
 export type ReviewHistoryArtifacts = Readonly<Record<string, ReviewHistoryArtifact>>;
+
+export interface ReviewHistoryCacheAuthority {
+  gatewayUrl: string;
+  profileId?: string | null;
+  principalId: string | null;
+}
+
+/** Transport generations invalidate requests, not facts already read from the same owner. */
+export function reviewHistoryCacheScope(runId: string, authority: ReviewHistoryCacheAuthority) {
+  return JSON.stringify([
+    authority.gatewayUrl,
+    authority.profileId ?? null,
+    authority.principalId,
+    runId,
+  ]);
+}
+
+function reviewUsageLabel(usage: RunnerSessionUsage | undefined): string | null {
+  if (!usage) return null;
+  if (usage.source === 'unavailable') return 'Usage unavailable';
+  const parts = [
+    usage.turns != null ? `${usage.turns} turns` : null,
+    usage.totalTokens != null ? `${usage.totalTokens.toLocaleString()} tokens` : null,
+    usage.costUsd != null ? `$${usage.costUsd.toFixed(4)}` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : 'Usage measured';
+}
 
 /** Keep recorded history readable during a refresh outage, while exposing the failed read. */
 export function mergeReviewHistoryArtifacts(
@@ -70,6 +98,7 @@ export interface ReviewHistoryRound {
   startedAt: string | null;
   completedAt: string | null;
   durationMs: number | null;
+  usageLabel: string | null;
   headSha: string | null;
   reviewBaseSha: string | null;
   resultRecorded: boolean;
@@ -553,6 +582,16 @@ export function reviewHistoryView(
         startedAt,
         completedAt,
         durationMs: duration(startedAt, completedAt),
+        usageLabel: reviewUsageLabel(
+          attempt?.usage ??
+            (review &&
+            ownsAttempt(
+              { ...review, headSha: review.reviewSnapshot?.headSha ?? undefined },
+              review.loopNumber,
+            )
+              ? review.usage
+              : undefined),
+        ),
         headSha,
         reviewBaseSha,
         resultRecorded: recorded,

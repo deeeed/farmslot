@@ -1,10 +1,6 @@
 import { html, nothing } from 'lit';
 
-import {
-  checklistProgressView,
-  nativeWorkerTabs,
-  nativeWorkerTargets,
-} from '@farmslot/review-dispatch';
+import { checklistProgressView, slotSessionView } from '@farmslot/review-dispatch';
 
 import '../chat/native-session-view.js';
 import '../shared/hydrating-placeholder.js';
@@ -225,11 +221,17 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
     requestedRunFromHash(),
     slotBoundRunIdForSlot(view.slotId, view._slot?.currentRunId, getState().fleet?.slots),
   );
-  const nativeWorker = nativeWorkerTargets(view._linkedRun?.agentContexts ?? []).find(
-    (target) =>
-      target.contextId === selectedAgentContext?.id &&
-      target.binding === selectedAgentContext?.nativeSession,
-  );
+  const tmuxSelectionKey = `${view.slotId}:${terminalRunId}`;
+  const tmuxSelected = view._tmuxSessionSelection === tmuxSelectionKey;
+  const {
+    target: nativeWorker,
+    unavailable: nativeUnavailable,
+    tabs: nativeTabs,
+  } = slotSessionView(view._linkedRun?.agentContexts ?? [], {
+    slotId: view.slotId,
+    contextId: selectedAgentContext?.id ?? '',
+    tmux: tmuxSelected,
+  });
   return html`
     <!-- Body: activity bar + sidebar + editor -->
     <div class="sv-body">
@@ -755,7 +757,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                           nativeWorker ? 480 : 0,
                         )}px"
                       >
-                        ${pinnedContextUnresolved
+                        ${pinnedContextUnresolved || nativeUnavailable
                           ? html`<p role="status" data-testid="native-context-unavailable">
                               The selected task context is loading or unavailable.
                             </p>`
@@ -765,25 +767,23 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                 <terminal-view
                                   .slotId=${view.slotId}
                                   .runId=${terminalRunId}
-                                  .contextId=${nativeWorker ? '' : selectedContextId}
-                                  .role=${nativeWorker ? '' : selectedRole}
+                                  .contextId=${nativeWorker || tmuxSelected
+                                    ? ''
+                                    : selectedContextId}
+                                  .role=${nativeWorker || tmuxSelected ? '' : selectedRole}
+                                  .bareSession=${tmuxSelected}
                                   .nativeWorker=${nativeWorker}
-                                  .nativeWorkers=${nativeWorkerTabs(
-                                    view._linkedRun?.agentContexts ?? [],
-                                    view.slotId,
-                                  )}
+                                  .nativeWorkers=${nativeTabs}
                                   @native-context-selected=${(
                                     event: CustomEvent<{ contextId: string | null }>,
                                   ) => {
-                                    const contexts = view._agentContexts();
-                                    const target = event.detail.contextId
-                                      ? contexts.find(
-                                          (context) => context.id === event.detail.contextId,
-                                        )
-                                      : contexts.find(
-                                          (context) =>
-                                            context.role === 'dev' || context.role === 'primary',
-                                        );
+                                    if (event.detail.contextId === null) {
+                                      view._tmuxSessionSelection = tmuxSelectionKey;
+                                      return;
+                                    }
+                                    const target = view
+                                      ._agentContexts()
+                                      .find((context) => context.id === event.detail.contextId);
                                     if (target) view._selectAgentContext(target);
                                   }}
                                   @terminal-subscribe-failed=${(

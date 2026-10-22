@@ -542,7 +542,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private _handlePost() {
-    if (this.readOnly || this._isRecovering) return;
+    if (this.readOnly || this._isRecovering || this._refreshing || !this._postAvailable) return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
@@ -998,6 +998,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         this._includeEvidence = includeEvidence;
       },
       posting: this._posting,
+      postAvailable: this._postAvailable,
       recovering: this._isRecovering,
       refreshing: this._refreshing,
       proposing: this._proposing,
@@ -1010,6 +1011,12 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       reviewerHref: this.reviewerHref,
       reviewerUnavailable: this.reviewerUnavailable,
     });
+  }
+
+  private get _postAvailable() {
+    return (
+      !this.decision.resolvedAt && this.decision.actions.some((action) => action.id === 'post')
+    );
   }
 
   private _renderDiffFiles() {

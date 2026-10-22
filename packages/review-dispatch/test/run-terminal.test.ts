@@ -137,6 +137,8 @@ test('a native fix opens the same-run owner of its recorded session and lease', 
     ...reviewer,
     id: 'fix',
     role: 'review-fix',
+    slotId: nativeWorker.slotId,
+    target: null,
     nativeSessionOwner: {
       contextId: 'dev',
       sessionId: 'worker-native',
@@ -144,6 +146,7 @@ test('a native fix opens the same-run owner of its recorded session and lease', 
     },
   };
   const view = runTerminalView(run({ transport: 'native', agentContexts: [nativeWorker, fix] }));
-  assert.equal(view.context?.id, 'dev');
-  assert.equal(view.context?.nativeSession?.sessionId, 'worker-native');
+  assert.equal(view.context?.id, 'fix');
+  assert.equal(view.label, 'Open conversation');
+  assert.equal(view.target?.contextId, 'fix');
 });

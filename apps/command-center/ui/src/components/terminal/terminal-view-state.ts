@@ -31,6 +31,7 @@ export abstract class TerminalViewState extends LitElement {
   @property({ type: Boolean }) compact = false;
   @property({ attribute: false }) nativeWorkers: ReturnType<typeof nativeWorkerTabs> = [];
   @property({ attribute: false }) nativeWorker?: NativeWorkerViewTarget;
+  @property({ type: Boolean }) bareSession = false;
 
   @state() protected _lifecycle = '';
   @state() protected _agent = '';
@@ -105,7 +106,7 @@ export abstract class TerminalViewState extends LitElement {
       role: this.role,
       contextId: this.contextId,
       worker: this._workerRef(),
-      postmortem: this._postmortem,
+      postmortem: this._postmortem || this.bareSession,
     };
   }
 

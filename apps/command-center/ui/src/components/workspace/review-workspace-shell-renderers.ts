@@ -147,6 +147,7 @@ export function renderReviewTopBar(input: {
   includeEvidence: boolean;
   setIncludeEvidence: (includeEvidence: boolean) => void;
   posting: boolean;
+  postAvailable: boolean;
   recovering: boolean;
   refreshing: boolean;
   proposing: boolean;
@@ -239,17 +240,21 @@ export function renderReviewTopBar(input: {
               : nothing}
           `
         : nothing}
-      <button
-        class="rw-action-btn ${input.pendingConfirm === 'post' ? 'rw-confirming' : 'rw-btn-post'}"
-        ?disabled=${input.posting || input.recovering}
-        @click=${input.post}
-      >
-        ${input.posting
-          ? 'Posting...'
-          : input.pendingConfirm === 'post'
-            ? `Confirm Post (${input.includedComments})?`
-            : `Post to PR (${input.includedComments})`}
-      </button>
+      ${input.postAvailable
+        ? html`<button
+            class="rw-action-btn ${input.pendingConfirm === 'post'
+              ? 'rw-confirming'
+              : 'rw-btn-post'}"
+            ?disabled=${input.posting || input.recovering || input.refreshing}
+            @click=${input.post}
+          >
+            ${input.posting
+              ? 'Posting...'
+              : input.pendingConfirm === 'post'
+                ? `Confirm Post (${input.includedComments})?`
+                : `Post to PR (${input.includedComments})`}
+          </button>`
+        : nothing}
       <button
         class="rw-action-btn ${input.pendingConfirm === 'dismiss'
           ? 'rw-confirming'

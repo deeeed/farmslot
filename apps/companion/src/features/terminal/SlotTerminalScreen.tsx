@@ -609,7 +609,7 @@ export default function TerminalScreen() {
       terminalViewRef.current?.setStatus('Waiting for gateway connection.');
       return;
     }
-    if (native.target || (contextId && !targetRun)) return;
+    if (native.target || native.unavailable || (contextId && !targetRun)) return;
     let disposed = false;
     let target =
       terminalTargetParamsRef.current ??
@@ -701,17 +701,25 @@ export default function TerminalScreen() {
     role,
     native.contextId,
     Boolean(native.target),
+    native.unavailable,
     Boolean(targetRun),
   ]);
 
   useEffect(() => {
-    if (connectionStatus !== 'connected' || native.target || (contextId && !targetRun)) return;
+    if (
+      connectionStatus !== 'connected' ||
+      native.target ||
+      native.unavailable ||
+      (contextId && !targetRun)
+    )
+      return;
     loadInitialSnapshot();
   }, [
     connectionStatus,
     lineCount,
     loadInitialSnapshot,
     Boolean(native.target),
+    native.unavailable,
     Boolean(targetRun),
     contextId,
   ]);
@@ -921,9 +929,11 @@ export default function TerminalScreen() {
     voiceStatus !== 'recording' &&
     voiceStatus !== 'transcribing' &&
     !voiceRecorderBusy;
-  const showInputBar = !native.target && (showTerminalControls || Boolean(controlError));
+  const showInputBar =
+    !native.target && !native.unavailable && (showTerminalControls || Boolean(controlError));
   const showVoiceComposer =
     !native.target &&
+    !native.unavailable &&
     (voiceComposerOpen ||
       voiceStatus !== 'idle' ||
       hasVoiceEditableInstruction ||
@@ -1564,6 +1574,7 @@ export default function TerminalScreen() {
 
   const showFloatingVoiceButton =
     !native.target &&
+    !native.unavailable &&
     !terminalInputDisabledReason &&
     !showInputBar &&
     !showVoiceComposer &&
@@ -1643,7 +1654,7 @@ export default function TerminalScreen() {
           />
         </>
       ) : null}
-      {!terminalFullscreen && !native.target && (
+      {!terminalFullscreen && !native.target && !native.unavailable && (
         <ScrollView
           style={[styles.header, { maxHeight: terminalHeaderMaxHeight }]}
           contentContainerStyle={styles.headerContent}

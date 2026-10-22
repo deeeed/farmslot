@@ -60,6 +60,7 @@ export function renderReviewAttempt(
             Started ${new Date(round.startedAt).toLocaleString()} · ${round.reviewRange}
           </div>`
         : nothing}
+      ${round.usageLabel ? html`<div class="review-loop-meta">${round.usageLabel}</div>` : nothing}
       ${round.findings.map(
         (finding) =>
           html`<article class="review-loop-issue" data-finding=${finding.id}>

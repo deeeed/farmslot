@@ -129,16 +129,19 @@ export function archivedNativeWorkerTargets(
 
 /** Overview controls open the current primary task; archived attempts keep explicit links. */
 export function nativeRunConversationParams(
-  run: Run,
+  run: Pick<Run, 'id' | 'agentContexts'>,
   selected?: AgentContext | null,
 ): Record<string, string> | undefined {
-  const contexts = (run.agentContexts ?? []).filter((context) => context.nativeSession);
+  const contexts = (run.agentContexts ?? []).filter(
+    (context) => context.nativeSession || context.nativeSessionOwner,
+  );
   const context = selected ?? contexts.find((item) => item.role === 'primary') ?? contexts[0];
-  const binding = context?.nativeSession;
-  if (!context || !binding) return undefined;
+  const target = context && nativeWorkerTarget(run.agentContexts ?? [], context);
+  if (!target) return undefined;
+  const { binding } = target;
   return {
     runId: run.id,
-    contextId: context.id,
+    contextId: target.contextId,
     sessionId: binding.sessionId,
     executionNodeId: binding.executionNodeId,
     leaseId: binding.leaseId,
@@ -146,33 +149,57 @@ export function nativeRunConversationParams(
   };
 }
 
+/** A shared native subtask keeps its own context and the exact recorded owner lease. */
+export function nativeWorkerTarget(
+  contexts: readonly AgentContext[],
+  context: AgentContext,
+): NativeWorkerViewTarget | undefined {
+  const reference = context.nativeSessionOwner;
+  if (context.nativeSession && reference) return;
+  const owners = reference ? contexts.filter((item) => item.id === reference.contextId) : [context];
+  if (owners.length !== 1) return;
+  const owner = owners[0];
+  if (
+    owner.nativeSessionOwner ||
+    owner.runId !== context.runId ||
+    owner.slotId !== context.slotId ||
+    (reference && owner.id === context.id)
+  )
+    return;
+  const bindings = reference
+    ? [owner.nativeSession, ...(owner.nativeSessionHistory ?? [])].filter(
+        (binding) =>
+          binding?.sessionId === reference.sessionId && binding.leaseId === reference.leaseId,
+      )
+    : [context.nativeSession];
+  if (bindings.length !== 1 || !bindings[0]) return;
+  const binding = bindings[0];
+  return {
+    runId: context.runId,
+    contextId: context.id,
+    label: context.label,
+    binding,
+    readOnly: binding !== owner.nativeSession || Boolean(binding.closedAt || binding.releasedAt),
+  };
+}
+
 /** All recorded native contexts share the same target, regardless of role or slot binding. */
 export function nativeWorkerTargets(contexts: readonly AgentContext[]): NativeWorkerViewTarget[] {
-  const current = contexts.flatMap((context) =>
-    context.nativeSession?.generation
-      ? [
-          {
-            runId: context.runId,
-            contextId: context.id,
-            label: context.label,
-            binding: context.nativeSession,
-            readOnly: Boolean(context.nativeSession.closedAt || context.nativeSession.releasedAt),
-          },
-        ]
-      : [],
-  );
+  const current = contexts.flatMap((context) => {
+    const target = nativeWorkerTarget(contexts, context);
+    return target ? [target] : [];
+  });
   return [...current, ...archivedNativeWorkerTargets(contexts)];
 }
 
 /** Native tabs sit beside tmux windows and keep their task lease when a session is reused. */
 export function nativeWorkerTabs(contexts: readonly AgentContext[], slotId?: string) {
   const selected = slotId ? contexts.filter((context) => context.slotId === slotId) : contexts;
-  return nativeWorkerTargets(selected)
-    .filter((target) =>
-      selected.some(
-        (context) => context.id === target.contextId && context.nativeSession === target.binding,
-      ),
-    )
+  return selected
+    .flatMap((context) => {
+      const target = nativeWorkerTarget(contexts, context);
+      return target ? [target] : [];
+    })
     .map((target) => {
       const context = selected.find((candidate) => candidate.id === target.contextId)!;
       const role = context.role === 'review' ? 'rev' : context.role;
@@ -183,4 +210,29 @@ export function nativeWorkerTabs(contexts: readonly AgentContext[], slotId?: str
         target,
       };
     });
+}
+
+export interface SlotSessionSelection {
+  slotId: string;
+  contextId: string;
+  tmux: boolean;
+}
+
+/** A window click explicitly opens tmux, including slots whose primary worker is native. */
+export function slotSessionView(
+  contexts: readonly AgentContext[],
+  selection: SlotSessionSelection,
+) {
+  const tabs = nativeWorkerTabs(contexts, selection.slotId || undefined);
+  const target = selection.tmux
+    ? undefined
+    : tabs.find((tab) => tab.target.contextId === selection.contextId)?.target;
+  const context = contexts.find((item) => item.id === selection.contextId);
+  return {
+    tabs,
+    target,
+    bareSession: selection.tmux,
+    unavailable:
+      !selection.tmux && !target && Boolean(context?.nativeSession || context?.nativeSessionOwner),
+  };
 }

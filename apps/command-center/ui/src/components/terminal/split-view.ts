@@ -1057,6 +1057,7 @@ export class TerminalSplitView extends LitElement {
       .role=${nativeWorker ? '' : (context?.role ?? '')}
       .nativeWorkers=${tabs}
       .nativeWorker=${nativeWorker}
+      .bareSession=${this._selectedContexts[key] === ''}
       @native-context-selected=${(event: CustomEvent<{ contextId: string | null }>) => {
         this._selectedContexts = { ...this._selectedContexts, [key]: event.detail.contextId ?? '' };
       }}

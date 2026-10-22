@@ -127,6 +127,15 @@ export class TerminalView extends TerminalViewState {
       if (this._hasTarget() && this._connected) void this._subscribe();
       return;
     }
+    if (changed.has('bareSession') && changed.get('bareSession') !== undefined) {
+      this._teardownStreams(
+        true,
+        this._activeSubscribeIdentity ?? undefined,
+        this._activeSubscribePostmortem,
+      );
+      if (this._hasTarget() && this._connected) void this._subscribe();
+      return;
+    }
 
     // Detect terminal detachment (e.g., after HMR re-render orphans xterm canvas)
     if (this._terminal && this._termContainer && !this._termContainer.querySelector('.xterm')) {
@@ -419,7 +428,7 @@ export class TerminalView extends TerminalViewState {
         contextId: this.contextId,
         workerRefJson: this.workerRefJson,
       };
-      this._activeSubscribePostmortem = this._postmortem;
+      this._activeSubscribePostmortem = this._postmortem || this.bareSession;
       this._lastSubscribeError = '';
       this._retiredTarget = false;
       this._subscribeOkAt = Date.now();

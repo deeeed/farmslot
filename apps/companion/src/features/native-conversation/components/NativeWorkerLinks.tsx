@@ -2,7 +2,11 @@ import { useRouter } from 'expo-router';
 import { Pressable, Text, View } from 'react-native';
 
 import type { Run } from '@farmslot/protocol';
-import { nativeWorkerTargets, runTerminalView } from '@farmslot/review-dispatch';
+import {
+  nativeWorkerTarget,
+  nativeWorkerTargets,
+  runTerminalView,
+} from '@farmslot/review-dispatch';
 
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
@@ -24,7 +28,11 @@ export function NativeWorkerLinks({ run }: { run: Run }) {
             testID={`companion-native-worker-${target.contextId}-${binding.leaseId}`}
             style={styles.button}
             onPress={() => {
-              if (context?.nativeSession === binding && terminal.target) {
+              if (
+                context &&
+                nativeWorkerTarget(run.agentContexts ?? [], context)?.binding === binding &&
+                terminal.target
+              ) {
                 router.push({
                   pathname: terminal.target.slotId
                     ? '/workspace/slot/[slotId]/terminal'

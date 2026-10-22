@@ -7,6 +7,7 @@ import {
   loadReviewHistoryArtifacts,
   mergeReviewHistoryArtifacts,
   reviewArtifactDir,
+  reviewHistoryCacheScope,
   reviewHistoryIdentity,
   reviewHistoryView,
 } from '../src/review-history.js';
@@ -788,4 +789,58 @@ test('overwritten live snapshots recover their original engine-written task rang
   assert.ok(requests.some((request) => request.base === firstHead && request.head === nextHead));
   assert.equal(requests.length, 3, 'each immutable base/head pair is read once');
   assert.deepEqual(rounds[1].fixFiles, ['order.ts']);
+});
+
+test('reconnect keeps an owner cache scope while profile, gateway, principal and run changes isolate it', () => {
+  const authority = { gatewayUrl: 'ws://farm', profileId: 'profile', principalId: 'person' };
+  const scope = reviewHistoryCacheScope('run', authority);
+  assert.equal(reviewHistoryCacheScope('run', { ...authority }), scope);
+  for (const change of [
+    { gatewayUrl: 'ws://another' },
+    { profileId: 'other' },
+    { principalId: 'other' },
+  ])
+    assert.notEqual(reviewHistoryCacheScope('run', { ...authority, ...change }), scope);
+  assert.notEqual(reviewHistoryCacheScope('another-run', authority), scope);
+  const saved = { diff: { content: 'known committed diff' } };
+  assert.equal(
+    mergeReviewHistoryArtifacts(saved, { diff: { error: 'reconnect offline' } }).diff.content,
+    saved.diff.content,
+  );
+});
+
+test('the shared round keeps recorded attempt usage when replacing the old gate timeline', () => {
+  const current = run();
+  current.engineState = {
+    publishGate: {
+      reviews: [
+        {
+          id: 'usage-review',
+          mode: 'warm',
+          loopNumber: 1,
+          verdict: 'pass',
+          unresolvedCount: 0,
+          attempts: [
+            {
+              mode: 'warm',
+              loopNumber: 1,
+              verdict: 'pass',
+              unresolvedCount: 0,
+              usage: {
+                measuredAt: '2026-10-22T00:00:00Z',
+                source: 'runner-transcript',
+                turns: 3,
+                totalTokens: 1234,
+                costUsd: 0.125,
+              },
+            },
+          ],
+        },
+      ],
+    },
+  };
+  assert.equal(
+    reviewHistoryView(current).checks[0].rounds[0].usageLabel,
+    '3 turns · 1,234 tokens · $0.1250',
+  );
 });

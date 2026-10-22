@@ -1227,7 +1227,11 @@ export function SlotTerminalSessionPane({
         }}
       />
       <View style={styles.terminalArea}>
-        {native.target && native.params ? (
+        {native.unavailable ? (
+          <Text style={styles.sendErrorText}>
+            The selected native conversation is loading or unavailable.
+          </Text>
+        ) : native.target && native.params ? (
           <NativeConversation
             key={`${native.target.binding.sessionId}:${native.target.binding.leaseId}:${native.target.binding.generation}`}
             params={native.params}

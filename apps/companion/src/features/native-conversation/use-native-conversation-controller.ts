@@ -166,26 +166,21 @@ export function useNativeConversationController(params: NativeConversationParams
               runId: params.runId,
             });
             if (!current()) return;
-            const context = run.agentContexts?.find((item) => item.id === params.contextId);
-            const binding = [context?.nativeSession, ...(context?.nativeSessionHistory ?? [])].find(
+            const selected = nativeWorkerTargets(run.agentContexts ?? []).find(
               (item) =>
-                item &&
-                item.sessionId === params.sessionId &&
-                item.executionNodeId === node &&
-                item.leaseId === params.leaseId,
+                item.contextId === params.contextId &&
+                item.binding.sessionId === params.sessionId &&
+                item.binding.executionNodeId === node &&
+                item.binding.leaseId === params.leaseId,
             );
-            if (!context || !binding)
+            if (!selected)
               throw new Error('This run no longer contains the selected worker conversation.');
             target = {
-              runId: run.id,
-              contextId: context.id,
-              label: context.label,
-              binding: { ...binding, generation: params.generation ?? binding.generation },
-              readOnly:
-                nativeWorkerTargets(run.agentContexts ?? []).find(
-                  (candidate) =>
-                    candidate.contextId === context.id && candidate.binding === binding,
-                )?.readOnly ?? true,
+              ...selected,
+              binding: {
+                ...selected.binding,
+                generation: params.generation ?? selected.binding.generation,
+              },
             };
             setWorker(target);
           }

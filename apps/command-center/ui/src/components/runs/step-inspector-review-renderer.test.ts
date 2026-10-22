@@ -25,6 +25,7 @@ function round(overrides: Partial<ReviewHistoryRound> = {}): ReviewHistoryRound 
     startedAt: '2026-10-21T10:00:00Z',
     completedAt: '2026-10-21T10:02:00Z',
     durationMs: 120000,
+    usageLabel: null,
     unresolvedCount: 1,
     unresolvedLabel: '1 unresolved',
     findingsLabel: '1 finding recorded.',

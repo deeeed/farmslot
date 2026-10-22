@@ -55,6 +55,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _taskProgress = 0;
   @state() _structuredProgress?: TaskProgressStructured;
   @state() _selectedAgentContextId = 'primary';
+  @state() _tmuxSessionSelection: string | null = null;
   @state() _selectedAgentContextIds: Record<string, string> = {};
   _lastLinkedRunId: string | null = null;
   _lastLinkedRunActiveTaskFile: string | null = null;

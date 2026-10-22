@@ -15,6 +15,7 @@ import {
   mergeReviewHistoryArtifacts,
   reviewHistoryArtifactPaths,
   type ReviewHistoryArtifacts,
+  reviewHistoryCacheScope,
   type ReviewHistoryFinding,
   reviewHistoryIdentity,
   type ReviewHistoryRound,
@@ -35,12 +36,18 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
   const epoch = useConnectionStore((state) => state.authorityEpoch);
   const [revision, setRevision] = useState(0);
   const profile = useConnectionStore((state) => state.activeProfileId);
-  const artifactScope = `${profile}:${epoch}:${url}:${client?.connectionGeneration}:${run.id}`;
-  const identity = `${artifactScope}:${revision}:${reviewHistoryIdentity(run)}`;
+  const principal = useConnectionStore((state) => state.principalId);
+  const artifactScope = reviewHistoryCacheScope(run.id, {
+    profileId: profile,
+    gatewayUrl: url,
+    principalId: principal,
+  });
+  const identity = `${artifactScope}:${epoch}:${client?.connectionGeneration}:${revision}:${reviewHistoryIdentity(run)}`;
   const [saved, setSaved] = useState<{
     identity: string;
     scope: string;
     artifacts: ReviewHistoryArtifacts;
+    error?: string;
   }>();
   useEffect(() => {
     if (!client || status !== 'connected') return;
@@ -62,17 +69,27 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
         if (!current()) throw new Error('Farm connection changed');
         return (await client.request<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
       },
-    ).then((artifacts) => {
-      if (!disposed && current())
-        setSaved((previous) => ({
-          identity,
-          scope: artifactScope,
-          artifacts: mergeReviewHistoryArtifacts(
-            previous?.scope === artifactScope ? previous.artifacts : {},
-            artifacts,
-          ),
-        }));
-    });
+    )
+      .then((artifacts) => {
+        if (!disposed && current())
+          setSaved((previous) => ({
+            identity,
+            scope: artifactScope,
+            artifacts: mergeReviewHistoryArtifacts(
+              previous?.scope === artifactScope ? previous.artifacts : {},
+              artifacts,
+            ),
+          }));
+      })
+      .catch((error: unknown) => {
+        if (!disposed && current())
+          setSaved((previous) => ({
+            identity,
+            scope: artifactScope,
+            artifacts: previous?.scope === artifactScope ? previous.artifacts : {},
+            error: error instanceof Error ? error.message : String(error),
+          }));
+      });
     return () => {
       disposed = true;
     };
@@ -112,6 +129,7 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
     inspect: (round: ReviewHistoryRound, finding: ReviewHistoryFinding) =>
       void inspect(round, finding),
     ...reviewHistoryView(run, saved?.scope === artifactScope ? saved.artifacts : {}, chain),
+    error: saved?.identity === identity ? saved.error : undefined,
     loading:
       status === 'connected' &&
       saved?.identity !== identity &&

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import type { Run, SlotAgentTargetParams } from '@farmslot/protocol';
-import { nativeRunConversationParams, nativeWorkerTabs } from '@farmslot/review-dispatch';
+import { nativeRunConversationParams, slotSessionView } from '@farmslot/review-dispatch';
 
 import { buildCompanionTerminalTarget } from '../../lib/terminal-target';
 
@@ -12,22 +12,30 @@ export function useSlotNativeSession(
   runId?: string,
   options?: { role?: SlotAgentTargetParams['role']; bareSession: boolean },
 ) {
-  const [contextId, select] = useState(requestedContextId ?? '');
-  useEffect(() => select(requestedContextId ?? ''), [requestedContextId, runId, slotId]);
-  const tabs = nativeWorkerTabs(run?.agentContexts ?? [], slotId || undefined);
-  const target = tabs.find((tab) => tab.target.contextId === contextId)?.target;
+  const [selection, setSelection] = useState({ contextId: requestedContextId ?? '', tmux: false });
+  const contextId = selection.contextId;
+  const select = (id: string) => setSelection({ contextId: id, tmux: id === '' });
+  useEffect(
+    () => setSelection({ contextId: requestedContextId ?? '', tmux: false }),
+    [requestedContextId, runId, slotId],
+  );
+  const { tabs, target, unavailable } = slotSessionView(run?.agentContexts ?? [], {
+    slotId,
+    contextId,
+    tmux: selection.tmux,
+  });
   const nativeRoute = tabs.some((tab) => tab.target.contextId === requestedContextId);
   const context = run?.agentContexts?.find((candidate) => candidate.id === target?.contextId);
   const params = run && context ? nativeRunConversationParams(run, context) : undefined;
   const terminalTarget = useMemo(
     () =>
-      (slotId || runId) && (!requestedContextId || run)
+      !unavailable && (slotId || runId) && (!requestedContextId || run)
         ? buildCompanionTerminalTarget({
             slotId,
             runId,
-            contextId: target ? undefined : contextId || undefined,
-            role: target || nativeRoute ? undefined : options?.role,
-            bareSession: options?.bareSession ?? false,
+            contextId: target || selection.tmux ? undefined : contextId || undefined,
+            role: target || nativeRoute || selection.tmux ? undefined : options?.role,
+            bareSession: selection.tmux || (options?.bareSession ?? false),
           })
         : null,
     [
@@ -36,6 +44,8 @@ export function useSlotNativeSession(
       requestedContextId,
       Boolean(run),
       contextId,
+      unavailable,
+      selection.tmux,
       Boolean(target),
       nativeRoute,
       options?.role,
@@ -47,9 +57,15 @@ export function useSlotNativeSession(
     select,
     tabs,
     target,
+    unavailable,
     params,
     terminalTarget,
     targetForBareSession: (bareSession: boolean) =>
-      buildCompanionTerminalTarget({ ...terminalTarget, slotId, runId, bareSession }),
+      buildCompanionTerminalTarget({
+        ...terminalTarget,
+        slotId,
+        runId,
+        bareSession: bareSession || selection.tmux,
+      }),
   };
 }

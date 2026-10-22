@@ -12,6 +12,7 @@ import {
   primaryRoleForFlow,
   selectLatestReviewerContext,
 } from '@farmslot/protocol';
+import { nativeWorkerTarget } from '@farmslot/review-dispatch';
 
 type SlotViewAgentContextLike = Pick<
   AgentContextSummary,
@@ -116,27 +117,10 @@ export function deriveSlotViewAgentContexts({
   const runContexts = (linkedRun.agentContexts ?? []).map((ctx) => {
     const summary = toAgentContextSummary(ctx);
     if (!ctx.nativeSessionOwner) return summary;
-    const reference = ctx.nativeSessionOwner;
-    const owners = (linkedRun.agentContexts ?? []).filter(
-      (candidate) => candidate.id === reference.contextId,
-    );
-    const owner = owners.length === 1 ? owners[0] : undefined;
-    const bindings = [owner?.nativeSession, ...(owner?.nativeSessionHistory ?? [])].filter(
-      (binding) =>
-        binding?.sessionId === reference.sessionId && binding.leaseId === reference.leaseId,
-    );
-    const binding = bindings.length === 1 ? bindings[0] : undefined;
-    if (
-      owner &&
-      owner.id !== ctx.id &&
-      !owner.nativeSessionOwner &&
-      owner.runId === ctx.runId &&
-      owner.slotId === ctx.slotId &&
-      binding?.sessionId === reference.sessionId &&
-      binding.leaseId === reference.leaseId
-    )
-      return { ...summary, nativeSession: binding };
-    return { ...summary, nativeSession: undefined };
+    return {
+      ...summary,
+      nativeSession: nativeWorkerTarget(linkedRun.agentContexts ?? [], ctx)?.binding,
+    };
   });
   const flowRole = primaryRoleForFlow(linkedRun.flowType ?? slot?.currentFlowType);
   const linkedRunId = linkedRun.id;
