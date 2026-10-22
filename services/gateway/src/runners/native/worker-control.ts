@@ -7,6 +7,7 @@ import {
   isTerminalRunStatus,
   Methods,
   type NativeSessionInfo,
+  type NativeSessionReadParams,
   type NativeSessionReadResult,
   type NativeSessionSendResult,
   nativeWorkerBindingIsHeld,
@@ -77,6 +78,7 @@ export async function readNativeWorkerSnapshot(
   runId: string,
   role?: AgentRole,
   contextId?: string,
+  history: Pick<NativeSessionReadParams, 'after' | 'limit'> = {},
 ) {
   const { binding } = workerBinding(runId, role, contextId, true);
   const snapshot = (await routeNativeExecution(
@@ -85,7 +87,8 @@ export async function readNativeWorkerSnapshot(
     {
       sessionId: binding.sessionId,
       executionNodeId: binding.executionNodeId,
-      limit: 1,
+      after: history.after,
+      limit: history.limit ?? 1,
     },
   )) as NativeSessionReadResult;
   const observedGeneration = binding.generation ?? snapshot.session.generation;

@@ -150,6 +150,9 @@ mock.module('../runners/native/worker-control.js', {
           outcome: commandFailed ? 'failed' : 'completed',
         },
       ],
+      events: [],
+      cursor: 0,
+      hasMore: false,
     }),
   },
 });
