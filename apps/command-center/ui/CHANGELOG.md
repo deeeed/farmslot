@@ -6,7 +6,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Show round reviewers, modes, timings, findings and fix deltas on review steps through the shared history model.
 
-- Selecting a review line comment reveals and highlights its exact source line with the inline comment, including while the editor loads.
+- Selecting a review line comment reveals and highlights its exact source line with the inline comment, including while the editor loads. Shareable URLs restore its file, line, finding and reviewed revision; unavailable lines never attach to the end of a file.
 
 - Run terminal controls and Open in Slot View select the same current reviewer or worker as Companion; finished runs show a disabled terminal action with a reason.
 - Publication blockers show finding details and their actions inline, including the current review round. WARM locks retained reviewer settings and keeps refusals in the dialog. Evidence judgments stay pending until the gateway responds.

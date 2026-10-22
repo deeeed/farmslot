@@ -25,6 +25,7 @@ export * from './runs/interactive-handoff.js';
 export * from './runs/publish-approval.js';
 export * from './runs/recovery-hints.js';
 export * from './runs/review-chain.js';
+export * from './runs/review-comment-navigation.js';
 export * from './runs/review-curation.js';
 export * from './runs/review-findings.js';
 export * from './runs/review-policy.js';

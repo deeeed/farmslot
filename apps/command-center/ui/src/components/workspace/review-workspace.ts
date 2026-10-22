@@ -7,7 +7,6 @@ import { customElement } from 'lit/decorators.js';
 
 import type {
   ArtifactRef,
-  FsReadResult,
   GitBranchDiffResult,
   GitDiffResult,
   GitShowResult,
@@ -19,6 +18,8 @@ import {
   buildRunResolveDecisionParams,
   Events,
   Methods,
+  reviewCommentIndex,
+  reviewCommentLocation,
   reviewedFindingContext,
   reviewPostingFingerprint,
   reviewPostRecommendation,
@@ -75,7 +76,11 @@ import {
   dedupeWorkspaceEvidenceArtifacts,
   renderWorkspaceEvidencePreview,
 } from './workspace-evidence-preview.js';
-import type { ReviewWorkspaceTab } from './workspace-url-state.js';
+import {
+  parseReviewWorkspaceHashState,
+  type ReviewWorkspaceTab,
+  writeReviewWorkspaceHashState,
+} from './workspace-url-state.js';
 
 @customElement('review-workspace')
 export class ReviewWorkspace extends ReviewWorkspaceState {
@@ -87,7 +92,55 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   private readonly _onHashChange = () => {
     this._readTabFromHash();
     this._normalizeActiveTab();
+    if (this._initialized && !this._isRecovering) void this._restoreSourceFromHash();
   };
+
+  private _sourceLoadEpoch = 0;
+
+  private _syncSourceToHash() {
+    const comment = this._comments[this._selectedCommentIdx];
+    writeReviewWorkspaceHashState({
+      tab: this._activeTab,
+      source: comment
+        ? reviewCommentLocation(comment, this._payload.reviewSnapshot?.headSha ?? undefined)
+        : this._selectedFile
+          ? { file: this._selectedFile }
+          : null,
+    });
+  }
+
+  private async _restoreSourceFromHash() {
+    const { source } = parseReviewWorkspaceHashState();
+    if (!source) {
+      this._commentFileError = '';
+      if (this._selectedCommentIdx >= 0) await this._selectFile(this._selectedFile, false);
+      return;
+    }
+    if (source.comment) {
+      const index = reviewCommentIndex(
+        this._comments,
+        source,
+        this._payload.reviewSnapshot?.headSha ?? undefined,
+      );
+      if (index < 0) {
+        this._sourceLoadEpoch++;
+        this._selectedCommentIdx = -1;
+        this._commentFileLoading = false;
+        this._commentFileError =
+          'This finding is unavailable in the current saved review. Open a finding from its recorded review.';
+        return;
+      }
+      if (
+        this._selectedCommentIdx === index &&
+        this._selectedFile === source.file &&
+        (this._commentFileLoading || this._commentFileContent)
+      )
+        return;
+      await this._navigateToComment(this._comments[index], index, false);
+    } else if (this._selectedFile !== source.file || this._selectedCommentIdx >= 0) {
+      await this._selectFile(source.file, false);
+    }
+  }
 
   private get _payload(): ReviewGatePayload {
     return this.decision.payload as ReviewGatePayload;
@@ -250,6 +303,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       }
       this._selectedRecommendation = reviewPostRecommendation(this._payload);
       this._normalizeActiveTab();
+      if (!this._isRecovering) void this._restoreSourceFromHash();
     }
     // Re-check if slotId changes
     if (changed.has('slotId') && this._initialized) {
@@ -273,6 +327,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       // No slot context (e.g. dev harness) — skip recovery, show content directly
       this._recoveryPhase = 'live';
       this._recoveryMessage = '';
+      await this._restoreSourceFromHash();
       return;
     }
     if (gateway.connectionState !== 'connected') {
@@ -297,6 +352,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     } finally {
       this._recoveryInFlight = false;
     }
+    if (!this._isRecovering) await this._restoreSourceFromHash();
   }
 
   // --- Data loading ---
@@ -352,9 +408,13 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._diffTestPatterns = result.testFilePatterns ?? null;
       // Auto-select the first listed file with comments, or the first listed file
       const visible = this._testFilter.split(result.files).visible;
-      const first = visible.find((f) => this._commentCountByFile.has(f.path)) ?? visible[0];
+      const { source } = parseReviewWorkspaceHashState();
+      const first =
+        visible.find((f) => f.path === source?.file) ??
+        visible.find((f) => this._commentCountByFile.has(f.path)) ??
+        visible[0];
       if (first) {
-        this._selectFile(first.path);
+        await this._selectFile(first.path, false);
       } else {
         // Nothing listed: drop a previous selection so showing tests loads this diff's file.
         this._selectedFile = '';
@@ -427,14 +487,23 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._fileDiff = '';
       this._selectedCommentIdx = -1;
       this._commentFileContent = '';
+      this._commentFileError = '';
+      this._sourceLoadEpoch++;
+      this._revealLine = 0;
+      this._syncSourceToHash();
     }
   }
 
-  private async _selectFile(path: string) {
+  private async _selectFile(path: string, syncHash = true) {
+    const epoch = ++this._sourceLoadEpoch;
     this._selectedFile = path;
     // Clear comment selection when navigating via file tab (not comment click)
     this._selectedCommentIdx = -1;
     this._commentFileContent = '';
+    this._commentFileLoading = false;
+    this._commentFileError = '';
+    this._revealLine = 0;
+    if (syncHash) this._syncSourceToHash();
     this._fileDiffLoading = true;
     this._fileDiff = '';
     try {
@@ -447,12 +516,12 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         ),
         ...(this.workspaceView ? { runId: this.runId } : {}),
       });
-      this._fileDiff = result.diff;
+      if (epoch === this._sourceLoadEpoch) this._fileDiff = result.diff;
     } catch (err) {
       console.error('[review-workspace] file diff failed:', err);
-      this._fileDiff = '';
+      if (epoch === this._sourceLoadEpoch) this._fileDiff = '';
     } finally {
-      this._fileDiffLoading = false;
+      if (epoch === this._sourceLoadEpoch) this._fileDiffLoading = false;
     }
   }
 
@@ -924,7 +993,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       files: this._diffFiles,
       testFilter: this._testFilter,
       selectedFile: this._selectedFile,
-      findingOpen: this._selectedCommentIdx >= 0,
+      findingOpen: this._selectedCommentIdx >= 0 || Boolean(this._commentFileError),
       commentCounts: this._commentCountByFile,
       recovering: this._isRecovering,
       selectFile: (path) => this._selectFile(path),
@@ -943,83 +1012,74 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     });
   }
 
-  private async _navigateToComment(c: ReviewLineComment, idx: number) {
+  private async _navigateToComment(c: ReviewLineComment, idx: number, syncHash = true) {
     if (this._isRecovering) return;
+    const epoch = ++this._sourceLoadEpoch;
     this._selectedCommentIdx = idx;
-    this._revealLine = 0; // reset so Lit detects change when we set it again
-    // Switch file diff (without clearing comment selection)
-    if (this._selectedFile !== c.path) {
-      this._selectedFile = c.path;
-      this._fileDiffLoading = true;
-      this._fileDiff = '';
-      const tDiff = performance.now();
-      gateway
-        .request<GitDiffResult>(Methods.GIT_DIFF, {
-          ...committedReviewFileDiffRequest(
-            this.slotId,
-            c.path,
-            this._baseRef,
-            this._payload.reviewSnapshot,
-          ),
-          ...(this.workspaceView ? { runId: this.runId } : {}),
-        })
-        .then((r) => {
-          this._fileDiff = r.diff;
-        })
-        .catch((err) => {
-          console.error('[review-workspace] file diff navigation failed:', err);
-        })
-        .finally(() => {
-          this._fileDiffLoading = false;
-          console.log(
-            `[review-workspace] fileDiff ${(performance.now() - tDiff).toFixed(0)}ms path=${c.path}`,
-          );
-        });
-    }
-    // Load file content for code-viewer with ViewZone
-    this._commentFileLoading = true;
+    this._selectedFile = c.path;
+    this._revealLine = 0;
     this._commentFileContent = '';
-    const tFile = performance.now();
-    try {
-      const reviewedHead = this._payload.reviewSnapshot?.headSha?.trim();
-      const result = reviewedHead
-        ? await gateway.request<GitShowResult>(Methods.GIT_SHOW, {
-            slotId: this.slotId,
-            ...(this.workspaceView ? { runId: this.runId } : {}),
-            ref: reviewedHead,
-            path: c.path,
-          })
-        : await gateway.request<FsReadResult>(Methods.FS_READ, {
-            slotId: this.slotId,
-            path: c.path,
-          });
-      this._commentFileContent = result.content;
-    } catch {
-      this._commentFileContent = '';
-    } finally {
+    this._commentFileError = '';
+    this._commentFileLoading = true;
+    this._fileDiffLoading = false;
+    if (syncHash) this._syncSourceToHash();
+    const reviewedHead = this._payload.reviewSnapshot?.headSha?.trim();
+    if (!reviewedHead) {
+      this._commentFileError =
+        'The reviewed revision was not recorded. Source for this finding is unavailable.';
       this._commentFileLoading = false;
-      console.log(
-        `[review-workspace] commentFile ${(performance.now() - tFile).toFixed(0)}ms path=${c.path}`,
-      );
+      return;
     }
-    // Set revealLine after content is loaded — use requestAnimationFrame
-    // to ensure code-viewer has processed the content update first
-    await this.updateComplete;
-    requestAnimationFrame(() => {
-      this._revealLine =
-        reviewedFindingContext(this._commentFileContent, c.line).lines.find((line) => line.target)
-          ?.number ?? 0;
-    });
+    try {
+      const result = await gateway.request<GitShowResult>(Methods.GIT_SHOW, {
+        slotId: this.slotId,
+        ...(this.workspaceView ? { runId: this.runId } : {}),
+        ref: reviewedHead,
+        path: c.path,
+      });
+      if (epoch !== this._sourceLoadEpoch) return;
+      this._commentFileContent = result.content;
+      const context = reviewedFindingContext(result.content, c.line);
+      if (context.available) this._revealLine = c.line;
+      else this._commentFileError = context.note;
+    } catch (error) {
+      if (epoch === this._sourceLoadEpoch)
+        this._commentFileError =
+          error instanceof Error ? error.message : 'Reviewed source is unavailable.';
+    } finally {
+      if (epoch === this._sourceLoadEpoch) this._commentFileLoading = false;
+    }
   }
 
   private _renderCodePanel() {
     const comment = this._selectedCommentIdx >= 0 ? this._comments[this._selectedCommentIdx] : null;
+    const reviewedHead = this._payload.reviewSnapshot?.headSha;
+    const sourceHeader = comment
+      ? html` <div class="rw-source-context" title=${reviewedHead ?? ''}>
+          ${reviewedHead ? `Reviewed ${reviewedHead.slice(0, 8)}` : 'Reviewed revision unavailable'}
+          · ${workspaceArtifactBasename(comment.path)}:${comment.line}
+        </div>`
+      : nothing;
+    const sourceError = this._commentFileError
+      ? html` <div class="rw-source-context" role="alert">
+          ${this._commentFileError}
+          ${comment && reviewedHead
+            ? html`<button
+                class="rw-panel-toggle"
+                @click=${() => this._navigateToComment(comment, this._selectedCommentIdx)}
+              >
+                Retry source
+              </button>`
+            : nothing}
+        </div>`
+      : nothing;
 
     // When a comment is selected and file is loaded → show code-viewer with ViewZone
     if (comment && this._commentFileContent && this._selectedFile === comment.path) {
       const threads = reviewThreadsForFile(this._commentsByFile, comment.path);
       const basename = workspaceArtifactBasename(comment.path);
       return html`
+        ${sourceHeader}${sourceError}
         <code-viewer
           .content=${this._commentFileContent}
           .language=${reviewWorkspaceLanguageForPath(comment.path)}
@@ -1032,8 +1092,11 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       `;
     }
 
+    if (this._commentFileError) return html`${sourceHeader}${sourceError}`;
+
     if (comment && this._commentFileLoading) {
-      return html`<div class="rw-diff-loading">Loading file...</div>`;
+      return html`${sourceHeader}
+        <div class="rw-diff-loading">Loading file...</div>`;
     }
 
     // Default: show diff

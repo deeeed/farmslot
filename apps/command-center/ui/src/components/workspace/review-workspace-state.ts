@@ -64,6 +64,7 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @state() _selectedCommentIdx = -1;
   @state() _commentFileContent = '';
   @state() _commentFileLoading = false;
+  @state() _commentFileError = '';
   @state() _revealLine = 0;
   @state() _recoveryPhase: RecoveryPhase = 'live';
   @state() _recoveryMessage = '';

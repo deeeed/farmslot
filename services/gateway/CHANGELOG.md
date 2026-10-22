@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Read complete files and diffs from frozen review commits by draining Git output before the helper exits.
+
 - Native pipeline re-reviews recover their validated session and reviewed head after gateway restart, before the final publication-review row exists.
 
 - Use the shared review artifact directory resolver so live history reads the same round snapshots the engine writes.

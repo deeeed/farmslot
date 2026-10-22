@@ -6,6 +6,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.64.0 - 2026-10-22
+
+- Share review finding locations by immutable revision and content identity, preserving file and line across comment reordering and link restoration.
+
+This SDK release keeps the node-gateway wire protocol at 0.63.0.
+
 ## 0.63.0 - 2026-10-21
 
 - Person claim confirmations can retain bound review-finding settlement references. Shared review policy counts qualified evidence findings as settled while preserving the original review verdict and code findings.
