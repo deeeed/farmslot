@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Read-only reviewers skip repository settings and hooks. A reviewer that starts or finishes after its acknowledgement timeout resumes the original run and review round.
+
 - Admin people can supervise a pinned native worker after their identity is replaced; the worker keeps its original execution owner.
 
 - Completed reviewers without hooks can reach their posting gate through verified native process state. An explicit publication retry can retain a matching manual review receipt without posting again.
