@@ -1,4 +1,15 @@
-// Read-only assertions on the real runs page after entering a linked key in Search.
+// Read-only assertions after real CDP interactions. In #dev/run-tag-editor,
+// click Additional tickets > Add, type ' TAT-4157 ', and Save.
+if (location.hash.startsWith('#dev/run-tag-editor')) {
+  const editor = document.querySelector('run-tag-editor[kind="tickets"]');
+  if (!editor?.shadowRoot) throw new Error('Open the additional-ticket editor fixture first');
+  if (editor.shadowRoot.querySelector('.tag-error'))
+    throw new Error('Pasted ticket text failed validation');
+  if (editor.shadowRoot.querySelector('form'))
+    throw new Error('Saving pasted ticket text must close the editor');
+  return { paddedTicketEditorSave: true, productionMetadataWrites: 0 };
+}
+// Real runs page, after entering a linked key in Search.
 const list = document.querySelector('run-list');
 if (!list?.shadowRoot) throw new Error('Open the runs list first');
 const query = list.searchQuery;

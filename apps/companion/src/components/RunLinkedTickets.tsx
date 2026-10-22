@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { normalizeRunLinkedTicketRefs, type Run, runLinkedTicketsView } from '@farmslot/protocol';
+import { parseRunLinkedTicketRefs, type Run, runLinkedTicketsView } from '@farmslot/protocol';
 
 import { colors, fonts } from '../lib/theme';
 
@@ -30,7 +30,7 @@ export function RunLinkedTickets({
     setBusy(true);
     setError('');
     try {
-      await onSave(normalizeRunLinkedTicketRefs(draft.trim() ? draft.split(/[\s,]+/) : []));
+      await onSave(parseRunLinkedTicketRefs(draft));
       setEditing(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));

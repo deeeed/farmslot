@@ -23,6 +23,12 @@ export function normalizeRunLinkedTicketRefs(input: unknown): string[] {
   return refs;
 }
 
+/** Parse the additional-ticket editor identically on web and native. */
+export function parseRunLinkedTicketRefs(draft: string): string[] {
+  const text = draft.trim();
+  return normalizeRunLinkedTicketRefs(text ? text.split(/[\s,]+/) : []);
+}
+
 /** Covered keys, derived without changing the frozen ticket or task inputs. */
 export function runLinkedTicketRefs(run: RunTicketSource): string[] {
   const ticket = run.ticketData;

@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Run, RunTicketData } from '../../src/contracts/runs.js';
 import {
   normalizeRunLinkedTicketRefs,
+  parseRunLinkedTicketRefs,
   runLinkedTicketRefs,
   runLinkedTicketsView,
 } from '../../src/runs/linked-tickets.js';
@@ -83,6 +84,15 @@ test('operator additions normalize and reject malformed input, and removing them
     'TEAM-200',
     'TEAM-300',
   ]);
+});
+
+test('additional-ticket editors accept pasted whitespace, mixed separators and duplicate keys', () => {
+  assert.deepEqual(parseRunLinkedTicketRefs(' \tteam-400, TEAM-500\nTEAM-400 '), [
+    'TEAM-400',
+    'TEAM-500',
+  ]);
+  assert.deepEqual(parseRunLinkedTicketRefs(' \n\t '), []);
+  assert.throws(() => parseRunLinkedTicketRefs('TEAM-400,invalid'), /Jira key/);
 });
 
 test('prefetched tickets work for PR runs and known browse roots link operator-added keys', () => {

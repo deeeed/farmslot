@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import {
   normalizeRunLinkedTicketRefs,
   normalizeRunTags,
+  parseRunLinkedTicketRefs,
   type Run,
   runLinkedTicketsView,
 } from '@farmslot/protocol';
@@ -152,10 +153,9 @@ export class RunTagEditor extends LitElement {
     this.saving = true;
     this.error = '';
     try {
-      const values = this.draft.trim() ? this.draft.split(/[\s,]+/) : [];
       const tags =
         this.kind === 'tickets'
-          ? normalizeRunLinkedTicketRefs(values)
+          ? parseRunLinkedTicketRefs(this.draft)
           : normalizeRunTags(this.draft.split(','));
       await this.saveTags(tags);
       this.editing = false;
