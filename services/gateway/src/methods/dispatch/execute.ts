@@ -1530,8 +1530,11 @@ export async function dispatchExecute(
   if (params.runId) {
     const { captureWorktreeHeadSha } = await import('../../run-engine/diff-artifacts.js');
     const worktreeHeadAtDispatch = await captureWorktreeHeadSha(params.slotId);
-    assertPRReviewWorktreeHead(getRun(params.runId), worktreeHeadAtDispatch);
-    if (worktreeHeadAtDispatch) {
+    const dispatchRun = getRun(params.runId);
+    assertPRReviewWorktreeHead(dispatchRun, worktreeHeadAtDispatch);
+    // A replay on the retained checkout may already be at the fixed head.
+    // Keep the original before-evidence base when preparation was skipped.
+    if (worktreeHeadAtDispatch && (!params.skipPrepare || !dispatchRun?.worktreeHeadAtDispatch)) {
       updateRunStore(params.runId, { worktreeHeadAtDispatch });
     }
   }
