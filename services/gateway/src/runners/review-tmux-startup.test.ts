@@ -83,6 +83,25 @@ test('a Codex review launch can skip the startup update check and turn hooks off
   assert.ok(command?.includes("--config 'features.hooks=false'"));
 });
 
+test('a read-only Claude review skips PR settings and hooks while ordinary launches keep them', () => {
+  const options = {
+    runner: 'claude',
+    repo: '/tmp/review.source',
+    promptPath: '/tmp/task/prompt.txt',
+    model: 'opus',
+  };
+  const review = buildInteractiveRefinementRunnerCommand({
+    ...options,
+    workspaceTrust: 'untrusted',
+    disableHooks: true,
+  });
+  assert.ok(review?.includes("'--setting-sources' 'user'"));
+  assert.ok(review?.includes(`'--settings' '{"disableAllHooks":true}'`));
+  const ordinary = buildInteractiveRefinementRunnerCommand(options);
+  assert.ok(!ordinary?.includes('--setting-sources'));
+  assert.ok(!ordinary?.includes('disableAllHooks'));
+});
+
 test('a Codex review launch allowlists its tool shell environment and refuses secrets', () => {
   const command = buildInteractiveRefinementRunnerCommand({
     runner: 'codex',

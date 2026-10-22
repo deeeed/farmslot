@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 
 import {
   nativeResultJsonSchema,
@@ -13,6 +14,10 @@ import { JsonLineProcess } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
 
 type JsonRecord = Record<string, unknown>;
+
+const { claudeReadOnlyReviewArgs } = createRequire(import.meta.url)(
+  '../../scripts/workspace-trust.cjs',
+) as { claudeReadOnlyReviewArgs: readonly string[] };
 
 /** Upstream fixed hook-history loss in 2.1.83 and interrupted-tool resume in 2.1.265. */
 export function claudeResumeUnavailableReason(version: string): string | undefined {
@@ -379,7 +384,7 @@ export const claudeNativeAdapter: NativeAdapter = {
     process = new JsonLineProcess(
       options.executable,
       [
-        ...(options.filesystemPolicy ? ['--settings', '{"disableAllHooks":true}'] : []),
+        ...(options.filesystemPolicy ? claudeReadOnlyReviewArgs : []),
         ...(options.resultSchema
           ? ['--json-schema', JSON.stringify(nativeResultJsonSchema(options.resultSchema))]
           : []),

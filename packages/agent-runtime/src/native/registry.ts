@@ -32,11 +32,8 @@ export interface NativeWorkspaceTrustOptions {
   inspectionCwd?: string;
 }
 
-export const {
-  workspaceTrustByRunner,
-  codexWorkspaceTrustConfig,
-  reviewConfigurationRootsByRunner,
-} = createRequire(import.meta.url)('../../scripts/workspace-trust.cjs') as {
+const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-trust.cjs') as {
+  claudeReadOnlyReviewArgs: readonly string[];
   reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
   codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
   workspaceTrustByRunner: Record<
@@ -49,6 +46,12 @@ export const {
     ) => void
   >;
 };
+
+export const {
+  workspaceTrustByRunner,
+  codexWorkspaceTrustConfig,
+  reviewConfigurationRootsByRunner,
+} = workspaceTrust;
 
 export interface NativeRunnerDefinition {
   adapter: NativeAdapter;
@@ -64,6 +67,8 @@ export interface NativeRunnerDefinition {
   supportsReadOnlyWorkspace?: boolean;
   /** Repository startup configuration cannot execute inside a read-only review. Git blobs stay readable. */
   reviewConfigurationRoots?: (cwd: string) => string[];
+  /** Exclude repository configuration before the sandbox can deny its startup read. */
+  reviewStartupArgs?: readonly string[];
   reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
   /** Read-only account inspection before copying support or trusting a review checkout. */
   reviewAccountPreflight?: { script: string; timeoutMs: number };
@@ -100,6 +105,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   claude: {
+    reviewStartupArgs: workspaceTrust.claudeReadOnlyReviewArgs,
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.claude,
     trustWorkspace: workspaceTrustByRunner.claude,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),

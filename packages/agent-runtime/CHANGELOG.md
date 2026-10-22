@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.37.2 - 2026-10-22
+
+- Read-only reviewers skip repository settings and hooks at startup while retaining the user's account configuration.
+
 ## 0.37.1 - 2026-10-22
 
 - Saved-session resume accepts large retained-thread replies separately from the bounded event journal.
