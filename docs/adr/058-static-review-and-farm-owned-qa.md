@@ -195,7 +195,8 @@ No new field, command or export. The framework reads only the documented `ref` a
 
 ## Amendment 3: Shared review approval policy (2026-10-22)
 
-**Status:** Proposed. Scope and ADR ownership approved by the lead.
+**Status:** Accepted (2026-10-22).
+**Implementation:** [#1432](https://github.com/deeeed/farmslot/pull/1432).
 
 ### Decision and rationale
 

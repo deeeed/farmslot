@@ -9,7 +9,7 @@ implement that proposal.
 
 ## Approval policy
 
-**Status:** Proposed under ADR-058 Amendment 3. Applies to review-pr and paired reviews.
+**Status:** Accepted under ADR-058 Amendment 3. Applies to review-pr and paired reviews.
 
 Project `approvalPolicy`, also supported in the existing source runtime settings, overrides the shared defaults: `maxNits: 3`, `minorVerdict: "COMMENT"`, `majorVerdict: "REQUEST_CHANGES"`. `maxNits` MUST be a nonnegative integer; verdict overrides accept APPROVE, COMMENT or REQUEST_CHANGES. Invalid configuration MUST fail closed. The gateway MUST resolve current configuration when producing instructions, accepting results and refreshing a gate; no restart is required.
 
