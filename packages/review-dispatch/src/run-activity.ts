@@ -13,6 +13,8 @@ import {
   type SlotAgentTargetParams,
 } from '@farmslot/protocol';
 
+import { nativeWorkerTarget } from './native-worker-target.js';
+
 /** An open blocked gate waits for a person; its recorded running step is not a running actor. */
 export function runActivityStepStatus(run: Run, step: RunStep): RunStepDisplayStatus {
   return step.name === 'human-gate' && isBlockedAtOpenHumanGate(run)
@@ -65,20 +67,12 @@ export function runTerminalView(run: Run, contextId?: string) {
       target: null,
       context: null,
     };
-  let context =
+  const context =
     (contextId ? contexts.find((entry) => entry.id === contextId) : undefined) ??
     runReviewActivityContext(run, ['review', 'review-fix', 'ci-fix']) ??
     contexts.find((entry) => entry.role === primaryRoleForFlow(run.flowType)) ??
     contexts.find((entry) => entry.role === 'primary');
-  const owner = context?.nativeSessionOwner;
-  if (owner)
-    context =
-      contexts.find(
-        (entry) =>
-          entry.id === owner.contextId &&
-          entry.nativeSession?.sessionId === owner.sessionId &&
-          entry.nativeSession.leaseId === owner.leaseId,
-      ) ?? context;
+  const native = context && nativeWorkerTarget(contexts, context);
   const slotId = context?.slotId ?? resolveRunSlotId(run);
   const target: ReturnType<typeof runTerminalTargetParams> | null = slotId
     ? runTerminalTargetParams({
@@ -92,17 +86,36 @@ export function runTerminalView(run: Run, contextId?: string) {
       : null;
   const disabledReason = isTerminalRunStatus(run.status)
     ? 'This run is finished.'
-    : context?.nativeSessionOwner && !context.nativeSession
+    : context?.nativeSessionOwner && !native
       ? 'No conversation is bound to this run.'
-      : !target && !context?.nativeSession
+      : !target && !native
         ? 'No terminal is bound to this run.'
         : null;
   return {
-    label: context?.nativeSession ? 'Open conversation' : 'Open terminal',
+    label: native ? 'Open conversation' : 'Open terminal',
     disabledReason,
     target,
     context: context ?? null,
   };
+}
+
+/** A gate follows up with its latest reviewer, even while that reviewer is waiting. */
+export function runReviewerView(run: Run) {
+  const context = [...(run.agentContexts ?? [])]
+    .filter((candidate) => candidate.role === 'review')
+    .sort((left, right) =>
+      (right.attemptStartedAt ?? right.startedAt ?? '').localeCompare(
+        left.attemptStartedAt ?? left.startedAt ?? '',
+      ),
+    )[0];
+  if (!context)
+    return {
+      label: 'Ask reviewer',
+      disabledReason: 'No reviewer session is recorded.',
+      target: null,
+      context: null,
+    };
+  return { ...runTerminalView(run, context.id), label: 'Ask reviewer' };
 }
 
 /** Keep the same actor binding for subscription, input, resize and snapshots on both clients. */

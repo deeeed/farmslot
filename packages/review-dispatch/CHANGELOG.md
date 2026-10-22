@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.0 - 2026-10-22
+
+- Share native conversation targets, review and fix timelines, frozen finding locations, recovered review failures and gate refresh readback across both operator apps.
+
 ## 0.12.0 - 2026-10-22
 
 - Share review history derivation and artifact loading across Command Center and Companion, including active rounds before a publication gate.

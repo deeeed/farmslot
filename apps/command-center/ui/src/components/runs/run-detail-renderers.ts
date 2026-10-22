@@ -36,6 +36,7 @@ import {
 import { runActivityView, runResultsSummary, runTerminalView } from '@farmslot/review-dispatch';
 
 import '../slot-view/worker-session-history.js';
+import './review-history-panel.js';
 import '../shared/workspace-pin.js';
 import '../shared/cancelled-run-slot-release.js';
 import '../shared/hydrating-placeholder.js';
@@ -528,6 +529,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const boundSlotId = resolveRunSlotId(r);
   const terminalUnavailable = reviewTerminalUnavailableReason(r);
   const terminal = runTerminalView(r, ctx._showTerminal ? ctx._terminalContextId : undefined);
+  const openReviewGate = r.decisions.some(
+    (decision) => !decision.resolvedAt && decision.type === 'engine_review_posting',
+  );
   // ADR-054 `free-slot`: while the park record holds the release, the slot row
   // belongs to dispatch, not to this run. `isSlotFreedByPark` ignores `phase`,
   // and cancel deliberately skips slot release for a park-freed run, so this
@@ -542,7 +546,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const variantDrift = Boolean(r.variant && variantNamesOtherEngine(r.variant, engine));
 
   return html`
-    ${backToRuns}
+    ${backToRuns} ${openReviewGate ? ctx.renderGateSection(r) : nothing}
     <source-status-panel
       .context=${{ target: { scope: 'run', targetId: r.id }, actions: ['pin', 'unpin'] }}
     ></source-status-panel>
@@ -1152,14 +1156,16 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
       ? ctx._renderRunEvidence(r)
       : nothing}
-    ${r.output ? ctx.renderGateSection(r) : nothing}
-    ${renderRunReviewResult(
-      r,
-      () => void ctx._onReplayStep('human-gate'),
-      actionsBlocked || ctx._rereviewInFlight,
-      () => void ctx._rereviewLatestHead(r),
-    )}
-    ${r.reviewWorkspace && !r.output ? ctx.renderGateSection(r) : nothing}
+    ${r.output && !openReviewGate ? ctx.renderGateSection(r) : nothing}
+    ${!openReviewGate
+      ? renderRunReviewResult(
+          r,
+          () => void ctx._onReplayStep('human-gate'),
+          actionsBlocked || ctx._rereviewInFlight,
+          () => void ctx._rereviewLatestHead(r),
+        )
+      : nothing}
+    ${r.reviewWorkspace && !r.output && !openReviewGate ? ctx.renderGateSection(r) : nothing}
     ${ctx._renderAgentSessions(r)} ${renderReviewChain(r)}
     ${ctx.siblings.length
       ? html`
@@ -1247,11 +1253,13 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}
       >
       </run-pipeline>
+      <review-history-panel .run=${r}></review-history-panel>
       ${ctx.selectedStep
         ? html`
             <step-inspector
               .step=${ctx.selectedStep}
               .run=${ctx.run}
+              .showReviewHistory=${false}
               .taskProgress=${stepInspectorTaskProgress({
                 selectedStepName: ctx.selectedStep?.name,
                 run: ctx.run ?? undefined,

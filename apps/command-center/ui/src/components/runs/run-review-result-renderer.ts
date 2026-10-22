@@ -116,6 +116,8 @@ export function renderRunReviewResult(
           : nothing}
       </div>
       <review-workspace
+        .run=${run}
+        .showHistory=${false}
         .runId=${run.id}
         .readOnly=${true}
         .workspaceView=${Boolean(run.reviewWorkspace)}

@@ -834,6 +834,7 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
         : reviewDecision
           ? html`
               <review-workspace
+                .run=${view._linkedRun}
                 .runId=${view._linkedRun.id}
                 .decision=${reviewDecision}
                 slotId=${view._isLive ? view.slotId : ''}

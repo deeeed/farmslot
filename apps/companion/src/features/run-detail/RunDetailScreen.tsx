@@ -52,7 +52,6 @@ import {
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { gateReviewHref, openHumanGateDecision } from '../../lib/gate-review';
-import { nativeRunConversationParams } from '../../lib/native-worker-target';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
@@ -86,6 +85,7 @@ import {
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
 import { useRunStore } from '../../store/runs';
+import DecisionDetailScreen from '../decision-workspace/DecisionWorkspaceScreen';
 import { GateReviewEntryCard } from '../gate-review/components/gate-review-panels';
 import { NativeWorkerLinks } from '../native-conversation/components/NativeWorkerLinks';
 import { SourceStatusSection } from '../sources/SourceStatusSection';
@@ -668,11 +668,6 @@ export default function RunDetailScreen() {
   const terminal = runTerminalView(run);
   const openTerminal = () => {
     if (terminal.disabledReason) return;
-    if (terminal.context?.nativeSession) {
-      const params = nativeRunConversationParams(run, terminal.context);
-      if (params) router.push({ pathname: '/native', params });
-      return;
-    }
     if (!terminal.target) return;
     router.push({
       pathname: terminal.target.slotId
@@ -765,16 +760,21 @@ export default function RunDetailScreen() {
             {reviewStatus}
           </Text>
         ) : null}
-        {openGate ? (
+        {openGate?.type === 'engine_review_posting' ? (
+          <DecisionDetailScreen
+            embedded
+            showReviewHistory={false}
+            decisionId={openGate.id}
+            runId={run.id}
+          />
+        ) : openGate ? (
           <GateReviewEntryCard
             testID="companion-open-gate-review"
             onOpen={() => router.push(gateReviewHref(run.id, openGate.id))}
           />
         ) : null}
 
-        {reviewPackageActiveTab === 'timeline' && run.transport === 'native' ? (
-          <NativeWorkerLinks run={run} />
-        ) : null}
+        <NativeWorkerLinks run={run} />
 
         <RunPosturePanel state={runPosture} gatePark={liveGateParkView(run)} />
         <ReviewPublication run={run} context="saved" />

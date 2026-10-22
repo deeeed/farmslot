@@ -24,7 +24,13 @@ export const nativeStyles = StyleSheet.create({
     lineHeight: 18,
   },
   detail: { maxHeight: 250 },
-  button: { backgroundColor: colors.bgCardHover, borderRadius: radii.md, padding: spacing.md },
+  button: {
+    backgroundColor: colors.bgCardHover,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
   buttonText: { color: colors.accent, fontWeight: '700', fontSize: fonts.sizeSm },
   disabled: { opacity: 0.45 },
   input: {

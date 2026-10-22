@@ -10,6 +10,7 @@ import {
   runStepDisplayStatus,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
+import { recoveredReviewFailureColor, runRecoveredReviewFailures } from '@farmslot/review-dispatch';
 
 import { colors } from '../../styles/theme-tokens.js';
 import {
@@ -187,7 +188,11 @@ export class RunPipelineMini extends LitElement {
           return html`
             <span
               class="seg ${toneClass}"
-              style="background:${unsafeCSS(pipelineToneColor(tone))}"
+              style="background:${unsafeCSS(
+                segment.outputs?.recoveredReviewFailure
+                  ? recoveredReviewFailureColor
+                  : pipelineToneColor(tone),
+              )}"
               title=${segment.title}
             ></span>
           `;
@@ -246,6 +251,9 @@ export class RunPipelineMini extends LitElement {
         detail: displayStep.detail,
       });
       if (step.name === 'review') {
+        if (run)
+          for (const failure of runRecoveredReviewFailures(run))
+            segments.push({ ...failure, title: failure.reason });
         segments.push(...preGateReviews);
       }
       if (step.name === 'human-gate') {

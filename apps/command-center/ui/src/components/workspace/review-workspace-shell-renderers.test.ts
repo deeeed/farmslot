@@ -9,6 +9,7 @@ import { DiffTestFilterController } from '../shared/diff-test-filter-controller.
 
 import {
   renderReviewDiffFiles,
+  renderReviewTopBar,
   reviewSeverityColor,
   reviewSeverityCounts,
 } from './review-workspace-shell-renderers.js';
@@ -88,4 +89,30 @@ test('renderReviewDiffFiles shows the all-hidden state even with a test file sti
     /CODE:src\/gate\.test\.ts/,
     'an open finding keeps its code visible',
   );
+});
+
+test('a refreshed gate without Post renders no publication control', () => {
+  const input: Parameters<typeof renderReviewTopBar>[0] = {
+    comments: [],
+    includedComments: 0,
+    selectedRecommendation: 'COMMENT',
+    setRecommendation: () => undefined,
+    hasLearnings: false,
+    evidenceCount: 0,
+    includeEvidence: false,
+    setIncludeEvidence: () => undefined,
+    posting: false,
+    postAvailable: false,
+    recovering: false,
+    refreshing: false,
+    proposing: false,
+    proposeError: null,
+    pendingConfirm: null,
+    refresh: () => undefined,
+    proposeImprovement: () => undefined,
+    post: () => undefined,
+    dismiss: () => undefined,
+  };
+  assert.doesNotMatch(litText(renderReviewTopBar(input)), /Post to PR/);
+  assert.match(litText(renderReviewTopBar({ ...input, postAvailable: true })), /Post to PR/);
 });
