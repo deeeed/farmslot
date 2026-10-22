@@ -83,18 +83,24 @@ Accepted snapshots remain eligible for persistence when a connection pauses or t
 view observer leaves. Authority changes clear the accepted value and cancel queued writes.
 The browser family proof checks the actual SQLite timestamp before closing its document.
 
+Slot workspaces now project each current fleet row instead of keeping the first
+copy or adopting `slot.changed` payloads separately. Removed slots and cleared
+authority retire the copied facts. `command-center-slot-writer.recipe.json`
+checks real mode writes, the rendered lifecycle and canonical query revisions.
+Fleet persistence and the remaining fleet-family reads are still pending.
+
 ## Run writer coverage
 
-| Writer                       | Notification owner                                                  | Covered behavior                                                                                                                                         |
-| ---------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Run persistence and deletion | `services/gateway/src/runs/store.ts`, `resources/run-changes.ts`    | Run, collection, decision, family and artifact dependencies                                                                                              |
-| Worker decision files        | `observability/fleet-monitor.ts`                                    | Creation, content change, removal and read failure/recovery                                                                                              |
-| File decision resolution     | `methods/decisions.ts`, file-decision owner                         | Physical deletion before acknowledgement; failures propagate                                                                                             |
-| Artifact acquisition         | `run-completion/artifact-mirror.ts`                                 | Actual copy/prune/pointer changes notify; unchanged acquisitions stay quiet                                                                              |
-| Feedback consumption         | `intelligence/feedback-ledger.ts`                                   | Inbox and retrospective derivations change after consumption                                                                                             |
-| PR monitor observations      | `pr-monitoring/store.ts`                                            | Run-derived monitor decisions invalidate when their inputs change                                                                                        |
-| Slot binding and membership  | `core/state.ts`, `fleet/state.ts`, `resources/slot-run-bindings.ts` | Direct/CAS/claim/mark/transition/reset/rewrite commits and external file changes invalidate affected slot and run projections; failed reads stay visible |
-| Inbox expiry                 | `runs/decision-inbox.ts`, resource deadline owner                   | Existing 48-hour expiry invalidates the inbox without rewriting the run                                                                                  |
+| Writer                       | Notification owner                                                  | Covered behavior                                                                                                                                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run persistence and deletion | `services/gateway/src/runs/store.ts`, `resources/run-changes.ts`    | Run, collection, decision, family and artifact dependencies                                                                                                                                                                         |
+| Worker decision files        | `observability/fleet-monitor.ts`                                    | Creation, content change, removal and read failure/recovery                                                                                                                                                                         |
+| File decision resolution     | `methods/decisions.ts`, file-decision owner                         | Physical deletion before acknowledgement; failures propagate                                                                                                                                                                        |
+| Artifact acquisition         | `run-completion/artifact-mirror.ts`                                 | Actual copy/prune/pointer changes notify; unchanged acquisitions stay quiet                                                                                                                                                         |
+| Feedback consumption         | `intelligence/feedback-ledger.ts`                                   | Inbox and retrospective derivations change after consumption                                                                                                                                                                        |
+| PR monitor observations      | `pr-monitoring/store.ts`                                            | Run-derived monitor decisions invalidate when their inputs change                                                                                                                                                                   |
+| Slot facts and membership    | `core/state.ts`, `fleet/state.ts`, `resources/slot-run-bindings.ts` | Direct/CAS/claim/mark/transition/reset/rewrite commits and external file changes invalidate slot facts and former project/node scopes. Membership or run-pointer changes also invalidate run projections; failed reads stay visible |
+| Inbox expiry                 | `runs/decision-inbox.ts`, resource deadline owner                   | Existing 48-hour expiry invalidates the inbox without rewriting the run                                                                                                                                                             |
 
 Gateway writer tests and the real-endpoint run recipe support these rows. They do not
 establish coverage for unmigrated cross-family inputs.

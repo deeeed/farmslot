@@ -1,39 +1,76 @@
-import type { SlotStatus } from '@farmslot/protocol';
+import {
+  canonicalResourceJson,
+  type ResourceKey,
+  resourceKeyId,
+} from '@farmslot/protocol/client-cache';
 
 import { type GatewayResourceRevisions, resourceRevisions } from './revisions.js';
 
-type SlotRunBinding = Pick<SlotStatus, 'slot' | 'currentRunId'>;
+interface SlotResourceSnapshot {
+  slot: string;
+  currentRunId: string | null;
+  project?: string;
+  nodeId?: string;
+  fingerprint: string;
+}
 
 /** The status writer and its filesystem observer share one scalar snapshot. */
-export class SlotRunBindingChanges {
-  private previous?: Map<string, string | null>;
+export class SlotResourceChanges {
+  private previous?: Map<string, SlotResourceSnapshot>;
   private failed = false;
 
   constructor(private readonly revisions: GatewayResourceRevisions = resourceRevisions) {}
 
-  observe(slots: readonly SlotRunBinding[]): void {
-    const current = new Map(slots.map(({ slot, currentRunId }) => [slot, currentRunId ?? null]));
+  observe(slots: readonly SlotResourceSnapshot[]): void {
+    const current = new Map(slots.map((row) => [row.slot, { ...row }]));
     const previous = this.previous;
-    const changed = [...new Set([...(previous?.keys() ?? []), ...current.keys()])].filter(
-      (id) => !previous?.has(id) || !current.has(id) || previous.get(id) !== current.get(id),
+    const ids = [...new Set([...(previous?.keys() ?? []), ...current.keys()])];
+    const changed = ids.filter(
+      (id) => this.failed || previous?.get(id)?.fingerprint !== current.get(id)?.fingerprint,
     );
-    if (!previous || this.failed || changed.length) this.invalidateCollections();
-    for (const slotId of changed)
-      this.revisions.advance(
-        { family: 'slot', slotId },
-        current.has(slotId) ? 'updated' : 'deleted',
-      );
+    if (!previous || this.failed || changed.length)
+      this.invalidateSlots(changed, current, previous);
+    if (
+      !previous ||
+      this.failed ||
+      ids.some((id) => previous.get(id)?.currentRunId !== current.get(id)?.currentRunId)
+    )
+      this.invalidateBindings();
     this.previous = current;
     this.failed = false;
   }
 
   unavailable(): void {
-    if (!this.failed) this.invalidateCollections();
+    if (!this.failed) {
+      this.invalidateSlots([...(this.previous?.keys() ?? [])], this.previous);
+      this.invalidateBindings();
+    }
     this.failed = true;
   }
 
-  private invalidateCollections(): void {
-    this.revisions.advance({ family: 'slots', scope: 'farm' });
+  private invalidateSlots(
+    ids: readonly string[],
+    current?: ReadonlyMap<string, SlotResourceSnapshot>,
+    previous?: ReadonlyMap<string, SlotResourceSnapshot>,
+  ): void {
+    const keys = new Map<string, ResourceKey>();
+    const add = (key: ResourceKey) => keys.set(resourceKeyId(key), key);
+    add({ family: 'slots', scope: 'farm' });
+    for (const slotId of ids) {
+      add({ family: 'slot', slotId });
+      for (const row of [previous?.get(slotId), current?.get(slotId)]) {
+        if (row?.project) add({ family: 'slots', scope: 'farm', project: row.project });
+        if (row?.nodeId) add({ family: 'slots', scope: 'farm', nodeId: row.nodeId });
+      }
+    }
+    for (const key of keys.values())
+      this.revisions.advance(
+        key,
+        key.family === 'slot' && !current?.has(key.slotId) ? 'deleted' : 'updated',
+      );
+  }
+
+  private invalidateBindings(): void {
     // Selection and gate projections may use former or implicit slot owners.
     // Broad invalidation keeps those readers current without guessing a run ID.
     this.revisions.advance({ family: 'runs', scope: 'farm' });
@@ -41,8 +78,8 @@ export class SlotRunBindingChanges {
   }
 }
 
-/** Validate only the bindings this migration owns; the fleet reader owns the rest. */
-export function statusRunBindings(value: unknown): SlotRunBinding[] {
+/** Capture scalar facts so a later in-place write cannot change the saved comparison. */
+export function statusSlotResources(value: unknown): SlotResourceSnapshot[] {
   if (!value || typeof value !== 'object') throw new Error('Fleet status must contain slot rows');
   const rows = Reflect.get(value, 'slots');
   if (!Array.isArray(rows)) throw new Error('Fleet status must contain slot rows');
@@ -59,6 +96,14 @@ export function statusRunBindings(value: unknown): SlotRunBinding[] {
     )
       throw new Error('Invalid fleet slot binding');
     ids.add(slot);
-    return { slot, currentRunId: owner ?? null };
+    const project = Reflect.get(row, 'project');
+    const nodeId = Reflect.get(row, 'machine');
+    return {
+      slot,
+      currentRunId: owner ?? null,
+      ...(typeof project === 'string' && project ? { project } : {}),
+      ...(typeof nodeId === 'string' && nodeId ? { nodeId } : {}),
+      fingerprint: canonicalResourceJson(row),
+    };
   });
 }

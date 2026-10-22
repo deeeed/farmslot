@@ -21,14 +21,28 @@ const reads = Object.fromEntries(
         status: controller.state.status,
         observedAt: controller.state.observedAt,
         error: controller.state.error?.message,
+        resourceState: controller.state.resourceState,
       },
     ];
   }),
 );
 const run = view._linkedRun;
+const lifecycle = view.querySelector('.sv-lifecycle-badge');
+const lifecycleRect = lifecycle?.getBoundingClientRect();
 return {
   mounted: true,
   slotId: view.slotId,
+  slotLifecycle: view._slot?.lifecycle,
+  renderedLifecycle: lifecycle?.textContent?.trim(),
+  lifecycleVisible: Boolean(
+    lifecycleRect &&
+    lifecycleRect.width > 0 &&
+    lifecycleRect.height > 0 &&
+    lifecycleRect.top >= 0 &&
+    lifecycleRect.right <= innerWidth &&
+    lifecycleRect.bottom <= innerHeight,
+  ),
+  slotCurrentRunId: view._slot?.currentRunId ?? null,
   runId: run?.id,
   runStatus: run?.status,
   tags: run?.tags,

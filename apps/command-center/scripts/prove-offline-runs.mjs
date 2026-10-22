@@ -48,6 +48,7 @@ assert(
     'ready-workspace-web',
     'review-workspace-web',
     'recipe-owner-web',
+    'slot-facts-web',
   ].includes(phase),
   'Select a run proof phase',
 );
@@ -681,6 +682,146 @@ async function detailBrowser(runId) {
     navigate,
     peek: () => cdp('eval', route, '--file', storeProbe),
   };
+}
+
+if (phase === 'slot-facts-web') {
+  assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+  assert(process.env.FARMSLOT_SLOT_RESOURCE_PROOF);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_SLOT_RESOURCE_PROOF, 'utf8'));
+  assert.equal(await realpath(fixture.home), home);
+  const pool = await realpath(fixture.poolFile);
+  assert(pool.startsWith(`${home}/pool/`), 'Only mutate the owned proof pool');
+  const beforePool = await readFile(pool);
+  const beforePoolMode = (await stat(pool)).mode & 0o777;
+  const originalMode = JSON.parse(beforePool).slots.find(
+    (slot) => slot.id === fixture.slotId,
+  )?.mode;
+  assert.equal(originalMode, 'custom');
+  const inspect = async () => {
+    const fleet = (await rpc('fleet.status')).fleet;
+    assert.equal(fleet.slots.length, 1, 'Use an isolated one-slot fleet');
+    const slot = fleet.slots[0];
+    assert.equal(slot.slot, fixture.slotId);
+    assert.equal(slot.repo, fixture.repo);
+    assert(!slot.currentRunId && !slot.phase && slot.lifecycle !== 'busy');
+    assert.equal((await rpc('run.list', { limit: 1 })).runs.length, 0);
+    return slot;
+  };
+  await inspect();
+  const route = `slot/${fixture.slotId}`;
+  const base = new URL(process.env.FARMSLOT_UI_URL);
+  assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
+  base.hash = route;
+  const artifacts = process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR;
+  assert(artifacts);
+  await mkdir(artifacts, { recursive: true });
+  const cdp = async (...args) => {
+    const { stdout } = await execute(
+      process.execPath,
+      [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+      { timeout: 30000, maxBuffer: 2 * 1024 * 1024 },
+    );
+    return JSON.parse(stdout);
+  };
+  const probe = path.join(root, 'apps/command-center/scripts/probes/offline-slot-run.js');
+  const until = async (test, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await cdp('eval', route, '--file', probe);
+      if (test(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  let observed, failure, result;
+  const cleanup = [];
+  try {
+    observed = await observeResources();
+    await cdp('goto', base.href);
+    await cdp('focus', route);
+    let before = await until(
+      (value) =>
+        value.mounted && value.reads?.slot.status === 'ready' && value.slotLifecycle === 'manual',
+      'The actual slot workspace must observe its canonical current context',
+    );
+    if (
+      await cdp(
+        'eval',
+        route,
+        "return Boolean(document.querySelector('whats-new-modal')?.shadowRoot?.querySelector('.backdrop'));",
+      )
+    )
+      await cdp('click', route, 'whats-new-modal >>> button.primary');
+    const cycles = [];
+    for (const mode of ['dispatch', 'custom']) {
+      const since = observed.changes.length;
+      await inspect();
+      await rpc('config.slot.update', { slotId: fixture.slotId, update: { mode } });
+      const currentSlot = await inspect();
+      assert.equal(JSON.parse(await readFile(pool)).slots[0].mode, mode);
+      const after = await until(
+        (value) =>
+          value.reads?.slot.status === 'ready' &&
+          value.slotLifecycle === currentSlot.lifecycle &&
+          value.renderedLifecycle === currentSlot.lifecycle &&
+          value.lifecycleVisible &&
+          value.reads.slot.observedAt > before.reads.slot.observedAt,
+        'A slot fact change must refetch the existing canonical query without Refresh',
+      );
+      assert.equal(after.reads.slot.query.id, before.reads.slot.query.id);
+      assert.equal(after.slotCurrentRunId, null);
+      const key = (value) => value.family === 'slot' && value.slotId === fixture.slotId;
+      const prior = before.reads.slot.resourceState.dependencies.find(({ key: value }) =>
+        key(value),
+      );
+      const current = after.reads.slot.resourceState.dependencies.find(({ key: value }) =>
+        key(value),
+      );
+      assert(current.revision > prior.revision);
+      await observed.barrier();
+      assert(observed.changes.slice(since).some((change) => key(change.key)));
+      assert(
+        !observed.changes.slice(since).some(({ key }) => key.family === 'runs'),
+        'A mode change must not invalidate unchanged run bindings',
+      );
+      cycles.push({
+        mode,
+        priorRevision: prior.revision,
+        currentRevision: current.revision,
+        after,
+      });
+      await cdp('screenshot', route, path.join(artifacts, `slot-${mode}.png`));
+      before = after;
+    }
+    assert.equal((await inspect()).lifecycle, 'manual');
+    assert.deepEqual(await readFile(pool), beforePool);
+    assert.equal((await stat(pool)).mode & 0o777, beforePoolMode);
+    await writeFile(path.join(artifacts, 'slot-fact-cycles.json'), JSON.stringify(cycles, null, 2));
+    result = {
+      result: 'PASS',
+      slotFactsNotified: true,
+      canonicalSlotContextRefetched: true,
+      unchangedRunBindingsRetained: true,
+      wholeFleetMigrationComplete: false,
+    };
+  } catch (error) {
+    failure = error;
+  } finally {
+    try {
+      await inspect();
+      await rpc('config.slot.update', { slotId: fixture.slotId, update: { mode: originalMode } });
+      assert.deepEqual(await readFile(pool), beforePool);
+      assert.equal((await stat(pool)).mode & 0o777, beforePoolMode);
+    } catch (error) {
+      cleanup.push(error);
+    }
+    observed?.close();
+  }
+  if (failure || cleanup.length)
+    throw new AggregateError([...(failure ? [failure] : []), ...cleanup], 'Slot fact proof failed');
+  console.log(JSON.stringify(result));
+  process.exit(0);
 }
 
 if (phase === 'recipe-owner-web') {

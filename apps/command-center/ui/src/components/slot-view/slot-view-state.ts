@@ -230,7 +230,6 @@ export abstract class SlotViewState extends LitElement {
   _resizeStartValue = 0;
 
   // --- Subscriptions ---
-  _unsubSlot?: () => void;
   _unsubState?: () => void;
   _unsubConn?: () => void;
   _unsubTaskProgress?: () => void;

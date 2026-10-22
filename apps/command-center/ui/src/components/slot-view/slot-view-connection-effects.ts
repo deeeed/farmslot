@@ -1,7 +1,6 @@
 import type {
   ResourceStatusUpdatedPayload,
   SlotResource,
-  SlotStatus,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import { Events } from '@farmslot/protocol';
@@ -38,27 +37,23 @@ export function connectSlotView(view: SlotView): void {
   if (view.slotId) view._loadSlot();
   void refreshSlotViewRecipeRunnerOptions(view);
 
-  // Re-load slot when fleet data arrives (e.g., after page refresh)
-  view._unsubState = subscribe((state) => {
-    if (state.fleet && view.slotId && !view._slot) {
-      view._loadSlot();
-    }
-    if (state.fleet) view._requestSlotSwitcherUpdate(state.fleet.slots);
-  });
-
   const updateLinkedRun = () => {
     view._runQueries.sync();
   };
 
-  view._unsubSlot = gateway.subscribe(Events.SLOT_CHANGED, (payload: unknown) => {
-    const slot = payload as SlotStatus;
-    if (slot.slot === view.slotId) {
-      const prevBoundRunId = view._slot?.currentRunId ?? null;
-      view._slot = slot;
-      if ((slot.currentRunId ?? null) !== prevBoundRunId) {
-        updateLinkedRun();
+  // Follow the same fleet projection as the rest of the application.
+  view._unsubState = subscribe((state) => {
+    if (view.slotId) {
+      const slot = state.fleet?.slots.find((candidate) => candidate.slot === view.slotId) ?? null;
+      if (!view._slot && slot) {
+        view._loadSlot();
+      } else if (view._slot !== slot) {
+        const previousRunId = view._slot?.currentRunId ?? null;
+        view._slot = slot;
+        if ((slot?.currentRunId ?? null) !== previousRunId) updateLinkedRun();
       }
     }
+    view._requestSlotSwitcherUpdate(state.fleet?.slots ?? []);
   });
 
   // Init workspace when gateway connects (handles page refresh)
@@ -104,7 +99,6 @@ export function connectSlotView(view: SlotView): void {
 export function disconnectSlotView(view: SlotView): void {
   document.removeEventListener('keydown', view._boundKeyHandler);
   window.removeEventListener('hashchange', view._onHashChange);
-  view._unsubSlot?.();
   view._unsubState?.();
   view._unsubConn?.();
   view._unsubTaskProgress?.();

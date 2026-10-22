@@ -46,7 +46,7 @@ import {
 } from '../core/config.js';
 import { onStatusCommit } from '../core/state.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
-import { SlotRunBindingChanges, statusRunBindings } from '../resources/slot-run-bindings.js';
+import { SlotResourceChanges, statusSlotResources } from '../resources/slot-run-bindings.js';
 
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
 import { getActiveResources, getCachedSlotResources } from './resource-manager.js';
@@ -265,16 +265,16 @@ function normalizePublicationReview(
 
 let cachedFleet: FleetStatus | null = null;
 let fleetReadVersion = 0;
-const slotRunBindings = new SlotRunBindingChanges();
+const slotResources = new SlotResourceChanges();
 onStatusCommit((snapshot) => {
   cachedFleet = null;
   fleetReadVersion++;
   try {
-    slotRunBindings.observe(statusRunBindings(snapshot));
+    slotResources.observe(statusSlotResources(snapshot));
   } catch (error) {
-    // The file committed, but cannot serve a trustworthy binding projection.
+    // The file committed, but cannot serve trustworthy slot facts or bindings.
     // Invalidate saved readers and propagate the owning writer's failure.
-    slotRunBindings.unavailable();
+    slotResources.unavailable();
     throw error;
   }
 });
@@ -628,19 +628,19 @@ export async function loadFleetStatus(
   try {
     const content = await readFile(statusFile, 'utf-8');
     const raw: RawStatus = JSON.parse(content);
-    const bindings = statusRunBindings(raw);
+    const resources = statusSlotResources(raw);
     const liveIds = new Set(
       (await loadPoolConfigs()).flatMap((pool) => pool.slots.map((slot) => slot.id)),
     );
     next = markGhostSlots(transformFleet(raw), liveIds);
     if (version === fleetReadVersion) {
       cachedFleet = next;
-      slotRunBindings.observe(bindings);
+      slotResources.observe(resources);
     }
   } catch (err) {
     if (version === fleetReadVersion) {
       cachedFleet = null;
-      slotRunBindings.unavailable();
+      slotResources.unavailable();
     }
     if (strictRead) throw err;
     console.error(

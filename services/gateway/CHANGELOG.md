@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot bindings, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire.
+- Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot facts, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire. Slot changes also invalidate former project and node scopes without refetching unchanged run bindings.
 - Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
 - Bound concurrent evidence and progress reads during node recovery, and preserve replayed review slot claims while fleet refresh completes.
 - Prepare reused slots after squash merges by recognizing patches already in the default branch or verified merged PR heads, while preserving unpublished commits and dirty files on newly accepted merged checkouts.

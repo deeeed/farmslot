@@ -100,6 +100,44 @@ test('refused, missing, identical and unrelated writes do not invalidate run rea
   assert.equal(resourceRevisions.revision(key), revision);
 });
 
+test('committed slot facts advance detail and collection reads while retaining the same run binding', async () => {
+  await state.rewriteStatusFile(() => ({
+    slots: [
+      {
+        slot: 'proof',
+        current_run_id: 'same-run',
+        lifecycle: 'ready',
+        branch: 'before',
+        project: 'before-project',
+        machine: 'before-node',
+      },
+    ],
+  }));
+  const slots = { family: 'slots', scope: 'farm' } as const;
+  const detail = { family: 'slot', slotId: 'proof' } as const;
+  const before = resourceRevisions.revision(slots);
+  const beforeDetail = resourceRevisions.revision(detail);
+  const beforeRun = resourceRevisions.revision(key);
+  await state.updateSlotStatus('proof', { lifecycle: 'held', branch: 'after' });
+  assert.equal(resourceRevisions.revision(slots), before + 1);
+  assert.equal(resourceRevisions.revision(detail), beforeDetail + 1);
+  assert.equal(resourceRevisions.revision(key), beforeRun);
+  const current = await loadFleetStatus(false, true);
+  assert.equal(current.slots[0].branch, 'after');
+  assert.equal(current.slots[0].currentRunId, 'same-run');
+  await state.updateSlotStatus('proof', { lifecycle: 'held', branch: 'after' });
+  assert.equal(resourceRevisions.revision(slots), before + 1);
+  await state.updateSlotStatusIf('proof', () => true, {
+    project: 'after-project',
+    machine: 'after-node',
+  });
+  for (const project of ['before-project', 'after-project'])
+    assert(resourceRevisions.revision({ family: 'slots', scope: 'farm', project }) > 0);
+  for (const nodeId of ['before-node', 'after-node'])
+    assert(resourceRevisions.revision({ family: 'slots', scope: 'farm', nodeId }) > 0);
+  assert.equal(resourceRevisions.revision(key), beforeRun);
+});
+
 test('a slow pre-commit read cannot restore an old cached binding or advance it again', async () => {
   await state.rewriteStatusFile(() => rows('before'));
   let captured!: () => void;
