@@ -51,6 +51,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Human claim overrides refresh and re-present their pending gate automatically, preserving existing reviews when the code and reviewed evidence are unchanged. A failed refresh keeps the saved override for retry. TAT-4158 run 4237202e previously required a manual refresh, whose changed display counts made the same reviewed inputs look stale.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Reclaim cancelled replay holds safely when another run needs the slot, detect structured runner failures and check provider authentication before dispatch, and keep operator-driven development out of monitor nudges.
+
 ## 0.30.0 - 2026-10-21
 
 - Completed captures register the gateway's frozen publication selection before retaining their bundle. Completion can read that selection through the strict manifest reader; core run 4b1b02f3 previously had the JSON on disk but outside its bundle manifest, so retaining and replaying completion repeated the refusal.

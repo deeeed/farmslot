@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Record when another run reclaims a cancelled replay hold so retained replays report why the slot is unavailable.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.64.0 - 2026-10-22

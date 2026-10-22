@@ -46,6 +46,7 @@ function harness(rows: Array<Record<string, unknown>>, runs: Record<string, Look
       return 'previewed';
     },
     deps: {
+      reclaimCancelled: async () => false,
       readRow: async () => {
         state.reads += 1;
         return queue.length > 1 ? queue.shift()! : queue[0];
@@ -653,3 +654,25 @@ for (const [kind, opts] of [
     });
   }
 }
+
+test('a pinned new run reclaims a cancelled holder before previewing', async () => {
+  const h = harness([
+    { ...readyRow, lifecycle: 'held', phase: 'occupied', current_run_id: 'prior-run' },
+  ]);
+  let reclaimed = false;
+  const result = await previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, {
+    ...h.deps,
+    reclaimCancelled: async (slot, requester) => {
+      assert.equal(slot, SLOT);
+      assert.equal(requester, 'new-run');
+      reclaimed = true;
+      return true;
+    },
+    readRow: async () => {
+      assert.equal(reclaimed, true);
+      return readyRow;
+    },
+  });
+  assert.equal(result, 'previewed');
+  assert.equal(h.state.previews, 1);
+});

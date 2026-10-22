@@ -63,6 +63,7 @@ import {
   stripRunnerNoise,
 } from '../runners/registry.js';
 import { readRunProgress, runDecisionWaitingStatus } from '../runners/run-progress.js';
+import { RunnerExecutionError } from '../runners/runner-execution-error.js';
 import {
   probeRunnerDescendantPid,
   resolveRunnerSessionForRun,
@@ -1183,18 +1184,26 @@ export async function monitorRun(
       isWorkerSignalFreshForRun(current, latestSignal)
         ? latestSignal
         : undefined;
-    const waiting =
-      alive &&
-      ['monitoring', 'reviewing', 'fixing'].includes(current.status) &&
-      context?.id &&
-      ownedSignal?.waitingForOperator
+    const policyWait =
+      isLightweightInteractiveDevRun(current) && context?.id
         ? {
-            ...ownedSignal.waitingForOperator,
-            contextId: context.id,
-            attemptId: ownedSignal.attemptId!,
+            who: 'operator' as const,
+            reason: 'Interactive development is operator-driven',
+            since: new Date(state.startedAt).toISOString(),
           }
         : undefined;
-    if (alive && ownedSignal) {
+    const wait = ownedSignal?.waitingForOperator ?? policyWait;
+    const waiting =
+      alive && ['monitoring', 'reviewing', 'fixing'].includes(current.status) && context?.id && wait
+        ? {
+            ...wait,
+            contextId: context.id,
+            attemptId: ownedSignal?.attemptId ?? context.nativeSession?.leaseId ?? current.id,
+          }
+        : undefined;
+    if (alive && policyWait && !ownedSignal?.waitingForOperator) {
+      state.operatorWaitMs = Math.max(0, Date.now() - state.startedAt);
+    } else if (alive && ownedSignal) {
       state.operatorWaitMs = operatorWaitDurationMs(ownedSignal, state.startedAt, Date.now());
       const resumed = ownedSignal.operatorWaitIntervals?.at(-1);
       if (resumed) {
@@ -1237,7 +1246,11 @@ export async function monitorRun(
       }
       const probe = await probeWorkerSignalForRun(runId, slotId, currentMonitorContext());
       latestSignal = probe.ok || probe.code === 'non_terminal' ? probe.signal : undefined;
-      if (!latestSignal && getRun(runId)?.waitingForOperator) {
+      if (
+        !latestSignal &&
+        getRun(runId)?.waitingForOperator &&
+        !isLightweightInteractiveDevRun(getRun(runId)!)
+      ) {
         recordOperatorWait(false);
       }
       if (!probe.ok && probe.code === 'artifact_contract') {
@@ -2014,6 +2027,7 @@ async function detectViolations(
 }
 
 interface MonitorLivenessReaders {
+  turn: typeof readRunnerTurnState;
   native: typeof readNativeWorkerSnapshot;
   slot: typeof loadSlotVars;
   target: typeof resolveAgentTarget;
@@ -2031,6 +2045,7 @@ export async function checkAgentLive(
   readers: Partial<MonitorLivenessReaders> = {},
 ): Promise<AgentLiveStatus> {
   const source = {
+    turn: readRunnerTurnState,
     native: readNativeWorkerSnapshot,
     slot: loadSlotVars,
     target: resolveAgentTarget,
@@ -2044,6 +2059,14 @@ export async function checkAgentLive(
     const vars = await source.slot(slotId);
     if (!vars.session) return 'idle';
     const session = (await source.target(slotId, { runId, role, contextId })).target;
+    const turn = await source.turn(vars, session, runner ?? '');
+    if (
+      turn?.confidence === 'high' &&
+      turn.source !== 'pane' &&
+      turn.source !== 'unknown' &&
+      turn.failure
+    )
+      throw new RunnerExecutionError(turn.failure);
     const r = await source.exec(
       vars,
       tmuxShellSnippet(
@@ -2060,6 +2083,7 @@ export async function checkAgentLive(
         ? 'idle'
         : 'unknown';
   } catch (err) {
+    if (err instanceof RunnerExecutionError) throw err;
     console.warn(
       `[run-monitor] live agent check failed for slot=${slotId} run=${runId?.slice(0, 8) ?? '-'} role=${role ?? '-'}: ${(err as Error).message}`,
     );
