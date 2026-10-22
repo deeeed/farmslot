@@ -47,6 +47,7 @@ let commentOwner = 'reviewer';
 let available = true;
 let receipt: ReviewPublicationReceipt | undefined;
 let posts = 0;
+let viewedWrites = 0;
 mock.module('../integrations/github-client.js', {
   namedExports: {
     ...gh,
@@ -104,13 +105,16 @@ mock.module('../pr-monitoring/github-account.js', {
 mock.module('./viewed-files.js', {
   namedExports: {
     ...viewed,
-    markReviewedFilesViewed: async () => ({
-      headSha: head,
-      attemptedAt: new Date().toISOString(),
-      state: 'skipped',
-      paths: [],
-      markedPaths: [],
-    }),
+    markReviewedFilesViewed: async () => {
+      viewedWrites++;
+      return {
+        headSha: head,
+        attemptedAt: new Date().toISOString(),
+        state: 'skipped',
+        paths: [],
+        markedPaths: [],
+      };
+    },
   },
 });
 const { publishWorkspaceReview } = await import('./provider.js');
@@ -152,5 +156,47 @@ test('reconciliation rejects changed report, finding or account and cannot post 
           : /inline findings/,
     );
   }
+  assert.equal(posts, 0);
+});
+
+test('an exact unmarked manual review is registered once without posting or other provider mutations', async () => {
+  body = run.reviewResult!.reviewMd;
+  commentBody = run.reviewResult!.lineComments[0].body;
+  commentOwner = 'reviewer';
+  available = true;
+  receipt = undefined;
+  viewedWrites = 0;
+  const failedRun: Run = { ...run, status: 'failed' };
+  const adoption = { ...input, run: failedRun, readReceipt: async () => receipt };
+
+  const result = await publishWorkspaceReview(adoption);
+  assert.equal(result.reviewId, 123);
+  assert.equal(result.bodySha256, createHash('sha256').update(body).digest('hex'));
+  assert.equal(result.state, 'published');
+  assert.equal((await publishWorkspaceReview(adoption)).reviewId, 123);
+  assert.equal(posts, 0);
+  assert.equal(viewedWrites, 0);
+  receipt = undefined;
+  commentBody = 'A different finding';
+  await assert.rejects(publishWorkspaceReview(adoption), /inline findings differ/);
+  assert.equal(receipt, undefined);
+  assert.equal(posts, 0);
+});
+
+test('a matching manual review blocks automatic posting until explicit reconciliation', async () => {
+  body = run.reviewResult!.reviewMd;
+  commentBody = run.reviewResult!.lineComments[0].body;
+  commentOwner = 'reviewer';
+  available = true;
+  receipt = undefined;
+  await assert.rejects(
+    publishWorkspaceReview({
+      ...input,
+      run: { ...run, status: 'done' },
+      reconcileExisting: false,
+    }),
+    /exists without a local attempted receipt/,
+  );
+  assert.equal(receipt, undefined);
   assert.equal(posts, 0);
 });

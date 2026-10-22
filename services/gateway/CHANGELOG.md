@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Complete frozen reviews with ignored tool state under `.agent/`, and register exact manual review posts during explicit reconciliation without posting again.
+
+- Download Jira image attachments into task assets even when supplied ticket data has no screenshot names.
+
 - Read-only reviewers skip repository settings and hooks. A reviewer that starts or finishes after its acknowledgement timeout resumes the original run and review round.
 
 - Admin people can supervise a pinned native worker after their identity is replaced; the worker keeps its original execution owner.
@@ -46,6 +50,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Human claim overrides refresh and re-present their pending gate automatically, preserving existing reviews when the code and reviewed evidence are unchanged. A failed refresh keeps the saved override for retry. TAT-4158 run 4237202e previously required a manual refresh, whose changed display counts made the same reviewed inputs look stale.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Reclaim cancelled replay holds safely when another run needs the slot, detect structured runner failures and check provider authentication before dispatch, and keep operator-driven development out of monitor nudges.
 
 ## 0.30.0 - 2026-10-21
 

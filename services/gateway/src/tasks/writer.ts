@@ -1274,7 +1274,7 @@ export async function writeTaskFile(
   });
 
   // Download Jira image attachments to assets/
-  if (run.ticketData?.jiraKey && run.ticketData.screenshots.length > 0) {
+  if (run.ticketData?.jiraKey) {
     try {
       const jiraConfig = (projectVars.projectJson as Record<string, unknown>).jira as
         | { base_url: string; email_env?: string; api_token_env?: string }

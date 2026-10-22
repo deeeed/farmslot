@@ -31,6 +31,7 @@ import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { executeHumanGateStep } from '../../run-engine/post-dispatch-steps.js';
 import { isPublicationReviewRecoveryHeld } from '../../run-engine/recovery.js';
 import { makeRun } from '../../run-engine/test-fixtures.js';
+import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 import {
   currentSessionOriginator,
@@ -1114,6 +1115,48 @@ test('runReplayStep rejects read-only imported reference runs', async (t) => {
     () => runReplayStep({ runId: run.id, stepName: 'prepare' }, () => {}),
     /read-only imported reference and cannot be replayed/,
   );
+});
+
+test('cancelled replay waits for demand cleanup and reads its persisted reclaim marker', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-4101',
+  });
+  updateRun(run.id, { status: 'cancelled' });
+  t.after(() => evictTestRun(run.id, 'cancelled'));
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const cleanupHeld = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cleanup = withRunTransition(run.id, async () => {
+    enter();
+    await cleanupHeld;
+    updateRun(run.id, {
+      slotReclaimed: {
+        slotId: 'fixture-slot',
+        byRunId: 'replacement',
+        at: new Date().toISOString(),
+      },
+    });
+  });
+  await entered;
+  const replay = runReplayStep({ runId: run.id, stepName: 'not-a-step' }, () => {});
+  const refused = replay.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  release();
+  await cleanup;
+  const error = await refused;
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /reclaimed by run replacement/);
+  assert.equal(getRun(run.id)?.status, 'cancelled');
 });
 
 test('replaying a cancelled graph run reclaims the node instead of double-dispatching', async (t) => {
