@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test, type TestContext } from 'node:test';
@@ -290,20 +290,34 @@ test('the post-prepare check refuses a checkout away from the frozen head', budg
 
 // Regression: a QA run that failed after prepare left the slot detached at its
 // head, and the next run's prepare refused "Slot is on 'HEAD', expected 'main'".
-test('a slot another QA run left detached prepares at this run head', budget, async (t) => {
-  git(repo, 'fetch', '-q', 'origin');
-  git(repo, 'checkout', '-q', '--detach', frozen);
-  // A failed deps step can leave tracked files changed that the idle branch lacks.
-  writeFileSync(path.join(repo, 'frozen.txt'), 'changed by a failed prepare\n');
-  const run = qaRun(t, selection({ kind: 'ref', ref: later, expectedHeadSha: later }));
+test(
+  'a detached QA slot preserves dirty work before preparing at the next head',
+  budget,
+  async (t) => {
+    git(repo, 'fetch', '-q', 'origin');
+    git(repo, 'checkout', '-q', '--detach', frozen);
+    // A failed deps step can leave tracked files changed that the idle branch lacks.
+    writeFileSync(path.join(repo, 'frozen.txt'), 'changed by a failed prepare\n');
+    t.after(() => git(repo, 'checkout', '-q', '--', 'frozen.txt'));
+    const run = qaRun(t, selection({ kind: 'ref', ref: later, expectedHeadSha: later }));
 
-  const result = await prepare(run.id);
+    await assert.rejects(prepare(run.id), /dirty files would be lost/);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), frozen);
+    assert.equal(
+      readFileSync(path.join(repo, 'frozen.txt'), 'utf8'),
+      'changed by a failed prepare\n',
+    );
 
-  assert.equal(result.outputs?.success, true);
-  assert.equal(git(repo, 'rev-parse', 'HEAD'), later);
-  assert.equal(git(repo, 'status', '--porcelain'), '');
-  assert.throws(() => git(repo, 'symbolic-ref', '-q', 'HEAD'), 'HEAD is detached');
-});
+    // Only the fixture owner discards its own changes, before retrying prepare.
+    git(repo, 'checkout', '-q', '--', 'frozen.txt');
+    const result = await prepare(run.id);
+
+    assert.equal(result.outputs?.success, true);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), later);
+    assert.equal(git(repo, 'status', '--porcelain'), '');
+    assert.throws(() => git(repo, 'symbolic-ref', '-q', 'HEAD'), 'HEAD is detached');
+  },
+);
 
 // A frozen head of a moved, untracked branch is on no remote-tracking ref, so the
 // unpublished-commit check read it as local work and refused both the next run
@@ -371,15 +385,13 @@ test('a slot detached at a local-only commit is still refused', budget, async (t
   assert.equal(git(repo, 'rev-parse', 'HEAD'), localOnly);
 });
 
-// A start-ref prepare that refuses keeps the slot, and any changes on it, where
-// the earlier run left them; only its reset to its own head may discard them.
+// Both source and dirty-work refusals leave the detached checkout untouched.
 test(
   'a refused start-ref prepare leaves a detached slot and its changes alone',
   budget,
   async (t) => {
     git(repo, 'fetch', '-q', 'origin');
     git(repo, 'checkout', '-q', '--detach', frozen);
-    writeFileSync(path.join(repo, 'frozen.txt'), 'evidence from the failed run\n');
     const unpublished = git(
       repo,
       '-c',
@@ -399,8 +411,14 @@ test(
     );
 
     await assert.rejects(prepare(run.id), /not reachable from fetched origin/);
+    writeFileSync(path.join(repo, 'frozen.txt'), 'evidence from the failed run\n');
+    t.after(() => git(repo, 'checkout', '-q', '--', 'frozen.txt'));
+    await assert.rejects(prepare(run.id), /dirty files would be lost/);
     assert.equal(git(repo, 'rev-parse', 'HEAD'), frozen);
     assert.equal(git(repo, 'status', '--porcelain'), 'M frozen.txt');
-    git(repo, 'checkout', '-q', '--', 'frozen.txt');
+    assert.equal(
+      readFileSync(path.join(repo, 'frozen.txt'), 'utf8'),
+      'evidence from the failed run\n',
+    );
   },
 );
