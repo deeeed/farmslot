@@ -49,6 +49,7 @@ assert(
     'review-workspace-web',
     'recipe-owner-web',
     'slot-facts-web',
+    'fleet-store-web',
   ].includes(phase),
   'Select a run proof phase',
 );
@@ -716,6 +717,149 @@ async function detailBrowser(runId) {
     navigate,
     peek: () => cdp('eval', route, '--file', storeProbe),
   };
+}
+
+if (phase === 'fleet-store-web') {
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_SLOT_RESOURCE_PROOF));
+  assert.equal(await realpath(fixture.home), home);
+  const pool = await realpath(fixture.poolFile);
+  assert(pool.startsWith(`${home}/pool/`), 'Only change the owned pool fixture');
+  const originalPool = await readFile(pool);
+  const originalMode = JSON.parse(originalPool).slots.find(
+    (slot) => slot.id === fixture.slotId,
+  )?.mode;
+  assert.equal(originalMode, 'custom');
+  assert.equal((await rpc('run.list', { limit: 1 })).runs.length, 0);
+  const artifacts = process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR;
+  assert(artifacts);
+  await mkdir(artifacts, { recursive: true });
+  const cdp = async (...args) =>
+    JSON.parse(
+      (
+        await execute(
+          process.execPath,
+          [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+          { timeout: 30000, maxBuffer: 2 * 1024 * 1024 },
+        )
+      ).stdout,
+    );
+  const base = new URL(process.env.FARMSLOT_UI_URL);
+  assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
+  base.searchParams.set('fleet-proof', randomUUID());
+  base.hash = 'fleet';
+  const probe = path.join(root, 'apps/command-center/scripts/probes/offline-fleet.js');
+  const until = async (test, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await cdp('eval', 'fleet', '--file', probe);
+      if (test(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const hasSlot = (value, lifecycle) =>
+    value.slots?.some(
+      (slot) =>
+        slot.id === fixture.slotId &&
+        slot.canonical &&
+        slot.rendered &&
+        (!lifecycle || slot.lifecycle === lifecycle),
+    );
+  try {
+    await cdp('goto', base.href);
+    await cdp('focus', 'fleet');
+    const initial = await until(
+      (value) => value.freshness === 'ready' && value.current && hasSlot(value, 'manual'),
+      'The fleet must render its canonical current observation',
+    );
+    assert.equal(initial.storage, 'opfs-sahpool', 'Use actual browser SQLite');
+    if (
+      await cdp(
+        'eval',
+        'fleet',
+        "return Boolean(document.querySelector('whats-new-modal')?.shadowRoot?.querySelector('.backdrop'));",
+      )
+    )
+      await cdp('click', 'fleet', 'whats-new-modal >>> button.primary');
+    await rpc('config.slot.update', { slotId: fixture.slotId, update: { mode: 'dispatch' } });
+    const ready = await until(
+      (value) =>
+        value.freshness === 'ready' &&
+        value.current &&
+        hasSlot(value, 'ready') &&
+        !value.refreshDisabled,
+      'An external writer must refresh the same global fleet without Refresh',
+    );
+    let cold;
+    const outage = await withOwnedGatewayOffline(async () => {
+      const stale = await until(
+        (value) =>
+          value.freshness === 'stale' && !value.current && value.refreshDisabled && hasSlot(value),
+        'Saved fleet controls must wait for a current read',
+      );
+      const age = await until(
+        (value) => value.stale && value.stale !== stale.stale,
+        'Saved fleet age must repaint while offline',
+      );
+      base.searchParams.set('fleet-cold-proof', randomUUID());
+      await cdp('goto', base.href);
+      await cdp('focus', 'fleet');
+      cold = await until(
+        (value) =>
+          value.freshness === 'stale' &&
+          !value.current &&
+          value.refreshDisabled &&
+          value.stale &&
+          hasSlot(value),
+        'A new offline document must render the saved fleet with disabled actions',
+      );
+      assert.equal(
+        cold.observedAt,
+        stale.observedAt,
+        'Cold startup must retain the saved observation age',
+      );
+      await cdp('screenshot', 'fleet', path.join(artifacts, 'fleet-cold-offline.png'));
+      return { stale, age, cold };
+    });
+    const recovered = await until(
+      (value) =>
+        value.freshness === 'ready' &&
+        value.current &&
+        !value.refreshDisabled &&
+        hasSlot(value, 'ready'),
+      'Gateway restart must restore fleet action authority only after a current read',
+    );
+    assert.notEqual(
+      recovered.resourceState.epoch,
+      ready.resourceState.epoch,
+      'Gateway restart must use a new resource epoch',
+    );
+    await rpc('config.slot.update', { slotId: fixture.slotId, update: { mode: originalMode } });
+    await until(
+      (value) => value.freshness === 'ready' && hasSlot(value, 'manual'),
+      'Restored pool mode must reach the same global fleet',
+    );
+    assert.deepEqual(await readFile(pool), originalPool);
+    await writeFile(
+      path.join(artifacts, 'fleet-store.json'),
+      JSON.stringify({ initial, ready, outage, recovered }, null, 2),
+    );
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        action: phase,
+        globalFleetNotified: true,
+        coldFleetRestored: true,
+        staleFleetActionsDisabled: true,
+        fleetRestartRecovered: true,
+      }),
+    );
+  } finally {
+    await rpc('config.slot.update', { slotId: fixture.slotId, update: { mode: originalMode } });
+    assert.deepEqual(await readFile(pool), originalPool);
+  }
+  process.exit(0);
 }
 
 if (phase === 'slot-facts-web') {

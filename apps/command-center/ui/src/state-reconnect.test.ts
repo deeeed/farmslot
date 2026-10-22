@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { FleetStatus, Run } from '@farmslot/protocol';
 
 import { installFakeGateway } from './testing/fake-gateway.js';
 
@@ -33,6 +33,13 @@ test('the workspace survives a gateway restart and clears only for another accou
   let serverRuns = [makeRun()];
   let runRevision = 0;
   let answerRuns = true;
+  let fleetRevision = 0;
+  let answerFleet = true;
+  let serverFleet = {
+    checkedAt: '2026-10-20T00:00:00Z',
+    slots: [{ slot: 'fleet-slot', lifecycle: 'ready' }],
+    summary: {},
+  } as FleetStatus;
   fakeGateway.responseForRequest = ({ method }) => {
     if (method === 'run.list')
       return answerRuns
@@ -52,7 +59,16 @@ test('the workspace survives a gateway restart and clears only for another accou
           dependencies: [{ key: { family: 'decisions', scope: 'farm' }, revision: 0 }],
         },
       };
-    if (method === 'fleet.status') return { payload: {} };
+    if (method === 'fleet.status')
+      return answerFleet
+        ? {
+            payload: { fleet: serverFleet },
+            resourceState: {
+              epoch: fakeGateway.resourceEpoch,
+              dependencies: [{ key: { family: 'slots', scope: 'farm' }, revision: fleetRevision }],
+            },
+          }
+        : undefined;
     if (method === 'pr.list') return { payload: { prs: [] } };
     if (method === 'config.projects') return { payload: { projects: [] } };
     if (method === 'workGraph.list') return { payload: { graphs: [] } };
@@ -67,6 +83,8 @@ test('the workspace survives a gateway restart and clears only for another accou
     onWorkspaceOwnerChange,
     runHistoryQuery,
     activeRunsQuery,
+    fleetQuery,
+    isFleetCurrent,
   } = await import('./state.js');
   const { getResourceCache, disposeResourceCache } = await import('./resource-cache.js');
   fakeGateway.beforeRestore = async () => {
@@ -87,7 +105,59 @@ test('the workspace survives a gateway restart and clears only for another accou
     getResourceCache()!.retry(activeRunsQuery),
   ]);
   assert.equal(getState().runs.length, 1);
+  assert.equal(getState().fleetObservation.status, 'ready');
+  assert.equal(isFleetCurrent(), true);
   let ownerChanges = 0;
+
+  await t.test(
+    'fleet payload events cannot replace the shared query; revisions refetch it once and errors retain stale facts',
+    async () => {
+      const socket = fakeGateway.sockets.at(-1)!;
+      const before = socket.sent.filter(({ method }) => method === 'fleet.status').length;
+      socket.event('fleet.updated', { fleet: { ...serverFleet, slots: [] } });
+      socket.event('slot.changed', { slot: { slot: 'fleet-slot', lifecycle: 'busy' } });
+      await flush();
+      assert.equal(getState().fleet?.slots[0].lifecycle, 'ready');
+      assert.equal(socket.sent.filter(({ method }) => method === 'fleet.status').length, before);
+      serverFleet = { ...serverFleet, stale: true };
+      fleetRevision++;
+      const notice = {
+        version: 1,
+        epoch: fakeGateway.resourceEpoch,
+        changes: [
+          { key: { family: 'slots', scope: 'farm' }, revision: fleetRevision, kind: 'updated' },
+        ],
+      };
+      socket.event('resource.changed', notice);
+      await flush();
+      assert.equal(getState().fleet?.stale, true);
+      assert.equal(isFleetCurrent(), false);
+      assert.equal(
+        socket.sent.filter(({ method }) => method === 'fleet.status').length,
+        before + 1,
+      );
+      socket.event('resource.changed', notice);
+      await flush();
+      assert.equal(
+        socket.sent.filter(({ method }) => method === 'fleet.status').length,
+        before + 1,
+      );
+      answerFleet = false;
+      const pending = getResourceCache()!.retry(fleetQuery);
+      await flush();
+      const request = socket.sent.filter(({ method }) => method === 'fleet.status').at(-1)!;
+      socket.failure(request.id, { code: 'METHOD_ERROR', message: 'Fleet source unreadable' });
+      await pending;
+      assert.equal(getState().fleetObservation.status, 'stale');
+      assert.equal(getState().fleetObservation.error?.message, 'Fleet source unreadable');
+      assert.equal(getState().fleet?.slots[0].slot, 'fleet-slot');
+      assert.equal(isFleetCurrent(), false);
+      answerFleet = true;
+      serverFleet = { ...serverFleet, stale: undefined };
+      await getResourceCache()!.retry(fleetQuery);
+      assert.equal(isFleetCurrent(), true);
+    },
+  );
 
   await t.test(
     'domain payloads cannot replace collections, while resource changes refetch them once',
@@ -137,6 +207,9 @@ test('the workspace survives a gateway restart and clears only for another accou
     );
     assert.equal(getState().workspaceAccess, 'farm');
     assert.equal(getState().runsObservation.status, 'stale');
+    assert.equal(getState().fleetObservation.status, 'stale');
+    assert.equal(getState().fleet?.slots[0].slot, 'fleet-slot');
+    assert.equal(isFleetCurrent(), false);
     assert.equal(isHydrating(getState(), 'runs'), false);
     t.after(onWorkspaceOwnerChange(() => (ownerChanges += 1)));
 
@@ -158,12 +231,14 @@ test('the workspace survives a gateway restart and clears only for another accou
     // Reconnecting as a different principal clears the previous account's workspace.
     fakeGateway.principalId = 'operator-b';
     answerRuns = false;
+    answerFleet = false;
     fakeGateway.restart();
     gateway.reconnect();
     await flush();
     assert.equal(gateway.connectionState, 'connected');
     assert.equal(gateway.authenticatedPrincipalId, 'operator-b');
     assert.deepEqual(getState().runs, []);
+    assert.equal(getState().fleet, null);
     assert.equal(ownerChanges, 1);
   });
 
@@ -171,6 +246,7 @@ test('the workspace survives a gateway restart and clears only for another accou
     // Changing credentials on this client clears at once, before any reconnect.
     serverRuns = [makeRun({ id: 'run-2' })];
     answerRuns = true;
+    answerFleet = true;
     const fresh = Promise.all([
       getResourceCache()!.retry(runHistoryQuery),
       getResourceCache()!.retry(activeRunsQuery),
@@ -193,6 +269,7 @@ test('the workspace survives a gateway restart and clears only for another accou
     await gateway.setAuthCredentials({ token: 'operator-c-secret' });
     assert.deepEqual(getState().runs, []);
     assert.equal(getState().workspaceAccess, 'none');
+    assert.equal(getState().fleet, null);
     assert.equal(ownerChanges, 2);
   });
 

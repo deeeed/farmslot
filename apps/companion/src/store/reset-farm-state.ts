@@ -6,7 +6,7 @@ import { useRunFilterStore } from './run-filters';
 import { useRunStore } from './runs';
 
 export function resetFarmState() {
-  useFleetStore.setState({ fleet: null, loading: false });
+  useFleetStore.setState({ fleet: null, observation: { status: 'loading' }, loading: false });
   useRunStore.setState({
     runs: [],
     observation: { status: 'loading' },

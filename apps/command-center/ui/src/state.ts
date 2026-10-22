@@ -9,7 +9,6 @@ import type {
   DispatchQueueListResult,
   FleetStatus,
   FleetStatusResult,
-  FleetUpdatedPayload,
   GitHubRateLimitPayload,
   MonitorViolation,
   MonitorViolationPayload,
@@ -26,8 +25,6 @@ import type {
   RunListResult,
   RunListSummaryMeta,
   RunProjectAnalyticsSummary,
-  SlotChangedPayload,
-  SlotStatus,
   WorkGraphListResult,
   WorkGraphProjection,
   WorkGraphUpdatedPayload,
@@ -112,6 +109,7 @@ export interface AppState {
   // left over from a prior connection. Reset on disconnect.
   bootstrapFailed: HydratedSlices;
   fleet: FleetStatus | null;
+  fleetObservation: ResourceQueryState<FleetStatusResult>;
   prs: PRStatus[];
   decisions: PendingDecision[];
   runs: Run[];
@@ -200,6 +198,7 @@ const state: AppState = {
   hydrated: { ...EMPTY_HYDRATED },
   bootstrapFailed: { ...EMPTY_HYDRATED },
   fleet: null,
+  fleetObservation: { status: 'loading' },
   prs: [],
   decisions: [],
   runs: [],
@@ -226,6 +225,7 @@ function clearWorkspaceState(): void {
   // Authentication transitions must not leave the previous owner's farm in memory.
   Object.assign(state, {
     fleet: null,
+    fleetObservation: { status: 'loading' },
     prs: [],
     decisions: [],
     runs: [],
@@ -465,6 +465,7 @@ export const runHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, {
 });
 export const activeRunsQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, { active: true });
 export const decisionsQuery = resourceQuery<DecisionListResult>(Methods.DECISION_LIST);
+export const fleetQuery = resourceQuery<FleetStatusResult>(Methods.FLEET_STATUS);
 
 let collectionCache: GatewayResourceCache | undefined;
 let collectionWorkspaceKey: string | undefined;
@@ -472,7 +473,7 @@ let collectionFarm = false;
 let collectionObservers: Array<() => void> = [];
 
 /** These arrays are view projections; notifications and persistence belong to the shared cache. */
-function bindRunCollections(): void {
+function bindFarmCollections(): void {
   const cache = getResourceCache();
   const workspaceKey = getResourceWorkspaceKey();
   const farm =
@@ -491,6 +492,8 @@ function bindRunCollections(): void {
   collectionFarm = farm;
   state.runsObservation = { status: 'loading' };
   state.decisionsObservation = { status: 'loading' };
+  state.fleetObservation = { status: 'loading' };
+  state.fleet = null;
   state.runs = [];
   state.decisions = [];
   if (!cache || !farm) {
@@ -499,6 +502,29 @@ function bindRunCollections(): void {
   }
   if (gateway.connectionState !== 'connected') state.workspaceAccess = 'farm';
   const current = () => collectionCache === cache && collectionWorkspaceKey === workspaceKey;
+  collectionObservers.push(
+    cache.observe(fleetQuery, (result) => {
+      if (!current()) return;
+      const previous = state.fleet;
+      state.fleetObservation = result;
+      state.fleet = result.data?.fleet ?? null;
+      state.hydrated = { ...state.hydrated, fleet: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, fleet: Boolean(result.error) };
+      if (previous && result.status === 'ready') {
+        for (const slot of state.fleet?.slots ?? [])
+          if (
+            slot.lifecycle === 'ready' &&
+            previous.slots.some((row) => row.slot === slot.slot && row.lifecycle === 'busy')
+          )
+            browserNotify('Dispatch complete', {
+              body: `${slot.slot} finished (${slot.taskId || 'task'})`,
+              tag: `complete-${slot.slot}`,
+              route: `#slot/${slot.slot}`,
+            });
+      }
+      notify();
+    }),
+  );
   const observeRuns = () => {
     if (!current()) return;
     const result = mergeRunListObservations(
@@ -590,28 +616,21 @@ export function updateFleet(fleet: FleetStatus): void {
   notify();
 }
 
-export function updateSlot(slot: SlotStatus): void {
-  if (!state.fleet) return;
-  const idx = state.fleet.slots.findIndex((s) => s.slot === slot.slot);
-  const prev = idx >= 0 ? state.fleet.slots[idx] : null;
-  const newSlots = [...state.fleet.slots];
-  if (idx >= 0) {
-    newSlots[idx] = slot;
-  } else {
-    newSlots.push(slot);
-  }
+/** Commands recheck the cache so a rendered button cannot outlive its current read. */
+export function isFleetCurrent(): boolean {
+  const result = getResourceCache()?.read(fleetQuery);
+  return (
+    gateway.connectionState === 'connected' &&
+    gateway.workspaceAccess === 'farm' &&
+    result?.status === 'ready' &&
+    result.data !== undefined &&
+    !result.data.fleet.stale
+  );
+}
 
-  // Detect dispatch completion: working -> released/ready
-  if (prev?.lifecycle === 'busy' && slot.lifecycle === 'ready') {
-    browserNotify('Dispatch complete', {
-      body: `${slot.slot} finished (${slot.taskId || 'task'})`,
-      tag: `complete-${slot.slot}`,
-      route: `#slot/${slot.slot}`,
-    });
-  }
-
-  state.fleet = { ...state.fleet, slots: newSlots };
-  notify();
+export function requireCurrentFleet(): FleetStatus {
+  if (!isFleetCurrent()) throw new Error('Wait for a current fleet read before acting.');
+  return getResourceCache()!.read(fleetQuery).data!.fleet;
 }
 
 export function updatePRs(
@@ -797,8 +816,8 @@ export function waitForCoreHydration(epoch?: number): Promise<void> {
 
 export function initState(): void {
   initializeResourceCache();
-  subscribeResourceCache(bindRunCollections);
-  bindRunCollections();
+  subscribeResourceCache(bindFarmCollections);
+  bindFarmCollections();
   // Keep URL ↔ state in sync: inbound hash changes refresh filter state; state
   // changes re-write the hash so filters ride along across route navigations.
   if (typeof window !== 'undefined') {
@@ -836,22 +855,13 @@ export function initState(): void {
       resetBootstrapState();
     }
     const ownerChanged = syncWorkspaceOwner(conn);
-    bindRunCollections();
+    bindFarmCollections();
     setConnection(conn);
     if (ownerChanged) notifyWorkspaceOwnerChange();
     if (conn === 'connected' && gateway.workspaceAccess === 'farm') {
       const epoch = gateway.connectionEpoch;
       void fetchInitialState(epoch);
     }
-  });
-
-  // Fleet events
-  gateway.subscribe<FleetUpdatedPayload>(Events.FLEET_UPDATED, (p) => {
-    if (p.fleet) deferEvent('fleet', () => updateFleet(p.fleet!));
-  });
-
-  gateway.subscribe<SlotChangedPayload>(Events.SLOT_CHANGED, (p) => {
-    if (p.slot) deferEvent('fleet', () => updateSlot(p.slot!));
   });
 
   // PR events
@@ -1049,14 +1059,14 @@ async function runFetchInitialState(
   // failure and mark the slice failed so the UI can show "cached/stale"
   // affordances instead of false empty states; ephemeral slices that do not
   // have a safe stale rendering path still clear below.
-  const fleetJob = gateway
-    .request<FleetStatusResult>(Methods.FLEET_STATUS)
-    .then((r) => {
-      if (stillCurrent() && r.fleet) updateFleet(r.fleet);
-    })
+  const cache = getResourceCache();
+  const fleetJob = (
+    cache
+      ? cache.retry(fleetQuery)
+      : Promise.reject(new Error('Offline fleet store is unavailable'))
+  )
     .catch(() => markFailed('fleet'))
     .finally(() => markReady('fleet'));
-  const cache = getResourceCache();
   const decisionsJob = (
     cache
       ? cache.retry(decisionsQuery)

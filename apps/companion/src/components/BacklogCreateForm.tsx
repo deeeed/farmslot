@@ -11,7 +11,6 @@ import {
   type BacklogUpdateResult,
   type ConfigProjectsResult,
   type ConfigTemplateOptionsResult,
-  type FleetStatusResult,
   type FlowType,
   Methods,
   type ProjectConfig,
@@ -30,6 +29,7 @@ import { backlogExecutionDefaults } from '../lib/backlog-review-dispatch';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
 import { useFilterStore } from '../store/filters';
+import { useFleetStore } from '../store/fleet';
 
 import { FormSheetHeader } from './FormSheetHeader';
 
@@ -65,7 +65,7 @@ export function BacklogCreateForm({
     item?.project ?? (selectedProjects.length === 1 ? selectedProjects[0] : ''),
   );
   const [projects, setProjects] = useState<ProjectConfig[]>([]);
-  const [fleetSlots, setFleetSlots] = useState<FleetStatusResult['fleet']['slots']>([]);
+  const fleetSlots = useFleetStore((state) => state.fleet?.slots);
   const [templateOptions, setTemplateOptions] = useState<ConfigTemplateOptionsResult['options']>(
     [],
   );
@@ -128,7 +128,7 @@ export function BacklogCreateForm({
   );
   const slotOptions = useMemo(
     () =>
-      fleetSlots
+      (fleetSlots ?? [])
         .filter((slot) => slot.project === project && slot.enabled !== false)
         .map((slot) => slot.slot)
         .sort(),
@@ -138,16 +138,13 @@ export function BacklogCreateForm({
   useEffect(() => {
     let cancelled = false;
     if (!client || status !== 'connected') return;
-    void Promise.all([
-      client.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}),
-      client.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
-    ])
-      .then(([projectResult, fleetResult]) => {
+    void client
+      .request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
+      .then((projectResult) => {
         if (cancelled) return;
         const configured = [...projectResult.projects].sort((a, b) => a.name.localeCompare(b.name));
         setProjects(configured);
         setProject((current) => current || configured[0]?.name || '');
-        setFleetSlots(fleetResult.fleet.slots);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) {

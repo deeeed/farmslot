@@ -4,9 +4,7 @@ import { create } from 'zustand';
 
 import {
   Events,
-  type FleetStatusResult,
   type GatewayAuthConnectResult,
-  Methods,
   type MonitorViolationPayload,
   type PersonDeviceSession,
   type PersonSessionAuth,
@@ -14,10 +12,8 @@ import {
   type PRUpdatedPayload,
   type Run,
   signOutAccount,
-  type SlotStatus,
 } from '@farmslot/protocol';
 
-import { currentFarmConnection } from '../lib/connection-authority';
 import {
   type ConnectionHealthState,
   type ConnectionLiveness,
@@ -65,7 +61,6 @@ import {
 import { notifyRunCompleted, notifyViolation } from '../lib/notifications';
 import type { WorkspaceAccess } from '../lib/workspace-access';
 
-import { useFleetStore } from './fleet';
 import { usePRStore } from './prs';
 import { resetFarmState } from './reset-farm-state';
 
@@ -174,21 +169,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       const session =
         !signedOut && activeProfile ? await readGatewayProfilePersonSession(activeProfile) : null;
 
-      // Subscribe to fleet events
-      client.subscribe(Events.FLEET_UPDATED, (payload) => {
-        const data = payload as { fleet: FleetStatusResult['fleet'] };
-        if (data.fleet) {
-          useFleetStore.getState().setFleet(data.fleet);
-        }
-      });
-
-      client.subscribe(Events.SLOT_CHANGED, (payload) => {
-        const slot = payload as SlotStatus;
-        if (slot?.slot) {
-          useFleetStore.getState().updateSlot(slot);
-        }
-      });
-
       // Completion alerts do not own the run collection.
       client.subscribe(Events.RUN_COMPLETED, (payload) => {
         if (get().client !== client || client.workspaceAccess !== 'farm') return;
@@ -261,20 +241,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         if (status === 'connected') {
           void livenessController?.probeFresh();
           if (workspaceAccess !== 'farm') return;
-          const isCurrent = currentFarmConnection(client);
-          useFleetStore.getState().setLoading(true);
-          client
-            .request<FleetStatusResult>(Methods.FLEET_STATUS)
-            .then((result) => {
-              if (!isCurrent()) return;
-              useFleetStore.getState().setFleet(result.fleet);
-              set({ lastSyncError: null });
-            })
-            .catch((err: Error) => {
-              if (!isCurrent()) return;
-              set({ lastSyncError: `Failed to refresh fleet: ${err.message}` });
-              useFleetStore.getState().setLoading(false);
-            });
 
           // PR_LIST fans out through GitHub and can legitimately outlive a cold
           // connect. Keep it lazy on the PR screen so a slow PR refresh does not

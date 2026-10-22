@@ -3,8 +3,6 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type {
-  FleetStatus,
-  FleetStatusResult,
   Run,
   RunListResult,
   SlotStatus,
@@ -86,7 +84,6 @@ export class TerminalSplitView extends LitElement {
   @state() private _endSessionError = '';
   @state() private _workerPaneFilter: WorkerPaneFilter = 'adhoc';
 
-  private _unsubFleet?: () => void;
   private _unsubTmuxWorkerUpdated?: () => void;
   private _unsubState?: () => void;
   private _tmuxWorkerFetchSeq = 0;
@@ -424,10 +421,6 @@ export class TerminalSplitView extends LitElement {
     this._globalFilters = initial.globalFilters;
     this._runs = initial.runs;
     this._hydrating = isHydrating(initial, 'fleet');
-    this._unsubFleet = gateway.subscribe(Events.FLEET_UPDATED, (payload: unknown) => {
-      const fleet = payload as FleetStatus;
-      this._availableSlots = this._applyFilters(fleet.slots).map((s) => s.slot);
-    });
     this._unsubTmuxWorkerUpdated = gateway.subscribe<TmuxWorkerInventoryUpdatedPayload>(
       Events.TMUX_WORKER_INVENTORY_UPDATED,
       (payload) => {
@@ -442,15 +435,12 @@ export class TerminalSplitView extends LitElement {
       this._globalFilters = s.globalFilters;
       this._runs = s.runs;
       this._hydrating = isHydrating(s, 'fleet');
-      if (s.fleet) {
-        this._availableSlots = this._applyFilters(s.fleet.slots).map((slot) => slot.slot);
-      }
+      this._availableSlots = this._applyFilters(s.fleet?.slots ?? []).map((slot) => slot.slot);
     });
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    this._unsubFleet?.();
     this._unsubTmuxWorkerUpdated?.();
     this._unsubState?.();
   }
@@ -547,13 +537,8 @@ export class TerminalSplitView extends LitElement {
     this._save();
   }
 
-  private async _fetchSlots() {
-    try {
-      const result = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
-      this._availableSlots = this._applyFilters(result.fleet.slots).map((s) => s.slot);
-    } catch (err) {
-      console.warn('[terminal-split-view] failed to refresh fleet slots', err);
-    }
+  private _fetchSlots() {
+    this._availableSlots = this._applyFilters(getState().fleet?.slots ?? []).map((s) => s.slot);
   }
 
   private async _fetchTmuxWorkers() {
@@ -631,12 +616,9 @@ export class TerminalSplitView extends LitElement {
 
   private async _showActiveRuns() {
     try {
-      const [fleetResult, active] = await Promise.all([
-        gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
-        this._refreshActiveRuns(),
-      ]);
+      const active = await this._refreshActiveRuns();
       const activeRuns = selectActiveRunSlotIds(
-        fleetResult.fleet.slots,
+        getState().fleet?.slots ?? [],
         active,
         this._globalFilters,
       );
@@ -655,10 +637,7 @@ export class TerminalSplitView extends LitElement {
 
   private async _showPinnedSlots() {
     try {
-      const [fleetResult] = await Promise.all([
-        gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
-        this._refreshActiveRuns(),
-      ]);
+      await this._refreshActiveRuns();
       const availableRuns = new Set(
         selectWorkspaceRuns(this._runs, this._globalFilters).map((run) => run.id),
       );
@@ -666,7 +645,7 @@ export class TerminalSplitView extends LitElement {
         .flatMap((pin) => ('runId' in pin && availableRuns.has(pin.runId) ? [pin.runId] : []))
         .slice(0, 8);
       const pinned = selectPinnedSlotIds(
-        fleetResult.fleet.slots,
+        getState().fleet?.slots ?? [],
         listPinnedSlots().map((pin) => pin.slotId),
         this._globalFilters,
       );

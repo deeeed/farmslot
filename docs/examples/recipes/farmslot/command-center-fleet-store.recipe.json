@@ -1,0 +1,75 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Fleet persists through an offline reload and gateway restart",
+  "description": "ADR-071 fleet client proof. Run from this checkout against the isolated one-slot CLI fixture selected by FARMSLOT_OFFLINE_PROOF, FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, FARMSLOT_SLOT_RESOURCE_PROOF, GATEWAY_PORT, FARMSLOT_UI_URL, FARMSLOT_CDP_PORT and FARMSLOT_RUN_WEB_EVIDENCE_DIR. The selected gateway must run under its own tsx watcher. The fixture has no workers, runs or devices and starts in custom mode. Only its pool mode changes, then exact pool bytes restore. The existing owned-gateway outage helper verifies listener/watcher identity, stops that gateway and recovers it in finally. Existing farm services remain untouched. Real CDP navigation reloads the page offline; probes only read the actual canonical fleet component. No UI/cache injection. Video is off. Native platform acceptance remains separate.",
+  "proofTargets": [
+    {
+      "id": "globalFleetNotified",
+      "claim": "An external configuration write updates the actual fleet from its canonical global observation without Refresh."
+    },
+    {
+      "id": "coldFleetRestored",
+      "claim": "A new offline document restores rendered fleet cards from actual browser SQLite with the saved age."
+    },
+    {
+      "id": "staleFleetActionsDisabled",
+      "claim": "Fleet actions stay disabled while offline and saved age repaints."
+    },
+    {
+      "id": "fleetRestartRecovered",
+      "claim": "Gateway restart changes the observed epoch and fleet actions wait for a current read."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs fleet-store-web",
+        "timeout_ms": 180000,
+        "intent": "Drive the real fleet, restart only the owned watched gateway, reload offline and restore exact private pool bytes.",
+        "next": "globalFleetNotified"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "globalFleetNotified": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"globalFleetNotified\":true",
+        "intent": "An external configuration write updates the actual fleet from its canonical global observation without Refresh.",
+        "proves": ["globalFleetNotified"],
+        "next": "coldFleetRestored"
+      },
+      "coldFleetRestored": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"coldFleetRestored\":true",
+        "intent": "A new offline document restores rendered fleet cards from actual browser SQLite with the saved age.",
+        "proves": ["coldFleetRestored"],
+        "next": "staleFleetActionsDisabled"
+      },
+      "staleFleetActionsDisabled": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"staleFleetActionsDisabled\":true",
+        "intent": "Fleet actions stay disabled while offline and saved age repaints.",
+        "proves": ["staleFleetActionsDisabled"],
+        "next": "fleetRestartRecovered"
+      },
+      "fleetRestartRecovered": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"fleetRestartRecovered\":true",
+        "intent": "Gateway restart changes the observed epoch and fleet actions wait for a current read.",
+        "proves": ["fleetRestartRecovered"],
+        "next": "done"
+      }
+    }
+  }
+}

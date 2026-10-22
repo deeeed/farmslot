@@ -23,7 +23,7 @@ import type {
   FleetRefreshSlotsResult,
   FleetRefreshSlotUpdateEvent,
   FleetRefreshSummaryEvent,
-  FleetStatusResult,
+  FleetStatus,
   ScriptComplete,
   ScriptOutput,
   SlotRefreshResult,
@@ -31,7 +31,7 @@ import type {
 import { Events, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-import { getState } from '../../state.js';
+import { getState, requireCurrentFleet } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 
 import {
@@ -123,16 +123,15 @@ export class FleetRefreshModal extends FleetRefreshModalState {
     this._filterSnapshot = { projects: [...filters.projects], machines: [...filters.machines] };
     this._filteredOutCount = 0;
 
-    let fleet: FleetStatusResult;
+    let fleet: FleetStatus;
     let projectConfigs: Record<string, FleetRefreshProjectConfig> = {};
     try {
-      const [fleetResult, projectsResult] = await Promise.all([
-        gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
-        gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}).catch(() => ({
+      fleet = requireCurrentFleet();
+      const projectsResult = await gateway
+        .request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
+        .catch(() => ({
           projects: [],
-        })),
-      ]);
-      fleet = fleetResult;
+        }));
       projectConfigs = Object.fromEntries(
         (projectsResult.projects ?? []).map((project) => [
           project.name,
@@ -149,7 +148,7 @@ export class FleetRefreshModal extends FleetRefreshModalState {
     }
 
     const { rows, hidden, staleSlotIds, filteredOutCount } = buildFleetRefreshReviewRows(
-      fleet.fleet.slots,
+      fleet.slots,
       this._filterSnapshot,
       projectConfigs,
     );
@@ -268,6 +267,7 @@ export class FleetRefreshModal extends FleetRefreshModalState {
     }
 
     try {
+      requireCurrentFleet();
       const slots = selected.map((r) => ({ slotId: r.slotId, mode: r.mode }));
       await gateway.request<FleetRefreshSlotsResult>(
         Methods.FLEET_REFRESH_SLOTS,
@@ -422,6 +422,7 @@ export class FleetRefreshModal extends FleetRefreshModalState {
     cleanup.push(gateway.subscribe(Events.SCRIPT_COMPLETE, onComplete));
 
     try {
+      requireCurrentFleet();
       const result = await gateway.request<SlotRefreshResult>(
         Methods.SLOT_REFRESH,
         { slotId, mode: 'force', requestId: reqId },

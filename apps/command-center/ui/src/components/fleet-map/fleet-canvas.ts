@@ -2,6 +2,7 @@ import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import type {
+  FleetStatusResult,
   FleetThumbnailsUpdatedPayload,
   MachineHealth,
   MachinePauseExecuteParams,
@@ -37,7 +38,8 @@ import type {
   TaskProgressStructured,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { Events, Methods, primaryRoleForFlow } from '@farmslot/protocol';
+import { Events, Methods, primaryRoleForFlow, sourceObservationAge } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import './machine-group.js';
 import './machine-pause-dialog.js';
@@ -50,10 +52,13 @@ import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
 import { providerAccountsStore } from '../../provider-accounts-store.js';
+import { getResourceCache } from '../../resource-cache.js';
 import {
   type AppState,
+  fleetQuery,
   getProjectSlotTrackingConfigs,
   getState,
+  isFleetCurrent,
   isHydrating,
   subscribe,
 } from '../../state.js';
@@ -101,6 +106,9 @@ export class FleetCanvas extends LitElement {
   @state() private slots: SlotStatus[] = [];
   @state() private hydrating = false;
   @state() private bootstrapFailed = false;
+  @state() private fleetObservation: ResourceQueryState<FleetStatusResult> = { status: 'loading' };
+  @state() private now = Date.now();
+  private fleetAgeTimer?: ReturnType<typeof setInterval>;
   @state() private groupBy: FleetCanvasGroupBy = 'machine';
   @state() private filterProjects: string[] = [];
   @state() private filterMachines: string[] = [];
@@ -488,6 +496,8 @@ export class FleetCanvas extends LitElement {
   }
 
   disconnectedCallback() {
+    clearInterval(this.fleetAgeTimer);
+    this.fleetAgeTimer = undefined;
     this.clearPressureHistoryRefresh();
     this.clearResourcePressureRecoveryRefresh();
     this._providerAccountsUnsub?.();
@@ -538,6 +548,16 @@ export class FleetCanvas extends LitElement {
     this.slots = s.fleet?.slots ?? [];
     this.hydrating = isHydrating(s, 'fleet');
     this.bootstrapFailed = s.bootstrapFailed.fleet;
+    this.fleetObservation = s.fleetObservation;
+    if (s.fleetObservation.status === 'stale' && s.fleet && !this.fleetAgeTimer) {
+      this.now = Date.now();
+      this.fleetAgeTimer = setInterval(() => {
+        this.now = Date.now();
+      }, 1000);
+    } else if (s.fleetObservation.status !== 'stale' || !s.fleet) {
+      clearInterval(this.fleetAgeTimer);
+      this.fleetAgeTimer = undefined;
+    }
     this.filterProjects = s.globalFilters.projects;
     this.filterMachines = s.globalFilters.machines;
     const pressureFilterChanged =
@@ -1303,11 +1323,30 @@ export class FleetCanvas extends LitElement {
           @input=${(e: Event) => (this.search = (e.target as HTMLInputElement).value)}
         />
         ${this.renderFleetRefreshTrigger()}
-        ${this.bootstrapFailed && this.slots.length > 0
-          ? html`<span class="rehydrating-banner">Refresh failed… showing cached fleet state</span>`
-          : this.hydrating && this.slots.length > 0
-            ? html`<span class="rehydrating-banner">Reconnecting… showing last snapshot</span>`
-            : ''}
+        ${this.fleetObservation.status === 'stale' && this.fleetObservation.data
+          ? html`<span class="rehydrating-banner" data-fleet-freshness="stale">
+              Saved fleet, ${sourceObservationAge(this.fleetObservation.observedAt, this.now)}.
+              Actions wait for a current read.
+            </span>`
+          : ''}
+        ${this.fleetObservation.data?.fleet.stale
+          ? html`<span class="rehydrating-banner"
+              >Fleet source is stale. Actions wait for a fresh observation.</span
+            >`
+          : ''}
+        ${this.fleetObservation.status === 'unsupported'
+          ? html`<span class="rehydrating-banner"
+              >Live fleet updates are unavailable on this gateway.</span
+            >`
+          : ''}
+        ${this.fleetObservation.error
+          ? html`<span role="alert"
+              >Could not read fleet: ${this.fleetObservation.error.message}
+              <button @click=${() => getResourceCache()?.retry(fleetQuery)}>
+                Retry reading fleet
+              </button>
+            </span>`
+          : ''}
       </div>
       <div class="canvas">
         ${this.groupBy === 'resource' ? this.renderResourceView() : this.renderGroupView()}
@@ -1341,11 +1380,12 @@ export class FleetCanvas extends LitElement {
     return html`
       <button
         class="toggle-btn fleet-refresh-trigger ${eligible > 0 ? 'has-eligible' : ''}"
-        ?disabled=${eligible === 0 || this.fleetRefreshOpen}
+        ?disabled=${!isFleetCurrent() || eligible === 0 || this.fleetRefreshOpen}
         title=${eligible === 0
           ? 'No eligible slots — every slot is busy, held, or disabled'
           : 'Bulk refresh idle slots'}
         @click=${() => {
+          if (!isFleetCurrent()) return;
           this.fleetRefreshOpen = true;
           this._writeUrlParams();
         }}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ResourceChangedPayload, Run } from '@farmslot/protocol';
+import type { FleetStatus, ResourceChangedPayload, Run } from '@farmslot/protocol';
 import {
   createGatewayResourceCache,
   createMemoryResourceStore,
@@ -63,6 +63,11 @@ class CollectionTransport implements ResourceCacheTransport {
   revision = 0;
   active = [run('active', 'monitoring')];
   history = [run('history')];
+  fleet = {
+    checkedAt: '2026-10-20T00:00:00Z',
+    slots: [{ slot: 'fleet-slot' }],
+    summary: {},
+  } as FleetStatus;
   readonly reads: Array<{ method: ResourceReadMethod; params: unknown }> = [];
   readonly connections = new Set<(connection: ResourceCacheConnection) => void>();
   readonly changes = new Set<(payload: ResourceChangedPayload) => void>();
@@ -83,12 +88,14 @@ class CollectionTransport implements ResourceCacheTransport {
   request<T>(method: ResourceReadMethod, params: unknown): Promise<ResourceReadResult<T>> {
     this.reads.push({ method, params });
     const data =
-      method === 'decision.list'
-        ? { decisions: [] }
-        : {
-            runs: Reflect.get(params as object, 'active') ? this.active : this.history,
-            totalCount: 1,
-          };
+      method === 'fleet.status'
+        ? { fleet: this.fleet }
+        : method === 'decision.list'
+          ? { decisions: [] }
+          : {
+              runs: Reflect.get(params as object, 'active') ? this.active : this.history,
+              totalCount: 1,
+            };
     return Promise.resolve({
       data: data as T,
       resourceState: {
@@ -128,21 +135,23 @@ test('native collections keep history on demand, replace deleted rows, retain st
   try {
     collections.bind(cache, 'first-owner');
     await flush();
-    assert.equal(transport.reads.length, 2);
+    assert.equal(transport.reads.length, 3);
+    assert.equal(observed.at(-1)?.fleet.status, 'ready');
+    assert.equal(observed.at(-1)?.fleet.data?.fleet.slots[0].slot, 'fleet-slot');
     assert.deepEqual(
       observed.at(-1)?.runs.data?.runs.map(({ id }) => id),
       ['active'],
     );
     await collections.openHistory();
     await flush();
-    assert.equal(transport.reads.length, 3);
+    assert.equal(transport.reads.length, 4);
     assert.deepEqual(nativeRunHistoryQuery.params, { limit: 80, sort: 'newest' });
     assert.equal(observed.at(-1)?.runs.data?.runs.length, 2);
     transport.active = [];
     transport.history = [];
     transport.invalidateRuns();
     await flush();
-    assert.equal(transport.reads.length, 5, 'Each observed run query refreshes once');
+    assert.equal(transport.reads.length, 6, 'Each observed run query refreshes once');
     assert.deepEqual(
       observed.at(-1)?.runs.data?.runs,
       [],
@@ -151,11 +160,14 @@ test('native collections keep history on demand, replace deleted rows, retain st
     transport.disconnect();
     await flush();
     assert.equal(observed.at(-1)?.runs.status, 'stale');
+    assert.equal(observed.at(-1)?.fleet.status, 'stale');
+    assert.equal(observed.at(-1)?.fleet.data?.fleet.slots[0].slot, 'fleet-slot');
     assert(observed.at(-1)?.runs.observedAt !== undefined);
     collections.bind(undefined, 'second-owner');
     assert.equal(observed.at(-1)?.runs.data, undefined);
     assert.equal(observed.at(-1)?.decisions.data, undefined);
     assert.equal(observed.at(-1)?.history, undefined);
+    assert.equal(observed.at(-1)?.fleet.data, undefined);
     collections.dispose();
   } finally {
     collections.dispose();

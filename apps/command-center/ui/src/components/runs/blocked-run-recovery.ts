@@ -2,7 +2,6 @@ import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
-  FleetStatusResult,
   Run,
   RunProbeWorkerSignalResult,
   RuntimeCapabilityProofPlan,
@@ -12,6 +11,7 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { requireCurrentFleet } from '../../state.js';
 
 import {
   blockedWorkerOwnsSlot,
@@ -114,7 +114,7 @@ export class BlockedRunRecovery extends LitElement {
       this.error = error instanceof Error ? error.message : String(error);
     }
     try {
-      const { fleet } = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
+      const fleet = requireCurrentFleet();
       if (refreshSeq !== this.refreshSeq) return false;
       if (fleet.stale)
         throw new Error('Slot ownership is stale. Refresh the fleet before recovery.');
@@ -154,7 +154,7 @@ export class BlockedRunRecovery extends LitElement {
   }
 
   private async assertSlotOwned(run: Run): Promise<void> {
-    const { fleet } = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
+    const fleet = requireCurrentFleet();
     if (fleet.stale) throw new Error('Slot ownership is stale. Refresh the fleet before recovery.');
     const slot = fleet.slots.find((entry) => entry.slot === run.slotId);
     if (this.run.id === run.id) {

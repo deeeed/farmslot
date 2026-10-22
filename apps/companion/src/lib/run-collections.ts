@@ -1,11 +1,12 @@
-import type { RunGetResult } from '@farmslot/protocol';
+import type { FleetStatus, RunGetResult } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { useConnectionStore } from '../store/connection';
 import { useDecisionStore } from '../store/decisions';
+import { useFleetStore } from '../store/fleet';
 import { useRunStore } from '../store/runs';
 
-import { nativeDecisionsQuery, NativeRunCollections } from './gateway-run-sync';
+import { nativeDecisionsQuery, nativeFleetQuery, NativeRunCollections } from './gateway-run-sync';
 import { notifyDecision } from './notifications';
 import {
   getResourceCache,
@@ -15,6 +16,11 @@ import {
 } from './resource-cache';
 
 const collections = new NativeRunCollections((snapshot) => {
+  useFleetStore.setState({
+    observation: snapshot.fleet,
+    fleet: snapshot.fleet.data?.fleet ?? null,
+    loading: snapshot.fleet.status === 'loading',
+  });
   useRunStore.setState({
     observation: snapshot.runs,
     runs: snapshot.runs.data?.runs ?? [],
@@ -68,6 +74,21 @@ export function initializeNativeRunCollections(): () => void {
 
 export const openNativeRunHistory = () => collections.openHistory();
 export const retryNativeDecisions = () => collections.retryDecisions();
+
+export function assertNativeFleetReady(): FleetStatus {
+  const state = useConnectionStore.getState();
+  const observed = getResourceCache()?.read(nativeFleetQuery);
+  if (
+    state.status !== 'connected' ||
+    state.client?.connectionState !== 'connected' ||
+    getResourceWorkspaceAccess() !== 'farm' ||
+    observed?.status !== 'ready' ||
+    !observed.data ||
+    observed.data.fleet.stale
+  )
+    throw new Error('Wait for a current fleet read before acting.');
+  return observed.data.fleet;
+}
 
 export function assertNativeDecisionReady(decisionId: string): void {
   const state = useConnectionStore.getState();

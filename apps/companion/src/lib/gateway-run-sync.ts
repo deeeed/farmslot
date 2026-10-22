@@ -1,5 +1,6 @@
 import {
   type DecisionListResult,
+  type FleetStatusResult,
   mergeRunListObservations,
   Methods,
   type RunListResult,
@@ -23,6 +24,7 @@ export const nativeRunHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LI
   sort: 'newest',
 });
 export const nativeDecisionsQuery = resourceQuery<DecisionListResult>(Methods.DECISION_LIST);
+export const nativeFleetQuery = resourceQuery<FleetStatusResult>(Methods.FLEET_STATUS);
 
 export function nativeCollectionReadTimeout(
   method: ResourceReadMethod,
@@ -36,6 +38,7 @@ export function nativeCollectionReadTimeout(
 }
 
 export interface NativeRunCollectionSnapshot {
+  fleet: ResourceQueryState<FleetStatusResult>;
   runs: ResourceQueryState<RunListResult>;
   active: ResourceQueryState<RunListResult>;
   history?: ResourceQueryState<RunListResult>;
@@ -67,6 +70,7 @@ export class NativeRunCollections {
     };
     this.stops.push(cache.observe(nativeActiveRunsQuery, changed));
     this.stops.push(cache.observe(nativeDecisionsQuery, changed));
+    this.stops.push(cache.observe(nativeFleetQuery, changed));
     if (this.historyRequested) this.stopHistory = cache.observe(nativeRunHistoryQuery, changed);
   }
 
@@ -106,6 +110,7 @@ export class NativeRunCollections {
     const history =
       this.cache && this.historyRequested ? this.cache.read(nativeRunHistoryQuery) : undefined;
     this.publish({
+      fleet: this.cache?.read(nativeFleetQuery) ?? { status: 'loading' },
       active,
       ...(history ? { history } : {}),
       runs: mergeRunListObservations(active, history),
