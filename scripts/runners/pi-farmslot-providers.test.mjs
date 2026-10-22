@@ -1,12 +1,40 @@
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import test from 'node:test';
 
 import {
+  checkPiProviderAuth,
   fetchOpenAiModelIds,
   listPiProviderSources,
   openaiBaseUrl,
   resolvePiProviderCatalog,
 } from './pi-farmslot-providers.mjs';
+
+test('extension-provider preflight uses live authenticated model discovery without inference', async (t) => {
+  let requests = 0;
+  const server = http.createServer((req, res) => {
+    requests++;
+    assert.equal(req.url, '/v1/models');
+    assert.equal(req.headers.authorization, 'Bearer fixture-key');
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ data: [{ id: 'qwen2.5-coder' }] }));
+  });
+  t.after(
+    () =>
+      new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const result = await checkPiProviderAuth('unused-native-cli', 'ollama/qwen2.5-coder', {
+    FARMSLOT_PI_OLLAMA_URL: `http://127.0.0.1:${address.port}`,
+    OLLAMA_API_KEY: 'fixture-key',
+  });
+  assert.deepEqual(result, { status: 'ready', provider: 'ollama' });
+  assert.equal(requests, 1);
+});
 
 test('openaiBaseUrl adds http and /v1', () => {
   assert.equal(openaiBaseUrl('127.0.0.1:11434'), 'http://127.0.0.1:11434/v1');

@@ -158,6 +158,9 @@ export function writePiHook(params) {
     tmuxPane,
     slotId: env.FARMSLOT_SLOT_ID || undefined,
     runner: env.FARMSLOT_RUNNER || 'pi',
+    ...(event === 'StopFailure' && typeof params.failure === 'string' && params.failure
+      ? { failure: params.failure }
+      : {}),
     ...(typeof turnStartedAt === 'number' ? { turnStartedAt } : {}),
     ...(typeof turnActive === 'boolean' ? { turnActive } : {}),
     ...(typeof rootSessionId === 'string' && rootSessionId ? { rootSessionId } : {}),
@@ -172,4 +175,17 @@ export function writePiHook(params) {
     writeSnapshot(path.join(obsDir, 'panes'), record.tmuxPane, record);
   }
   return record;
+}
+
+/** The last native assistant result owns this turn's error, never rendered text. */
+export function piTurnFailure(messages) {
+  if (!Array.isArray(messages)) return null;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (!message || message.role !== 'assistant') continue;
+    return message.stopReason === 'error' && typeof message.errorMessage === 'string'
+      ? message.errorMessage
+      : null;
+  }
+  return null;
 }

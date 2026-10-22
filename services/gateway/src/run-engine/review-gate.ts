@@ -635,37 +635,37 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
     return { run: fresh, decision: current };
   };
   const invalidateApproval = async (error: unknown): Promise<never> => {
-    if (error instanceof ReviewApprovalPolicyError) {
-      const target = freshTarget();
-      const actions = reviewPostingActions(null);
-      const invalidated = updateRun(runId, {
-        reviewResult: undefined,
-        decisions: target.run.decisions.map((entry) =>
-          entry.id === decision.id
-            ? {
-                ...entry,
-                payload: {
-                  ...(entry.payload as ReviewGatePayload),
-                  recommendation:
-                    error.recommendation === 'APPROVE' ? 'COMMENT' : error.recommendation,
-                },
-                description: `${error.message}. Correct the updated review result before publication.`,
-                actions,
-                context: { ...entry.context, gateActions: actions },
-              }
-            : entry,
-        ),
-      });
-      const evaluated = await refreshRunGateReadiness(invalidated);
-      await persistRunNow(evaluated, 'invalidate stale review approval');
-      broadcastFn(Events.RUN_UPDATED, { run: evaluated });
-    }
+    const target = freshTarget();
+    const actions = reviewPostingActions(null);
+    const invalidated = updateRun(runId, {
+      reviewResult: undefined,
+      decisions: target.run.decisions.map((entry) =>
+        entry.id === decision.id
+          ? {
+              ...entry,
+              payload: {
+                ...(entry.payload as ReviewGatePayload),
+                recommendation:
+                  error instanceof ReviewApprovalPolicyError && error.recommendation !== 'APPROVE'
+                    ? error.recommendation
+                    : 'COMMENT',
+              },
+              description: `${error instanceof Error ? error.message : String(error)}. Correct the updated review result before publication.`,
+              actions,
+              context: { ...entry.context, gateActions: actions },
+            }
+          : entry,
+      ),
+    });
+    const evaluated = await refreshRunGateReadiness(invalidated);
+    await persistRunNow(evaluated, 'invalidate stale review approval');
+    broadcastFn(Events.RUN_UPDATED, { run: evaluated });
     throw error;
   };
   if (run.reviewWorkspace) {
     const completion = await readReviewWorkspaceCompletion(runId).catch(invalidateApproval);
     if (!completion?.result || completion.signal.outcome !== 'success')
-      throw new Error('Reviewer has not finished its updated result');
+      return invalidateApproval(new Error('Reviewer has not finished its updated result'));
     const target = freshTarget();
     const result = completion.result;
     const actions = reviewPostingActions(result.reviewMd);
@@ -688,7 +688,7 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
     broadcastFn(Events.RUN_UPDATED, { run: evaluated });
     return evaluated;
   }
-  await copyWorkerArtifacts(runId);
+  await copyWorkerArtifacts(runId).catch(invalidateApproval);
   const review = await readReviewArtifacts(runId).catch(invalidateApproval);
   try {
     if (review.lineComments.length) {

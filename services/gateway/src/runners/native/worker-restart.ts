@@ -10,6 +10,7 @@ import { cancelNativeRunWorkers } from './worker.js';
 export async function restartNativeWorkerContexts(
   runId: string,
   assertCurrent: () => void,
+  options: { machineTransitionHeld?: boolean } = {},
 ): Promise<void> {
   const original = getRun(runId);
   if (!original || original.transport !== 'native') throw new Error('Native run not found');
@@ -17,7 +18,7 @@ export async function restartNativeWorkerContexts(
   if (original.agentContexts?.some((context) => context.nativeSession?.recovery))
     throw new Error('Reconcile the pending native recovery before restarting its task');
   assertCurrent();
-  await cancelNativeRunWorkers(runId);
+  await cancelNativeRunWorkers(runId, options);
   assertCurrent();
   const run = getRun(runId)!;
   for (const context of run.agentContexts ?? []) {

@@ -327,7 +327,9 @@ async function verifyCheckout() {
   const common = await git(['-C',checkout,'rev-parse','--path-format=absolute','--git-common-dir']);
   if (fs.realpathSync(common) !== fs.realpathSync(cache)) throw new Error('Checkout belongs to another repository');
   if (await git(['-C',checkout,'rev-parse','HEAD']) !== identity.headSha) throw new Error('Checkout HEAD no longer matches frozen review');
-  if (await git(['-C',checkout,'status','--porcelain','--untracked-files=normal','--ignored=matching'])) throw new Error('Review checkout changed; refusing to discard files');
+  const changes = (await git(['-C',checkout,'status','--porcelain','-z','--untracked-files=normal','--ignored=matching'])).split('\0').filter(Boolean);
+  // Ignored tool runtime state is not reviewed source. Preserve every other change.
+  if (changes.some((entry) => !entry.startsWith('!! .agent/'))) throw new Error('Review checkout changed; refusing to discard files');
 }
 (async () => {
   directory(root);

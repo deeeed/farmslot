@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { Type } from 'typebox';
 
-import { writePiHook } from './pi-farmslot-hook-writer.mjs';
+import { piTurnFailure, writePiHook } from './pi-farmslot-hook-writer.mjs';
 import { resolvePiProviderCatalog } from './pi-farmslot-providers.mjs';
 import {
   deliverTaskOnce,
@@ -204,6 +204,20 @@ export default async function (pi: {
     },
   );
 
+  let terminalFailure: string | null = null;
+  pi.on('agent_start', async () => {
+    terminalFailure = null;
+  });
+  pi.on('agent_end', async (event: { messages?: unknown }) => {
+    terminalFailure = piTurnFailure(event.messages);
+  });
+  pi.on('agent_before_settle', async (event: { outcome?: string }) => {
+    terminalFailure =
+      event.outcome === 'error'
+        ? terminalFailure || 'Pi runner failed before completing its turn'
+        : null;
+  });
+
   pi.on(
     'agent_settled',
     async (
@@ -212,7 +226,8 @@ export default async function (pi: {
     ) => {
       writePiHook({
         obsDir: obsDir(),
-        event: 'Stop',
+        event: terminalFailure ? 'StopFailure' : 'Stop',
+        failure: terminalFailure,
         sessionId: sessionIdFrom(ctx),
         cwd: ctx.cwd,
       });

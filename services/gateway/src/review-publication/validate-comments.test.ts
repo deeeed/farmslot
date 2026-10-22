@@ -5,7 +5,11 @@ import type { ReviewDiffSnapshot } from '@farmslot/protocol';
 
 import { makeRun } from '../run-completion/test-fixtures.js';
 
-import { assertReviewCommentLines, assertReviewFindingBodies } from './validate-comments.js';
+import {
+  assertReviewCommentLines,
+  assertReviewFindingBodies,
+  readReviewCommentDiff,
+} from './validate-comments.js';
 
 const snapshot: ReviewDiffSnapshot = {
   baseSha: 'a'.repeat(40),
@@ -19,6 +23,41 @@ const comment = {
   severity: 'minor',
   body: 'Handle the missing value.',
 };
+
+test('a renamed destination keeps its source in the diff limiter', async () => {
+  const run = makeRun();
+  run.reviewWorkspace = {
+    workspaceId: 'rename',
+    machine: 'local',
+    executionNodeId: 'local',
+    checkoutPath: '/fixture/source',
+    taskPath: '/fixture/task',
+    artifactPath: '/fixture/task/artifacts',
+  };
+  const read = (_run: typeof run, scope: ReviewDiffSnapshot, file: string) =>
+    readReviewCommentDiff(run, scope, file, {
+      runCommand: async (args) => {
+        let stdout = snapshot.baseSha ?? '';
+        if (args[0] === 'rev-parse' && args.includes(`${snapshot.headSha}^{commit}`))
+          stdout = snapshot.headSha ?? '';
+        if (args[0] === 'diff') {
+          stdout = args.includes('--name-status')
+            ? 'R095\told.ts\tnew.ts\n'
+            : args.includes('--numstat')
+              ? '1\t1\told.ts => new.ts\n'
+              : args.includes(':(literal)old.ts')
+                ? '@@ -15 +15 @@\n-old\n+new\n'
+                : '@@ -0,0 +1,2 @@\n+first\n+second\n';
+        }
+        return { stdout, stderr: '' };
+      },
+    });
+  await assert.rejects(
+    assertReviewCommentLines(run, [{ ...comment, path: 'new.ts', line: 1 }], snapshot, read),
+    /RIGHT-side diff/,
+  );
+  await assertReviewCommentLines(run, [{ ...comment, path: 'new.ts', line: 15 }], snapshot, read);
+});
 
 test('inline review comments resolve to added or context lines at the frozen head, never a deleted or out-of-diff line', async () => {
   const run = makeRun();

@@ -140,6 +140,7 @@ const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
 
 export interface SlotReleaseOptions {
   restartRunId?: string;
+  machineTransitionHeld?: boolean;
   expectedSlotEpoch?: number;
   prepareStopTimeoutMs?: number;
   prepareStopHeartbeatMs?: number;
@@ -160,6 +161,7 @@ function releaseCoalesceKey(params: SlotReleaseParams, options?: SlotReleaseOpti
     preserveAgents: params.preserveAgents ?? false,
     detachRuns: params.detachRuns ?? true,
     restartRunId: options?.restartRunId ?? null,
+    machineTransitionHeld: options?.machineTransitionHeld ?? false,
     expectedSlotEpoch: options?.expectedSlotEpoch ?? null,
   });
 }
@@ -618,9 +620,13 @@ async function slotReleaseImpl(
     const releasingRunId = params.expectedRunId ?? boundOwner;
     await assertReleaseClaim();
     if (releasingRunId && getRun(releasingRunId)?.transport === 'native') {
-      await cancelNativeRunWorkers(releasingRunId);
+      await cancelNativeRunWorkers(releasingRunId, {
+        machineTransitionHeld: options?.machineTransitionHeld,
+      });
     } else {
-      await retireNativeWorkersForSlot(params.slotId, releasingRunId ?? undefined);
+      await retireNativeWorkersForSlot(params.slotId, releasingRunId ?? undefined, undefined, {
+        machineTransitionHeld: options?.machineTransitionHeld,
+      });
       await assertReleaseClaim();
       await closeDevServerLogTailWindow(vars);
       await assertReleaseClaim();

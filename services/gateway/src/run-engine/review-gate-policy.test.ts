@@ -30,6 +30,19 @@ mock.module('../review-workspaces/task.js', {
     collectReviewWorkspaceSubtaskMetrics: unused,
   },
 });
+mock.module('./review-artifacts.js', {
+  namedExports: {
+    reviewCommitFromMarkdown: unused,
+    reviewRecommendationFromMarkdown: unused,
+    readFrozenPlanningContext: unused,
+    buildReviewPlanningBrief: unused,
+    copyWorkerArtifacts: async () => {},
+    readReviewArtifacts: async () => {
+      if (latest instanceof Error) throw latest;
+      throw new Error('Unexpected primary read');
+    },
+  },
+});
 const root = await mkdtemp(path.join(os.tmpdir(), 'review-gate-policy-'));
 process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
@@ -87,6 +100,33 @@ test('refresh invalidates stale APPROVE and then projects revised minor and majo
     (getRun(run.id)!.decisions[0].payload as ReviewGatePayload).recommendation,
     'COMMENT',
   );
+  const workspace = getRun(run.id)!.reviewWorkspace;
+  for (const mode of ['workspace', 'primary'])
+    for (const message of [
+      'body-only finding missing from report',
+      'outside RIGHT-side diff',
+      'wrong head identity',
+    ]) {
+      const before = getRun(run.id)!;
+      updateRun(run.id, {
+        reviewWorkspace: mode === 'workspace' ? workspace : undefined,
+        reviewResult: result,
+        decisions: before.decisions.map((decision) => ({
+          ...decision,
+          payload: { ...(decision.payload as ReviewGatePayload), ...result },
+          actions: [{ id: 'post', label: 'Post', style: 'primary' }],
+        })),
+      });
+      latest = new Error(message);
+      await assert.rejects(refreshReviewGate(run.id), { message });
+      const invalid = getRun(run.id)!;
+      assert.equal(invalid.reviewResult, undefined);
+      const payload = invalid.decisions[0].payload;
+      assert(payload?.kind === 'review');
+      assert.equal(payload.recommendation, 'COMMENT');
+      assert(!invalid.decisions[0].actions.some((action) => action.id === 'post'));
+    }
+  updateRun(run.id, { reviewWorkspace: workspace });
   for (const recommendation of ['COMMENT', 'REQUEST_CHANGES'] as const) {
     latest = {
       signal: { status: 'complete', outcome: 'success', timestamp: new Date().toISOString() },

@@ -45,6 +45,7 @@ import {
 } from '../review/review-round-budget.js';
 import { reviewedInputsAwaitingReview } from '../review/reviewed-inputs.js';
 import { reviewResultArtifactPath } from '../review/terminal-result.js';
+import { assertReviewCommentLines } from '../review-publication/validate-comments.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
 import type { InheritedAcceptanceCandidate } from '../run-completion/inherited-acceptance.js';
 import { isArtifactOnlyRun } from '../run-completion/orchestrator.js';
@@ -307,6 +308,10 @@ const readers: GatePrerequisiteReaders = {
       readReviewInputSnapshot(path.join(taskDir, path.basename(run.taskFile ?? 'TASK.md'))),
     ]);
     const snapshot = input.snapshot;
+    if (review.lineComments.length) {
+      if (!snapshot) throw new Error('Review diff identity is unavailable');
+      await assertReviewCommentLines(run, review.lineComments, snapshot);
+    }
     return (
       review.hasReview &&
       Boolean(snapshot?.headSha) &&

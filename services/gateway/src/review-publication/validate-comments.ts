@@ -1,27 +1,45 @@
 import type { ReviewDiffSnapshot, ReviewIssue, ReviewLineComment, Run } from '@farmslot/protocol';
 import { normalizeReviewSeverity } from '@farmslot/protocol/review-approval-policy.cjs';
 
-import { gitExec } from '../methods/git.js';
+import { gitBranchDiff, gitExec, type GitExecDeps } from '../methods/git.js';
 import { workspaceReviewGit } from '../review-workspaces/git.js';
 
 import { rightDiffLines } from './diff-comments.js';
 
-export async function readReviewCommentDiff(run: Run, snapshot: ReviewDiffSnapshot, file: string) {
+export async function readReviewCommentDiff(
+  run: Run,
+  snapshot: ReviewDiffSnapshot,
+  file: string,
+  dependencies?: GitExecDeps,
+) {
   if (!snapshot.baseSha || !snapshot.headSha)
     throw new Error('Review diff identity is unavailable');
-  const deps = run.reviewWorkspace
-    ? await workspaceReviewGit({
-        runId: run.id,
-        slotId: '',
-        base: snapshot.baseSha,
-        head: snapshot.headSha,
-      })
-    : undefined;
+  const deps =
+    dependencies ??
+    (run.reviewWorkspace
+      ? await workspaceReviewGit({
+          runId: run.id,
+          slotId: '',
+          base: snapshot.baseSha,
+          head: snapshot.headSha,
+        })
+      : undefined);
   if (!run.reviewWorkspace && !run.slotId) throw new Error('Review source is unavailable');
+  const inventory = await gitBranchDiff(
+    { slotId: run.slotId ?? '', base: snapshot.baseSha, head: snapshot.headSha },
+    deps,
+  );
+  const oldPath = inventory.files.find((entry) => entry.path === file)?.oldPath;
   return (
     await gitExec(
       run.slotId ?? '',
-      ['diff', `${snapshot.baseSha}...${snapshot.headSha}`, '--', `:(literal)${file}`],
+      [
+        'diff',
+        `${snapshot.baseSha}...${snapshot.headSha}`,
+        '--',
+        `:(literal)${file}`,
+        ...(oldPath ? [`:(literal)${oldPath}`] : []),
+      ],
       { maxBuffer: 10 * 1024 * 1024 },
       deps,
     )

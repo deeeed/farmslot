@@ -43,6 +43,8 @@ export type RunnerTaskProgressReader = (
 ) => Promise<MonitorProgressKind | null>;
 
 export interface HookRecord {
+  /** Error emitted by this exact native terminal turn. */
+  failure?: string;
   schemaVersion?: number;
   observedAt?: number;
   observed_at?: number;
