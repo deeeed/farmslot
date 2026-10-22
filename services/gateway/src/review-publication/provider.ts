@@ -134,7 +134,8 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
       JSON.stringify([run.id, ownerId, pr.host.toLowerCase(), pr.repo.toLowerCase(), pr.number]),
     )
     .digest('hex')} -->`;
-  let publishedBody = `${result.reviewMd.trim()}\n\n${marker}`;
+  const report = result.reviewMd.trim();
+  let publishedBody = `${report}\n\n${marker}`;
   await input.authorize();
   const binding = await resolvePRSourceAccount(account, ownerId);
   const endpoint = `repos/${pr.repo}/pulls/${pr.number}`;
@@ -172,15 +173,28 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
   const pages = await get('/reviews?per_page=100', ['--paginate', '--slurp']);
   if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page)))
     throw new Error('GitHub review history is incomplete');
+  const exactManualReview = (review: Record<string, unknown>) =>
+    typeof review.body === 'string' &&
+    review.body.trim() === report &&
+    review.commit_id === subject.headSha &&
+    record(review.user) &&
+    typeof review.user.login === 'string' &&
+    review.user.login.toLowerCase() === account.login.toLowerCase();
   const matches = pages
     .flat()
     .filter(
       (review: unknown): review is Record<string, unknown> =>
-        record(review) && typeof review.body === 'string' && review.body.includes(marker),
+        record(review) &&
+        typeof review.body === 'string' &&
+        (review.body.includes(marker) || exactManualReview(review)),
     );
   if (matches.length > 1)
     throw new Error('Multiple provider reviews contain this publication marker');
-  const retain = async (review: Record<string, unknown>, receipt: ReviewPublicationReceipt) => {
+  const retain = async (
+    review: Record<string, unknown>,
+    receipt: ReviewPublicationReceipt,
+    updateViewedFiles = true,
+  ) => {
     if (
       typeof review.id !== 'number' ||
       !Number.isSafeInteger(review.id) ||
@@ -208,6 +222,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
       publishedAt: review.submitted_at,
     };
     await input.saveReceipt(published);
+    if (!updateViewedFiles) return published;
     const viewedFiles = await markReviewedFilesViewed(
       { pr, headSha: subject.headSha, account, binding },
       async (viewedFiles) => input.saveReceipt({ ...published, viewedFiles }),
@@ -217,7 +232,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
   if (matches.length) {
     if (!prior && input.reconcileExisting) {
       const review = matches[0];
-      const report = result.reviewMd.trim();
+      const manual = exactManualReview(review);
       const body = typeof review.body === 'string' ? review.body : '';
       const plain = `${report}\n\n${marker}`;
       const notice =
@@ -228,7 +243,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
         /^Reviewed head: `([a-f0-9]{40})`\. The PR advanced to `[a-f0-9]{40}` after this review; these findings concern the reviewed head\.$/u.exec(
           notice,
         );
-      if (body !== plain && noticeMatch?.[1] !== subject.headSha)
+      if (!manual && body !== plain && noticeMatch?.[1] !== subject.headSha)
         throw new Error('Provider review body differs from the gated report');
       if (typeof review.id !== 'number' || !Number.isSafeInteger(review.id) || review.id <= 0)
         throw new Error('Provider review identity is invalid');
@@ -260,8 +275,8 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
           throw new Error('Provider inline findings do not match the reviewed source/account');
         actual.push(JSON.stringify([detail.path, detail.original_line, detail.side, detail.body]));
       }
-      const expected = comments.map((comment) =>
-        JSON.stringify([comment.path, comment.line, comment.side, comment.body]),
+      const expected = (manual ? result.lineComments : comments).map((comment) =>
+        JSON.stringify([comment.path, comment.line, 'RIGHT', comment.body]),
       );
       if (JSON.stringify(actual.sort()) !== JSON.stringify(expected.sort()))
         throw new Error('Provider inline findings differ from the gated review');
@@ -271,22 +286,30 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
           ? 'COMMENT'
           : recommendation;
       await input.authorize();
-      return retain(review, {
-        version: 1,
-        state: 'posting',
-        runId: run.id,
-        ownerId,
-        ...(input.ownerGeneration !== undefined ? { ownerGeneration: input.ownerGeneration } : {}),
-        account: structuredClone(account),
-        pr: structuredClone(pr),
-        headSha: subject.headSha,
-        contentSha256,
-        marker,
-        event,
-        attemptedAt:
-          typeof review.submitted_at === 'string' ? review.submitted_at : new Date().toISOString(),
-        bodySha256: createHash('sha256').update(body).digest('hex'),
-      });
+      return retain(
+        review,
+        {
+          version: 1,
+          state: 'posting',
+          runId: run.id,
+          ownerId,
+          ...(input.ownerGeneration !== undefined
+            ? { ownerGeneration: input.ownerGeneration }
+            : {}),
+          account: structuredClone(account),
+          pr: structuredClone(pr),
+          headSha: subject.headSha,
+          contentSha256,
+          marker,
+          event,
+          attemptedAt:
+            typeof review.submitted_at === 'string'
+              ? review.submitted_at
+              : new Date().toISOString(),
+          bodySha256: createHash('sha256').update(body).digest('hex'),
+        },
+        !manual,
+      );
     }
     if (!prior)
       throw new Error(
@@ -314,7 +337,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     comments.length ? await get('/files?per_page=100', ['--paginate', '--slurp']) : [],
     { host: pr.host, repo: pr.repo, headSha: subject.headSha },
   );
-  publishedBody = `${result.reviewMd.trim()}${located.bodySuffix}\n\n${marker}`;
+  publishedBody = `${report}${located.bodySuffix}\n\n${marker}`;
   const receipt: ReviewPublicationReceipt = {
     version: 1,
     state: 'posting',
