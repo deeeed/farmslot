@@ -86,6 +86,13 @@ interface DispatchWizardViewContext {
   comparisonFlow: boolean;
   comparisonPickerRuns: readonly Run[];
   comparisonPickerLoading: boolean;
+  comparisonPickerReady: boolean;
+  comparisonPickerError: string;
+  comparisonPickerSavedAge: string;
+  retryComparisonPicker: () => void;
+  baselineReadError: string;
+  baselineSavedAge: string;
+  retryBaseline: () => void;
   comparePickerOpen: boolean;
   comparePickerSearch: string;
   variantCollision: boolean;
@@ -179,6 +186,10 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
         pickerSearch: ctx.comparePickerSearch,
         pickerRuns: ctx.comparisonPickerRuns,
         pickerLoading: ctx.comparisonPickerLoading,
+        pickerReady: ctx.comparisonPickerReady,
+        pickerError: ctx.comparisonPickerError,
+        pickerSavedAge: ctx.comparisonPickerSavedAge,
+        retryPicker: ctx.retryComparisonPicker,
         enterComparisonFlow: ctx.enterComparisonFlow,
         enterNormalFlow: ctx.enterNormalFlow,
         openComparisonPicker: ctx.openComparisonPicker,
@@ -186,6 +197,16 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
         setPickerOpen: ctx.setComparePickerOpen,
         setPickerSearch: ctx.setComparePickerSearch,
       })}
+      ${ctx.baselineSavedAge
+        ? html`<div role="status" data-comparison-baseline-stale>
+            Saved comparison baseline, ${ctx.baselineSavedAge}. Dispatch waits for a current read.
+          </div>`
+        : nothing}
+      ${ctx.baselineReadError
+        ? html`<div role="alert" data-comparison-baseline-error>
+            ${ctx.baselineReadError}<button @click=${ctx.retryBaseline}>Retry</button>
+          </div>`
+        : nothing}
       ${showDispatchForm
         ? html`
             ${renderDispatchWizardPrimaryControls({

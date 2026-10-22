@@ -34,6 +34,7 @@ assert(
     'history-web',
     'store-navigation-web',
     'slot-run-web',
+    'dispatch-runs-web',
   ].includes(phase),
   'Select a run proof phase',
 );
@@ -1719,6 +1720,190 @@ if (phase === 'slot-run-web') {
     base.hash = 'runs';
     await cdp('goto', base.href);
   }
+  process.exit(0);
+}
+
+if (phase === 'dispatch-runs-web') {
+  const cdp = async (...args) => {
+    const { stdout } = await execute(
+      process.execPath,
+      [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+      { timeout: 60000, maxBuffer: 1024 * 1024 },
+    );
+    return JSON.parse(stdout);
+  };
+  const route = 'dispatch';
+  const probe = path.join(root, 'apps/command-center/scripts/probes/offline-dispatch-runs.js');
+  const storeProbe = path.join(
+    root,
+    'apps/command-center/scripts/probes/offline-dispatch-runs-store.js',
+  );
+  const base = new URL(process.env.FARMSLOT_UI_URL ?? `http://localhost:${process.env.VITE_PORT}`);
+  assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
+  base.searchParams.set('dispatch-runs-proof', randomUUID());
+  base.hash = route;
+  const artifacts =
+    process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR ??
+    path.join(home, 'dispatch-runs-proof', randomUUID());
+  await mkdir(artifacts, { recursive: true });
+  const snapshot = () => cdp('eval', route, '--file', probe);
+  const until = async (ready, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await snapshot();
+      if (ready(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const storedAt = async (expected) => {
+    const deadline = Date.now() + 15000;
+    let stored;
+    do {
+      stored = await cdp('eval', route, '--file', storeProbe);
+      if (stored.storedObservedAt === expected) return stored;
+      await delay(50);
+    } while (Date.now() < deadline);
+    assert.fail(
+      `The actual dispatch SQLite row must match its accepted timestamp: ${JSON.stringify(stored)}`,
+    );
+  };
+  const result = await withRunFixture(
+    ({ runId }) => ({
+      status: 'blocked',
+      completedAt: undefined,
+      ticketOrPr: `Offline dispatch proof ${runId.slice(0, 8)}`,
+    }),
+    async ({ runId, runFile }) => {
+      const row = (value) => value.cards?.find((card) => card.id === runId);
+      await cdp('goto', base.href);
+      await cdp('focus', route);
+      await cdp('click', route, 'dispatch-wizard >>> [data-testid="dispatch-intent-comparison"]');
+      const initial = await until(
+        (value) =>
+          value.open &&
+          value.picker.status === 'ready' &&
+          value.canonicalRows &&
+          row(value)?.visible &&
+          !row(value).disabled,
+        'The comparison picker must render the actual shared current list',
+      );
+      assert.equal(initial.selectedBaseline, '');
+      assert.equal(initial.picker.query.method, 'run.list');
+      assert.equal(initial.picker.query.params.limit, 50);
+      await cdp('fill', route, 'dispatch-wizard >>> .compare-modal-search', runId);
+      await until(
+        (value) => value.cards.length === 1 && row(value)?.visible,
+        'Real picker search must isolate the disposable run',
+      );
+      await rpc('run.cancel', { runId });
+      const changed = await until(
+        (value) =>
+          value.picker.status === 'ready' &&
+          value.canonicalRows &&
+          row(value)?.text.includes('cancelled'),
+        'External cancellation must update the visible canonical comparison card',
+      );
+      await cdp('screenshot', route, path.join(artifacts, 'dispatch-picker-current.png'));
+      await cdp('key', route, 'Tab');
+      await until(
+        (value) => value.activeCard === runId,
+        'Real keyboard focus must reach the baseline card',
+      );
+      let pickerObservedAt;
+      await withOwnedGatewayOffline(async () => {
+        const stale = await until(
+          (value) =>
+            value.open &&
+            value.picker.status === 'stale' &&
+            value.canonicalRows &&
+            row(value)?.visible &&
+            row(value).disabled,
+          'Saved comparison cards must disable selection after disconnect',
+        );
+        pickerObservedAt = stale.picker.observedAt;
+        assert(pickerObservedAt >= changed.picker.observedAt);
+        await cdp('key', route, 'Enter');
+        const refused = await snapshot();
+        assert.equal(
+          refused.selectedBaseline,
+          '',
+          'A real keyboard selection cannot adopt stale comparison inputs',
+        );
+        assert.equal(refused.open, true);
+        await until(
+          (value) => value.pickerAge && value.pickerAge !== stale.pickerAge,
+          'Saved picker age must repaint without reading',
+        );
+        await storedAt(pickerObservedAt);
+        await cdp('screenshot', route, path.join(artifacts, 'dispatch-picker-stale.png'));
+      });
+      await until(
+        (value) =>
+          value.pickerReady &&
+          !value.contextBlocked &&
+          value.picker.status === 'ready' &&
+          row(value)?.visible &&
+          !row(value).disabled &&
+          !value.selectedBaseline,
+        'Reconnect must reread the picker without selecting a baseline',
+      );
+      await cdp('click', route, `dispatch-wizard >>> [data-run-id="${runId}"] .compare-run-cta`);
+      const selected = await until(
+        (value) =>
+          value.selectedBaseline === runId &&
+          !value.open &&
+          value.baseline.status === 'ready' &&
+          value.runInputsReady,
+        'An explicit current selection must bind its canonical full-run observation',
+      );
+      assert.equal(selected.baseline.query.method, 'run.get');
+      assert.deepEqual(selected.baseline.query.params, { runId });
+      assert(selected.ticket.includes('Offline dispatch proof'));
+      let baselineObservedAt;
+      await withOwnedGatewayOffline(async () => {
+        const stale = await until(
+          (value) =>
+            value.selectedBaseline === runId &&
+            value.baseline.status === 'stale' &&
+            !value.runInputsReady &&
+            value.baselineAge,
+          'A saved selected baseline must retire dispatch readiness until a current read',
+        );
+        baselineObservedAt = stale.baseline.observedAt;
+        await storedAt(baselineObservedAt);
+        await cdp('screenshot', route, path.join(artifacts, 'dispatch-baseline-stale.png'));
+      });
+      await until(
+        (value) =>
+          value.selectedBaseline === runId &&
+          value.baseline.status === 'ready' &&
+          value.runInputsReady,
+        'Reconnect must revalidate the selected full run without dispatching',
+      );
+      const record = JSON.parse(await readFile(runFile, 'utf8'));
+      assert.equal(record.status, 'cancelled');
+      assert.equal(record.slotId, null);
+      return {
+        result: 'PASS',
+        action: phase,
+        sharedComparisonPicker: true,
+        externalCancellationVisible: true,
+        staleKeyboardRefused: true,
+        selectionNotReplayed: true,
+        selectedFullRunObserved: true,
+        pickerSqliteObservedAt: pickerObservedAt,
+        baselineSqliteObservedAt: baselineObservedAt,
+        coldPickerPendingFleetPersistence: true,
+        dispatchCommandMatrixPending: true,
+        screenshots: artifacts,
+      };
+    },
+  );
+  base.hash = 'runs';
+  await cdp('goto', base.href);
+  console.log(JSON.stringify(result));
   process.exit(0);
 }
 

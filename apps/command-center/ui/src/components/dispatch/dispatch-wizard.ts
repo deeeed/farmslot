@@ -13,6 +13,8 @@ import type {
   QaInput,
   Run,
   RunCancelResult,
+  RunGetResult,
+  RunListResult,
   SourceSelection,
 } from '@farmslot/protocol';
 import {
@@ -20,8 +22,10 @@ import {
   Methods,
   parseGitHubPullUrl,
   parseGitHubRef,
+  sourceObservationAge,
   workspacePolicyMachines,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   defaultModelForRunner,
   resolveReviewDispatchDefaults,
@@ -36,6 +40,8 @@ import './dispatch-native-profiles.js';
 import './recipe-compatibility-panel.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
+import { activeRunsQuery, runHistoryQuery } from '../../state.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { COMPARISON_LANE_RUNNERS, RUNNER_OPTIONS } from '../../utils/runner-options.js';
 import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
@@ -45,6 +51,7 @@ import {
 } from '../shared/execution-template-picker-model.js';
 import { qaInputFieldStyles } from '../shared/qa-input-fields.js';
 import { renderQaProfileControl } from '../shared/qa-profile-control.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   dispatchNativeProfileKey,
@@ -85,8 +92,8 @@ import {
   selectedTemplateMode,
   syncSelectedAppForProject,
 } from './dispatch-wizard-draft.js';
+import { filterRunsForComparisonPicker } from './dispatch-wizard-helpers.js';
 import {
-  lookupRecentRunsForComparisonPicker,
   requestDispatchProfileFit,
   requestDispatchProjectMatch,
   requestDispatchWizardCandidates,
@@ -128,12 +135,151 @@ import { renderDispatchWizardView } from './dispatch-wizard-view-renderer.js';
 
 @customElement('dispatch-wizard')
 export class DispatchWizard extends DispatchWizardState {
+  private readonly comparisonQuery = new ResourceQueryController<RunListResult>(this, () =>
+    this._runReadsChanged(),
+  );
+  private readonly baselineQuery = new ResourceQueryController<RunGetResult>(this, () =>
+    this._runReadsChanged(),
+  );
+  private _runOwnerKey?: string;
+  private _runAgeClock?: number;
+  private _runActionRequest?: symbol;
+
+  private get _comparisonRows(): Run[] {
+    return filterRunsForComparisonPicker(
+      this.mockMode
+        ? (this.mockPriorRuns ?? getState().runs)
+        : this.comparisonQuery.belongsToWorkspace
+          ? (this.comparisonQuery.state.data?.runs ?? [])
+          : [],
+      {
+        projectFilters: getState().globalFilters.projects,
+        machineFilters: getState().globalFilters.machines,
+      },
+    );
+  }
+
+  private get _comparisonReady(): boolean {
+    return (
+      this.mockMode ||
+      (!this._hydrating &&
+        !this._bootstrapFailed &&
+        !this._connectionStale &&
+        this.comparisonQuery.ready)
+    );
+  }
+
+  private _runReadsChanged(): void {
+    const key = getResourceWorkspaceKey();
+    if (this._runOwnerKey !== undefined && key !== this._runOwnerKey) {
+      this._runActionRequest = undefined;
+      this._dispatching = false;
+      this._error = '';
+      this._exitComparisonMode();
+    }
+    this._runOwnerKey = key;
+    if (this.baselineQuery.ready && this.baselineQuery.state.data?.run)
+      this._tryHydrateComparisonParentEngine([this.baselineQuery.state.data.run]);
+    const saved =
+      (this._comparePickerOpen &&
+        this.comparisonQuery.state.status !== 'ready' &&
+        this.comparisonQuery.state.data) ||
+      (this._comparisonParentRunId &&
+        this.baselineQuery.state.status !== 'ready' &&
+        this.baselineQuery.state.data);
+    if (saved && !this._runAgeClock)
+      this._runAgeClock = window.setInterval(() => this.requestUpdate(), 1000);
+    else if (!saved && this._runAgeClock) {
+      window.clearInterval(this._runAgeClock);
+      this._runAgeClock = undefined;
+    }
+  }
+
+  private _observeRunReads(): void {
+    const projects = getState().globalFilters.projects;
+    this.comparisonQuery.setQuery(
+      this._comparePickerOpen && !this.mockMode
+        ? resourceQuery<RunListResult>(Methods.RUN_LIST, {
+            limit: 50,
+            ...(projects.length === 1 ? { project: projects[0] } : {}),
+          })
+        : undefined,
+    );
+    this.baselineQuery.setQuery(
+      this._comparisonParentRunId && !this.mockMode
+        ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: this._comparisonParentRunId })
+        : undefined,
+    );
+    this._runReadsChanged();
+  }
+
+  private _runInputsReady(): boolean {
+    const cache = getResourceCache();
+    return (
+      this.mockMode ||
+      Boolean(
+        gateway.connectionState === 'connected' &&
+        cache &&
+        cache.read(activeRunsQuery).status === 'ready' &&
+        cache.read(runHistoryQuery).status === 'ready' &&
+        (!this._comparisonParentRunId || this.baselineQuery.ready),
+      )
+    );
+  }
+
+  private _requireCurrentRunInputs(): void {
+    const cache = getResourceCache();
+    if (
+      !this.isConnected ||
+      gateway.connectionState !== 'connected' ||
+      !cache ||
+      cache.read(activeRunsQuery).status !== 'ready' ||
+      cache.read(runHistoryQuery).status !== 'ready'
+    )
+      throw new Error('Wait for current runs before dispatching.');
+    if (this._comparisonParentRunId) {
+      const run = this.baselineQuery.requireReady().run;
+      if (
+        run.id !== this._comparisonParentRunId ||
+        (run.familyId || run.id) !== this._comparisonFamilyId ||
+        run.project !== this._project
+      )
+        throw new Error('The comparison baseline changed. Pick it again before dispatching.');
+    }
+  }
+
+  private _captureRunAction(): () => boolean {
+    const workspace = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    const scope = JSON.stringify([
+      this._ticketId,
+      this._project,
+      this._flowType,
+      this._comparisonParentRunId,
+    ]);
+    return () =>
+      this.isConnected &&
+      workspace === getResourceWorkspaceKey() &&
+      connection === gateway.resourceConnectionId &&
+      gateway.connectionState === 'connected' &&
+      scope ===
+        JSON.stringify([
+          this._ticketId,
+          this._project,
+          this._flowType,
+          this._comparisonParentRunId,
+        ]);
+  }
   @state() private _sourceSelections: SourceSelection[] = [];
   @state() private _sourceSelectionRefusal = '';
   private readonly _templateOptionsCache = new Map<string, ConfigTemplateOptionsResult>();
 
   updated(changed: Map<string, unknown>) {
     super.updated(changed);
+    if (
+      ['_comparePickerOpen', '_comparisonParentRunId', 'mockMode'].some((key) => changed.has(key))
+    )
+      this._observeRunReads();
     if (this.mockMode && changed.has('mockInitial')) {
       this._applyMockInitial();
       this._syncFleet(getState());
@@ -215,6 +361,10 @@ export class DispatchWizard extends DispatchWizardState {
     document.removeEventListener('keydown', this._onComparePickerKeydown);
     this._unsubConn?.();
     this._unsubState?.();
+    window.clearInterval(this._runAgeClock);
+    this._runAgeClock = undefined;
+    this._runActionRequest = undefined;
+    this._dispatching = false;
     if (this._matchTimer) clearTimeout(this._matchTimer);
     if (this._scoringFetchTimer) clearTimeout(this._scoringFetchTimer);
   }
@@ -313,12 +463,8 @@ export class DispatchWizard extends DispatchWizardState {
       });
     }
 
-    const comparisonFilterKey = `${[...fp].sort().join(',')}|${machineSig}`;
-    if (this._comparePickerOpen && comparisonFilterKey !== this._comparisonPickerFilterKey) {
-      void this._loadComparisonPickerRuns();
-    }
-
-    this._tryHydrateComparisonParentEngine(s.runs ?? []);
+    this._observeRunReads();
+    this._checkActiveRunConflict();
   }
 
   private _tryHydrateComparisonParentEngine(runs: readonly Run[]): void {
@@ -885,49 +1031,10 @@ export class DispatchWizard extends DispatchWizardState {
     }
   }
 
-  private async _loadComparisonPickerRuns(): Promise<void> {
-    const state = getState();
-    const projectFilters = state.globalFilters.projects;
-    const machineFilters = state.globalFilters.machines;
-    const filterKey = `${[...projectFilters].sort().join(',')}|${[...machineFilters].sort().join(',')}`;
-    this._comparisonPickerFilterKey = filterKey;
-    const fetchGen = ++this._comparisonPickerFetchGen;
-    this._comparisonPickerLoading = true;
-    try {
-      const runs = await lookupRecentRunsForComparisonPicker({
-        mockMode: this.mockMode,
-        stateRuns: this.mockMode && this.mockPriorRuns ? this.mockPriorRuns : (state.runs ?? []),
-        projectFilters,
-        machineFilters,
-      });
-      if (
-        fetchGen === this._comparisonPickerFetchGen &&
-        this._comparisonPickerFilterKey === filterKey
-      ) {
-        this._comparisonPickerRuns = runs;
-      }
-    } catch (err) {
-      console.warn('[dispatch-wizard] comparison run picker failed', err);
-      if (
-        fetchGen === this._comparisonPickerFetchGen &&
-        this._comparisonPickerFilterKey === filterKey
-      ) {
-        this._comparisonPickerRuns = [];
-      }
-    } finally {
-      if (
-        fetchGen === this._comparisonPickerFetchGen &&
-        this._comparisonPickerFilterKey === filterKey
-      ) {
-        this._comparisonPickerLoading = false;
-      }
-    }
-  }
-
   private async _openComparisonPicker(): Promise<void> {
     this._comparePickerSearch = '';
     this._comparePickerOpen = true;
-    await this._loadComparisonPickerRuns();
+    this._observeRunReads();
   }
 
   private _onComparePickerKeydown = (event: KeyboardEvent): void => {
@@ -954,13 +1061,35 @@ export class DispatchWizard extends DispatchWizardState {
     this._variantInput = next.variantInput;
     this._comparisonFlow = false;
     this._comparePickerOpen = false;
-    this._comparisonPickerRuns = [];
     this._comparisonParentEngineHydrated = false;
     this._comparisonHashPinnedEngine = false;
     this._checkActiveRunConflict();
   }
 
-  private _applyComparisonBaseline(run: Run): void {
+  private _applyComparisonBaseline(expected: Run): void {
+    let run = expected;
+    if (!this.mockMode) {
+      try {
+        if (!this._comparisonReady)
+          throw new Error('Wait for current dispatch options before selecting a baseline.');
+        const latest = this.comparisonQuery
+          .requireReady()
+          .runs.find(({ id }) => id === expected.id);
+        if (
+          !latest ||
+          latest.familyId !== expected.familyId ||
+          latest.project !== expected.project ||
+          latest.ticketOrPr !== expected.ticketOrPr
+        )
+          throw new Error(
+            'The comparison baseline changed. Review its current row before selecting it.',
+          );
+        run = latest;
+      } catch (error) {
+        this._error = error instanceof Error ? error.message : String(error);
+        return;
+      }
+    }
     this._transport = run.transport ?? 'tmux';
     this._transportChosen = true;
     this._comparisonFlow = true;
@@ -1026,23 +1155,29 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private async _cancelConflictingRun(): Promise<void> {
-    if (!this._activeRunConflict) return;
+    if (!this._activeRunConflict || this._runActionRequest || !this._runInputsReady()) return;
+    const request = Symbol('cancel-conflict');
+    const expected = this._activeRunConflict.id;
+    const current = this._captureRunAction();
+    this._runActionRequest = request;
     try {
+      this._requireCurrentRunInputs();
+      this._checkActiveRunConflict();
+      if (this._activeRunConflict?.id !== expected)
+        throw new Error(
+          'The conflicting run changed. Review the current run before cancelling it.',
+        );
       const result = await gateway.request<RunCancelResult>(Methods.RUN_CANCEL, {
-        runId: this._activeRunConflict.id,
+        runId: expected,
       });
-      this._activeRunConflict = null;
-      // The conflict is genuinely resolved — the run is terminal — but a failed slot
-      // release means the slot may still be claimed, and this wizard is about to
-      // dispatch into it. Say so instead of proceeding silently.
+      if (!current()) return;
       const failed = failedRunCancelEffects(result.effects);
-      if (failed.length) {
-        this._error = `Run cancelled, but teardown was incomplete (${failed
-          .map((effect) => effect.name)
-          .join(', ')}) — the slot may still be claimed.`;
-      }
-    } catch (err) {
-      this._error = err instanceof Error ? err.message : 'Cancel failed';
+      if (failed.length)
+        this._error = `Run cancelled, but teardown was incomplete (${failed.map((effect) => effect.name).join(', ')})`;
+    } catch (error) {
+      if (current()) this._error = error instanceof Error ? error.message : 'Cancel failed';
+    } finally {
+      if (this._runActionRequest === request) this._runActionRequest = undefined;
     }
   }
 
@@ -1212,7 +1347,10 @@ export class DispatchWizard extends DispatchWizardState {
       comparisonParentRunId: this._comparisonParentRunId,
       pressureOverrideReady: this._pressureOverrideReady(),
     });
-    const workflowReason = this._sourceSelectionRefusal || this._workflowSelectionError();
+    const workflowReason =
+      (!this._runInputsReady() ? 'Wait for current run data before dispatching.' : '') ||
+      this._sourceSelectionRefusal ||
+      this._workflowSelectionError();
     if (this._flowType === 'review-pr') {
       return {
         ...base,
@@ -1394,34 +1532,52 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private async _dispatch() {
-    if (this._blockingState().dispatchBlocked) return;
+    if (this._runActionRequest || this._blockingState().dispatchBlocked) return;
+    const request = Symbol('dispatch');
+    this._runActionRequest = request;
+    const current = this._captureRunAction();
     this._dispatching = true;
     this._error = '';
 
     try {
+      this._requireCurrentRunInputs();
       const payloadDraft = this._dispatchPayloadDraft();
       if (!payloadDraft) return;
       const runId = await dispatchRunCreateFromDraft(payloadDraft);
-      location.hash = `run/${runId}`;
+      if (current()) location.hash = `run/${runId}`;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Dispatch failed';
-      this._error = msg;
+      if (current()) this._error = msg;
     } finally {
-      this._dispatching = false;
+      if (this._runActionRequest === request) {
+        this._runActionRequest = undefined;
+        this._dispatching = false;
+      }
     }
   }
 
   private async _addToQueue() {
-    if (this._blockingState().queueBlocked) return;
+    if (this._runActionRequest || this._blockingState().queueBlocked) return;
+    const request = Symbol('queue-dispatch');
+    this._runActionRequest = request;
+    const current = this._captureRunAction();
+    this._dispatching = true;
     try {
+      this._requireCurrentRunInputs();
       const payloadDraft = this._dispatchPayloadDraft();
       if (!payloadDraft) return;
       await addDispatchQueueItemFromDraft(payloadDraft);
+      if (!current()) return;
       this._ticketId = '';
       this._normalizedTicket = '';
       this._error = '';
-    } catch (err: unknown) {
-      this._error = err instanceof Error ? err.message : 'Queue add failed';
+    } catch (error) {
+      if (current()) this._error = error instanceof Error ? error.message : 'Queue add failed';
+    } finally {
+      if (this._runActionRequest === request) {
+        this._runActionRequest = undefined;
+        this._dispatching = false;
+      }
     }
   }
 
@@ -1888,8 +2044,33 @@ export class DispatchWizard extends DispatchWizardState {
         ticketOrPr: this._ticketId,
       }),
       comparisonFlow: this._comparisonFlow,
-      comparisonPickerRuns: this._comparisonPickerRuns,
-      comparisonPickerLoading: this._comparisonPickerLoading,
+      comparisonPickerRuns: this._comparisonRows,
+      comparisonPickerLoading:
+        !this.mockMode &&
+        !this.comparisonQuery.state.data &&
+        this.comparisonQuery.state.status === 'loading',
+      comparisonPickerReady: this._comparisonReady,
+      comparisonPickerError: this.comparisonQuery.state.error?.message ?? '',
+      comparisonPickerSavedAge:
+        this.comparisonQuery.state.status !== 'ready' &&
+        this.comparisonQuery.state.data &&
+        this.comparisonQuery.state.observedAt !== undefined
+          ? sourceObservationAge(this.comparisonQuery.state.observedAt)
+          : '',
+      retryComparisonPicker: () => {
+        void this.comparisonQuery.retry();
+      },
+      baselineReadError: this.baselineQuery.state.error?.message ?? '',
+      baselineSavedAge:
+        this._comparisonParentRunId &&
+        this.baselineQuery.state.data &&
+        this.baselineQuery.state.status !== 'ready' &&
+        this.baselineQuery.state.observedAt !== undefined
+          ? sourceObservationAge(this.baselineQuery.state.observedAt)
+          : '',
+      retryBaseline: () => {
+        void this.baselineQuery.retry();
+      },
       comparePickerOpen: this._comparePickerOpen,
       comparePickerSearch: this._comparePickerSearch,
       variantCollision: this._variantCollision,

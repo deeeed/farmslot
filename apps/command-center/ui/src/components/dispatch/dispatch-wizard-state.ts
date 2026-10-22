@@ -169,8 +169,6 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _comparisonParentRunId = '';
   @state() _comparePickerOpen = false;
   @state() _comparePickerSearch = '';
-  @state() _comparisonPickerRuns: Run[] = [];
-  @state() _comparisonPickerLoading = false;
   /** Operator-supplied variant suffix used only when the default <runner>-<model> tag would
    *  collide with an existing sibling (same-runner+same-model template/recipe edit comparison). */
   @state() _variantInput = '';
@@ -193,10 +191,6 @@ export abstract class DispatchWizardState extends LitElement {
   _lastFetchScoringKey: string | undefined;
   /** Monotonic fetch generation. Only the latest fetch's response is applied; earlier in-flight responses are discarded. */
   _fetchGen = 0;
-  /** Tracks global filter signature so an open comparison picker refreshes when filters flip. */
-  _comparisonPickerFilterKey = '';
-  /** Monotonic picker lookup generation; stale async responses are ignored. */
-  _comparisonPickerFetchGen = 0;
   /** True once baseline runner/model were copied from parentRunId (picker or hydrate). */
   _comparisonParentEngineHydrated = false;
   /** Hash explicitly pinned runner/model — skip parent-engine hydrate. */

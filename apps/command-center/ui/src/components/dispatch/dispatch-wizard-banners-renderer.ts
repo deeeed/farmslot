@@ -97,6 +97,10 @@ export interface CompareRunPickerModalContext {
   title: string;
   subtitle: string;
   emptyMessage: string;
+  ready?: boolean;
+  error?: string;
+  savedAge?: string;
+  retry?: () => void;
   onSelectRun: (run: Run) => void;
   setPickerOpen: (open: boolean) => void;
   setPickerSearch: (value: string) => void;
@@ -139,6 +143,17 @@ export function renderCompareRunPickerModal(ctx: CompareRunPickerModalContext) {
           @input=${(event: InputEvent) =>
             ctx.setPickerSearch((event.target as HTMLInputElement).value)}
         />
+        ${ctx.savedAge
+          ? html`<div role="status" data-comparison-saved-age>
+              Saved runs, ${ctx.savedAge}. Selection waits for a current read.
+            </div>`
+          : nothing}
+        ${ctx.error
+          ? html`<div role="alert" data-comparison-read-error>
+              ${ctx.error}
+              <button @click=${ctx.retry}>Retry</button>
+            </div>`
+          : nothing}
         <div class="compare-modal-list">
           ${filtered.length === 0
             ? html`<div class="compare-modal-empty">${ctx.emptyMessage}</div>`
@@ -164,16 +179,20 @@ function renderCompareRunPickerRow(ctx: CompareRunPickerModalContext, run: Run) 
     <div
       class="compare-run-item"
       data-testid="dispatch-compare-run-card"
+      data-run-id=${run.id}
       role="button"
-      tabindex="0"
+      aria-disabled=${ctx.ready === false ? 'true' : 'false'}
+      tabindex=${ctx.ready === false ? '-1' : '0'}
       title="Use run ${run.id.slice(0, 8)} as the comparison baseline"
       @click=${() => {
+        if (ctx.ready === false) return;
         ctx.onSelectRun(run);
         ctx.setPickerOpen(false);
       }}
       @keydown=${(event: KeyboardEvent) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
+          if (ctx.ready === false) return;
           ctx.onSelectRun(run);
           ctx.setPickerOpen(false);
         }
@@ -249,6 +268,10 @@ export interface ComparisonFlowPanelRenderContext {
   pickerSearch: string;
   pickerRuns: readonly Run[];
   pickerLoading: boolean;
+  pickerReady?: boolean;
+  pickerError?: string;
+  pickerSavedAge?: string;
+  retryPicker?: () => void;
   enterComparisonFlow: () => void;
   enterNormalFlow: () => void;
   openComparisonPicker: () => void;
@@ -336,6 +359,10 @@ export function renderComparisonFlowPanel(ctx: ComparisonFlowPanelRenderContext)
             title: 'Pick comparison baseline',
             subtitle: `${ctx.pickerRuns.length} recent run${ctx.pickerRuns.length === 1 ? '' : 's'}`,
             emptyMessage: 'No runs match this search.',
+            ready: ctx.pickerReady,
+            error: ctx.pickerError,
+            savedAge: ctx.pickerSavedAge,
+            retry: ctx.retryPicker,
             onSelectRun: ctx.onSelectBaselineRun,
             setPickerOpen: ctx.setPickerOpen,
             setPickerSearch: ctx.setPickerSearch,

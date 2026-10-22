@@ -98,6 +98,10 @@
     {
       "id": "browser-shared-slot-run",
       "claim": "SlotView observes its actual full run and recipe inventory, follows external writes and mirror acquisition, preserves saved facts after read failure and cold offline launch, and requires current reads before sync without replaying commands."
+    },
+    {
+      "id": "browser-shared-dispatch-runs",
+      "claim": "The real comparison picker follows readable external run changes through its shared query, refuses stale keyboard selection, saves exact query timestamps, and revalidates its selected full baseline without replaying selection or dispatch."
     }
   ],
   "workflow": {
@@ -447,6 +451,22 @@
         "match": "\"coldSlotFullRun\":true",
         "intent": "Require canonical render inputs, actual recipe arrival, guarded commands and the exact saved run timestamp after an offline reload.",
         "proves": ["browser-shared-slot-run"],
+        "next": "dispatch-runs-web"
+      },
+      "dispatch-runs-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs dispatch-runs-web",
+        "timeout_ms": 240000,
+        "intent": "Drive the real comparison picker through external cancellation, stale keyboard selection, persistent query timestamps and selected-baseline reconnect.",
+        "next": "dispatch-runs-proof"
+      },
+      "dispatch-runs-proof": {
+        "action": "assert_output",
+        "source": "dispatch-runs-web",
+        "stream": "stdout",
+        "match": "\"selectedFullRunObserved\":true",
+        "intent": "Require actual list and full-run ownership, saved rows, guarded selection and reconnect without dispatch.",
+        "proves": ["browser-shared-dispatch-runs"],
         "next": "done"
       }
     }
