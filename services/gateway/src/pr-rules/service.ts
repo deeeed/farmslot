@@ -187,7 +187,7 @@ export class PRRuleService {
     this.notifyChanges();
   }
 
-  async publishReview(ownerId: string, runId: string) {
+  async publishReview(ownerId: string, runId: string, reconcileExisting = false) {
     this.assertAuthorized(ownerId);
     const existing = await getRunWithArchived(runId);
     if (!existing) throw new Error('Review run is unavailable');
@@ -209,14 +209,15 @@ export class PRRuleService {
     if ((direct?.ownerId ?? run.prWork?.review?.ownerId) !== ownerId)
       throw new Error('Review publication belongs to another principal');
     if (direct && run.prWork && !gate) throw new Error('Ambiguous publication authority');
-    if (run.status !== 'done') throw new Error('Review must complete before publication');
+    if (run.status !== 'done' && !reconcileExisting)
+      throw new Error('Review must complete before publication');
     const pr = direct?.pr ?? run.prWork!.pr;
     const authorize = async () => {
       this.assertAuthorized(ownerId, publicationOwner.ownerGeneration ?? 0);
       const current = await getRunWithArchived(runId);
       if (
         !current ||
-        current.status !== 'done' ||
+        current.status !== run.status ||
         !isDeepStrictEqual(current.prWork, run.prWork) ||
         !isDeepStrictEqual(current.reviewResult, run.reviewResult) ||
         !isDeepStrictEqual(approvedReviewDecision(current), approvedReviewDecision(run)) ||
@@ -286,6 +287,7 @@ export class PRRuleService {
     try {
       const receipt = await publishWorkspaceReview({
         run,
+        reconcileExisting,
         ownerId,
         ...(publicationOwner.ownerGeneration !== undefined
           ? { ownerGeneration: publicationOwner.ownerGeneration }

@@ -8,6 +8,7 @@ import {
   buildClaudeInterruptionProbeCommand,
   parseClaudeInterruptionProbe,
 } from '../../../../services/gateway/src/runners/claude-observability.ts';
+import { claudeProcessRegistration } from '../../../../services/gateway/src/runners/claude-process-observability.ts';
 import {
   buildCodexPromptProbeCommand,
   buildCodexSessionBindingProbeCommand,
@@ -251,18 +252,17 @@ function claudeProcessSession(meta) {
   for (const pid of meta.runner_pids || []) {
     const record = parseHookJsonl(readOptional(path.join(root, 'sessions', `${pid}.json`)))[0];
     // A reused pid keeps an older record until the new process registers itself.
-    if (String(record?.pid) !== String(pid) || !(record.startedAt >= meta.process_started_at))
-      continue;
-    if (!record.sessionId) return null;
+    const registration = claudeProcessRegistration(record, String(pid), meta.process_started_at);
+    if (!registration) continue;
     return {
-      sessionId: record.sessionId,
+      sessionId: registration.sessionId,
       // A fresh session writes its transcript with the first prompt.
-      sessionPath: claudeTranscript(root, record.sessionId),
+      sessionPath: claudeTranscript(root, registration.sessionId),
       hooks: [],
       snapshot: {},
       processBound: true,
-      status: record.status,
-      observedAt: record.statusUpdatedAt || null,
+      status: registration.status,
+      observedAt: registration.observedAt,
     };
   }
   return null;

@@ -1,3 +1,9 @@
+import {
+  parseReviewCommentLocation,
+  type ReviewCommentLocation,
+  writeReviewCommentLocation,
+} from '@farmslot/protocol';
+
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 
 export type ReadyWorkspaceTab =
@@ -36,10 +42,12 @@ export interface ReadyWorkspaceHashWriteState {
 
 export interface ReviewWorkspaceHashState {
   tab?: ReviewWorkspaceTab;
+  source?: ReviewCommentLocation;
 }
 
 export interface ReviewWorkspaceHashWriteState {
   tab: ReviewWorkspaceTab;
+  source?: ReviewCommentLocation | null;
 }
 
 const READY_TABS = new Set<ReadyWorkspaceTab>([
@@ -180,7 +188,8 @@ export function parseReviewWorkspaceHashState(
 ): ReviewWorkspaceHashState {
   const { params } = parseHashRoute(hash);
   const tab = reviewWorkspaceTab(params.get('tab')) ?? legacyReviewTabFromPanels(params);
-  return tab ? { tab } : {};
+  const source = parseReviewCommentLocation(params);
+  return { ...(tab ? { tab } : {}), ...(source ? { source } : {}) };
 }
 
 export function reviewWorkspaceHashWithState(
@@ -194,6 +203,7 @@ export function reviewWorkspaceHashWithState(
     params.set('tab', state.tab);
   }
   params.delete('panel');
+  if (state.source !== undefined) writeReviewCommentLocation(params, state.source);
   return buildHash(route, params);
 }
 

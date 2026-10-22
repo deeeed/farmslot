@@ -6,6 +6,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot bindings, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire.
 - Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
+- Completed reviewers without hooks can reach their posting gate through verified native process state. An explicit publication retry can retain a matching manual review receipt without posting again.
+- Read complete files and diffs from frozen review commits by draining Git output before the helper exits.
+
 - Native pipeline re-reviews recover their validated session and reviewed head after gateway restart, before the final publication-review row exists.
 
 - Use the shared review artifact directory resolver so live history reads the same round snapshots the engine writes.

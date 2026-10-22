@@ -3,6 +3,7 @@ import { isRecord } from '@farmslot/protocol';
 import { execOnSlot } from '../core/exec.js';
 import { resolveExactTmuxWindowPane } from '../core/tmux.js';
 
+import { readClaudeProcessState } from './claude-process-observability.js';
 import {
   readRunnerPaneObservabilityState,
   readRunnerSessionObservabilityState,
@@ -138,9 +139,12 @@ export async function readClaudeBackgroundWorkState(
   const pane = await source.pane(vars, target);
   if (!pane) return unknown();
   const paneState = await source.paneState(vars, pane.paneId);
-  const sessionId = paneState?.rootSessionId ?? paneState?.session_id;
+  const native = !paneState ? await readClaudeProcessState(vars, target) : null;
+  const sessionId = paneState?.rootSessionId ?? paneState?.session_id ?? native?.sessionId;
   if (!sessionId) return unknown();
-  const session = await source.sessionState(vars, sessionId);
+  const session = native
+    ? { session_id: native.sessionId, tmuxPane: pane.paneId, transcript_path: native.sessionPath }
+    : await source.sessionState(vars, sessionId);
   if (
     session?.session_id !== sessionId ||
     session.tmuxPane !== pane.paneId ||
@@ -153,6 +157,11 @@ export async function readClaudeBackgroundWorkState(
     { timeout: 10000, maxBuffer: 4096 },
   );
   if (result.exitCode !== 0) return unknown();
+  if (native) {
+    const current = await readClaudeProcessState(vars, target);
+    if (current?.sessionId !== native.sessionId || current.processPid !== native.processPid)
+      return unknown();
+  }
   const value: unknown = JSON.parse(result.stdout);
   if (
     !isRecord(value) ||

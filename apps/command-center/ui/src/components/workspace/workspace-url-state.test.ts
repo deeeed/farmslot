@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { reviewCommentLocation } from '@farmslot/protocol';
+
 import {
   parseReadyWorkspaceHashState,
   parseReviewWorkspaceHashState,
@@ -95,6 +97,32 @@ test('review workspace tab state preserves unrelated params', () => {
     reviewWorkspaceHashWithState({ tab: 'review' }, '#slot/demo?projects=cc&tab=quality'),
     '#slot/demo?projects=cc',
   );
+});
+
+test('review source selection survives tab changes and a fresh URL parse', () => {
+  const source = reviewCommentLocation(
+    {
+      path: 'usePerpsCloseAllCalculations.ts',
+      line: 479,
+      body: 'Fix this calculation',
+      severity: 'major',
+    },
+    '03f5642c',
+  );
+  const selected = reviewWorkspaceHashWithState({ tab: 'review', source }, '#runs?run=review');
+  assert.deepEqual(parseReviewWorkspaceHashState(selected), { source });
+  const evidence = reviewWorkspaceHashWithState({ tab: 'evidence' }, selected);
+  assert.deepEqual(parseReviewWorkspaceHashState(evidence), { tab: 'evidence', source });
+  const otherFile = reviewWorkspaceHashWithState(
+    { tab: 'review', source: { file: 'other.ts' } },
+    evidence,
+  );
+  assert.deepEqual(parseReviewWorkspaceHashState(otherFile).source, {
+    file: 'other.ts',
+    line: undefined,
+    comment: undefined,
+    head: undefined,
+  });
 });
 
 test('review workspace maps legacy panel param to first tab', () => {
