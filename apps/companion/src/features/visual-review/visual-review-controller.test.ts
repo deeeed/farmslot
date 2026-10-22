@@ -5,13 +5,20 @@ import {
   Methods,
   type RecipeRunArtifactGroup,
   type Run,
+  type RunGetResult,
+  type RunRecipeRunsForRunResult,
   validateVisualReviewFeedbackDocument,
   type VisualReviewSourceDocument,
 } from '@farmslot/protocol';
+import type { ResourceQuery, ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import { artifactUrl } from '../../lib/artifact-url';
 import type { GatewayClient } from '../../lib/gateway-client';
-import { createVisualReviewGateway } from '../../lib/visual-review-gateway';
+import {
+  createVisualReviewGateway as createGateway,
+  type VisualReviewConnection,
+  type VisualReviewResources,
+} from '../../lib/visual-review-gateway';
 
 import {
   VisualReviewController,
@@ -65,6 +72,15 @@ const currentArtifacts = {
   ],
 } as unknown as RecipeRunArtifactGroup;
 
+const resources = new WeakMap<Pick<GatewayClient, 'request'>['request'], VisualReviewResources>();
+function createVisualReviewGateway(
+  client: Pick<GatewayClient, 'request'>,
+  connection: VisualReviewConnection,
+  live?: () => VisualReviewConnection,
+) {
+  return createGateway(client, connection, resources.get(client.request)!, live);
+}
+
 interface Harness {
   controller: VisualReviewController;
   client: Pick<GatewayClient, 'request'>;
@@ -85,7 +101,6 @@ function harness(
     route?: { sourcePath?: string };
     originStatus?: Run['status'];
     holdSend?: Promise<void>;
-    holdOriginRun?: Promise<void>;
   } = {},
 ): Harness {
   const requests: Harness['requests'] = [];
@@ -97,17 +112,6 @@ function harness(
   const client = {
     async request(method: string, params: unknown) {
       requests.push({ method, params });
-      if (method === Methods.RUN_GET) {
-        const { runId } = params as { runId: string };
-        if (runId !== originRun.id) return { run: hostRun };
-        await options.holdOriginRun;
-        return {
-          run: options.originStatus ? { ...originRun, status: options.originStatus } : originRun,
-        };
-      }
-      if (method === Methods.RUN_RECIPE_RUNS_FOR_RUN) {
-        return { recipeRuns: [currentArtifacts], selectedRecipeRunId: null };
-      }
       if (method === Methods.TERMINAL_SEND) {
         if (options.sendError) throw options.sendError;
         await options.holdSend;
@@ -116,6 +120,20 @@ function harness(
       throw new Error(`unexpected gateway method ${method}`);
     },
   } as Pick<GatewayClient, 'request'>;
+  const origin = options.originStatus ? { ...originRun, status: options.originStatus } : originRun;
+  resources.set(client.request, {
+    sourceRunId: hostRun.id,
+    current: () => true,
+    cache: {
+      read<T>(query: ResourceQuery<T>): ResourceQueryState<T> {
+        const data: RunGetResult | RunRecipeRunsForRunResult =
+          query.method === Methods.RUN_GET
+            ? { run: (query.params as { runId: string }).runId === hostRun.id ? hostRun : origin }
+            : { recipeRuns: [currentArtifacts], selectedRecipeRunId: null };
+        return { status: 'ready', data: data as T };
+      },
+    },
+  });
   const controller = new VisualReviewController(
     { runId: hostRun.id, ...options.route },
     () => new Date('2026-09-25T11:00:00.000Z'),
@@ -155,7 +173,7 @@ test('loads a schema-valid source and its images through the run artifact path',
 
   assert.deepEqual(
     requests.map(({ method }) => method),
-    [Methods.RUN_GET, Methods.RUN_RECIPE_RUNS_FOR_RUN],
+    [],
   );
   assert.deepEqual(fetched, [
     { url: artifactUrl(GATEWAY_URL, hostRun.id, SOURCE_PATH), headers: AUTH },
@@ -269,7 +287,7 @@ test('accepted delivery sends the portable document to the originating run worke
   assert.deepEqual(sent, controller.exportDocument());
   assert.deepEqual(
     requests.map(({ method }) => method),
-    [Methods.RUN_GET, Methods.RUN_RECIPE_RUNS_FOR_RUN, Methods.RUN_GET, Methods.TERMINAL_SEND],
+    [Methods.TERMINAL_SEND],
   );
 });
 
@@ -292,10 +310,7 @@ test("failed delivery reports status: 'failed', keeps the draft, and resolves no
   });
   assert.equal(state.draft, before);
   const methods = new Set(requests.map(({ method }) => method));
-  assert.deepEqual(
-    [...methods],
-    [Methods.RUN_GET, Methods.RUN_RECIPE_RUNS_FOR_RUN, Methods.TERMINAL_SEND],
-  );
+  assert.deepEqual([...methods], [Methods.TERMINAL_SEND]);
   for (const forbidden of [
     Methods.RUN_RESOLVE_DECISION,
     Methods.RUN_FORCE_COMPLETE,
@@ -415,7 +430,11 @@ test('switching to another gateway reloads the review from it', async () => {
 
   assert.ok(state.gatewayConnectionId.startsWith('|ws://gateway.other:9000/ws|'));
   assert.deepEqual(state.draft.annotations, []);
-  assert.ok(requests.slice(before).some(({ method }) => method === Methods.RUN_GET));
+  assert.equal(
+    requests.length,
+    before,
+    'Loading another owner uses canonical observations, not direct run RPCs',
+  );
 });
 
 test('disconnecting during a load drops the stale response', async () => {
@@ -481,10 +500,7 @@ test('switching profiles on the same gateway URL reloads the review', async () =
 });
 
 test('a profile switch while sending never sends through the new connection', async () => {
-  let release!: () => void;
-  const { controller, client, requests } = harness({
-    holdOriginRun: new Promise<void>((resolve) => (release = resolve)),
-  });
+  const { controller, client, requests } = harness();
   await ready(controller);
   draftSomeFeedback(controller);
 
@@ -496,7 +512,6 @@ test('a profile switch while sending never sends through the new connection', as
       profileId: 'other-principal',
     }),
   );
-  release();
   await sending;
 
   assert.equal(
@@ -505,11 +520,8 @@ test('a profile switch while sending never sends through the new connection', as
   );
 });
 
-test('a same-credential reconnect while sending still delivers', async () => {
-  let release!: () => void;
-  const { controller, client } = harness({
-    holdOriginRun: new Promise<void>((resolve) => (release = resolve)),
-  });
+test('a same-credential reconnect preserves the draft and never replays an in-flight send', async () => {
+  const { controller, client, requests } = harness();
   await ready(controller);
   draftSomeFeedback(controller);
 
@@ -518,17 +530,15 @@ test('a same-credential reconnect while sending still delivers', async () => {
   controller.setGateway(
     createVisualReviewGateway({ ...client }, { gatewayUrl: GATEWAY_URL, authHeaders: { ...AUTH } }),
   );
-  release();
   await sending;
 
-  assert.equal((controller.getState() as VisualReviewReadyState).delivery.status, 'accepted');
+  assert.equal((controller.getState() as VisualReviewReadyState).delivery.status, 'idle');
+  assert.equal(requests.length, 0);
+  assert.equal((controller.getState() as VisualReviewReadyState).draft.annotations.length, 1);
 });
 
 test('a connection switch before the screen rebinds refuses the send', async () => {
-  let release!: () => void;
-  const { controller, client, requests } = harness({
-    holdOriginRun: new Promise<void>((resolve) => (release = resolve)),
-  });
+  const { controller, client, requests } = harness();
   let live = { gatewayUrl: GATEWAY_URL, authHeaders: AUTH };
   controller.setGateway(
     createVisualReviewGateway(client, { gatewayUrl: GATEWAY_URL, authHeaders: AUTH }, () => live),
@@ -539,7 +549,6 @@ test('a connection switch before the screen rebinds refuses the send', async () 
   const sending = controller.submit();
   // The store has switched credentials; React has not rebound the controller yet.
   live = { gatewayUrl: GATEWAY_URL, authHeaders: { Authorization: 'Bearer replaced' } };
-  release();
   await sending;
 
   const { delivery } = controller.getState() as VisualReviewReadyState;
@@ -549,4 +558,66 @@ test('a connection switch before the screen rebinds refuses the send', async () 
     requests.some(({ method }) => method === Methods.TERMINAL_SEND),
     false,
   );
+});
+
+for (const family of ['source', 'target', 'inventory'] as const) {
+  test(`a retained stale ${family} observation refuses feedback without another read or command`, async () => {
+    const { controller, client, requests } = harness();
+    await ready(controller);
+    draftSomeFeedback(controller);
+    const port = resources.get(client.request)!;
+    const read = port.cache.read;
+    port.cache.read = <T>(query: ResourceQuery<T>): ResourceQueryState<T> => {
+      const state = read(query);
+      const runId = (query.params as { runId: string }).runId;
+      const stale =
+        family === 'inventory'
+          ? query.method === Methods.RUN_RECIPE_RUNS_FOR_RUN
+          : query.method === Methods.RUN_GET &&
+            runId === (family === 'source' ? hostRun.id : originRun.id);
+      return stale
+        ? {
+            ...state,
+            status: 'stale',
+            error: { code: 'READ_FAILED', message: 'Temporary read failure' },
+          }
+        : state;
+    };
+    await controller.submit();
+    assert.equal(requests.length, 0);
+    const state = controller.getState() as VisualReviewReadyState;
+    assert.equal(state.delivery.status, 'failed');
+    assert.equal(state.draft.annotations.length, 1);
+    assert.equal(
+      state.draft.surfaceNotes['capture-ready-gate'],
+      'Ready Gate summary is too dense.',
+    );
+  });
+}
+
+test('a late accepted command cannot mark another owner draft delivered', async () => {
+  let release!: () => void;
+  const { controller, client, requests } = harness({
+    holdSend: new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  });
+  await ready(controller);
+  draftSomeFeedback(controller);
+  const sending = controller.submit();
+  while (!requests.length) await new Promise((resolve) => setImmediate(resolve));
+  controller.setGateway(
+    createVisualReviewGateway(client, {
+      gatewayUrl: GATEWAY_URL,
+      authHeaders: AUTH,
+      profileId: 'next-owner',
+    }),
+  );
+  await ready(controller);
+  controller.setSurfaceNote('Next owner draft');
+  release();
+  await sending;
+  const state = controller.getState() as VisualReviewReadyState;
+  assert.equal(state.delivery.status, 'idle');
+  assert.equal(state.draft.surfaceNotes['capture-ready-gate'], 'Next owner draft');
 });

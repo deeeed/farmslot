@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { access, chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -44,6 +44,7 @@ assert(
     'unbound-slot-diff',
     'retry-artifacts',
     'retry-diff',
+    'visual-context',
     'terminal-context',
     'slot-context',
     'seed-inbox',
@@ -170,6 +171,233 @@ async function restartNative() {
     ]);
   }
   await waitForSimulatorRecipeBridge({ platform });
+}
+
+if (phase === 'visual-context') {
+  assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE && process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  const template = JSON.parse(await readFile(fixture.runFile, 'utf8'));
+  assert.equal(template.readOnly, false);
+  const runId = randomUUID();
+  const folder = `visual-store-${runId}`;
+  const directory = path.join(home, 'projects/farmslot-farm/tasks', runId);
+  const runFile = path.join(home, 'runs', `${runId}.json`);
+  const taskFile = path.join(directory, 'TASK.md');
+  await mkdir(path.join(directory, 'artifacts'), { recursive: true });
+  const sourcePath = 'artifacts/visual-review-source.json';
+  const sourceFile = path.join(directory, sourcePath);
+  let seeded = false;
+  const device = createAgentDeviceClient({ stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR });
+  const deviceId = platform === 'ios' ? process.env.IOS_SIMULATOR : process.env.ADB_SERIAL;
+  const sessions = (await device.sessions.list()).filter(
+    (session) => session.device.id === deviceId,
+  );
+  assert.equal(sessions.length, 1);
+  const selection = { session: sessions[0].name, platform, target: 'mobile' };
+  const screen = () =>
+    device.capture.snapshot({ ...selection, interactiveOnly: false, forceFull: true });
+  const reveal = async (identifier, direction = 'down') => {
+    for (let at = 0; at < 9; at++) {
+      const node = (await screen()).nodes.find((node) => node.identifier === identifier);
+      if (node?.rect && node.rect.y >= 0) return node;
+      await device.interactions.scroll({ ...selection, direction, pixels: 320 });
+    }
+    assert.fail(`The actual visual-review control must be visible: ${identifier}`);
+  };
+  const press = async (identifier) => {
+    const node = await reveal(identifier);
+    await device.interactions.press({
+      ...selection,
+      x: node.rect.x + node.rect.width / 2,
+      y: node.rect.y + node.rect.height / 2,
+    });
+  };
+  const nativePhases = [];
+  let startedAt = Date.now();
+  const capture = async (name) => {
+    await device.capture.screenshot({
+      ...selection,
+      path: path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'screenshots', name),
+      stabilize: true,
+    });
+    nativePhases.push({ name, startedAt, endedAt: Date.now() });
+    startedAt = Date.now();
+  };
+  const note = `Keep this visual draft ${randomUUID().slice(0, 8)}`;
+  const tag = `native-visual-${randomUUID().slice(0, 8)}`;
+  const draft = (value) =>
+    value.visualState?.status === 'ready' && value.visualState.draft.surfaceNotes.proof === note;
+  const canonical = (value) =>
+    value.visualState?.status === 'ready' &&
+    value.visualRunCanonical &&
+    value.visualRecipesCanonical &&
+    value.visualCommandsReady;
+  proofRef = `runs-cache:visual:${runId}`;
+  try {
+    await inbox();
+    const imageFile = path.join(directory, 'artifacts/screen.png');
+    await device.capture.screenshot({ ...selection, path: imageFile, stabilize: true });
+    // The source uses an actual square crop of the private app, keeping the note visible on a phone.
+    await execute('sips', ['--cropToHeightWidth', '200', '200', imageFile]);
+    const source = {
+      version: 1,
+      kind: 'visual-review-source',
+      id: folder,
+      title: 'Private visual store proof',
+      capturedAt: new Date().toISOString(),
+      runId: runId,
+      surfaces: [
+        {
+          id: 'proof',
+          title: 'Private app capture',
+          captures: [
+            { id: platform, platform, image: { path: 'screen.png', width: 200, height: 200 } },
+          ],
+        },
+      ],
+    };
+    await writeFile(sourceFile, JSON.stringify(source), { flag: 'wx' });
+    await writeFile(taskFile, 'Private visual-review store proof. No worker is launched.\n', {
+      flag: 'wx',
+    });
+    const artifactManifest = await Promise.all(
+      [sourceFile, imageFile].map(async (file) => {
+        const bytes = await readFile(file);
+        return {
+          path: path.relative(directory, file),
+          purpose: file === imageFile ? 'image' : 'json',
+          sizeBytes: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        };
+      }),
+    );
+    const now = new Date().toISOString();
+    const run = {
+      ...template,
+      id: runId,
+      familyId: runId,
+      parentRunId: null,
+      slotId: null,
+      taskFile,
+      ticketOrPr: 'Visual review shared store proof',
+      steps: [],
+      decisions: [],
+      agentContexts: [],
+      tags: [],
+      readOnly: false,
+      artifactBundle: undefined,
+      engineState: undefined,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: now,
+      output: {
+        workerFinished: true,
+        capturedAt: now,
+        artifactManifest,
+        manifestDigest: createHash('sha256').update(JSON.stringify(artifactManifest)).digest('hex'),
+      },
+    };
+    await withOwnedGatewayOffline(async () => {
+      await writeFile(runFile, JSON.stringify(run), { flag: 'wx', mode: 0o600 });
+      seeded = true;
+    });
+    const retained = await rpc('run.bundle.retain', { runId });
+    assert(
+      retained.ref && retained.missingData.length === 0,
+      'The real retention endpoint must capture every source/image byte',
+    );
+    const route = `visual-review/${runId}?source=${encodeURIComponent(sourcePath)}`;
+    await inbox(route);
+    const initial = await until(
+      (value) => canonical(value) && value.visualState.source.id === folder,
+      'The actual visual review must use canonical full run and recipe observations',
+    );
+    await reveal('visual-review-surface-note');
+    await device.interactions.fill({
+      ...selection,
+      selector: 'id="visual-review-surface-note"',
+      text: note,
+      verify: true,
+    });
+    await device.command.keyboard({ ...selection, action: 'dismiss' });
+    await until(draft, 'The note must come from the actual native input');
+    const send = await reveal('visual-review-send');
+    assert.equal(send.enabled, true, 'Current visual-review inputs must allow explicit delivery');
+    await capture('native-visual-current.png');
+    await rpc('run.tags.set', { runId: runId, tags: [tag] });
+    const updated = await until(
+      (value) => canonical(value) && draft(value) && value.detail.data.run.tags?.includes(tag),
+      'External run changes must update the visual-review observation without resetting its draft',
+    );
+    assert.deepEqual(updated.visualState.source, initial.visualState.source);
+    assert.equal(updated.visualState.delivery.status, 'idle');
+    await press('visual-review-send');
+    const refused = await until(
+      (value) =>
+        draft(value) &&
+        value.visualState.delivery.status === 'failed' &&
+        value.visualState.delivery.message.includes('not attached'),
+      'Finished private runs must refuse feedback before any terminal command',
+    );
+    await capture('native-visual-refused.png');
+    let stale;
+    await withOwnedGatewayOffline(async () => {
+      stale = await until(
+        (value) => draft(value) && value.detail?.status === 'stale' && !value.visualCommandsReady,
+        'Disconnect must preserve the actual visual draft and pause delivery',
+      );
+      const disabled = await reveal('visual-review-send');
+      assert.equal(
+        disabled.enabled,
+        false,
+        'The actual visual feedback button must be disabled offline',
+      );
+      await device.interactions.scroll({ ...selection, direction: 'up', pixels: 1400 });
+      const age = await screen();
+      assert(
+        age.nodes.some((node) => node.label?.startsWith('Saved visual review run,')),
+        'The actual visual review must show saved run age',
+      );
+      await capture('native-visual-stale.png');
+    });
+    const recovered = await until(
+      (value) =>
+        canonical(value) && draft(value) && value.detail.observedAt >= stale.detail.observedAt,
+      'Reconnect must revalidate visual context without replaying the refused feedback',
+    );
+    assert.deepEqual(recovered.visualState.delivery, refused.visualState.delivery);
+    assert.equal(recovered.startedAt, initial.startedAt);
+    await reveal('visual-review-send');
+    await capture('native-visual-recovered.png');
+    const after = (await rpc('run.get', { runId: runId })).run;
+    assert.deepEqual(after.decisions, [], 'Visual feedback must resolve no gate');
+    assert.equal(after.status, 'done');
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        nativeVisualShared: true,
+        nativeVisualDraft: true,
+        nativeVisualStale: true,
+        nativeVisualNoReplay: true,
+        runId: runId,
+        nativePhases,
+        offlineContentBytesProven: false,
+      }),
+    );
+  } finally {
+    try {
+      await inbox();
+    } finally {
+      if (seeded)
+        await withOwnedGatewayOffline(async () => {
+          await rm(runFile);
+        });
+      await rm(directory, { recursive: true });
+    }
+  }
+  process.exit(0);
 }
 
 if (['unbound-slot-diff', 'retry-artifacts', 'retry-diff'].includes(phase)) {

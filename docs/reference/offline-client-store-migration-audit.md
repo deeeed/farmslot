@@ -56,6 +56,8 @@ history remains explicit and bounded to 80 rows until the version-list migration
 
 | Native slot terminal | Independent run.get/run.forSlot and recipe reads, run-event adoption, subscribe and command-time rereads | Shared canonical run selection and recipe observation; current command preconditions and owner/target-bound terminal view; stream subscription retains its own owner | `terminal-runs-live.recipe.json`; iOS and Android7/7 with verified recording timelines prove a real private-shell key, updates without stream restart, cold exact SQLite timestamp/age, no replay, actor refusal and clearing the previous pane. Notification, readiness and pane-scope controls fail their intended assertions, restore exactly and recover7/7 |
 
+| Native visual review | Independent full-run and recipe-inventory reads, including command-time run RPCs | Shared source/target full-run and recipe observations; HTTP source/image bytes retain their owner; current canonical command inputs and owner/connection/reply fences | `visual-runs-live.recipe.json`; iOS/Android7/7 with actual note input, external run update, safe finished-run refusal, stale disabled controls and reconnect without replay. Notification and disabled-Send product controls fail intended assertions, restore exactly and recover7/7; cold source/image bytes remain for content caching |
+
 Explicit mutations such as refreshing a publication package retain their command owners.
 They do not adopt returned run data. A shared observation supplies the resulting state.
 Local age clocks repaint saved timestamps without issuing network reads.

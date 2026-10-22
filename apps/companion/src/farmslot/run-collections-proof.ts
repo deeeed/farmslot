@@ -20,6 +20,7 @@ import {
   type StoredResourceQueryInfo,
 } from '@farmslot/protocol/client-cache';
 
+import type { VisualReviewScreenState } from '../features/visual-review/visual-review-controller';
 import { nativeActiveRunsQuery, nativeDecisionsQuery } from '../lib/gateway-run-sync';
 import { getResourceCache, getResourceWorkspaceKey } from '../lib/resource-cache';
 import { useConnectionStore } from '../store/connection';
@@ -29,6 +30,22 @@ import { useRunStore } from '../store/runs';
 import type { FarmslotRecipeUiObserver } from './RecipeBridgeProvider';
 
 const startedAt = Date.now();
+interface VisualReviewProofFrame {
+  focused: boolean;
+  run: Run | null;
+  recipes: ResourceQueryState<RunRecipeRunsForRunResult>;
+  state: VisualReviewScreenState;
+  target: ResourceQueryState<RunGetResult>;
+  commandsReady: boolean;
+}
+const visualFrames = new Map<string, () => VisualReviewProofFrame>();
+/** Read the mounted visual-review projection without modifying its draft or shared cache. */
+export function observeNativeVisualReview(runId: string, read: () => VisualReviewProofFrame) {
+  visualFrames.set(runId, read);
+  return () => {
+    if (visualFrames.get(runId) === read) visualFrames.delete(runId);
+  };
+}
 interface FamilyProofFrame {
   focused: boolean;
   routeRunId: string;
@@ -136,10 +153,11 @@ async function storedNativeQuery(
 /** Read production projections and actual store diagnostics without issuing a query. */
 export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs) => {
   const match =
-    /^runs-cache:(detail|family|diff|artifacts|slot|slot-diff|terminal):([a-f0-9-]{36})$/.exec(
+    /^runs-cache:(detail|family|diff|artifacts|slot|slot-diff|terminal|visual):([a-f0-9-]{36})$/.exec(
       refs[0] ?? '',
     );
   const detailId = match?.[2];
+  const visual = detailId && match?.[1] === 'visual' ? visualFrames.get(detailId)?.() : undefined;
   const family =
     match?.[1] === 'family' && detailId
       ? getResourceCache()?.read(
@@ -185,6 +203,33 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
         startedAt,
         online: useConnectionStore.getState().client?.connectionState === 'connected',
         connectionGeneration: useConnectionStore.getState().client?.connectionGeneration,
+        ...(visual?.focused
+          ? {
+              visualState:
+                visual.state.status === 'ready'
+                  ? {
+                      status: visual.state.status,
+                      source: visual.state.source,
+                      draft: visual.state.draft,
+                      delivery: visual.state.delivery,
+                      targetRunId: visual.state.targetRunId,
+                    }
+                  : visual.state,
+              visualCommandsReady: visual.commandsReady,
+              visualRunCanonical:
+                visual.run ===
+                cache?.read(resourceQuery<RunGetResult>('run.get', { runId: detailId })).data?.run,
+              visualRecipesCanonical:
+                visual.recipes ===
+                cache?.read(
+                  resourceQuery<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
+                    runId: detailId,
+                  }),
+                ),
+              visualRecipes: visual.recipes,
+              visualTarget: visual.target,
+            }
+          : {}),
         workspaceKey: getResourceWorkspaceKey(),
         storedDetail,
         runsStatus: runStore.observation.status,

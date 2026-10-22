@@ -1,8 +1,23 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useIsFocused } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Platform, Share } from 'react-native';
 
-import { createVisualReviewGateway } from '../../lib/visual-review-gateway';
+import { Methods, type RunGetResult, type RunRecipeRunsForRunResult } from '@farmslot/protocol';
+import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
+
+import { observeNativeVisualReview } from '../../farmslot/run-collections-proof';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
+import { currentFarmConnection } from '../../lib/connection-authority';
+import {
+  getResourceCache,
+  getResourceWorkspaceKey,
+  subscribeResourceCache,
+} from '../../lib/resource-cache';
+import {
+  createVisualReviewGateway,
+  visualReviewConnectionId,
+} from '../../lib/visual-review-gateway';
 import { useConnectionStore } from '../../store/connection';
 
 import { VisualReviewController, type VisualReviewRouteParams } from './visual-review-controller';
@@ -11,32 +26,124 @@ import { VisualReviewController, type VisualReviewRouteParams } from './visual-r
 const EXPORT_FILE_NAME = 'visual-feedback.json';
 
 export function useVisualReviewController(route: VisualReviewRouteParams) {
+  const focused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const authHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const profileId = useConnectionStore((s) => s.activeProfileId);
+  const connection = useConnectionStore((s) => s.status);
+  const epoch = useConnectionStore((s) => s.authorityEpoch);
+  const cache = useSyncExternalStore(subscribeResourceCache, getResourceCache, getResourceCache);
+  const workspaceKey = useSyncExternalStore(
+    subscribeResourceCache,
+    getResourceWorkspaceKey,
+    getResourceWorkspaceKey,
+  );
   const { runId, sourcePath, recipeRunId } = route;
+  const identity = visualReviewConnectionId({ gatewayUrl, authHeaders, profileId });
   const controller = useMemo(
     () => new VisualReviewController({ runId, sourcePath, recipeRunId }),
-    [recipeRunId, runId, sourcePath],
+    [recipeRunId, runId, sourcePath, workspaceKey, identity, epoch],
   );
   const state = useSyncExternalStore(controller.subscribe, controller.getState);
+  const currentController = useRef(controller);
+  currentController.current = controller;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      controller.setGateway(null);
+    };
+  }, [controller]);
+  const runQuery = useMemo(() => resourceQuery<RunGetResult>(Methods.RUN_GET, { runId }), [runId]);
+  const recipeQuery = useMemo(
+    () => resourceQuery<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, { runId }),
+    [runId],
+  );
+  const runObservation = useResourceQuery(runQuery);
+  const recipeObservation = useResourceQuery(recipeQuery);
+  const targetRunId = state.status === 'ready' ? state.targetRunId : runId;
+  const targetQuery = useMemo(
+    () => resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: targetRunId }),
+    [targetRunId],
+  );
+  const targetObservation = useResourceQuery(targetQuery);
+  const sourceReady = runObservation.status === 'ready' && recipeObservation.status === 'ready';
+  const commandsReady =
+    connection === 'connected' && sourceReady && targetObservation.status === 'ready';
+  const frame = useRef({
+    focused,
+    run: runObservation.data?.run ?? null,
+    recipes: recipeObservation,
+    state,
+    target: targetObservation,
+    commandsReady,
+  });
+  frame.current = {
+    focused,
+    run: runObservation.data?.run ?? null,
+    recipes: recipeObservation,
+    state,
+    target: targetObservation,
+    commandsReady,
+  };
+  useEffect(() => {
+    if (__DEV__) return observeNativeVisualReview(runId, () => frame.current);
+  }, [runId]);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const generation = client?.connectionGeneration;
+  const gateway = useMemo(() => {
+    if (!focused || !client || !cache || connection !== 'connected') return null;
+    const connected = currentFarmConnection(client, useConnectionStore.getState);
+    return createVisualReviewGateway(
+      client,
+      { gatewayUrl, authHeaders, profileId },
+      {
+        cache,
+        sourceRunId: runId,
+        current: () =>
+          mounted.current &&
+          currentController.current === controller &&
+          cache === getResourceCache() &&
+          workspaceKey === getResourceWorkspaceKey() &&
+          connected(),
+      },
+      () => {
+        const live = useConnectionStore.getState();
+        return {
+          gatewayUrl: live.gatewayUrl,
+          authHeaders: live.activeProfileHttpAuthHeaders,
+          profileId: live.activeProfileId,
+        };
+      },
+    );
+  }, [
+    focused,
+    client,
+    cache,
+    connection,
+    generation,
+    workspaceKey,
+    identity,
+    epoch,
+    controller,
+    runId,
+  ]);
 
   useEffect(() => {
-    controller.setGateway(
-      client
-        ? createVisualReviewGateway(client, { gatewayUrl, authHeaders, profileId }, () => {
-            const live = useConnectionStore.getState();
-            return {
-              gatewayUrl: live.gatewayUrl,
-              authHeaders: live.activeProfileHttpAuthHeaders,
-              profileId: live.activeProfileId,
-            };
-          })
-        : null,
+    controller.setGateway(sourceReady ? gateway : null);
+    return () => controller.setGateway(null);
+  }, [controller, gateway, sourceReady]);
+  useEffect(() => setExportMessage(null), [controller]);
+  const retry = useCallback(async () => {
+    const current = getResourceCache();
+    const queries: ResourceQuery<unknown>[] = [runQuery, recipeQuery, targetQuery];
+    await Promise.all(
+      queries.filter((query) => current?.read(query).error).map((query) => current?.retry(query)),
     );
-  }, [authHeaders, client, controller, gatewayUrl, profileId]);
+    if (mounted.current && currentController.current === controller) await controller.load();
+  }, [controller, runQuery, recipeQuery, targetQuery]);
 
   const exportFeedback = useCallback(async () => {
     try {
@@ -47,10 +154,12 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
       if (sharedFile) {
         const uri = `${FileSystem.cacheDirectory}${EXPORT_FILE_NAME}`;
         await FileSystem.writeAsStringAsync(uri, json);
+        if (!mounted.current || currentController.current !== controller) return;
         result = await Share.share({ url: uri, title: EXPORT_FILE_NAME });
       } else {
         result = await Share.share({ message: json, title: EXPORT_FILE_NAME });
       }
+      if (!mounted.current || currentController.current !== controller) return;
       if (result.action === Share.dismissedAction) {
         setExportMessage('Export cancelled.');
         return;
@@ -61,6 +170,7 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
           : `Shared the feedback JSON as text. Save it as ${EXPORT_FILE_NAME} to open it in the HTML board.`,
       );
     } catch (error) {
+      if (!mounted.current || currentController.current !== controller) return;
       // Export problems are shown next to the button; the draft is unaffected.
       setExportMessage(`Export failed: ${(error as Error).message}`);
     }
@@ -68,7 +178,7 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
 
   const actions = useMemo(
     () => ({
-      retry: () => void controller.load(),
+      retry: () => void retry(),
       selectSurface: controller.selectSurface.bind(controller),
       selectCapture: controller.selectCapture.bind(controller),
       setMode: controller.setMode.bind(controller),
@@ -81,10 +191,18 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
       exportFeedback: () => void exportFeedback(),
       submit: () => void controller.submit(),
     }),
-    [controller, exportFeedback],
+    [controller, exportFeedback, retry],
   );
 
-  return { state, exportMessage, actions };
+  return {
+    state,
+    runObservation,
+    recipeObservation,
+    targetObservation,
+    commandsReady,
+    exportMessage,
+    actions,
+  };
 }
 
 export type VisualReviewActions = ReturnType<typeof useVisualReviewController>['actions'];

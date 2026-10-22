@@ -102,14 +102,22 @@ export class VisualReviewController {
    * Any change drops an in-flight load that belongs to the previous connection.
    */
   setGateway(gateway: VisualReviewGateway | null): void {
+    if (this.gateway === gateway) return;
     this.gateway = gateway;
     this.loadGeneration++;
-    if (!gateway) return;
+    if (!gateway) {
+      this.updateReady((state) => ({
+        ...state,
+        delivery: state.delivery.status === 'pending' ? { status: 'idle' } : state.delivery,
+      }));
+      return;
+    }
     if (this.state.status === 'ready' && this.state.gatewayConnectionId === gateway.connectionId) {
       const { source, sourceArtifact } = this.state;
       this.updateReady((state) => ({
         ...state,
         captures: this.captureViews(gateway, source, sourceArtifact),
+        delivery: state.delivery.status === 'pending' ? { status: 'idle' } : state.delivery,
       }));
       return;
     }
@@ -221,9 +229,12 @@ export class VisualReviewController {
     const gateway = this.gateway;
     if (state.delivery.status === 'pending') return;
     const targetRunId = state.targetRunId;
+    const generation = this.loadGeneration;
+    const current = () => this.gateway === gateway && this.loadGeneration === generation;
     const fail = (message: string) =>
-      this.updateReady((current) => ({
-        ...current,
+      current() &&
+      this.updateReady((value) => ({
+        ...value,
         delivery: { status: 'failed', targetRunId, message },
       }));
     let document: VisualReviewFeedbackDocument;
@@ -256,26 +267,28 @@ export class VisualReviewController {
     }));
     try {
       const run = await gateway.getRun(targetRunId);
+      if (!current()) return;
       if (!run.slotId) throw new Error(`Run ${targetRunId} is not attached to a slot.`);
       // A finished run's slot may already host another worker; never type into it.
       if (isTerminalRunStatus(run.status)) {
         throw new Error(`Run ${targetRunId} is ${run.status}; its worker no longer takes input.`);
       }
       // The client is shared across profiles; never send this review through another connection.
-      if (this.gateway?.connectionId !== gateway.connectionId) {
-        throw new Error('The gateway connection changed while sending. Reopen the review to send.');
-      }
-      await gateway.sendWorkerMessage({
-        slotId: run.slotId,
-        runId: targetRunId,
-        text,
-        enter: true,
-      });
+      await gateway.sendWorkerMessage(
+        {
+          slotId: run.slotId,
+          runId: targetRunId,
+          text,
+          enter: true,
+        },
+        run,
+      );
     } catch (error) {
       // Delivery failures are part of the review state: the operator retries from the same draft.
       fail((error as Error).message);
       return;
     }
+    if (!current()) return;
     // Edits made while the send was pending were not in the message the worker received.
     this.updateReady((current) => ({
       ...current,
