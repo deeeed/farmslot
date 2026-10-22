@@ -36,8 +36,11 @@ mock.module('../core/read-probes.js', { namedExports: { ...probes } });
 const reviewedModule: string = './reviewed-inputs.js?bounded-read-probes';
 const { readReviewedInputs }: typeof import('./reviewed-inputs.js') = await import(reviewedModule);
 const observabilityModule: string = '../runners/observability-files.js?bounded-read-probes';
-const { readRunnerObservabilityFiles }: typeof import('../runners/observability-files.js') =
-  await import(observabilityModule);
+const {
+  readRunnerObservabilityFiles,
+  readRunnerSessionObservabilityState,
+  readRunnerPaneObservabilityState,
+}: typeof import('../runners/observability-files.js') = await import(observabilityModule);
 const run: Pick<Run, 'id' | 'project' | 'taskFile' | 'slotId'> = {
   id: 'chart-read-probe',
   project: vars.projectName,
@@ -99,6 +102,30 @@ test('concurrent progress consumers share the same slow hooks and statusline rea
   await readRunnerObservabilityFiles(vars);
   assert.equal(hooks, 2);
 });
+
+for (const snapshot of [
+  { name: 'session', read: () => readRunnerSessionObservabilityState(vars, 'fixture-session') },
+  { name: 'pane', read: () => readRunnerPaneObservabilityState(vars, '%fixture') },
+]) {
+  test(`concurrent progress readers share one ${snapshot.name} snapshot command`, async () => {
+    const hold = latch();
+    let reads = 0;
+    execute = async (_slot, command) => {
+      if (command.includes('install.json')) return { stdout: 'external', stderr: '', exitCode: 0 };
+      reads++;
+      await hold.promise;
+      return { stdout: '{"event":"Stop"}', stderr: '', exitCode: 0 };
+    };
+    const readers = Array.from({ length: 100 }, () => snapshot.read());
+    try {
+      await flush();
+      assert.equal(reads, 1);
+    } finally {
+      hold.release();
+      await Promise.all(readers);
+    }
+  });
+}
 
 test(
   'a timed-out probe retains its flight until the owned process is killed and reaped',
