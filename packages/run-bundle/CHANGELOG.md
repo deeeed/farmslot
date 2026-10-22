@@ -4,6 +4,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- Queue retention work within a process so long captures do not exhaust other runs' file-lock retries. External contention errors include the lock path.
+
 - Reading a retained artifact the capture declared it could not keep names the reason, e.g. `Artifact not retained (media-capacity): <path>`, instead of a bare `ENOENT` from `realpath`. The error keeps `code: 'ENOENT'`.
 - Bundle garbage collection releases the reservations and pins of a refused completion once it is discarded or archived.
 - `runBundleRefs(run)` lists every bundle a run references, each decision's with its decision, so garbage collection, the gateway's readers and run retention share one list.
