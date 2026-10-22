@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resume a blocked review-fix through its held review step and show fresh worker progress without restarting the completed primary worker.
+
 - Complete frozen reviews with ignored tool state under `.agent/`, and register exact manual review posts during explicit reconciliation without posting again.
 
 - Download Jira image attachments into task assets even when supplied ticket data has no screenshot names.

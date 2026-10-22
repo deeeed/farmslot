@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Resume the blocked worker through the gateway’s validated recovery action, including held review fixes.
+
 - Show round reviewers, modes, timings, findings and fix deltas on review steps through the shared history model.
 
 - Selecting a review line comment reveals and highlights its exact source line with the inline comment, including while the editor loads. Shareable URLs restore its file, line, finding and reviewed revision; unavailable lines never attach to the end of a file.
