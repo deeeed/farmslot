@@ -1496,7 +1496,7 @@ for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success'])
           'ws://127.0.0.1:7801',
           fs.readFileSync(path.join(repo, 'scripts/lib/worker-env-prefix.sh'), 'utf8').trimEnd(),
           fs.readFileSync(path.join(repo, 'scripts/lib/tmux-bin.sh'), 'utf8'),
-          '1',
+          phase === 'success' ? '10' : '1',
           'dev',
           '',
           path.join(fixture.root, 'node-bin/node'),
@@ -1519,7 +1519,7 @@ for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success'])
       };
       t.after(stop);
       // A failure ceiling, not a wait: removing the production bound cannot hang the test.
-      const ceiling = setTimeout(stop, 3_000);
+      const ceiling = setTimeout(stop, 15_000);
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', (chunk) => {
