@@ -21,6 +21,7 @@ import {
   type RecipeQualitySignal,
   type RelatedRunSummary,
   type Run,
+  runLinkedTicketRefs,
   taskTitleText,
 } from '@farmslot/protocol';
 
@@ -791,6 +792,7 @@ async function buildRunSummary(
     decisions,
     metrics: { ...run.metrics, durationMs: runDurationMs(run) ?? run.metrics.durationMs },
     links: run.links,
+    linkedTicketRefs: runLinkedTicketRefs(run),
     missingData,
   };
 }

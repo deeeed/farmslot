@@ -6,6 +6,7 @@ import {
   type HumanGrade,
   isSettledBlockedRun,
   isTerminalRunStatus,
+  normalizeRunLinkedTicketRefs,
   normalizeRunTags,
   type Run,
   type RunArchiveParams,
@@ -20,6 +21,8 @@ import {
   type RunGetGradeResult,
   type RunGradeParams,
   type RunGradeResult,
+  type RunLinkedTicketsSetParams,
+  type RunLinkedTicketsSetResult,
   type RunTagsListResult,
   type RunTagsSetParams,
   type RunTagsSetResult,
@@ -74,6 +77,17 @@ export function runSetTags(params: RunTagsSetParams, emit: Emit): RunTagsSetResu
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   const tags = normalizeRunTags(params.tags);
   const run = updateRun(params.runId, { tags });
+  emit(Events.RUN_UPDATED, { run });
+  return { run };
+}
+
+export function runSetLinkedTickets(
+  params: RunLinkedTicketsSetParams,
+  emit: Emit,
+): RunLinkedTicketsSetResult {
+  if (!getRun(params.runId)) throw new Error(`Run not found: ${params.runId}`);
+  const linkedTicketRefs = normalizeRunLinkedTicketRefs(params.linkedTicketRefs);
+  const run = updateRun(params.runId, { linkedTicketRefs });
   emit(Events.RUN_UPDATED, { run });
   return { run };
 }

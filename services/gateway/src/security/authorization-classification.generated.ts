@@ -293,6 +293,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.getGrade': { classification: 'admin' },
   'run.grade': { classification: 'admin' },
   'run.interactiveDev.resolve': { classification: 'admin' },
+  'run.linkedTickets.set': { classification: 'admin' },
   'run.list': { classification: 'operator' },
   'run.overrideClaim': { classification: 'admin' },
   'run.pause': { classification: 'admin' },

@@ -1,7 +1,13 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import { normalizeRunTags } from '@farmslot/protocol';
+import {
+  normalizeRunLinkedTicketRefs,
+  normalizeRunTags,
+  parseRunLinkedTicketRefs,
+  type Run,
+  runLinkedTicketsView,
+} from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
@@ -91,6 +97,17 @@ export class RunTagEditor extends LitElement {
       outline: none;
       border-color: ${unsafeCSS(colors.accent)}99;
     }
+    :host([kind='tickets']) .tag-pill,
+    :host([kind='tickets']) .tag-manage,
+    :host([kind='tickets']) .tag-save,
+    :host([kind='tickets']) .tag-cancel,
+    :host([kind='tickets']) .tag-input {
+      min-height: 44px;
+      box-sizing: border-box;
+      display: inline-flex;
+      align-items: center;
+      text-decoration: none;
+    }
     .tag-error {
       flex-basis: 100%;
       color: ${unsafeCSS(colors.statusFail)};
@@ -99,6 +116,8 @@ export class RunTagEditor extends LitElement {
     }
   `;
 
+  @property({ reflect: true }) kind: 'tags' | 'tickets' = 'tags';
+  @property({ attribute: false }) run?: Run;
   @property({ attribute: false }) tags: readonly string[] = [];
   @property({ type: Boolean }) disabled = false;
   @property({ attribute: false }) saveTags?: (tags: string[]) => void | Promise<void>;
@@ -110,7 +129,9 @@ export class RunTagEditor extends LitElement {
   @state() private error = '';
 
   private normalizedTags(): string[] {
-    return normalizeRunTags(this.tags);
+    return this.kind === 'tickets'
+      ? normalizeRunLinkedTicketRefs(this.run?.linkedTicketRefs ?? [])
+      : normalizeRunTags(this.tags);
   }
 
   private beginEdit() {
@@ -129,10 +150,13 @@ export class RunTagEditor extends LitElement {
 
   private async saveEdit() {
     if (this.disabled || this.saving || !this.saveTags) return;
-    const tags = normalizeRunTags(this.draft.split(','));
     this.saving = true;
     this.error = '';
     try {
+      const tags =
+        this.kind === 'tickets'
+          ? parseRunLinkedTicketRefs(this.draft)
+          : normalizeRunTags(this.draft.split(','));
       await this.saveTags(tags);
       this.editing = false;
       this.draft = '';
@@ -145,6 +169,8 @@ export class RunTagEditor extends LitElement {
 
   render() {
     const tags = this.normalizedTags();
+    const tickets = this.kind === 'tickets' && this.run ? runLinkedTicketsView(this.run) : null;
+    if (tickets && !tickets.tickets.length && !tickets.pr && !this.saveTags) return nothing;
     if (this.editing) {
       return html`
         <form
@@ -155,11 +181,13 @@ export class RunTagEditor extends LitElement {
             void this.saveEdit();
           }}
         >
-          <label class="tag-label" for="tag-editor-input">Tags</label>
+          <label class="tag-label" for="tag-editor-input"
+            >${tickets ? 'Additional tickets' : 'Tags'}</label
+          >
           <input
             id="tag-editor-input"
             class="tag-input"
-            placeholder="demo, onboarding"
+            placeholder=${tickets ? 'TEAM-123, TEAM-456' : 'demo, onboarding'}
             .value=${this.draft}
             ?disabled=${this.saving}
             @input=${(e: Event) => {
@@ -191,20 +219,41 @@ export class RunTagEditor extends LitElement {
 
     return html`
       <div class="tag-row" @click=${(e: Event) => e.stopPropagation()}>
-        <span class="tag-label">Tags</span>
-        ${tags.length
-          ? tags.map(
-              (tag) => html`
-                <button
+        <span class="tag-label">${tickets ? 'Tickets' : 'Tags'}</span>
+        ${tickets
+          ? html`${tickets.tickets.map((ticket) =>
+              ticket.url
+                ? html`<a
+                    class="tag-pill"
+                    href=${ticket.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >${ticket.ref}</a
+                  >`
+                : html`<span class="tag-pill">${ticket.ref}</span>`,
+            )}
+            ${tickets.pr
+              ? html`<a
                   class="tag-pill"
-                  title="Filter by tag ${tag}"
-                  @click=${() => this.filterTag?.(tag)}
-                >
-                  #${tag}
-                </button>
-              `,
-            )
-          : html`<span class="tag-empty">none</span>`}
+                  href=${tickets.pr.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >PR ↗</a
+                >`
+              : nothing}`
+          : tags.length
+            ? tags.map(
+                (tag) => html`
+                  <button
+                    class="tag-pill"
+                    title="Filter by tag ${tag}"
+                    @click=${() => this.filterTag?.(tag)}
+                  >
+                    #${tag}
+                  </button>
+                `,
+              )
+            : html`<span class="tag-empty">none</span>`}
         ${this.saveTags
           ? html`<button class="tag-manage" ?disabled=${this.disabled} @click=${this.beginEdit}>
               ${tags.length ? 'Manage' : '+ Add'}

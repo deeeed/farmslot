@@ -1,4 +1,5 @@
 import { html, nothing } from 'lit';
+import { keyed } from 'lit/directives/keyed.js';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
@@ -141,6 +142,7 @@ export interface RunDetailViewContext {
   _slotHealthForRun: (run: Run) => import('@farmslot/protocol').SlotHealth | null;
   /** The slot a cancelled run still holds for replay, with its two choices. */
   _cancelledRunSlot: CancelledRunSlotChoices | null;
+  _setRunLinkedTickets: (run: Run, refs: string[]) => void | Promise<void>;
   _setRunTags: (run: Run, tags: string[]) => void | Promise<void>;
   _renderInteractiveDevGate: (run: Run) => unknown;
   _currentCiStatus: (run: Run) => CiCheckUpdatedPayload | null;
@@ -641,6 +643,15 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             )}</span
           >`
         : nothing}
+      ${keyed(
+        r.id,
+        html`<run-tag-editor
+          kind="tickets"
+          .disabled=${actionsBlocked}
+          .run=${r}
+          .saveTags=${(refs: string[]) => ctx._setRunLinkedTickets(r, refs)}
+        ></run-tag-editor>`,
+      )}
       <run-tag-editor
         .tags=${normalizeRunTags(r.tags)}
         .disabled=${actionsBlocked}

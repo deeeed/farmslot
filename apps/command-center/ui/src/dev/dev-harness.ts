@@ -2518,6 +2518,14 @@ All checks passed.`;
       <p class="section-label">Run tag editor states</p>
       <div class="card-grid">
         <div class="index-card">
+          <h3>Additional tickets</h3>
+          <run-tag-editor
+            kind="tickets"
+            .run=${{ ...mockRuns()[0], ticketOrPr: 'TEAM-100', linkedTicketRefs: [] }}
+            .saveTags=${async () => undefined}
+          ></run-tag-editor>
+        </div>
+        <div class="index-card">
           <h3>Tagged run</h3>
           <run-tag-editor
             .tags=${['demo', 'onboarding']}

@@ -363,6 +363,7 @@ export const Methods = {
   RUN_BULK_DELETE: 'run.bulkDelete',
   RUN_CLEANUP: 'run.cleanup',
   RUN_TAGS_SET: 'run.tags.set',
+  RUN_LINKED_TICKETS_SET: 'run.linkedTickets.set',
   RUN_TAGS_LIST: 'run.tags.list',
   RUN_BACKFILL_SUMMARIES: 'run.backfillSummaries',
 

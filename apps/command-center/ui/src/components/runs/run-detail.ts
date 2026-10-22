@@ -1841,6 +1841,10 @@ export class RunDetail extends RunDetailState {
       _slotHealthForRun: (run) =>
         getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.health ?? null,
       _cancelledRunSlot: this.run ? cancelledRunSlotChoices(this.run, this._fleetSlots) : null,
+      _setRunLinkedTickets: async (run, linkedTicketRefs) => {
+        await gateway.request(Methods.RUN_LINKED_TICKETS_SET, { runId: run.id, linkedTicketRefs });
+        await this.fetchRun(run.id);
+      },
       _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _publicationActions: this._publicationActions,
       _retryReviewPublication: (run) => this._retryReviewPublication(run),
