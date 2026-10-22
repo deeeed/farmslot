@@ -586,6 +586,7 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
     'run-1',
     {
       id: 'review-fix',
+      deliveryBaselineRef: 'captured-pre-fix-head',
       runner: 'claude',
       model: 'opus',
       taskFile: 'tasks/run-1/REVIEW-FIX.md',
@@ -602,9 +603,10 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
         assert.equal(signalPath, '/repo/tasks/run-1/REVIEW-FIX-SIGNAL.json');
         return null;
       },
-      syncChecklistTarget: async (_vars, taskDir, role) => {
+      syncChecklistTarget: async (_vars, taskDir, role, terminal) => {
         assert.equal(taskDir, 'tasks/run-1');
         assert.equal(role, 'review-fix');
+        assert.equal(terminal?.ciBaseRef, 'captured-pre-fix-head');
         checklistTargetRestored = true;
       },
       ensureTarget: async (_vars, session, target, window, flowType) => {

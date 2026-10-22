@@ -4,11 +4,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Share configurable review verdict policy and severity definitions across review instructions and result validation.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.65.0 - 2026-10-22
+## 0.65.0 - 2026-10-23
+
+- Share configurable review verdict policy and severity definitions across review instructions and result validation.
+- Keep the shared CI checklist step minimal and describe receipt reuse.
 
 - Share the held worker recovery step so Resume follows a blocked review-fix without restarting completed primary work.
 

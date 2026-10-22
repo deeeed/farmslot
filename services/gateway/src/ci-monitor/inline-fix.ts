@@ -559,6 +559,7 @@ async function writeCIFixTask(
   failedChecks: string[],
   prNumber: number,
   ciRepo: string,
+  ciBaseRef: string,
 ): Promise<{ taskDir: string; taskPath: string; progress?: CIWatchFixProgress } | null> {
   const run = getRun(runId);
   if (!run) return null;
@@ -650,7 +651,7 @@ async function writeCIFixTask(
   // Write CI-FIX.md to slot using the shared safe text writer
   const taskPath = taskDirRelPath(taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
   await writeTextFileOnSlot(vars, taskPath, expanded);
-  await syncChecklistTargetForRole(vars, taskDir, 'ci-fix');
+  await syncChecklistTargetForRole(vars, taskDir, 'ci-fix', { ciBaseRef });
 
   // Mark CI-FIX.md as the active task file for progress tracking
   updateRun(runId, { activeTaskFile: taskPath });
@@ -731,7 +732,7 @@ async function attemptInlineCIFix(
         taskPath: recoveredContext.taskFile!,
         progress: undefined,
       }
-    : await writeCIFixTask(slotId, runId, comments, failedChecks, prNumber, ciRepo);
+    : await writeCIFixTask(slotId, runId, comments, failedChecks, prNumber, ciRepo, beforeSha);
   if (!writeResult) {
     console.warn(
       `[ci-monitor] run ${runId.slice(0, 8)} — failed to write CI-FIX.md, skipping inline fix`,

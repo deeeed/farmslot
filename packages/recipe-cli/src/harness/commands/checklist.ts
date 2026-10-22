@@ -170,8 +170,8 @@ function terminalSignalStatus(taskDir: string, overrides: ChecklistTargetOverrid
 }
 
 // The exit code when the mark stops here, or null to forward it. On a successful
-// verdict (no-change writes `complete` too), a declared deterministic step reruns
-// its check so the receipt matches the current tree; the signal stays as it is.
+// verdict (no-change writes `complete` too), a declared deterministic step validates
+// its receipt against the current tree, executing only when needed; the signal stays put.
 function preserveTerminalSignal(
   taskDir: string,
   step: string | undefined,
@@ -189,7 +189,7 @@ function preserveTerminalSignal(
     try {
       if (deterministicChecks.execute(taskDir, checklist, stepNumber)) {
         console.log(
-          `signal already terminal: status=complete; refreshed the receipt of deterministic step ${step} for the current tree`,
+          `signal already terminal: status=complete; validated deterministic step ${step} for the current tree`,
         );
         return EXIT.ok;
       }

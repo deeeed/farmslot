@@ -299,6 +299,7 @@ export async function syncTerminalContractForFlowOnSlot(
   reportPath?: string,
   checklistBasename?: string,
   additionalArtifactPaths: readonly string[] = [],
+  ciBaseRef?: string | null,
 ): Promise<void> {
   const fullTaskDir = `${vars.remoteRepo}/${taskDirRelPath(taskDir, '')}`;
   const parentContractPath = `${fullTaskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`;
@@ -330,7 +331,9 @@ export async function syncTerminalContractForFlowOnSlot(
     const checklist = checklistBasename ?? 'CHECKLIST.md';
     const markdown = await slotReadFile(vars, `${fullTaskDir}/${checklist}`);
     contract = deterministicChecks.freeze(contract, markdown, checklist, {
-      'ci.local_check': localCheck,
+      'ci.local_check': ciBaseRef
+        ? `export FARMSLOT_CI_BASE_REF=${shellQuote(ciBaseRef)}\n${localCheck}`
+        : localCheck,
     });
   }
   await writeTextFileOnSlot(
