@@ -1038,6 +1038,8 @@ export async function dispatchExecute(
   options: {
     nativeRetainedFrom?: { runId: string; contextId: string };
     assertCurrent?: () => void;
+    /** PREPARE ran in the engine; params.skipPrepare only avoids doing it twice. */
+    preparationRan?: boolean;
   } = {},
 ): Promise<{ dispatched: boolean; launchCommand?: string }> {
   options.assertCurrent?.();
@@ -1530,8 +1532,14 @@ export async function dispatchExecute(
   if (params.runId) {
     const { captureWorktreeHeadSha } = await import('../../run-engine/diff-artifacts.js');
     const worktreeHeadAtDispatch = await captureWorktreeHeadSha(params.slotId);
-    assertPRReviewWorktreeHead(getRun(params.runId), worktreeHeadAtDispatch);
-    if (worktreeHeadAtDispatch) {
+    const dispatchRun = getRun(params.runId);
+    assertPRReviewWorktreeHead(dispatchRun, worktreeHeadAtDispatch);
+    // The engine prepares in a preceding step and skips only the duplicate here.
+    // A retained checkout keeps its original before-evidence base.
+    if (
+      worktreeHeadAtDispatch &&
+      (!params.skipPrepare || options.preparationRan || !dispatchRun?.worktreeHeadAtDispatch)
+    ) {
       updateRunStore(params.runId, { worktreeHeadAtDispatch });
     }
   }

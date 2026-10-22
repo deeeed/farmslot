@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve the original before-evidence baseline when dispatch replays on an existing checkout without preparation.
 - Persist operator-added run tickets through supported metadata edits and include covered keys in summaries.
 
 - Bound concurrent evidence and progress reads during node recovery, and preserve replayed review slot claims while fleet refresh completes.
