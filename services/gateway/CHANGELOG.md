@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Prepare reused slots after squash merges by recognizing patches already in the default branch or verified merged PR heads, while preserving unpublished work.
+- Prepare reused slots after squash merges by recognizing patches already in the default branch or verified merged PR heads, while preserving unpublished commits and dirty files.
 
 - Resume a blocked review-fix through its held review step and show fresh worker progress without restarting the completed primary worker.
 

@@ -5,6 +5,7 @@ import { execOnSlot, type RawProjectJson, type SlotVars } from '../../core/index
 import { shellQuote } from '../../core/tmux.js';
 import { hasUserSlotChanges } from '../../fleet/slot-scaffolding.js';
 import { ghRequest } from '../../integrations/github-client.js';
+import { GitHubHttpError } from '../../integrations/github-errors.js';
 
 interface UnpushedCommitOptions {
   preservedByLocalBranch?: boolean;
@@ -15,6 +16,7 @@ interface PrepareCommitPublicationOptions {
   headOnRemote?: boolean;
   defaultBranch?: string;
   githubRepo?: string;
+  projectJson?: RawProjectJson;
 }
 
 export interface MergedPreparePullRequest {
@@ -163,6 +165,15 @@ export async function assertPrepareCommitsPublished(
 ): Promise<void> {
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const defaultBranch = options.defaultBranch ?? DEFAULT_BRANCH;
+  const status = await exec(vars, `${git} status --porcelain -z --untracked-files=all`);
+  if (status.exitCode !== 0)
+    throw new Error(
+      `Cannot inspect work on ${vars.slotId}; prepare left branches untouched. ${status.stderr || status.stdout}`,
+    );
+  if (hasUserSlotChanges(status.stdout, options.projectJson ?? {}))
+    throw new Error(
+      `Prepare refused on ${vars.slotId}: dirty files would be lost. Commit or preserve them before retrying; no branch was reset or deleted.`,
+    );
   // Keep last-published tips reachable after upstream deletion/squash merge.
   // Already-pruned squash merges are verified by patch or merged-PR identity below.
   const fetch = await exec(vars, `${git} fetch --all --no-prune --no-tags`, { timeout: 120_000 });
@@ -194,23 +205,34 @@ export async function assertPrepareCommitsPublished(
       preservedByLocalBranch: ref === 'HEAD' && head.exitCode === 1,
       patchBase: `origin/${defaultBranch}`,
     });
-    if (
-      commits.length &&
-      options.githubRepo &&
-      (await refIncludedInMergedPullRequest(
-        vars,
-        ref,
-        defaultBranch,
-        options.githubRepo,
-        exec,
-        readMerged,
-      ))
-    )
-      continue;
-    if (commits.length)
-      throw new Error(
-        `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits: ${commits.join('; ')}. Push or preserve them before retrying; no branch was reset or deleted.`,
-      );
+    if (!commits.length) continue;
+    const refusal = `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits: ${commits.join('; ')}. Push or preserve them before retrying; no branch was reset or deleted.`;
+    if (options.githubRepo) {
+      try {
+        if (
+          await refIncludedInMergedPullRequest(
+            vars,
+            ref,
+            defaultBranch,
+            options.githubRepo,
+            exec,
+            readMerged,
+          )
+        )
+          continue;
+      } catch (error) {
+        const unknownCommit =
+          error instanceof GitHubHttpError &&
+          error.status === 422 &&
+          error.message.includes('No commit found for SHA');
+        // GitHub cannot associate a local-only tip with a PR. Keep the ordinary refusal below.
+        if (!unknownCommit) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(`${refusal} Merged PR verification failed: ${detail}`, { cause: error });
+        }
+      }
+    }
+    throw new Error(refusal);
   }
 }
 

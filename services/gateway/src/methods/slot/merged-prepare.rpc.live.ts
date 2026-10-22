@@ -38,6 +38,8 @@ test(
     const project = 'merged-prepare-proof';
     const safe = path.join(root, 'safe');
     const unsafe = path.join(root, 'unsafe');
+    const tracked = path.join(root, 'tracked');
+    const untracked = path.join(root, 'untracked');
     const origin = path.join(root, 'origin.git');
     for (const dir of [
       'pool',
@@ -111,9 +113,19 @@ test(
     git(unsafe, 'add', '.');
     git(unsafe, 'commit', '-qm', 'unpublished work');
     const unpublishedHead = git(unsafe, 'rev-parse', 'HEAD');
+    for (const repo of [tracked, untracked]) {
+      git(root, 'clone', '-q', safe, repo);
+      configure(repo);
+      git(repo, 'remote', 'set-url', 'origin', origin);
+      git(repo, 'fetch', '-q', '--prune', 'origin');
+    }
+    await writeFile(path.join(tracked, 'fix.txt'), 'operator edit\n');
+    await writeFile(path.join(untracked, 'personal-notes.txt'), 'operator notes\n');
     const slots = [
       { id: 'merged-prepare-safe', repo: safe },
       { id: 'merged-prepare-unsafe', repo: unsafe },
+      { id: 'merged-prepare-tracked', repo: tracked },
+      { id: 'merged-prepare-untracked', repo: untracked },
     ];
     await writeFile(
       path.join(root, 'pool/fixture.json'),
@@ -178,6 +190,25 @@ test(
     );
     assert.equal(git(unsafe, 'rev-parse', 'HEAD'), unpublishedHead);
     assert.equal(git(unsafe, 'rev-parse', branch), unpublishedHead);
+    for (const slot of slots.slice(2)) {
+      const run = makeRun(slot.id);
+      await assert.rejects(
+        fixture.client.call(Methods.SLOT_PREPARE, {
+          slotId: slot.id,
+          runId: run.id,
+          branch: 'next-run',
+          prepareProfile: 'core',
+        }),
+        /dirty files/,
+      );
+      assert.equal(git(slot.repo, 'rev-parse', 'HEAD'), publishedHead);
+      assert.equal(git(slot.repo, 'rev-parse', branch), publishedHead);
+    }
+    assert.equal(await readFile(path.join(tracked, 'fix.txt'), 'utf8'), 'operator edit\n');
+    assert.equal(
+      await readFile(path.join(untracked, 'personal-notes.txt'), 'utf8'),
+      'operator notes\n',
+    );
     const accepted = makeRun(slots[0].id);
     const result = await fixture.client.call<SlotPrepareResult>(Methods.SLOT_PREPARE, {
       slotId: slots[0].id,
@@ -205,6 +236,8 @@ test(
           preparedHead: mainHead,
           previousBranchPreserved: publishedHead,
           unpublishedRefusedAndPreserved: unpublishedHead,
+          trackedEditRefusedAndPreserved: true,
+          untrackedFileRefusedAndPreserved: true,
           workerOrReviewerStarted: false,
           realTmuxServerStarted: false,
         },

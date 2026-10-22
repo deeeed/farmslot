@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
+import { GitHubHttpError } from '../../integrations/github-errors.js';
 
 import {
   assertPrepareCommitsPublished,
@@ -307,6 +308,35 @@ test('prepare still refuses new unpublished work after a pruned squash merge', a
   assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
 });
 
+for (const file of ['fix.txt', 'untracked-notes.txt']) {
+  test(`prepare preserves dirty ${file} on an otherwise merged checkout`, async (t) => {
+    const { repo, vars } = slotRepo(t, ['origin']);
+    const merged = squashAndPrune(repo);
+    writeFileSync(path.join(repo, file), 'operator work\n');
+
+    await assert.rejects(assertPrepareCommitsPublished(vars, 'next-run', bash), /dirty files/);
+
+    assert.equal(readFileSync(path.join(repo, file), 'utf8'), 'operator work\n');
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), merged.headSha);
+  });
+}
+
+test('prepare ignores configured untracked scaffolding but keeps adjacent user files', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  squashAndPrune(repo);
+  const projectJson = { task_dir: 'support/tasks with spaces', paths: { runtime_dir: '.runtime' } };
+  mkdirSync(path.join(repo, projectJson.task_dir), { recursive: true });
+  writeFileSync(path.join(repo, projectJson.task_dir, 'TASK.md'), 'managed scaffold');
+  await assertPrepareCommitsPublished(vars, 'next-run', bash, { projectJson });
+
+  mkdirSync(path.join(repo, 'support/tasks with spaces-extra'));
+  writeFileSync(path.join(repo, 'support/tasks with spaces-extra/user.md'), 'operator work');
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, 'next-run', bash, { projectJson }),
+    /dirty files/,
+  );
+});
+
 test('prepare checks patch equivalence against the configured default branch', async (t) => {
   const { repo, vars } = slotRepo(t, ['origin']);
   git(repo, 'branch', 'release', 'main');
@@ -390,7 +420,36 @@ test('merged PR evidence does not authorize unpublished commits after its head',
         throw new Error('GitHub unavailable');
       },
     ),
-    /GitHub unavailable/,
+    (error: Error) => {
+      assert.match(error.message, /GitHub unavailable/);
+      assert.match(error.message, /has unpushed commits/);
+      assert.match(error.message, /no branch was reset or deleted/);
+      assert.ok(error.message.includes(head));
+      return true;
+    },
+  );
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+});
+
+test('a GitHub unknown-commit response keeps the actionable unpublished-work refusal', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const head = git(repo, 'rev-parse', 'HEAD');
+  await assert.rejects(
+    assertPrepareCommitsPublished(
+      vars,
+      'next-run',
+      bash,
+      { githubRepo: 'example/project' },
+      async () => {
+        throw new GitHubHttpError(422, `No commit found for SHA: ${head}`);
+      },
+    ),
+    (error: Error) => {
+      assert.match(error.message, /has unpushed commits/);
+      assert.match(error.message, /no branch was reset or deleted/);
+      assert.ok(error.message.includes(head));
+      return true;
+    },
   );
   assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
 });

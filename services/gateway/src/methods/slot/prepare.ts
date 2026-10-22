@@ -662,6 +662,7 @@ async function slotPrepareInner(
       headOnRemote: detachedHeadOnRemote,
       defaultBranch,
       githubRepo: getProjectField(projectJson, 'ci.repo') || undefined,
+      projectJson,
     });
 
   if (!phaseEnabled('git')) {
