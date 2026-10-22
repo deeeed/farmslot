@@ -132,9 +132,11 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
   ]);
 
   useEffect(() => {
-    controller.setGateway(sourceReady ? gateway : null);
-    return () => controller.setGateway(null);
+    // Observation invalidation pauses new commands; an on-wire delivery still
+    // belongs to this connection and must retain its eventual acknowledgement.
+    controller.setGateway(gateway, sourceReady);
   }, [controller, gateway, sourceReady]);
+  useEffect(() => () => controller.setGateway(null), [controller, gateway]);
   useEffect(() => setExportMessage(null), [controller]);
   const retry = useCallback(async () => {
     const current = getResourceCache();

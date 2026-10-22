@@ -10,9 +10,10 @@ import { promisify } from 'node:util';
 import { createAgentDeviceClient } from 'agent-device';
 
 import { automationGatewayTarget } from '../../../../scripts/lib/gateway-profile.mjs';
+import { createVisualReplyProxy } from '../../../../services/gateway/scripts/visual-reply-proxy.mjs';
 import { withOwnedGatewayOffline } from '../../../command-center/scripts/owned-gateway-outage.mjs';
 
-import { waitForSimulatorRecipeBridge } from './simulator-dev-client.mjs';
+import { openAndroidDevClient, waitForSimulatorRecipeBridge } from './simulator-dev-client.mjs';
 
 const execute = promisify(execFile);
 // adb shell joins argv into a remote shell command, so a URL's query separators
@@ -45,6 +46,7 @@ assert(
     'retry-artifacts',
     'retry-diff',
     'visual-context',
+    'visual-wire-context',
     'terminal-context',
     'slot-context',
     'seed-inbox',
@@ -120,6 +122,7 @@ async function inbox(route = 'inbox') {
   } else {
     const serial = process.env.ADB_SERIAL ?? process.env.ANDROID_SERIAL;
     assert(serial?.startsWith('emulator-'));
+    await execute('adb', ['-s', serial, 'wait-for-device'], { timeout: 15000 });
     await execute('adb', [
       '-s',
       serial,
@@ -156,24 +159,19 @@ async function restartNative() {
   } else {
     const serial = process.env.ADB_SERIAL ?? process.env.ANDROID_SERIAL;
     assert(serial?.startsWith('emulator-'));
+    // A cold launch needs the owned Metro tunnel as well as the selected gateway route.
+    // Keep the gateway mapping intact: the wire proof temporarily routes it through its proxy.
+    await execute('adb', ['-s', serial, 'reverse', `tcp:${metro}`, `tcp:${metro}`]);
     await execute('adb', ['-s', serial, 'shell', 'am', 'force-stop', bundle]);
-    await execute('adb', [
-      '-s',
-      serial,
-      'shell',
-      'am',
-      'start',
-      '-a',
-      'android.intent.action.VIEW',
-      '-d',
-      androidShellArgument(link),
-      bundle,
-    ]);
+    await openAndroidDevClient(serial, bundle, { waitForBridge: false });
   }
   await waitForSimulatorRecipeBridge({ platform });
 }
 
-if (phase === 'visual-context') {
+if (phase === 'visual-context' || phase === 'visual-wire-context') {
+  const wire = phase === 'visual-wire-context';
+  if (wire)
+    assert.equal(platform, 'android', 'The wire proof uses only the owned emulator reverse tunnel');
   assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
   assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE && process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR);
   const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
@@ -189,6 +187,9 @@ if (phase === 'visual-context') {
   const sourcePath = 'artifacts/visual-review-source.json';
   const sourceFile = path.join(directory, sourcePath);
   let seeded = false;
+  let proxy;
+  let proofFailure;
+  let cleanupFailure;
   const device = createAgentDeviceClient({ stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR });
   const deviceId = platform === 'ios' ? process.env.IOS_SIMULATOR : process.env.ADB_SERIAL;
   const sessions = (await device.sessions.list()).filter(
@@ -213,6 +214,18 @@ if (phase === 'visual-context') {
       x: node.rect.x + node.rect.width / 2,
       y: node.rect.y + node.rect.height / 2,
     });
+  };
+  const sendButton = async (enabled) => {
+    const deadline = Date.now() + 20000;
+    let button;
+    do {
+      button = await reveal('visual-review-send');
+      if (button.enabled === enabled) return button;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(
+      `The actual visual Send button must become enabled=${enabled}: ${JSON.stringify(button)}`,
+    );
   };
   const nativePhases = [];
   let startedAt = Date.now();
@@ -279,7 +292,8 @@ if (phase === 'visual-context') {
       id: runId,
       familyId: runId,
       parentRunId: null,
-      slotId: null,
+      slotId: wire ? `offline-visual-unavailable-${runId}` : null,
+      status: wire ? 'monitoring' : 'done',
       taskFile,
       ticketOrPr: 'Visual review shared store proof',
       steps: [],
@@ -308,6 +322,16 @@ if (phase === 'visual-context') {
       retained.ref && retained.missingData.length === 0,
       'The real retention endpoint must capture every source/image byte',
     );
+    if (wire) {
+      assert.equal(
+        (await rpc('fleet.status')).fleet.slots.some((slot) => slot.slot === run.slotId),
+        false,
+        'The wire target must not name any live slot',
+      );
+      proxy = await createVisualReplyProxy({ upstreamPort: Number(gateway.port), runId });
+      await execute('adb', ['-s', deviceId, 'reverse', `tcp:${gateway.port}`, `tcp:${proxy.port}`]);
+      await restartNative();
+    }
     const route = `visual-review/${runId}?source=${encodeURIComponent(sourcePath)}`;
     await inbox(route);
     const initial = await until(
@@ -321,9 +345,15 @@ if (phase === 'visual-context') {
       text: note,
       verify: true,
     });
-    await device.command.keyboard({ ...selection, action: 'dismiss' });
+    if (platform === 'android')
+      await execute('adb', ['-s', deviceId, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+    else await device.command.keyboard({ ...selection, action: 'dismiss' });
     await until(draft, 'The note must come from the actual native input');
-    const send = await reveal('visual-review-send');
+    await until(
+      (value) => canonical(value) && draft(value),
+      'Wait for current visual inputs after native note entry',
+    );
+    const send = await sendButton(true);
     assert.equal(send.enabled, true, 'Current visual-review inputs must allow explicit delivery');
     await capture('native-visual-current.png');
     await rpc('run.tags.set', { runId: runId, tags: [tag] });
@@ -334,69 +364,168 @@ if (phase === 'visual-context') {
     assert.deepEqual(updated.visualState.source, initial.visualState.source);
     assert.equal(updated.visualState.delivery.status, 'idle');
     await press('visual-review-send');
-    const refused = await until(
-      (value) =>
-        draft(value) &&
-        value.visualState.delivery.status === 'failed' &&
-        value.visualState.delivery.message.includes('not attached'),
-      'Finished private runs must refuse feedback before any terminal command',
-    );
-    await capture('native-visual-refused.png');
-    let stale;
-    await withOwnedGatewayOffline(async () => {
-      stale = await until(
-        (value) => draft(value) && value.detail?.status === 'stale' && !value.visualCommandsReady,
-        'Disconnect must preserve the actual visual draft and pause delivery',
-      );
-      const disabled = await reveal('visual-review-send');
+    if (wire) {
+      const deadline = Date.now() + 10000;
+      while (!proxy.state().held && Date.now() < deadline) await delay(20);
       assert.equal(
-        disabled.enabled,
+        proxy.state().held,
+        true,
+        'Hold an actual terminal.send reply from the real gateway',
+      );
+      assert.equal(
+        proxy.state().responseOk,
         false,
-        'The actual visual feedback button must be disabled offline',
+        'The deliberately absent private slot must refuse delivery',
       );
-      await device.interactions.scroll({ ...selection, direction: 'up', pixels: 1400 });
-      const age = await screen();
-      assert(
-        age.nodes.some((node) => node.label?.startsWith('Saved visual review run,')),
-        'The actual visual review must show saved run age',
+      const wireTag = `native-visual-wire-${randomUUID().slice(0, 8)}`;
+      await rpc('run.tags.set', { runId, tags: [tag, wireTag] });
+      const refreshed = await until(
+        (value) => canonical(value) && value.detail.data.run.tags?.includes(wireTag),
+        'A same-socket external notification must revalidate the real visual observations',
       );
-      await capture('native-visual-stale.png');
-    });
-    const recovered = await until(
-      (value) =>
-        canonical(value) && draft(value) && value.detail.observedAt >= stale.detail.observedAt,
-      'Reconnect must revalidate visual context without replaying the refused feedback',
-    );
-    assert.deepEqual(recovered.visualState.delivery, refused.visualState.delivery);
-    assert.equal(recovered.startedAt, initial.startedAt);
-    await reveal('visual-review-send');
-    await capture('native-visual-recovered.png');
-    const after = (await rpc('run.get', { runId: runId })).run;
-    assert.deepEqual(after.decisions, [], 'Visual feedback must resolve no gate');
-    assert.equal(after.status, 'done');
-    console.log(
-      JSON.stringify({
-        result: 'PASS',
-        nativeVisualShared: true,
-        nativeVisualDraft: true,
-        nativeVisualStale: true,
-        nativeVisualNoReplay: true,
-        runId: runId,
-        nativePhases,
-        offlineContentBytesProven: false,
-      }),
-    );
+      assert(draft(refreshed));
+      assert.equal(refreshed.connectionGeneration, initial.connectionGeneration);
+      const pendingTransport = proxy.state();
+      assert.equal(
+        pendingTransport.expired,
+        false,
+        `The proof must observe pending before its reply deadline: ${JSON.stringify({ transport: pendingTransport, delivery: refreshed.visualState.delivery })}`,
+      );
+      assert.equal(
+        refreshed.visualState.delivery.status,
+        'pending',
+        `Ordinary invalidation must not retire an on-wire visual acknowledgement: ${JSON.stringify({ transport: pendingTransport, delivery: refreshed.visualState.delivery })}`,
+      );
+      assert.equal(
+        (await sendButton(false)).enabled,
+        false,
+        'The actual Send button must remain disabled while its wire reply is pending',
+      );
+      assert.equal(
+        proxy.state().expired,
+        false,
+        'Release the held reply before the fixture deadline',
+      );
+      proxy.release();
+      const settled = await until(
+        (value) => draft(value) && value.visualState.delivery.status === 'failed',
+        'The actual gateway refusal must settle the retained pending delivery',
+      );
+      assert.equal(settled.visualState.delivery.message, proxy.state().errorMessage);
+      assert.equal(settled.connectionGeneration, initial.connectionGeneration);
+      assert.equal(settled.startedAt, initial.startedAt);
+      const transport = proxy.state();
+      assert.equal(transport.requests, 1, 'Invalidation must never replay the terminal command');
+      assert.equal(transport.responseDigest, transport.deliveredDigest);
+      await capture('native-visual-wire-settled.png');
+      assert.deepEqual((await rpc('run.get', { runId })).run.decisions, []);
+      console.log(
+        JSON.stringify({
+          result: 'PASS',
+          nativeVisualPendingReply: true,
+          nativeVisualPendingDisabled: true,
+          nativeVisualReplySettled: true,
+          nativeVisualWireNoReplay: true,
+          runId,
+          nativePhases,
+          transport,
+          acceptedWorkerDeliveryProven: false,
+          offlineContentBytesProven: false,
+        }),
+      );
+    } else {
+      const refused = await until(
+        (value) =>
+          draft(value) &&
+          value.visualState.delivery.status === 'failed' &&
+          value.visualState.delivery.message.includes('not attached'),
+        'Finished private runs must refuse feedback before any terminal command',
+      );
+      await capture('native-visual-refused.png');
+      let stale;
+      await withOwnedGatewayOffline(async () => {
+        stale = await until(
+          (value) => draft(value) && value.detail?.status === 'stale' && !value.visualCommandsReady,
+          'Disconnect must preserve the actual visual draft and pause delivery',
+        );
+        const disabled = await sendButton(false);
+        assert.equal(
+          disabled.enabled,
+          false,
+          'The actual visual feedback button must be disabled offline',
+        );
+        await device.interactions.scroll({ ...selection, direction: 'up', pixels: 1400 });
+        const age = await screen();
+        assert(
+          age.nodes.some((node) => node.label?.startsWith('Saved visual review run,')),
+          'The actual visual review must show saved run age',
+        );
+        await capture('native-visual-stale.png');
+      });
+      const recovered = await until(
+        (value) =>
+          canonical(value) && draft(value) && value.detail.observedAt >= stale.detail.observedAt,
+        'Reconnect must revalidate visual context without replaying the refused feedback',
+      );
+      assert.deepEqual(recovered.visualState.delivery, refused.visualState.delivery);
+      assert.equal(recovered.startedAt, initial.startedAt);
+      await reveal('visual-review-send');
+      await capture('native-visual-recovered.png');
+      const after = (await rpc('run.get', { runId: runId })).run;
+      assert.deepEqual(after.decisions, [], 'Visual feedback must resolve no gate');
+      assert.equal(after.status, 'done');
+      console.log(
+        JSON.stringify({
+          result: 'PASS',
+          nativeVisualShared: true,
+          nativeVisualDraft: true,
+          nativeVisualStale: true,
+          nativeVisualNoReplay: true,
+          runId: runId,
+          nativePhases,
+          offlineContentBytesProven: false,
+        }),
+      );
+    }
+  } catch (error) {
+    proofFailure = error;
   } finally {
     try {
-      await inbox();
-    } finally {
-      if (seeded)
-        await withOwnedGatewayOffline(async () => {
-          await rm(runFile);
-        });
-      await rm(directory, { recursive: true });
+      try {
+        await inbox();
+      } finally {
+        try {
+          if (proxy) {
+            await execute('adb', ['-s', deviceId, 'wait-for-device'], { timeout: 15000 });
+            await execute('adb', [
+              '-s',
+              deviceId,
+              'reverse',
+              `tcp:${gateway.port}`,
+              `tcp:${gateway.port}`,
+            ]);
+            await restartNative();
+          }
+        } finally {
+          await proxy?.close();
+          if (seeded)
+            await withOwnedGatewayOffline(async () => {
+              await rm(runFile);
+            });
+          await rm(directory, { recursive: true });
+        }
+      }
+    } catch (error) {
+      cleanupFailure = error;
     }
   }
+  if (proofFailure && cleanupFailure)
+    throw new AggregateError(
+      [proofFailure, cleanupFailure],
+      'Visual proof and cleanup both failed',
+    );
+  if (proofFailure) throw proofFailure;
+  if (cleanupFailure) throw cleanupFailure;
   process.exit(0);
 }
 

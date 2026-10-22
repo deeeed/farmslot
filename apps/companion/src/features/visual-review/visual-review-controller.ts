@@ -101,8 +101,11 @@ export class VisualReviewController {
    * credentials may be another principal, so the review reloads.
    * Any change drops an in-flight load that belongs to the previous connection.
    */
-  setGateway(gateway: VisualReviewGateway | null): void {
-    if (this.gateway === gateway) return;
+  setGateway(gateway: VisualReviewGateway | null, loadWhenBound = true): void {
+    if (this.gateway === gateway) {
+      if (gateway && loadWhenBound) void this.load();
+      return;
+    }
     this.gateway = gateway;
     this.loadGeneration++;
     if (!gateway) {
@@ -122,7 +125,7 @@ export class VisualReviewController {
       return;
     }
     this.setState({ status: 'loading' });
-    void this.load();
+    if (loadWhenBound) void this.load();
   }
 
   /** Loads once; after that the draft is the source of truth until the screen closes. */
@@ -227,7 +230,7 @@ export class VisualReviewController {
   async submit(): Promise<void> {
     const state = this.requireReady();
     const gateway = this.gateway;
-    if (state.delivery.status === 'pending') return;
+    if (state.delivery.status === 'pending' || state.delivery.status === 'accepted') return;
     const targetRunId = state.targetRunId;
     const generation = this.loadGeneration;
     const current = () => this.gateway === gateway && this.loadGeneration === generation;

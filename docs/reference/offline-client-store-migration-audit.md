@@ -61,6 +61,12 @@ history remains explicit and bounded to 80 rows until the version-list migration
 Explicit mutations such as refreshing a publication package retain their command owners.
 They do not adopt returned run data. A shared observation supplies the resulting state.
 Local age clocks repaint saved timestamps without issuing network reads.
+Visual feedback keeps the connection bound during ordinary observation invalidation,
+so a reply already in flight still settles its original delivery. Source readiness
+pauses new commands without retiring that reply. An accepted draft requires an edit
+before another send. `visual-wire-live.recipe.json` covers an actual delayed gateway
+refusal across same-connection invalidation; successful worker delivery remains in
+the broader command acceptance matrix.
 Artifact sync acknowledgements require their captured connection and evidence scope.
 Busy cleanup also checks the specific request identity, so a lost reply cannot leave
 the current scope busy or clear a newer request. Recipe output remains under its
@@ -112,7 +118,7 @@ establish packaged publication, actual visual judgments or the full command matr
 ## Remaining acceptance
 
 - Finish workspace source controls and the combined browser proof; dispatch controls are accepted.
-  Migrate the remaining native terminal/visual-review/conversation readers. Artifact reader component evidence is recorded.
+  Migrate the remaining native conversation reader. Terminal, visual-review and artifact reader component evidence is recorded.
 - Migrate the remaining consumers of `run.forSlot` and `run.recipeRunsForSlot`; binding writers and dependencies now have isolated tests, live browser history and SlotView evidence.
 - Finish native context recipes and negative controls, then the browser, desktop,
   iOS and Android authority/profile and connected-stale command matrix.

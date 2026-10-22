@@ -621,3 +621,35 @@ test('a late accepted command cannot mark another owner draft delivered', async 
   assert.equal(state.delivery.status, 'idle');
   assert.equal(state.draft.surfaceNotes['capture-ready-gate'], 'Next owner draft');
 });
+
+test('an on-wire acknowledgement survives same-connection invalidation and cannot be sent twice', async () => {
+  let release!: () => void;
+  const { controller, client, requests } = harness({
+    holdSend: new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  });
+  await ready(controller);
+  const gateway = createVisualReviewGateway(client, { gatewayUrl: GATEWAY_URL, authHeaders: AUTH });
+  controller.setGateway(gateway);
+  draftSomeFeedback(controller);
+  const sending = controller.submit();
+  while (!requests.length) await new Promise((resolve) => setImmediate(resolve));
+  // The shared observation becomes stale while terminal.send is already on the wire.
+  // The hook keeps the same connection bound, deferring only new source loading.
+  const canonical = resources.get(client.request)!;
+  const read = canonical.cache.read;
+  canonical.cache.read = <T>(query: ResourceQuery<T>): ResourceQueryState<T> => ({
+    ...read(query),
+    status: 'stale',
+  });
+  controller.setGateway(gateway, false);
+  assert.equal((controller.getState() as VisualReviewReadyState).delivery.status, 'pending');
+  canonical.cache.read = read;
+  controller.setGateway(gateway, true);
+  release();
+  await sending;
+  assert.equal((controller.getState() as VisualReviewReadyState).delivery.status, 'accepted');
+  await controller.submit();
+  assert.equal(requests.length, 1, 'The same accepted feedback must not be delivered again');
+});
