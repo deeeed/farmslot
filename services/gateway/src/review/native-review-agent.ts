@@ -492,6 +492,9 @@ async function runNativeReviewAttempt(
       return snapshot;
     });
     const run = admit();
+    const projectVars = await loadProjectVars(run.project);
+    const inactivityTimeoutMs =
+      (projectVars.projectJson.review?.review_inactivity_timeout_min ?? 10) * 60_000;
     const existingTerminal = recovering
       ? await probeWorkerSignalForRun(runId, vars.slotId, context!)
       : null;
@@ -529,7 +532,6 @@ async function runNativeReviewAttempt(
           });
         }
       }
-      const projectVars = await loadProjectVars(run.project);
       const source =
         context?.nativeSession?.handoffFrom ??
         (warm ? { runId: warmRunId!, contextId: warm.id } : undefined);
@@ -612,7 +614,18 @@ async function runNativeReviewAttempt(
       role: 'review',
       isCurrent: captureNativeReviewOperationCheck(),
     });
-    const deadline = Date.now() + input.reviewTimeoutMs;
+    const acceptedAt = Date.parse(reviewBinding.acceptedAt ?? startedAt);
+    let monitoringStartedAt = Math.min(Date.now(), acceptedAt);
+    let deadline = monitoringStartedAt + input.reviewTimeoutMs;
+    let lastProgressAt = monitoringStartedAt;
+    let observedProgress = false;
+    let eventCursor: number | undefined;
+    const recordProgress = (at: string) => {
+      const timestamp = Date.parse(at);
+      if (!Number.isFinite(timestamp) || timestamp < monitoringStartedAt) return;
+      observedProgress = true;
+      lastProgressAt = Math.max(lastProgressAt, Math.min(Date.now(), timestamp));
+    };
     while (true) {
       const latest = admit().agentContexts?.find((candidate) => candidate.id === contextId);
       if (
@@ -627,7 +640,34 @@ async function runNativeReviewAttempt(
       // A resumed process can bootstrap a fresh signal attempt. Read the watcher's
       // current binding so its valid terminal signal is not compared with the old one.
       context = latest;
-      const snapshot = await readNativeWorkerSnapshot(runId, 'review', contextId);
+      const snapshot = await readNativeWorkerSnapshot(runId, 'review', contextId, {
+        after: eventCursor,
+        limit: 500,
+      });
+      eventCursor = snapshot.cursor;
+      for (const event of snapshot.events) {
+        if (
+          event.sessionId !== reviewBinding.sessionId ||
+          event.generation !== reviewBinding.generation ||
+          event.commandId !== context.nativeSession!.commandId
+        )
+          continue;
+        if (event.type === 'command.accepted') {
+          // Recovery preserves the admitted attempt and can accept a new command
+          // long after its first process. Use that command's real startup clock.
+          const commandAcceptedAt = Math.min(Date.now(), Date.parse(event.at));
+          if (commandAcceptedAt > monitoringStartedAt) {
+            monitoringStartedAt = commandAcceptedAt;
+            deadline = commandAcceptedAt + input.reviewTimeoutMs;
+            if (lastProgressAt < commandAcceptedAt) {
+              lastProgressAt = commandAcceptedAt;
+              observedProgress = false;
+            }
+          }
+        } else if (event.type === 'tool.started' || event.type === 'tool.completed') {
+          recordProgress(event.at);
+        }
+      }
       const refused = await refuseReviewerApprovals(context.nativeSession!, snapshot);
       if (refused)
         console.warn(`[review] ${runId.slice(0, 8)}: refused ${refused} runner approval(s)`);
@@ -635,6 +675,10 @@ async function runNativeReviewAttempt(
         (command) => command.commandId === context!.nativeSession!.commandId,
       );
       const probe = await probeWorkerSignalForRun(runId, vars.slotId, context);
+      if (probe.ok || probe.code === 'non_terminal') {
+        for (const event of probe.signal?.checklistTiming?.events ?? [])
+          recordProgress(event.checkedAt);
+      }
       if (probe.ok && command?.state === 'completed' && command.outcome === 'completed') break;
       if (!probe.ok && probe.code === 'artifact_contract')
         throw new TerminalReviewArtifactError(probe.message);
@@ -643,8 +687,15 @@ async function runNativeReviewAttempt(
           snapshot.session.error ?? 'Native reviewer stopped without a valid terminal signal';
         throw reviewerExitForNativeSnapshot(snapshot) ?? new Error(reason);
       }
-      if (Date.now() >= deadline) {
-        throw new Error(`Native reviewer did not complete within ${input.reviewTimeoutMs}ms`);
+      // Drain this lease's history before judging silence; later pages can hold
+      // activity that happened while the gateway was offline.
+      if (snapshot.hasMore) continue;
+      const now = Date.now();
+      if (now - lastProgressAt >= inactivityTimeoutMs || (now >= deadline && !observedProgress)) {
+        throw new Error(
+          `Native reviewer made no checklist or tool progress for ${now - lastProgressAt}ms ` +
+            `(inactivity limit ${inactivityTimeoutMs}ms; review budget ${input.reviewTimeoutMs}ms)`,
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }

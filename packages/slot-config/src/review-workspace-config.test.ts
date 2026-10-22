@@ -6,9 +6,29 @@ import { after, test } from 'node:test';
 
 const root = await mkdtemp(path.join(tmpdir(), 'review-workspace-config-'));
 process.env.FARMSLOT_PROJECTS_DIR = root;
-const { loadProjectVars, normalizeRawReviewWorkspaces, normalizeRawStaticReview } =
-  await import('./config.js');
+const {
+  loadProjectVars,
+  normalizeRawReviewWorkspaces,
+  normalizeRawStaticReview,
+  validateReviewConfig,
+} = await import('./config.js');
 after(() => rm(root, { recursive: true, force: true }));
+
+test('review inactivity minutes are configurable and require a positive finite value', () => {
+  assert.doesNotThrow(() =>
+    validateReviewConfig({ review: { review_inactivity_timeout_min: 5 } }, 'project.json'),
+  );
+  for (const minutes of [0, -1, NaN, Infinity]) {
+    assert.throws(
+      () =>
+        validateReviewConfig(
+          { review: { review_inactivity_timeout_min: minutes } },
+          'project.json',
+        ),
+      /review.review_inactivity_timeout_min must be positive/,
+    );
+  }
+});
 
 test('machine reviewer capacity requires an explicit positive integer limit', () => {
   assert.equal(normalizeRawReviewWorkspaces(undefined, 'machine.json'), undefined);

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 ## Unreleased
 
 - Validate dynamic project approvalPolicy overrides.
+- Configure native review inactivity with `review.review_inactivity_timeout_min`, defaulting to ten minutes.
 
 - Expose provider CLI checks through a standalone entry that does not require a checkout.
 

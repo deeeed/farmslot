@@ -130,8 +130,13 @@ reviewer blocked, records `reviewRecovery.status = "operator-required"`, preserv
 results, replays the human gate, and stops polling. Fresh failed and blocked terminal signals persist
 a visible failed-review outcome without retry; stale prior-attempt signals are ignored. An idle or
 shell-looking pane is not completion evidence, so partial artifacts remain recoverable while its
-runner is alive. The live wait still ends at `review_timeout_min`; a newly launched reviewer window
-is killed by its resolved tmux window ID before the caller raises the timeout, while an operator can
+runner is alive. Native pipeline reviewers use `review.review_inactivity_timeout_min`, defaulting
+to ten minutes without a new bound checklist mark or tool event. Signal heartbeats and text output
+do not count as progress. `review.review_timeout_min` remains the project review budget; fresh
+progress preserves the reviewer across that boundary. Recovery reads retained activity before
+judging inactivity, without resetting its clock at gateway restart. Reviewers using tmux still end
+their live wait at `review_timeout_min`; a newly launched reviewer window is killed by its resolved
+tmux window ID before the caller raises the timeout, while an operator can
 end the wait earlier with a shared failed or blocked terminal signal. The registered scenario uses
 only its generated session, window, and child-process IDs for cleanup; it never scans or kills by a
 shared name pattern. Reproduce the production gateway regression against the broken baseline and
