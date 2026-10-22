@@ -39,6 +39,7 @@ const state = await import('../core/state.js');
 const { getCachedFleet, loadFleetStatus, onStateChange, startFileWatcher } =
   await import('./state.js');
 const overlays = await import('./state.js');
+const resources = await import('./resource-manager.js');
 const {
   markMachineOnline,
   markMachineOffline,
@@ -242,6 +243,60 @@ test('pressure readers invalidate when the last sample becomes stale without ano
   assert.equal(resourceRevisions.revision(key), before + 1);
 });
 
+test('resource observations invalidate slot facts and keep cached fleet rollups current', async () => {
+  const slotId = 'resource-proof';
+  const machine = 'resource-proof-node';
+  await state.rewriteStatusFile(() => ({
+    slots: [{ slot: slotId, machine, project: 'resource-project', current_run_id: 'owner' }],
+  }));
+  await loadFleetStatus(false, true);
+  const detail = { family: 'slot', slotId } as const;
+  const beforeRun = resourceRevisions.revision(key);
+  let revision = resourceRevisions.revision(detail);
+  resources.setCachedResourceStatus(slotId, 'primary', 'running', { broadcast: false });
+  assert(resourceRevisions.revision(detail) > revision);
+  assert.equal(getCachedFleet()?.slots[0].resourceRollup, 'coherent');
+  revision = resourceRevisions.revision(detail);
+  resources.setCachedResourceStatus(slotId, 'primary', 'running', { broadcast: false });
+  assert.equal(resourceRevisions.revision(detail), revision);
+  resources.setCachedResourceStatus(slotId, 'secondary', 'stopped', { broadcast: false });
+  assert.equal((await loadFleetStatus(false, true)).slots[0].resourceRollup, 'partial');
+  const payload = {
+    machine,
+    slotId,
+    resourceId: 'primary',
+    status: 'running',
+    pid: 123,
+    at: '2026-10-23T00:00:00Z',
+    meta: { slotId, runId: 'former', startedAt: '2026-10-23T00:00:00Z' },
+  };
+  resources.handleNodeResourceChanged(payload);
+  assert.equal(getCachedFleet()?.slots[0].resourceRollup, 'stale');
+  revision = resourceRevisions.revision(detail);
+  resources.handleNodeResourceChanged(payload);
+  assert.equal(
+    resourceRevisions.revision(detail),
+    revision,
+    'An identical observation stays quiet',
+  );
+  resources.handleNodeResourceChanged({ ...payload, meta: { ...payload.meta, runId: 'owner' } });
+  resources.setCachedResourceStatus(slotId, 'secondary', 'running', { broadcast: false });
+  assert.equal(getCachedFleet()?.slots[0].resourceRollup, 'coherent');
+  revision = resourceRevisions.revision(detail);
+  resources.deleteActiveResource(slotId, 'primary');
+  assert(resourceRevisions.revision(detail) > revision);
+  await resources.clearMachineResourceStatus(machine);
+  assert.equal(getCachedFleet()?.slots[0].resourceRollup, 'none');
+  revision = resourceRevisions.revision(detail);
+  await resources.clearMachineResourceStatus(machine);
+  assert.equal(resourceRevisions.revision(detail), revision, 'Repeated clear stays quiet');
+  assert.equal(resourceRevisions.revision(key), beforeRun);
+  assert(
+    resourceRevisions.revision({ family: 'slots', scope: 'farm', project: 'resource-project' }) > 0,
+  );
+  assert(resourceRevisions.revision({ family: 'slots', scope: 'farm', nodeId: machine }) > 0);
+});
+
 test('every serialized binding writer publishes only after the committed file is readable', async () => {
   await state.rewriteStatusFile(() => rows(null));
   markMachineOnline('proof-machine');
@@ -397,6 +452,9 @@ test(
   async (t) => {
     await state.rewriteStatusFile(() => rows('watch-before'));
     await loadFleetStatus(true, true);
+    overlays.setBranchOverlay('proof', 'retained-watch-branch');
+    overlays.setTaskProgressOverlay('proof', 'Verify', 1, 2);
+    resources.setCachedResourceStatus('proof', 'watch-resource', 'running', { broadcast: false });
     const watcher = startFileWatcher();
     t.after(() => watcher.close());
     await watcher.ready;
@@ -406,6 +464,11 @@ test(
     const observe = async (write: () => Promise<void>, expected: string | null) => {
       const seen = new Promise<void>((resolve) => {
         receiver = (fleet) => {
+          if (fleet.slots.length) {
+            assert.equal(fleet.slots[0].branch, 'retained-watch-branch');
+            assert.equal(fleet.slots[0].taskPhase, 'Verify 1/2');
+            assert.equal(fleet.slots[0].resourceRollup, 'coherent');
+          }
           if ((fleet.slots[0]?.currentRunId ?? null) === expected) resolve();
         };
       });
@@ -428,5 +491,8 @@ test(
     const before = resourceRevisions.revision(key);
     await loadFleetStatus(true, true);
     assert.equal(resourceRevisions.revision(key), before);
+    overlays.clearBranchOverlay('proof');
+    overlays.clearTaskProgressOverlay('proof');
+    resources.setCachedResourceStatus('proof', 'watch-resource', 'unknown', { broadcast: false });
   },
 );

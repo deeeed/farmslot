@@ -47,7 +47,10 @@ import {
 } from '../core/config.js';
 import { onStatusCommit } from '../core/state.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
-import { SlotResourceChanges, statusSlotResources } from '../resources/slot-run-bindings.js';
+import {
+  slotResourceChanges as slotResources,
+  statusSlotResources,
+} from '../resources/slot-run-bindings.js';
 
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
 import { getActiveResources, getCachedSlotResources } from './resource-manager.js';
@@ -266,7 +269,6 @@ function normalizePublicationReview(
 
 let cachedFleet: FleetStatus | null = null;
 let fleetReadVersion = 0;
-const slotResources = new SlotResourceChanges();
 onStatusCommit((snapshot) => {
   cachedFleet = null;
   fleetReadVersion++;
@@ -595,6 +597,7 @@ function withFleetOverlays(fleet: FleetStatus): FleetStatus {
     if (branchOverride) {
       slot.branch = branchOverride;
     }
+    slot.resourceRollup = computeResourceRollup(slot);
     return slot;
   });
   enrichSlotHostLoad(slots);
@@ -602,11 +605,7 @@ function withFleetOverlays(fleet: FleetStatus): FleetStatus {
 }
 
 function transformFleet(raw: RawStatus): FleetStatus {
-  const slots = raw.slots.map((s) => {
-    const slot = transformSlot(s);
-    slot.resourceRollup = computeResourceRollup(slot);
-    return slot;
-  });
+  const slots = raw.slots.map(transformSlot);
   return {
     checkedAt: raw.checked_at,
     slots,
@@ -715,9 +714,10 @@ export function startFileWatcher() {
   watcher.on('all', async (event) => {
     if (event !== 'change' && event !== 'add' && event !== 'unlink') return;
     await loadFleetStatus(true);
-    if (cachedFleet) {
+    const fleet = getCachedFleet();
+    if (fleet) {
       for (const handler of changeHandlers) {
-        handler(cachedFleet);
+        handler(fleet);
       }
     }
   });

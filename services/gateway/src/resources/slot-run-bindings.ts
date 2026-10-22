@@ -90,6 +90,8 @@ export class SlotResourceChanges {
   }
 }
 
+export const slotResourceChanges = new SlotResourceChanges();
+
 /** Capture scalar facts so a later in-place write cannot change the saved comparison. */
 export function statusSlotResources(value: unknown): SlotResourceSnapshot[] {
   if (!value || typeof value !== 'object') throw new Error('Fleet status must contain slot rows');

@@ -37,6 +37,7 @@ return {
   slotId: view.slotId,
   slotLifecycle: view._slot?.lifecycle,
   slotBranch: view._slot?.branch,
+  slotResourceRollup: view._slot?.resourceRollup,
   renderedBranch: branchLabel?.nextElementSibling?.textContent?.trim(),
   renderedLifecycle: lifecycle?.textContent?.trim(),
   lifecycleVisible: Boolean(

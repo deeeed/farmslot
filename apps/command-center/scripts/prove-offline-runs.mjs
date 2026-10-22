@@ -487,6 +487,7 @@ if (phase === 'list-web') {
 async function observeResources({ clientKind = 'ui', token = profile.credential.token } = {}) {
   const socket = new WebSocket(profile.url);
   const changes = [];
+  const fleetUpdates = [];
   socket.addEventListener('message', ({ data }) => {
     const frame = JSON.parse(data);
     if (clientKind === 'node' && frame.type === 'req')
@@ -505,6 +506,8 @@ async function observeResources({ clientKind = 'ui', token = profile.credential.
       changes.push(
         ...frame.payload.changes.map((change) => ({ ...change, receivedAt: Date.now() })),
       );
+    if (frame.type === 'event' && frame.event === 'fleet.updated' && frame.payload.fleet)
+      fleetUpdates.push(frame.payload.fleet);
   });
   const request = (method, params = {}, stamped = false) =>
     new Promise((resolve, reject) => {
@@ -564,6 +567,7 @@ async function observeResources({ clientKind = 'ui', token = profile.credential.
     if (clientKind === 'ui') assert.equal(auth.capabilities.resourceChanges.version, 1);
     return {
       changes,
+      fleetUpdates,
       epoch: auth.capabilities.resourceChanges.epoch,
       read: request,
       readStamped: (method, params) => request(method, params, true),
@@ -717,6 +721,11 @@ async function detailBrowser(runId) {
 if (phase === 'slot-facts-web') {
   assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
   assert.equal(process.env.FARMSLOT_BRANCH_WATCHERS, '1');
+  assert.equal(
+    process.env.FARMSLOT_MONITOR_FLEET_POLL_MS,
+    '600000',
+    'Keep periodic rereads outside the filesystem-observer proof window',
+  );
   assert(process.env.FARMSLOT_SLOT_RESOURCE_PROOF);
   const fixture = JSON.parse(await readFile(process.env.FARMSLOT_SLOT_RESOURCE_PROOF, 'utf8'));
   assert.equal(await realpath(fixture.home), home);
@@ -728,6 +737,9 @@ if (phase === 'slot-facts-web') {
     (slot) => slot.id === fixture.slotId,
   )?.mode;
   assert.equal(originalMode, 'custom');
+  const resourceId = fixture.resourceId;
+  assert(typeof resourceId === 'string' && resourceId);
+  assert(Object.hasOwn(JSON.parse(beforePool).slots[0].resources ?? {}, resourceId));
   const repo = await realpath(fixture.repo);
   assert(repo.startsWith(`${home}/`), 'Only switch the disposable worker repository');
   assert((await realpath(path.join(repo, '.git'))).startsWith(`${home}/`));
@@ -774,7 +786,7 @@ if (phase === 'slot-facts-web') {
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
   };
-  let observed, failure, result, nodePeer, nodePrincipalId, nodeCredentialId;
+  let observed, failure, result, nodePeer, nodePrincipalId, nodeCredentialId, statusRestore;
   const cleanup = [];
   const retireNodeIdentity = async () => {
     if (nodeCredentialId) {
@@ -784,6 +796,16 @@ if (phase === 'slot-facts-web') {
     if (nodePrincipalId) {
       await observed.read('principal.retire', { principalIds: [nodePrincipalId] });
       nodePrincipalId = undefined;
+    }
+  };
+  const replaceStatus = async (bytes) => {
+    assert(statusRestore);
+    const temporary = `${statusRestore.file}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, bytes, { flag: 'wx', mode: statusRestore.mode });
+      await rename(temporary, statusRestore.file);
+    } finally {
+      await rm(temporary, { force: true });
     }
   };
   try {
@@ -940,28 +962,30 @@ if (phase === 'slot-facts-web') {
     nodeCredentialId = issued.credential.id;
     nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
     const nodeCycles = [];
-    const nodeCycle = async (label, write, verify) => {
+    const nodeCycle = async (label, write, verify, noticeFamilies = ['node', 'pressure']) => {
       const since = observed.changes.length;
       await write();
       const after = await until(
         (value) =>
           value.reads?.slot.status === 'ready' &&
           value.reads.slot.observedAt > before.reads.slot.observedAt,
-        'A node observation must refetch the existing canonical slot query without Refresh',
+        `A ${label} observation must refetch the existing canonical slot query without Refresh`,
       );
       const revision = (value) =>
         value.reads.slot.resourceState.dependencies.find(
           ({ key }) => key.family === 'slot' && key.slotId === fixture.slotId,
         ).revision;
       assert.equal(after.reads.slot.query.id, before.reads.slot.query.id);
-      assert(revision(after) > revision(before), 'Node observation revision must advance');
+      assert(revision(after) > revision(before), `${label} observation revision must advance`);
       const fleet = (await rpc('fleet.status')).fleet;
       const health = fleet.machines.find((row) => row.machine === machine);
       assert(verify(health, fleet.slots[0]), `Node observation ${label} must be readable`);
       await observed.barrier();
       const changes = observed.changes.slice(since);
-      for (const family of ['node', 'pressure'])
+      for (const family of noticeFamilies)
         assert(changes.some(({ key }) => key.family === family && key.nodeId === machine));
+      assert(changes.some(({ key }) => key.family === 'slot' && key.slotId === fixture.slotId));
+      assert(changes.some(({ key }) => key.family === 'slots' && key.scope === 'farm'));
       assert(
         !changes.some(({ key }) => key.family === 'runs'),
         'Node observations preserve run bindings',
@@ -971,6 +995,7 @@ if (phase === 'slot-facts-web') {
         revision: revision(after),
         health,
         hostLoad: fleet.slots[0].hostLoad,
+        resourceRollup: fleet.slots[0].resourceRollup,
       });
       before = after;
     };
@@ -994,10 +1019,64 @@ if (phase === 'slot-facts-web') {
       () => nodePeer.sendEvent('node.metrics', { machine, metrics }),
       (health, slot) => health?.system?.cpuPercent === 23 && slot.hostLoad?.memoryPercent === 34,
     );
+    const configured = (await rpc('resource.list', { slotId: fixture.slotId })).resources;
+    assert(configured.some((entry) => entry.id === resourceId));
+    for (const [status, rollup] of [
+      ['running', 'coherent'],
+      ['stopped', 'none'],
+      ['running', 'coherent'],
+    ]) {
+      await nodeCycle(
+        `resource-${status}`,
+        () =>
+          nodePeer.sendEvent('node.resource.changed', {
+            machine,
+            slotId: fixture.slotId,
+            resourceId,
+            status,
+            pid: process.pid,
+            at: new Date().toISOString(),
+          }),
+        (_health, slot) => slot.resourceRollup === rollup,
+        [],
+      );
+    }
+    assert.equal(await realpath(path.dirname(statusFile)), await realpath(fixture.root));
+    assert(statusFile.startsWith(`${path.dirname(home)}/`));
+    statusRestore = {
+      file: statusFile,
+      bytes: await readFile(statusFile),
+      mode: (await stat(statusFile)).mode & 0o777,
+    };
+    const checkedAt = new Date().toISOString();
+    const statusSnapshot = JSON.parse(statusRestore.bytes);
+    assert.notEqual(statusSnapshot.checked_at, checkedAt);
+    const sinceFleet = observed.fleetUpdates.length;
+    await replaceStatus(JSON.stringify({ ...statusSnapshot, checked_at: checkedAt }));
+    const watcherView = await until(
+      (value) =>
+        value.slotResourceRollup === 'coherent' &&
+        observed.fleetUpdates
+          .slice(sinceFleet)
+          .some(
+            (fleet) =>
+              fleet.checkedAt === checkedAt &&
+              fleet.slots.find((slot) => slot.slot === fixture.slotId)?.resourceRollup ===
+                'coherent',
+          ),
+      'Filesystem observer must preserve enriched slot facts in the actual client',
+    );
+    await replaceStatus(statusRestore.bytes);
+    assert.deepEqual(await readFile(statusFile), statusRestore.bytes);
+    assert.equal((await stat(statusFile)).mode & 0o777, statusRestore.mode);
+    statusRestore = undefined;
     await nodeCycle(
       'disconnect',
       () => nodePeer.closeAndWait(),
-      (health, slot) => health?.online === false && slot.hostLoad?.headroom === 'red',
+      (health, slot) =>
+        health?.online === false &&
+        slot.hostLoad?.headroom === 'red' &&
+        slot.resourceRollup === 'none',
     );
     nodePeer = undefined;
     await retireNodeIdentity();
@@ -1012,6 +1091,10 @@ if (phase === 'slot-facts-web') {
       path.join(artifacts, 'node-observation-cycles.json'),
       JSON.stringify(nodeCycles, null, 2),
     );
+    await writeFile(
+      path.join(artifacts, 'filesystem-enrichment.json'),
+      JSON.stringify({ checkedAt, watcherView }, null, 2),
+    );
     result = {
       result: 'PASS',
       slotFactsNotified: true,
@@ -1019,11 +1102,22 @@ if (phase === 'slot-facts-web') {
       unchangedRunBindingsRetained: true,
       branchOverlayNotifiedAndRead: true,
       nodeObservationNotifiedAndRead: true,
+      resourceRollupNotifiedAndRead: true,
+      filesystemEnrichmentPreserved: true,
       wholeFleetMigrationComplete: false,
     };
   } catch (error) {
     failure = error;
   } finally {
+    if (statusRestore) {
+      try {
+        await replaceStatus(statusRestore.bytes);
+        assert.deepEqual(await readFile(statusRestore.file), statusRestore.bytes);
+        assert.equal((await stat(statusRestore.file)).mode & 0o777, statusRestore.mode);
+      } catch (error) {
+        cleanup.push(error);
+      }
+    }
     if (nodePeer || nodePrincipalId || nodeCredentialId) {
       try {
         if (nodePeer) await nodePeer.closeAndWait();
