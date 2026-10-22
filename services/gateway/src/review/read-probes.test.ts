@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import { mock, test } from 'node:test';
 
+import { WebSocket, WebSocketServer } from 'ws';
+
 import type { Run } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
 const execution = await import('../core/exec.js');
 const { NodeExecUnconfirmedError } = await import('../fleet/node-rpc.js');
+const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
 const templates = await import('./templates.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
 const vars = makeVars({ projectName: 'read-probes', remoteRepo: '/fixture/terminal' });
@@ -143,6 +146,7 @@ test(
       options.signal.addEventListener('abort', aborted.release, { once: true });
       return execution.execLocal(command, {
         ...options,
+        closeoutTimeoutMs: 25,
         cwd: os.tmpdir(),
         onOutput: (stream, value) => {
           if (stream === 'stdout') {
@@ -199,4 +203,40 @@ test('unconfirmed closeout does not admit another probe on the same node connect
   );
   assert.ok(results.every((result) => result.status === 'rejected' && result.reason === failure));
   assert.equal(launches, 1);
+});
+
+test('a probe that waits for reconnect retains the connection that actually executed it', async (t) => {
+  const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const peer = new Promise<WebSocket>((resolve) => server.once('connection', resolve));
+  const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  await new Promise<void>((resolve, reject) => client.once('open', resolve).once('error', reject));
+  const socket = await peer;
+  t.after(async () => {
+    unregisterByWs(socket);
+    client.terminate();
+    socket.terminate();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  });
+  let launches = 0;
+  execute = async () => {
+    launches++;
+    registerNode(vars.machine, 1, socket);
+    throw new NodeExecUnconfirmedError(vars.machine, 'reconnected-request', 'timeout', socket);
+  };
+  await assert.rejects(probes.readSlotProbe(vars, 'reconnect read', 'reconnect-fixture', 100));
+  await Promise.allSettled(
+    Array.from({ length: 100 }, () =>
+      probes.readSlotProbe(vars, 'reconnect read', 'reconnect-fixture', 100),
+    ),
+  );
+  assert.equal(
+    launches,
+    1,
+    'socket B must not be mistaken for a replacement of an undefined socket',
+  );
 });

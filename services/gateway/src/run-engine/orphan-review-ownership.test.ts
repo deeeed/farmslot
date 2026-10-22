@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { after, test } from 'node:test';
+import { after, mock, test } from 'node:test';
 
 await import('../runtime/mock-pty.test-support.js');
 const fixture = await mkdtemp(path.join(os.tmpdir(), 'orphan-review-ownership-'));
@@ -10,15 +10,61 @@ process.env.NODE_TEST_CONTEXT = '1';
 process.env.FARMSLOT_RUNS_DIR = path.join(fixture, 'runs');
 process.env.FARMSLOT_POOL_DIR = path.join(fixture, 'pool');
 process.env.FARMSLOT_TEST_STATUS_FILE = path.join(fixture, 'status.json');
+process.env.FARMSLOT_PROJECTS_DIR = path.join(fixture, 'projects');
+const slotId = 'reboot-review-fixture';
+const task = path.join(fixture, 'projects', slotId, 'tasks/proof/TASK.md');
+for (const directory of [
+  process.env.FARMSLOT_POOL_DIR,
+  path.dirname(task),
+  path.join(fixture, 'repo'),
+])
+  await mkdir(directory, { recursive: true });
+await writeFile(
+  path.join(fixture, 'projects', slotId, 'project.json'),
+  JSON.stringify({ name: slotId, task_dir: 'temp/tasks', hooks: {}, review: { enabled: false } }),
+);
+await writeFile(
+  path.join(fixture, 'pool/fixture.json'),
+  JSON.stringify({
+    machine: os.hostname(),
+    host: 'localhost',
+    ssh_user: os.userInfo().username,
+    platform: 'cli',
+    os: process.platform,
+    project: slotId,
+    slots: [
+      {
+        id: slotId,
+        enabled: true,
+        mode: 'dispatch',
+        repo: path.join(fixture, 'repo'),
+        session: slotId,
+      },
+    ],
+  }),
+);
+await writeFile(task, '# Owned replay fixture\n');
 const core = await import('../core/index.js');
 const store = await import('../runs/store.js');
 const { withRunTransition } = await import('../run-lifecycle/transition-coordinator.js');
 const { withNativeReviewOperation, withNativeReviewMutation } =
   await import('../review/native-review-operation.js');
 const { reconcileOrphanedSlots } = await import('./recovery.js');
+const contracts = await import('../tasks/worker-terminal-contract.js');
+let readContract: typeof contracts.readFrozenWorkerTerminalContractForRun = async () => null;
+mock.module('../tasks/worker-terminal-contract.js', {
+  namedExports: {
+    ...contracts,
+    readFrozenWorkerTerminalContractForRun: (...args: Parameters<typeof readContract>) =>
+      readContract(...args),
+  },
+});
+const replayModule: string = '../methods/run/replay-step.js?orphan-replay-path';
+const { runReplayStep }: typeof import('../methods/run/replay-step.js') = await import(
+  replayModule
+);
 type Collaborators = Parameters<typeof reconcileOrphanedSlots>[0];
 after(() => rm(fixture, { recursive: true, force: true }));
-const slotId = 'reboot-review-fixture';
 
 function latch() {
   let release!: () => void;
@@ -33,7 +79,7 @@ async function setup(t: import('node:test').TestContext) {
     {
       flowType: 'dev',
       project: 'reboot-review-fixture',
-      ticketOrPr: 'TEST-REBOOT',
+      ticketOrPr: 'PROOF-1',
       slotId,
       transport: 'tmux',
     },
@@ -123,4 +169,73 @@ for (const statusChangesBeforeFleetReturns of [true, false]) {
       'the original native review ownership fence still accepts the replayed owner',
     );
   });
+}
+
+for (const status of ['failed', 'done'] as const) {
+  test(
+    `the public ${status} review replay retains its claim while awaiting the worker contract`,
+    { timeout: 5_000 },
+    async (t) => {
+      const { id, deps } = await setup(t);
+      const initial = store.getRun(id)!;
+      store.updateRun(id, {
+        status,
+        taskFile: task,
+        steps: initial.steps.map((step) => ({
+          ...step,
+          status: step.name === 'review' ? 'failed' : 'done',
+        })),
+      });
+      const fleetEntered = latch(),
+        releaseFleet = latch(),
+        contractEntered = latch(),
+        releaseContract = latch();
+      deps.listRuns = () => {
+        const current = store.getRun(id)!;
+        return { runs: ['failed', 'done'].includes(current.status) ? [] : [current] };
+      };
+      deps.loadFleetStatus = async () => {
+        fleetEntered.release();
+        await releaseFleet.promise;
+        return { slots: [{ slot: slotId, lifecycle: 'busy', phase: 'preparing' }] };
+      };
+      readContract = async () => {
+        contractEntered.release();
+        await releaseContract.promise;
+        return null;
+      };
+      const reconcile = reconcileOrphanedSlots(deps);
+      await fleetEntered.promise;
+      const replay = runReplayStep({ runId: id, stepName: 'review' }, () => {}, {
+        startEngine: async () => {},
+      });
+      try {
+        await Promise.race([
+          contractEntered.promise,
+          replay.then(() => {
+            throw new Error('Replay did not reach its post-claim contract read');
+          }),
+        ]);
+        assert.equal(
+          store.getRun(id)!.status,
+          status,
+          'the production replay is still terminal across this await',
+        );
+        releaseFleet.release();
+        for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(await core.readSlotField(slotId, 'current_run_id'), id);
+        releaseContract.release();
+        await replay;
+        await reconcile;
+        await withNativeReviewOperation(store.getRun(id)!, () =>
+          withNativeReviewMutation(async () => {}),
+        );
+      } finally {
+        releaseFleet.release();
+        releaseContract.release();
+        await Promise.allSettled([replay, reconcile]);
+        readContract = async () => null;
+      }
+    },
+  );
 }

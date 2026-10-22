@@ -45,6 +45,7 @@ export function readSlotProbe(
         // A lost closeout reply does not prove the old process stopped. Keep
         // readers on that failure until its node connection is replaced.
         entry.unconfirmed = error instanceof NodeExecUnconfirmedError;
+        if (error instanceof NodeExecUnconfirmedError) entry.connection = error.executionConnection;
         throw error;
       } finally {
         clearTimeout(timer);
