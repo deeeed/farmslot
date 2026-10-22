@@ -51,6 +51,15 @@ or user-data loss. Escalate at round 4; stop at round 5 with a design or scope d
 
 Both approvals freeze the head. `ready` checks CI and the merge gate, then writes
 `MERGE-READY owner/repo#number <SHA>` to REPORT.md. Later work goes under `FOLLOW-UPS`.
+For required CI/test fixes after approval, lanes may explicitly request
+`review --approved-delta`. It requires a changed descendant of the last reviewed
+head and the same idle PR-bound sessions in `reviews.lanes`. Both reviewers MUST
+continue WARM, inspect only those new commits and check that they are CI/test fixes.
+Missing, changed, busy or foreign sessions MUST be refused before review dispatch;
+this mode never launches replacement sessions or falls back to fresh subprocesses.
+New verdicts name the new head; the round budget and merge gates still apply.
+`--conflict-only` keeps its existing manifest and range rules and cannot be combined
+with `--approved-delta`.
 `merge-watch` defaults to a dry run. Execution requires project permission, the matching
 head, both approvals, at least one finished CI check, all checks green, resolved review
 threads, and a clean portability scan. Vercel is excluded; completed SUCCESS/SKIPPED/NEUTRAL
