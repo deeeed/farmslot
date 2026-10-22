@@ -438,8 +438,8 @@ elif command.startswith('test -d '): sys.exit(1)
 // left worker-side fixes on whatever revision the CLI was last installed at. The
 // ssh stub runs each remote command locally with HOME at a temp directory, so the
 // snapshot, its links and the worker-shell verify are real files and processes.
-// The tmux stub stands in for the node user's server: it runs a new session's
-// command in the foreground. Each test runs one deploy.
+// The tmux stub returns from detached session creation before the worker body.
+// The fixture's poll clock runs the queued body. Each test runs one deploy.
 const FAKE_CLI = `#!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
@@ -494,16 +494,25 @@ case "$1" in
   new-session)
     for arg; do command=$arg; done
     echo "$command" >> "$HOME/tmux.log"
-    [ -f "$HOME/tmux-hangs" ] || bash -c "$command" ;;
-  kill-session) echo "$*" >> "$HOME/tmux-kills.log" ;;
+    [ -f "$HOME/tmux-hangs" ] || printf '%s' "$command" > "$HOME/tmux-pending"
+    ;;
+  kill-session)
+    echo "$*" >> "$HOME/tmux-kills.log"
+    rm -f "$HOME/tmux-pending"
+    ;;
 esac
 `,
     true,
   );
-  // sleep returns at once; in a verify poll it first waits for a hung CLI to start.
+  // A verify poll advances the fake detached server, without running its body
+  // inside the separately bounded tmux client. Other sleeps return at once.
   write(
     'bin/sleep',
-    '#!/bin/sh\n[ "$1" = 0.5 ] && [ -f "$HOME/cli-hangs" ] || exit 0\n' +
+    '#!/bin/sh\n' +
+      'if [ "$1" = 0.5 ] && [ -f "$HOME/tmux-pending" ]; then\n' +
+      '  command=$(cat "$HOME/tmux-pending"); rm "$HOME/tmux-pending"\n' +
+      '  exec bash -c "$command"\nfi\n' +
+      '[ "$1" = 0.5 ] && [ -f "$HOME/cli-hangs" ] || exit 0\n' +
       'for _ in $(seq 1 100); do [ -s "$HOME/cli-hang.pid" ] && exit 0; /bin/sleep 0.05; done\n',
     true,
   );
@@ -1370,7 +1379,8 @@ for (const [name, explicit, expected, instance, authDefault, captureMode = 'reta
 for (const tmuxServer of [true, false]) {
   test(`deploy-node honors the pool worker profile home (${tmuxServer ? 'tmux' : 'login shell'})`, (t) => {
     const fixture = cliFixture(t, { tmuxServer });
-    fixture.write('bin/sleep', '#!/bin/sh\nexec /bin/sleep "$@"\n', true);
+    if (!tmuxServer)
+      fixture.write('bin/sleep', '#!/bin/sh\nexec /bin/sleep "$@"\n', true);
     const serviceHome = path.join(fixture.home, "service profiles' literal-$value");
     fixture.write(
       'pool/z-configured-worker.json',
