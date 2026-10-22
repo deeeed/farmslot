@@ -1,14 +1,12 @@
 import { html, nothing } from 'lit';
 
-import { isSlotFreedByPark } from '@farmslot/protocol';
-import { checklistProgressView } from '@farmslot/review-dispatch';
+import { checklistProgressView, slotSessionView } from '@farmslot/review-dispatch';
 
 import '../chat/native-session-view.js';
 import '../shared/hydrating-placeholder.js';
 
 import { getState } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
-import type { NativeWorkerViewTarget } from '../chat/native-worker-target.js';
 import {
   buildRerunAlongsideHref,
   canReplayRunSteps,
@@ -223,24 +221,17 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
     requestedRunFromHash(),
     slotBoundRunIdForSlot(view.slotId, view._slot?.currentRunId, getState().fleet?.slots),
   );
-  const nativeWorker: NativeWorkerViewTarget | undefined =
-    selectedAgentContext?.nativeSession &&
-    view._linkedRun &&
-    selectedAgentContext.runId === view._linkedRun.id
-      ? {
-          runId: view._linkedRun.id,
-          contextId: selectedAgentContext.id,
-          label: selectedAgentContext.label,
-          binding: selectedAgentContext.nativeSession,
-          readOnly:
-            !view._linkedRun ||
-            isTerminalRunStatus(view._linkedRun.status) ||
-            view._isRecoveryBlocked ||
-            view._linkedRun.slotId !== view.slotId ||
-            Boolean(view._slot?.currentRunId && view._slot.currentRunId !== view._linkedRun.id) ||
-            isSlotFreedByPark(view._linkedRun),
-        }
-      : undefined;
+  const tmuxSelectionKey = `${view.slotId}:${terminalRunId}`;
+  const tmuxSelected = view._tmuxSessionSelection === tmuxSelectionKey;
+  const {
+    target: nativeWorker,
+    unavailable: nativeUnavailable,
+    tabs: nativeTabs,
+  } = slotSessionView(view._linkedRun?.agentContexts ?? [], {
+    slotId: view.slotId,
+    contextId: selectedAgentContext?.id ?? '',
+    tmux: tmuxSelected,
+  });
   return html`
     <!-- Body: activity bar + sidebar + editor -->
     <div class="sv-body">
@@ -766,73 +757,86 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                           nativeWorker ? 480 : 0,
                         )}px"
                       >
-                        ${pinnedContextUnresolved
+                        ${pinnedContextUnresolved || nativeUnavailable
                           ? html`<p role="status" data-testid="native-context-unavailable">
                               The selected task context is loading or unavailable.
                             </p>`
-                          : nativeWorker &&
-                              (view._bottomTab === 'terminal' || view._bottomTab === 'history')
-                            ? html`${view._renderAgentContexts()}<native-session-view
-                                  .worker=${nativeWorker}
-                                ></native-session-view>`
-                            : view._bottomTab === 'terminal'
+                          : view._bottomTab === 'terminal' ||
+                              (nativeWorker && view._bottomTab === 'history')
+                            ? html`
+                                <terminal-view
+                                  .slotId=${view.slotId}
+                                  .runId=${terminalRunId}
+                                  .contextId=${nativeWorker || tmuxSelected
+                                    ? ''
+                                    : selectedContextId}
+                                  .role=${nativeWorker || tmuxSelected ? '' : selectedRole}
+                                  .bareSession=${tmuxSelected}
+                                  .nativeWorker=${nativeWorker}
+                                  .nativeWorkers=${nativeTabs}
+                                  @native-context-selected=${(
+                                    event: CustomEvent<{ contextId: string | null }>,
+                                  ) => {
+                                    if (event.detail.contextId === null) {
+                                      view._tmuxSessionSelection = tmuxSelectionKey;
+                                      return;
+                                    }
+                                    const target = view
+                                      ._agentContexts()
+                                      .find((context) => context.id === event.detail.contextId);
+                                    if (target) view._selectAgentContext(target);
+                                  }}
+                                  @terminal-subscribe-failed=${(
+                                    e: CustomEvent<{ contextId?: string; role?: string }>,
+                                  ) => {
+                                    const selected = selectedAgentContext;
+                                    const key =
+                                      e.detail?.contextId ||
+                                      (selected
+                                        ? view._contextKey(selected)
+                                        : e.detail?.role
+                                          ? `${e.detail.role}:${view.slotId}`
+                                          : '');
+                                    if (!key) return;
+                                    const next = new Set(view._unavailableContextKeys);
+                                    next.add(key);
+                                    view._unavailableContextKeys = next;
+                                  }}
+                                ></terminal-view>
+                              `
+                            : view._bottomTab === 'history'
                               ? html`
-                                  <terminal-view
+                                  ${view._renderAgentContexts()}
+                                  <worker-session-history
                                     .slotId=${view.slotId}
                                     .runId=${terminalRunId}
-                                    .contextId=${selectedContextId}
                                     .role=${selectedRole}
-                                    @terminal-subscribe-failed=${(
-                                      e: CustomEvent<{ contextId?: string; role?: string }>,
-                                    ) => {
-                                      const selected = selectedAgentContext;
-                                      const key =
-                                        e.detail?.contextId ||
-                                        (selected
-                                          ? view._contextKey(selected)
-                                          : e.detail?.role
-                                            ? `${e.detail.role}:${view.slotId}`
-                                            : '');
-                                      if (!key) return;
-                                      const next = new Set(view._unavailableContextKeys);
-                                      next.add(key);
-                                      view._unavailableContextKeys = next;
-                                    }}
-                                  ></terminal-view>
+                                    .contextId=${selectedContextId}
+                                  ></worker-session-history>
                                 `
-                              : view._bottomTab === 'history'
+                              : view._bottomTab === 'comments'
                                 ? html`
-                                    ${view._renderAgentContexts()}
-                                    <worker-session-history
-                                      .slotId=${view.slotId}
-                                      .runId=${terminalRunId}
-                                      .role=${selectedRole}
-                                      .contextId=${selectedContextId}
-                                    ></worker-session-history>
+                                    <pr-comments-panel
+                                      .threads=${view._prThreads}
+                                      .pr=${view._prNumber ?? 0}
+                                      .repo=${view._prRepo ?? ''}
+                                      .currentUser=${view._prCurrentUser}
+                                      .loading=${view._prCommentsLoading}
+                                      @comment-navigate=${(e: CustomEvent) =>
+                                        view._handleCommentNavigate(e.detail)}
+                                      @thread-resolved=${() => view._loadPRComments()}
+                                    ></pr-comments-panel>
                                   `
-                                : view._bottomTab === 'comments'
-                                  ? html`
-                                      <pr-comments-panel
-                                        .threads=${view._prThreads}
-                                        .pr=${view._prNumber ?? 0}
-                                        .repo=${view._prRepo ?? ''}
-                                        .currentUser=${view._prCurrentUser}
-                                        .loading=${view._prCommentsLoading}
-                                        @comment-navigate=${(e: CustomEvent) =>
-                                          view._handleCommentNavigate(e.detail)}
-                                        @thread-resolved=${() => view._loadPRComments()}
-                                      ></pr-comments-panel>
-                                    `
-                                  : html`
-                                      <problems-panel
-                                        .diagnostics=${view._diagnostics}
-                                        .loading=${view._diagnosticsLoading}
-                                        .truncated=${view._diagnosticsTruncated}
-                                        @diagnostic-navigate=${(e: CustomEvent) =>
-                                          view._handleDiagnosticNavigate(e.detail)}
-                                        @diagnostics-refresh=${() => view._runDiagnostics()}
-                                      ></problems-panel>
-                                    `}
+                                : html`
+                                    <problems-panel
+                                      .diagnostics=${view._diagnostics}
+                                      .loading=${view._diagnosticsLoading}
+                                      .truncated=${view._diagnosticsTruncated}
+                                      @diagnostic-navigate=${(e: CustomEvent) =>
+                                        view._handleDiagnosticNavigate(e.detail)}
+                                      @diagnostics-refresh=${() => view._runDiagnostics()}
+                                    ></problems-panel>
+                                  `}
                       </div>
                     `
                   : nothing}

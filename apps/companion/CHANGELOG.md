@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Open every native run conversation beside slot terminals and show open gates, structured review and fix history, and recovered review failures from the shared models.
+
 - Show the existing shared review history panel on run detail while rounds run, as well as at the gate.
 
 - Verify exact reviewed line selection for line comments using the shared source context.

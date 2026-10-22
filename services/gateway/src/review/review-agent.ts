@@ -17,6 +17,10 @@ import {
   type RunnerSessionUsage,
   type WorkerSignalChecklistTiming,
 } from '@farmslot/protocol';
+import {
+  renderReviewResultInstructions,
+  type ReviewRecommendation,
+} from '@farmslot/protocol/review-approval-policy.cjs';
 import { executionModelFromSelection, reviewArtifactDir } from '@farmslot/review-dispatch';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
@@ -292,26 +296,6 @@ export function reReviewChecklistPrefix(params: {
       artifactScope: priorScope,
     }),
   ].join('\n');
-}
-
-function structuredReviewResultInstructions(resultRelPath: string): string {
-  return `
-
-## Machine-readable review result
-
-Write \`${resultRelPath}\` as JSON before completing:
-
-\`\`\`json
-{
-  "schemaVersion": 1,
-  "verdict": "pass",
-  "issues": []
-}
-\`\`\`
-
-For an issues verdict, set \`verdict\` to \`"issues"\` and include at least one
-\`{ "file": "path", "line": 1, "description": "specific finding" }\` entry.
-The JSON verdict and issues are authoritative; the Markdown file is the human-readable report.`;
 }
 
 /** A native reviewer's context id starts with this; a launch with the same inputs reattaches to it. */
@@ -628,13 +612,14 @@ export function scopeReviewFeedbackPath(
       ? scoped
       : `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
   return resultRelPath
-    ? `${feedbackScoped.trimEnd()}${structuredReviewResultInstructions(resultRelPath)}`
+    ? `${feedbackScoped.trimEnd()}${renderReviewResultInstructions(resultRelPath)}`
     : feedbackScoped;
 }
 
 // Exported for review.test.ts to seed runReviewRetryLoop fixtures. Not part of the
 // gateway's public surface — keep internal to this module's tests.
 export interface ReviewAgentResult {
+  recommendation?: ReviewRecommendation;
   reviewId?: string;
   mode?: ReviewMode;
   reviewerSessionId?: string | null;

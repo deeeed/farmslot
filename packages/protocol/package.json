@@ -387,6 +387,10 @@
     "./scripts/acceptance.mjs": {
       "types": "./scripts/acceptance.d.mts",
       "default": "./scripts/acceptance.mjs"
+    },
+    "./review-approval-policy.cjs": {
+      "types": "./scripts/review-approval-policy.d.cts",
+      "default": "./scripts/review-approval-policy.cjs"
     }
   },
   "scripts": {
@@ -436,7 +440,9 @@
     "dist/**/*.js.map",
     "scripts/acceptance.mjs",
     "scripts/acceptance.d.cts",
-    "scripts/acceptance.d.mts"
+    "scripts/acceptance.d.mts",
+    "scripts/review-approval-policy.cjs",
+    "scripts/review-approval-policy.d.cts"
   ],
   "publishConfig": {
     "access": "public"

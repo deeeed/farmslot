@@ -1,26 +1,36 @@
 import {
   type AgentContext,
   deriveChecklistStepDurations,
+  digestRecipeDocument,
   extractRunArtifactManifest,
   type FsReadParams,
+  type GitDiffParams,
   isTerminalRunStatus,
   observedReviewSessionContinuity,
   type ReviewAttempt,
   type ReviewChainEntry,
   reviewChainForRun,
   type ReviewMode,
+  reviewResultForRun,
   type ReviewStatus,
   type Run,
+  type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
+import { reviewHistoryTimeline } from './review-history-timeline.js';
 import { runActivityView, runReviewActivityContext } from './run-activity.js';
+import { reviewAttemptFailureReason } from './run-review-failures.js';
 
 export interface ReviewHistoryFinding {
+  id: string;
   title: string;
   details: string;
   severity: string;
   file: string;
   line: number | null;
+  status: 'new' | 'still-open' | 'resolved';
+  statusLabel: string;
+  resolvedBy: string | null;
 }
 export interface ReviewHistoryArtifact {
   content?: string;
@@ -28,18 +38,70 @@ export interface ReviewHistoryArtifact {
 }
 export type ReviewHistoryArtifacts = Readonly<Record<string, ReviewHistoryArtifact>>;
 
+export interface ReviewHistoryCacheAuthority {
+  gatewayUrl: string;
+  profileId?: string | null;
+  principalId: string | null;
+}
+
+/** Transport generations invalidate requests, not facts already read from the same owner. */
+export function reviewHistoryCacheScope(runId: string, authority: ReviewHistoryCacheAuthority) {
+  return JSON.stringify([
+    authority.gatewayUrl,
+    authority.profileId ?? null,
+    authority.principalId,
+    runId,
+  ]);
+}
+
+function reviewUsageLabel(usage: RunnerSessionUsage | undefined): string | null {
+  if (!usage) return null;
+  if (usage.source === 'unavailable') return 'Usage unavailable';
+  const parts = [
+    usage.turns != null ? `${usage.turns} turns` : null,
+    usage.totalTokens != null ? `${usage.totalTokens.toLocaleString()} tokens` : null,
+    usage.costUsd != null ? `$${usage.costUsd.toFixed(4)}` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : 'Usage measured';
+}
+
+/** Keep recorded history readable during a refresh outage, while exposing the failed read. */
+export function mergeReviewHistoryArtifacts(
+  previous: ReviewHistoryArtifacts,
+  next: ReviewHistoryArtifacts,
+): ReviewHistoryArtifacts {
+  return {
+    ...previous,
+    ...Object.fromEntries(
+      Object.entries(next).map(([path, value]) => [
+        path,
+        value.error && previous[path]?.content !== undefined
+          ? { ...previous[path], error: value.error }
+          : value,
+      ]),
+    ),
+  };
+}
+
 export interface ReviewHistoryRound {
   key: string;
   reviewId: string;
   loopNumber: number;
+  roundNumber: number;
   runner: string;
   model: string;
   mode: ReviewMode | null;
   modeLabel: string;
   verdict: string;
+  verdictTone: 'ok' | 'warn' | 'fail' | 'running';
+  failureReason?: string | null;
   startedAt: string | null;
   completedAt: string | null;
   durationMs: number | null;
+  usageLabel: string | null;
+  headSha: string | null;
+  reviewBaseSha: string | null;
+  resultRecorded: boolean;
   unresolvedCount: number | null;
   unresolvedLabel: string;
   findingsLabel: string;
@@ -49,15 +111,22 @@ export interface ReviewHistoryRound {
   fixRange: string | null;
   fixStat: string | null;
   fixDurationMs: number | null;
+  fixStartedAt: string | null;
+  fixCompletedAt: string | null;
+  fixFiles: string[];
   fixRunning: boolean;
   activeFixStartedAt: string | null;
-  resolution: 'Not recorded';
   hasFix: boolean;
   diffPath: string | null;
+  diffText: string | null;
+  diffReconstructed: boolean;
   reviewDiffRetained: boolean;
   fixDiffPath: string | null;
   fixDiffText: string | null;
   fixDiffError: string | null;
+  fixBaseSha: string | null;
+  fixHeadSha: string | null;
+  fixReconstructed: boolean;
   validationDepth: string;
   timing: ReturnType<typeof deriveChecklistStepDurations>;
   unavailable: string[];
@@ -134,11 +203,15 @@ function findings(value: unknown): ReviewHistoryFinding[] {
     const title = text(issue.title) ?? firstLine.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? firstLine;
     return [
       {
+        id: text(issue.id) ?? digestRecipeDocument({ file: issue.file ?? issue.path, title }),
         title,
         details: body.startsWith(title) ? body.slice(title.length).trim() : body,
         severity: text(issue.severity) ?? priority?.[1] ?? 'Severity not recorded',
         file: text(issue.file) ?? text(issue.path) ?? 'General finding',
         line: number(issue.line),
+        status: 'new' as const,
+        statusLabel: 'New',
+        resolvedBy: null,
       },
     ];
   });
@@ -162,6 +235,10 @@ export function reviewHistoryArtifactPaths(run: Run): string[] {
   ];
 }
 
+function recoveredSnapshotKey(actor: AgentContext): string {
+  return `history:${actor.id}:${actor.reviewLoopNumber ?? 0}:${actor.deliveryBaselineRef ?? actor.pipelineVisualReviewInput?.headSha ?? ''}:snapshot`;
+}
+
 function readyReviews(run: Run): ReviewStatus[] {
   const live = run.engineState?.publishGate?.reviews;
   if (live?.length) return live;
@@ -175,10 +252,32 @@ export function reviewHistoryView(
   artifacts: ReviewHistoryArtifacts = {},
   chain: ReviewChainEntry[] = reviewChainForRun(run),
 ) {
-  const contexts = (run.agentContexts ?? []).filter(
-    (context) => context.role === 'review' && context.reviewId && context.reviewLoopNumber,
+  const result = reviewResultForRun(run);
+  const staticActors = new Set(
+    (run.agentContexts ?? [])
+      .filter(
+        (context) =>
+          context.role === 'review' && !context.reviewLoopNumber && run.flowType === 'review-pr',
+      )
+      .map((context) => context.id),
   );
+  const contexts = (run.agentContexts ?? [])
+    .filter((context) => context.role === 'review')
+    .flatMap((context) =>
+      staticActors.has(context.id)
+        ? [
+            {
+              ...context,
+              reviewId: context.reviewId ?? `workspace-review-${run.id}`,
+              reviewLoopNumber: 1,
+            },
+          ]
+        : context.reviewId && context.reviewLoopNumber
+          ? [context]
+          : [],
+    );
   const reviews = readyReviews(run);
+  const useGit = artifacts['history:git']?.content === 'enabled';
   const retainedPaths = new Set(extractRunArtifactManifest(run).map((entry) => entry.path));
   const currentActor =
     runActivityView(run)?.kind === 'worker-fix' ? runReviewActivityContext(run) : null;
@@ -229,18 +328,69 @@ export function reviewHistoryView(
         ...stepAttempts.map((entry, index) => number(entry.loopNumber) ?? index + 1),
       ]),
     ].sort((a, b) => a - b);
-    const rounds = loops.map((loop): ReviewHistoryRound => {
-      const roundActors = actors
-        .filter((context) => context.reviewLoopNumber === loop)
-        .sort((left, right) =>
-          (left.attemptStartedAt ?? left.startedAt ?? '').localeCompare(
-            right.attemptStartedAt ?? right.startedAt ?? '',
-          ),
+    // Replays can restart the loop counter. A context is an attempt, not another copy of loop 1.
+    const sources = loops
+      .flatMap<{ loop: number; actor: AgentContext | undefined }>((loop) => {
+        const matching = actors.filter((context) => context.reviewLoopNumber === loop);
+        return matching.length
+          ? matching.map((actor) => ({ loop, actor }))
+          : [{ loop, actor: undefined }];
+      })
+      .sort(
+        (left, right) =>
+          (left.actor?.startedAt ?? '').localeCompare(right.actor?.startedAt ?? '') ||
+          left.loop - right.loop,
+      );
+    let roundNumber = 0;
+    const rounds = sources.map(({ loop, actor }): ReviewHistoryRound => {
+      roundNumber = Math.max(roundNumber + 1, loop);
+      const sameLoop = actors.filter((context) => context.reviewLoopNumber === loop);
+      const ownsAttempt = (
+        entry: { startedAt?: string; completedAt?: string; verdict?: string; headSha?: string },
+        entryLoop: number,
+      ) => {
+        if (!actor) return entryLoop === loop;
+        if (actor.status === 'failed' && entry.verdict !== 'failed') return false;
+        if (entry.startedAt && actor.completedAt && entry.startedAt > actor.completedAt)
+          return false;
+        if (entry.completedAt && actor.startedAt && entry.completedAt < actor.startedAt)
+          return false;
+        if (
+          entry.headSha &&
+          actor.deliveryBaselineRef &&
+          entry.headSha !== actor.deliveryBaselineRef
+        )
+          return false;
+        const sameHead = entry.headSha && entry.headSha === actor.deliveryBaselineRef;
+        if (entryLoop !== loop && !sameHead) return false;
+        return (
+          sameLoop.length === 1 ||
+          (entry.startedAt
+            ? entry.startedAt >= (actor.startedAt ?? '') &&
+              (!actor.completedAt || entry.startedAt <= actor.completedAt)
+            : sameLoop.at(-1)?.id === actor.id)
         );
-      const actor = roundActors.at(-1);
-      const recordedAttempt = attempts.filter((entry) => entry.loopNumber === loop).at(-1);
+      };
+      const recordedAttempt = attempts
+        .filter((entry) =>
+          ownsAttempt(
+            { ...entry, headSha: entry.reviewSnapshot?.headSha ?? undefined },
+            entry.loopNumber,
+          ),
+        )
+        .at(-1);
       const recordedRaw = stepAttempts
-        .filter((entry, index) => (number(entry.loopNumber) ?? index + 1) === loop)
+        .filter((entry, index) =>
+          ownsAttempt(
+            {
+              startedAt: text(entry.startedAt) ?? undefined,
+              completedAt: text(entry.completedAt) ?? undefined,
+              verdict: text(entry.verdict) ?? undefined,
+              headSha: text(record(entry.reviewSnapshot)?.headSha) ?? undefined,
+            },
+            number(entry.loopNumber) ?? index + 1,
+          ),
+        )
         .at(-1);
       const newerActive =
         actor &&
@@ -255,24 +405,114 @@ export function reviewHistoryView(
         actor?.reviewResultFile && (!newerActive || actor.reviewResultValidatedAt)
           ? artifact(artifacts, actor.reviewResultFile)
           : null;
+      const staticResult = actor && staticActors.has(actor.id) ? result : null;
+      const storedSnapshot =
+        attempt?.reviewSnapshot ?? record(raw?.reviewSnapshot) ?? staticResult?.reviewSnapshot;
+      const recordedSnapshot =
+        storedSnapshot ?? artifact(artifacts, `${dir}/review-diff-stat.json`);
+      const expectedHead = actor?.deliveryBaselineRef ?? actor?.pipelineVisualReviewInput?.headSha;
+      const overwritten =
+        !storedSnapshot &&
+        actor?.completedAt &&
+        text(recordedSnapshot?.capturedAt) &&
+        String(recordedSnapshot?.capturedAt) > actor.completedAt;
       const snapshot =
-        attempt?.reviewSnapshot ??
-        record(raw?.reviewSnapshot) ??
-        artifact(artifacts, `${dir}/review-diff-stat.json`);
+        (overwritten || (expectedHead && recordedSnapshot?.headSha !== expectedHead)
+          ? null
+          : recordedSnapshot) ?? (actor ? artifact(artifacts, recoveredSnapshotKey(actor)) : null);
+      const storedFix = attempt?.fixDelta ?? record(raw?.fixDelta);
+      const candidateFix = storedFix ?? artifact(artifacts, `${dir}/fix-delta-stat.json`);
       const fix =
-        attempt?.fixDelta ??
-        record(raw?.fixDelta) ??
-        artifact(artifacts, `${dir}/fix-delta-stat.json`);
-      const issueValue = attempt?.issues ?? raw?.issues ?? saved?.issues;
+        (!storedFix &&
+          actor?.completedAt &&
+          text(candidateFix?.capturedAt) &&
+          String(candidateFix?.capturedAt) > actor.completedAt) ||
+        (expectedHead &&
+          candidateFix &&
+          (candidateFix.fixHeadSha ?? candidateFix.headSha) !== expectedHead)
+          ? null
+          : candidateFix;
+      const issueValue =
+        attempt?.issues ?? raw?.issues ?? saved?.issues ?? staticResult?.lineComments;
       const issueRows = findings(issueValue);
       const startedAt =
         attempt?.startedAt ??
         text(raw?.startedAt) ??
-        actor?.attemptStartedAt ??
         actor?.startedAt ??
+        actor?.attemptStartedAt ??
         null;
       const completedAt =
-        attempt?.completedAt ?? text(raw?.completedAt) ?? actor?.completedAt ?? null;
+        attempt?.completedAt ??
+        text(raw?.completedAt) ??
+        actor?.completedAt ??
+        (staticResult ? run.steps.find((entry) => entry.name === 'monitor')?.completedAt : null) ??
+        null;
+      const previousCompletedAt = actors
+        .filter(
+          (candidate) =>
+            candidate.id !== actor?.id &&
+            candidate.completedAt &&
+            startedAt &&
+            candidate.completedAt <= startedAt,
+        )
+        .map((candidate) => candidate.completedAt)
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .at(-1);
+      const previousActor = actors
+        .filter(
+          (candidate) =>
+            candidate.id !== actor?.id &&
+            candidate.completedAt &&
+            startedAt &&
+            candidate.completedAt <= startedAt,
+        )
+        .sort((left, right) => (left.completedAt ?? '').localeCompare(right.completedAt ?? ''))
+        .at(-1);
+      const previousHead =
+        previousActor?.deliveryBaselineRef ?? previousActor?.pipelineVisualReviewInput?.headSha;
+      const headSha = text(snapshot?.headSha) ?? expectedHead ?? null;
+      const reconstructedFix = !fix && previousHead && headSha && previousHead !== headSha;
+      const fixBaseSha =
+        text(fix?.fixBaseSha ?? fix?.baseSha) ?? (reconstructedFix ? previousHead : null);
+      const fixHeadSha =
+        text(fix?.fixHeadSha ?? fix?.headSha) ?? (reconstructedFix ? headSha : null);
+      const fixDiffPath =
+        useGit && fixBaseSha && fixHeadSha
+          ? `history:git:${fixBaseSha}:${fixHeadSha}.diff`
+          : (text(fix?.diffPath) ??
+            (reconstructedFix && actor ? `history:${actor.id}:fix.diff` : null));
+      const reviewBaseSha = text(snapshot?.baseSha);
+      const diffPath =
+        useGit && reviewBaseSha && headSha
+          ? `history:git:${reviewBaseSha}:${headSha}.diff`
+          : text(snapshot?.diffPath);
+      const completedFix =
+        previousCompletedAt && startedAt
+          ? (run.agentContexts ?? [])
+              .filter(
+                (candidate) =>
+                  candidate.role === 'review-fix' &&
+                  (candidate.completedAt ?? text(fix?.capturedAt)) &&
+                  (candidate.promptDeliveryStartedAt ?? candidate.startedAt ?? '') >
+                    previousCompletedAt &&
+                  (candidate.completedAt ?? text(fix?.capturedAt) ?? '') <= startedAt,
+              )
+              .sort((left, right) =>
+                (left.completedAt ?? '').localeCompare(right.completedAt ?? ''),
+              )
+              .at(-1)
+          : undefined;
+      const firstFix =
+        previousCompletedAt && startedAt
+          ? run.agentContexts?.find(
+              (candidate) =>
+                candidate.role === 'review-fix' &&
+                candidate.startedAt &&
+                candidate.startedAt > previousCompletedAt &&
+                candidate.startedAt <= startedAt,
+            )
+          : undefined;
       const segment = attempt?.timeline?.find((entry) => entry.kind === 'worker-fix');
       const rawSegment = (
         Array.isArray(raw?.timeline) ? raw.timeline.map(record).filter(isRecord) : segments
@@ -284,35 +524,77 @@ export function reviewHistoryView(
           : latestReviewActor?.reviewId === id)
           ? fixingActor
           : null;
-      const latest = loop === loops.at(-1);
       const initialMode =
         loop === 1 && id === `pipeline-review-${run.id}`
           ? record(run.steps.find((step) => step.name === 'review')?.inputs?.reviewSelection)?.mode
           : null;
       const mode =
-        attempt?.mode ?? text(raw?.mode) ?? (actor?.reviewFallback ? 'cold' : initialMode);
+        attempt?.mode ??
+        text(raw?.mode) ??
+        text(saved?.mode) ??
+        staticResult?.session?.mode ??
+        (actor?.reviewFallback
+          ? 'cold'
+          : actor?.nativeSession?.handoffFrom
+            ? 'warm'
+            : actor?.nativeSession
+              ? 'cold'
+              : null) ??
+        (actor && staticActors.has(actor.id)
+          ? (run.reviewMode ?? run.repeatReviewContext?.mode)
+          : null) ??
+        initialMode;
       const recorded = Array.isArray(issueValue);
       const verdict =
         attempt?.verdict ??
         text(raw?.verdict) ??
+        staticResult?.recommendation ??
         (actor?.status === 'failed' ? 'failed' : text(saved?.verdict)) ??
         (actor?.status === 'complete' ? 'Result not recorded' : 'pending');
+      const failureReason =
+        verdict === 'failed'
+          ? (attempt?.reason ??
+            text(raw?.reason) ??
+            (actor ? reviewAttemptFailureReason(run, actor) : null))
+          : null;
       const unresolved =
         attempt?.unresolvedCount ??
         number(raw?.unresolvedCount) ??
         (recorded ? issueRows.length : null);
       return {
-        key: `${id}:${loop}`,
+        key: actor?.id ?? `${id}:${loop}`,
         reviewId: id,
         loopNumber: loop,
+        roundNumber,
         runner: actor?.runner ?? review?.runner ?? text(step?.outputs?.runner) ?? 'Unknown runner',
         model: actor?.model ?? review?.model ?? text(step?.outputs?.model) ?? 'default',
         mode: mode === 'warm' || mode === 'cold' ? mode : null,
-        modeLabel: mode === 'warm' || mode === 'cold' ? mode.toUpperCase() : 'Mode not recorded',
+        modeLabel: mode === 'warm' || mode === 'cold' ? mode.toUpperCase() : 'Mode unavailable',
         verdict,
+        verdictTone: ['pass', 'APPROVE'].includes(verdict)
+          ? 'ok'
+          : verdict === 'failed'
+            ? 'fail'
+            : verdict === 'pending'
+              ? 'running'
+              : 'warn',
+        failureReason,
         startedAt,
         completedAt,
         durationMs: duration(startedAt, completedAt),
+        usageLabel: reviewUsageLabel(
+          attempt?.usage ??
+            (review &&
+            ownsAttempt(
+              { ...review, headSha: review.reviewSnapshot?.headSha ?? undefined },
+              review.loopNumber,
+            )
+              ? review.usage
+              : undefined),
+        ),
+        headSha,
+        reviewBaseSha,
+        resultRecorded: recorded,
         unresolvedCount: unresolved,
         unresolvedLabel:
           unresolved !== null
@@ -326,18 +608,16 @@ export function reviewHistoryView(
             : 'No findings recorded in this round.'
           : verdict === 'pending'
             ? 'Review is running. Findings appear when it finishes.'
-            : 'Findings not recorded',
+            : verdict === 'failed'
+              ? 'Review failed before producing findings.'
+              : 'Findings unavailable',
         findings: issueRows,
-        earlierAttempts: roundActors.slice(0, -1).map((context) => ({
-          status: context.status,
-          startedAt: context.attemptStartedAt ?? context.startedAt ?? null,
-          durationMs: duration(
-            context.attemptStartedAt ?? context.startedAt ?? null,
-            context.completedAt ?? null,
-          ),
-        })),
-        reviewRange: range(snapshot?.baseSha, snapshot?.headSha) ?? 'SHA unavailable',
-        fixRange: range(fix?.fixBaseSha ?? fix?.baseSha, fix?.fixHeadSha ?? fix?.headSha),
+        earlierAttempts: [],
+        reviewRange:
+          range(snapshot?.baseSha, snapshot?.headSha) ??
+          actor?.deliveryBaselineRef?.slice(0, 7) ??
+          'Head pending',
+        fixRange: range(fixBaseSha, fixHeadSha),
         fixStat: fixStat(fix),
         fixDurationMs:
           segment?.durationMs ??
@@ -345,20 +625,50 @@ export function reviewHistoryView(
           duration(
             segment?.startedAt ?? text(rawSegment?.startedAt),
             segment?.completedAt ?? text(rawSegment?.completedAt),
+          ) ??
+          duration(
+            completedFix?.promptDeliveryStartedAt ??
+              completedFix?.startedAt ??
+              completedFix?.attemptStartedAt ??
+              null,
+            completedFix?.completedAt ?? text(fix?.capturedAt),
           ),
-        fixRunning: Boolean(latest && fixing),
-        activeFixStartedAt: latest ? (fixing?.attemptStartedAt ?? fixing?.startedAt ?? null) : null,
-        resolution: 'Not recorded',
-        hasFix: Boolean(fix || segment || rawSegment),
-        diffPath: text(snapshot?.diffPath),
+        fixStartedAt:
+          segment?.startedAt ??
+          text(rawSegment?.startedAt) ??
+          completedFix?.promptDeliveryStartedAt ??
+          completedFix?.startedAt ??
+          firstFix?.startedAt ??
+          null,
+        fixCompletedAt:
+          segment?.completedAt ??
+          text(rawSegment?.completedAt) ??
+          completedFix?.completedAt ??
+          text(fix?.capturedAt),
+        fixFiles: [
+          ...(artifacts[String(fixDiffPath)]?.content ?? '').matchAll(
+            /^diff --git a\/.+ b\/(.+)$/gm,
+          ),
+        ].map((match) => match[1]),
+        fixRunning: Boolean(actor?.id === latestReviewActor?.id && fixing),
+        activeFixStartedAt:
+          actor?.id === latestReviewActor?.id
+            ? (fixing?.promptDeliveryStartedAt ??
+              fixing?.attemptStartedAt ??
+              fixing?.startedAt ??
+              null)
+            : null,
+        hasFix: Boolean(fix || reconstructedFix || segment || rawSegment || completedFix),
+        diffPath,
+        diffReconstructed: useGit || record(snapshot)?.reconstructed === true,
+        diffText: diffPath ? (artifacts[String(diffPath)]?.content ?? null) : null,
         reviewDiffRetained: retainedPaths.has(String(snapshot?.diffPath)),
-        fixDiffPath: text(fix?.diffPath),
-        fixDiffText: text(fix?.diffPath)
-          ? (artifacts[String(fix?.diffPath)]?.content ?? null)
-          : null,
-        fixDiffError: text(fix?.diffPath)
-          ? (artifacts[String(fix?.diffPath)]?.error ?? null)
-          : null,
+        fixDiffPath,
+        fixDiffText: fixDiffPath ? (artifacts[String(fixDiffPath)]?.content ?? null) : null,
+        fixDiffError: fixDiffPath ? (artifacts[String(fixDiffPath)]?.error ?? null) : null,
+        fixBaseSha,
+        fixHeadSha,
+        fixReconstructed: Boolean(reconstructedFix || (useGit && fixBaseSha && fixHeadSha)),
         validationDepth:
           attempt?.validationDepth ??
           text(raw?.validationDepth) ??
@@ -367,7 +677,9 @@ export function reviewHistoryView(
         timing: deriveChecklistStepDurations(attempt?.checklistTiming, startedAt ?? undefined),
         unavailable: [
           ...reviewHistoryArtifactPathsForActor(actor),
-          ...(text(fix?.diffPath) ? [String(fix?.diffPath)] : []),
+          ...(actor ? [recoveredSnapshotKey(actor)] : []),
+          ...(fixDiffPath ? [fixDiffPath] : []),
+          ...(diffPath ? [diffPath] : []),
         ].flatMap((path) => (artifacts[path]?.error ? [artifacts[path].error!] : [])),
       };
     });
@@ -402,6 +714,21 @@ export function reviewHistoryView(
     });
   }
   const roundCount = checks.reduce((sum, check) => sum + check.rounds.length, 0);
+  const replayStep = run.steps.find((step) => step.name === 'review' && step.status === 'running');
+  const activeReplay =
+    run.status === 'reviewing' &&
+    (run.engineState?.generation ?? 0) > 0 &&
+    replayStep?.startedAt &&
+    latestReviewActor?.completedAt &&
+    replayStep.startedAt > latestReviewActor.completedAt &&
+    !contexts.some((context) => ['launching', 'working', 'waiting'].includes(context.status))
+      ? {
+          roundNumber:
+            Math.max(...checks.flatMap((check) => check.rounds.map((round) => round.roundNumber))) +
+            1,
+          startedAt: replayStep.startedAt,
+        }
+      : null;
   const summary = [
     chain.length ? `${chain.length} diff generation${chain.length === 1 ? '' : 's'}` : '',
     `${checks.length} review check${checks.length === 1 ? '' : 's'}`,
@@ -413,6 +740,7 @@ export function reviewHistoryView(
     checks,
     segments,
     roundCount,
+    activeReplay,
     summary,
     chain: chain.map((entry) => ({
       ...entry,
@@ -421,6 +749,10 @@ export function reviewHistoryView(
       diffPath:
         entry.artifactRefs.find((artifact) => artifact.path.endsWith('.diff'))?.path ?? null,
     })),
+    events: reviewHistoryTimeline(
+      run,
+      checks.flatMap((check) => check.rounds),
+    ),
   };
 }
 
@@ -436,15 +768,46 @@ function reviewHistoryArtifactPathsForActor(actor: AgentContext | undefined): st
   ].filter((path): path is string => Boolean(path));
 }
 
+function historyAttemptIdentity(value: unknown) {
+  const attempt = record(value);
+  return [
+    attempt?.loopNumber,
+    attempt?.mode,
+    attempt?.verdict,
+    attempt?.unresolvedCount,
+    attempt?.startedAt,
+    attempt?.completedAt,
+    attempt?.reviewSnapshot,
+    attempt?.fixDelta,
+    attempt?.artifactPaths,
+  ];
+}
+
 /** Refresh on retained round changes, without rereading files for unrelated run heartbeats. */
 export function reviewHistoryIdentity(run: Run): string {
   return JSON.stringify([
     run.id,
-    readyReviews(run),
+    run.reviewResult,
+    run.reviewMode,
+    run.reviewRoundSettlements,
+    readyReviews(run).map((review) => [
+      review.id,
+      review.runner,
+      review.model,
+      review.source,
+      review.stale,
+      historyAttemptIdentity(review),
+      review.attempts?.map(historyAttemptIdentity),
+    ]),
     run.steps
       .filter((step) => step.name.includes('review'))
       .map((step) => [
-        step.outputs?.attempts,
+        step.status,
+        step.startedAt,
+        step.completedAt,
+        Array.isArray(step.outputs?.attempts)
+          ? step.outputs.attempts.map(historyAttemptIdentity)
+          : undefined,
         step.outputs?.timeline,
         step.outputs?.reviewId,
         step.outputs?.runner,
@@ -460,6 +823,10 @@ export function reviewHistoryIdentity(run: Run): string {
         context.reviewResultFile,
         context.artifactScope,
         context.attemptStartedAt,
+        context.startedAt,
+        context.completedAt,
+        context.deliveryBaselineRef,
+        context.nativeSession?.handoffFrom,
       ]),
   ]);
 }
@@ -469,6 +836,7 @@ export async function loadReviewHistoryArtifacts(
   run: Run,
   read: (path: string) => Promise<string | null>,
   readLive?: (params: FsReadParams) => Promise<string>,
+  readDiff?: (params: GitDiffParams) => Promise<string>,
 ): Promise<Record<string, ReviewHistoryArtifact>> {
   const readPaths = async (paths: string[]) => {
     const settled = await Promise.allSettled(
@@ -513,11 +881,86 @@ export async function loadReviewHistoryArtifacts(
     );
   };
   const metadata = await readPaths(reviewHistoryArtifactPaths(run));
+  if (readDiff && !isTerminalRunStatus(run.status))
+    metadata['history:git'] = { content: 'enabled' };
+  if (readLive && readDiff && !isTerminalRunStatus(run.status)) {
+    const rounds = reviewHistoryView(run, metadata).checks.flatMap((check) => check.rounds);
+    const recoveryRounds = rounds.filter((round) => !round.diffPath);
+    const recoveries = await Promise.allSettled(
+      recoveryRounds.map(async (round) => {
+        const actor = run.agentContexts?.find(
+          (context) =>
+            context.id === round.key &&
+            context.runId === run.id &&
+            context.slotId === run.slotId &&
+            context.taskFile &&
+            !['working', 'launching'].includes(context.status),
+        );
+        if (!actor?.slotId || !actor.taskFile) return;
+        const task = await readLive({ slotId: actor.slotId, path: actor.taskFile });
+        // These are engine-written frozen input headers, not reviewer transcript/output.
+        const match =
+          /## COLD review range\s+Review the complete PR diff ([a-f0-9]{40})\.\.([a-f0-9]{40}) in /.exec(
+            task,
+          ) ?? /- Exact review range: `([a-f0-9]{40})\.\.([a-f0-9]{40})`/.exec(task);
+        if (!match || (round.headSha && match[2] !== round.headSha)) return;
+        metadata[recoveredSnapshotKey(actor)] = {
+          content: JSON.stringify({
+            source: 'local-git',
+            baseSha: match[1],
+            headSha: match[2],
+            reconstructed: true,
+          }),
+        };
+      }),
+    );
+    recoveries.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        const actor = run.agentContexts?.find(
+          (context) => context.id === recoveryRounds[index].key,
+        );
+        if (actor)
+          metadata[recoveredSnapshotKey(actor)] = {
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          };
+      }
+    });
+  }
+  if (readDiff && metadata['history:git']) {
+    const requests = new Map<string, GitDiffParams>();
+    for (const round of reviewHistoryView(run, metadata).checks.flatMap((check) => check.rounds)) {
+      for (const [path, base, head] of [
+        [round.diffPath, round.reviewBaseSha, round.headSha],
+        [round.fixDiffPath, round.fixBaseSha, round.fixHeadSha],
+      ]) {
+        if (path?.startsWith('history:git:') && base && head)
+          requests.set(path, {
+            slotId: run.slotId ?? '',
+            ...(run.slotId ? {} : { runId: run.id }),
+            base,
+            head,
+          });
+      }
+    }
+    const entries = [...requests];
+    const results = await Promise.allSettled(entries.map(([, params]) => readDiff(params)));
+    entries.forEach(([path], index) => {
+      const value = results[index];
+      metadata[path] =
+        value.status === 'fulfilled'
+          ? { content: value.value }
+          : { error: value.reason instanceof Error ? value.reason.message : String(value.reason) };
+    });
+  }
   // Reuse each platform's existing diff viewer for changed files, instead of another diff parser.
   const diffs = [
     ...new Set(
       reviewHistoryView(run, metadata).checks.flatMap((check) =>
-        check.rounds.flatMap((round) => (round.fixDiffPath ? [round.fixDiffPath] : [])),
+        check.rounds.flatMap((round) =>
+          [round.fixDiffPath, round.diffPath]
+            .filter((path) => !path?.startsWith('history:'))
+            .filter((path): path is string => Boolean(path)),
+        ),
       ),
     ),
   ];

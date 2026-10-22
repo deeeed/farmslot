@@ -6,6 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Resume an accepted publication review request when its lost gate loop is reconciling, preserving its selected reviewer and retained package.
 
+- Validate review recommendations and RIGHT-side inline locations before gates and on refresh.
+
 - Keep native reviewers running while bound checklist or tool activity progresses, and fail after the configured inactivity window instead of a fixed total-time boundary.
 
 - Complete frozen reviews with ignored tool state under `.agent/`, and register exact manual review posts during explicit reconciliation without posting again.

@@ -7,6 +7,10 @@ import {
   type PlanningContextProjection,
   type RunArtifactBundleRef,
 } from '@farmslot/protocol';
+import {
+  normalizeReviewSeverity,
+  ReviewApprovalPolicyError,
+} from '@farmslot/protocol/review-approval-policy.cjs';
 
 import {
   isGatewayOwnedArtifactMirrorEntry,
@@ -15,6 +19,9 @@ import {
 } from '../core/artifact-copy-policy.js';
 import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotCopyDir, slotCopyFile, slotFileExists, slotListDir } from '../core/slot-io.js';
+import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
+import { parseStructuredReviewFeedback } from '../review/feedback.js';
+import { assertReviewFindingBodies } from '../review-publication/validate-comments.js';
 import {
   createRunArtifactAcquisition,
   readOptionalRetainedRunText,
@@ -280,10 +287,19 @@ export async function readReviewArtifacts(
       const comments = reviewLineCommentsFromArtifact(data);
       const counts: Record<string, number> = {};
       for (const c of comments) {
-        const sev = typeof c.severity === 'string' ? c.severity.toLowerCase() : 'comment';
+        const sev = typeof c.severity === 'string' ? c.severity.toLowerCase() : 'major';
         counts[sev] = (counts[sev] ?? 0) + 1;
       }
-      const parts = ['must_fix', 'suggestion', 'nitpick', 'comment']
+      const parts = [
+        'blocker',
+        'major',
+        'minor',
+        'nit',
+        'must_fix',
+        'suggestion',
+        'nitpick',
+        'comment',
+      ]
         .filter((s) => counts[s])
         .map((s) => `${counts[s]} ${s}`);
       result.lineCommentSummary = `${comments.length} comments: ${parts.join(', ')}`;
@@ -291,7 +307,7 @@ export async function readReviewArtifacts(
         path: typeof c.path === 'string' ? c.path : '',
         line: typeof c.line === 'number' ? c.line : 0,
         body: typeof c.body === 'string' ? c.body : '',
-        severity: typeof c.severity === 'string' ? c.severity.toLowerCase() : 'comment',
+        severity: typeof c.severity === 'string' ? c.severity.toLowerCase() : 'major',
       }));
 
       // Fail closed when the human-readable verdict and structured sidecar
@@ -316,5 +332,35 @@ export async function readReviewArtifacts(
     }
   }
 
+  if (result.hasReview) {
+    const rawResult = await readOptionalRetainedRunText(
+      run,
+      'artifacts/review-result.json',
+      artifactBundle,
+    );
+    if (rawResult === undefined)
+      throw new Error(
+        'Review requires artifacts/review-result.json with every finding and its severity',
+      );
+    const policy = await loadReviewApprovalPolicy(run.project);
+    const feedback = parseStructuredReviewFeedback(
+      rawResult,
+      'artifacts/review-result.json',
+      policy,
+      result.lineComments.map((comment) => ({
+        file: comment.path,
+        line: comment.line,
+        description: comment.body,
+        severity: normalizeReviewSeverity(comment.severity),
+      })),
+    );
+    if (feedback.incomplete) {
+      if (feedback.recommendation) throw new ReviewApprovalPolicyError(feedback.recommendation);
+      throw new Error(feedback.terminalInvalidReason);
+    }
+    assertReviewFindingBodies(feedback.issues, result.lineComments, result.reviewMd);
+    if (!feedback.recommendation || feedback.recommendation !== result.recommendation)
+      throw new ReviewApprovalPolicyError(feedback.recommendation ?? 'COMMENT');
+  }
   return result;
 }

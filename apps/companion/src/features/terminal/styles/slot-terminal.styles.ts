@@ -635,7 +635,9 @@ export const slotTerminalStyles = StyleSheet.create({
   },
   tmuxWindowButton: {
     minWidth: 86,
+    minHeight: 44,
   },
+  sessionTabs: { flexGrow: 0, flexShrink: 0, maxHeight: 52 },
   tmuxWindowButtonActive: {
     backgroundColor: colors.accent + '22',
     borderColor: colors.accent,

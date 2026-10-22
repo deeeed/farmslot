@@ -3,6 +3,8 @@
 **Status:** Normative, authorized by [ADR-063](../adr/063-review-modes-warm-cold.md), accepted 2026-10-11.
 **Owner:** Farmslot maintainers.
 
+Verdicts, severity, configurable approval policy and inline locations follow the [shared review policy](review-curation-and-results.md#approval-policy), including gate refresh.
+
 ## Selection and sequence
 
 A review selection has exactly four configurable dimensions: `runner`, `model`,

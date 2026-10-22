@@ -1,6 +1,7 @@
 import { html } from 'lit';
 
 import { Methods } from '@farmslot/protocol';
+import type { nativeWorkerTabs } from '@farmslot/review-dispatch';
 
 import '../shared/workspace-pin.js';
 
@@ -57,10 +58,48 @@ export interface TmuxToolbarContext {
   toggleSelectMode: () => void;
   sendRawKeys: (data: string) => void;
   tmuxAction: (method: string, params?: Record<string, unknown>) => void | Promise<void>;
+  nativeWorkers?: ReturnType<typeof nativeWorkerTabs>;
+  selectedNativeKey?: string;
+  selectNative?: (contextId: string | null) => void;
+}
+
+function renderTerminalWindowTabs(ctx: TmuxToolbarContext) {
+  return html`<div class="tmux-windows" role="tablist" aria-label="Slot sessions">
+    ${ctx.windows.map(
+      (window) =>
+        html`<button
+          class="tmux-win-btn ${!ctx.selectedNativeKey && window.active ? 'active' : ''}"
+          role="tab"
+          aria-selected=${!ctx.selectedNativeKey && window.active}
+          title=${`Window ${window.index}: ${window.name}`}
+          @click=${() => {
+            ctx.selectNative?.(null);
+            void ctx.tmuxAction(Methods.TMUX_SELECT_WINDOW, { index: window.index });
+          }}
+        >
+          ${window.index}:${window.name}
+        </button>`,
+    )}
+    ${(ctx.nativeWorkers ?? []).map(
+      (tab) =>
+        html`<button
+          class="tmux-win-btn ${ctx.selectedNativeKey === tab.key ? 'active' : ''}"
+          role="tab"
+          aria-selected=${ctx.selectedNativeKey === tab.key}
+          data-native-context=${tab.target.contextId}
+          title=${`${tab.target.label} · ${tab.target.binding.sessionId}`}
+          @click=${() => ctx.selectNative?.(tab.target.contextId)}
+        >
+          ${tab.label}
+        </button>`,
+    )}
+  </div>`;
 }
 
 export function renderTmuxToolbar(ctx: TmuxToolbarContext) {
   if (ctx.isWorkerTarget) return '';
+  if (ctx.selectedNativeKey || (ctx.mode !== 'pty' && ctx.nativeWorkers?.length))
+    return html`<div class="tmux-toolbar">${renderTerminalWindowTabs(ctx)}</div>`;
   if (ctx.mode !== 'pty') return '';
 
   return html`
@@ -177,26 +216,7 @@ export function renderTmuxToolbar(ctx: TmuxToolbarContext) {
         </button>
       </div>
 
-      ${ctx.windows.length > 0
-        ? html`
-            <div class="tmux-windows">
-              ${ctx.windows.map(
-                (window) => html`
-                  <button
-                    class="tmux-win-btn ${window.active ? 'active' : ''}"
-                    title="Window ${window.index}: ${window.name}${window.panes.length > 1
-                      ? ` (${window.panes.length} panes)`
-                      : ''}"
-                    @click=${() =>
-                      ctx.tmuxAction(Methods.TMUX_SELECT_WINDOW, { index: window.index })}
-                  >
-                    ${window.index}:${window.name}
-                  </button>
-                `,
-              )}
-            </div>
-          `
-        : ''}
+      ${ctx.windows.length || ctx.nativeWorkers?.length ? renderTerminalWindowTabs(ctx) : ''}
       ${ctx.renaming
         ? html`
             <div class="tmux-rename-bar">
@@ -241,6 +261,7 @@ export interface TerminalChromeContext {
   hasTarget: boolean;
   taskMarkdown: string;
   toolbar: unknown;
+  nativeContent?: unknown;
   reconnecting: boolean;
   recoveryMessage: string;
   copyToast: boolean;
@@ -315,9 +336,10 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
           </div>
         `
       : ''}
-    ${ctx.toolbar}
+    ${ctx.toolbar} ${ctx.nativeContent}
     <div
       class="terminal-wrap"
+      style=${ctx.nativeContent ? 'display:none' : ''}
       @dragenter=${ctx.onDragEnter}
       @dragover=${ctx.onDragOver}
       @dragleave=${ctx.onDragLeave}

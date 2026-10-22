@@ -45,6 +45,7 @@ import { farmslotDirectoryForSlot, renderRoleTemplate } from '../tasks/agent-run
 import { REVIEW_FIX_CHECKLIST_TARGET } from '../tasks/checklist-target.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 
+import { loadReviewApprovalPolicy } from './approval-policy.js';
 import {
   buildDescriptionCheckSection,
   type DescriptionCheckFinding,
@@ -284,7 +285,7 @@ async function diffScopeSection(
     // A disconnected slot still gets a review packet, with no clean-scope claim.
     unavailable = error instanceof Error ? error.message : String(error);
   }
-  return buildDiffScopePacket(files, unavailable);
+  return buildDiffScopePacket(files, unavailable, await loadReviewApprovalPolicy(run.project));
 }
 
 export async function expandReviewTemplate(

@@ -7,6 +7,8 @@ import type { Run } from '@farmslot/protocol';
 mock.module('../../gateway-client.js', {
   namedExports: { gateway: { request: async () => ({}), subscribe: () => () => {} } },
 });
+// The evidence renderer does not exercise the browser-only history panel and its CSS.
+mock.module('./review-history-panel.js', { namedExports: {} });
 const memory = new Map<string, string>();
 Object.assign(globalThis, {
   location: new URL('http://localhost/#'),

@@ -1391,7 +1391,7 @@ test('a different reviewer PASS cannot clear findings on the unchanged head at a
               ? [
                   {
                     file: 'icon.service.ts',
-                    severity: 'warning',
+                    severity: 'minor',
                     description: 'Exponential parsing',
                   },
                 ]
@@ -1409,7 +1409,12 @@ test('a different reviewer PASS cannot clear findings on the unchanged head at a
       [{ id: 'approve-publish-unresolved' }, { id: 'hold' }],
     );
     assert.deepEqual(readiness.findings, [
-      { reviewId: 'review-a', file: 'icon.service.ts', description: 'Exponential parsing' },
+      {
+        reviewId: 'review-a',
+        file: 'icon.service.ts',
+        description: 'Exponential parsing',
+        severity: 'minor',
+      },
     ]);
   }
 });
@@ -1446,7 +1451,7 @@ test('unresolved approval accepts valid head findings, never missing reviews or 
       JSON.stringify({
         schemaVersion: 1,
         verdict: 'issues',
-        issues: [{ file: 'src/example.ts', severity: 'warning', description: 'Remaining finding' }],
+        issues: [{ file: 'src/example.ts', severity: 'minor', description: 'Remaining finding' }],
       }),
   };
   for (const reviews of [[], [{ ...review, reviewedHeadSha: 'old-head' }], [review]]) {
@@ -1502,7 +1507,12 @@ test('unresolved approval accepts valid head findings, never missing reviews or 
   );
   assert.deepEqual(gateActionsForReadiness(actions, spent), actions);
   assert.deepEqual(spent.findings, [
-    { reviewId: 'native-current', file: 'src/example.ts', description: 'Remaining finding' },
+    {
+      reviewId: 'native-current',
+      file: 'src/example.ts',
+      description: 'Remaining finding',
+      severity: 'minor',
+    },
   ]);
   assert.match(spent.findingsDigest ?? '', /^sha256:[0-9a-f]{64}$/);
   // A fix in progress, or an invalid result at the head, withholds it.

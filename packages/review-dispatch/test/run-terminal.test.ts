@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { AgentContext, Run } from '@farmslot/protocol';
 
-import { runTerminalView } from '../src/run-activity.js';
+import { runReviewerView, runTerminalView } from '../src/run-activity.js';
 
 const worker: AgentContext = {
   id: 'dev',
@@ -83,6 +83,20 @@ test('a finished run keeps its action disabled even when its old slot and contex
     assert.equal(runTerminalView(run({ status })).disabledReason, 'This run is finished.');
 });
 
+test('Ask reviewer keeps the completed reviewer instead of selecting its active producing worker', () => {
+  const view = runReviewerView(
+    run({
+      status: 'human-gating',
+      agentContexts: [worker, { ...reviewer, status: 'waiting' }],
+    }),
+  );
+  assert.equal(view.label, 'Ask reviewer');
+  assert.equal(view.context?.id, reviewer.id);
+  assert.equal(view.target?.slotId, 'review-slot');
+  assert.equal(view.disabledReason, null);
+  assert.equal(runReviewerView(run()).target, null);
+});
+
 test('native reviewers keep their own conversation binding on a tmux producing run', () => {
   const native: AgentContext = {
     ...reviewer,
@@ -123,6 +137,8 @@ test('a native fix opens the same-run owner of its recorded session and lease', 
     ...reviewer,
     id: 'fix',
     role: 'review-fix',
+    slotId: nativeWorker.slotId,
+    target: null,
     nativeSessionOwner: {
       contextId: 'dev',
       sessionId: 'worker-native',
@@ -130,6 +146,7 @@ test('a native fix opens the same-run owner of its recorded session and lease', 
     },
   };
   const view = runTerminalView(run({ transport: 'native', agentContexts: [nativeWorker, fix] }));
-  assert.equal(view.context?.id, 'dev');
-  assert.equal(view.context?.nativeSession?.sessionId, 'worker-native');
+  assert.equal(view.context?.id, 'fix');
+  assert.equal(view.label, 'Open conversation');
+  assert.equal(view.target?.contextId, 'fix');
 });
