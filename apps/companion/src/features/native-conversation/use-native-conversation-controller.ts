@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
-  isTerminalRunStatus,
   Methods,
   type NativeSessionInfo,
   type NativeSessionListResult,
@@ -24,6 +23,7 @@ import {
   nativeConversationStorageKey,
 } from '../../lib/native-conversation-storage';
 import {
+  nativeWorkerTargets,
   nativeWorkerViewControl,
   type NativeWorkerViewTarget,
 } from '../../lib/native-worker-target';
@@ -166,23 +166,21 @@ export function useNativeConversationController(params: NativeConversationParams
               runId: params.runId,
             });
             if (!current()) return;
-            const context = run.agentContexts?.find((item) => item.id === params.contextId);
-            const binding = [context?.nativeSession, ...(context?.nativeSessionHistory ?? [])].find(
+            const selected = nativeWorkerTargets(run.agentContexts ?? []).find(
               (item) =>
-                item &&
-                item.sessionId === params.sessionId &&
-                item.executionNodeId === node &&
-                item.leaseId === params.leaseId,
+                item.contextId === params.contextId &&
+                item.binding.sessionId === params.sessionId &&
+                item.binding.executionNodeId === node &&
+                item.binding.leaseId === params.leaseId,
             );
-            if (!context || !binding)
+            if (!selected)
               throw new Error('This run no longer contains the selected worker conversation.');
             target = {
-              runId: run.id,
-              contextId: context.id,
-              label: context.label,
-              binding: { ...binding, generation: params.generation ?? binding.generation },
-              readOnly:
-                isTerminalRunStatus(run.status) || !!binding.closedAt || !!binding.releasedAt,
+              ...selected,
+              binding: {
+                ...selected.binding,
+                generation: params.generation ?? selected.binding.generation,
+              },
             };
             setWorker(target);
           }

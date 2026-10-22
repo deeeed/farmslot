@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resume an accepted publication review request when its lost gate loop is reconciling, preserving its selected reviewer and retained package.
+
 - Validate review recommendations and RIGHT-side inline locations before gates and on refresh.
 - Freeze the pre-fix commit in review-fix and CI-fix checks, including recovery and replay.
 

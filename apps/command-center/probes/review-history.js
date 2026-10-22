@@ -1,4 +1,4 @@
-// Read the live run and drive its recorded round and fix-diff controls.
+// Shared history proof against a real run. Interactions inspect only, never dispatch reviews.
 function all(root, selector) {
   return [
     ...root.querySelectorAll(selector),
@@ -7,62 +7,67 @@ function all(root, selector) {
       .flatMap((element) => all(element.shadowRoot, selector)),
   ];
 }
-async function until(read, description) {
-  const deadline = Date.now() + 20000;
+async function until(read, message) {
+  const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     const value = read();
     if (value) return value;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(description);
+  throw new Error(message);
 }
-await until(() => {
-  const app = document.querySelector('farm-app');
-  return app?.connection === 'connected' && app.hydrated;
-}, 'Command Center is not connected to the live farm');
-const inspector = await until(() => all(document, 'step-inspector')[0], 'No step inspector');
+await until(
+  () => document.querySelector('farm-app')?.connection === 'connected',
+  'Farm not connected',
+);
 const panel = await until(
-  () => inspector.shadowRoot.querySelector('[data-testid="review-history"]'),
-  'No review history on this review step',
+  () => all(document, 'review-history-panel')[0],
+  'No shared history panel',
 );
-await until(() => !inspector._historyLoading, 'Recorded history did not load');
-const rounds = [...panel.querySelectorAll('[data-round]')];
-if (rounds.length < 4) throw new Error('Expected at least four recorded rounds');
-const third = rounds[2];
-if (!third.open) third.querySelector('summary').click();
-await until(() => third.open, 'Round toggle did not expand');
-const findings = [...third.querySelectorAll('.review-loop-issue')].map((row) =>
-  row.textContent.trim().replace(/\s+/g, ' '),
+await until(
+  () => !panel._historyLoading && panel.shadowRoot.querySelectorAll('[data-round]').length >= 2,
+  'History did not load',
 );
-if (!findings.length) throw new Error('Expanded round has no recorded findings');
-const button = [...third.querySelectorAll('button')].find((element) =>
-  element.textContent.includes('Changed files and diff'),
+const rounds = [...panel.shadowRoot.querySelectorAll('[data-round]')];
+const first = rounds.find((round) => round.querySelector('.review-loop-issue'));
+if (!first) throw new Error('No completed findings');
+if (!first.open) first.querySelector('summary').click();
+const fix = panel.shadowRoot.querySelector('[data-fix]');
+if (!fix) throw new Error('No intervening fix');
+if (!fix.open) fix.querySelector('summary').click();
+const diff = [...fix.querySelectorAll('button')].find((button) =>
+  button.textContent.includes('Changed files and diff'),
 );
-if (!button || button.disabled) throw new Error('Recorded fix diff is unavailable');
-button.click();
+if (!diff || diff.disabled) throw new Error('Fix diff action unavailable');
+diff.click();
 const modal = await until(() => {
-  const view = inspector.shadowRoot.querySelector('diff-viewer-modal');
+  const view = panel.shadowRoot.querySelector('diff-viewer-modal');
   return view?.open && view.diffText?.includes('diff --git') ? view : null;
 }, 'Fix diff did not open');
-const diff = { path: modal.title, bytes: modal.diffText.length };
-const close = all(modal, 'button').find((element) => element.classList.contains('dvm-close'));
+const diffProof = { path: modal.title, bytes: modal.diffText.length };
+const close = all(modal, '.dvm-close')[0];
 if (!close) throw new Error('No diff close control');
 close.click();
 await until(() => !modal.open, 'Diff did not close');
-panel.scrollIntoView({ block: 'start' });
+const findings = [...first.querySelectorAll('.review-loop-issue')].map((finding) => ({
+  id: finding.dataset.finding,
+  text: ['.finding-heading', '.finding-location', '.finding-text']
+    .map((selector) => finding.querySelector(selector)?.textContent.trim())
+    .join(' ')
+    .replace(/\s+/g, ' '),
+}));
+first.scrollIntoView({ block: 'start' });
 await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 return {
-  runId: inspector.run.id,
-  step: inspector.step.name,
-  runStatus: inspector.run.status,
-  connected: true,
+  runId: panel.run.id,
+  runStatus: panel.run.status,
   rounds: rounds.map((round) => ({
     round: Number(round.dataset.round),
     summary: round.querySelector('summary').textContent.trim().replace(/\s+/g, ' '),
   })),
   findings,
-  fix: third.querySelector('.review-loop-fix')?.textContent.trim().replace(/\s+/g, ' '),
-  diff,
+  fix: fix.textContent.trim().replace(/\s+/g, ' '),
+  diff: diffProof,
   actualControlClicks: true,
   viewport: { width: innerWidth, height: innerHeight },
 };
