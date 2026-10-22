@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { access, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
@@ -36,6 +37,90 @@ before(async () => {
   await writeFile(configFile, JSON.stringify(config));
 });
 after(() => rm(legacyPack, { recursive: true, force: true }));
+
+test('writeTaskFile downloads Jira images when supplied ticket data has no screenshot names', async (t) => {
+  const { invalidateProjectVarsCache } = await import('@farmslot/slot-config');
+  const configFile = path.join(legacyPack, 'project.json');
+  const originalConfig = await readFile(configFile, 'utf8');
+  const image = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aEn8AAAAASUVORK5CYII=',
+    'base64',
+  );
+  const requested: string[] = [];
+  const server = createServer((req, res) => {
+    requested.push(req.url!);
+    if (req.url === '/rest/api/3/issue/PROJ-42?fields=attachment') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(
+        JSON.stringify({
+          fields: {
+            attachment: [
+              { filename: 'design.png', mimeType: 'image/png', content: `${baseUrl}/design.png` },
+              { filename: 'notes.txt', mimeType: 'text/plain', content: `${baseUrl}/notes.txt` },
+            ],
+          },
+        }),
+      );
+    } else if (req.url === '/design.png') {
+      res.setHeader('Content-Type', 'image/png');
+      res.end(image);
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      ),
+  );
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const authEnv = {
+    FARMSLOT_WRITER_TEST_JIRA_EMAIL: 'test@example.invalid',
+    FARMSLOT_WRITER_TEST_JIRA_TOKEN: 'test-only',
+  };
+  for (const [name, value] of Object.entries(authEnv)) {
+    const previous = process.env[name];
+    process.env[name] = value;
+    t.after(() => {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    });
+  }
+  const config = JSON.parse(originalConfig);
+  config.jira = {
+    base_url: baseUrl,
+    email_env: 'FARMSLOT_WRITER_TEST_JIRA_EMAIL',
+    api_token_env: 'FARMSLOT_WRITER_TEST_JIRA_TOKEN',
+  };
+  await writeFile(configFile, JSON.stringify(config));
+  invalidateProjectVarsCache(legacyProject);
+  let taskPath = '';
+  t.after(async () => {
+    await writeFile(configFile, originalConfig);
+    invalidateProjectVarsCache(legacyProject);
+    if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+  });
+  const run = makeRun('PROJ-42', 'jira-attachments');
+  run.project = legacyProject;
+  run.ticketData = {
+    ...run.ticketData!,
+    source: 'jira',
+    jiraKey: 'PROJ-42',
+    description: 'Caller-authored description',
+    acceptanceCriteria: ['Preserve caller acceptance criteria'],
+  };
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
+  assert.deepEqual(await readFile(path.join(path.dirname(taskPath), 'assets/design.png')), image);
+  assert.deepEqual(requested, ['/rest/api/3/issue/PROJ-42?fields=attachment', '/design.png']);
+  const task = await readFile(taskPath, 'utf8');
+  assert.match(task, /Caller-authored description/);
+  assert.match(task, /Preserve caller acceptance criteria/);
+  assert.deepEqual(run.ticketData.screenshots, []);
+});
 
 import { buildPlanningContextSection } from './planning-context.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';

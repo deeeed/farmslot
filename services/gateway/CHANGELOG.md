@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Download Jira image attachments into task assets even when supplied ticket data has no screenshot names.
+
 - Read-only reviewers skip repository settings and hooks. A reviewer that starts or finishes after its acknowledgement timeout resumes the original run and review round.
 
 - Admin people can supervise a pinned native worker after their identity is replaced; the worker keeps its original execution owner.
