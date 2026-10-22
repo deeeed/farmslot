@@ -14,6 +14,7 @@ export async function assertRunnerAuthBeforeLaunch(
   model: string | null | undefined,
   projectJson: RawProjectJson,
   projectVars?: ProjectVars,
+  runDomain?: string | null,
   dependencies: { execute?: typeof execOnSlot; definition?: RunnerDefinition } = {},
 ): Promise<void> {
   const definition = dependencies.definition ?? getRunnerDefinition(runner);
@@ -22,6 +23,7 @@ export async function assertRunnerAuthBeforeLaunch(
     vars,
     projectJson,
     projectVars,
+    runDomain,
   });
   const result = await (dependencies.execute ?? execOnSlot)(vars, command, { timeout: 30_000 });
   let status: unknown;

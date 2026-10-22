@@ -908,6 +908,19 @@ export async function runReplayStep(
   emit: Emit,
   hooks: RunReplayStepHooks = {},
 ): Promise<RunReplayStepResult> {
+  // Cancelled replay and demand reclamation must admit exactly one owner before
+  // either path awaits cleanup or revives a worker. Blocked-resume callers already
+  // hold their transition and do not enter this cancelled-only bracket.
+  if (getRun(params.runId)?.status === 'cancelled')
+    return withRunTransition(params.runId, () => replayRunStepCoalesced(params, emit, hooks));
+  return replayRunStepCoalesced(params, emit, hooks);
+}
+
+async function replayRunStepCoalesced(
+  params: RunReplayStepParams,
+  emit: Emit,
+  hooks: RunReplayStepHooks,
+): Promise<RunReplayStepResult> {
   const run = getRun(params.runId);
   if (run?.reviewWorkspaceTarget) assertNativeRunOwner(run);
   if (params.stepName !== PS.REVIEW) return replayRunStep(params, emit, hooks);

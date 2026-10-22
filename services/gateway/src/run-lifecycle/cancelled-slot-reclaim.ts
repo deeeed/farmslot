@@ -3,8 +3,14 @@ import type { Run } from '@farmslot/protocol';
 import { readSlotRow, SLOT_PHASE_RELEASING } from '../core/index.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
-import { defaultCancelCollaborators } from './cancel-transition.js';
 import { withRunTransition } from './transition-coordinator.js';
+
+export function isCancelledSlotHolder(
+  holderId: string | null | undefined,
+  requesterId: string,
+): boolean {
+  return !!holderId && holderId !== requesterId && getRun(holderId)?.status === 'cancelled';
+}
 
 /** Cancel preserves replay until a new selection explicitly needs its slot. */
 export async function reclaimCancelledSlot(
@@ -27,28 +33,20 @@ export async function reclaimCancelledSlot(
       getRun(requestingRunId)?.status === 'cancelled'
     )
       return false;
+    const { defaultCancelCollaborators } = await import('./cancel-transition.js');
     const cleanup = defaultCancelCollaborators({ keepForReplay: false });
-    await cleanup.releaseCapabilities(holder);
     // Persist refusal before making the slot available, so a crash cannot let an
     // old replay adopt a checkout that a successor has already prepared.
     const preserved = updateRun(holderId, {
       slotReclaimed: { slotId, byRunId: requestingRunId, at: new Date().toISOString() },
     });
     await persistRunNow(preserved, 'cancelled slot reclaimed');
-    try {
-      const result = await cleanup.releaseSlot(holder);
-      if (result?.skipped)
-        throw new Error(`Cancelled slot ${slotId} cleanup refused: ${result.skipped}`);
-    } catch (error) {
-      const retained = await readSlotRow(slotId);
-      if (retained?.current_run_id === holderId || retained?.cleanup_run_id === holderId) {
-        await persistRunNow(
-          updateRun(holderId, { slotReclaimed: undefined }),
-          'cancelled reclaim refused',
-        );
-      }
-      throw error;
-    }
+    // A refused cleanup may finish later through occupied-slot recovery. Keep
+    // the reclaim identity so that recovery cannot free an unprotected checkout.
+    await cleanup.releaseCapabilities(holder);
+    const result = await cleanup.releaseSlot(holder);
+    if (result?.skipped)
+      throw new Error(`Cancelled slot ${slotId} cleanup refused: ${result.skipped}`);
     const released = await readSlotRow(slotId);
     if (released?.current_run_id === holderId || released?.cleanup_run_id === holderId)
       return false;

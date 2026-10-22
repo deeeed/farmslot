@@ -183,7 +183,8 @@ export function resolvePiBinary(preferred?: string | null): string {
   return 'pi';
 }
 
-function piCliModel(model: string): string {
+export function resolvePiModel(model?: string | null): string {
+  model = model && model !== 'unknown' ? model : DEFAULT_PI_MODEL;
   if (model.includes('/')) return model;
   if (model === DEFAULT_PI_MODEL || model.startsWith('grok-')) return `xai/${model}`;
   return model;
@@ -208,9 +209,7 @@ export function buildPiLaunch(options: {
   effort?: string | null;
   taskFile?: string | null;
 }): string {
-  const effectiveModel =
-    options.model && options.model !== 'unknown' ? options.model : DEFAULT_PI_MODEL;
-  const cliModel = piCliModel(effectiveModel);
+  const cliModel = resolvePiModel(options.model);
   const runtimeDir = options.runtimeDir ?? '.agent';
   const obsDir = path.posix.join(runnerRuntimeDir(options.repo, runtimeDir), '.observability');
   const extension = piObservabilityExtensionPath(options.repo, runtimeDir);

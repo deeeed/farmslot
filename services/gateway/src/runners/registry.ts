@@ -1,5 +1,6 @@
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 
+import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
   runnerPaneContainsInstruction,
   runnerPaneHasQueuedInstruction,
@@ -105,7 +106,10 @@ import {
   readLaunchAckSignalSnapshot,
   type RunnerHandoffAckProbe,
 } from './prompt-delivery-evidence.js';
-import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
+import {
+  buildPiAuthCheckCommand,
+  buildRunnerObservabilityInstallCommand,
+} from './runner-observability.js';
 import {
   claudeSessionUsageProvider,
   codexSessionUsageProvider,
@@ -547,7 +551,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   pi: {
     id: 'pi',
     authCheck: (vars, model) =>
-      `${shellQuote(vars.piPath || 'pi')} auth check --model ${shellQuote(model && model !== 'unknown' ? model : DEFAULT_PI_MODEL)} --json`,
+      buildPiAuthCheckCommand(vars, resolvePiBinary(vars.piPath), resolvePiModel(model)),
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['pi'],
     headlessPrintFlags: ['-p', '--print'],

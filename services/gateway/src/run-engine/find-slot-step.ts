@@ -74,7 +74,10 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
-import { reclaimCancelledSlot } from '../run-lifecycle/cancelled-slot-reclaim.js';
+import {
+  isCancelledSlotHolder,
+  reclaimCancelledSlot,
+} from '../run-lifecycle/cancelled-slot-reclaim.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import {
   assertNativeProfileSlot,
@@ -764,23 +767,6 @@ export async function executeFindSlotStep(
   // For PR-bound flows the run branch is the PR head. Resolve profile fit before any
   // branch-affinity shortcut so wizard nudge/fresh-reuse paths honor simulator resources
   // the same way the normal slot picker does.
-  // Reclaim only when this selection needs capacity; cancel itself retains replay.
-  const beforeReclaim = await loadFleetStatus();
-  const candidatesForReclaim = beforeReclaim.slots.filter(
-    (slot) =>
-      slot.project === run.project &&
-      (run.slotId
-        ? slot.slot === run.slotId
-        : !run.allowedSlots?.length || run.allowedSlots.includes(slot.slot)) &&
-      slot.currentRunId &&
-      slot.currentRunId !== runId &&
-      getRun(slot.currentRunId)?.status === 'cancelled',
-  );
-  if (run.slotId) {
-    for (const slot of candidatesForReclaim) {
-      if (await reclaimCancelledSlot(slot.slot, runId)) break;
-    }
-  }
   const branchFleet = await loadFleetStatus(true);
   const targetBranch = await resolveDispatchTargetBranch(
     {
@@ -1054,7 +1040,7 @@ export async function executeFindSlotStep(
   const eligibleFreeSlots = freeSlots.filter(isEligibleFreeSlot);
   if (!run.slotId && eligibleFreeSlots.length === 0) {
     for (const slot of projectSlots) {
-      if (!slot.currentRunId || getRun(slot.currentRunId)?.status !== 'cancelled') continue;
+      if (!isCancelledSlotHolder(slot.currentRunId, runId)) continue;
       const available = {
         ...slot,
         lifecycle: 'ready' as const,

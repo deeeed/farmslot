@@ -1196,7 +1196,14 @@ export async function dispatchExecute(
         : null,
   });
   assertRunnerLaunchPrerequisites(vars, runner);
-  await assertRunnerAuthBeforeLaunch(vars, runner, model, projectJson, projectVars);
+  await assertRunnerAuthBeforeLaunch(
+    vars,
+    runner,
+    model,
+    projectJson,
+    projectVars,
+    currentRun?.domain,
+  );
   const taskDirName = resolveProjectTaskDirName(projectJson);
   const workerTaskDir = `${taskDirName}/${flowSubdir}/${taskFolderId}`;
   const priorReviewRun = currentRun?.repeatReviewContext?.priorRunId

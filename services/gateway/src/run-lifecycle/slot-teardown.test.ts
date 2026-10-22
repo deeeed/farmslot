@@ -882,12 +882,20 @@ test('cancel retains replay until a pinned new request needs the slot, preservin
   );
 });
 
-test('cancelled reclamation refuses surviving processes and preserves the replay record', async () => {
+test('deferred cleanup preserves the reclaim identity after a surviving worker exits', async () => {
   workerBlocker = 'worker still alive';
   slotAgentKillError = new Error('worker did not stop');
   await assert.rejects(reclaimCancelledSlot(SLOT_ID, 'requester'), /cleanup refused/);
   assert.notEqual(slotRow?.lifecycle, 'ready');
-  assert.equal(run.slotReclaimed, undefined);
+  assert.equal(run.slotReclaimed?.byRunId, 'requester');
+  workerBlocker = null;
+  slotAgentKillError = null;
+  assert.equal(await retryOccupiedRunSlot(SLOT_ID), true);
+  assert.equal(slotRow?.lifecycle, 'ready');
+  // A successor can use and release the checkout; the old replay remains refused.
+  slotRow = { ...slotRow, current_run_id: 'successor', slot_epoch: 2 };
+  slotRow = { ...slotRow, current_run_id: null, slot_epoch: 3 };
+  assert.match(cancelledSlotReplayRefusal(run) ?? '', /reclaimed by run requester/);
 });
 
 for (const state of ['successor', 'handoff'] as const) {

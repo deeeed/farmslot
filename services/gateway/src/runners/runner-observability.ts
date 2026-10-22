@@ -131,6 +131,20 @@ export function withRunnerObservabilityInstall(
   return `(${installCommand} || echo '[farmslot-observability] install failed; continuing without hooks' >&2) && (${fallbackCommand}) && ${launchCommand}`;
 }
 
+/** Auth discovery uses the provider catalog from the selected node support bundle. */
+export function buildPiAuthCheckCommand(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  binary: string,
+  model: string,
+): string {
+  const helper = path.posix.join(
+    farmslotDirForSlot(vars),
+    'scripts/runners',
+    'pi-farmslot-providers.mjs',
+  );
+  return `cd ${shellExpressionForRemotePath(vars.remoteRepo)} && node ${shellExpressionForRemotePath(helper)} ${shellExpressionForRemotePath(binary)} ${shellQuote(model)}`;
+}
+
 /**
  * Like withRunnerObservabilityInstall, but the install step is load-bearing:
  * when it fails the runner must not start (the installer's error is the last

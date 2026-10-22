@@ -346,28 +346,36 @@ test(
     const directory = await mkdtemp(path.join(tmpdir(), 'runner-auth-live-'));
     const { rm } = await import('node:fs/promises');
     t.after(() => rm(directory, { recursive: true, force: true }));
-    const { makeVars } = await import('../runners/test-fixtures.js');
-    const { assertRunnerAuthBeforeLaunch } = await import('../runners/runner-auth.js');
     const piPath = execFileSync('which', ['pi'], { encoding: 'utf8' }).trim();
-    const vars = makeVars({
-      piPath,
-      repo: directory,
-      remoteRepo: directory,
-      machineEnv: { PI_CODING_AGENT_DIR: directory },
-    });
-    await assert.rejects(
-      assertRunnerAuthBeforeLaunch(vars, 'pi', 'anthropic/claude-haiku-4-5', {
-        command_env: {
-          unset: [
-            'ANTHROPIC_API_KEY',
-            'ANTHROPIC_OAUTH_TOKEN',
-            'ANTHROPIC_AUTH_TOKEN',
-            'OPENAI_API_KEY',
-            'XAI_API_KEY',
-          ],
-        },
-      }),
-      /authentication failed before dispatch: credentials_not_configured/,
+    // The first fixture removes its private root. A fresh process avoids reusing
+    // that root's cached module constants when resolving the real auth helper.
+    const sourceRoot = new URL('../../../../', import.meta.url).pathname;
+    execFileSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '-e',
+        `
+      import assert from 'node:assert/strict';
+      const { makeVars } = await import(${JSON.stringify(new URL('../runners/test-fixtures.js', import.meta.url).href)});
+      const { assertRunnerAuthBeforeLaunch } = await import(${JSON.stringify(new URL('../runners/runner-auth.js', import.meta.url).href)});
+      const { directory, piPath } = JSON.parse(process.argv[1]);
+      const vars = makeVars({ piPath, repo: directory, remoteRepo: directory,
+        machineEnv: { PI_CODING_AGENT_DIR: directory } });
+      await assert.rejects(assertRunnerAuthBeforeLaunch(vars, 'pi', 'anthropic/claude-haiku-4-5', {
+        command_env: { unset: ['ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN',
+          'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'XAI_API_KEY'] },
+      }), /authentication failed before dispatch: credentials_not_configured/);
+    `,
+        JSON.stringify({ directory, piPath }),
+      ],
+      {
+        env: { ...process.env, FARMSLOT_ROOT: sourceRoot },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 30_000,
+      },
     );
     const out = process.env.FARMSLOT_RUNNER_SLOT_PROOF_OUT;
     assert.ok(out);
