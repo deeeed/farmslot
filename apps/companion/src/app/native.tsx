@@ -1,52 +1,11 @@
-import { Redirect, Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Pressable, Text } from 'react-native';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 
-import { NativeConversationScreen } from '../features/native-conversation/NativeConversationScreen';
-import {
-  type NativeConversationParams,
-  useNativeConversationController,
-} from '../features/native-conversation/use-native-conversation-controller';
+import { NativeConversation } from '../features/native-conversation/NativeConversation';
+import { type NativeConversationParams } from '../features/native-conversation/use-native-conversation-controller';
 import { routeParamString } from '../features/workspace-shared/route-params';
 import { canOpenNativeConversation, workspaceHome } from '../lib/workspace-access';
 import { useConnectionStore } from '../store/connection';
 
-function Conversation({ params }: { params: NativeConversationParams }) {
-  const router = useRouter();
-  const screen = useNativeConversationController(params);
-  return (
-    <>
-      <Stack.Screen
-        options={{
-          title: 'Conversation',
-          headerBackTitle: params.runId ? 'Run' : 'Back',
-          headerRight: () => (
-            <Pressable
-              testID="companion-native-connection"
-              accessibilityRole="button"
-              onPress={() => router.push('/connection')}
-            >
-              <Text style={{ color: '#fff' }}>Connection</Text>
-            </Pressable>
-          ),
-        }}
-      />
-      <NativeConversationScreen
-        {...screen}
-        selected={!!params.sessionId}
-        onSelect={(session) =>
-          router.push({
-            pathname: '/native',
-            params: {
-              sessionId: session.id,
-              executionNodeId: session.executionNodeId,
-              ...(params.draft ? { draft: params.draft } : {}),
-            },
-          })
-        }
-      />
-    </>
-  );
-}
 export default function NativeConversationRoute() {
   const route = useLocalSearchParams();
   const profile = useConnectionStore((state) => state.activeProfileId);
@@ -76,7 +35,7 @@ export default function NativeConversationRoute() {
   )
     return <Redirect href={workspaceHome(access)} />;
   return (
-    <Conversation
+    <NativeConversation
       key={JSON.stringify([
         profile,
         gatewayUrl,

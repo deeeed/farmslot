@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
-  isTerminalRunStatus,
   Methods,
   type NativeSessionInfo,
   type NativeSessionListResult,
@@ -24,6 +23,7 @@ import {
   nativeConversationStorageKey,
 } from '../../lib/native-conversation-storage';
 import {
+  nativeWorkerTargets,
   nativeWorkerViewControl,
   type NativeWorkerViewTarget,
 } from '../../lib/native-worker-target';
@@ -182,7 +182,10 @@ export function useNativeConversationController(params: NativeConversationParams
               label: context.label,
               binding: { ...binding, generation: params.generation ?? binding.generation },
               readOnly:
-                isTerminalRunStatus(run.status) || !!binding.closedAt || !!binding.releasedAt,
+                nativeWorkerTargets(run.agentContexts ?? []).find(
+                  (candidate) =>
+                    candidate.contextId === context.id && candidate.binding === binding,
+                )?.readOnly ?? true,
             };
             setWorker(target);
           }

@@ -5,18 +5,23 @@ import type { ReviewHistoryRound } from '@farmslot/review-dispatch';
 
 import { litBindings, litText } from '../../testing/lit-text.js';
 
-import { renderReviewAttempt } from './step-inspector-review-renderer.js';
+import { renderReviewAttempt, renderReviewFix } from './step-inspector-review-renderer.js';
 
 function round(overrides: Partial<ReviewHistoryRound> = {}): ReviewHistoryRound {
   return {
     key: 'review:2',
     reviewId: 'review',
     loopNumber: 2,
+    roundNumber: 2,
+    headSha: 'bbbbbbb',
+    reviewBaseSha: 'aaaaaaa',
+    resultRecorded: true,
     runner: 'codex',
     model: 'gpt-6.1-sol',
     mode: 'warm',
     modeLabel: 'WARM',
     verdict: 'issues',
+    verdictTone: 'warn',
     startedAt: '2026-10-21T10:00:00Z',
     completedAt: '2026-10-21T10:02:00Z',
     durationMs: 120000,
@@ -25,6 +30,10 @@ function round(overrides: Partial<ReviewHistoryRound> = {}): ReviewHistoryRound 
     findingsLabel: '1 finding recorded.',
     findings: [
       {
+        id: 'fill',
+        status: 'new',
+        statusLabel: 'New',
+        resolvedBy: null,
         title: 'Missing fill',
         details: '',
         severity: 'Severity not recorded',
@@ -37,11 +46,18 @@ function round(overrides: Partial<ReviewHistoryRound> = {}): ReviewHistoryRound 
     fixRange: null,
     fixStat: null,
     fixDurationMs: null,
+    fixStartedAt: null,
+    fixCompletedAt: null,
+    fixFiles: [],
     fixRunning: false,
     activeFixStartedAt: null,
-    resolution: 'Not recorded',
     hasFix: false,
     diffPath: null,
+    diffText: null,
+    diffReconstructed: false,
+    fixBaseSha: null,
+    fixHeadSha: null,
+    fixReconstructed: false,
     reviewDiffRetained: false,
     fixDiffPath: null,
     fixDiffText: null,
@@ -54,7 +70,15 @@ function round(overrides: Partial<ReviewHistoryRound> = {}): ReviewHistoryRound 
 }
 
 test('the shared round shows reviewer, mode, start, duration and exact finding location', () => {
-  const text = litText(renderReviewAttempt(round(), -1));
+  const text = litText(
+    renderReviewAttempt(
+      round(),
+      false,
+      () => undefined,
+      () => undefined,
+      () => undefined,
+    ),
+  );
   for (const label of [
     'Round 2',
     'codex',
@@ -68,30 +92,49 @@ test('the shared round shows reviewer, mode, start, duration and exact finding l
   assert.doesNotMatch(text, /worker fix applied/);
 });
 
-test('a fix keeps its SHA and diffstat while missing resolution and duration remain explicit', () => {
-  const text = litText(
-    renderReviewAttempt(
-      round({ hasFix: true, fixRange: 'aaaaaaa → bbbbbbb', fixStat: '2 files · +3 −1' }),
-      0,
-    ),
-  );
-  assert.match(text, /Fix before round 2/);
-  assert.match(text, /2 files/);
-  assert.match(text, /Fix duration not recorded/);
-  assert.match(text, /Resolved findings: Not recorded/);
-});
-
-test('the recorded diff action opens the existing artifact viewer', () => {
+test('a fix is a separate timeline card with changed files and the existing diff action', () => {
   const opened: string[] = [];
-  const view = renderReviewAttempt(
-    round({ fixDiffPath: 'artifacts/round-2/fix.diff' }),
-    0,
+  const view = renderReviewFix(
+    {
+      key: 'fix',
+      reconstructed: false,
+      diffError: null,
+      verifiedAt: null,
+      label: 'Fix before round 2',
+      startedAt: null,
+      completedAt: null,
+      durationMs: 60000,
+      running: false,
+      range: 'aaaaaaa → bbbbbbb',
+      stat: '2 files · +3 −1',
+      files: ['order.ts', 'order.test.ts'],
+      diffPath: 'artifacts/fix.diff',
+      diffText: 'diff --git',
+      resolved: [],
+    },
     (path) => opened.push(path),
   );
-  const clicks = litBindings(view, '@click=');
-  assert.equal(clicks.length, 1);
-  const click = clicks[0];
+  const text = litText(view);
+  assert.match(text, /Fix before round 2/);
+  assert.match(text, /2 files/);
+  assert.match(text, /order.test.ts/);
+  assert.doesNotMatch(text, /Resolved findings: Not recorded/);
+  const click = litBindings(view, '@click=')[0];
   assert.equal(typeof click, 'function');
   if (typeof click === 'function') click();
-  assert.deepEqual(opened, ['artifacts/round-2/fix.diff']);
+  assert.deepEqual(opened, ['artifacts/fix.diff']);
+});
+
+test('a finding opens its reviewed source independently of the diff', () => {
+  const selected: string[] = [];
+  const view = renderReviewAttempt(
+    round(),
+    false,
+    () => undefined,
+    (finding) => selected.push(finding.file + ':' + finding.line),
+    () => undefined,
+  );
+  const click = litBindings(view, '@click=')[0];
+  if (typeof click === 'function') click();
+  assert.deepEqual(selected, ['order.ts:462']);
 });

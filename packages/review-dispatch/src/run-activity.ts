@@ -105,6 +105,25 @@ export function runTerminalView(run: Run, contextId?: string) {
   };
 }
 
+/** A gate follows up with its latest reviewer, even while that reviewer is waiting. */
+export function runReviewerView(run: Run) {
+  const context = [...(run.agentContexts ?? [])]
+    .filter((candidate) => candidate.role === 'review')
+    .sort((left, right) =>
+      (right.attemptStartedAt ?? right.startedAt ?? '').localeCompare(
+        left.attemptStartedAt ?? left.startedAt ?? '',
+      ),
+    )[0];
+  if (!context)
+    return {
+      label: 'Ask reviewer',
+      disabledReason: 'No reviewer session is recorded.',
+      target: null,
+      context: null,
+    };
+  return { ...runTerminalView(run, context.id), label: 'Ask reviewer' };
+}
+
 /** Keep the same actor binding for subscription, input, resize and snapshots on both clients. */
 export function runTerminalTargetParams({
   slotId,

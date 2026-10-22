@@ -1,11 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { type FsReadResult, Methods, type ReviewChainEntry, type Run } from '@farmslot/protocol';
+import {
+  type FsReadResult,
+  type GitDiffResult,
+  type GitShowResult,
+  Methods,
+  type ReviewChainEntry,
+  type ReviewedFindingContext,
+  reviewedFindingContext,
+  type Run,
+} from '@farmslot/protocol';
 import {
   loadReviewHistoryArtifacts,
+  mergeReviewHistoryArtifacts,
   reviewHistoryArtifactPaths,
   type ReviewHistoryArtifacts,
+  type ReviewHistoryFinding,
   reviewHistoryIdentity,
+  type ReviewHistoryRound,
+  reviewHistorySourceRequest,
   reviewHistoryView,
 } from '@farmslot/review-dispatch';
 
@@ -22,8 +35,13 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
   const epoch = useConnectionStore((state) => state.authorityEpoch);
   const [revision, setRevision] = useState(0);
   const profile = useConnectionStore((state) => state.activeProfileId);
-  const identity = `${profile}:${epoch}:${revision}:${url}:${client?.connectionGeneration}:${reviewHistoryIdentity(run)}`;
-  const [saved, setSaved] = useState<{ identity: string; artifacts: ReviewHistoryArtifacts }>();
+  const artifactScope = `${profile}:${epoch}:${url}:${client?.connectionGeneration}:${run.id}`;
+  const identity = `${artifactScope}:${revision}:${reviewHistoryIdentity(run)}`;
+  const [saved, setSaved] = useState<{
+    identity: string;
+    scope: string;
+    artifacts: ReviewHistoryArtifacts;
+  }>();
   useEffect(() => {
     if (!client || status !== 'connected') return;
     let disposed = false;
@@ -40,15 +58,60 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
         if (!current()) throw new Error('Farm connection changed');
         return (await client.request<FsReadResult>(Methods.FS_READ, params)).content;
       },
+      async (params) => {
+        if (!current()) throw new Error('Farm connection changed');
+        return (await client.request<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
+      },
     ).then((artifacts) => {
-      if (!disposed && current()) setSaved({ identity, artifacts });
+      if (!disposed && current())
+        setSaved((previous) => ({
+          identity,
+          scope: artifactScope,
+          artifacts: mergeReviewHistoryArtifacts(
+            previous?.scope === artifactScope ? previous.artifacts : {},
+            artifacts,
+          ),
+        }));
     });
     return () => {
       disposed = true;
     };
   }, [identity, status, client]);
+  const selection = useRef<object | null>(null);
+  const [source, setSource] = useState<{
+    identity: string;
+    key: string;
+    loading?: boolean;
+    context?: ReviewedFindingContext;
+    error?: string;
+  }>();
+  const inspect = async (round: ReviewHistoryRound, finding: ReviewHistoryFinding) => {
+    if (!client || status !== 'connected') return;
+    const params = reviewHistorySourceRequest(run, round, finding);
+    if (!params) return;
+    const request = {};
+    selection.current = request;
+    const key = `${round.key}:${finding.id}`;
+    const current = currentFarmConnection(client, useConnectionStore.getState);
+    setSource({ identity, key, loading: true });
+    try {
+      const result = await client.request<GitShowResult>(Methods.GIT_SHOW, params);
+      if (selection.current === request && current())
+        setSource({
+          identity,
+          key,
+          context: reviewedFindingContext(result.content, finding.line!),
+        });
+    } catch (error) {
+      if (selection.current === request && current())
+        setSource({ identity, key, error: error instanceof Error ? error.message : String(error) });
+    }
+  };
   return {
-    ...reviewHistoryView(run, saved?.identity === identity ? saved.artifacts : {}, chain),
+    source: source?.identity === identity ? source : undefined,
+    inspect: (round: ReviewHistoryRound, finding: ReviewHistoryFinding) =>
+      void inspect(round, finding),
+    ...reviewHistoryView(run, saved?.scope === artifactScope ? saved.artifacts : {}, chain),
     loading:
       status === 'connected' &&
       saved?.identity !== identity &&

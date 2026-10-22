@@ -4,6 +4,7 @@ import { LitElement } from 'lit';
 import { property, query, state } from 'lit/decorators.js';
 
 import type { AgentRole, TmuxWorkerRef } from '@farmslot/protocol';
+import type { nativeWorkerTabs, NativeWorkerViewTarget } from '@farmslot/review-dispatch';
 
 import type { TerminalAttachment, TerminalAttachmentQueue } from './terminal-attachment-model.js';
 import type { TerminalAttachPhase } from './terminal-view-attach-model.js';
@@ -28,6 +29,8 @@ export abstract class TerminalViewState extends LitElement {
   @property({ type: String }) runId = '';
   @property({ type: String }) workerRefJson = '';
   @property({ type: Boolean }) compact = false;
+  @property({ attribute: false }) nativeWorkers: ReturnType<typeof nativeWorkerTabs> = [];
+  @property({ attribute: false }) nativeWorker?: NativeWorkerViewTarget;
 
   @state() protected _lifecycle = '';
   @state() protected _agent = '';
@@ -107,7 +110,7 @@ export abstract class TerminalViewState extends LitElement {
   }
 
   protected _hasTarget(): boolean {
-    return terminalHasTarget(this._targetState());
+    return !this.nativeWorker && terminalHasTarget(this._targetState());
   }
 
   protected _targetLabel(): string {

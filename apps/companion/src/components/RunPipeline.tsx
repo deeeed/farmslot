@@ -1,5 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import {
   deriveRunLifecycleView,
@@ -8,7 +16,12 @@ import {
   runStepDisplayDetail,
   type RunStepDisplayStatus,
 } from '@farmslot/protocol';
-import { runActivityStepStatus, runActivityView } from '@farmslot/review-dispatch';
+import {
+  recoveredReviewFailureColor,
+  runActivityStepStatus,
+  runActivityView,
+  runRecoveredReviewFailures,
+} from '@farmslot/review-dispatch';
 
 import { colors, fonts, spacing } from '../lib/theme';
 
@@ -60,7 +73,11 @@ export function RunPipelineMini({ run }: { run: Run }) {
   const activity = runActivityView(run);
   usePipelineClock(Boolean(activity));
   const isCancelled = runStatus === 'cancelled';
-  const visible = (activity?.steps ?? steps).filter((s) => s.status !== 'skipped');
+  const failures = runRecoveredReviewFailures(run);
+  const reasons = new Map(failures.map((step) => [step.name, step.reason]));
+  const visible = (activity?.steps ?? steps)
+    .filter((s) => s.status !== 'skipped')
+    .flatMap((step) => (step.name === 'review' ? [step, ...failures] : [step]));
   if (visible.length === 0) return null;
 
   const eff = (s: RunStep) => runActivityStepStatus(run, s);
@@ -71,8 +88,8 @@ export function RunPipelineMini({ run }: { run: Run }) {
   const remaining = active
     ? visible.slice(labelIdx + 1).filter((s) => eff(s) === 'pending').length
     : 0;
-  const allDone = visible.every((s) => eff(s) === 'done');
-  const hasFailed = visible.some((s) => eff(s) === 'failed');
+  const allDone = visible.every((s) => eff(s) === 'done' || reasons.has(s.name));
+  const hasFailed = visible.some((s) => eff(s) === 'failed' && !reasons.has(s.name));
   const blocked = visible.find((s) => eff(s) === 'blocked');
   const shown = blocked ?? active;
   const detail = shown ? runStepDisplayDetail(run, shown) : active?.detail;
@@ -94,12 +111,18 @@ export function RunPipelineMini({ run }: { run: Run }) {
       <View style={miniStyles.bars}>
         {visible.map((step, i) => {
           const vis = eff(step);
+          const reason = reasons.get(step.name);
           return (
-            <View
+            <Pressable
+              accessibilityLabel={reason ?? step.name}
+              accessibilityHint={reason}
+              disabled={!reason}
+              hitSlop={20}
+              onPress={() => reason && Alert.alert('Review attempt recovered', reason)}
               key={`${step.name}-${i}`}
               style={[
                 miniStyles.segment,
-                { backgroundColor: stepColor(vis) },
+                { backgroundColor: reason ? recoveredReviewFailureColor : stepColor(vis) },
                 vis === 'pending' && miniStyles.segmentPending,
                 vis === 'done' && miniStyles.segmentDone,
                 vis === 'skipped' && miniStyles.segmentPending,

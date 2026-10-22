@@ -25,7 +25,6 @@ import {
   RESOURCE_POSTURE_TRANSITION_POLL_LIMIT,
   type ResourcePostureGateChoice,
   resourcePostureTransitionBaseline,
-  reviewChainForRun,
   reviewRoundBudgetLabel,
   type Run,
   type RunDecision,
@@ -142,7 +141,7 @@ import { PlanningChoices } from '../planning/PlanningControls';
 import { ReviewDispatchPicker } from '../review-dispatch/ReviewDispatchPicker';
 import { ReviewHistoryPanel } from '../run-detail/components/ReviewHistoryPanel';
 import { VisualReviewEntryCard } from '../visual-review/components/VisualReviewEntryCard';
-import { ReviewPublicationPanel } from '../workspace-shared/ReviewPublication';
+import { AskReviewer, ReviewPublicationPanel } from '../workspace-shared/ReviewPublication';
 import { useReviewPublication } from '../workspace-shared/use-review-publication';
 
 import {
@@ -179,11 +178,21 @@ const POSTURE_APPLY_POLL_DELAY_MS = 600;
 
 type DecisionSectionKey = 'signals' | 'evidence' | 'reports' | 'progress' | 'terminal' | 'actions';
 
-export default function DecisionDetailScreen({ embedded = false }: { embedded?: boolean }) {
+export default function DecisionDetailScreen({
+  embedded = false,
+  showReviewHistory = true,
+  decisionId: suppliedDecisionId,
+  runId: suppliedRunId,
+}: {
+  embedded?: boolean;
+  showReviewHistory?: boolean;
+  decisionId?: string;
+  runId?: string;
+}) {
   const {
     id,
     decisionId,
-    runId: routeRunId,
+    runId: urlRunId,
     recipeRun: routeRecipeRun,
     artifact: routeArtifactPath,
   } = useLocalSearchParams<{
@@ -193,7 +202,9 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     recipeRun?: string | string[];
     artifact?: string | string[];
   }>();
-  const resolvedDecisionId = routeParamString(decisionId) || routeParamString(id);
+  const routeRunId = suppliedRunId ?? urlRunId;
+  const resolvedDecisionId =
+    suppliedDecisionId ?? (routeParamString(decisionId) || routeParamString(id));
   const reviewPicker = useMemo(
     () =>
       new ReviewDispatchViewModel({
@@ -1107,6 +1118,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             <Text style={styles.ageText}>{new Date(decision.createdAt).toLocaleTimeString()}</Text>
           </View>
           <Text style={styles.title}>{presentation.title}</Text>
+          {decision.type === 'engine_review_posting' ? <AskReviewer run={sourceRun} /> : null}
           <Text style={baseStyles.textSecondary}>
             {presentation.summary || presentation.description}
           </Text>
@@ -1513,26 +1525,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           </View>
         ) : null}
 
-        {embedded && sourceRun ? (
-          <ReviewHistoryPanel
-            run={sourceRun}
-            chain={reviewChainForRun(sourceRun)}
-            onOpenArtifact={(artifactPath) => {
-              router.push({
-                pathname: '/workspace/run/[runId]/files',
-                params: {
-                  runId: sourceRun.id,
-                  ...decisionRouteContext,
-                  recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                  artifact: artifactPath,
-                  filter:
-                    artifactFilterParamForArtifactPath(artifactPath) ??
-                    artifactFilterParamForWorkspaceNav('review'),
-                },
-              });
-            }}
-          />
-        ) : null}
+        {showReviewHistory && sourceRun ? <ReviewHistoryPanel run={sourceRun} /> : null}
 
         {presentation.highlights.length > 0 && (
           <View

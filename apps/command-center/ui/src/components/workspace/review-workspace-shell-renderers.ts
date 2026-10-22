@@ -156,6 +156,8 @@ export function renderReviewTopBar(input: {
   proposeImprovement: () => void;
   post: () => void;
   dismiss: () => void;
+  reviewerHref?: string;
+  reviewerUnavailable?: string;
 }) {
   const counts = reviewSeverityCounts(input.comments);
   return html`
@@ -200,6 +202,18 @@ export function renderReviewTopBar(input: {
           `
         : nothing}
       <span class="rw-spacer"></span>
+      ${input.reviewerHref
+        ? html`<a class="rw-action-btn" data-testid="ask-reviewer" href=${input.reviewerHref}
+            >Ask reviewer</a
+          >`
+        : html`<button
+            class="rw-action-btn"
+            data-testid="ask-reviewer"
+            disabled
+            title=${input.reviewerUnavailable ?? 'Reviewer session unavailable'}
+          >
+            Ask reviewer
+          </button>`}
       <button
         class="rw-panel-toggle"
         ?disabled=${input.posting || input.recovering || input.refreshing}

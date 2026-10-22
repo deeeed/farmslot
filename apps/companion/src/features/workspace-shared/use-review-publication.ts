@@ -15,6 +15,7 @@ import {
   savedReviewView,
   toggleReviewFinding,
 } from '@farmslot/protocol';
+import { refreshReviewGateView } from '@farmslot/review-dispatch';
 
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { loadReviewFindingSource, reviewFindingSourceRequest } from '../../lib/review-curation';
@@ -188,13 +189,15 @@ export function useReviewPublication(
       } else if (operation === 'retry') {
         await retryReviewPublication(client, run.id, current, useRunStore.getState().upsertRun);
       } else {
-        const result = await client.request<RunGetResult>(Methods.RUN_REFRESH_REVIEW_GATE, {
-          runId: run.id,
-        });
-        if (current()) {
+        const result = await refreshReviewGateView(
+          () => client.request<RunGetResult>(Methods.RUN_REFRESH_REVIEW_GATE, { runId: run.id }),
+          () => client.request<RunGetResult>(Methods.RUN_GET, { runId: run.id }),
+        );
+        if (current() && result.run) {
           useRunStore.getState().upsertRun(result.run);
           onRefreshed?.(result.run);
         }
+        if (result.error) throw new Error(result.error);
       }
       if (current()) setAction({ scope: capturedScope, busy: false });
     } catch (error) {

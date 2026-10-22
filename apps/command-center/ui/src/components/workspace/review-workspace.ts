@@ -24,7 +24,9 @@ import {
   reviewPostingFingerprint,
   reviewPostRecommendation,
 } from '@farmslot/protocol';
+import { refreshReviewGateView } from '@farmslot/review-dispatch';
 
+import '../runs/review-history-panel.js';
 import '../diff-viewer/diff-review.js';
 import '../diff-viewer/code-viewer.js';
 import '../shared/media-lightbox.js';
@@ -609,15 +611,28 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._comments.map((c, i) => [this._commentKey(c), this._includedComments.has(i)]),
     );
     this._preservedIncludeEvidence = this._includeEvidence;
-    try {
-      await gateway.request(Methods.RUN_REFRESH_REVIEW_GATE, { runId: this.runId });
-    } catch (err) {
-      console.error('Failed to refresh review artifacts:', err);
+    this._refreshError = '';
+    const runId = this.runId;
+    const epoch = currentRecoveryEpoch();
+    const refreshed = await refreshReviewGateView(
+      () => gateway.request(Methods.RUN_REFRESH_REVIEW_GATE, { runId }),
+      () => gateway.request(Methods.RUN_GET, { runId }),
+    );
+    if (!isRecoveryEpochCurrent(epoch) || this.runId !== runId || !this.isConnected) {
+      this._refreshing = false;
+      return;
+    }
+    if (refreshed.run && refreshed.run.id === runId) {
+      this.run = refreshed.run;
+      const decision = refreshed.run.decisions.find((entry) => entry.id === this.decision.id);
+      if (decision) this.decision = decision;
+    }
+    this._refreshError = refreshed.error ?? '';
+    if (refreshed.error) {
       this._preservedInclusion = undefined;
       this._preservedIncludeEvidence = undefined;
-    } finally {
-      this._refreshing = false;
     }
+    this._refreshing = false;
   }
 
   private async _handleProposeImprovement() {
@@ -672,7 +687,14 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
     return html`
       ${renderReviewWorkspaceStyles(this._recoveryPhase)} ${this._renderTopBar()}
-      ${this._renderLoadingBanner()} ${this._branchMismatch ? this._renderBranchBanner() : nothing}
+      ${this._renderLoadingBanner()}
+      ${this._refreshError
+        ? html`<div class="rw-source-context" role="alert">${this._refreshError}</div>`
+        : nothing}
+      ${this.showHistory && this.run
+        ? html`<review-history-panel .run=${this.run}></review-history-panel>`
+        : nothing}
+      ${this._branchMismatch ? this._renderBranchBanner() : nothing}
       <div class="rw-split">
         ${this._isRecovering
           ? html`
@@ -985,6 +1007,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       proposeImprovement: () => this._handleProposeImprovement(),
       post: () => this._handlePost(),
       dismiss: () => this._handleDismiss(),
+      reviewerHref: this.reviewerHref,
+      reviewerUnavailable: this.reviewerUnavailable,
     });
   }
 

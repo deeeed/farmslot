@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import type { ComponentPropsWithRef } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
@@ -8,7 +9,7 @@ import {
   type TaskProgressStructured,
   type TmuxWindow,
 } from '@farmslot/protocol';
-import { taskProgressPercent } from '@farmslot/review-dispatch';
+import { type nativeWorkerTabs, taskProgressPercent } from '@farmslot/review-dispatch';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
 import {
@@ -35,7 +36,11 @@ import {
   targetWorkspaceRouteContextParams,
   type WorkspaceRouteContext,
 } from '../../../lib/workspace-navigation';
+import { NativeConversation } from '../../native-conversation/NativeConversation';
+import type { useSlotNativeSession } from '../../native-conversation/use-slot-native-session';
 import { slotTerminalStyles as styles } from '../styles/slot-terminal.styles';
+
+import { TerminalViewSurface } from './terminal-history-viewer';
 
 export function TerminalSteeringContextCard({
   slotId,
@@ -1126,41 +1131,112 @@ export function TmuxControlPanel({
         {renderTmuxButton('Prefix', Methods.TMUX_SEND_KEYS, { keys: 'C-b' })}
         {renderTmuxButton('Kill pane', Methods.TMUX_KILL_PANE, {}, true)}
       </View>
-      {windows.length > 0 ? (
-        <View style={styles.controlRow}>
-          {windows.map((window) => (
-            <Pressable
-              key={window.index}
-              style={[
-                styles.controlButton,
-                styles.tmuxWindowButton,
-                window.active && styles.tmuxWindowButtonActive,
-                actionDisabled && styles.disabledButton,
-              ]}
-              disabled={actionDisabled}
-              onPress={() =>
-                onAction(`Win ${window.index}`, Methods.TMUX_SELECT_WINDOW, {
-                  index: window.index,
-                })
-              }
-            >
-              <Text
-                style={[
-                  styles.controlButtonText,
-                  window.active && styles.tmuxWindowButtonTextActive,
-                ]}
-                numberOfLines={1}
-              >
-                {activeAction === `Win ${window.index}`
-                  ? '…'
-                  : `${window.index}:${window.name || 'window'}${
-                      window.panes.length > 1 ? `/${window.panes.length}` : ''
-                    }`}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
     </View>
+  );
+}
+
+export function SlotSessionTabs({
+  windows,
+  nativeTabs,
+  selectedNativeContextId,
+  disabled,
+  onNative,
+  onWindow,
+}: {
+  windows: TmuxWindow[];
+  nativeTabs: ReturnType<typeof nativeWorkerTabs>;
+  selectedNativeContextId: string;
+  disabled: boolean;
+  onNative: (contextId: string) => void;
+  onWindow: (index: number) => void;
+}) {
+  if (!windows.length && !nativeTabs.length) return null;
+  return (
+    <ScrollView
+      horizontal
+      style={styles.sessionTabs}
+      contentContainerStyle={styles.controlRow}
+      testID="companion-slot-session-tabs"
+    >
+      {windows.map((window) => (
+        <Pressable
+          key={`tmux-${window.index}`}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: !selectedNativeContextId && window.active, disabled }}
+          style={[
+            styles.controlButton,
+            styles.tmuxWindowButton,
+            !selectedNativeContextId && window.active && styles.tmuxWindowButtonActive,
+          ]}
+          disabled={disabled}
+          onPress={() => onWindow(window.index)}
+        >
+          <Text style={styles.controlButtonText}>
+            {window.index}:{window.name || 'window'}
+          </Text>
+        </Pressable>
+      ))}
+      {nativeTabs.map((tab) => (
+        <Pressable
+          key={tab.key}
+          testID={`companion-slot-native-${tab.target.contextId}`}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: selectedNativeContextId === tab.target.contextId }}
+          style={[
+            styles.controlButton,
+            styles.tmuxWindowButton,
+            selectedNativeContextId === tab.target.contextId && styles.tmuxWindowButtonActive,
+          ]}
+          onPress={() => onNative(tab.target.contextId)}
+        >
+          <Text style={styles.controlButtonText}>{tab.label}</Text>
+        </Pressable>
+      ))}
+    </ScrollView>
+  );
+}
+
+export function SlotTerminalSessionPane({
+  native,
+  windows,
+  disabled,
+  onTmuxAction,
+  terminal,
+}: {
+  native: ReturnType<typeof useSlotNativeSession>;
+  windows: TmuxWindow[];
+  disabled: boolean;
+  onTmuxAction: (
+    label: string,
+    method: MobileTmuxActionMethod,
+    params?: Record<string, unknown>,
+  ) => void;
+  terminal: ComponentPropsWithRef<typeof TerminalViewSurface>;
+}) {
+  return (
+    <>
+      <SlotSessionTabs
+        windows={windows}
+        nativeTabs={native.tabs}
+        selectedNativeContextId={native.target?.contextId ?? ''}
+        disabled={disabled}
+        onNative={native.select}
+        onWindow={(index) => {
+          native.select('');
+          onTmuxAction(`Win ${index}`, Methods.TMUX_SELECT_WINDOW, { index });
+        }}
+      />
+      <View style={styles.terminalArea}>
+        {native.target && native.params ? (
+          <NativeConversation
+            key={`${native.target.binding.sessionId}:${native.target.binding.leaseId}:${native.target.binding.generation}`}
+            params={native.params}
+            embedded
+          />
+        ) : (
+          <TerminalViewSurface {...terminal} />
+        )}
+      </View>
+    </>
   );
 }

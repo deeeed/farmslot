@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { AgentContext, Run } from '@farmslot/protocol';
 
-import { runTerminalView } from '../src/run-activity.js';
+import { runReviewerView, runTerminalView } from '../src/run-activity.js';
 
 const worker: AgentContext = {
   id: 'dev',
@@ -81,6 +81,20 @@ test('an active run opens its exact worker, while the running reviewer takes pre
 test('a finished run keeps its action disabled even when its old slot and context remain', () => {
   for (const status of ['done', 'failed', 'cancelled'] as const)
     assert.equal(runTerminalView(run({ status })).disabledReason, 'This run is finished.');
+});
+
+test('Ask reviewer keeps the completed reviewer instead of selecting its active producing worker', () => {
+  const view = runReviewerView(
+    run({
+      status: 'human-gating',
+      agentContexts: [worker, { ...reviewer, status: 'waiting' }],
+    }),
+  );
+  assert.equal(view.label, 'Ask reviewer');
+  assert.equal(view.context?.id, reviewer.id);
+  assert.equal(view.target?.slotId, 'review-slot');
+  assert.equal(view.disabledReason, null);
+  assert.equal(runReviewerView(run()).target, null);
 });
 
 test('native reviewers keep their own conversation binding on a tmux producing run', () => {

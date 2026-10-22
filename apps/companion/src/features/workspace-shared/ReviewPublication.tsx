@@ -1,7 +1,9 @@
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Text, View } from 'react-native';
 
 import { REVIEW_POST_RECOMMENDATIONS, type Run } from '@farmslot/protocol';
+import { runReviewerView } from '@farmslot/review-dispatch';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { MobileDiffViewer } from '../../components/MobileDiffViewer';
@@ -227,4 +229,25 @@ export function ReviewPublication({
 }) {
   const controller = useReviewPublication(run, undefined, undefined, context);
   return <ReviewPublicationPanel {...controller} />;
+}
+
+export function AskReviewer({ run }: { run: Run | null }) {
+  const router = useRouter();
+  const reviewer = run ? runReviewerView(run) : null;
+  return (
+    <PRButton
+      label="Ask reviewer"
+      testID="companion-ask-reviewer"
+      disabled={!reviewer || Boolean(reviewer.disabledReason)}
+      onPress={() => {
+        if (!run || !reviewer?.context || !reviewer.target || reviewer.disabledReason) return;
+        router.push({
+          pathname: reviewer.target.slotId
+            ? '/workspace/slot/[slotId]/terminal'
+            : '/run-terminal/[runId]',
+          params: { ...reviewer.target, contextId: reviewer.context.id },
+        });
+      }}
+    />
+  );
 }

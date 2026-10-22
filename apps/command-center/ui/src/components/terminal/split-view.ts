@@ -26,6 +26,7 @@ import {
   tmuxWorkerRefsMatch,
   upsertTmuxWorkerWatchItem,
 } from '@farmslot/protocol';
+import { nativeWorkerTabs } from '@farmslot/review-dispatch';
 
 import './terminal-view.js';
 import '../shared/workspace-pin.js';
@@ -69,6 +70,7 @@ export class TerminalSplitView extends LitElement {
   @property() initialRun = '';
   @state() private _selectedRuns: string[] = [];
   @state() private _runs: Run[] = [];
+  @state() private _selectedContexts: Record<string, string> = {};
 
   @state() private _availableSlots: string[] = [];
   @state() private _selectedSlots: string[] = [];
@@ -1038,6 +1040,31 @@ export class TerminalSplitView extends LitElement {
     </div>`;
   }
 
+  private _renderContextTerminal(runId: string, slotId = '') {
+    const key = `${slotId}/${runId}`;
+    const run = this._runs.find((candidate) => candidate.id === runId);
+    const contexts = run?.agentContexts ?? [];
+    const contextId =
+      this._selectedContexts[key] ??
+      (hashParams().get('run') === runId ? (hashParams().get('contextId') ?? '') : '');
+    const tabs = nativeWorkerTabs(contexts, slotId || undefined);
+    const nativeWorker = tabs.find((tab) => tab.target.contextId === contextId)?.target;
+    const context = contexts.find((candidate) => candidate.id === contextId);
+    return html`<terminal-view
+      .slotId=${slotId}
+      .runId=${runId}
+      .contextId=${nativeWorker ? '' : contextId}
+      .role=${nativeWorker ? '' : (context?.role ?? '')}
+      .nativeWorkers=${tabs}
+      .nativeWorker=${nativeWorker}
+      @native-context-selected=${(event: CustomEvent<{ contextId: string | null }>) => {
+        this._selectedContexts = { ...this._selectedContexts, [key]: event.detail.contextId ?? '' };
+      }}
+      @terminal-expand=${this._handleExpand}
+      @terminal-close=${this._handleTerminalClose}
+    ></terminal-view>`;
+  }
+
   render() {
     const max = this._maxSlots();
     const slotsToShow = this._selectedSlots.slice(0, max);
@@ -1155,11 +1182,7 @@ export class TerminalSplitView extends LitElement {
                       run.reviewWorkspace &&
                       !run.reviewWorkspace.cleanedAt,
                   )
-                  ? html`<terminal-view
-                      .runId=${pane.runId}
-                      @terminal-expand=${this._handleExpand}
-                      @terminal-close=${this._handleTerminalClose}
-                    ></terminal-view>`
+                  ? this._renderContextTerminal(pane.runId)
                   : html`<div class="empty-slot">
                       ${this._runs.find((run) => run.id === pane.runId)?.reviewWorkspace?.cleanedAt
                         ? 'This worktree has been cleaned up.'
@@ -1182,12 +1205,10 @@ export class TerminalSplitView extends LitElement {
                       @terminal-close=${this._handleTerminalClose}
                     ></terminal-view>`
                   : pane.slotId
-                    ? html`<terminal-view
-                        .slotId=${pane.slotId}
-                        .runId=${this._currentRunIdForSlot(pane.slotId)}
-                        @terminal-expand=${this._handleExpand}
-                        @terminal-close=${this._handleTerminalClose}
-                      ></terminal-view>`
+                    ? this._renderContextTerminal(
+                        this._currentRunIdForSlot(pane.slotId),
+                        pane.slotId,
+                      )
                     : html`<div class="empty-slot">Select a slot</div>`,
             )}
           </div>`}

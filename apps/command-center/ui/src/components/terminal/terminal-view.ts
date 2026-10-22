@@ -1,4 +1,6 @@
+import { html } from 'lit';
 import { customElement } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 
 import type {
   SlotStatus,
@@ -8,8 +10,10 @@ import type {
   TerminalModePayload,
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
+import { nativeWorkerAttemptKey } from '@farmslot/review-dispatch';
 
 import '../progress-tracker/progress-tracker.js';
+import '../chat/native-session-view.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState } from '../../state.js';
@@ -91,6 +95,10 @@ export class TerminalView extends TerminalViewState {
 
   firstUpdated() {
     this._initTerminal();
+    if (this.nativeWorker) {
+      void this._refreshTmuxList({ force: true });
+      return;
+    }
     if (this._hasTarget()) {
       if (gateway.connectionState === 'connected') {
         this._log('firstUpdated → subscribe');
@@ -106,6 +114,18 @@ export class TerminalView extends TerminalViewState {
   updated(changed: Map<string, unknown>) {
     if (changed.has('_runner')) {
       syncTerminalRunnerAccent(this, this._runner);
+    }
+    if (changed.has('nativeWorker') && this.nativeWorker) {
+      const prior = this._activeSubscribeIdentity ?? undefined;
+      this._teardownStreams(Boolean(prior), prior, this._activeSubscribePostmortem);
+      this._mode = 'none';
+      void this._refreshTmuxList({ force: true });
+      return;
+    }
+    if (changed.has('nativeWorker') && !this.nativeWorker && changed.get('nativeWorker')) {
+      this._fitAddon?.fit();
+      if (this._hasTarget() && this._connected) void this._subscribe();
+      return;
     }
 
     // Detect terminal detachment (e.g., after HMR re-render orphans xterm canvas)
@@ -183,7 +203,7 @@ export class TerminalView extends TerminalViewState {
    * advertise a feature whose every request must fail, so the whole surface is disabled.
    */
   private _attachmentsSupported(): boolean {
-    return !this._retiredTarget && !this._workerRef() && Boolean(this.slotId);
+    return !this.nativeWorker && !this._retiredTarget && !this._workerRef() && Boolean(this.slotId);
   }
 
   private _initAttachmentQueue() {
@@ -970,7 +990,7 @@ export class TerminalView extends TerminalViewState {
   }
 
   private async _refreshTmuxList(opts: { force?: boolean } = {}) {
-    if (!this.slotId || this._mode !== 'pty') return;
+    if (!this.slotId || (this._mode !== 'pty' && !this.nativeWorker)) return;
     if (!opts.force && document.hidden) return;
     if (this._tmuxListInFlight) return;
     if (!opts.force && Date.now() < this._tmuxListBackoffUntil) return;
@@ -1151,6 +1171,16 @@ export class TerminalView extends TerminalViewState {
       mode: this._mode,
       selectMode: this._selectMode,
       windows: this._tmuxWindows,
+      nativeWorkers: this.nativeWorkers,
+      selectedNativeKey: this.nativeWorker ? nativeWorkerAttemptKey(this.nativeWorker) : '',
+      selectNative: (contextId) =>
+        this.dispatchEvent(
+          new CustomEvent('native-context-selected', {
+            detail: { contextId },
+            bubbles: true,
+            composed: true,
+          }),
+        ),
       renaming: this._renaming,
       renameValue: this._renameValue,
       setRenameValue: (value) => {
@@ -1176,7 +1206,8 @@ export class TerminalView extends TerminalViewState {
         : undefined;
 
     return renderTerminalChrome({
-      showInputBar: !this._retiredTarget && !this.compact && this._mode !== 'pty',
+      showInputBar:
+        !this.nativeWorker && !this._retiredTarget && !this.compact && this._mode !== 'pty',
       retiredTarget: this._retiredTarget,
       retryAvailable:
         !this._retiredTarget &&
@@ -1197,9 +1228,18 @@ export class TerminalView extends TerminalViewState {
       slotId: this.slotId,
       runId: this._postmortem ? '' : this.runId,
       targetLabel: workspaceRun?.ticketOrPr || this._targetLabel(),
-      hasTarget: this._hasTarget(),
+      hasTarget: this._hasTarget() || Boolean(this.nativeWorker),
       taskMarkdown: this._taskMarkdown,
       toolbar: this._renderTmuxToolbar(),
+      nativeContent: this.nativeWorker
+        ? keyed(
+            nativeWorkerAttemptKey(this.nativeWorker),
+            html`<native-session-view
+              .worker=${this.nativeWorker}
+              style="display:flex;flex:1;min-height:0;overflow:hidden"
+            ></native-session-view>`,
+          )
+        : undefined,
       reconnecting: this._reconnecting,
       recoveryMessage: this._recoveryMessage,
       copyToast: this._copyToast,

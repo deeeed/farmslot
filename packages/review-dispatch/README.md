@@ -67,3 +67,23 @@ callers supply resource, QA and publication context. Preserve saved custom model
 
 Run `yarn workspace @farmslot/review-dispatch quality`. Build after protocol with
 `yarn workspace @farmslot/review-dispatch build`.
+
+## Run views
+
+Command Center and Companion use `nativeWorkerTargets`, `nativeWorkerTabs` and
+`runReviewerView` for native terminal tabs and the gate's reviewer link. The gateway
+remains authoritative for the pinned session's lease, generation and input owner.
+
+`reviewHistoryView` returns chronological review, fix and gate events from saved
+attempts, contexts and structured artifacts. Each platform renders one history
+panel across run detail, step and gate views. Replays retain separate attempts;
+finding locations use the round's frozen head. Exact file/title matches carry
+finding identity across severity and line changes. Disappearance from a later
+completed result is shown with that round's provenance, rather than a recorded
+per-finding resolution claim.
+
+`loadReviewHistoryArtifacts` and `mergeReviewHistoryArtifacts` retain known facts
+during refresh failures. `refreshReviewGateView` reads the current gate after a
+refused refresh, because that refusal may have committed revised findings.
+`runRecoveredReviewFailures` supplies the same warning and reason to both mini
+pipelines without changing the run's engine state.
