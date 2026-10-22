@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Find runs by every covered Jira key and show editable operator ticket links in run detail.
+
 - Show current-checklist progress beneath the pipeline in run lists and detail.
 
 - Resume the blocked worker through the gateway’s validated recovery action, including held review fixes.

@@ -270,3 +270,9 @@ the exported API.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Run ticket helpers `runLinkedTicketRefs`, `runLinkedTicketsView` and
+`normalizeRunLinkedTicketRefs` serve Command Center and Companion list/detail/search.
+`Run.linkedTicketRefs` stores operator additions; frozen ticket data stays intact.
+`RunMethods.setLinkedTickets` names the supported metadata RPC. See the
+[task directory contract](https://farmslot.io/docs/reference/task-directory-contract).

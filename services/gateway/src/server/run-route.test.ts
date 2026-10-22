@@ -100,3 +100,71 @@ test('source-selected run creation refuses missing or revoked source authority b
     before,
   );
 });
+
+test('linked-ticket metadata persists and broadcasts without changing frozen inputs or execution', async () => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'dev',
+    ticketOrPr: 'TEAM-100',
+    ticketData: {
+      source: 'manual',
+      title: 'Original scope',
+      description: '## TEAM-100',
+      acceptanceCriteria: ['[TEAM-100] Original acceptance'],
+      affectedArea: '',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+    },
+  });
+  const before = structuredClone(getRun(run.id)!);
+  const broadcasts: EventFrame[] = [];
+  const context = {
+    emit: () => assert.fail('metadata must broadcast'),
+    broadcast: (frame: EventFrame) => broadcasts.push(frame),
+  };
+  await routeRunMethod(
+    Methods.RUN_LINKED_TICKETS_SET,
+    { runId: run.id, linkedTicketRefs: [' team-200 ', 'TEAM-200'] },
+    context,
+  );
+  const saved = getRun(run.id)!;
+  assert.deepEqual(saved.linkedTicketRefs, ['TEAM-200']);
+  for (const key of [
+    'ticketData',
+    'taskFile',
+    'engineState',
+    'steps',
+    'decisions',
+    'reviewRoundAdmissions',
+    'status',
+  ] as const)
+    assert.deepEqual(saved[key], before[key]);
+  assert.equal(broadcasts.length, 1);
+  assert.equal(broadcasts[0].event, Events.RUN_UPDATED);
+  await persistRunNow(saved);
+  assert.deepEqual(
+    JSON.parse(
+      await (
+        await import('node:fs/promises')
+      ).readFile((await import('../runs/store.js')).runRecordPath(run.id), 'utf8'),
+    ).linkedTicketRefs,
+    ['TEAM-200'],
+  );
+  await assert.rejects(
+    routeRunMethod(
+      Methods.RUN_LINKED_TICKETS_SET,
+      { runId: run.id, linkedTicketRefs: ['bad'] },
+      context,
+    ),
+    /Jira key/,
+  );
+  assert.deepEqual(getRun(run.id)?.linkedTicketRefs, ['TEAM-200']);
+  assert.equal(broadcasts.length, 1);
+  await routeRunMethod(
+    Methods.RUN_LINKED_TICKETS_SET,
+    { runId: run.id, linkedTicketRefs: [] },
+    context,
+  );
+  assert.deepEqual(getRun(run.id)?.ticketData, before.ticketData);
+});

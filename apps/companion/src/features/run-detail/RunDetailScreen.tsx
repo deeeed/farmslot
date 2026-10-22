@@ -19,6 +19,7 @@ import {
   type RecipeRunArtifactGroup,
   reviewChainForRun,
   type Run,
+  type RunLinkedTicketsSetResult,
   type RunRecipeRunsForRunResult,
   type RunRecordedEvidenceReview,
   type RunReplayStepResult,
@@ -38,6 +39,7 @@ import {
   runTerminalView,
 } from '@farmslot/review-dispatch';
 
+import { RunLinkedTickets } from '../../components/RunLinkedTickets';
 import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
@@ -724,6 +726,22 @@ export default function RunDetailScreen() {
             </View>
           </View>
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
+          <RunLinkedTickets
+            key={run.id}
+            run={run}
+            onSave={
+              client
+                ? async (linkedTicketRefs) => {
+                    const result = await client.request<RunLinkedTicketsSetResult>(
+                      Methods.RUN_LINKED_TICKETS_SET,
+                      { runId: run.id, linkedTicketRefs },
+                    );
+                    upsertRun(result.run);
+                    await loadRun();
+                  }
+                : undefined
+            }
+          />
           {run.summary && <RunTitle style={baseStyles.textSecondary} title={run.summary} />}
           <CockpitTile
             testID="companion-run-open-terminal"

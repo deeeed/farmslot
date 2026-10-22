@@ -19,6 +19,7 @@ import { FLOW_COLORS, FLOW_LABELS, projectColor, RUNNER_COLORS } from '@farmslot
 
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
 import { FilterEmptyState } from '../../components/FilterEmptyState';
+import { RunLinkedTickets } from '../../components/RunLinkedTickets';
 import { RunPipelineMini } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import {
@@ -217,6 +218,7 @@ function RunCard({
           </View>
         </View>
         <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
+        <RunLinkedTickets key={run.id} run={run} />
         {run.summary ? <RunTitle style={styles.runSummary} title={run.summary} /> : null}
         {normalizeRunTags(run.tags).length > 0 ? (
           <View style={styles.tagRow}>

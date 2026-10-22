@@ -4,7 +4,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add shared linked-ticket lookup and operator ticket metadata on runs without changing frozen task inputs.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.66.0 - 2026-10-23
+
+- Add linked-run ticket metadata, shared lookup and the metadata setter contract.
 
 ## 0.65.0 - 2026-10-23
 
