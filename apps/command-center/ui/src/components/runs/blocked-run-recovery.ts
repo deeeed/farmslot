@@ -16,19 +16,18 @@ import { gateway } from '../../gateway-client.js';
 import {
   blockedWorkerOwnsSlot,
   blockedWorkerProofReady,
-  canResumeBlockedWorkerMonitor,
   isRecoverableBlockedWorkerRun,
 } from './blocked-run-recovery-model.js';
 
 @customElement('blocked-run-recovery')
 export class BlockedRunRecovery extends LitElement {
   @property({ attribute: false }) run!: Run;
-  @property({ attribute: false }) replayMonitor!: () => void | Promise<void>;
+  @property({ attribute: false }) resumeWorker!: () => void | Promise<void>;
   @property({ attribute: false }) restartWorker!: () => void | Promise<void>;
   @property({ type: Boolean }) disabled = false;
 
   @state() private plan: RuntimeCapabilityProofPlan | null = null;
-  @state() private signal: unknown = null;
+  @state() private resumable = false;
   @state() private status: RuntimeCapabilityStatusResult | null = null;
   @state() private ownedSlotStatus: SlotStatus | null = null;
   @state() private ownershipKnown = false;
@@ -92,7 +91,7 @@ export class BlockedRunRecovery extends LitElement {
     const run = this.run;
     const refreshSeq = ++this.refreshSeq;
     this.plan = null;
-    this.signal = null;
+    this.resumable = false;
     this.status = null;
     this.ownedSlotStatus = null;
     this.ownershipKnown = false;
@@ -137,7 +136,7 @@ export class BlockedRunRecovery extends LitElement {
       );
       if (refreshSeq !== this.refreshSeq) return false;
       if (probe.code === 'ready' || probe.code === 'non_terminal') {
-        this.signal = probe.signal ?? null;
+        this.resumable = probe.resumable === true;
       } else {
         this.error = [this.error, probe.message].filter(Boolean).join('; ');
       }
@@ -171,18 +170,18 @@ export class BlockedRunRecovery extends LitElement {
     }
   }
 
-  private async resumeMonitor(): Promise<void> {
+  private async resume(): Promise<void> {
     this.busy = true;
     this.error = '';
     try {
       if (!(await this.refresh())) return;
       await this.assertSlotOwned(this.run);
-      if (!this.requirementsReady() || !canResumeBlockedWorkerMonitor(this.run, this.signal)) {
+      if (!this.requirementsReady() || !this.resumable) {
         throw new Error(
           this.error || 'Recovery is not ready. Check the worker signal and proof resources.',
         );
       }
-      await this.replayMonitor();
+      await this.resumeWorker();
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
     } finally {
@@ -221,15 +220,15 @@ export class BlockedRunRecovery extends LitElement {
             lease.cleanupFailure,
         ),
       ) ?? [];
-    const freshSignal = canResumeBlockedWorkerMonitor(run, this.signal);
+    const freshSignal = this.resumable;
     const slotOwned = blockedWorkerOwnsSlot(run, this.ownedSlotStatus ?? undefined);
     const canSelectWorker = run.steps.some((step) => step.name === 'find-slot');
     return html`
       <section data-testid="blocked-run-recovery" aria-label="Recover blocked worker">
         <h3>Recover this worker</h3>
         <p>
-          If this run still owns its slot, fix the blocker and start a fresh worker attempt before
-          resuming monitoring. Farmslot workers can run <code>./mark start</code>.
+          Resolve the blocker, then resume when the worker records fresh progress. The run keeps its
+          current worker and completed steps.
         </p>
         ${!this.ownershipKnown
           ? html`<p>Slot ownership is unknown. Refresh recorded status before recovery.</p>`
@@ -250,7 +249,9 @@ export class BlockedRunRecovery extends LitElement {
                 ? `Proof resources: ${this.plan.requirements.map((requirement) => requirement.capabilityId).join(', ')}.`
                 : 'No proof resources required.'}
               ${!this.plan.requirements.length
-                ? 'A new worker attempt is still required.'
+                ? freshSignal
+                  ? 'Fresh worker progress is recorded.'
+                  : 'Fresh worker progress is still required.'
                 : ready
                   ? 'Leases were rechecked after this worker blocked.'
                   : unresolved.length
@@ -261,10 +262,14 @@ export class BlockedRunRecovery extends LitElement {
             ? html`<p>
                 ${this.status.catalog?.length
                   ? 'No proof plan is recorded. Resource needs are unknown.'
-                  : 'No runtime proof resources are configured. A fresh worker attempt is still required.'}
-                ${canSelectWorker
-                  ? 'Restart on an available worker.'
-                  : `Start a new ${run.flowType} run.`}
+                  : 'No runtime proof resources are configured.'}
+                ${slotOwned
+                  ? freshSignal
+                    ? 'Fresh worker progress is recorded.'
+                    : 'Wait for fresh worker progress.'
+                  : canSelectWorker
+                    ? 'Restart on an available worker.'
+                    : `Start a new ${run.flowType} run.`}
               </p>`
             : nothing}
         <div class="actions">
@@ -292,15 +297,15 @@ export class BlockedRunRecovery extends LitElement {
           <button
             data-testid="blocked-run-retry-monitor"
             ?disabled=${this.disabled || this.busy || !slotOwned || !freshSignal || !ready}
-            @click=${this.resumeMonitor}
+            @click=${this.resume}
           >
-            Resume monitoring
+            Resume worker
           </button>
         </div>
         ${slotOwned && !freshSignal
           ? html`<p>
-              Waiting for a new worker signal. A replay before the next attempt starts would re-read
-              the old blocked result. Use Refresh recorded status after the worker starts.
+              Waiting for fresh worker progress. Use Refresh recorded status after the worker
+              resumes.
             </p>`
           : nothing}
         ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}

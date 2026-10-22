@@ -829,20 +829,17 @@ async function main(): Promise<void> {
     })
       .then((rearmedTerminalContext) => {
         if (rearmedTerminalContext && runId) rearmPublicationReviewRecoveryForRun(runId);
+        // Adopt the resumed attempt before its engine step reads that context.
+        if (ENABLE_ORCHESTRATION && runId && signal.status === 'running') {
+          return resumeBlockedRunWhoseWorkerContinued(runId, broadcastEvent);
+        }
+        return null;
       })
       .catch((error) => {
         console.warn(
           `[worker-signal] failed to apply running signal for ${slotId}: ${(error as Error).message}`,
         );
       });
-    // A blocked run whose worker kept going without `./mark start` resumes here.
-    if (ENABLE_ORCHESTRATION && runId && signal.status === 'running') {
-      void resumeBlockedRunWhoseWorkerContinued(runId, broadcastEvent).catch((error) => {
-        console.warn(
-          `[worker-signal] blocked run ${runId.slice(0, 8)} did not resume: ${(error as Error).message}`,
-        );
-      });
-    }
     broadcast({
       type: 'event',
       event: Events.WORKER_SIGNAL,

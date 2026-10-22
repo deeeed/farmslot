@@ -136,6 +136,42 @@ test('resuming a blocked run whose worker finished after the block replays the m
   assert.equal(ack.status, 'monitoring');
 });
 
+test('resuming a blocked review-fix returns to review without replaying the primary worker', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-FIX-RESUME' });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'blocked' });
+  const signal = {
+    status: 'complete',
+    attemptId: 'resumed-fix',
+    timestamp: '2026-10-22T08:50:43.308Z',
+    role: 'review-fix',
+    contextId: 'review-fix',
+  } as const;
+  const replays: string[] = [];
+  const ack = await runResumeTransitionLocked(
+    { runId: run.id },
+    () => {},
+    {},
+    {
+      ...refuseDeps,
+      blockedRunResumableSignal: async () => ({
+        signal,
+        probe: { ok: true, code: 'ready', message: 'ready', signal },
+        stepName: 'review',
+      }),
+      replayMonitor: async () => assert.fail('the completed primary worker must be preserved'),
+      replayGate: async (id, stepName) => {
+        replays.push(stepName);
+        replayedFrom(id, stepName);
+        updateRun(id, { status: 'reviewing' });
+      },
+    },
+  );
+  assert.deepEqual(replays, ['review']);
+  assert.equal(ack.stepName, 'review');
+  assert.equal(ack.status, 'reviewing');
+});
+
 test('a blocked-run resume reports the step the replay actually starts at', async (t) => {
   const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-REROUTE' });
   t.after(() => cleanupRun(run.id));

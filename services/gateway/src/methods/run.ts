@@ -212,7 +212,7 @@ import {
 import { applyComparisonBranchPolicy } from './run/comparison-branch-policy.js';
 import { runCancel } from './run/lifecycle-control.js';
 import { triggerImprovementAnalysis } from './run/propose-improvement.js';
-import { freshBlockedMonitorAttempt, runReplayStep } from './run/replay-step.js';
+import { blockedRunResumableSignal, runReplayStep } from './run/replay-step.js';
 import {
   buildLocalDevRef,
   isInternalArtifactOnlyEvalTicket,
@@ -1562,10 +1562,12 @@ export async function runProbeWorkerSignal(
 ): Promise<RunProbeWorkerSignalResult> {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
+  if (run.status === 'blocked') {
+    const check = await blockedRunResumableSignal(run);
+    return { ...check.probe, resumable: check.signal !== null };
+  }
   const ctx = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
-  const probe = await probeWorkerSignalForRun(params.runId, run.slotId, ctx);
-  if (run.status !== 'blocked') return probe;
-  return { ...probe, resumable: freshBlockedMonitorAttempt(run, probe, ctx) !== null };
+  return probeWorkerSignalForRun(params.runId, run.slotId, ctx);
 }
 
 /**
@@ -1796,11 +1798,20 @@ export function continueResolvedRunDecision(
   setTimeout(() => {
     void (async () => {
       const afterResolve = getRun(params.runId);
+      const reconcilingReviewRequest =
+        afterResolve?.status === 'reconciling' &&
+        afterResolve.decisions.some(
+          (decision) =>
+            decision.id === params.decisionId &&
+            decision.type === 'engine_human_gate' &&
+            isHumanGateReviewRequestAction(decision.resolvedAction) &&
+            typeof decision.context?.reviewRequestConsumedAt !== 'string',
+        );
       if (
         !afterResolve ||
         engineResumed ||
         runSupersededSince(afterResolve, gateGeneration) ||
-        !['blocked', 'human-gating'].includes(afterResolve.status)
+        (!reconcilingReviewRequest && !['blocked', 'human-gating'].includes(afterResolve.status))
       )
         return;
       // ADR-054 `free-slot`: this timer exists to resume a run whose engine loop
