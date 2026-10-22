@@ -178,6 +178,14 @@ export function pipelineReviewerBinding(
   run: Run,
   context: AgentContext,
 ): PipelineVisualReviewerBinding {
+  const admission = pipelineReviewerAdmission(run, context);
+  if ('error' in admission) throw new Error(admission.error);
+  return admission.binding;
+}
+
+type PipelineReviewerAdmission = { binding: PipelineVisualReviewerBinding } | { error: string };
+
+function pipelineReviewerAdmission(run: Run, context: AgentContext): PipelineReviewerAdmission {
   const b = context.nativeSession;
   const producerId = contextIdFor(primaryRoleForFlow(run.flowType));
   const producing = (candidate: AgentContext) =>
@@ -195,7 +203,7 @@ export function pipelineReviewerBinding(
     !isNativeResultSchema(b.resultSchema) ||
     !context.runnerSessionId
   )
-    throw new Error('Visual verification requires an independent admitted native review command');
+    return { error: 'Visual verification requires an independent admitted native review command' };
   const producerBindings = (run.agentContexts ?? [])
     .filter(producing)
     .flatMap((c) => [c.nativeSession, ...(c.nativeSessionHistory ?? [])]);
@@ -208,15 +216,17 @@ export function pipelineReviewerBinding(
           c.nativeSessionOwner?.sessionId === b.sessionId),
     )
   )
-    throw new Error('The producing worker cannot verify its own visual evidence');
+    return { error: 'The producing worker cannot verify its own visual evidence' };
   return {
-    contextId: context.id,
-    executionNodeId: b.executionNodeId,
-    ownerPrincipalId: b.ownerPrincipalId,
-    sessionId: b.sessionId,
-    generation: b.generation,
-    leaseId: b.leaseId,
-    commandId: b.commandId,
+    binding: {
+      contextId: context.id,
+      executionNodeId: b.executionNodeId,
+      ownerPrincipalId: b.ownerPrincipalId,
+      sessionId: b.sessionId,
+      generation: b.generation,
+      leaseId: b.leaseId,
+      commandId: b.commandId,
+    },
   };
 }
 
@@ -336,6 +346,14 @@ export async function stampPipelineVisualReviews(
       verified.headSha !== headSha ||
       !context.reviewResultValidatedAt ||
       context.status !== 'complete'
+    )
+      continue;
+    // Replayed contexts retain their results after releasing the command. They are
+    // history, not a candidate that can prevent a later admitted result from binding.
+    const admission = pipelineReviewerAdmission(run, context);
+    if (
+      'error' in admission ||
+      digestRecipeDocument(admission.binding) !== digestRecipeDocument(verified.binding)
     )
       continue;
     if ('retained' in verified.result)
