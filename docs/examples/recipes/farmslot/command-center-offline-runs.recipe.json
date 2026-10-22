@@ -102,6 +102,10 @@
     {
       "id": "browser-shared-dispatch-runs",
       "claim": "The real comparison picker follows readable external run changes through its shared query, refuses stale keyboard selection, saves exact query timestamps, and revalidates its selected full baseline without replaying selection or dispatch."
+    },
+    {
+      "id": "browser-shared-ready-workspace",
+      "claim": "Actual gate workspace observes shared run/frozen evidence, retains cold offline gate facts and refuses stale actions."
     }
   ],
   "workflow": {
@@ -377,7 +381,7 @@
         "action": "command",
         "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs family-web",
         "timeout_ms": 180000,
-        "intent": "Prove the canonical family and selected-run observations, real external change, stale report refusal and cold saved selection.",
+        "intent": "Prove live family updates, stale guards and recovery without replay.",
         "next": "family-proof"
       },
       "family-proof": {
@@ -409,7 +413,7 @@
         "action": "command",
         "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs history-web",
         "timeout_ms": 240000,
-        "intent": "Observe pointer-only and membership commits through the real history dialog, including failed reads, offline controls and explicit prepare refusal.",
+        "intent": "Prove slot history follows binding writes and guards stale prepare.",
         "next": "history-proof"
       },
       "history-proof": {
@@ -417,7 +421,7 @@
         "source": "history-web",
         "stream": "stdout",
         "match": "\"sharedHistoryProof\":true",
-        "intent": "Require canonical history ownership, live binding changes, visible read failures, stale-action guards and confirmation reset.",
+        "intent": "Require history updates, saved age and safe recovery after read failures.",
         "proves": ["browser-shared-history"],
         "next": "store-navigation-web"
       },
@@ -425,7 +429,7 @@
         "action": "command",
         "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs store-navigation-web",
         "timeout_ms": 180000,
-        "intent": "Navigate the actual runs page away and back ten times, verifying real restored documents, reopened workers, new connections and SQLite integrity.",
+        "intent": "Prove browser navigation reopens SQLite with fresh authenticated reads.",
         "next": "store-navigation-proof"
       },
       "store-navigation-proof": {
@@ -441,7 +445,7 @@
         "action": "command",
         "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs slot-run-web",
         "timeout_ms": 240000,
-        "intent": "Observe actual slot run and recipe queries through readable artifact acquisition, external tags, binding read failure, cold offline state and reconnect.",
+        "intent": "Prove slot run updates, artifact arrival and cold offline recovery.",
         "next": "slot-run-proof"
       },
       "slot-run-proof": {
@@ -449,7 +453,7 @@
         "source": "slot-run-web",
         "stream": "stdout",
         "match": "\"coldSlotFullRun\":true",
-        "intent": "Require canonical render inputs, actual recipe arrival, guarded commands and the exact saved run timestamp after an offline reload.",
+        "intent": "Require canonical slot facts, guarded commands and exact saved timestamps.",
         "proves": ["browser-shared-slot-run"],
         "next": "dispatch-runs-web"
       },
@@ -457,7 +461,7 @@
         "action": "command",
         "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs dispatch-runs-web",
         "timeout_ms": 240000,
-        "intent": "Drive the real comparison picker through external cancellation, stale keyboard selection, persistent query timestamps and selected-baseline reconnect.",
+        "intent": "Prove picker updates, stale guards and saved baseline recovery.",
         "next": "dispatch-runs-proof"
       },
       "dispatch-runs-proof": {
@@ -467,6 +471,22 @@
         "match": "\"selectedFullRunObserved\":true",
         "intent": "Require actual list and full-run ownership, saved rows, guarded selection and reconnect without dispatch.",
         "proves": ["browser-shared-dispatch-runs"],
+        "next": "ready-workspace-web"
+      },
+      "ready-workspace-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs ready-workspace-web",
+        "timeout_ms": 240000,
+        "intent": "Prove gate updates, visible refusal and cold offline recovery.",
+        "next": "ready-workspace-proof"
+      },
+      "ready-workspace-proof": {
+        "action": "assert_output",
+        "source": "ready-workspace-web",
+        "stream": "stdout",
+        "match": "\"coldWorkspaceGate\":true",
+        "intent": "Require canonical run and frozen evidence ownership, visible refusal, saved age and reconnect without command replay.",
+        "proves": ["browser-shared-ready-workspace"],
         "next": "done"
       }
     }

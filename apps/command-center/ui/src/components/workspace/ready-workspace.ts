@@ -16,6 +16,7 @@ import {
   MARK_CLAIM_UNTESTABLE_ACTION,
   Methods,
   type ReadyGatePayload,
+  sourceObservationAge,
   validVisualJudgmentReason,
 } from '@farmslot/protocol';
 import {
@@ -37,6 +38,7 @@ import '../reviews/review-loop-timeline.js';
 import './recipe-runner-controls.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
 import { summarizeReviewCounts } from '../../utils/review-gate-display.js';
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
@@ -100,12 +102,6 @@ import {
 import { loadRecipeRunnerUiOptionsForProject } from './recipe-runner-options-model.js';
 import { isWorkspaceDiffArtifact, workspaceArtifactBasename } from './workspace-artifacts.js';
 
-interface EvidenceReadScope {
-  runId: string;
-  decisionId: string | undefined;
-  packageHash: string | undefined;
-}
-
 @customElement('ready-workspace')
 export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _claimOverrideId: string | null = null;
@@ -119,105 +115,64 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _evidenceLoading = true;
   @state() private _evidenceError = '';
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
-  private _evidenceRequest = 0;
-  private _evidenceRead: Promise<void> | undefined;
-  private _evidenceLoaded = false;
-  private _evidenceScope: EvidenceReadScope | undefined;
+  private _evidenceSource?: RunRecipeRunsForRunResult;
+  private _evidenceDecision?: import('@farmslot/protocol').RunDecision;
+  private _evidenceScope = '';
   private _evidenceRecipeRunId: string | null = null;
   private _evidenceItems: import('../shared/media-lightbox-types.js').LightboxItem[] | null = null;
-  private get _actionsPaused(): boolean {
-    return this.actionsBlocked || this._packagePending;
-  }
-  private _resetReviewEvidence(scope: EvidenceReadScope): void {
-    this._evidenceScope = scope;
-    this._evidenceLoaded = false;
-    this._evidenceLoading = true;
-    this._evidenceError = '';
-    this._evidenceModel = this._reviewEvidenceModel();
-    this._claimOverrideId = null;
-    this._claimOverrideReason = '';
-    this._visualReviewReasons = {};
-    this._evidenceItems = null;
-    this._evidenceRecipeRunId = null;
-    this._lightboxOpen = false;
-  }
-  private _loadReviewEvidence(force = false): Promise<void> {
-    const scope = {
-      runId: this.runId,
-      decisionId: this.decision?.id,
-      packageHash: this._payload?.prPackage?.packageHash,
-    };
-    const sameDecision =
-      scope.runId === this._evidenceScope?.runId &&
-      scope.decisionId === this._evidenceScope?.decisionId;
-    // Compact list snapshots disclose omitted metadata; retain a cached answer until run.get lands.
-    if (this._packagePending) {
-      if (!sameDecision) {
-        ++this._evidenceRequest;
-        this._evidenceRead = undefined;
-        this._resetReviewEvidence(scope);
-      }
-      return Promise.resolve();
+
+  override _sharedWorkspaceQueriesChanged(): void {
+    const scope = JSON.stringify([
+      getResourceWorkspaceKey(),
+      this.runId,
+      this.slotId,
+      this.decision?.id,
+      this._payload?.prPackage?.packageHash,
+    ]);
+    if (scope !== this._evidenceScope) {
+      this._evidenceScope = scope;
+      this._evidenceSource = undefined;
+      this._evidenceDecision = undefined;
+      this._claimOverrideId = null;
+      this._claimOverrideReason = '';
+      this._visualReviewReasons = {};
+      this._visualJudgmentFeedback = undefined;
+      this._blockerSheet = null;
+      this._attestingDecisionId = null;
+      this._acceptingFindingsDecisionId = null;
+      this._reviewLinkKey = '';
+      this._evidenceItems = null;
+      this._evidenceRecipeRunId = null;
+      this._lightboxOpen = false;
+      this._review = null;
     }
-    const sameScope = sameDecision && scope.packageHash === this._evidenceScope?.packageHash;
-    if (!force && sameScope && this._evidenceRead) return this._evidenceRead;
-    const task: Promise<void> = this._readReviewEvidence(scope, sameScope).finally(() => {
-      if (this._evidenceRead === task) this._evidenceRead = undefined;
-    });
-    this._evidenceRead = task;
-    return task;
+    const read = this._queries.evidence;
+    const source = read.belongsToWorkspace ? read.state.data : undefined;
+    this._evidenceLoading = !source && read.state.status === 'loading';
+    this._evidenceError = read.state.error?.message ?? '';
+    if (source !== this._evidenceSource || this._gateDecision !== this._evidenceDecision) {
+      this._evidenceSource = source;
+      this._evidenceDecision = this._gateDecision;
+      this._evidenceModel = this._gateDecision
+        ? this._reviewEvidenceModel(source?.recordedEvidence)
+        : null;
+      this._evidenceRecipeRunId = source?.selectedRecipeRunId ?? null;
+    }
+    this.requestUpdate();
   }
-  private async _readReviewEvidence(scope: EvidenceReadScope, sameScope: boolean): Promise<void> {
-    const request = ++this._evidenceRequest;
-    if (!sameScope) this._resetReviewEvidence(scope);
-    if (!this._evidenceLoaded) {
-      this._evidenceLoading = true;
-      this._evidenceError = '';
-    }
-    if (!this.runId || this.mockData) {
-      this._evidenceLoading = false;
-      return;
-    }
-    try {
-      const source = await gateway.request<RunRecipeRunsForRunResult>(
-        'run.recipeRunsForRun',
-        {
-          runId: scope.runId,
-          includeRecordedEvidence: true,
-          decisionId: scope.decisionId,
-          evidenceSnapshotHash: scope.packageHash,
-        },
-        60_000,
-      );
-      if (request !== this._evidenceRequest || !this.isConnected || this._packagePending) return;
-      this._evidenceModel = this._reviewEvidenceModel(source.recordedEvidence);
-      this._evidenceLoaded = true;
-      this._evidenceError = '';
-      this._evidenceRecipeRunId = source.selectedRecipeRunId;
-    } catch (error) {
-      if (request === this._evidenceRequest && this.isConnected) {
-        this._evidenceError = error instanceof Error ? error.message : String(error);
-        if (!this._evidenceLoaded)
-          this._evidenceModel = this._reviewEvidenceModel(undefined, [
-            error instanceof Error ? error.message : String(error),
-          ]);
-      }
-    } finally {
-      if (request === this._evidenceRequest) this._evidenceLoading = false;
-    }
-  }
+
   private _reviewEvidenceModel(
     source?: RunRecipeRunsForRunResult['recordedEvidence'],
     readErrors?: string[],
   ): EvidenceReviewModel {
     return createEvidenceReviewModel({
       context: 'pr-preview',
-      gateDecision: this.decision,
+      gateDecision: this._gateDecision,
       criteria: publicationGateCriteria(this._payload),
       ledger: this._payload?.acceptanceStatus,
       artifacts: this._payload ? this._evidenceArtifacts(this._payload) : [],
       comparisonSnapshot: this._payload?.prPackage?.reviewSnapshot,
-      criterionSourceUrl: this.run?.links?.find((link) => link.label === 'Jira')?.url,
+      criterionSourceUrl: this._canonicalRun?.links?.find((link) => link.label === 'Jira')?.url,
       package: source?.input,
       contractVersion: source?.contractVersion,
       claimOverrideAuthority: source?.claimOverrideAuthority,
@@ -262,13 +217,13 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private _visualReviewControls() {
     return {
       judgmentRows: this._evidenceModel?.judgmentRows(gateway.authenticatedPrincipal) ?? [],
-      busy: this._acting || this._refreshingPackage,
+      busy: this._acting || this._refreshingPackage || this._actionsPaused,
       feedback: this._visualJudgmentFeedback,
       reviewReason: (id: string) => this._visualReviewReasons[id] ?? '',
       changeReviewReason: (id: string, reason: string) => {
         this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
       },
-      recordReview: this.decision?.resolvedAt
+      recordReview: this._gateDecision?.resolvedAt
         ? undefined
         : (id: string, verdict: 'confirmed' | 'rejected') =>
             void this._recordVisualReview(id, verdict),
@@ -294,7 +249,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
             this._claimOverrideReason = reason;
           },
         },
-        markUntestable: this.decision?.resolvedAt
+        markUntestable: this._gateDecision?.resolvedAt
           ? undefined
           : (claimId, reason) => void this._skipCriterion(claimId, reason),
         evidenceHref: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
@@ -312,67 +267,75 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   /** Skip a criterion: the gateway records the untestable override with its reason. */
   private async _skipCriterion(claimId: string, reason: string): Promise<void> {
     const model = this._evidenceModel;
-    if (!this.decision || !model || this._acting) return;
+    if (!this._gateDecision || !model || this._acting) return;
     const candidate = model.claimOverrideCandidate(claimId);
     if (!candidate) return;
+    const command = this._beginWorkspaceCommand();
+    if (!command) return;
     this._acting = true;
     try {
       const request = buildRunDecisionActionRequest({
         runId: this.runId,
-        decision: this.decision,
+        decision: command.decision,
         actionId: MARK_CLAIM_UNTESTABLE_ACTION,
         ...candidate,
         claimOverrideReason: reason,
       });
       await gateway.request(request.method, request.params);
-      await this._loadReviewEvidence(true);
+      if (!command.current()) return;
       this._claimOverrideId = null;
       this._claimOverrideReason = '';
       this._blockerSheet = null;
       this._actionMessage = `${claimId} skipped as untestable. Refresh the package to publish.`;
     } catch (error) {
+      if (!command.current()) return;
       this._actionMessage = error instanceof Error ? error.message : String(error);
     } finally {
-      this._acting = false;
+      command.finish();
     }
   }
 
   /** One more review round (admin): the gateway raises the run's limit for this head. */
   private async _giveAnotherRound(payload: ReadyGatePayload, brief: string): Promise<void> {
+    if (payload !== this._payload) return;
     const budget = payload.reviewRoundBudget;
     const headSha = payload.prPackage?.headSha;
-    if (!budget || !headSha || !this.decision || this._acting) return;
+    if (!budget || !headSha || !this._gateDecision || this._acting) return;
+    const command = this._beginWorkspaceCommand();
+    if (!command) return;
     this._acting = true;
     try {
       await gateway.request(
         Methods.RUN_EXTEND_REVIEW_BUDGET,
         anotherReviewRoundParams({
           runId: this.runId,
-          decisionId: this.decision.id,
+          decisionId: this._gateDecision.id,
           budget,
           headSha,
           brief,
         }),
       );
+      if (!command.current()) return;
       this._blockerSheet = null;
       this._actionMessage =
         'One more review round granted. Send it back to the agent to fix and review again.';
     } catch (error) {
+      if (!command.current()) return;
       this._actionMessage = error instanceof Error ? error.message : String(error);
     } finally {
-      this._acting = false;
+      command.finish();
     }
   }
 
   /** What blocks publish, at the top of the gate, with one plain action per blocker. */
   private _renderBlockers(payload: ReadyGatePayload) {
     const model = this._evidenceModel;
-    const resolved = Boolean(this.decision?.resolvedAt);
+    const resolved = Boolean(this._gateDecision?.resolvedAt);
     const controls = this._visualReviewControls();
     const view = publicationGateView({
-      run: this.run,
-      gate: this.decision,
-      actions: this.decision?.actions ?? [],
+      run: this._canonicalRun,
+      gate: this._gateDecision,
+      actions: this._gateDecision?.actions ?? [],
       judgmentRows: controls.judgmentRows,
       pendingVisualClaimIds: model?.pendingVisualClaimIds,
       readiness: payload.gateReadiness,
@@ -382,7 +345,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       blockers: publicationGateBlockers({
         view,
         readiness: payload.gateReadiness,
-        gate: this.decision,
+        gate: this._gateDecision,
         resolved,
         canSkip: (claimId) => Boolean(model?.claimOverrideCandidate(claimId)),
         budget: payload.reviewRoundBudget,
@@ -404,7 +367,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         if (action.kind === 'see-findings') return;
         if (action.kind === 'accept-findings') {
           this._blockerSheet = null;
-          this._acceptingFindingsDecisionId = this.decision?.id ?? null;
+          this._acceptingFindingsDecisionId = this._gateDecision?.id ?? null;
           void this.updateComplete.then(() =>
             this.querySelector<HTMLTextAreaElement>(
               '[data-testid="accept-findings-reason"]',
@@ -435,6 +398,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   ): Promise<void> {
     const model = this._evidenceModel;
     if (!model || this._acting) return;
+    const command = this._beginWorkspaceCommand();
+    if (!command) return;
     this._acting = true;
     this._visualJudgmentFeedback = { claimId, phase: 'saving' };
     try {
@@ -451,17 +416,17 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       );
       if (params.runId !== this.runId) throw new Error('The run changed. Refresh the evidence.');
       await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params, { timeout: null });
-      this._visualJudgmentFeedback = { claimId, phase: 'refreshing' };
-      await this._loadReviewEvidence(true);
+      if (!command.current()) return;
       this._visualJudgmentFeedback = undefined;
     } catch (error) {
+      if (!command.current()) return;
       this._visualJudgmentFeedback = {
         claimId,
         phase: 'error',
         message: error instanceof Error ? error.message : String(error),
       };
     } finally {
-      this._acting = false;
+      command.finish();
     }
   }
   /** The view the hash holds as applied or reported, so only a new link reapplies. */
@@ -503,17 +468,15 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   override updated(changed: Map<string, unknown>): void {
     super.updated(changed);
     this._restoreReviewFromHash();
-    if (['runId', 'decision', 'selectedRecipeRunId'].some((key) => changed.has(key)))
-      void this._loadReviewEvidence();
     if (changed.has('run')) {
-      const projectName = this.run?.project ?? '';
+      const projectName = this._canonicalRun?.project ?? '';
       this._reviewPicker.setContext({
         ...this._reviewPicker.context,
         defaults: resolveReviewDispatchDefaults(undefined, 'review-pr'),
       });
       void loadRecipeRunnerUiOptionsForProject(projectName, async () => {
         const configs = await requestProjectConfigs();
-        if (this.run?.project === projectName)
+        if (this._canonicalRun?.project === projectName)
           this._reviewPicker.setContext({
             ...this._reviewPicker.context,
             defaults: resolveReviewDispatchDefaults(
@@ -542,7 +505,15 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   override render() {
     const payload = this._payload;
     if (!payload) return renderReadyWorkspaceEmpty();
-    return renderReadyWorkspaceFrame({
+    return html` ${!this._queries.run.ready && this._queries.run.state.observedAt
+      ? html`<p class="rdy-saved-state" role="status">
+          Saved gate ·
+          ${sourceObservationAge(this._queries.run.state.observedAt)}${this._queries.run.state.error
+            ? ` · ${this._queries.run.state.error.message}`
+            : ''}
+        </p>`
+      : nothing}
+    ${renderReadyWorkspaceFrame({
       payload,
       renderReview: () =>
         this._review && this._evidenceModel
@@ -616,7 +587,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         testPatterns: this._diffTestPatterns,
         close: () => this._closeDiffModal(),
       },
-    });
+    })}`;
   }
 
   private _renderInputArtifactViewer(payload: ReadyGatePayload) {
@@ -650,16 +621,16 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     return renderReadyReviewFlow({
       reviews: payload.reviews ?? [],
       passingReviews: reviewCounts.trustedPassingReviews,
-      reviewProgress: readyReviewRequestProgress(this.run),
+      reviewProgress: readyReviewRequestProgress(this._canonicalRun),
       unresolvedFindings: reviewCounts.unresolvedFindings,
       staleIgnoredReviews: reviewCounts.staleIgnoredReviews,
-      continuationActive: (this.run?.agentContexts ?? []).some(
+      continuationActive: (this._canonicalRun?.agentContexts ?? []).some(
         (context) =>
           context.role === 'review-fix' &&
           ['launching', 'working', 'waiting'].includes(context.status),
       ),
       activeReviewIds: new Set(
-        (this.run?.agentContexts ?? []).flatMap((context) =>
+        (this._canonicalRun?.agentContexts ?? []).flatMap((context) =>
           context.role === 'review' &&
           ['launching', 'working', 'waiting'].includes(context.status) &&
           context.artifactScope
@@ -689,24 +660,27 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private _renderTopBar(payload: ReadyGatePayload) {
     const diffArtifact = this._primaryDiffArtifact(payload);
     return renderReadyTopBar({
-      run: this.run,
+      run: this._canonicalRun,
       payload,
-      decision: this.decision,
+      decision: this._gateDecision,
       publicationTarget: this._publicationTarget,
       pendingConfirm: this._pendingConfirm,
       attestationReason: this._evidenceAttestationReason,
-      attesting: this._attestingDecisionId === this.decision?.id,
+      attesting: this._attestingDecisionId === this._gateDecision?.id,
       chooseAttestation: () => {
-        this._attestingDecisionId = this.decision?.id ?? null;
+        this._attestingDecisionId = this._gateDecision?.id ?? null;
       },
-      acceptingFindings: this._acceptingFindingsDecisionId === this.decision?.id,
+      acceptingFindings: this._acceptingFindingsDecisionId === this._gateDecision?.id,
       chooseAcceptFindings: () => {
         this._blockerSheet = null;
-        this._acceptingFindingsDecisionId = this.decision?.id ?? null;
+        this._acceptingFindingsDecisionId = this._gateDecision?.id ?? null;
       },
       setAttestationReason: (value) => this._setEvidenceAttestationReason(value),
       acting: this._acting || this._refreshingPackage,
-      pausedRetry: this.loadError ? () => location.reload() : undefined,
+      pausedRetry:
+        this.loadError || this._queries.run.state.error || this._evidenceError
+          ? () => void this._queries.retry()
+          : undefined,
       pausedReason: this._actionsPaused
         ? this.loadError
           ? 'Run unavailable; actions paused'
@@ -716,7 +690,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       diffArtifact,
       fileDiffAvailable: Boolean(this._fileDiff),
       actionMessage: this._actionMessage,
-      reviewProgress: readyReviewRequestProgress(this.run),
+      reviewProgress: readyReviewRequestProgress(this._canonicalRun),
       actionTone: this._actionTone,
       openDiff: (title, artifact) => this._openDiffModal(title, artifact),
       openReviewRequestModal: () => this._openReviewRequestModal(),
@@ -725,7 +699,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       showClaims: false,
       loading: this._evidenceLoading && !this.mockData,
       loadError: this._evidenceError,
-      retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence()),
+      retry: () => void this._queries.retry(),
       refreshPackage: () => void this._refreshPublishPackage(payload),
       pendingVisualClaimIds: this._evidenceModel?.pendingVisualClaimIds,
     });
@@ -742,7 +716,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       selectedEvidence: this._publishEvidenceSet(payload),
       selectedEvidenceKeys: this._selectedEvidenceKeys ?? undefined,
       expanded: this._packagePanelExpanded,
-      resolved: Boolean(this.decision?.resolvedAt),
+      resolved: Boolean(this._gateDecision?.resolvedAt),
       refreshingPackage: this._refreshingPackage,
       acting: this._acting || this._actionsPaused,
       recovering: this._isRecovering,
@@ -781,7 +755,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   }
 
   private _renderResolvedBanner(payload: ReadyGatePayload) {
-    return renderReadyResolvedBanner({ payload, resolvedAt: this.decision?.resolvedAt });
+    return renderReadyResolvedBanner({ payload, resolvedAt: this._gateDecision?.resolvedAt });
   }
 
   private _renderTabBar(payload: ReadyGatePayload) {
@@ -830,7 +804,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     if (this._packagePending && !payload.prPackage) return renderPrPreviewSkeleton();
     return html`${renderReadyPackageMetadata({
       payload,
-      decision: this.decision,
+      decision: this._gateDecision,
       publicationTarget: this._publicationTarget,
       pendingConfirm: null,
       acting: this._acting,
@@ -936,10 +910,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       criteria: this._renderClaimReview(),
       loading: this._evidenceLoading && !this.mockData,
       error: this._evidenceError,
-      retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence()),
+      retry: () => void this._queries.retry(),
       selectionToolbar: this._renderEvidenceSelectionToolbar(payload),
       artifactGroups: this._evidenceModel
-        ? html` ${payload.prPackage && !this.decision?.resolvedAt
+        ? html` ${payload.prPackage && !this._gateDecision?.resolvedAt
             ? html`<details class="rdy-publish-file-selection">
                 <summary>Choose files to include in PR</summary>
                 ${this._renderArtifactGroups(artifacts, payload, { publishSelectable: true })}
@@ -1054,7 +1028,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   }
 
   private _renderEvidenceSelectionToolbar(payload: ReadyGatePayload) {
-    if (this.decision?.resolvedAt) return nothing;
+    if (this._gateDecision?.resolvedAt) return nothing;
     return renderReadyEvidenceSelectionToolbar({
       publishEvidence: this._publishEvidenceArtifacts(payload),
       selected: this._publishEvidenceSet(payload),

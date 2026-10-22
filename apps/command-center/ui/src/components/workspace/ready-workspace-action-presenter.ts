@@ -5,7 +5,6 @@ import type {
   ReadyGateInputSnapshot,
   ReadyGatePayload,
   RecipeRunArtifactGroup,
-  RunGetResult,
   RunRefreshPublishPackageResult,
 } from '@farmslot/protocol';
 import {
@@ -45,13 +44,13 @@ import {
 } from '../slot-view/slot-view-branch-model.js';
 
 import {
-  applyReadyPackageRefreshResult,
   isReadyPublicationApproval,
   readyActionRequiresConfirmation,
   readyDecisionActionStateKey,
   readyDecisionSubmittingMessage,
   readyDecisionSuccessMessage,
   readyRefreshPublishPackageFeedback,
+  refreshedReadyEvidenceSelection,
 } from './ready-workspace-action-model.js';
 import {
   readyWorkspaceAllArtifacts,
@@ -75,6 +74,7 @@ import {
   selectedReadyWorkspaceLightboxRecipeRun,
 } from './ready-workspace-lightbox.js';
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
+import { ReadyWorkspaceQueries } from './ready-workspace-queries.js';
 import {
   excludeReadyEvidenceVideos,
   initialReadyEvidenceSelection,
@@ -117,49 +117,121 @@ type DecisionOutcome =
   | { kind: 'pending' }
   | { kind: 'unknown' };
 
-/** What the gateway recorded for a decision, read after its request did not end cleanly. */
-async function decisionOutcome(
-  runId: string,
-  decisionId: string | undefined,
-  actionId: string,
-): Promise<DecisionOutcome> {
-  try {
-    const { run } = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId });
-    const current = run.decisions.find((candidate) => candidate.id === decisionId);
-    if (!current?.resolvedAt) return { kind: 'pending' };
+export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState {
+  readonly _queries = new ReadyWorkspaceQueries(this);
+  private _commandRequest: object | undefined;
+  private _fileDiffRequest?: object;
+
+  get _gateDecision() {
+    return this._usesMockData ? this.decision : this._queries.decision;
+  }
+
+  get _canonicalRun() {
+    return this._usesMockData
+      ? this.run
+      : this._queries.run.belongsToWorkspace && this._queries.run.state.data?.run.id === this.runId
+        ? this._queries.run.state.data.run
+        : null;
+  }
+
+  override get _packagePending(): boolean {
+    const decision = this._gateDecision;
+    return (
+      decision?.payload?.kind === 'ready' &&
+      !decision.payload.prPackage &&
+      Boolean(decision.payloadTrimmed?.includes('prPackage'))
+    );
+  }
+
+  get _actionsPaused(): boolean {
+    return this.actionsBlocked || this._packagePending || !this._queries.ready;
+  }
+
+  _sharedWorkspaceQueriesChanged(): void {
+    this.requestUpdate();
+  }
+
+  _retireWorkspaceCommands(): void {
+    this._commandRequest = undefined;
+    this._acting = false;
+    this._refreshingPackage = false;
+    this._pendingConfirm = null;
+    this._actionMessage = '';
+    this._actionTone = '';
+    this._pendingPackageSelection = undefined;
+    this._selectedEvidenceKeys = null;
+    this._evidenceSelectionKey = '';
+    this._publicationTargetKey = '';
+    this._decisionActionStateKey = '';
+    this._evidenceAttestationReason = '';
+    this._publicationTarget = 'ready';
+    this._fileDiffRequest = undefined;
+    this._selectedFile = '';
+    this._diffError = '';
+    this._diffTestPatterns = null;
+    this._diffModalText = '';
+    this._diffModalUrl = '';
+    this._fileDiffLoading = false;
+    this._diffLoading = false;
+    this._initialized = false;
+    this._diffFiles = [];
+    this._fileDiff = '';
+    this._diffModalOpen = false;
+    this._legacyTaskPromptText = '';
+    this._legacyTaskPromptLoading = false;
+    this._legacyTaskPromptError = '';
+    this._reviewModalOpen = false;
+    this._inputArtifactViewerOpen = false;
+    this._confirmTimer.clear();
+  }
+
+  _beginWorkspaceCommand() {
+    if (this._commandRequest || this._acting || this._refreshingPackage) return;
+    try {
+      if (this._actionsPaused || this._isRecovering)
+        throw new Error('Wait for current run and evidence reads before acting.');
+      const decision = this._queries.requireDecision();
+      const request = {};
+      const captured = this._queries.capture();
+      this._commandRequest = request;
+      return {
+        decision,
+        current: () => this._commandRequest === request && captured.current(),
+        finish: () => {
+          if (this._commandRequest !== request || !captured.ownsView()) return;
+          this._commandRequest = undefined;
+          this._acting = false;
+          this._refreshingPackage = false;
+        },
+      };
+    } catch (error) {
+      this._actionMessage = error instanceof Error ? error.message : String(error);
+      this._actionTone = 'error';
+      return;
+    }
+  }
+
+  /** A failed command may have committed despite losing its reply. */
+  private async _decisionOutcome(decisionId: string, actionId: string): Promise<DecisionOutcome> {
+    const state = await this._queries.run.retry();
+    if (!this._queries.run.ready || state.status !== 'ready' || !state.data)
+      return { kind: 'unknown' };
+    const current = state.data.run.decisions.find(({ id }) => id === decisionId);
+    if (!current) return { kind: 'unknown' };
+    if (!current.resolvedAt) return { kind: 'pending' };
     return current.resolvedAction === actionId
       ? { kind: 'applied' }
       : { kind: 'other', action: current.resolvedAction ?? 'another action' };
-  } catch {
-    // An unreadable run leaves the outcome unknown, and the person is told exactly that.
-    return { kind: 'unknown' };
   }
-}
 
-interface RetainedReadyPayload {
-  runId: string;
-  decisionId: string;
-  payload: ReadyGatePayload;
-}
-
-export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState {
   readonly _testFilter = new DiffTestFilterController(this, {
     patterns: () => this._diffTestPatterns,
     onChange: () => this._onHideTestsChanged(),
   });
 
-  private _retainedPayload: RetainedReadyPayload | undefined;
-
   get _payload(): ReadyGatePayload | undefined {
-    const payload = this.decision?.payload;
-    if (payload?.kind !== 'ready') return undefined;
-    // Keep the last captured metadata and its media bindings together during a compact refresh.
-    const cached = this._retainedPayload;
-    return this._packagePending &&
-      cached?.runId === this.runId &&
-      cached.decisionId === this.decision?.id
-      ? cached.payload
-      : payload;
+    const payload = this._gateDecision?.payload;
+    return payload?.kind === 'ready' ? payload : undefined;
   }
 
   get _currentRunner(): string {
@@ -171,22 +243,16 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   willUpdate() {
-    const payload = this.decision?.payload;
-    if (payload?.kind === 'ready' && !this._packagePending)
-      this._retainedPayload = { runId: this.runId, decisionId: this.decision.id, payload };
-    else if (
-      this._retainedPayload?.runId !== this.runId ||
-      this._retainedPayload?.decisionId !== this.decision?.id
-    )
-      this._retainedPayload = undefined;
-    if (!this._initialized && this.decision && this.slotId) {
+    this._queries.sync();
+    if (!this._initialized && this._gateDecision && this.slotId) {
       this._initialized = true;
       this._hydratePublicationTarget();
       void this._beginRecovery();
     }
-    if (this.decision) this._syncDecisionActionState();
-    if (this.decision) this._hydratePublicationTarget();
-    if (this.decision) this._hydrateEvidenceSelection();
+    if (this._gateDecision) this._syncDecisionActionState();
+    if (this._gateDecision) this._hydratePublicationTarget();
+    if (this._gateDecision) this._hydrateEvidenceSelection();
+    this._applyPendingPackageSelection();
     if (this.hideRecipeTab && this._activeTab === 'recipe') {
       this._activeTab = this._payload?.prPackage ? 'evidence' : 'diff';
     }
@@ -290,7 +356,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   get _isRecovering(): boolean {
-    return !this.decision?.resolvedAt && this._recoveryPhase !== 'live';
+    return !this._gateDecision?.resolvedAt && this._recoveryPhase !== 'live';
   }
 
   get _usesMockData(): boolean {
@@ -354,11 +420,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   _inputSnapshot(payload: ReadyGatePayload): ReadyGateInputSnapshot | null {
-    return readyWorkspaceInputSnapshot(payload, this.run);
+    return readyWorkspaceInputSnapshot(payload, this._canonicalRun);
   }
 
   _inputItemCount(payload: ReadyGatePayload): number {
-    return readyWorkspaceInputItemCount(payload, this.run, {
+    return readyWorkspaceInputItemCount(payload, this._canonicalRun, {
       legacyTaskPromptText: this._legacyTaskPromptText,
       legacyTaskPromptLoading: this._legacyTaskPromptLoading,
       legacyTaskPromptError: this._legacyTaskPromptError,
@@ -366,7 +432,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   _inputArtifacts(payload: ReadyGatePayload): ReadyInputArtifact[] {
-    return readyWorkspaceInputArtifacts(payload, this.run, {
+    return readyWorkspaceInputArtifacts(payload, this._canonicalRun, {
       legacyTaskPromptText: this._legacyTaskPromptText,
       legacyTaskPromptLoading: this._legacyTaskPromptLoading,
       legacyTaskPromptError: this._legacyTaskPromptError,
@@ -385,17 +451,20 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     const payload = this._payload;
     const input = payload ? this._inputSnapshot(payload) : null;
     if (!input?.taskFile || input.taskPrompt || this._legacyTaskPromptLoading) return;
+    const captured = this._queries.capture();
     this._legacyTaskPromptLoading = true;
     this._legacyTaskPromptError = '';
     try {
       const params = new URLSearchParams({ runId: this.runId, path: 'TASK.md' });
       const response = await gatewayHttpFetch(`/api/run-artifact?${params}`);
       if (!response.ok) throw new Error(`${response.status}`);
-      this._legacyTaskPromptText = await response.text();
+      const text = await response.text();
+      if (captured.current()) this._legacyTaskPromptText = text;
     } catch (error) {
+      if (!captured.current()) return;
       this._legacyTaskPromptError = error instanceof Error ? error.message : String(error);
     } finally {
-      this._legacyTaskPromptLoading = false;
+      if (captured.ownsView()) this._legacyTaskPromptLoading = false;
     }
   }
 
@@ -511,7 +580,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   async _beginRecovery() {
-    if (this.decision?.resolvedAt) {
+    if (this._gateDecision?.resolvedAt) {
       this._recoveryPhase = 'live';
       this._recoveryMessage = '';
       return;
@@ -544,6 +613,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
 
   async _loadBranchDiff(epoch = this._recoveryEpoch || currentRecoveryEpoch()) {
     if (!this.slotId) return;
+    const captured = this._queries.capture();
+    const packageHash = this._payload?.prPackage?.packageHash;
+    const current = () =>
+      captured.current() && this._payload?.prPackage?.packageHash === packageHash;
     this._diffLoading = true;
     try {
       const result = await gateway.request<GitBranchDiffResult>(
@@ -554,7 +627,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           this._payload?.prPackage?.reviewSnapshot,
         ),
       );
-      if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      if (!current() || epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffError = '';
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
@@ -568,7 +641,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         this._fileDiff = '';
       }
     } catch (err) {
-      if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      if (!current() || epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       console.error('[ready-workspace] branch diff failed:', err);
       if (this._payload?.prPackage) {
         this._diffFiles = [];
@@ -584,8 +657,9 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._recoveryPhase = 'error';
       this._recoveryMessage = 'Ready workspace failed to recover — retry when ready.';
     } finally {
-      if (epoch === this._recoveryEpoch) this._diffLoading = false;
+      if (captured.ownsView() && epoch === this._recoveryEpoch) this._diffLoading = false;
       if (
+        current() &&
         epoch === this._recoveryEpoch &&
         isRecoveryEpochCurrent(epoch) &&
         this._recoveryPhase !== 'error'
@@ -620,6 +694,15 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   async _selectFile(filePath: string) {
+    const request = {};
+    this._fileDiffRequest = request;
+    const captured = this._queries.capture();
+    const packageHash = this._payload?.prPackage?.packageHash;
+    const current = () =>
+      captured.current() &&
+      this._fileDiffRequest === request &&
+      this._selectedFile === filePath &&
+      this._payload?.prPackage?.packageHash === packageHash;
     this._selectedFile = filePath;
     this._syncViewStateToHash();
     this._fileDiffLoading = true;
@@ -634,15 +717,17 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           this._payload?.prPackage?.reviewSnapshot,
         ),
       );
+      if (!current()) return;
       this._fileDiff = result.diff;
       if (this._diffModalOpen && !this._diffModalUrl) {
         this._diffModalTitle = `${workspaceArtifactBasename(filePath)} diff`;
         this._diffModalText = result.diff;
       }
     } catch (err) {
-      console.error('[ready-workspace] file diff failed:', err);
+      if (!current()) return;
+      this._diffError = err instanceof Error ? err.message : String(err);
     } finally {
-      this._fileDiffLoading = false;
+      if (captured.ownsView() && this._fileDiffRequest === request) this._fileDiffLoading = false;
     }
   }
 
@@ -651,14 +736,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   _hydratePublicationTarget() {
     const payload = this._payload;
     if (!payload) return;
-    const key = readyPublicationTargetKey({ decisionId: this.decision?.id, payload });
+    const key = readyPublicationTargetKey({ decisionId: this._gateDecision?.id, payload });
     if (key === this._publicationTargetKey) return;
     this._publicationTargetKey = key;
     this._publicationTarget = readyPublicationTarget(payload);
   }
 
   _syncDecisionActionState(): void {
-    const key = readyDecisionActionStateKey(this.decision);
+    const key = readyDecisionActionStateKey(this._gateDecision);
     if (key === this._decisionActionStateKey) return;
     this._decisionActionStateKey = key;
     this._acting = false;
@@ -671,7 +756,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   _hydrateEvidenceSelection() {
     const payload = this._payload;
     if (!payload?.prPackage) return;
-    const key = readyEvidenceSelectionKey({ decisionId: this.decision?.id, payload });
+    const key = readyEvidenceSelectionKey({ decisionId: this._gateDecision?.id, payload });
     if (key === this._evidenceSelectionKey) return;
     this._evidenceSelectionKey = key;
     this._selectedEvidenceKeys = initialReadyEvidenceSelection(
@@ -734,7 +819,8 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   _confirmAction(actionId: string) {
-    if (this._isRecovering) return;
+    if (this._actionsPaused || this._acting || this._refreshingPackage || this._isRecovering)
+      return;
     const packageGate = Boolean(this._payload?.prPackage);
     if (readyActionRequiresConfirmation(actionId, packageGate)) {
       this._confirmTimer.confirm(actionId, () => this._resolve(actionId));
@@ -744,12 +830,13 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   _openReviewRequestModal() {
-    if (this.decision?.resolvedAt || this._isRecovering || this._acting) return;
+    if (this._actionsPaused || this._gateDecision?.resolvedAt || this._isRecovering || this._acting)
+      return;
     this._reviewPicker = new ReviewDispatchViewModel({
       context: {
         allowedActions: ['request-review'],
         allowSequence: true,
-        reviewLineages: reviewLineagesForRun(this.run),
+        reviewLineages: reviewLineagesForRun(this._canonicalRun),
         // ADR-063 Amendment 5: rows preselect their runner's latest available lineage in WARM.
         lineageOptions: this._payload?.reviewLineageOptions,
         defaults: this._reviewPicker.context.defaults,
@@ -768,12 +855,13 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   async _submitReviewRequest() {
     if (this._acting || !this._reviewPicker.canInvoke('request-review')) return;
     const reviewRequest = this._reviewPicker.toRequestPayload();
+    const captured = this._queries.capture();
     const applied = await this._resolve('request-review', { reviewRequest });
-    if (applied) this._closeReviewRequestModal();
+    if (applied && captured.current()) this._closeReviewRequestModal();
   }
 
   async _resolve(actionId: string, extraSelectionData: Record<string, unknown> = {}) {
-    if (this._isRecovering || this.decision?.resolvedAt) return;
+    if (this._gateDecision?.resolvedAt) return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) {
@@ -781,6 +869,8 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._actionTone = 'error';
       return;
     }
+    const command = this._beginWorkspaceCommand();
+    if (!command) return;
     this._acting = true;
     const payload = this._payload;
     const requestingReview = actionId === 'request-review';
@@ -790,9 +880,8 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       : readyDecisionSubmittingMessage(approving);
     this._actionTone = '';
     // This view is reused across runs: a reply for a gate it no longer shows is not its to report.
-    const runId = this.runId;
-    const decisionId = this.decision?.id;
-    const stillShown = () => this.runId === runId && this.decision?.id === decisionId;
+    const decisionId = command.decision.id;
+    const stillShown = command.current;
     // The gateway checks the gate against its slot before it answers, which can be slow.
     const slow = setTimeout(() => {
       if (stillShown() && this._acting)
@@ -805,7 +894,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         Methods.RUN_RESOLVE_DECISION,
         buildRunResolveDecisionParams({
           runId: this.runId,
-          decision: this.decision,
+          decision: command.decision,
           actionId,
           ...(actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
             ? { evidenceAttestationReason: this._evidenceAttestationReason }
@@ -821,7 +910,6 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         DECISION_RESOLVE_TIMEOUT_MS,
       );
     } catch (err) {
-      console.error('[ready-workspace] resolve failed:', err);
       failure = err;
     } finally {
       clearTimeout(slow);
@@ -831,8 +919,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     const outcome: DecisionOutcome =
       failure === undefined
         ? { kind: 'applied' }
-        : await decisionOutcome(runId, decisionId, actionId);
-    if (!stillShown()) return;
+        : stillShown()
+          ? await this._decisionOutcome(decisionId, actionId)
+          : { kind: 'unknown' };
+    if (!stillShown()) {
+      command.finish();
+      return;
+    }
+    command.finish();
     if (outcome.kind === 'applied') {
       this._actionMessage = requestingReview
         ? 'Review requested; preparing the reviewer.'
@@ -856,45 +950,54 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   async _refreshPublishPackage(payload: ReadyGatePayload) {
-    if (this._refreshingPackage || this._acting || this._isRecovering || !payload.prPackage) return;
+    if (!payload.prPackage || payload !== this._payload) return;
+    const command = this._beginWorkspaceCommand();
+    if (!command) return;
     this._refreshingPackage = true;
     this._actionMessage = 'Refreshing publish package…';
     this._actionTone = '';
     try {
-      const result = (await gateway.request(
+      const result = await gateway.request<RunRefreshPublishPackageResult>(
         Methods.RUN_REFRESH_PUBLISH_PACKAGE,
         {
           runId: this.runId,
-          decisionId: this.decision.id,
+          decisionId: command.decision.id,
           selectedEvidenceKeys: this._selectedEvidenceKeysForSubmit(payload),
           publicationTarget: this._publicationTarget,
         },
         transferBoundRequestOptions(this.runId),
-      )) as RunRefreshPublishPackageResult;
-      // The gateway returns the refreshed package atomically with the Run. Adopt
-      // that decision before enabling approval so a fast click cannot submit the
-      // package identity that was visible before refresh.
-      applyReadyPackageRefreshResult(result, this.decision.id, {
-        setRun: (run) => {
-          this.run = run;
-        },
-        setDecision: (decision) => {
-          this.decision = decision;
-        },
-        clearConfirmation: () => this._confirmTimer.clear(),
-        setSelectedEvidenceKeys: (keys) => {
-          this._selectedEvidenceKeys = keys;
-        },
-      });
+      );
+      if (!command.current()) return;
+      // The reply reports the command, while notifications refresh the canonical gate.
+      // Preserve curation only for the package the command produced.
+      this._pendingPackageSelection = {
+        packageHash: result.packageHash,
+        keys: refreshedReadyEvidenceSelection(result),
+      };
+      this._applyPendingPackageSelection();
       const feedback = readyRefreshPublishPackageFeedback(result);
       this._actionMessage = feedback.message;
       this._actionTone = feedback.tone;
     } catch (err) {
-      console.error('[ready-workspace] refresh publish package failed:', err);
+      if (!command.current()) return;
       this._actionMessage = `Failed to refresh package: ${err instanceof Error ? err.message : String(err)}`;
       this._actionTone = 'error';
     } finally {
-      this._refreshingPackage = false;
+      command.finish();
     }
+  }
+
+  private _pendingPackageSelection?: { packageHash: string; keys: string[] | null };
+
+  private _applyPendingPackageSelection(): void {
+    const pending = this._pendingPackageSelection;
+    if (
+      !pending ||
+      !this._queries.ready ||
+      this._payload?.prPackage?.packageHash !== pending.packageHash
+    )
+      return;
+    if (pending.keys) this._selectedEvidenceKeys = pending.keys;
+    this._pendingPackageSelection = undefined;
   }
 }

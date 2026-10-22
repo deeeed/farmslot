@@ -6,17 +6,17 @@ platform proof below is pending.
 
 ## Current query owners
 
-| Query                                  | Dependencies                          | Persistence             | Current consumers                                                                                                                                |
-| -------------------------------------- | ------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `sources.status`                       | `sources/farm`                        | 2 MB                    | Sources controllers in Command Center and Companion                                                                                              |
-| `run.list`                             | `runs/farm`                           | 20 MB across variants   | Browser active/history/tag/family lists and comparison baseline picker; native active and explicit history collections                           |
-| `run.get`                              | `run/{runId}`, `runs/farm`            | 50 entries, 20 MB total | Browser detail/comparison/family and selected dispatch baseline; native detail, diff, artifact viewer, family, gates, decisions and saved review |
-| `decision.list`                        | `decisions/farm`                      | 10 MB across variants   | Browser inbox; native inbox, decision workspace and gate action guards                                                                           |
-| `run.recipeRunsForRun`                 | `run/{runId}`, `artifacts/{runId}`    | Memory                  | Browser run detail and SlotView; native run detail, diff, frozen artifact viewer, decision workspace and gate acceptance evidence                |
-| `family.observability.get`             | `family/{familyId}`, `decisions/farm` | Memory                  | Browser comparison and family view; native family workspace                                                                                      |
-| `run.slotHistory`                      | `runs/farm`, `slots/farm`             | Memory                  | Browser slot history                                                                                                                             |
-| `run.forSlot`, `run.recipeRunsForSlot` | `runs/farm`, `slot/{slotId}`          | Memory                  | Browser SlotView selection through `run.forSlot`; `run.recipeRunsForSlot` consumers remain to migrate                                            |
-| `run.tags.list`                        | `runs/farm`                           | Memory                  | Browser tag filters                                                                                                                              |
+| Query                                  | Dependencies                          | Persistence             | Current consumers                                                                                                                                                       |
+| -------------------------------------- | ------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sources.status`                       | `sources/farm`                        | 2 MB                    | Sources controllers in Command Center and Companion                                                                                                                     |
+| `run.list`                             | `runs/farm`                           | 20 MB across variants   | Browser active/history/tag/family lists and comparison baseline picker; native active and explicit history collections                                                  |
+| `run.get`                              | `run/{runId}`, `runs/farm`            | 50 entries, 20 MB total | Browser detail/comparison/family, publication workspace and selected dispatch baseline; native detail, diff, artifact viewer, family, gates, decisions and saved review |
+| `decision.list`                        | `decisions/farm`                      | 10 MB across variants   | Browser inbox; native inbox, decision workspace and gate action guards                                                                                                  |
+| `run.recipeRunsForRun`                 | `run/{runId}`, `artifacts/{runId}`    | Memory                  | Browser run detail, SlotView and frozen publication workspace; native run detail, diff, frozen artifact viewer, decision workspace and gate acceptance evidence         |
+| `family.observability.get`             | `family/{familyId}`, `decisions/farm` | Memory                  | Browser comparison and family view; native family workspace                                                                                                             |
+| `run.slotHistory`                      | `runs/farm`, `slots/farm`             | Memory                  | Browser slot history                                                                                                                                                    |
+| `run.forSlot`, `run.recipeRunsForSlot` | `runs/farm`, `slot/{slotId}`          | Memory                  | Browser SlotView selection through `run.forSlot`; `run.recipeRunsForSlot` consumers remain to migrate                                                                   |
+| `run.tags.list`                        | `runs/farm`                           | Memory                  | Browser tag filters                                                                                                                                                     |
 
 The protocol registry is `packages/protocol/src/client-cache/registry.ts`. Parameters form
 part of query identity. Native active/history/decision deadlines remain 20/60/30 seconds;
@@ -83,10 +83,28 @@ The browser family proof checks the actual SQLite timestamp before closing its d
 Gateway writer tests and the real-endpoint run recipe support these rows. They do not
 establish coverage for unmigrated cross-family inputs.
 
+## Browser publication workspace checkpoint
+
+The workspace observes canonical full `run.get` and frozen
+`run.recipeRunsForRun` with its decision and package hash. It no longer adopts
+compact prop metadata, independent evidence reads, post-judgment rereads or
+package-refresh reply records. Explicit package refresh and lost-decision
+outcome reporting remain; the latter reads through the shared observation.
+Owner, view, connection and request scopes guard command replies and cleanup.
+Confirmations retire on invalidation or package changes. Existing Git/TASK
+content reads remain with their content owners and scoped replies.
+
+Focused browser `ready-workspace-live-r6` passes 3/3 with actual external tags,
+a real removed-action refusal, cold offline gate facts, saved age, exact SQLite
+observation time and current evidence recovery without replay. Notification and readiness controls each fail their intended assertion, restore the
+exact source bytes and recover 3/3. Current/refused and cold/age screenshots are
+inspected. The combined recording is pending. This slot-free gate proof does not
+establish packaged publication, actual visual judgments or the full command matrix.
+
 ## Remaining acceptance
 
-- Migrate remaining browser workspace readers and finish dispatch controls and the combined proof, and finish the
-  remaining native slot/terminal/visual-review/conversation readers; artifact reader component evidence is recorded.
+- Finish workspace source controls and the combined browser proof; dispatch controls are accepted.
+  Migrate the remaining native slot/terminal/visual-review/conversation readers. Artifact reader component evidence is recorded.
 - Migrate the remaining consumers of `run.forSlot` and `run.recipeRunsForSlot`; binding writers and dependencies now have isolated tests, live browser history and SlotView evidence.
 - Finish native context recipes and negative controls, then the browser, desktop,
   iOS and Android authority/profile and connected-stale command matrix.

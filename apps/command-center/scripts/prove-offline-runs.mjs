@@ -35,6 +35,7 @@ assert(
     'store-navigation-web',
     'slot-run-web',
     'dispatch-runs-web',
+    'ready-workspace-web',
   ].includes(phase),
   'Select a run proof phase',
 );
@@ -667,6 +668,176 @@ async function detailBrowser(runId) {
     navigate,
     peek: () => cdp('eval', route, '--file', storeProbe),
   };
+}
+
+if (phase === 'ready-workspace-web') {
+  const decisionId = randomUUID();
+  const result = await withRunFixture(
+    ({ createdAt }) => ({
+      status: 'human-gating',
+      completedAt: undefined,
+      decisions: [
+        {
+          id: decisionId,
+          type: 'engine_human_gate',
+          title: 'Private workspace proof',
+          description: 'Owned slot-free gate',
+          createdAt,
+          actions: [{ id: 'request-extra-review', label: 'Request previous review' }],
+          payload: {
+            kind: 'ready',
+            prNumber: null,
+            repo: null,
+            branch: 'private-proof',
+            diffStat: { filesChanged: 0, insertions: 0, deletions: 0 },
+            workerReport: 'Private offline workspace proof',
+          },
+        },
+      ],
+    }),
+    async ({ runId }) => {
+      const { cdp, base, route, artifacts } = await detailBrowser(runId);
+      const probe = path.join(
+        root,
+        'apps/command-center/scripts/probes/offline-ready-workspace.js',
+      );
+      const snapshot = () => cdp('eval', route, '--file', probe);
+      const until = async (predicate, label) => {
+        const deadline = Date.now() + 45000;
+        let value;
+        do {
+          value = await snapshot();
+          if (predicate(value)) return value;
+          await delay(100);
+        } while (Date.now() < deadline);
+        assert.fail(`${label}: ${JSON.stringify(value)}`);
+      };
+      const current = (value) =>
+        value.mounted &&
+        value.run.status === 'ready' &&
+        value.evidence.status === 'ready' &&
+        value.runCanonical &&
+        value.gateCanonical &&
+        !value.paused;
+      const initial = await until(
+        current,
+        'The actual gate must observe the full run and frozen evidence',
+      );
+      assert(initial.renderedReport);
+      assert.deepEqual(initial.evidence.query.params, {
+        runId,
+        decisionId,
+        includeRecordedEvidence: true,
+      });
+      const tag = `workspace-${randomUUID().slice(0, 8)}`;
+      await rpc('run.tags.set', { runId, tags: [tag] });
+      const updated = await until(
+        (value) => current(value) && value.tags?.includes(tag) && value.renderedTags?.includes(tag),
+        'An external write must update the rendered canonical workspace run',
+      );
+      await cdp('click', route, 'run-detail >>> ready-workspace .gate-more-actions > summary');
+      await cdp('screenshot', route, path.join(artifacts, 'workspace-before-submit.png'));
+      await cdp(
+        'click',
+        route,
+        'run-detail >>> ready-workspace [data-action="request-extra-review"]',
+      );
+      await writeFile(
+        path.join(artifacts, 'workspace-after-click.json'),
+        JSON.stringify(await snapshot(), null, 2),
+      );
+      const refused = await until(
+        (value) => value.actionTone === 'error' && value.renderedMessage && !value.busy,
+        'The real gateway refusal of a removed legacy action must remain visible',
+      );
+      assert.match(refused.actionMessage, /This review action was removed/);
+      assert.equal(
+        (await rpc('run.get', { runId })).run.decisions.find((d) => d.id === decisionId).resolvedAt,
+        undefined,
+      );
+      await cdp('click', route, 'run-detail >>> ready-workspace .rdy-action-feedback');
+      assert(
+        (await snapshot()).feedbackVisible,
+        'The gateway refusal must be visible in the viewport',
+      );
+      await cdp('screenshot', route, path.join(artifacts, 'workspace-current-refusal.png'));
+      const beforeOffline = await until(current, 'The workspace must finish its outcome read');
+      const storeProbe = path.join(
+        root,
+        'apps/command-center/scripts/probes/offline-ready-workspace-store.js',
+      );
+      let stored;
+      const deadline = Date.now() + 15000;
+      do {
+        stored = await cdp('eval', route, '--file', storeProbe);
+        if (stored.storedObservedAt === beforeOffline.run.observedAt) break;
+        await delay(100);
+      } while (Date.now() < deadline);
+      assert.equal(stored.storedObservedAt, beforeOffline.run.observedAt);
+      let cold;
+      await withOwnedGatewayOffline(async () => {
+        const stale = await until(
+          (value) =>
+            value.run?.status === 'stale' &&
+            value.paused &&
+            value.renderedReport &&
+            value.commands.length &&
+            value.commands.every((button) => button.disabled),
+          'Saved gate actions must be disabled during an actual outage',
+        );
+        await cdp('key', route, 'Enter');
+        assert.equal((await snapshot()).busy, false);
+        const repaint = await until(
+          (value) => value.saved && value.saved !== stale.saved,
+          'The saved gate age must repaint',
+        );
+        base.searchParams.set('workspace-cold', randomUUID());
+        await cdp('goto', base.href);
+        cold = await until(
+          (value) =>
+            value.run?.status === 'stale' &&
+            value.paused &&
+            value.renderedReport &&
+            value.saved &&
+            value.commands.every((button) => button.disabled),
+          'A cold offline document must render the saved gate without granting action authority',
+        );
+        assert.equal(cold.run.observedAt, stale.run.observedAt);
+        assert(repaint.saved);
+        await cdp('click', route, 'run-detail >>> ready-workspace .rdy-saved-state');
+        assert(
+          (await snapshot()).savedVisible,
+          'The saved gate age must be visible in the viewport',
+        );
+        await cdp('screenshot', route, path.join(artifacts, 'workspace-cold-offline.png'));
+      });
+      const recovered = await until(
+        current,
+        'Reconnect must reread the frozen evidence before enabling actions',
+      );
+      assert.equal(recovered.actionMessage, '');
+      assert.equal(
+        (await rpc('run.get', { runId })).run.decisions.find((d) => d.id === decisionId).resolvedAt,
+        undefined,
+      );
+      return {
+        result: 'PASS',
+        action: phase,
+        runId,
+        decisionId,
+        workspaceSharedQueries: true,
+        externalWorkspaceUpdate: true,
+        refusal: refused.actionMessage,
+        coldWorkspaceGate: true,
+        coldObservedAt: cold.run.observedAt,
+        noCommandReplay: true,
+        screenshots: artifacts,
+        updatedAt: updated.run.observedAt,
+      };
+    },
+  );
+  console.log(JSON.stringify(result));
+  process.exit(0);
 }
 
 if (phase === 'detail-web') {
