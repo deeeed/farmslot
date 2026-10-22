@@ -4,6 +4,11 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Prove linked-ticket search and pasted additional-ticket keys through the browser.
+
+- Let browser proofs set an exact narrow viewport and system appearance.
+
+- Verify blocked review-fix recovery through the existing Resume control and its rendered active state.
 - Prove frozen review finding navigation, review/fix timelines and native session tabs through the connected operator views.
 
 - Restore shared review finding links at their exact file and line, with explicit unavailable-source states.

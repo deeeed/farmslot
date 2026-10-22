@@ -1441,6 +1441,7 @@ type FixPromptRecoveryContext = Pick<
   | 'promptDeliveryStartedAt'
   | 'promptAcceptance'
   | 'startedAt'
+  | 'deliveryBaselineRef'
 >;
 
 interface FixPromptRecoveryDeps {
@@ -1545,7 +1546,9 @@ export async function resumeReviewFixPromptDelivery(
   if (deps.getRun(runId)?.transport === 'native') {
     if (context.taskFile)
       await withNativeReviewMutation(() =>
-        deps.syncChecklistTarget(vars, path.posix.dirname(context.taskFile!), 'review-fix'),
+        deps.syncChecklistTarget(vars, path.posix.dirname(context.taskFile!), 'review-fix', {
+          ciBaseRef: context.deliveryBaselineRef,
+        }),
       );
     return deliverNativeFix(runId, context.id);
   }
@@ -1572,7 +1575,9 @@ export async function resumeReviewFixPromptDelivery(
   // the role target before any recovered prompt is delivered, otherwise a
   // completed worker writes SIGNAL.json while recovery waits forever on the
   // scoped fix signal.
-  await deps.syncChecklistTarget(vars, taskDir, 'review-fix');
+  await deps.syncChecklistTarget(vars, taskDir, 'review-fix', {
+    ciBaseRef: context.deliveryBaselineRef,
+  });
   const target = await deps.ensureTarget(
     vars,
     session,
@@ -2476,7 +2481,7 @@ async function sendOwnedFeedbackToWorker(
     taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist),
     expanded,
   );
-  await syncChecklistTargetForRole(vars, taskDir, 'review-fix');
+  await syncChecklistTargetForRole(vars, taskDir, 'review-fix', { ciBaseRef: fixBaseSha });
   assertNativeReviewOperationCurrent();
 
   const fixTaskRel = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist);

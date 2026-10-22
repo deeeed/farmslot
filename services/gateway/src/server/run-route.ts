@@ -33,6 +33,7 @@ import {
   type RunGetParams,
   type RunGradeParams,
   type RunInteractiveDevResolveParams,
+  type RunLinkedTicketsSetParams,
   type RunListParams,
   type RunPauseParams,
   type RunProbeWorkerSignalParams,
@@ -82,6 +83,7 @@ import {
   runGetGrade,
   runGrade,
   runListTags,
+  runSetLinkedTickets,
   runSetTags,
 } from '../methods/run/admin.js';
 import { runAdopt } from '../methods/run/adopt.js';
@@ -320,6 +322,8 @@ export async function routeRunMethod(
       return handled(runBulkDelete(p as RunBulkDeleteParams, emit));
     case Methods.RUN_CLEANUP:
       return handled(runCleanup(p as RunCleanupParams));
+    case Methods.RUN_LINKED_TICKETS_SET:
+      return handled(runSetLinkedTickets(p as RunLinkedTicketsSetParams, emit));
     case Methods.RUN_TAGS_SET:
       return handled(runSetTags(p as RunTagsSetParams, emit));
     case Methods.RUN_TAGS_LIST:

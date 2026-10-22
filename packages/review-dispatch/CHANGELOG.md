@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+- Share current-checklist counts, item labels and attempt identity for run progress in both clients.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.14.0 - 2026-10-22
+
+- Add shared current-checklist progress for run lists and detail.
 
 ## 0.13.0 - 2026-10-22
 

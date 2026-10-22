@@ -1,4 +1,5 @@
 import { html, nothing } from 'lit';
+import { keyed } from 'lit/directives/keyed.js';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
@@ -22,6 +23,7 @@ import {
   isSettledBlockedRun,
   isSlotFreedByPark,
   isTerminalRunStatus,
+  Methods,
   modeForFlow,
   modelsMatch,
   normalizeRunTags,
@@ -40,6 +42,7 @@ import '../shared/workspace-pin.js';
 import '../shared/cancelled-run-slot-release.js';
 import '../shared/hydrating-placeholder.js';
 
+import { gateway } from '../../gateway-client.js';
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
@@ -139,6 +142,7 @@ export interface RunDetailViewContext {
   _slotHealthForRun: (run: Run) => import('@farmslot/protocol').SlotHealth | null;
   /** The slot a cancelled run still holds for replay, with its two choices. */
   _cancelledRunSlot: CancelledRunSlotChoices | null;
+  _setRunLinkedTickets: (run: Run, refs: string[]) => void | Promise<void>;
   _setRunTags: (run: Run, tags: string[]) => void | Promise<void>;
   _renderInteractiveDevGate: (run: Run) => unknown;
   _currentCiStatus: (run: Run) => CiCheckUpdatedPayload | null;
@@ -639,6 +643,15 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             )}</span
           >`
         : nothing}
+      ${keyed(
+        r.id,
+        html`<run-tag-editor
+          kind="tickets"
+          .disabled=${actionsBlocked}
+          .run=${r}
+          .saveTags=${(refs: string[]) => ctx._setRunLinkedTickets(r, refs)}
+        ></run-tag-editor>`,
+      )}
       <run-tag-editor
         .tags=${normalizeRunTags(r.tags)}
         .disabled=${actionsBlocked}
@@ -1354,7 +1367,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           <blocked-run-recovery
             .run=${r}
             .disabled=${actionsBlocked}
-            .replayMonitor=${() => ctx._onReplayStep('monitor')}
+            .resumeWorker=${async () => {
+              await gateway.request(Methods.RUN_RESUME, { runId: r.id });
+            }}
             .restartWorker=${() => ctx._onReplayStep('find-slot')}
           ></blocked-run-recovery>
         </details>`

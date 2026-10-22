@@ -5,10 +5,17 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Preserve the original before-evidence baseline when dispatch replays on an existing checkout without preparation.
+- Persist operator-added run tickets through supported metadata edits and include covered keys in summaries.
+
+- Bound concurrent evidence and progress reads during node recovery, and preserve replayed review slot claims while fleet refresh completes.
+- Prepare reused slots after squash merges by recognizing patches already in the default branch or verified merged PR heads, while preserving unpublished commits and dirty files on newly accepted merged checkouts.
+
+- Resume a blocked review-fix through its held review step and show fresh worker progress without restarting the completed primary worker.
 
 - Resume an accepted publication review request when its lost gate loop is reconciling, preserving its selected reviewer and retained package.
 
 - Validate review recommendations and RIGHT-side inline locations before gates and on refresh.
+- Freeze the pre-fix commit in review-fix and CI-fix checks, including recovery and replay.
 
 - Keep native reviewers running while bound checklist or tool activity progresses, and fail after the configured inactivity window instead of a fixed total-time boundary.
 

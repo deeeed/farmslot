@@ -9,6 +9,7 @@ import {
 } from '../contracts/runs.js';
 import type { SlotStatus } from '../contracts/slots.js';
 
+import { runLinkedTicketRefs } from './linked-tickets.js';
 import { resolveRunSlotId } from './slot-resolution.js';
 
 /** `active` follows `isActiveListRun`, `history` keeps terminal runs, `all` keeps every run. */
@@ -80,6 +81,7 @@ function matchesSearch(run: Run, search: string): boolean {
   return [
     run.ticketOrPr,
     run.summary,
+    ...runLinkedTicketRefs(run),
     resolveRunSlotId(run),
     run.metrics.disposition?.replace(/_/g, ' '),
     ...(run.tags ?? []),

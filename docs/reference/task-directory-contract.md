@@ -11,15 +11,60 @@ The shared harness checklist command MUST resolve explicit `--checklist` and
 blocker, run `checklist mark <task-dir> start`, then continue numbered marks. This
 uses the existing runtime start verb, preserves checked boxes and resumes signal
 progress under the launcher's attempt identity. Successful terminal verdicts remain protected.
-On a complete or no-change signal, `checklist mark <task-dir> N` for a declared
-deterministic step reruns that check and refreshes its receipt for the current
-tree without reopening the signal; other numbered marks stay ignored.
+On a complete or no-change signal, `checklist mark <task-dir> N` validates the
+declared deterministic step under the receipt rules below without reopening the
+signal; other numbered marks stay ignored.
 
 Ticket intake preserves an explicit acceptance section, including an empty one. When none is supplied,
 authored `AC1:` or `AC-1:` paragraphs outside fenced code populate the same
 acceptance array in source order. Paragraph boundaries exclude unrelated prose.
 Existing structured criteria remain authoritative. Generated TASK.md and
 `inputs/handoff.json` MUST consume that same normalized array.
+
+## Linked run tickets
+
+`Run.linkedTicketRefs` stores operator-added Jira keys only. Metadata edits MUST
+NOT rewrite `ticketData`, task files, package inputs, review state or evidence.
+The shared reader unions the canonical Jira ref, `ticketData.jiraKey`, prefetched
+`ticketData.linkedTickets`, ticket keys in description headings and acceptance
+criterion prefixes, and these operator additions. Keys are uppercase and unique;
+incidental references in description prose are not covered tickets.
+
+Run list/detail in Command Center and Companion MUST show this same union and
+search it through the shared run-list selection. Existing run and family summary
+projections carry the covered-key union so a trimmed summary retains ticket lookup.
+Removing an operator addition MUST NOT remove a key derived from frozen inputs.
+A known Jira browse URL supplies links; a key without a resolved URL stays visible.
+The run's recorded PR link remains available beside its tickets.
+
+### Public surface
+
+`@farmslot/protocol` exports the additive `Run.linkedTicketRefs` contract,
+`normalizeRunLinkedTicketRefs`, `runLinkedTicketRefs` and `runLinkedTicketsView`.
+Command Center and Companion use the same reader and validation. Each platform
+reuses one ticket renderer for run list and detail. The supported admin metadata
+RPC `run.linkedTickets.set { runId, linkedTicketRefs }` replaces only the operator
+additions, persists the run and broadcasts `run.updated`, following `run.tags.set`.
+`RunMethods.setLinkedTickets` names it; CLI callers may use the existing generic
+`farmslot rpc` entry. There is no new worker/harness hook, task input, workflow
+action or wire version. The SDK addition requires a fresh minor package release.
+
+## Run checklist progress
+
+Command Center and Companion MUST retain the run pipeline and, when its current
+step has structured checklist data, show a thinner bar beneath it with
+`completedSteps/totalSteps` and `currentStep`. They MUST NOT derive totals from
+pipeline segments or hint text. Without checklist data, no sub-bar is rendered;
+the compact strip reserves its height so live updates do not move the run row.
+A finished run or idle person gate MUST NOT display the previous review's checklist.
+
+Both clients consume the `@farmslot/review-dispatch` run-checklist view model and
+one renderer per platform for list and detail. They hydrate through existing
+`task.progress` and follow `task.progress.updated`, matching the run, slot and
+active checklist. Checklist or attempt changes invalidate cached progress.
+Slot-free review workspaces use their existing empty slot id and run id.
+These additive UI helpers are exported by `@farmslot/review-dispatch`; there are
+no new CLI flags, persisted fields, harness requirements or wire version changes.
 
 ## Two documents, one checklist
 
@@ -155,10 +200,12 @@ PR-producing worker templates reference one `{{CI_PARITY_STEP}}` part. It materi
 
 The shared task writer freezes each declaration under `inputs/worker-terminal-contract.json.deterministicChecks`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`, including `vars['ci.local_check']`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
 
+Fix-role initialization MUST bind the engine's captured pre-fix commit to `FARMSLOT_CI_BASE_REF` in the frozen CI command. Retained delivery and replay MUST use that same commit. The Terminal pack consumes it for affected-test selection; worker instructions do not carry this binding. Missing legacy context retains the existing contribution-wide check.
+
 ### Mark and receipt rules
 
-1. `./mark N` MUST execute the declared command itself before checking the box. Repeating an already checked deterministic step reruns it, including after a complete signal. Execution uses the Git checkout containing the task, or the caller's target checkout when a standalone task is outside Git. The process inherits the configured environment and runs without a login shell.
-2. Mark MUST persist a running record first, then an immutable output log and a schema-version-1 completion receipt under `artifacts/deterministic-checks/<checklist>/<step>.json`. The receipt records command, reference, checklist, step, source-input hash, timestamps, exit code, signal and the relative log path/hash.
+1. `./mark N` MUST reuse a receipt only when the frozen command, current publishable-input hash, successful completion and recorded log integrity still validate. Reuse MUST leave the receipt and log unchanged. Otherwise mark MUST execute the declared command itself before checking the box. This also applies after a complete signal. Execution uses the Git checkout containing the task, or the caller's target checkout when a standalone task is outside Git. The process inherits the configured environment and runs without a login shell.
+2. On execution, mark MUST persist a running record first, then an immutable output log and a schema-version-1 completion receipt under `artifacts/deterministic-checks/<checklist>/<step>.json`. The receipt records command, reference, checklist, step, source-input hash, timestamps, exit code, signal and the relative log path/hash.
    Tracked submodules bind their checked-out commit, or their recorded gitlink commit while uninitialized. Uncommitted submodule work MUST fail closed with a commit-and-rerun hint because the parent repository publishes a gitlink, not those local files.
 3. Only exit zero, unchanged publishable inputs and successful receipt persistence permit checking the box. Failure, interruption and missing configuration MUST refuse completion. Bulk/terminal marks and checklist skip flags do not waive these checks. Custom mark engines that cannot produce receipts cannot satisfy declared steps.
 4. Publishable inputs are Git's tracked and nonignored untracked file inventory, paths, file permissions, file bytes or symlink targets, including tracked deletions. The task directory's owned inputs/outputs are excluded. Commit metadata is excluded, so committing identical checked content preserves a pass. Failure to identify the checkout or inputs fails closed.

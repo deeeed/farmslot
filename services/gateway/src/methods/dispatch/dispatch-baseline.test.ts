@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
+import type { SlotPrepareResult } from '../slot/shared.js';
+
 await import('../../runtime/mock-pty.test-support.js');
 const root = await mkdtemp(path.join(os.tmpdir(), 'dispatch-baseline-'));
 process.env.FARMSLOT_HOME = root;
@@ -11,6 +13,11 @@ process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
 process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
 after(() => rm(root, { recursive: true, force: true }));
 const core = await import('../../core/index.js');
+const config = await import('../../core/config.js');
+const execution = await import('../../core/exec.js');
+const remote = await import('../../run-engine/remote-probes.js');
+const providers = await import('../../runners/status-provider.js');
+const dispatch = await import('../dispatch.js');
 const capabilities = await import('../../run-engine/declared-capabilities.js');
 const snapshots = await import('../../run-engine/diff-artifacts.js');
 const admission = await import('../../backlog/pr-admission.js');
@@ -24,6 +31,25 @@ const captured: string[] = [];
 let prepares = 0;
 const stop = new Error('Fixture stops before worker task copy or launch');
 
+mock.module('../../core/config.js', {
+  namedExports: {
+    ...config,
+    loadSlotVars: async () => vars,
+    resolveProjectRuntimeDir: async () => 'temp/farmslot',
+  },
+});
+mock.module('../../core/exec.js', {
+  namedExports: {
+    ...execution,
+    execOnSlot: async () => ({ stdout: '', stderr: '', exitCode: 1 }),
+  },
+});
+mock.module('../../run-engine/remote-probes.js', {
+  namedExports: { ...remote, probeRemotePath: async () => ({ ok: true }) },
+});
+mock.module('../../runners/status-provider.js', {
+  namedExports: { ...providers, getRunnerStatusProvider: () => undefined },
+});
 mock.module('../../core/index.js', {
   namedExports: {
     ...core,
@@ -58,11 +84,27 @@ mock.module('../slot.js', {
     ...slots,
     slotPrepare: async () => {
       prepares++;
+      return { prepared: true, requestId: 'fixture-prepare' } satisfies SlotPrepareResult;
     },
   },
 });
 const modulePath: string = './execute.js?dispatch-baseline';
 const { dispatchExecute } = (await import(modulePath)) as typeof import('./execute.js');
+let engineSkipPrepare: boolean | undefined;
+mock.module('../dispatch.js', {
+  namedExports: {
+    ...dispatch,
+    dispatchExecute: (...args: Parameters<typeof dispatchExecute>) => {
+      engineSkipPrepare = args[0].skipPrepare;
+      return dispatchExecute(...args);
+    },
+  },
+});
+const engineModule: string = '../../run-engine/dispatch-lifecycle-steps.js?dispatch-baseline';
+const {
+  executePrepareStep,
+  executeDispatchStep,
+}: typeof import('../../run-engine/dispatch-lifecycle-steps.js') = await import(engineModule);
 
 for (const scenario of [
   { name: 'checkout-preserving replay', skipPrepare: true, prior: baseline, expected: baseline },
@@ -117,6 +159,66 @@ for (const scenario of [
     assert.equal(getRun(run.id)!.worktreeHeadAtDispatch, scenario.expected);
     assert.equal(prepares, scenario.skipPrepare ? 0 : 1);
     // Retaining the evidence base must not hide a changed review checkout.
+    assert.deepEqual(captured, [fixedHead]);
+  });
+}
+
+for (const skipPrepare of [false, true]) {
+  test(`engine prepare then dispatch ${skipPrepare ? 'retains' : 'refreshes'} the baseline`, async (t) => {
+    const taskFile = path.join(root, 'ENGINE-TASK.md');
+    await writeFile(taskFile, '# Worker: dev\n\n**Branch:** feat/dispatch-baseline\n');
+    const run = createRun({
+      flowType: 'dev',
+      project: vars.projectName,
+      ticketOrPr: 'TAT-4153',
+      slotId: vars.slotId,
+      transport: 'tmux',
+      mode: 'autonomous',
+    });
+    updateRun(run.id, {
+      taskFile,
+      worktreeHeadAtDispatch: baseline,
+      engineState: { flags: skipPrepare ? { skipPrepare: true } : {} },
+      metrics: { ...run.metrics, runner: 'claude', model: 'opus' },
+    });
+    t.after(async () => {
+      updateRun(run.id, { status: 'done' });
+      await deleteRun(run.id);
+    });
+    await core.rewriteStatusFile(() => ({
+      slots: [
+        {
+          slot: vars.slotId,
+          current_run_id: run.id,
+          slot_epoch: 1,
+          lifecycle: 'ready',
+          agent: 'idle',
+          phase: null,
+        },
+      ],
+    }));
+    prepares = 0;
+    captured.length = 0;
+    engineSkipPrepare = undefined;
+    const preparation = await executePrepareStep(run.id, {
+      activeMonitors: new Map(),
+      broadcastFn: () => {},
+      getRunFlags: (id) =>
+        getRun(id)?.engineState?.flags?.skipPrepare ? { skipPrepare: true } : {},
+      normalizeEvalReplayForTaskWrite: async (_id, current) => current,
+      stepPartialIO: new Map(),
+    });
+    assert.equal(prepares, skipPrepare ? 0 : 1);
+    assert.equal(preparation.outputs?.skipped === true, skipPrepare);
+    await assert.rejects(
+      executeDispatchStep(run.id, {
+        stepPartialIO: new Map(),
+        blockedRunError: (message) => new Error(message),
+      }),
+      (error: unknown) => error === stop,
+    );
+    assert.equal(engineSkipPrepare, true, 'engine prevents duplicate preparation inside dispatch');
+    assert.equal(getRun(run.id)!.worktreeHeadAtDispatch, skipPrepare ? baseline : fixedHead);
     assert.deepEqual(captured, [fixedHead]);
   });
 }

@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { Events, type Run, type WorkerSignal } from '@farmslot/protocol';
 
+import { upsertAgentContext } from '../../agents/contexts.js';
 import { claimSlotStatusIf, statusFile } from '../../core/state.js';
 import { cleanupSlotAfterRunFailure } from '../../run-engine/orchestrator.js';
 import { isWorkerSignalFreshForRun } from '../../run-engine/run-monitor.js';
@@ -22,8 +23,9 @@ import { rebindRunSlot } from '../fleet.js';
 
 import {
   blockedRunWorkerRunningAgain,
+  blockedWorkerContext,
   type BlockedWorkerContinuedDependencies,
-  freshBlockedMonitorAttempt,
+  freshBlockedWorkerAttempt,
   rebindReleasedSlot,
   resumeBlockedRunWhoseWorkerContinued,
 } from './replay-step.js';
@@ -93,7 +95,7 @@ function recordingDeps(signal: Record<string, unknown>, refusals = 0) {
   const replayed: string[] = [];
   const deps: BlockedWorkerContinuedDependencies = {
     runningWorkerSignal: async (run) => blockedRunWorkerRunningAgain(run, probeOf(signal), null),
-    replayMonitor: async (runId) => {
+    replayWorkerStep: async (runId) => {
       // Let concurrent notifications pile up behind this one.
       await new Promise((resolve) => setImmediate(resolve));
       if (refusals-- > 0) throw new Error('Proof resources are not healthy after the block.');
@@ -135,9 +137,9 @@ test('a blocked run counts as working again on its own later running signal', ()
 test('the monitor checks accept the blocked attempt running again, with no SIGNAL.json rewrite', () => {
   const run = { status: 'blocked' as const, steps: blockedSteps };
   // Operator replay and run resume still ask for ./mark start; the automatic replay does not.
-  assert.equal(freshBlockedMonitorAttempt(run, probeOf(runningAgain), null), null);
+  assert.equal(freshBlockedWorkerAttempt(run, probeOf(runningAgain), null), null);
   assert.deepEqual(
-    freshBlockedMonitorAttempt(run, probeOf(runningAgain), null, {
+    freshBlockedWorkerAttempt(run, probeOf(runningAgain), null, {
       acceptRunningBlockedAttempt: true,
     }),
     runningAgain,
@@ -150,6 +152,105 @@ test('the monitor checks accept the blocked attempt running again, with no SIGNA
   } as unknown as Run;
   assert.equal(isWorkerSignalFreshForRun(replayed, runningAgain), true);
   assert.equal(isWorkerSignalFreshForRun(replayed, { ...runningAgain, status: 'complete' }), true);
+});
+
+test('a held review-fix consumes its own later signal instead of the completed primary signal', () => {
+  const run = {
+    status: 'blocked' as const,
+    steps: [
+      {
+        name: 'review',
+        status: 'done' as const,
+        completedAt: '2026-10-22T07:40:58.688Z',
+        outputs: { verdict: 'blocked', feedbackSent: true },
+      },
+    ],
+  };
+  const context = { id: 'review-fix', role: 'review-fix' as const };
+  const signal: WorkerSignal = {
+    status: 'complete',
+    attemptId: 'resumed-fix',
+    timestamp: '2026-10-22T08:50:43.308Z',
+    role: 'review-fix',
+    contextId: 'review-fix',
+  };
+  const probe = { ok: true, code: 'ready' as const, message: 'ready', signal };
+  assert.deepEqual(freshBlockedWorkerAttempt(run, probe, context), signal);
+  assert.equal(freshBlockedWorkerAttempt(run, probe, { id: 'dev', role: 'primary' }), null);
+  assert.equal(
+    freshBlockedWorkerAttempt(
+      run,
+      { ...probe, signal: { ...signal, contextId: 'old-fix' } },
+      context,
+    ),
+    null,
+  );
+  assert.equal(
+    freshBlockedWorkerAttempt(
+      run,
+      { ...probe, signal: { ...signal, timestamp: '2026-10-22T07:40:56.638Z' } },
+      context,
+    ),
+    null,
+  );
+  assert.equal(freshBlockedWorkerAttempt(run, { ...probe, code: 'stale' }, context), null);
+  assert.equal(
+    freshBlockedWorkerAttempt(
+      { ...run, steps: [{ ...run.steps[0]!, outputs: { verdict: 'blocked' } }] },
+      probe,
+      context,
+    ),
+    null,
+    'a blocked reviewer is not a held fix pass',
+  );
+});
+
+test('a resumed review-fix reattaches review once and exposes an active run', async (t) => {
+  const run = await blockedRun(t, 'PROJ-FIX-ACTIVE');
+  const primarySignal = { ...blocked, status: 'complete' };
+  updateRunStep(run.id, 'monitor', { outputs: { workerSignal: primarySignal } });
+  updateRunStep(run.id, 'review', {
+    status: 'done',
+    completedAt: '2026-10-22T07:40:58.688Z',
+    outputs: { verdict: 'blocked', feedbackSent: true },
+  });
+  await upsertAgentContext(run.id, 'review-fix', {
+    id: 'review-fix',
+    status: 'working',
+    signalAttemptId: 'resumed-fix',
+    taskFile: 'tasks/fix/REVIEW-FIX.md',
+    signalFile: 'tasks/fix/REVIEW-FIX-SIGNAL.json',
+  });
+  const signal: WorkerSignal = {
+    status: 'running',
+    attemptId: 'resumed-fix',
+    timestamp: '2026-10-22T08:00:00.000Z',
+    role: 'review-fix',
+    contextId: 'review-fix',
+  };
+  const replays: string[] = [];
+  const deps: BlockedWorkerContinuedDependencies = {
+    runningWorkerSignal: async (current) =>
+      blockedRunWorkerRunningAgain(
+        current,
+        { ok: false, code: 'non_terminal', message: 'running', signal },
+        blockedWorkerContext(current),
+      ),
+    replayWorkerStep: async (id, stepName) => {
+      replays.push(stepName);
+      updateRunStep(id, stepName, { status: 'running' });
+      return updateRun(id, { status: 'fixing' })!;
+    },
+  };
+  const resumed = await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps);
+  assert.equal(resumed?.status, 'fixing');
+  assert.deepEqual(replays, ['review']);
+  assert.deepEqual(
+    resumed?.steps.find((step) => step.name === 'monitor')?.outputs?.workerSignal,
+    primarySignal,
+  );
+  assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
+  assert.equal(resumes(run.id)[0]?.pipelineStep, 'review');
 });
 
 test('a blocked run whose worker kept going on the same attempt replays the monitor and records it once', async (t) => {
@@ -303,10 +404,10 @@ test('a worker that resumes during the block teardown waits for the cleanup, the
     await terminal;
   });
   const { replayed, deps } = recordingDeps(runningAgain);
-  const replayMonitor = deps.replayMonitor;
-  deps.replayMonitor = async (id) => {
+  const replayWorkerStep = deps.replayWorkerStep;
+  deps.replayWorkerStep = async (id, stepName) => {
     order.push('replay');
-    return replayMonitor(id);
+    return replayWorkerStep(id, stepName);
   };
 
   await settling;

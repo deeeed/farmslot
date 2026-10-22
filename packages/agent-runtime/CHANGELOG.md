@@ -2,9 +2,14 @@
 
 ## Unreleased
 
-- Include the shared approval policy in self-review and paired review instructions.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.38.0 - 2026-10-23
+
+- Align with `@farmslot/protocol` 0.65.0.
+
+- Include the shared approval policy in self-review and paired review instructions.
+- Reuse validated passing deterministic receipts for unchanged commands and inputs.
 
 ## 0.37.2 - 2026-10-22
 

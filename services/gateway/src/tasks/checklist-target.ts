@@ -96,15 +96,18 @@ export async function syncChecklistTargetOnSlot(
   await syncChecklistTarget(vars, taskDir, targetForChecklistBasename(checklistBasename));
 }
 
+interface RoleTerminalOptions {
+  reportPath?: string;
+  additionalArtifactPaths?: readonly string[];
+  target?: ChecklistTarget;
+  ciBaseRef?: string | null;
+}
+
 export async function syncChecklistTargetForRole(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
   role: NestedLoopAgentRole,
-  terminal?: {
-    reportPath?: string;
-    additionalArtifactPaths?: readonly string[];
-    target?: ChecklistTarget;
-  },
+  terminal?: RoleTerminalOptions,
   registry: ChecklistTargetRegistry = DEFAULT_CHECKLIST_TARGET_REGISTRY,
 ): Promise<void> {
   const target = terminal?.target ?? checklistTargetForAgentRole(role, registry);
@@ -117,6 +120,7 @@ export async function syncChecklistTargetForRole(
     terminal?.reportPath,
     target.checklist,
     terminal?.additionalArtifactPaths,
+    terminal?.ciBaseRef,
   );
 }
 

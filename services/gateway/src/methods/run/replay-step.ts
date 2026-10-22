@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   type AgentContext,
+  blockedWorkerRecoveryStep,
   DEFAULT_TASK_DIR,
   Events,
   FLOW_STEPS,
@@ -67,7 +68,10 @@ import { replaySlotCapabilityRequirements } from '../../run-engine/slot-capabili
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import { assertRunNotArchiving, isRunArchivingRefusal } from '../../run-lifecycle/archive-fence.js';
 import { cancelledSlotReplayRefusal } from '../../run-lifecycle/cancelled-slot-reclaim.js';
-import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
+import {
+  acquireRunTransition,
+  withRunTransition,
+} from '../../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -201,7 +205,10 @@ export function blockedReviewFixTaskFile(
   run: Pick<Run, 'agentContexts' | 'steps'>,
 ): string | undefined {
   const review = run.steps.find((step) => step.name === PS.REVIEW);
-  if (review?.outputs?.verdict !== 'blocked' || review.outputs.recoveryContinuationPending !== true)
+  if (
+    review?.outputs?.verdict !== 'blocked' ||
+    (review.outputs.recoveryContinuationPending !== true && review.outputs.feedbackSent !== true)
+  )
     return undefined;
   return (
     (run.agentContexts ?? []).find(
@@ -402,16 +409,25 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
 
 /** The `blocked` signal a blocked run's monitor stopped on, or null. */
 function blockedMonitorSignal(run: Pick<Run, 'status' | 'steps'>): Record<string, unknown> | null {
-  const monitor = run.steps.find((step) => step.name === PS.MONITOR);
-  const previous = monitor?.outputs?.workerSignal;
-  const previousSignal =
-    previous && typeof previous === 'object' ? (previous as Record<string, unknown>) : null;
-  return run.status === 'blocked' &&
-    monitor?.status === 'done' &&
-    previousSignal?.status === 'blocked'
-    ? previousSignal
+  const monitor = blockedWorkerRecoveryStep(run);
+  const signal = monitor?.outputs?.workerSignal;
+  return monitor?.name === PS.MONITOR && signal && typeof signal === 'object'
+    ? (signal as Record<string, unknown>)
     : null;
 }
+
+function blockedWorkerSignal(
+  run: Pick<Run, 'status' | 'steps'>,
+  context?: Pick<AgentContext, 'id' | 'role'> | null,
+): Record<string, unknown> | null {
+  const review = blockedWorkerRecoveryStep(run);
+  if (review?.name !== PS.REVIEW) return blockedMonitorSignal(run);
+  // A primary completion must never stand in for the held fix's signal.
+  return context?.role === 'review-fix' ? { timestamp: review.completedAt } : null;
+}
+
+type BlockedWorkerContext = Pick<AgentContext, 'id' | 'role'> &
+  Partial<Pick<AgentContext, 'status' | 'signalAttemptId'>>;
 
 function signalNewerThan(signal: WorkerSignal, previousSignal: Record<string, unknown>): boolean {
   const signalAt = parseStrictIsoMs(signal.timestamp);
@@ -421,18 +437,23 @@ function signalNewerThan(signal: WorkerSignal, previousSignal: Record<string, un
   return signalAt !== null && previousAt !== null && signalAt > previousAt;
 }
 
-export function freshBlockedMonitorAttempt(
+export function freshBlockedWorkerAttempt(
   run: Pick<Run, 'status' | 'steps'>,
   probe: RunProbeWorkerSignalResult,
-  context?: Pick<AgentContext, 'id' | 'role'> | null,
+  context?: BlockedWorkerContext | null,
   options: Pick<RunReplayStepHooks, 'acceptRunningBlockedAttempt'> = {},
 ): WorkerSignal | null {
-  const previousSignal = blockedMonitorSignal(run);
+  const previousSignal = blockedWorkerSignal(run, context);
   const signal = probe.signal;
   if (
     !previousSignal ||
     !signal ||
     !signal.attemptId ||
+    // A still-blocked fix is recoverable only after its own reopened attempt
+    // finishes. A running attempt is first adopted by the context watcher.
+    (blockedWorkerRecoveryStep(run)?.name === PS.REVIEW &&
+      context?.status === 'blocked' &&
+      (signal.status === 'running' || signal.attemptId === context.signalAttemptId)) ||
     // The same attempt counts when it finished: a worker that marked blocked
     // and later completed without `./mark start` (ledger F44). The automatic
     // resume also accepts it running again (TAT-4034).
@@ -455,9 +476,9 @@ export function freshBlockedMonitorAttempt(
 export function blockedRunWorkerRunningAgain(
   run: Pick<Run, 'status' | 'steps'>,
   probe: RunProbeWorkerSignalResult,
-  context?: Pick<AgentContext, 'id' | 'role'> | null,
+  context?: BlockedWorkerContext | null,
 ): WorkerSignal | null {
-  const signal = freshBlockedMonitorAttempt(run, probe, context, {
+  const signal = freshBlockedWorkerAttempt(run, probe, context, {
     acceptRunningBlockedAttempt: true,
   });
   return signal?.status === 'running' ? signal : null;
@@ -467,11 +488,18 @@ export function blockedRunWorkerRunningAgain(
  * The agent context whose SIGNAL.json a blocked run's monitor reads: the
  * monitor's own selection, so resume never accepts a signal it won't consume.
  */
-export function blockedMonitorContext(run: Run): AgentContext | null {
-  return selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+export function blockedWorkerContext(run: Run): AgentContext | null {
+  return selectAgentContext(run, {
+    role:
+      blockedWorkerRecoveryStep(run)?.name === PS.REVIEW
+        ? 'review-fix'
+        : primaryRoleForFlow(run.flowType),
+  });
 }
 
 export interface BlockedRunResumeCheck {
+  /** The existing engine step that consumes this worker role. */
+  stepName?: 'monitor' | 'review';
   /** The later signal that lets the run resume monitoring, or null. */
   signal: WorkerSignal | null;
   /** What reading SIGNAL.json returned, for a refusal to name. */
@@ -484,21 +512,27 @@ export interface BlockedRunResumeCheck {
  * `run.probeWorkerSignal` reports it as `resumable` for sweeps.
  */
 export async function blockedRunResumableSignal(run: Run): Promise<BlockedRunResumeCheck> {
-  const context = blockedMonitorContext(run);
+  const context = blockedWorkerContext(run);
   const probe = await probeWorkerSignalForRun(run.id, run.slotId, context);
-  return { signal: freshBlockedMonitorAttempt(run, probe, context), probe };
+  return {
+    signal: freshBlockedWorkerAttempt(run, probe, context, {
+      acceptRunningBlockedAttempt: blockedWorkerRecoveryStep(run)?.name === PS.REVIEW,
+    }),
+    probe,
+    stepName: blockedWorkerRecoveryStep(run)?.name === PS.REVIEW ? PS.REVIEW : PS.MONITOR,
+  };
 }
 
 export interface BlockedWorkerContinuedDependencies {
   /** The blocked run's worker signal when it is running again, or null. */
   runningWorkerSignal(run: Run): Promise<WorkerSignal | null>;
   /** Replay the monitor; returns the run as the replay left it. */
-  replayMonitor(runId: string): Promise<Run>;
+  replayWorkerStep(runId: string, stepName: 'monitor' | 'review'): Promise<Run>;
 }
 
 const DEFAULT_BLOCKED_WORKER_CONTINUED_DEPS: BlockedWorkerContinuedDependencies = {
   runningWorkerSignal: async (run) => {
-    const context = blockedMonitorContext(run);
+    const context = blockedWorkerContext(run);
     return blockedRunWorkerRunningAgain(
       run,
       await probeWorkerSignalForRun(run.id, run.slotId, context),
@@ -512,9 +546,9 @@ const DEFAULT_BLOCKED_WORKER_CONTINUED_DEPS: BlockedWorkerContinuedDependencies 
   // resume (the watcher's classifier is not consulted), so a resume still
   // happens once the budget is spent, and each one can leave a later monitor
   // failure unrepaired, skipped as `max_attempts_per_step`.
-  replayMonitor: async (runId) =>
+  replayWorkerStep: async (runId, stepName) =>
     (
-      await runReplayStep({ runId, stepName: PS.MONITOR, triggeredBy: 'auto-recovery' }, () => {}, {
+      await runReplayStep({ runId, stepName, triggeredBy: 'auto-recovery' }, () => {}, {
         acceptRunningBlockedAttempt: true,
       })
     ).run,
@@ -549,7 +583,7 @@ export async function resumeBlockedRunWhoseWorkerContinued(
       // reset the slot under the resumed worker; until then a later signal
       // retries.
       !isTerminalTeardownInFlight(run.slotId) &&
-      blockedMonitorSignal(run)
+      blockedWorkerSignal(run, blockedWorkerContext(run))
       ? run
       : null;
   };
@@ -558,7 +592,8 @@ export async function resumeBlockedRunWhoseWorkerContinued(
     const run = waiting();
     const signal = run ? await deps.runningWorkerSignal(run) : null;
     if (!run || !signal?.attemptId || !waiting()) return null;
-    const blockedAttemptId = blockedMonitorSignal(run)?.attemptId ?? null;
+    const blockedAttemptId = blockedWorkerSignal(run, blockedWorkerContext(run))?.attemptId ?? null;
+    const stepName = blockedWorkerRecoveryStep(run)?.name === PS.REVIEW ? PS.REVIEW : PS.MONITOR;
     const id = runId.slice(0, 8);
     // The block's cleanup resets a slot its run owns. The worker running again
     // proves the workspace is still this run's, so a slot left free is re-bound
@@ -581,10 +616,10 @@ export async function resumeBlockedRunWhoseWorkerContinued(
     }
     let replayed: Run;
     try {
-      replayed = await deps.replayMonitor(runId);
+      replayed = await deps.replayWorkerStep(runId, stepName);
     } catch (error) {
       console.warn(
-        `[run] blocked run ${id}: worker attempt ${signal.attemptId} is running again at step ${signal.step ?? '?'}, but the monitor replay was refused: ${(error as Error).message}`,
+        `[run] blocked run ${id}: worker attempt ${signal.attemptId} is running again at step ${signal.step ?? '?'}, but the ${stepName} replay was refused: ${(error as Error).message}`,
       );
       return null;
     }
@@ -600,6 +635,7 @@ export async function resumeBlockedRunWhoseWorkerContinued(
               blockedAttemptId,
               attemptId: signal.attemptId,
               step: signal.step ?? null,
+              ...(stepName === PS.REVIEW ? { pipelineStep: stepName, role: 'review-fix' } : {}),
               at: new Date().toISOString(),
             },
           ],
@@ -607,7 +643,7 @@ export async function resumeBlockedRunWhoseWorkerContinued(
       });
     }
     console.log(
-      `[run] blocked run ${id}: worker resumed after blocked at step ${signal.step ?? '?'} (attempt ${blockedAttemptId} -> ${signal.attemptId}); monitor re-attached`,
+      `[run] blocked run ${id}: worker resumed after blocked at step ${signal.step ?? '?'} (attempt ${blockedAttemptId} -> ${signal.attemptId}); ${stepName} re-attached`,
     );
     const current = getRun(runId) ?? replayed;
     emit(Events.RUN_UPDATED, { run: current });
@@ -908,9 +944,9 @@ export async function runReplayStep(
   emit: Emit,
   hooks: RunReplayStepHooks = {},
 ): Promise<RunReplayStepResult> {
-  // Cancelled replay and demand reclamation must admit exactly one owner before
-  // either path awaits cleanup or revives a worker. Blocked-resume callers already
-  // hold their transition and do not enter this cancelled-only bracket.
+  // Cancelled replay serializes demand reclamation before any cleanup. Other
+  // terminal replays protect only claim-to-revive below, so preflight remains
+  // interruptible by force-complete. Blocked resume already holds its transition.
   if (getRun(params.runId)?.status === 'cancelled')
     return withRunTransition(params.runId, () => replayRunStepCoalesced(params, emit, hooks, true));
   return replayRunStepCoalesced(params, emit, hooks);
@@ -1160,12 +1196,14 @@ async function replayRunStep(
     }
   }
   const probeBlockedMonitor = needsBlockedAttempt && replayStepName === PS.MONITOR;
-  const monitorContext = probeBlockedMonitor ? blockedMonitorContext(existing) : null;
+  const monitorContext = probeBlockedMonitor
+    ? selectAgentContext(existing, { role: primaryRoleForFlow(existing.flowType) })
+    : null;
   const probe = probeBlockedMonitor
     ? await probeWorkerSignalForRun(existing.id, existing.slotId, monitorContext)
     : null;
   const blockedAttempt = probe
-    ? freshBlockedMonitorAttempt(existing, probe, monitorContext, hooks)
+    ? freshBlockedWorkerAttempt(existing, probe, monitorContext, hooks)
     : null;
   if (
     replayStepName !== PS.FIND_SLOT &&
@@ -1331,6 +1369,7 @@ async function replayRunStep(
 
   let reclaimedSlotId: string | null = null;
   let reclaimedSlotEpoch: number | null = null;
+  let releaseClaimTransition: (() => Promise<void>) | undefined;
   let priorOwnedSlotFields: Record<string, unknown> | null = null;
   const priorRunSlotId = existing.slotId ?? null;
   const selectionGeneration = existing.engineState?.generation;
@@ -1413,7 +1452,14 @@ async function replayRunStep(
           const release = await slotRelease(
             { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
             () => {},
-            rollbackReclaimedSlotReleaseOptions(existing.status, params.runId, reclaimedSlotEpoch),
+            {
+              ...rollbackReclaimedSlotReleaseOptions(
+                existing.status,
+                params.runId,
+                reclaimedSlotEpoch,
+              ),
+              machineTransitionHeld,
+            },
           );
           if (!release.released) {
             const current = await readSlotRow(reclaimedSlotId);
@@ -1609,6 +1655,10 @@ async function replayRunStep(
     } else {
       const replaySlotId = recoverReplaySlotId(replaySnapshot, targetIdx, findSlotIdx, prepareIdx);
       if (replaySlotId) {
+        if (!machineTransitionHeld && isTerminalRunStatus(existing.status)) {
+          releaseClaimTransition = await acquireRunTransition(params.runId);
+          machineTransitionHeld = true;
+        }
         // Re-claim only when the slot is free or still owned by this run. A released run
         // can keep stale agentContext.slotId history after its slot is reassigned; blindly
         // writing slot status here would steal that physical worker from the new run.
@@ -1917,7 +1967,10 @@ async function replayRunStep(
             assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
             assertNativeReplayCurrent();
             if (preserveReviewFix) {
-              await syncChecklistTargetForRole(vars, taskDirRel, 'review-fix');
+              await syncChecklistTargetForRole(vars, taskDirRel, 'review-fix', {
+                ciBaseRef: selectAgentContext(runForReviewFix, { role: 'review-fix' })
+                  ?.deliveryBaselineRef,
+              });
             } else {
               await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel, {
                 flowType: existing.flowType,
@@ -2219,6 +2272,12 @@ async function replayRunStep(
     // launchAttempt differs (N vs N+1 requeue).
     await persistRunNow(getRun(params.runId)!, 'replay-revive');
     revived = true;
+    if (releaseClaimTransition) {
+      const release = releaseClaimTransition;
+      releaseClaimTransition = undefined;
+      await release();
+      machineTransitionHeld = false;
+    }
     if (gateReentry) gateReentry.revived = true;
     const lockToDrop = softLock;
     if (lockToDrop) {
@@ -2278,5 +2337,7 @@ async function replayRunStep(
       }
     }
     throw err;
+  } finally {
+    await releaseClaimTransition?.();
   }
 }

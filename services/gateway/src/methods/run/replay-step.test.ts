@@ -46,7 +46,7 @@ import {
   blockedMonitorProofReady,
   blockedReviewFixTaskFile,
   canAdoptTaskSignalAfterUncertainDispatch,
-  freshBlockedMonitorAttempt,
+  freshBlockedWorkerAttempt,
   freshDispatchEngineStateForReplay,
   normalizeReplayPrerequisites,
   readAdoptableTaskSignal,
@@ -224,11 +224,11 @@ test('blocked monitor replay binds a fresh completed attempt before monitoring r
   } as const;
   const context = { id: 'worker', role: 'fix-bug' } as const;
   assert.equal(
-    freshBlockedMonitorAttempt(run, { ok: false, code: 'stale', message: '', signal }, context),
+    freshBlockedWorkerAttempt(run, { ok: false, code: 'stale', message: '', signal }, context),
     null,
   );
   assert.equal(
-    freshBlockedMonitorAttempt(
+    freshBlockedWorkerAttempt(
       run,
       { ok: true, code: 'ready', message: '', signal: { ...signal, attemptId: undefined } },
       context,
@@ -236,7 +236,7 @@ test('blocked monitor replay binds a fresh completed attempt before monitoring r
     null,
   );
   assert.equal(
-    freshBlockedMonitorAttempt(
+    freshBlockedWorkerAttempt(
       run,
       { ok: false, code: 'stale', message: '', signal: { ...signal, contextId: 'other' } },
       context,
@@ -244,7 +244,7 @@ test('blocked monitor replay binds a fresh completed attempt before monitoring r
     null,
   );
   assert.equal(
-    freshBlockedMonitorAttempt(
+    freshBlockedWorkerAttempt(
       run,
       {
         ok: false,
@@ -268,7 +268,7 @@ test('blocked monitor replay accepts the blocked attempt completing later withou
   };
   const context = { id: 'worker', role: 'fix-bug' } as const;
   const probe = (signal: Record<string, unknown>) =>
-    freshBlockedMonitorAttempt(
+    freshBlockedWorkerAttempt(
       run,
       { ok: true, code: 'ready', message: '', signal: signal as never },
       context,
@@ -3791,6 +3791,16 @@ test('a review replay keeps the fix pass its worker blocked', () => {
   };
   const run: Run = { ...makeRun({ status: 'blocked', steps }), agentContexts: [fix] };
   assert.equal(blockedReviewFixTaskFile(run), fix.taskFile);
+  assert.equal(
+    blockedReviewFixTaskFile({
+      ...run,
+      steps: [
+        { name: 'review', status: 'done', outputs: { verdict: 'blocked', feedbackSent: true } },
+      ],
+    }),
+    fix.taskFile,
+    'TAT-4206 retained a blocked fix without the continuation flag',
+  );
   const delivered = run.steps.map((step) =>
     step.name === 'review'
       ? { ...step, outputs: { ...step.outputs, recoveryContinuationPending: false } }

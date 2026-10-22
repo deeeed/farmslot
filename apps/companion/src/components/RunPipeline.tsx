@@ -15,6 +15,7 @@ import {
   type RunStep,
   runStepDisplayDetail,
   type RunStepDisplayStatus,
+  type TaskProgressStructured,
 } from '@farmslot/protocol';
 import {
   recoveredReviewFailureColor,
@@ -23,7 +24,10 @@ import {
   runRecoveredReviewFailures,
 } from '@farmslot/review-dispatch';
 
+import { useRunChecklistProgress } from '../hooks/useRunChecklistProgress';
 import { colors, fonts, spacing } from '../lib/theme';
+
+import { RunChecklistProgress } from './RunChecklistProgress';
 
 function stepColor(status: RunStepDisplayStatus): string {
   if (status === 'done') return colors.statusOk;
@@ -70,6 +74,7 @@ function usePipelineClock(running: boolean) {
 
 export function RunPipelineMini({ run }: { run: Run }) {
   const { steps, status: runStatus } = run;
+  const checklist = useRunChecklistProgress(run);
   const activity = runActivityView(run);
   usePipelineClock(Boolean(activity));
   const isCancelled = runStatus === 'cancelled';
@@ -107,51 +112,54 @@ export function RunPipelineMini({ run }: { run: Run }) {
             : ''));
 
   return (
-    <View style={miniStyles.container}>
-      <View style={miniStyles.bars}>
-        {visible.map((step, i) => {
-          const vis = eff(step);
-          const reason = reasons.get(step.name);
-          return (
-            <Pressable
-              accessibilityLabel={reason ?? step.name}
-              accessibilityHint={reason}
-              disabled={!reason}
-              hitSlop={20}
-              onPress={() => reason && Alert.alert('Review attempt recovered', reason)}
-              key={`${step.name}-${i}`}
-              style={[
-                miniStyles.segment,
-                { backgroundColor: reason ? recoveredReviewFailureColor : stepColor(vis) },
-                vis === 'pending' && miniStyles.segmentPending,
-                vis === 'done' && miniStyles.segmentDone,
-                vis === 'skipped' && miniStyles.segmentPending,
-              ]}
-            />
-          );
-        })}
-      </View>
-      <View style={miniStyles.summary}>
-        <Text
-          style={[
-            miniStyles.label,
-            allDone && { color: colors.statusOk },
-            // A held run's failed step is what it waits on a person for, not a failure.
-            hasFailed && runStatus !== 'needs-decision' && { color: colors.statusFail },
-            blocked && { color: colors.statusWarn },
-            isCancelled && { color: colors.statusFail },
-          ]}
-          numberOfLines={1}
-        >
-          {label}
-        </Text>
-        {/* A blocked run's label already carries its reason. */}
-        {!activity && !allDone && !isCancelled && detail && !label.includes(detail) ? (
-          <Text style={miniStyles.detail} numberOfLines={2}>
-            {detail}
+    <View>
+      <View style={miniStyles.container}>
+        <View style={miniStyles.bars}>
+          {visible.map((step, i) => {
+            const vis = eff(step);
+            const reason = reasons.get(step.name);
+            return (
+              <Pressable
+                accessibilityLabel={reason ?? step.name}
+                accessibilityHint={reason}
+                disabled={!reason}
+                hitSlop={20}
+                onPress={() => reason && Alert.alert('Review attempt recovered', reason)}
+                key={`${step.name}-${i}`}
+                style={[
+                  miniStyles.segment,
+                  { backgroundColor: reason ? recoveredReviewFailureColor : stepColor(vis) },
+                  vis === 'pending' && miniStyles.segmentPending,
+                  vis === 'done' && miniStyles.segmentDone,
+                  vis === 'skipped' && miniStyles.segmentPending,
+                ]}
+              />
+            );
+          })}
+        </View>
+        <View style={miniStyles.summary}>
+          <Text
+            style={[
+              miniStyles.label,
+              allDone && { color: colors.statusOk },
+              // A held run's failed step is what it waits on a person for, not a failure.
+              hasFailed && runStatus !== 'needs-decision' && { color: colors.statusFail },
+              blocked && { color: colors.statusWarn },
+              isCancelled && { color: colors.statusFail },
+            ]}
+            numberOfLines={1}
+          >
+            {label}
           </Text>
-        ) : null}
+          {/* A blocked run's label already carries its reason. */}
+          {!activity && !allDone && !isCancelled && detail && !label.includes(detail) ? (
+            <Text style={miniStyles.detail} numberOfLines={2}>
+              {detail}
+            </Text>
+          ) : null}
+        </View>
       </View>
+      <RunChecklistProgress run={run} progress={checklist?.progress} error={checklist?.error} />
     </View>
   );
 }
@@ -159,8 +167,10 @@ export function RunPipelineMini({ run }: { run: Run }) {
 export function RunPipelineFull({
   run,
   onStepPress,
+  taskProgress,
 }: {
   run: Run;
+  taskProgress?: TaskProgressStructured | null;
   onStepPress?: (stepName: string, index: number) => void;
 }) {
   const { steps } = run;
@@ -172,76 +182,81 @@ export function RunPipelineFull({
   const eff = (s: RunStep) => runActivityStepStatus(run, s);
 
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={fullStyles.scrollContent}
-    >
-      {visible.map((step, i) => {
-        const vis = eff(step);
-        const color = stepColor(vis);
-        const prevDone = i > 0 && eff(visible[i - 1]) === 'done';
-        const ownerName = step.name === activity?.nodeId ? activity.ownerStepName : step.name;
-        return (
-          <React.Fragment key={`${step.name}-${i}`}>
-            {i > 0 && (
-              <View style={fullStyles.connectorWrap}>
+    <View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={fullStyles.scrollContent}
+      >
+        {visible.map((step, i) => {
+          const vis = eff(step);
+          const color = stepColor(vis);
+          const prevDone = i > 0 && eff(visible[i - 1]) === 'done';
+          const ownerName = step.name === activity?.nodeId ? activity.ownerStepName : step.name;
+          return (
+            <React.Fragment key={`${step.name}-${i}`}>
+              {i > 0 && (
+                <View style={fullStyles.connectorWrap}>
+                  <View
+                    style={[
+                      fullStyles.connector,
+                      {
+                        backgroundColor: prevDone
+                          ? colors.statusOk + '66'
+                          : colors.textMuted + '33',
+                      },
+                    ]}
+                  />
+                </View>
+              )}
+              <Pressable
+                style={fullStyles.stepColumn}
+                accessibilityLabel={step.name === activity?.nodeId ? activity.label : step.name}
+                onPress={
+                  onStepPress
+                    ? () =>
+                        onStepPress(
+                          ownerName,
+                          steps.findIndex((owner) => owner.name === ownerName),
+                        )
+                    : undefined
+                }
+              >
                 <View
                   style={[
-                    fullStyles.connector,
-                    {
-                      backgroundColor: prevDone ? colors.statusOk + '66' : colors.textMuted + '33',
-                    },
+                    fullStyles.dot,
+                    { backgroundColor: color },
+                    (vis === 'pending' || vis === 'skipped') && fullStyles.dotPending,
+                    vis === 'running' && fullStyles.dotRunning,
                   ]}
-                />
-              </View>
-            )}
-            <Pressable
-              style={fullStyles.stepColumn}
-              accessibilityLabel={step.name === activity?.nodeId ? activity.label : step.name}
-              onPress={
-                onStepPress
-                  ? () =>
-                      onStepPress(
-                        ownerName,
-                        steps.findIndex((owner) => owner.name === ownerName),
-                      )
-                  : undefined
-              }
-            >
-              <View
-                style={[
-                  fullStyles.dot,
-                  { backgroundColor: color },
-                  (vis === 'pending' || vis === 'skipped') && fullStyles.dotPending,
-                  vis === 'running' && fullStyles.dotRunning,
-                ]}
-              >
-                {vis === 'running' ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={fullStyles.dotIcon}>{stepDotIcon(vis)}</Text>
-                )}
-              </View>
-              <Text
-                style={[
-                  fullStyles.stepName,
-                  { color: vis === 'pending' || vis === 'skipped' ? colors.textMuted : color },
-                ]}
-                numberOfLines={1}
-              >
-                {step.name === activity?.nodeId ? activity.nodeLabel : shortName(step.name)}
-              </Text>
-              {stepDuration(step) ? (
-                <Text style={[fullStyles.duration, vis === 'running' && { color: '#3b82f6' }]}>
-                  {stepDuration(step)}
+                >
+                  {vis === 'running' ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={fullStyles.dotIcon}>{stepDotIcon(vis)}</Text>
+                  )}
+                </View>
+                <Text
+                  style={[
+                    fullStyles.stepName,
+                    { color: vis === 'pending' || vis === 'skipped' ? colors.textMuted : color },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {step.name === activity?.nodeId ? activity.nodeLabel : shortName(step.name)}
                 </Text>
-              ) : null}
-            </Pressable>
-          </React.Fragment>
-        );
-      })}
-    </ScrollView>
+                {stepDuration(step) ? (
+                  <Text style={[fullStyles.duration, vis === 'running' && { color: '#3b82f6' }]}>
+                    {stepDuration(step)}
+                  </Text>
+                ) : null}
+              </Pressable>
+            </React.Fragment>
+          );
+        })}
+      </ScrollView>
+      <RunChecklistProgress run={run} progress={taskProgress} />
+    </View>
   );
 }
 

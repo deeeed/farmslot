@@ -274,6 +274,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.getGrade`                          | admin          |                                                                                    |
 | `run.grade`                             | admin          |                                                                                    |
 | `run.interactiveDev.resolve`            | admin          |                                                                                    |
+| `run.linkedTickets.set`                 | admin          |                                                                                    |
 | `run.list`                              | operator       |                                                                                    |
 | `run.overrideClaim`                     | admin          |                                                                                    |
 | `run.pause`                             | admin          |                                                                                    |

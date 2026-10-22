@@ -1118,6 +1118,10 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "run.linkedTickets.set": {
+      "surface": "rpc-only",
+      "note": "Operator-added Jira metadata; use the existing farmslot rpc entry."
+    },
     "run.tags.set": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
