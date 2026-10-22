@@ -137,12 +137,9 @@ export class JsonLineProcess {
       }
       if (Buffer.byteLength(line) > NATIVE_EVENT_LIMIT) {
         message = withoutBase64Payloads(message) as Record<string, unknown>;
-        if (Buffer.byteLength(JSON.stringify(message)) > NATIVE_EVENT_LIMIT) {
-          this.fail(new Error('Native runner event exceeds 1 MiB'));
-          this.beginStop();
-          return;
-        }
       }
+      // Adapters need complete control messages and schema-bound results.
+      // The session recorder bounds diagnostic payloads after interpreting them.
       try {
         onMessage(message);
       } catch (error) {

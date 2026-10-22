@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.38.1 - 2026-10-23
+
+- Keep native review sessions alive after oversized runner events. Compact recorded diagnostic payloads while preserving protocol control messages and schema-bound results.
+
 ## 0.38.0 - 2026-10-23
 
 - Align with `@farmslot/protocol` 0.65.0.
