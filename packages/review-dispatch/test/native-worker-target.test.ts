@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { type AgentContext, primaryRoleForFlow } from '@farmslot/protocol';
+import { type AgentContext, Methods, primaryRoleForFlow } from '@farmslot/protocol';
 
 import {
+  listSlotTmuxWindows,
   nativeRunConversationParams,
   nativeWorkerTabs,
   nativeWorkerTargets,
   nativeWorkerViewControl,
   selectedNativeWorkerTarget,
   slotSessionView,
+  slotTmuxWindowTarget,
 } from '../src/native-worker-target.js';
 
 const context = (id: string, role: AgentContext['role']): AgentContext => ({
@@ -137,4 +139,27 @@ test('an explicit tmux window replaces native primary and fix-bug conversations'
     assert.equal(tmux.bareSession, true);
     assert.equal(tmux.unavailable, false);
   }
+});
+
+test('the window-list consumer uses a bare slot RPC target before any native-primary window click', async () => {
+  const worker = context('worker', 'primary');
+  const selected = slotSessionView([worker], {
+    slotId: 'slot-k',
+    contextId: worker.id,
+    tmux: false,
+  });
+  assert.equal(selected.target?.contextId, worker.id);
+  assert.equal(selected.bareSession, false);
+  let requests = 0;
+  await listSlotTmuxWindows('slot-k', async (method, params) => {
+    requests++;
+    assert.equal(method, Methods.TMUX_LIST);
+    assert.deepEqual(params, { slotId: 'slot-k', bareSession: true });
+    return { windows: [] };
+  });
+  assert.equal(requests, 1);
+  assert.deepEqual(
+    { ...slotTmuxWindowTarget('slot-k'), index: 2 },
+    { slotId: 'slot-k', bareSession: true, index: 2 },
+  );
 });

@@ -8,9 +8,14 @@ import type {
   TerminalData,
   TerminalExitedPayload,
   TerminalModePayload,
+  TmuxListResult,
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
-import { nativeWorkerAttemptKey } from '@farmslot/review-dispatch';
+import {
+  listSlotTmuxWindows,
+  nativeWorkerAttemptKey,
+  slotTmuxWindowTarget,
+} from '@farmslot/review-dispatch';
 
 import '../progress-tracker/progress-tracker.js';
 import '../chat/native-session-view.js';
@@ -990,7 +995,11 @@ export class TerminalView extends TerminalViewState {
 
   private async _tmuxAction(method: string, params: Record<string, unknown> = {}) {
     try {
-      await gateway.request(method, { ...this._targetParams(), ...params });
+      const target =
+        method === Methods.TMUX_SELECT_WINDOW
+          ? slotTmuxWindowTarget(this.slotId)
+          : this._targetParams();
+      await gateway.request(method, { ...target, ...params });
       // Refresh tmux state after action
       this._refreshTmuxList({ force: true });
     } catch (err) {
@@ -1005,20 +1014,9 @@ export class TerminalView extends TerminalViewState {
     if (!opts.force && Date.now() < this._tmuxListBackoffUntil) return;
     this._tmuxListInFlight = true;
     try {
-      const result = await gateway.request<{
-        windows: Array<{
-          index: number;
-          name: string;
-          active: boolean;
-          panes: Array<{
-            index: number;
-            active: boolean;
-            width: number;
-            height: number;
-            title: string;
-          }>;
-        }>;
-      }>(Methods.TMUX_LIST, this._targetParams());
+      const result = await listSlotTmuxWindows(this.slotId, (method, params) =>
+        gateway.request<TmuxListResult>(method, params),
+      );
       this._tmuxWindows = result.windows;
       this._tmuxListBackoffUntil = 0;
     } catch (err) {

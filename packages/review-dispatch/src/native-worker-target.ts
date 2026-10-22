@@ -1,11 +1,14 @@
-import type {
-  AgentContext,
-  AgentContextSummary,
-  NativeSessionInfo,
-  NativeSessionReadResult,
-  NativeWorkerControlTarget,
-  NativeWorkerSessionBinding,
-  Run,
+import {
+  type AgentContext,
+  type AgentContextSummary,
+  Methods,
+  type NativeSessionInfo,
+  type NativeSessionReadResult,
+  type NativeWorkerControlTarget,
+  type NativeWorkerSessionBinding,
+  type Run,
+  type TmuxListParams,
+  type TmuxListResult,
 } from '@farmslot/protocol';
 
 export interface NativeWorkerViewTarget {
@@ -251,4 +254,21 @@ export function slotSessionView(
     unavailable:
       !selection.tmux && !target && Boolean(context?.nativeSession || context?.nativeSessionOwner),
   };
+}
+
+/** Slot window peers belong to tmux, independently of the selected native actor. */
+export function slotTmuxWindowTarget(slotId: string): TmuxListParams {
+  return { slotId, bareSession: true };
+}
+
+export type SlotTmuxListRequest = (
+  method: typeof Methods.TMUX_LIST,
+  params: TmuxListParams,
+) => Promise<TmuxListResult>;
+
+export function listSlotTmuxWindows(
+  slotId: string,
+  request: SlotTmuxListRequest,
+): Promise<TmuxListResult> {
+  return request(Methods.TMUX_LIST, slotTmuxWindowTarget(slotId));
 }

@@ -74,6 +74,7 @@ Command Center and Companion use `nativeWorkerTargets`, `nativeWorkerTabs`, `slo
 `runReviewerView` for native terminal tabs and the gate's reviewer link. The gateway
 remains authoritative for the pinned session's lease, generation and input owner.
 `nativeWorkerBinding` projects the same binding for Command Center's lightweight slot summaries.
+Both terminal views use `listSlotTmuxWindows` and `slotTmuxWindowTarget` to discover and select peers without a native actor target.
 
 `reviewHistoryView` returns chronological review, fix and gate events from saved
 attempts, contexts and structured artifacts. Each platform renders one history

@@ -44,6 +44,7 @@ import {
   type TmuxListResult,
   type TmuxWindow,
 } from '@farmslot/protocol';
+import { listSlotTmuxWindows, slotTmuxWindowTarget } from '@farmslot/review-dispatch';
 
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
@@ -755,24 +756,28 @@ export default function TerminalScreen() {
   );
 
   const refreshTmuxWindows = useCallback(async () => {
-    const target = terminalTargetParamsRef.current;
-    if (!client || !target?.slotId || connectionStatus !== 'connected') {
+    if (!client || !slotId || connectionStatus !== 'connected') {
       setTmuxWindows([]);
       return;
     }
     try {
-      const result = await client.request<TmuxListResult>(Methods.TMUX_LIST, target);
+      const result = await listSlotTmuxWindows(slotId, (method, params) =>
+        client.request<TmuxListResult>(method, params),
+      );
       setTmuxWindows(result.windows);
       setTmuxError(null);
     } catch (error) {
       setTmuxWindows([]);
       setTmuxError(`Tmux state failed: ${getErrorMessage(error)}`);
     }
-  }, [client, connectionStatus]);
+  }, [client, connectionStatus, slotId]);
 
   const runTmuxAction = useCallback(
     async (label: string, method: MobileTmuxActionMethod, params: Record<string, unknown> = {}) => {
-      const target = terminalTargetParamsRef.current;
+      const target =
+        method === Methods.TMUX_SELECT_WINDOW
+          ? slotTmuxWindowTarget(slotId)
+          : terminalTargetParamsRef.current;
       if (!client || !target?.slotId || connectionStatus !== 'connected' || activeTmuxAction)
         return;
       setActiveTmuxAction(label);
@@ -790,7 +795,7 @@ export default function TerminalScreen() {
         setActiveTmuxAction(null);
       }
     },
-    [activeTmuxAction, client, connectionStatus, refreshTmuxWindows],
+    [activeTmuxAction, client, connectionStatus, refreshTmuxWindows, slotId],
   );
 
   useEffect(() => {
