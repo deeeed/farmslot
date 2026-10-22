@@ -22,7 +22,12 @@ export async function nativeSessionRoute(
   actingPrincipal: Principal,
 ): Promise<unknown> {
   const originator = currentSessionOriginator();
-  if (originator.kind !== 'principal' || actingPrincipal.id !== originator.principalId)
+  if (originator.kind !== 'principal')
+    throw new GatewayMethodError(
+      'AUTH_FORBIDDEN',
+      'Native workspace requires an authenticated owner',
+    );
+  if (actingPrincipal.id !== originator.principalId)
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
       'Native caller authority does not match its owner',
