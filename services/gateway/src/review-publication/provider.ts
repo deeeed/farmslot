@@ -33,6 +33,8 @@ export interface PublishWorkspaceReviewInput {
   /** Read and durably update the receipt before any provider mutation. */
   readReceipt: () => Promise<ReviewPublicationReceipt | undefined>;
   saveReceipt: (receipt: ReviewPublicationReceipt) => Promise<void>;
+  /** Explicit RPC retries may adopt a verified manual post; background sweeps never do. */
+  reconcileExisting?: boolean;
 }
 
 export class ReviewPublicationInProgressError extends Error {
@@ -62,7 +64,11 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
   assertMonitoredPRIdentity(pr);
   if (pr.host !== 'github.com' || account.host.toLowerCase() !== pr.host)
     throw new Error('Review publication requires a matching supported GitHub account');
-  if (run.flowType !== 'review-pr' || run.status !== 'done' || !run.reviewWorkspaceSubject)
+  if (
+    run.flowType !== 'review-pr' ||
+    (!input.reconcileExisting && run.status !== 'done') ||
+    !run.reviewWorkspaceSubject
+  )
     throw new Error('Only a completed workspace static review can be published');
   const owners = [
     run.createdByPrincipalId,
@@ -90,7 +96,11 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
   if (!/^[a-f0-9]{40}$/.test(subject.headSha))
     throw new Error('Review head is not an exact commit');
   const recommendation = result.recommendation;
-  if (!['APPROVE', 'REQUEST_CHANGES', 'COMMENT'].includes(recommendation))
+  if (
+    recommendation !== 'APPROVE' &&
+    recommendation !== 'REQUEST_CHANGES' &&
+    recommendation !== 'COMMENT'
+  )
     throw new Error('Review recommendation is unsupported');
   const comments = result.lineComments.map((comment) => {
     if (
@@ -132,7 +142,15 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     JSON.parse(
       (
         await ghRequest(
-          ['api', '--hostname', pr.host, `${endpoint}${suffix}`, '--method', 'GET', ...extra],
+          [
+            'api',
+            '--hostname',
+            pr.host,
+            suffix.startsWith('repos/') ? suffix : `${endpoint}${suffix}`,
+            '--method',
+            'GET',
+            ...extra,
+          ],
           { account: binding, force: true },
         )
       ).stdout,
@@ -197,12 +215,86 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     return { ...published, viewedFiles };
   };
   if (matches.length) {
+    if (!prior && input.reconcileExisting) {
+      const review = matches[0];
+      const report = result.reviewMd.trim();
+      const body = typeof review.body === 'string' ? review.body : '';
+      const plain = `${report}\n\n${marker}`;
+      const notice =
+        body.startsWith(`${report}\n\n`) && body.endsWith(`\n\n${marker}`)
+          ? body.slice(report.length + 2, -(marker.length + 2))
+          : '';
+      const noticeMatch =
+        /^Reviewed head: `([a-f0-9]{40})`\. The PR advanced to `[a-f0-9]{40}` after this review; these findings concern the reviewed head\.$/u.exec(
+          notice,
+        );
+      if (body !== plain && noticeMatch?.[1] !== subject.headSha)
+        throw new Error('Provider review body differs from the gated report');
+      if (typeof review.id !== 'number' || !Number.isSafeInteger(review.id) || review.id <= 0)
+        throw new Error('Provider review identity is invalid');
+      const pages = await get(`/reviews/${review.id}/comments?per_page=100`, [
+        '--paginate',
+        '--slurp',
+      ]);
+      if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page)))
+        throw new Error('Provider inline findings are incomplete');
+      const actual: string[] = [];
+      for (const comment of pages.flat()) {
+        if (
+          !record(comment) ||
+          typeof comment.id !== 'number' ||
+          !Number.isSafeInteger(comment.id) ||
+          comment.id <= 0
+        )
+          throw new Error('Provider inline findings have an invalid identity');
+        // The review-comments collection omits line fields; individual comments retain them.
+        const detail = await get(`repos/${pr.repo}/pulls/comments/${comment.id}`);
+        if (
+          !record(detail) ||
+          detail.pull_request_review_id !== review.id ||
+          detail.original_commit_id !== subject.headSha ||
+          !record(detail.user) ||
+          typeof detail.user.login !== 'string' ||
+          detail.user.login.toLowerCase() !== account.login.toLowerCase()
+        )
+          throw new Error('Provider inline findings do not match the reviewed source/account');
+        actual.push(JSON.stringify([detail.path, detail.original_line, detail.side, detail.body]));
+      }
+      const expected = comments.map((comment) =>
+        JSON.stringify([comment.path, comment.line, comment.side, comment.body]),
+      );
+      if (JSON.stringify(actual.sort()) !== JSON.stringify(expected.sort()))
+        throw new Error('Provider inline findings differ from the gated review');
+      const live = await get('');
+      const event =
+        live.user?.login?.toLowerCase() === account.login.toLowerCase()
+          ? 'COMMENT'
+          : recommendation;
+      await input.authorize();
+      return retain(review, {
+        version: 1,
+        state: 'posting',
+        runId: run.id,
+        ownerId,
+        ...(input.ownerGeneration !== undefined ? { ownerGeneration: input.ownerGeneration } : {}),
+        account: structuredClone(account),
+        pr: structuredClone(pr),
+        headSha: subject.headSha,
+        contentSha256,
+        marker,
+        event,
+        attemptedAt:
+          typeof review.submitted_at === 'string' ? review.submitted_at : new Date().toISOString(),
+        bodySha256: createHash('sha256').update(body).digest('hex'),
+      });
+    }
     if (!prior)
       throw new Error(
         'Provider review exists without a local attempted receipt; inspect publication history',
       );
     return retain(matches[0], prior);
   }
+  if (run.status !== 'done') throw new Error('Review must complete before publication');
   if (prior && prior.state !== 'prepared')
     throw new Error(
       'Publication outcome is uncertain; no duplicate was sent. Retry reconciliation after checking GitHub.',
@@ -216,9 +308,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
   )
     throw new Error('PR is closed, unavailable or changed since the static review');
   const event =
-    live.user?.login?.toLowerCase() === account.login.toLowerCase()
-      ? 'COMMENT'
-      : (recommendation as ReviewPublicationReceipt['event']);
+    live.user?.login?.toLowerCase() === account.login.toLowerCase() ? 'COMMENT' : recommendation;
   const located = locatePublicationComments(
     comments,
     comments.length ? await get('/files?per_page=100', ['--paginate', '--slurp']) : [],

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Completed reviewers without hooks can reach their posting gate through verified native process state. An explicit publication retry can retain a matching manual review receipt without posting again.
 - Read complete files and diffs from frozen review commits by draining Git output before the helper exits.
 
 - Native pipeline re-reviews recover their validated session and reviewed head after gateway restart, before the final publication-review row exists.

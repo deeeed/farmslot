@@ -3,6 +3,7 @@ import path from 'node:path';
 import { execOnSlot } from '../core/exec.js';
 import { resolveTmuxPaneId } from '../core/tmux.js';
 
+import { readClaudeProcessState } from './claude-process-observability.js';
 import { readSlotClockMs } from './observability-clock.js';
 import {
   activeToolFromHooks,
@@ -318,7 +319,18 @@ PY`,
     if (!paneId) return null;
     const paneState = await readRunnerPaneObservabilityState(vars, paneId);
     const sessionId = paneState?.session_id;
-    if (!sessionId) return null;
+    if (!sessionId) {
+      const native = await readClaudeProcessState(vars, target);
+      return native
+        ? {
+            value: native.status === 'busy' ? 'active' : 'idle',
+            source: 'signal',
+            confidence: 'high',
+            observedAt: native.observedAt,
+            sessionId: native.sessionId,
+          }
+        : null;
+    }
     return readClaudeSessionTurnState(vars, paneState, sessionId);
   },
 

@@ -177,10 +177,10 @@ export async function prRulesMethod(method: string, value: unknown): Promise<unk
     if (supervised)
       return {
         receipt: await runWithPrincipalOwner(supervised, () =>
-          rules.publishReview(supervised.ownerId, runId),
+          rules.publishReview(supervised.ownerId, runId, true),
         ),
       };
-    return { receipt: await rules.publishReview(ownerId, runId) };
+    return { receipt: await rules.publishReview(ownerId, runId, true) };
   }
   if (method === Methods.PR_REVIEW_REQUEST) {
     assertPRReviewRequest(p.request);
