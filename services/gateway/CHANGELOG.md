@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Persist operator-added run tickets through supported metadata edits and include covered keys in summaries.
 
+- Bound concurrent evidence and progress reads during node recovery, and preserve replayed review slot claims while fleet refresh completes.
 - Prepare reused slots after squash merges by recognizing patches already in the default branch or verified merged PR heads, while preserving unpublished commits and dirty files on newly accepted merged checkouts.
 
 - Resume a blocked review-fix through its held review step and show fresh worker progress without restarting the completed primary worker.

@@ -167,6 +167,7 @@ test(
     const refusal = assert.rejects(result, (error: unknown) => {
       assert(error instanceof NodeExecUnconfirmedError);
       assert.equal(error.requestId, request.id);
+      assert.equal(error.executionConnection, socket.asSocket());
       return true;
     });
     const replacement = new ExecSocket();

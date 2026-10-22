@@ -1945,6 +1945,38 @@ test('restart recovery drives no slot work for a park that crashed before slotFr
   );
 });
 
+type OrphanCollaborators = Parameters<typeof reconcileOrphanedSlots>[0];
+function orphanCollaborators(overrides: Partial<OrphanCollaborators>): OrphanCollaborators {
+  const unexpected = (): never => {
+    throw new Error('Unexpected orphan reconciliation dependency');
+  };
+  return {
+    listRuns: unexpected,
+    loadFleetStatus: async () => unexpected(),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => null,
+    getRun: () => undefined,
+    updateRun: unexpected,
+    stopRunOwnedWorkers: async () => unexpected(),
+    resetSlot: async () => unexpected(),
+    resetSlotIf: async () => unexpected(),
+    updateSlotStatusIf: async () => unexpected(),
+    broadcast: unexpected,
+    retryOccupiedRunSlot: async () => unexpected(),
+    ...overrides,
+  };
+}
+function recordOrphanReset(
+  reset: string[],
+  row: Readonly<Record<string, unknown>>,
+): OrphanCollaborators['resetSlotIf'] {
+  return async (slotId, predicate) => {
+    if (!predicate(row)) return false;
+    reset.push(slotId);
+    return true;
+  };
+}
+
 test('orphan reconcile reclaims a busy slot that only a park-freed run still names', async () => {
   // The parked run keeps `slotId` as its restore target, so counting it as an
   // occupant would mask this slot from reclamation for as long as the park
@@ -1954,15 +1986,18 @@ test('orphan reconcile reclaims a busy slot that only a park-freed run still nam
     slotFreedAt: '2026-09-05T00:00:10.000Z',
   });
   const reset: string[] = [];
-  const deps = {
+  const deps = orphanCollaborators({
     listRuns: () => ({ runs: [parked] }),
     loadFleetStatus: async () => ({
       slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: null }],
     }),
     isTerminalTeardownInFlight: () => false,
     readSlotField: async () => null,
-    resetSlot: async (slotId: string) => reset.push(slotId),
-  } as unknown as RunRecoveryCollaborators;
+    resetSlotIf: recordOrphanReset(reset, { current_run_id: null, lifecycle: 'busy', phase: null }),
+    resetSlot: async (slotId: string) => {
+      reset.push(slotId);
+    },
+  });
 
   await reconcileOrphanedSlots(deps);
 
@@ -2010,7 +2045,7 @@ test('orphan reconcile preserves a persisted closed-run cleanup obligation', asy
     closeError: 'Release refused',
   };
   const reset: string[] = [];
-  const deps = {
+  const deps = orphanCollaborators({
     listRuns: () => ({ runs: [] }),
     loadFleetStatus: async () => ({
       slots: [{ slot: 'closed-slot', lifecycle: 'busy', phase: 'working' }],
@@ -2018,8 +2053,15 @@ test('orphan reconcile preserves a persisted closed-run cleanup obligation', asy
     isTerminalTeardownInFlight: () => false,
     readSlotField: async () => owner.id,
     getRun: (id: string) => (id === owner.id ? owner : undefined),
-    resetSlot: async (slotId: string) => reset.push(slotId),
-  } as unknown as RunRecoveryCollaborators;
+    resetSlotIf: recordOrphanReset(reset, {
+      current_run_id: owner.id,
+      lifecycle: 'busy',
+      phase: 'working',
+    }),
+    resetSlot: async (slotId: string) => {
+      reset.push(slotId);
+    },
+  });
   await reconcileOrphanedSlots(deps);
   assert.deepEqual(reset, [], 'restart must not erase pending cleanup');
   owner.output.cleanupPending = false;
@@ -2196,7 +2238,7 @@ test('a worker stop that throws keeps the fence and the pass goes on to the next
   });
   const reclaimed: string[] = [];
   const reset: string[] = [];
-  const deps = {
+  const deps = orphanCollaborators({
     listRuns: () => ({ runs: [blocked] }),
     loadFleetStatus: async () => ({
       slots: [
@@ -2213,13 +2255,23 @@ test('a worker stop that throws keeps the fence and the pass goes on to the next
     stopRunOwnedWorkers: async () => {
       throw new Error('Worker dev ownership changed before stop; exit was not delivered');
     },
-    resetSlot: async (slotId: string) => reset.push(slotId),
-    resetSlotIf: async (slotId: string) => {
-      reclaimed.push(slotId);
+    resetSlot: async (slotId: string) => {
+      reset.push(slotId);
+    },
+    resetSlotIf: async (slotId, predicate) => {
+      const releasing = slotId === 'macwork-ff-2';
+      const row = {
+        current_run_id: releasing ? blocked.id : null,
+        lifecycle: 'busy',
+        phase: releasing ? 'releasing' : 'working',
+        releasing_since: stale,
+      };
+      if (!predicate(row)) return false;
+      (releasing ? reclaimed : reset).push(slotId);
       return true;
     },
     updateSlotStatusIf: async () => true,
-  } as unknown as RunRecoveryCollaborators;
+  });
 
   await reconcileOrphanedSlots(deps);
 
@@ -2410,15 +2462,22 @@ test('orphan reconcile still reclaims a genuinely abandoned slot', async () => {
     taskFile: '/tmp/recovery-abandoned/TASK.md',
   });
   const reset: string[] = [];
-  const deps = {
+  const deps = orphanCollaborators({
     listRuns: () => ({ runs: [terminal] }),
     loadFleetStatus: async () => ({
       slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'working' }],
     }),
     isTerminalTeardownInFlight: () => false,
     readSlotField: async () => null,
-    resetSlot: async (slotId: string) => reset.push(slotId),
-  } as unknown as RunRecoveryCollaborators;
+    resetSlotIf: recordOrphanReset(reset, {
+      current_run_id: null,
+      lifecycle: 'busy',
+      phase: 'working',
+    }),
+    resetSlot: async (slotId: string) => {
+      reset.push(slotId);
+    },
+  });
 
   await reconcileOrphanedSlots(deps);
 
@@ -2502,18 +2561,23 @@ test('orphan reconcile retains failed completion resources after restart until o
     steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
   });
   const reset: string[] = [];
-  const deps = {
+  const deps = orphanCollaborators({
     listRuns: () => ({ runs: [] }),
     loadFleetStatus: async () => ({
-      slots: [{ slot: owner.slotId, lifecycle: 'busy', phase: 'completing' }],
+      slots: [{ slot: owner.slotId!, lifecycle: 'busy', phase: 'completing' }],
     }),
     isTerminalTeardownInFlight: () => false,
     readSlotField: async () => owner.id,
     getRun: () => owner,
+    resetSlotIf: recordOrphanReset(reset, {
+      current_run_id: owner.id,
+      lifecycle: 'busy',
+      phase: 'completing',
+    }),
     resetSlot: async (slotId: string) => {
       reset.push(slotId);
     },
-  } as unknown as RunRecoveryCollaborators;
+  });
   await reconcileOrphanedSlots(deps);
   assert.deepEqual(reset, []);
   owner.status = 'done';

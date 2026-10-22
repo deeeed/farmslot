@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import type { Run, RunEngineState } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { readSlotProbe } from '../core/read-probes.js';
 import { shellQuote } from '../core/tmux.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
@@ -63,16 +63,19 @@ export function fingerprintReviewedInputs(
 
 /** The fingerprints of what a reviewer judges now, or null when the slot cannot say. */
 export async function readReviewedInputs(
-  run: Pick<Run, 'project' | 'taskFile' | 'slotId'>,
+  run: Pick<Run, 'id' | 'project' | 'taskFile' | 'slotId'>,
 ): Promise<ReviewedInputsFingerprint | null> {
   if (!run.slotId) return null;
   try {
     const vars = await loadSlotVars(run.slotId);
     const taskDir = await resolveWorkerTaskDir(vars, run.project, run.taskFile);
     if (!taskDir) return null;
-    const result = await execOnSlot(vars, reviewedInputsCommand(vars.remoteRepo, taskDir), {
-      timeout: 60_000,
-    });
+    const result = await readSlotProbe(
+      vars,
+      reviewedInputsCommand(vars.remoteRepo, taskDir),
+      `reviewed-inputs:${run.id}`,
+      60_000,
+    );
     if (result.exitCode !== 0) return null;
     return fingerprintReviewedInputs(result.stdout, taskDir);
   } catch {
