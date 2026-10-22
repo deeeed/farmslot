@@ -49,6 +49,7 @@ import {
 import {
   executeReviewWorkspaceStep,
   reconcileReviewWorkspaceCleanup,
+  reconcileReviewWorkspaceStartup,
   teardownReviewWorkspace,
 } from '../review-workspaces/pipeline.js';
 import { PublishPackageRefusedError } from '../run-completion/publish-package-refused.js';
@@ -1718,18 +1719,30 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
 
 export async function recoverActiveRuns(): Promise<void> {
   await Promise.all([
+    reconcileWorkspaceReviewerStartup(),
     reconcileReviewWorkspaceCleanup(broadcastFn),
     recoverActiveRunsImpl(buildRecoveryDeps()),
   ]);
 }
 
 let workspaceCleanupTimer: ReturnType<typeof setInterval> | undefined;
+function reconcileWorkspaceReviewerStartup(): Promise<void> {
+  return reconcileReviewWorkspaceStartup(broadcastFn, (runId) => {
+    startRun(runId).catch((error) => {
+      console.error(`[run-engine] late reviewer observation failed for ${runId}: ${String(error)}`);
+    });
+  });
+}
+
 export function startOrphanReconciler(): void {
   startOrphanReconcilerImpl(buildRecoveryDeps());
   if (!workspaceCleanupTimer) {
     workspaceCleanupTimer = setInterval(() => {
-      reconcileReviewWorkspaceCleanup(broadcastFn).catch((error) => {
-        console.error(`[run-engine] workspace cleanup reconciliation failed: ${String(error)}`);
+      Promise.all([
+        reconcileWorkspaceReviewerStartup(),
+        reconcileReviewWorkspaceCleanup(broadcastFn),
+      ]).catch((error) => {
+        console.error(`[run-engine] workspace reconciliation failed: ${String(error)}`);
       });
     }, 30_000);
     workspaceCleanupTimer.unref();
