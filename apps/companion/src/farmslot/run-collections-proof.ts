@@ -7,6 +7,7 @@ import type {
   Run,
   RunGetResult,
   RunRecipeRunsForRunResult,
+  SlotRunHistoryResult,
 } from '@farmslot/protocol';
 import {
   type ResourceQuery,
@@ -38,6 +39,29 @@ interface DiffProofFrame {
   recipes: ResourceQueryState<RunRecipeRunsForRunResult>;
 }
 const diffFrames = new Map<string, Set<() => DiffProofFrame>>();
+interface SlotProofFrame extends DiffProofFrame {
+  history?: ResourceQueryState<SlotRunHistoryResult>;
+  historyRunIds?: readonly string[];
+  historyRuns?: readonly ResourceQueryState<RunGetResult>[];
+  historyRecipes?: readonly ResourceQueryState<RunRecipeRunsForRunResult>[];
+}
+const slotFrames = new Map<string, Set<() => SlotProofFrame>>();
+
+/** Inspect real slot workspace inputs without changing the mounted view or its cache. */
+export function observeNativeSlotFrame(
+  kind: 'slot' | 'slot-diff',
+  runId: string,
+  read: () => SlotProofFrame,
+) {
+  const key = `${kind}:${runId}`;
+  const frames = slotFrames.get(key) ?? new Set<() => SlotProofFrame>();
+  slotFrames.set(key, frames);
+  frames.add(read);
+  return () => {
+    frames.delete(read);
+    if (!frames.size && slotFrames.get(key) === frames) slotFrames.delete(key);
+  };
+}
 interface ArtifactProofFrame {
   focused: boolean;
   run: Run | null;
@@ -84,7 +108,9 @@ export function observeNativeFamilyFrame(familyId: string, read: () => FamilyPro
 
 /** Read production projections and actual store diagnostics without issuing a query. */
 export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs) => {
-  const match = /^runs-cache:(detail|family|diff|artifacts):([a-f0-9-]{36})$/.exec(refs[0] ?? '');
+  const match = /^runs-cache:(detail|family|diff|artifacts|slot|slot-diff):([a-f0-9-]{36})$/.exec(
+    refs[0] ?? '',
+  );
   const detailId = match?.[2];
   const family =
     match?.[1] === 'family' && detailId
@@ -98,6 +124,11 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
   const runStore = useRunStore.getState();
   const decisionStore = useDecisionStore.getState();
   const cache = getResourceCache();
+  const slotFrame = detailId
+    ? [...(slotFrames.get(`${match?.[1]}:${detailId}`) ?? [])]
+        .map((read) => read())
+        .find((value) => value.focused)
+    : undefined;
   const artifactFrame = detailId
     ? [...(artifactFrames.get(detailId) ?? [])].map((read) => read()).find((value) => value.focused)
     : undefined;
@@ -126,6 +157,42 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
         decisionsObservedAt: decisionStore.observation.observedAt,
         decisions: decisionStore.decisions.map(({ id, title }) => ({ id, title })),
         decisionProjectionMatches: decisionStore.observation === cache?.read(nativeDecisionsQuery),
+        ...(slotFrame && detailId
+          ? {
+              slotProjectionMatches:
+                slotFrame.run ===
+                cache?.read(resourceQuery<RunGetResult>('run.get', { runId: detailId })).data?.run,
+              slotRecipesMatch:
+                slotFrame.recipes ===
+                cache?.read(
+                  resourceQuery<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
+                    runId: detailId,
+                  }),
+                ),
+              slotRecipes: slotFrame.recipes,
+              slotHistory: slotFrame.history,
+              slotHistoryReadCount: slotFrame.historyRunIds?.length,
+              slotHistoryReadsReady: Boolean(
+                slotFrame.historyRunIds?.length &&
+                slotFrame.historyRuns?.length === slotFrame.historyRunIds.length &&
+                slotFrame.historyRecipes?.length === slotFrame.historyRunIds.length &&
+                slotFrame.historyRuns.every((read) => read.status === 'ready' && read.data) &&
+                slotFrame.historyRecipes.every((read) => read.status === 'ready' && read.data),
+              ),
+              slotHistoryDetailsMatch: slotFrame.historyRunIds?.every(
+                (runId, index) =>
+                  slotFrame.historyRuns?.[index] ===
+                  cache?.read(resourceQuery<RunGetResult>('run.get', { runId })),
+              ),
+              slotHistoryRecipesMatch: slotFrame.historyRunIds?.every(
+                (runId, index) =>
+                  slotFrame.historyRecipes?.[index] ===
+                  cache?.read(
+                    resourceQuery<RunRecipeRunsForRunResult>('run.recipeRunsForRun', { runId }),
+                  ),
+              ),
+            }
+          : {}),
         ...(match?.[1] === 'artifacts' && detailId
           ? {
               artifactProjectionMatches: Boolean(

@@ -50,6 +50,10 @@ history remains explicit and bounded to 80 rows until the version-list migration
 
 | Browser dispatch comparison picker and baseline | Independent picker run.list reads and async result copies; selected-parent hydration from app-list rows | Shared filtered run.list and selected full run.get, saved age and current-input checks for selection and dispatch/queue/cancellation | Focused dispatch-runs-live-r2 passes3/3; notification r2 and readiness r1 restore exactly and recover3/3each. Cold picker and full command matrix remain pending |
 
+| Native slot workspace | Independent history, full-run, family and per-history run/recipe reads; event payload adoption | Shared canonical run, history, family and recipe observations; current binding marker and scoped recipe/task-progress selection | `slot-runs-live.recipe.json`; recorded iOS6/6 and Android6/6. Cold pinned full run, exact timestamp, age and restored current reads pass; notification and cold-render controls fail their intended assertions and restore exactly |
+
+| Native slot diff | Independent run/recipe reads and run-event payload adoption/refetch | Shared slot-run selection, persisted full run and recipe observation; Git diff stays with its content owner and scoped replies | Same native slot recipe proves actual current diff projection on both platforms. Cold unpinned slot selection/content remain for later slices |
+
 Explicit mutations such as refreshing a publication package retain their command owners.
 They do not adopt returned run data. A shared observation supplies the resulting state.
 Local age clocks repaint saved timestamps without issuing network reads.
@@ -104,7 +108,7 @@ establish packaged publication, actual visual judgments or the full command matr
 ## Remaining acceptance
 
 - Finish workspace source controls and the combined browser proof; dispatch controls are accepted.
-  Migrate the remaining native slot/terminal/visual-review/conversation readers. Artifact reader component evidence is recorded.
+  Migrate the remaining native terminal/visual-review/conversation readers. Artifact reader component evidence is recorded.
 - Migrate the remaining consumers of `run.forSlot` and `run.recipeRunsForSlot`; binding writers and dependencies now have isolated tests, live browser history and SlotView evidence.
 - Finish native context recipes and negative controls, then the browser, desktop,
   iOS and Android authority/profile and connected-stale command matrix.

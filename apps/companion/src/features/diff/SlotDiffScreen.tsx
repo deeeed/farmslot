@@ -1,22 +1,24 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
-  Events,
   extractRunArtifactManifest,
   type GitDiffResult,
   Methods,
-  type RecipeRunArtifactGroup,
-  type Run,
+  type RunForSlotResult,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
 } from '@farmslot/protocol';
+import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
 import { MobileDiffViewer } from '../../components/MobileDiffViewer';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
+import { observeNativeSlotFrame } from '../../farmslot/run-collections-proof';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -26,11 +28,7 @@ import {
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
-import {
-  type RunRefreshEvent,
-  runRefreshEventMatchesSlotWorkspace,
-  runRefreshEventRunId,
-} from '../../lib/run-refresh';
+import { getResourceCache, getResourceWorkspaceKey } from '../../lib/resource-cache';
 import {
   selectSlotCompareTarget,
   selectSlotRecipeArtifactsForPreviewScope,
@@ -56,6 +54,13 @@ import { useSlotWorkspaceTabs } from '../workspace-shared/slot-workspace-tabs';
 import { routeParamString, SlotDiffCockpit } from './components/slot-diff-panels';
 import { slotDiffStyles as styles } from './styles/slot-diff.styles';
 
+interface SlotDiffRead {
+  key: string;
+  diff: string;
+  loading: boolean;
+  error?: string;
+}
+
 export default function SlotDiffViewerScreen() {
   const { slotId, path, workspace, decisionKind } = useLocalSearchParams<{
     slotId: string;
@@ -64,24 +69,75 @@ export default function SlotDiffViewerScreen() {
     decisionKind?: string | string[];
   }>();
   const router = useRouter();
+  const focused = useIsFocused();
   const insideSlotWorkspaceTabs = useSlotWorkspaceTabs();
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const slot = useFleetStore((s) => s.fleet?.slots.find((entry) => entry.slot === slotId));
-  const [diffText, setDiffText] = useState('');
-  const [currentRun, setCurrentRun] = useState<Run | null>(null);
-  const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
-  const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const runRefreshRequestRef = useRef(0);
-  const recipeRunsRefreshRequestRef = useRef(0);
+  const slotRunQuery = useMemo(
+    () => (slotId ? resourceQuery<RunForSlotResult>(Methods.RUN_FOR_SLOT, { slotId }) : undefined),
+    [slotId],
+  );
+  const slotRunObservation = useResourceQuery(slotRunQuery);
+  const currentRunId = slotRunObservation.data
+    ? (slotRunObservation.data.run?.id ?? null)
+    : (slot?.currentRunId ?? null);
+  const runQuery = useMemo(
+    () =>
+      currentRunId
+        ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: currentRunId })
+        : undefined,
+    [currentRunId],
+  );
+  const runObservation = useResourceQuery(runQuery);
+  const currentRun = runObservation.data?.run ?? null;
+  const recipeQuery = useMemo(
+    () =>
+      currentRunId
+        ? resourceQuery<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, {
+            runId: currentRunId,
+          })
+        : undefined,
+    [currentRunId],
+  );
+  const recipeObservation = useResourceQuery(recipeQuery);
+  const recipeRuns = recipeObservation.data?.recipeRuns ?? [];
+  const recipeRunsLoaded = Boolean(recipeObservation.data);
+  const workspaceKey = getResourceWorkspaceKey();
+  const [diffRead, setDiffRead] = useState<SlotDiffRead>();
+  const diffScope = JSON.stringify([workspaceKey, slotId, currentRunId]);
+  const currentDiff = diffRead?.key === diffScope ? diffRead : undefined;
+  const diffText = currentDiff?.diff ?? '';
+  const loading = currentDiff?.loading ?? false;
+  const error = currentDiff?.error ?? null;
+  const readError =
+    slotRunObservation.error?.message ??
+    runObservation.error?.message ??
+    recipeObservation.error?.message;
+  const retryRead = async () => {
+    const cache = getResourceCache();
+    const queries: Array<ResourceQuery<unknown> | undefined> = [
+      slotRunQuery,
+      runQuery,
+      recipeQuery,
+    ];
+    await Promise.all(
+      queries
+        .filter((query) => query && cache?.read(query).error)
+        .map((query) => cache?.retry(query!)),
+    );
+  };
+  const frame = useRef({ focused, run: currentRun, recipes: recipeObservation });
+  frame.current = { focused, run: currentRun, recipes: recipeObservation };
+  useEffect(() => {
+    if (__DEV__ && currentRunId)
+      return observeNativeSlotFrame('slot-diff', currentRunId, () => frame.current);
+  }, [currentRunId]);
   const diffRefreshRequestRef = useRef(0);
 
   const pathParamError = Array.isArray(path) ? 'Only one diff path can be opened at a time.' : null;
   const requestedPath = !pathParamError && typeof path === 'string' ? path.trim() : '';
-  const currentRunId = slot?.currentRunId ?? null;
   const workspaceRouteContext = useMemo(
     () =>
       workspaceRouteContextParams(
@@ -100,167 +156,69 @@ export default function SlotDiffViewerScreen() {
     [workspaceRouteContext.decisionKind],
   );
 
-  const refreshCurrentRun = useCallback(
-    async (reason: string, targetRunId: string | null = currentRunId) => {
-      const requestId = runRefreshRequestRef.current + 1;
-      runRefreshRequestRef.current = requestId;
-      if (!client || !targetRunId) {
-        setCurrentRun(null);
-        return;
-      }
-
-      try {
-        const result = await client.request<RunGetResult>('run.get', { runId: targetRunId });
-        if (runRefreshRequestRef.current !== requestId) return;
-        setCurrentRun(result.run);
-      } catch (err) {
-        if (runRefreshRequestRef.current !== requestId) return;
-        setCurrentRun(null);
-        setError(
-          `Failed to refresh live diff run context after ${reason}: ${(err as Error).message}`,
-        );
-      }
-    },
-    [client, currentRunId],
-  );
-
-  useEffect(() => {
-    if (!currentRunId) {
-      runRefreshRequestRef.current += 1;
-      setCurrentRun(null);
-      return;
-    }
-    void refreshCurrentRun('initial load', currentRunId);
-  }, [currentRunId, refreshCurrentRun]);
-
-  const refreshRecipeRuns = useCallback(
-    async (reason: string, targetRunId: string | null = currentRunId, reset: boolean) => {
-      const requestId = recipeRunsRefreshRequestRef.current + 1;
-      recipeRunsRefreshRequestRef.current = requestId;
-      if (!client || !targetRunId) {
-        setRecipeRuns([]);
-        setRecipeRunsLoaded(false);
-        return;
-      }
-      if (reset) {
-        setRecipeRuns([]);
-        setRecipeRunsLoaded(false);
-      }
-      try {
-        const result = await client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-          runId: targetRunId,
-        });
-        if (recipeRunsRefreshRequestRef.current !== requestId) return;
-        setRecipeRuns(result.recipeRuns);
-        setRecipeRunsLoaded(true);
-      } catch (err) {
-        if (recipeRunsRefreshRequestRef.current !== requestId) return;
-        setRecipeRuns([]);
-        setRecipeRunsLoaded(true);
-        setError(
-          `Failed to refresh live diff recipe context after ${reason}: ${(err as Error).message}`,
-        );
-      }
-    },
-    [client, currentRunId],
-  );
-
-  useEffect(() => {
-    if (!currentRunId) {
-      recipeRunsRefreshRequestRef.current += 1;
-      setRecipeRuns([]);
-      setRecipeRunsLoaded(false);
-      return;
-    }
-    void refreshRecipeRuns('initial load', currentRunId, true);
-  }, [currentRunId, refreshRecipeRuns]);
-
   const refreshDiff = useCallback(
     async (reason: string, reset: boolean) => {
       const requestId = diffRefreshRequestRef.current + 1;
       diffRefreshRequestRef.current = requestId;
-      if (!client || !slotId || pathParamError) {
-        setDiffText('');
-        setLoading(false);
+      if (
+        !client ||
+        !slotId ||
+        pathParamError ||
+        runObservation.status !== 'ready' ||
+        slotRunObservation.status !== 'ready'
+      ) {
+        setDiffRead((previous) =>
+          previous?.key === diffScope ? { ...previous, loading: false } : undefined,
+        );
         return;
       }
 
-      if (reset) setLoading(true);
-      setError(null);
+      setDiffRead((previous) => ({
+        key: diffScope,
+        diff: previous?.key === diffScope ? previous.diff : '',
+        loading: reset,
+      }));
+      const generation = client.connectionGeneration;
+      const current = () =>
+        diffRefreshRequestRef.current === requestId &&
+        workspaceKey === getResourceWorkspaceKey() &&
+        generation === client.connectionGeneration;
       try {
         const result = await client.request<GitDiffResult>(Methods.GIT_DIFF, { slotId });
-        if (diffRefreshRequestRef.current !== requestId) return;
-        setDiffText(result.diff);
+        if (!current()) return;
+        setDiffRead({ key: diffScope, diff: result.diff, loading: false });
       } catch (err) {
-        if (diffRefreshRequestRef.current !== requestId) return;
-        setDiffText('');
-        setError(
-          `Failed to refresh live workspace diff after ${reason}: ${(err as Error).message}`,
-        );
+        if (!current()) return;
+        setDiffRead({
+          key: diffScope,
+          diff: '',
+          loading: false,
+          error: `Failed to refresh live workspace diff after ${reason}: ${(err as Error).message}`,
+        });
       } finally {
-        if (diffRefreshRequestRef.current === requestId) setLoading(false);
+        if (diffRefreshRequestRef.current === requestId)
+          setDiffRead((previous) =>
+            previous?.key === diffScope ? { ...previous, loading: false } : previous,
+          );
       }
     },
-    [client, pathParamError, slotId],
+    [
+      client,
+      pathParamError,
+      slotId,
+      runObservation.status,
+      slotRunObservation.status,
+      diffScope,
+      workspaceKey,
+    ],
   );
 
   useEffect(() => {
     void refreshDiff('initial load', true);
-  }, [refreshDiff, requestedPath]);
-
-  useEffect(() => {
-    if (!client || !slotId) return;
-    const handleRunEvent = (payload: unknown, reason: string) => {
-      const event = payload as RunRefreshEvent & { run?: Run | null };
-      if (
-        !runRefreshEventMatchesSlotWorkspace(
-          { slotId, workspaceRunId: currentRun?.id ?? currentRunId },
-          event,
-        )
-      ) {
-        return;
-      }
-
-      const eventRunId = runRefreshEventRunId(event);
-      if (event.run?.slotId === slotId) {
-        runRefreshRequestRef.current += 1;
-        setCurrentRun(event.run);
-      } else if (eventRunId === currentRun?.id || eventRunId === currentRunId) {
-        void refreshCurrentRun(reason, eventRunId);
-      }
-      const recipeRunId = event.run?.id ?? eventRunId ?? currentRun?.id ?? currentRunId;
-      void refreshRecipeRuns(reason, recipeRunId, false);
-      void refreshDiff(reason, false);
-    };
-    const unsubscribers = [
-      client.subscribe(Events.RUN_CREATED, (payload) => handleRunEvent(payload, 'run.created')),
-      client.subscribe(Events.RUN_UPDATED, (payload) => handleRunEvent(payload, 'run.updated')),
-      client.subscribe(Events.RUN_COMPLETED, (payload) => handleRunEvent(payload, 'run.completed')),
-      client.subscribe(Events.RUN_STEP_COMPLETED, (payload) =>
-        handleRunEvent(payload, 'run.step.completed'),
-      ),
-      client.subscribe(Events.RUN_DECISION_NEW, (payload) =>
-        handleRunEvent(payload, 'run.decision.new'),
-      ),
-      client.subscribe(Events.RUN_DECISION_UPDATED, (payload) =>
-        handleRunEvent(payload, 'run.decision.updated'),
-      ),
-      client.subscribe(Events.RUN_DECISION_RESOLVED, (payload) =>
-        handleRunEvent(payload, 'run.decision.resolved'),
-      ),
-    ];
     return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
+      diffRefreshRequestRef.current++;
     };
-  }, [
-    client,
-    currentRun?.id,
-    currentRunId,
-    refreshCurrentRun,
-    refreshDiff,
-    refreshRecipeRuns,
-    slotId,
-  ]);
+  }, [refreshDiff, requestedPath]);
 
   const goBackOrSlot = useCallback(() => {
     if (router.canGoBack()) {
@@ -341,6 +299,17 @@ export default function SlotDiffViewerScreen() {
         </View>
       ) : null}
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+        <ResourceReadStatus observation={runObservation} label="slot diff run" />
+        <ResourceReadStatus observation={recipeObservation} label="slot diff recipe inventory" />
+        {readError ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry slot diff reads"
+            onPress={() => void retryRead()}
+          >
+            <Text style={baseStyles.textSecondary}>Retry</Text>
+          </Pressable>
+        ) : null}
         <RunWorkspaceNav
           current="diff"
           dense

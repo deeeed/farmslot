@@ -41,6 +41,7 @@ const familyPhases = [
 ];
 assert(
   [
+    'slot-context',
     'seed-inbox',
     'resolve-inbox',
     'open-detail',
@@ -166,6 +167,176 @@ async function restartNative() {
   }
   await waitForSimulatorRecipeBridge({ platform });
 }
+
+if (phase === 'slot-context') {
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  assert.equal(fixture.runFile, path.join(home, 'runs', `${fixture.runId}.json`));
+  const original = (await rpc('run.get', { runId: fixture.runId })).run;
+  assert.equal(original.readOnly, false, 'Never mutate imported runs');
+  assert.equal(original.slotId, fixture.slotId);
+  assert.equal(original.taskFile, fixture.taskFile);
+  const tag = `native-slot-${randomUUID().slice(0, 8)}`;
+  const device = createAgentDeviceClient({ stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR });
+  const deviceId = platform === 'ios' ? process.env.IOS_SIMULATOR : process.env.ADB_SERIAL;
+  const sessions = (await device.sessions.list()).filter(
+    (session) => session.device.id === deviceId,
+  );
+  assert.equal(sessions.length, 1);
+  const selection = { session: sessions[0].name, platform, target: 'mobile' };
+  const nativePhases = [];
+  let phaseStart = Date.now();
+  const capture = async (name) => {
+    await device.capture.screenshot({
+      ...selection,
+      path: path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'screenshots', name),
+      stabilize: true,
+    });
+    nativePhases.push({ name, startedAt: phaseStart, endedAt: Date.now() });
+    phaseStart = Date.now();
+  };
+  const route = `workspace/slot/${fixture.slotId}/slot?runId=${fixture.runId}`;
+  const current = (value) =>
+    value.detail?.status === 'ready' &&
+    value.slotProjectionMatches &&
+    value.slotRecipesMatch &&
+    value.slotRecipes?.status === 'ready';
+  const historyId = randomUUID();
+  const historyFile = path.join(home, 'runs', `${historyId}.json`);
+  const historyTime = new Date(Date.now() - 60_000).toISOString();
+  const historyRun = {
+    id: historyId,
+    familyId: original.familyId,
+    parentRunId: fixture.runId,
+    familyRootTicketOrPr: original.familyRootTicketOrPr,
+    lane: 'validation',
+    variant: null,
+    flowType: 'dev',
+    mode: 'interactive',
+    status: 'done',
+    project: original.project,
+    ticketOrPr: 'Native slot history proof',
+    slotId: fixture.slotId,
+    branch: null,
+    taskFile: null,
+    completionPolicy: 'artifact-only',
+    steps: [],
+    decisions: [],
+    agentContexts: [],
+    readOnly: true,
+    metrics: {
+      nudgeCount: 0,
+      runner: null,
+      model: null,
+      runnerSessionId: null,
+      runnerSessionPath: null,
+    },
+    createdAt: historyTime,
+    updatedAt: historyTime,
+    startedAt: historyTime,
+    completedAt: historyTime,
+  };
+  let seeded = false;
+  let cold;
+  let started;
+  try {
+    await withOwnedGatewayOffline(async () => {
+      await writeFile(historyFile, JSON.stringify(historyRun), { flag: 'wx', mode: 0o600 });
+      seeded = true;
+    });
+    proofRef = `runs-cache:slot:${fixture.runId}`;
+    await inbox(route);
+    const initial = await until(
+      (value) =>
+        current(value) &&
+        value.slotHistory?.status === 'ready' &&
+        value.slotHistory.data.runs.some((row) => row.runId === historyId) &&
+        value.slotHistoryReadsReady &&
+        value.slotHistoryReadCount > 0 &&
+        value.slotHistoryDetailsMatch &&
+        value.slotHistoryRecipesMatch,
+      'The mounted slot workspace must use canonical run, history and recipe observations',
+    );
+    started = initial.startedAt;
+    await rpc('run.tags.set', { runId: fixture.runId, tags: [...(original.tags ?? []), tag] });
+    await until(
+      (value) => current(value) && value.detail.data.run.tags?.includes(tag),
+      'The real slot workspace run must follow an external write',
+    );
+    await capture('native-slot-current.png');
+    proofRef = `runs-cache:slot-diff:${fixture.runId}`;
+    await inbox(`workspace/slot/${fixture.slotId}/diff`);
+    await until(current, 'The actual slot diff must share its full run and recipe observations');
+    await capture('native-slot-diff-current.png');
+    proofRef = `runs-cache:slot:${fixture.runId}`;
+    await inbox(route);
+    await until(current, 'Return to the canonical slot workspace before disconnect');
+    await withOwnedGatewayOffline(async () => {
+      const stale = await until(
+        (value) => value.detail?.status === 'stale' && value.slotProjectionMatches,
+        'The slot workspace must retain its actual shared run during an outage',
+      );
+      await restartNative();
+      await inbox(route);
+      cold = await until(
+        (value) =>
+          value.startedAt > started &&
+          value.detail?.status === 'stale' &&
+          value.detail.data?.run.id === fixture.runId &&
+          value.slotProjectionMatches &&
+          !value.slotRecipes?.data,
+        'A cold slot workspace must render its saved full run without inventing fleet or recipe facts',
+      );
+      assert.equal(cold.detail.observedAt, stale.detail.observedAt);
+      assert.equal(cold.diagnostics.integrity, 'ok');
+      const screen = await device.capture.snapshot({
+        ...selection,
+        interactiveOnly: false,
+        forceFull: true,
+      });
+      assert(
+        screen.nodes.some((node) => node.label?.includes('Saved slot run')),
+        'The actual cold slot workspace must show its saved run age',
+      );
+      assert(
+        screen.nodes.some((node) => node.label?.includes(original.ticketOrPr)),
+        'The actual cold slot workspace must render its saved run identity',
+      );
+      await capture('native-slot-cold.png');
+    });
+    await until(
+      (value) => current(value) && value.slotHistory?.status === 'ready',
+      'The slot workspace must recover its current history and recipe reads after reconnect',
+    );
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        phase,
+        nativePhases,
+        nativeSlotProjection: true,
+        nativeSlotDiffProjection: true,
+        nativeSlotExternalWrite: true,
+        nativeHistoricalQueries: true,
+        nativeSlotCold: true,
+        observedAt: cold.detail.observedAt,
+      }),
+    );
+  } finally {
+    try {
+      await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
+      await inbox('runs');
+    } finally {
+      if (seeded)
+        await withOwnedGatewayOffline(async () => {
+          assert.equal(JSON.parse(await readFile(historyFile, 'utf8')).id, historyId);
+          await rm(historyFile);
+        });
+    }
+  }
+  process.exit(0);
+}
+
 if (familyPhases.includes(phase)) {
   assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
   assert.equal(process.env.FARMSLOT_RUNS_DIR, path.join(home, 'runs'));
