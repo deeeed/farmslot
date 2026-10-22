@@ -1,5 +1,6 @@
 import type {
   AgentContext,
+  AgentContextSummary,
   NativeSessionInfo,
   NativeSessionReadResult,
   NativeWorkerControlTarget,
@@ -149,11 +150,18 @@ export function nativeRunConversationParams(
   };
 }
 
-/** A shared native subtask keeps its own context and the exact recorded owner lease. */
-export function nativeWorkerTarget(
-  contexts: readonly AgentContext[],
-  context: AgentContext,
-): NativeWorkerViewTarget | undefined {
+export type NativeWorkerBindingContext = Pick<
+  AgentContext,
+  'id' | 'nativeSession' | 'nativeSessionOwner' | 'nativeSessionHistory'
+> &
+  Pick<AgentContextSummary, 'runId'> &
+  Partial<Pick<AgentContext, 'slotId'>>;
+
+/** Shared binding projection also accepts the slot's lightweight context summaries. */
+export function nativeWorkerBinding(
+  contexts: readonly NativeWorkerBindingContext[],
+  context: NativeWorkerBindingContext,
+): Pick<NativeWorkerViewTarget, 'binding' | 'readOnly'> | undefined {
   const reference = context.nativeSessionOwner;
   if (context.nativeSession && reference) return;
   const owners = reference ? contexts.filter((item) => item.id === reference.contextId) : [context];
@@ -175,12 +183,20 @@ export function nativeWorkerTarget(
   if (bindings.length !== 1 || !bindings[0]) return;
   const binding = bindings[0];
   return {
-    runId: context.runId,
-    contextId: context.id,
-    label: context.label,
     binding,
     readOnly: binding !== owner.nativeSession || Boolean(binding.closedAt || binding.releasedAt),
   };
+}
+
+/** A shared native subtask keeps its own context and the exact recorded owner lease. */
+export function nativeWorkerTarget(
+  contexts: readonly AgentContext[],
+  context: AgentContext,
+): NativeWorkerViewTarget | undefined {
+  const resolved = nativeWorkerBinding(contexts, context);
+  return resolved
+    ? { runId: context.runId, contextId: context.id, label: context.label, ...resolved }
+    : undefined;
 }
 
 /** All recorded native contexts share the same target, regardless of role or slot binding. */

@@ -12,7 +12,7 @@ import {
   primaryRoleForFlow,
   selectLatestReviewerContext,
 } from '@farmslot/protocol';
-import { nativeWorkerTarget } from '@farmslot/review-dispatch';
+import { nativeWorkerBinding } from '@farmslot/review-dispatch';
 
 type SlotViewAgentContextLike = Pick<
   AgentContextSummary,
@@ -119,7 +119,7 @@ export function deriveSlotViewAgentContexts({
     if (!ctx.nativeSessionOwner) return summary;
     return {
       ...summary,
-      nativeSession: nativeWorkerTarget(linkedRun.agentContexts ?? [], ctx)?.binding,
+      nativeSession: nativeWorkerBinding(linkedRun.agentContexts ?? [], ctx)?.binding,
     };
   });
   const flowRole = primaryRoleForFlow(linkedRun.flowType ?? slot?.currentFlowType);
