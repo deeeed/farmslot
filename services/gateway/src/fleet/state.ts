@@ -49,6 +49,7 @@ import { onStatusCommit } from '../core/state.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
 import {
   slotResourceChanges as slotResources,
+  statusCheckedAt,
   statusSlotResources,
 } from '../resources/slot-run-bindings.js';
 
@@ -273,7 +274,7 @@ onStatusCommit((snapshot) => {
   cachedFleet = null;
   fleetReadVersion++;
   try {
-    slotResources.observe(statusSlotResources(snapshot));
+    slotResources.observe(statusSlotResources(snapshot), statusCheckedAt(snapshot));
   } catch (error) {
     // The file committed, but cannot serve trustworthy slot facts or bindings.
     // Invalidate saved readers and propagate the owning writer's failure.
@@ -607,7 +608,7 @@ function withFleetOverlays(fleet: FleetStatus): FleetStatus {
 function transformFleet(raw: RawStatus): FleetStatus {
   const slots = raw.slots.map(transformSlot);
   return {
-    checkedAt: raw.checked_at,
+    checkedAt: statusCheckedAt(raw) ?? '',
     slots,
     summary: computeSummary(slots),
   };
@@ -647,7 +648,8 @@ export async function loadFleetStatus(
     next = markGhostSlots(transformFleet(raw), liveIds);
     if (version === fleetReadVersion) {
       cachedFleet = next;
-      slotResources.observe(resources);
+      slotResources.observe(resources, statusCheckedAt(raw));
+      slotResources.observePool(liveIds);
     }
   } catch (err) {
     if (version === fleetReadVersion) {
@@ -658,6 +660,7 @@ export async function loadFleetStatus(
     console.error(
       `[state] loadFleetStatus failed: ${(err as Error).message} — falling back to empty fleet`,
     );
+    // Keep this bootstrap fallback out of the cache so strict queries still see the source error.
     next = {
       checkedAt: new Date().toISOString(),
       slots: [],
@@ -672,7 +675,6 @@ export async function loadFleetStatus(
         warmCount: 0,
       },
     };
-    if (version === fleetReadVersion) cachedFleet = next;
   }
   return withFleetOverlays(next);
 }
@@ -713,22 +715,21 @@ export function startFileWatcher() {
   });
   watcher.on('all', async (event) => {
     if (event !== 'change' && event !== 'add' && event !== 'unlink') return;
-    await loadFleetStatus(true);
-    const fleet = getCachedFleet();
-    if (fleet) {
-      for (const handler of changeHandlers) {
-        handler(fleet);
-      }
-    }
+    const fleet = await loadFleetStatus(true);
+    for (const handler of changeHandlers) handler(fleet);
   });
 
   // Watch pool config changes — hot-reload without gateway restart
   let poolDebounce: ReturnType<typeof setTimeout> | undefined;
-  const poolWatcher = watch(path.join(poolDir, '*.json'), {
+  const poolWatcher = watch(poolDir, {
     persistent: true,
     ignoreInitial: true,
+    depth: 0,
+    ignored: (file) =>
+      file !== poolDir && (!file.endsWith('.json') || isIgnoredPoolFile(path.basename(file))),
   });
-  poolWatcher.on('all', () => {
+  poolWatcher.on('all', (event, file) => {
+    if (file === poolDir || !['add', 'change', 'unlink'].includes(event)) return;
     clearTimeout(poolDebounce);
     poolDebounce = setTimeout(async () => {
       try {

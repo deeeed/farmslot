@@ -6,6 +6,60 @@ import type { ResourceChangedPayload } from '@farmslot/protocol';
 import { GatewayResourceRevisions } from './revisions.js';
 import { SlotResourceChanges, statusSlotResources } from './slot-run-bindings.js';
 
+test('fleet timestamps and their stale deadline invalidate slot scopes without changing run bindings', async (t) => {
+  const previousThreshold = process.env.FARMSLOT_FLEET_STALE_MS;
+  process.env.FARMSLOT_FLEET_STALE_MS = '1000';
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
+  const revisions = new GatewayResourceRevisions();
+  const slots = new SlotResourceChanges(revisions);
+  const snapshot = statusSlotResources({
+    slots: [{ slot: 'proof', project: 'project', machine: 'node', current_run_id: 'same-run' }],
+  });
+  const detail = { family: 'slot', slotId: 'proof' } as const;
+  const runKey = { family: 'runs', scope: 'farm' } as const;
+  try {
+    slots.observe(snapshot, new Date().toISOString());
+    const before = revisions.revision(detail);
+    const beforeRuns = revisions.revision(runKey);
+    t.mock.timers.tick(50);
+    const checkedAt = new Date().toISOString();
+    slots.observe(snapshot, checkedAt);
+    assert.equal(revisions.revision(detail), before + 1);
+    slots.observe(snapshot, checkedAt);
+    assert.equal(revisions.revision(detail), before + 1);
+    t.mock.timers.tick(951);
+    assert.equal(revisions.revision(detail), before + 1, 'The old stale deadline was replaced');
+    t.mock.timers.tick(50);
+    for (const key of [
+      detail,
+      { family: 'slots', scope: 'farm' },
+      { family: 'slots', scope: 'farm', project: 'project' },
+      { family: 'slots', scope: 'farm', nodeId: 'node' },
+    ] as const)
+      assert.equal(revisions.revision(key), before + 2);
+    assert.equal(revisions.revision(runKey), beforeRuns);
+    slots.observe(snapshot, checkedAt);
+    assert.equal(
+      revisions.revision(detail),
+      before + 2,
+      'Reading expired facts does not extend their deadline',
+    );
+    slots.observe(snapshot, new Date().toISOString());
+    slots.unavailable();
+    const failed = revisions.revision(detail);
+    t.mock.timers.tick(2000);
+    assert.equal(
+      revisions.revision(detail),
+      failed,
+      'An unavailable source cancels its stale timer',
+    );
+  } finally {
+    revisions.dispose();
+    if (previousThreshold === undefined) delete process.env.FARMSLOT_FLEET_STALE_MS;
+    else process.env.FARMSLOT_FLEET_STALE_MS = previousThreshold;
+  }
+});
+
 test('membership and pointer changes include former members, while identical observations stay quiet', async () => {
   const revisions = new GatewayResourceRevisions();
   const bindings = new SlotResourceChanges(revisions);

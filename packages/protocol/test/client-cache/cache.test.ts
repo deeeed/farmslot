@@ -152,3 +152,15 @@ test('canonical query identities cover normalized params and exclude command reg
     resourceStoreScopeId({ gatewayUrl: 'ws://localhost/' }),
   );
 });
+
+test('fleet observations share one bounded persisted query and cannot execute refresh commands', () => {
+  const fleet = resourceQuery('fleet.status');
+  assert.equal(fleet.id, resourceQuery('fleet.status', { forceRefresh: false }).id);
+  assert.deepEqual(fleet.params, {});
+  assert.equal(fleet.live, true);
+  assert.equal(fleet.persisted, true);
+  assert.equal(fleet.maxBytes, 2 * 1024 * 1024);
+  assert.deepEqual(fleet.retention, { maxEntries: 1, maxBytes: 2 * 1024 * 1024 });
+  for (const params of [{ forceRefresh: true }, { forceRefresh: 'false' }, { unsupported: true }])
+    assert.throws(() => resourceQuery('fleet.status', params), /forceRefresh/);
+});

@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Slot facts, branch overlays and node observations invalidate an open workspace",
-  "description": "ADR-071 fleet migration writer proof. Run from the repository root against an isolated authenticated one-slot gateway and Command Center over CDP. Set FARMSLOT_OFFLINE_PROOF=1, FARMSLOT_DISABLE_ORCHESTRATION=1, FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, GATEWAY_PORT, FARMSLOT_PROJECTS_DIR, FARMSLOT_UI_URL, FARMSLOT_CDP_PORT and FARMSLOT_RUN_WEB_EVIDENCE_DIR. FARMSLOT_SLOT_RESOURCE_PROOF names a setup receipt with home, poolFile, slotId and repo. The pool must be inside the selected home's pool directory, the slot must start in custom mode, and the gateway must contain no runs. A second client changes only that slot's mode through config.slot.update; the helper verifies its actual canonical slot context refetches without Refresh, then restores the exact pool bytes. Use an existing terminal server; the fixture lifecycle must close only its own slot session. No devices or workers are launched and no UI values are injected. This does not claim whole fleet migration or offline fleet persistence. Set FARMSLOT_BRANCH_WATCHERS=1. After the mode changes, the helper switches branches in the disposable worker repository and restores its original branch, commit and clean state. The real branch watcher must advance the same canonical slot query and render the branch in Slot Info. Task-progress and PR-health setters share the overlay path; this recipe does not claim live task/PR collector acceptance. A private node-subject peer authenticates through the actual gateway, registers the fixture machine, sends a defined metrics observation and disconnects. It explicitly refuses machine commands, launches no daemon or hardware collector, and retires its issued credential/principal. Node/pressure/slot notices must accompany canonical slot refetches and current gateway health/host-load reads. This proves node observation handling, not hardware metric collection. The setup receipt must name a resourceId declared in the owned slot/project. Defined node.resource.changed observations switch its status running/stopped/running and node disconnect clears it to unknown. Actual fleet.status reads must show coherent/none/coherent/none while the same canonical browser query covers each newer slot revision. No resource command or hardware probe runs. Finally an external writer changes only checked_at in the isolated status file. The actual filesystem observer must publish enriched fleet facts and the open browser row must retain coherent resources; the touched status bytes/permissions restore before cleanup. No worker lock or run field is modified. Set FARMSLOT_MONITOR_FLEET_POLL_MS=600000 in the isolated stack so a periodic reread cannot mask a broken filesystem-observer callback during the bounded proof.",
+  "description": "ADR-071 fleet migration writer proof. Run from the repository root against an isolated authenticated one-slot gateway and Command Center over CDP. Set FARMSLOT_OFFLINE_PROOF=1, FARMSLOT_DISABLE_ORCHESTRATION=1, FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, GATEWAY_PORT, FARMSLOT_PROJECTS_DIR, FARMSLOT_UI_URL, FARMSLOT_CDP_PORT and FARMSLOT_RUN_WEB_EVIDENCE_DIR. FARMSLOT_SLOT_RESOURCE_PROOF names a setup receipt with home, poolFile, slotId and repo. The pool must be inside the selected home's pool directory, the slot must start in custom mode, and the gateway must contain no runs. A second client changes only that slot's mode through config.slot.update; the helper verifies its actual canonical slot context refetches without Refresh, then restores the exact pool bytes. Use an existing terminal server; the fixture lifecycle must close only its own slot session. No devices or workers are launched and no UI values are injected. This does not claim whole fleet migration or offline fleet persistence. Set FARMSLOT_BRANCH_WATCHERS=1. After the mode changes, the helper switches branches in the disposable worker repository and restores its original branch, commit and clean state. The real branch watcher must advance the same canonical slot query and render the branch in Slot Info. Task-progress and PR-health setters share the overlay path; this recipe does not claim live task/PR collector acceptance. A private node-subject peer authenticates through the actual gateway, registers the fixture machine, sends a defined metrics observation and disconnects. It explicitly refuses machine commands, launches no daemon or hardware collector, and retires its issued credential/principal. Node/pressure/slot notices must accompany canonical slot refetches and current gateway health/host-load reads. This proves node observation handling, not hardware metric collection. The setup receipt must name a resourceId declared in the owned slot/project. Defined node.resource.changed observations switch its status running/stopped/running and node disconnect clears it to unknown. Actual fleet.status reads must show coherent/none/coherent/none while the same canonical browser query covers each newer slot revision. No resource command or hardware probe runs. Finally an external writer changes only checked_at in the isolated status file. The actual filesystem observer must publish enriched fleet facts and the open browser row must retain coherent resources; the touched status bytes/permissions restore before cleanup. No worker lock or run field is modified. Set FARMSLOT_MONITOR_FLEET_POLL_MS=600000 in the isolated stack so a periodic reread cannot mask a broken filesystem-observer callback during the bounded proof. Fleet backend proof temporarily holds only the owned pool file so a retained ghost row suppresses automatic re-probes. The real pool observer must advance the stamped fleet query. A timestamp-only status replacement schedules the normal five-minute age boundary five seconds ahead; a passive client must receive expiry without a source write, then fleet.status must return stale/non-dispatchable facts. Corrupt and missing status sources must return structured RPC errors and recover after exact file/pool restoration. No run/worker field or lock changes. This proves the backend read contract; global fleet persistence and platform action guards still need client migration.",
   "proofTargets": [
     {
       "id": "slot-fact-notice",
@@ -26,6 +26,22 @@
     {
       "id": "filesystem-enrichment",
       "claim": "A real external status-file observation delivers current derived fleet facts to the actual client instead of the un-enriched base snapshot."
+    },
+    {
+      "id": "fleet-metadata",
+      "claim": "Fleet timestamp-only updates advance the canonical stamped collection without changing slot rows or run bindings."
+    },
+    {
+      "id": "fleet-expiry",
+      "claim": "The stale boundary notifies passive clients without a source write and fleet.status returns stale non-dispatchable data."
+    },
+    {
+      "id": "fleet-source-errors",
+      "claim": "Corrupt and missing fleet sources return RPC errors, then current reads and the actual slot consumer recover."
+    },
+    {
+      "id": "fleet-pool-projection",
+      "claim": "Removing and restoring the owned pool updates retained ghost projections and stamped query revisions without fabricating a status-file deletion."
     }
   ],
   "workflow": {
@@ -94,6 +110,42 @@
         "match": "\"filesystemEnrichmentPreserved\":true",
         "intent": "Require the real filesystem observer and production browser row to retain derived resource coherence, then restore the external status-file update.",
         "proves": ["filesystem-enrichment"],
+        "next": "fleet-metadata"
+      },
+      "fleet-metadata": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"fleetMetadataStamped\":true",
+        "intent": "Fleet timestamp-only updates advance the canonical stamped collection without changing slot rows or run bindings.",
+        "proves": ["fleet-metadata"],
+        "next": "fleet-expiry"
+      },
+      "fleet-expiry": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"fleetExpiryNotified\":true",
+        "intent": "The stale boundary notifies passive clients without a source write and fleet.status returns stale non-dispatchable data.",
+        "proves": ["fleet-expiry"],
+        "next": "fleet-source-errors"
+      },
+      "fleet-source-errors": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"fleetSourceErrorsExposed\":true",
+        "intent": "Corrupt and missing fleet sources return RPC errors, then current reads and the actual slot consumer recover.",
+        "proves": ["fleet-source-errors"],
+        "next": "fleet-pool-projection"
+      },
+      "fleet-pool-projection": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"fleetPoolProjectionNotified\":true",
+        "intent": "Removing and restoring the owned pool updates retained ghost projections and stamped query revisions without fabricating a status-file deletion.",
+        "proves": ["fleet-pool-projection"],
         "next": "done"
       }
     }

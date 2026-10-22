@@ -50,6 +50,7 @@ const { readWithResourceState, resourceRevisions } = await import('../resources/
 await import('../runtime/mock-pty.test-support.js');
 const { runSlotHistory } = await import('../methods/run/slot-history.js');
 const { runForSlot, runRecipeRunsForSlot } = await import('../methods/run/context.js');
+const { fleetStatus } = await import('../methods/fleet.js');
 const key = { family: 'runs', scope: 'farm' } as const;
 const rows = (owner: string | null) => ({ slots: [{ slot: 'proof', current_run_id: owner }] });
 
@@ -296,6 +297,69 @@ test('resource observations invalidate slot facts and keep cached fleet rollups 
   );
   assert(resourceRevisions.revision({ family: 'slots', scope: 'farm', nodeId: machine }) > 0);
 });
+
+test('a fallback read cannot cache an empty fleet that hides source failure from strict readers', async () => {
+  await state.rewriteStatusFile(() => ({
+    checked_at: new Date().toISOString(),
+    slots: [{ slot: 'proof' }],
+  }));
+  await fs.writeFile(state.statusFile, '{bad');
+  assert.equal((await loadFleetStatus(true)).slots.length, 0);
+  assert.equal(getCachedFleet(), null);
+  await assert.rejects(() => fleetStatus(), SyntaxError);
+  await state.rewriteStatusFile(() => ({
+    checked_at: new Date().toISOString(),
+    slots: [{ slot: 'proof' }],
+  }));
+  assert.equal((await fleetStatus()).fleet.slots[0].slot, 'proof');
+});
+
+test(
+  'pool removal and recovery invalidate retained slot projections without a status-file write',
+  { timeout: 8000 },
+  async (t) => {
+    const pool = path.join(process.env.FARMSLOT_POOL_DIR!, 'freshness-proof.json');
+    const content = JSON.stringify({
+      schema_version: 2,
+      machine: 'proof-node',
+      host: 'localhost',
+      project: 'proof-project',
+      platform: 'cli',
+      slots: [{ id: 'proof', enabled: true, mode: 'dispatch' }],
+    });
+    await fs.writeFile(pool, content);
+    await state.rewriteStatusFile(() => ({
+      checked_at: new Date().toISOString(),
+      slots: [
+        { slot: 'proof', machine: 'proof-node', project: 'proof-project', dispatchable: true },
+      ],
+    }));
+    const source = await fs.readFile(state.statusFile);
+    const first = await loadFleetStatus(true, true);
+    assert.equal(first.slots[0].missingFromPool, undefined);
+    const detail = { family: 'slot', slotId: 'proof' } as const;
+    const before = resourceRevisions.revision(detail);
+    const beforeRuns = resourceRevisions.revision(key);
+    const watcher = startFileWatcher();
+    t.after(() => watcher.close());
+    await watcher.ready;
+    await fs.unlink(pool);
+    const deadline = Date.now() + 4500;
+    while (resourceRevisions.revision(detail) === before) {
+      assert(Date.now() < deadline, 'Pool watcher must notify without a forced status read');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(getCachedFleet()?.slots[0].missingFromPool, true);
+    await watcher.close();
+    assert.equal((await loadFleetStatus(true, true)).slots[0].missingFromPool, true);
+    assert(resourceRevisions.revision(detail) > before);
+    await fs.writeFile(pool, content);
+    assert.equal((await loadFleetStatus(true, true)).slots[0].missingFromPool, undefined);
+    assert.equal(resourceRevisions.revision(key), beforeRuns);
+    assert.deepEqual(await fs.readFile(state.statusFile), source);
+    await fs.unlink(pool);
+  },
+);
 
 test('every serialized binding writer publishes only after the committed file is readable', async () => {
   await state.rewriteStatusFile(() => rows(null));

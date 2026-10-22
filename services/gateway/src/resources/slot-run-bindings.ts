@@ -4,6 +4,8 @@ import {
   resourceKeyId,
 } from '@farmslot/protocol/client-cache';
 
+import { fleetStaleDeadline } from '../fleet/freshness.js';
+
 import { type GatewayResourceRevisions, resourceRevisions } from './revisions.js';
 
 interface SlotResourceSnapshot {
@@ -17,19 +19,22 @@ interface SlotResourceSnapshot {
 /** The status writer and its filesystem observer share one scalar snapshot. */
 export class SlotResourceChanges {
   private previous?: Map<string, SlotResourceSnapshot>;
+  private previousCheckedAt?: string;
+  private ghosts = new Set<string>();
   private failed = false;
 
   constructor(private readonly revisions: GatewayResourceRevisions = resourceRevisions) {}
 
-  observe(slots: readonly SlotResourceSnapshot[]): void {
+  observe(slots: readonly SlotResourceSnapshot[], checkedAt?: string): void {
     const current = new Map(slots.map((row) => [row.slot, { ...row }]));
     const previous = this.previous;
     const ids = [...new Set([...(previous?.keys() ?? []), ...current.keys()])];
     const changed = ids.filter(
       (id) => this.failed || previous?.get(id)?.fingerprint !== current.get(id)?.fingerprint,
     );
-    if (!previous || this.failed || changed.length)
-      this.invalidateSlots(changed, current, previous);
+    const metadataChanged = !previous || this.failed || this.previousCheckedAt !== checkedAt;
+    if (metadataChanged || changed.length)
+      this.invalidateSlots(metadataChanged ? ids : changed, current, previous);
     if (
       !previous ||
       this.failed ||
@@ -37,7 +42,21 @@ export class SlotResourceChanges {
     )
       this.invalidateBindings();
     this.previous = current;
+    this.previousCheckedAt = checkedAt;
     this.failed = false;
+    this.revisions.scheduleInvalidations(
+      'fleet-status',
+      this.slotKeys([...current.keys()], current),
+      fleetStaleDeadline(checkedAt),
+    );
+  }
+
+  /** Pool membership can change derived ghost/dispatch facts without a status-file commit. */
+  observePool(liveIds: ReadonlySet<string>): void {
+    const ghosts = new Set([...(this.previous?.keys() ?? [])].filter((id) => !liveIds.has(id)));
+    for (const id of new Set([...this.ghosts, ...ghosts]))
+      if (this.previous?.has(id) && this.ghosts.has(id) !== ghosts.has(id)) this.overlayChanged(id);
+    this.ghosts = ghosts;
   }
 
   unavailable(): void {
@@ -46,6 +65,7 @@ export class SlotResourceChanges {
       this.invalidateBindings();
     }
     this.failed = true;
+    this.revisions.scheduleInvalidations('fleet-status', [], undefined);
   }
 
   /** In-memory enrichments change slot facts without changing persisted run ownership. */
@@ -65,6 +85,18 @@ export class SlotResourceChanges {
     current?: ReadonlyMap<string, SlotResourceSnapshot>,
     previous?: ReadonlyMap<string, SlotResourceSnapshot>,
   ): void {
+    for (const key of this.slotKeys(ids, current, previous))
+      this.revisions.advance(
+        key,
+        key.family === 'slot' && !current?.has(key.slotId) ? 'deleted' : 'updated',
+      );
+  }
+
+  private slotKeys(
+    ids: readonly string[],
+    current?: ReadonlyMap<string, SlotResourceSnapshot>,
+    previous?: ReadonlyMap<string, SlotResourceSnapshot>,
+  ): ResourceKey[] {
     const keys = new Map<string, ResourceKey>();
     const add = (key: ResourceKey) => keys.set(resourceKeyId(key), key);
     add({ family: 'slots', scope: 'farm' });
@@ -75,11 +107,7 @@ export class SlotResourceChanges {
         if (row?.nodeId) add({ family: 'slots', scope: 'farm', nodeId: row.nodeId });
       }
     }
-    for (const key of keys.values())
-      this.revisions.advance(
-        key,
-        key.family === 'slot' && !current?.has(key.slotId) ? 'deleted' : 'updated',
-      );
+    return [...keys.values()];
   }
 
   private invalidateBindings(): void {
@@ -91,6 +119,12 @@ export class SlotResourceChanges {
 }
 
 export const slotResourceChanges = new SlotResourceChanges();
+
+export function statusCheckedAt(value: unknown): string | undefined {
+  const checkedAt =
+    value && typeof value === 'object' ? Reflect.get(value, 'checked_at') : undefined;
+  return typeof checkedAt === 'string' ? checkedAt : undefined;
+}
 
 /** Capture scalar facts so a later in-place write cannot change the saved comparison. */
 export function statusSlotResources(value: unknown): SlotResourceSnapshot[] {

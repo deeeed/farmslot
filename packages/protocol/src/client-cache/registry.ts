@@ -16,6 +16,8 @@ export interface ResourceQueryDefinition {
   timeoutMs?: number;
   /** Becomes true only when the slice's writers and read stamps are implemented. */
   live: boolean;
+  /** Observation parameters can exclude imperative variants of an existing read method. */
+  normalizeParams?(params: unknown): unknown;
   dependencies(params: unknown): ResourceKey[];
 }
 
@@ -115,9 +117,24 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     dependencies: () => [{ family: 'runs', scope: 'farm' }],
   },
   [Methods.FLEET_STATUS]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
-    live: false,
+    retention: { maxEntries: 1, maxBytes: 2 * mb },
+    live: true,
+    normalizeParams: (params: unknown) => {
+      if (params == null) return {};
+      if (
+        typeof params !== 'object' ||
+        Array.isArray(params) ||
+        Object.keys(params).some((key) => key !== 'forceRefresh') ||
+        (Reflect.get(params, 'forceRefresh') !== undefined &&
+          Reflect.get(params, 'forceRefresh') !== false)
+      )
+        throw new Error(
+          'Fleet observations cannot forceRefresh; use fleet.refresh outside the cache',
+        );
+      return {};
+    },
     dependencies: () => [{ family: 'slots', scope: 'farm' }],
   },
 } satisfies Record<string, ResourceQueryDefinition>;
@@ -150,7 +167,9 @@ export function resourceQuery<T = unknown>(
 ): ResourceQuery<T> {
   const definition: ResourceQueryDefinition = RESOURCE_QUERY_DEFINITIONS[method];
   if (!definition) throw new Error(`Unregistered resource read: ${method}`);
-  const canonical = canonicalResourceJson(params ?? {});
+  const canonical = canonicalResourceJson(
+    definition.normalizeParams ? definition.normalizeParams(params) : (params ?? {}),
+  );
   const normalized: unknown = JSON.parse(canonical);
   return {
     id: `${method}:${canonical}`,

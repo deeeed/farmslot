@@ -786,7 +786,14 @@ if (phase === 'slot-facts-web') {
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
   };
-  let observed, failure, result, nodePeer, nodePrincipalId, nodeCredentialId, statusRestore;
+  let observed,
+    failure,
+    result,
+    nodePeer,
+    nodePrincipalId,
+    nodeCredentialId,
+    statusRestore,
+    poolHold;
   const cleanup = [];
   const retireNodeIdentity = async () => {
     if (nodeCredentialId) {
@@ -807,6 +814,28 @@ if (phase === 'slot-facts-web') {
     } finally {
       await rm(temporary, { force: true });
     }
+  };
+  const fleetRevision = (reply) => {
+    assert.equal(
+      reply.resourceState?.epoch,
+      observed.epoch,
+      'Fleet reads must carry the current resource stamp',
+    );
+    const dependency = reply.resourceState.dependencies.find(
+      ({ key }) => key.family === 'slots' && key.scope === 'farm' && !key.project && !key.nodeId,
+    );
+    assert(dependency, 'Fleet reads must declare their collection dependency');
+    return dependency.revision;
+  };
+  const awaitFleet = async (test, label) => {
+    const deadline = Date.now() + 10000;
+    let reply;
+    do {
+      reply = await observed.readStamped('fleet.status');
+      if (test(reply)) return reply;
+      await delay(50);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(reply)}`);
   };
   try {
     observed = await observeResources();
@@ -1080,6 +1109,145 @@ if (phase === 'slot-facts-web') {
     );
     nodePeer = undefined;
     await retireNodeIdentity();
+    const normal = await observed.readStamped('fleet.status');
+    const normalRevision = fleetRevision(normal);
+    assert.equal(normal.data.fleet.slots[0].missingFromPool, undefined);
+    poolHold = `${pool}.freshness-${randomUUID()}.hold`;
+    await rename(pool, poolHold);
+    const ghost = await awaitFleet(
+      (reply) =>
+        reply.data.fleet.slots[0]?.missingFromPool === true &&
+        fleetRevision(reply) > normalRevision,
+      'Pool membership must invalidate a ghost projection',
+    );
+    assert.equal(ghost.data.fleet.slots[0].dispatchable, false);
+    assert.deepEqual(await readFile(poolHold), beforePool);
+    statusRestore = {
+      file: statusFile,
+      bytes: await readFile(statusFile),
+      mode: (await stat(statusFile)).mode & 0o777,
+    };
+    const threshold = Number(process.env.FARMSLOT_FLEET_STALE_MS ?? 300000);
+    assert.equal(threshold, 300000, 'Use the unchanged normal fleet stale threshold');
+    const seededAt = Date.now() - threshold + 5000;
+    const seededTime = new Date(seededAt).toISOString();
+    const staleAt = seededAt + threshold + 1;
+    const ghostRevision = fleetRevision(ghost);
+    const sinceMetadata = observed.changes.length;
+    await replaceStatus(
+      JSON.stringify({ ...JSON.parse(statusRestore.bytes), checked_at: seededTime }),
+    );
+    const fresh = await awaitFleet(
+      (reply) =>
+        reply.data.fleet.checkedAt === seededTime &&
+        !reply.data.fleet.stale &&
+        fleetRevision(reply) > ghostRevision,
+      'Fleet timestamp metadata must advance its read stamp before expiry',
+    );
+    assert.deepEqual(
+      fresh.data.fleet.slots,
+      ghost.data.fleet.slots,
+      'Only the fleet timestamp changed',
+    );
+    assert(
+      !observed.changes.slice(sinceMetadata).some(({ key }) => key.family === 'runs'),
+      'Timestamp metadata preserves run bindings',
+    );
+    const freshRevision = fleetRevision(fresh);
+    const seededBytes = await readFile(statusFile);
+    const deadline = staleAt + 5000;
+    while (
+      !observed.changes.some(
+        ({ key, revision }) =>
+          key.family === 'slots' &&
+          key.scope === 'farm' &&
+          !key.project &&
+          !key.nodeId &&
+          revision > freshRevision,
+      )
+    ) {
+      assert(Date.now() < deadline, 'Fleet stale boundary must notify without any source write');
+      await observed.barrier();
+      await delay(50);
+    }
+    assert(Date.now() >= staleAt, 'Fleet expiry must not publish early');
+    assert.deepEqual(
+      await readFile(statusFile),
+      seededBytes,
+      'The expiry notice is independent of source writes',
+    );
+    const stale = await observed.readStamped('fleet.status');
+    assert.equal(stale.data.fleet.checkedAt, seededTime);
+    assert.equal(stale.data.fleet.stale, true);
+    assert(stale.data.fleet.slots.every((slot) => slot.dispatchable === false));
+    assert(fleetRevision(stale) > freshRevision);
+    const sourceErrors = [];
+    const sinceSourceFailure = observed.changes.length;
+    await replaceStatus('{fleet-source-corrupt');
+    const sourceDeadline = Date.now() + 10000;
+    while (
+      !observed.changes
+        .slice(sinceSourceFailure)
+        .some(
+          ({ key, revision }) =>
+            key.family === 'slots' &&
+            key.scope === 'farm' &&
+            !key.project &&
+            !key.nodeId &&
+            revision > fleetRevision(stale),
+        )
+    ) {
+      assert(
+        Date.now() < sourceDeadline,
+        'An unreadable fleet source must invalidate existing observations',
+      );
+      await observed.barrier();
+      await delay(50);
+    }
+    await assert.rejects(
+      () => observed.readStamped('fleet.status'),
+      (error) => {
+        sourceErrors.push({ stage: 'corrupt', code: error.code });
+        return error.code === 'METHOD_ERROR';
+      },
+      'Fleet source corruption must remain an error',
+    );
+    await rm(statusFile);
+    await assert.rejects(
+      () => observed.readStamped('fleet.status'),
+      (error) => {
+        sourceErrors.push({ stage: 'missing', code: error.code });
+        return error.code === 'METHOD_ERROR';
+      },
+      'A missing fleet source must remain an error',
+    );
+    await observed.barrier();
+    await replaceStatus(statusRestore.bytes);
+    assert.deepEqual(await readFile(statusFile), statusRestore.bytes);
+    assert.equal((await stat(statusFile)).mode & 0o777, statusRestore.mode);
+    statusRestore = undefined;
+    await rename(poolHold, pool);
+    poolHold = undefined;
+    const recovered = await awaitFleet(
+      (reply) =>
+        reply.data.fleet.slots[0]?.missingFromPool !== true &&
+        fleetRevision(reply) > fleetRevision(stale),
+      'Fleet source and pool restoration must become current again',
+    );
+    const recoveredView = await until(
+      (value) =>
+        value.mounted && value.reads?.slot.status === 'ready' && value.slotLifecycle === 'manual',
+      'The actual canonical slot consumer must recover after fleet source errors',
+    );
+    assert.equal(recoveredView.reads.slot.query.id, before.reads.slot.query.id);
+    await writeFile(
+      path.join(artifacts, 'fleet-freshness.json'),
+      JSON.stringify(
+        { normal, ghost, fresh, stale, recovered, sourceErrors, recoveredView },
+        null,
+        2,
+      ),
+    );
     assert.deepEqual(await readFile(pool), beforePool);
     assert.equal((await stat(pool)).mode & 0o777, beforePoolMode);
     await writeFile(path.join(artifacts, 'slot-fact-cycles.json'), JSON.stringify(cycles, null, 2));
@@ -1104,11 +1272,22 @@ if (phase === 'slot-facts-web') {
       nodeObservationNotifiedAndRead: true,
       resourceRollupNotifiedAndRead: true,
       filesystemEnrichmentPreserved: true,
+      fleetMetadataStamped: true,
+      fleetExpiryNotified: true,
+      fleetSourceErrorsExposed: true,
+      fleetPoolProjectionNotified: true,
       wholeFleetMigrationComplete: false,
     };
   } catch (error) {
     failure = error;
   } finally {
+    if (poolHold) {
+      try {
+        await rename(poolHold, pool);
+      } catch (error) {
+        cleanup.push(error);
+      }
+    }
     if (statusRestore) {
       try {
         await replaceStatus(statusRestore.bytes);

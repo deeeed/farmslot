@@ -10,6 +10,12 @@ import type { ResourceChangedPayload } from '@farmslot/protocol/transport/events
 
 type Change = ResourceChangedPayload['changes'][number];
 
+interface InvalidationDeadline {
+  at: number;
+  keys: ResourceKey[];
+  timer: ReturnType<typeof setTimeout>;
+}
+
 /** Gateway-process counters. Writers advance after commit; no durable epoch or event log. */
 export class GatewayResourceRevisions {
   readonly epoch = randomUUID();
@@ -20,10 +26,7 @@ export class GatewayResourceRevisions {
     ReturnType<typeof setTimeout> | null
   >();
   private publisher?: (payload: ResourceChangedPayload) => void;
-  private readonly deadlines = new Map<
-    string,
-    { at: number; timer: ReturnType<typeof setTimeout> }
-  >();
+  private readonly deadlines = new Map<string, InvalidationDeadline>();
 
   setPublisher(publish: (payload: ResourceChangedPayload) => void): void {
     this.publisher = publish;
@@ -70,23 +73,42 @@ export class GatewayResourceRevisions {
 
   /** A time-dependent projection has no write at its boundary; its owner schedules that change. */
   scheduleInvalidation(ownerId: string, key: ResourceKey, at: number | undefined): void {
-    const id = `${resourceKeyId(key)}\0${ownerId}`;
+    this.scheduleDeadline(`${resourceKeyId(key)}\0${ownerId}`, [key], at);
+  }
+
+  /** One source deadline changes all its derived keys in the same publication turn. */
+  scheduleInvalidations(
+    ownerId: string,
+    keys: readonly ResourceKey[],
+    at: number | undefined,
+  ): void {
+    this.scheduleDeadline(`cohort\0${ownerId}`, keys, at);
+  }
+
+  private scheduleDeadline(id: string, keys: readonly ResourceKey[], at: number | undefined): void {
     const previous = this.deadlines.get(id);
-    if (previous?.at === at) return;
+    if (previous && previous.at === at) {
+      previous.keys = keys.map((key) => ({ ...key }));
+      return;
+    }
     if (previous) clearTimeout(previous.timer);
     this.deadlines.delete(id);
-    if (at === undefined || !Number.isFinite(at) || at <= Date.now()) return;
-    const timer = setTimeout(
-      () => {
-        this.deadlines.delete(id);
-        // Node timers have a signed 32-bit delay; a future timestamp can need another chunk.
-        if (Date.now() < at) this.scheduleInvalidation(ownerId, key, at);
-        else this.advance(key);
-      },
-      Math.min(at - Date.now(), 2_147_483_647),
-    );
-    timer.unref();
-    this.deadlines.set(id, { at, timer });
+    if (!keys.length || at === undefined || !Number.isFinite(at) || at <= Date.now()) return;
+    const deadline: InvalidationDeadline = {
+      at,
+      keys: keys.map((key) => ({ ...key })),
+      timer: setTimeout(
+        () => {
+          this.deadlines.delete(id);
+          // Node timers have a signed 32-bit delay; a future timestamp can need another chunk.
+          if (Date.now() < at) this.scheduleDeadline(id, deadline.keys, at);
+          else for (const key of deadline.keys) this.advance(key);
+        },
+        Math.min(at - Date.now(), 2_147_483_647),
+      ),
+    };
+    deadline.timer.unref();
+    this.deadlines.set(id, deadline);
   }
 
   private publish(family: ResourceKey['family']): void {

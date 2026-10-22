@@ -40,6 +40,7 @@ import {
   type SlotVars,
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { fleetStaleThresholdMs, isFleetCheckedAtStale } from '../fleet/freshness.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { fixtureCheckVars } from '../node-support/ensure.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
@@ -59,18 +60,7 @@ const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
 let fleetRefreshInFlight: Promise<FleetStatusResult> | null = null;
 
-const FLEET_STALE_MS_DEFAULT = 5 * 60_000;
-
-export function fleetStaleThresholdMs(): number {
-  const raw = Number(process.env.FARMSLOT_FLEET_STALE_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : FLEET_STALE_MS_DEFAULT;
-}
-
-export function isFleetCheckedAtStale(checkedAt: string, nowMs = Date.now()): boolean {
-  const ts = Date.parse(checkedAt);
-  if (!Number.isFinite(ts)) return true;
-  return nowMs - ts > fleetStaleThresholdMs();
-}
+export { fleetStaleThresholdMs, isFleetCheckedAtStale };
 
 export interface FleetStatusDeps {
   load(): Promise<FleetStatus>;
@@ -78,7 +68,7 @@ export interface FleetStatusDeps {
 }
 
 const defaultFleetStatusDeps: FleetStatusDeps = {
-  load: () => loadFleetStatus(),
+  load: () => loadFleetStatus(false, true),
   refresh: () => fleetRefresh(),
 };
 
