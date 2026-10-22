@@ -1756,6 +1756,7 @@ test('loadQueue drops dispatching rows stamped with a terminal Run', async () =>
   updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
   const item = addItem(
     {
+      autoDispatch: false,
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: 'PROJ-stamp-terminal-reconcile',
@@ -1785,6 +1786,7 @@ test('reclaimExpiredClaims drops stamped rows whose Run still exists', async () 
   });
   const item = addItem(
     {
+      autoDispatch: false,
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: 'PROJ-stamp-expire-drop',
@@ -1816,6 +1818,7 @@ test('loadQueue drops higher-attempt launch row when a live run owns the candida
   });
   const item = addItem(
     {
+      autoDispatch: false,
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: 'PROJ-attempt-mismatch',
@@ -1850,6 +1853,7 @@ test('loadQueue keeps legacy undefined-attempt launch row against live attempt-b
   });
   const item = addItem(
     {
+      autoDispatch: false,
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: 'PROJ-legacy-attempt',
@@ -1883,6 +1887,7 @@ test('loadQueue drops queued rows whose handoff is already owned by a live Run',
   });
   const item = addItem(
     {
+      autoDispatch: false,
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: 'PROJ-queued-live-owner',
