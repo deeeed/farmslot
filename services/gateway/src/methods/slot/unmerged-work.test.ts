@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
+import { GitHubHttpError } from '../../integrations/github-errors.js';
 
 import {
   assertPrepareCommitsPublished,
   assertPublishedPrepareBranchContained,
   findUnmergedSlotWork,
+  type MergedPreparePullRequest,
 } from './unmerged-work.js';
 
 const BRANCH = 'TAT-4091-feat-fix-terminal-unit-tests';
@@ -56,6 +58,21 @@ function slotRepo(t: test.TestContext, remotes: string[]) {
   git(repo, 'checkout', '-q', '-b', BRANCH);
   commit(repo, 'fix.txt');
   return { repo, vars: { slotId: 'macwork-mmt-3', remoteRepo: repo } as SlotVars };
+}
+
+function squashAndPrune(repo: string, baseBranch = 'main'): MergedPreparePullRequest {
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  const headSha = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'checkout', '-q', baseBranch);
+  git(repo, 'merge', '--squash', BRANCH);
+  git(repo, 'commit', '-qm', 'squash merged work');
+  const mergeSha = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'push', '-q', 'origin', baseBranch);
+  const origin = git(repo, 'remote', 'get-url', 'origin');
+  git(origin, 'update-ref', '-d', `refs/heads/${BRANCH}`);
+  git(repo, 'fetch', '-q', '--prune', 'origin');
+  git(repo, 'checkout', '-q', BRANCH);
+  return { number: 241, headSha, mergeSha, baseBranch };
 }
 
 test('a HEAD that publication pushed to origin is not unpushed work', async (t) => {
@@ -264,6 +281,242 @@ test('prepare retains published tips after remote deletion and still refuses lat
   const head = git(repo, 'rev-parse', 'HEAD');
   await assert.rejects(assertPrepareCommitsPublished(vars, 'next-run', bash), /unpushed commits/);
   assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+});
+
+test('prepare accepts a squash-merged patch after the deleted branch was pruned', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const merged = squashAndPrune(repo);
+  assert.match(git(repo, 'cherry', 'origin/main', 'HEAD'), /^- /);
+
+  await assertPrepareCommitsPublished(vars, 'next-run', bash);
+
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), merged.headSha);
+  assert.equal(git(repo, 'rev-parse', BRANCH), merged.headSha);
+});
+
+test('prepare still refuses new unpublished work after a pruned squash merge', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  squashAndPrune(repo);
+  commit(repo, 'unpublished-after-squash.txt');
+  const head = git(repo, 'rev-parse', 'HEAD');
+
+  await assert.rejects(assertPrepareCommitsPublished(vars, 'next-run', bash), (error: Error) => {
+    assert.match(error.message, /unpushed commits/);
+    assert.ok(error.message.includes(head));
+    return true;
+  });
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+});
+
+for (const file of ['fix.txt', 'untracked-notes.txt']) {
+  test(`prepare preserves dirty ${file} on an otherwise merged checkout`, async (t) => {
+    const { repo, vars } = slotRepo(t, ['origin']);
+    const merged = squashAndPrune(repo);
+    writeFileSync(path.join(repo, file), 'operator work\n');
+
+    await assert.rejects(assertPrepareCommitsPublished(vars, 'next-run', bash), /dirty files/);
+
+    assert.equal(readFileSync(path.join(repo, file), 'utf8'), 'operator work\n');
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), merged.headSha);
+  });
+}
+
+test('prepare ignores configured untracked scaffolding but keeps adjacent user files', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  squashAndPrune(repo);
+  const projectJson = { task_dir: 'support/tasks with spaces', paths: { runtime_dir: '.runtime' } };
+  mkdirSync(path.join(repo, projectJson.task_dir), { recursive: true });
+  writeFileSync(path.join(repo, projectJson.task_dir, 'TASK.md'), 'managed scaffold');
+  await assertPrepareCommitsPublished(vars, 'next-run', bash, { projectJson });
+
+  mkdirSync(path.join(repo, 'support/tasks with spaces-extra'));
+  writeFileSync(path.join(repo, 'support/tasks with spaces-extra/user.md'), 'operator work');
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, 'next-run', bash, { projectJson }),
+    /dirty files/,
+  );
+});
+
+test('prepare checks patch equivalence against the configured default branch', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'branch', 'release', 'main');
+  const merged = squashAndPrune(repo, 'release');
+
+  await assertPrepareCommitsPublished(vars, 'next-run', bash, { defaultBranch: 'release' });
+  await assert.rejects(assertPrepareCommitsPublished(vars, 'next-run', bash), /unpushed commits/);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), merged.headSha);
+});
+
+test('merged tips do not hide unpublished work beyond the five displayed commits', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const unpublished = git(repo, 'rev-parse', 'HEAD');
+  const merged: string[] = [];
+  for (let index = 0; index < 5; index++) {
+    commit(repo, `published-${index}.txt`);
+    merged.push(git(repo, 'rev-parse', 'HEAD'));
+  }
+  const head = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'checkout', '-q', 'main');
+  git(repo, 'cherry-pick', ...merged);
+  git(repo, 'push', '-q', 'origin', 'main');
+  git(repo, 'checkout', '-q', BRANCH);
+
+  await assert.rejects(assertPrepareCommitsPublished(vars, 'next-run', bash), (error: Error) => {
+    assert.ok(error.message.includes(unpublished));
+    assert.ok(!error.message.includes(head));
+    return true;
+  });
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+});
+
+test('prepare accepts a merged multi-commit PR whose individual patches differ from the squash', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  commit(repo, 'second-fix.txt');
+  const merged = squashAndPrune(repo);
+  assert.ok(
+    git(repo, 'cherry', 'origin/main', 'HEAD')
+      .split('\n')
+      .every((line) => line.startsWith('+ ')),
+  );
+
+  await assertPrepareCommitsPublished(
+    vars,
+    'next-run',
+    bash,
+    { githubRepo: 'example/project' },
+    async (repository, head) => {
+      assert.equal(repository, 'example/project');
+      assert.equal(head, merged.headSha);
+      return [merged];
+    },
+  );
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), merged.headSha);
+
+  writeFileSync(path.join(repo, 'fix.txt'), 'operator work\n');
+  await assert.rejects(
+    assertPrepareCommitsPublished(
+      vars,
+      'next-run',
+      bash,
+      { githubRepo: 'example/project' },
+      async () => [merged],
+    ),
+    /dirty files/,
+  );
+  assert.equal(readFileSync(path.join(repo, 'fix.txt'), 'utf8'), 'operator work\n');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), merged.headSha);
+});
+
+test('merged PR evidence does not authorize unpublished commits after its head', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  commit(repo, 'second-fix.txt');
+  const merged = squashAndPrune(repo);
+  commit(repo, 'unpublished-after-pr.txt');
+  const head = git(repo, 'rev-parse', 'HEAD');
+
+  await assert.rejects(
+    assertPrepareCommitsPublished(
+      vars,
+      'next-run',
+      bash,
+      { githubRepo: 'example/project' },
+      async () => [merged],
+    ),
+    /unpushed commits/,
+  );
+  await assert.rejects(
+    assertPrepareCommitsPublished(
+      vars,
+      'next-run',
+      bash,
+      { githubRepo: 'example/project' },
+      async () => {
+        throw new Error('GitHub unavailable');
+      },
+    ),
+    (error: Error) => {
+      assert.match(error.message, /GitHub unavailable/);
+      assert.match(error.message, /has unpushed commits/);
+      assert.match(error.message, /no branch was reset or deleted/);
+      assert.ok(error.message.includes(head));
+      return true;
+    },
+  );
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+});
+
+test('a GitHub unknown-commit response keeps the actionable unpublished-work refusal', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const head = git(repo, 'rev-parse', 'HEAD');
+  await assert.rejects(
+    assertPrepareCommitsPublished(
+      vars,
+      'next-run',
+      bash,
+      { githubRepo: 'example/project' },
+      async () => {
+        throw new GitHubHttpError(422, `No commit found for SHA: ${head}`);
+      },
+    ),
+    (error: Error) => {
+      assert.match(error.message, /has unpushed commits/);
+      assert.match(error.message, /no branch was reset or deleted/);
+      assert.ok(error.message.includes(head));
+      return true;
+    },
+  );
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+});
+
+test('merged PR proof can fetch a later head without moving the slot branch', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const head = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  const origin = git(repo, 'remote', 'get-url', 'origin');
+  const author = path.join(repo, '..', 'author');
+  git(repo, 'clone', '-q', repo, author);
+  git(author, 'config', 'user.email', 'test@example.com');
+  git(author, 'config', 'user.name', 'Test');
+  git(author, 'config', 'commit.gpgsign', 'false');
+  git(author, 'remote', 'set-url', 'origin', origin);
+  commit(author, 'later-pr-fix.txt');
+  const merged = squashAndPrune(author);
+  git(origin, 'update-ref', 'refs/pull/241/head', merged.headSha);
+  git(repo, 'fetch', '-q', '--prune', 'origin');
+  const before = spawnSync('git', ['cat-file', '-e', `${merged.headSha}^{commit}`], { cwd: repo });
+  assert.notEqual(before.status, 0);
+
+  await assertPrepareCommitsPublished(
+    vars,
+    'next-run',
+    bash,
+    { githubRepo: 'example/project' },
+    async () => [merged],
+  );
+
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(repo, 'rev-parse', BRANCH), head);
+  assert.equal(git(repo, 'rev-parse', `${merged.headSha}^{commit}`), merged.headSha);
+});
+
+test('merged PR evidence must reach the configured target branch', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'branch', 'release', 'main');
+  commit(repo, 'second-fix.txt');
+  const merged = squashAndPrune(repo, 'release');
+  for (const evidence of [merged, { ...merged, baseBranch: 'main' }]) {
+    await assert.rejects(
+      assertPrepareCommitsPublished(
+        vars,
+        'next-run',
+        bash,
+        { githubRepo: 'example/project' },
+        async () => [evidence],
+      ),
+      /unpushed commits/,
+    );
+  }
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), merged.headSha);
 });
 
 test('published unique worker commits block replacement and are named without moving refs', async (t) => {
