@@ -210,9 +210,11 @@ mock.module('../runs/store.js', {
     listRuns: () => ({ runs: otherRuns }),
     getRun: (id: string) => (liveRun && id === RUN_ID ? run : undefined),
     getRunWithArchived: async (id: string) => (id === RUN_ID ? run : undefined),
+    persistRunNow: async () => {},
     updateRun: (_id: string, patch: Partial<Run>) => {
       runUpdates.push(patch);
-      return { ...run, ...patch };
+      Object.assign(run, patch);
+      return run;
     },
   },
 });
@@ -286,6 +288,8 @@ const { slotTeardownBlocker, stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } 
   await import('./slot-teardown.js');
 const { replaySlotReclaimCheck } = await import('../methods/run/replay-step.js');
 const { defaultCancelCollaborators } = await import('./cancel-transition.js');
+const { reclaimCancelledSlot, cancelledSlotReplayRefusal } =
+  await import('./cancelled-slot-reclaim.js');
 const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
 
 const run = {
@@ -298,6 +302,7 @@ const reaps = () => commands.filter((cmd) => cmd.includes(`identityfile='${IDENT
 
 beforeEach(() => {
   run.status = 'cancelled';
+  run.slotReclaimed = undefined;
   run.steps = [];
   slotRow = { current_run_id: RUN_ID, slot_epoch: 1 };
   slotWrites = [];
@@ -851,3 +856,47 @@ test('another active run on the slot still keeps it on cancel', async () => {
     'Another active run run-active uses this slot',
   );
 });
+
+test('cancel retains replay until a pinned new request needs the slot, preserving checkout and evidence', async () => {
+  const cancel = defaultCancelCollaborators();
+  await cancel.releaseCapabilities(run);
+  await cancel.releaseSlot(run);
+  assertKeptForReplay();
+  otherRuns = [
+    {
+      ...run,
+      id: 'requester',
+      status: 'slot-finding',
+      steps: [{ name: 'find-slot', status: 'running' }],
+    },
+  ];
+  assert.equal(await reclaimCancelledSlot(SLOT_ID, 'requester'), true);
+  assert.equal(slotRow?.lifecycle, 'ready');
+  assert.equal(slotRow?.current_run_id, null);
+  assert.equal(run.status, 'cancelled');
+  assert.equal(run.slotReclaimed?.byRunId, 'requester');
+  assert.match(cancelledSlotReplayRefusal(run) ?? '', /slot .* was reclaimed by run requester/);
+  assert.deepEqual(
+    commands.filter((cmd) => /git (reset|clean|checkout)/.test(cmd)),
+    [],
+  );
+});
+
+test('cancelled reclamation refuses surviving processes and preserves the replay record', async () => {
+  workerBlocker = 'worker still alive';
+  slotAgentKillError = new Error('worker did not stop');
+  await assert.rejects(reclaimCancelledSlot(SLOT_ID, 'requester'), /cleanup refused/);
+  assert.notEqual(slotRow?.lifecycle, 'ready');
+  assert.equal(run.slotReclaimed, undefined);
+});
+
+for (const state of ['successor', 'handoff'] as const) {
+  test(`cancelled reclamation never touches a ${state}`, async () => {
+    if (state === 'successor') slotRow!.current_run_id = 'successor';
+    else slotRow!.handoff_run_id = 'successor';
+    assert.equal(await reclaimCancelledSlot(SLOT_ID, 'requester'), false);
+    assert.deepEqual(commands, []);
+    assert.deepEqual(slotWrites, []);
+    assert.equal(run.slotReclaimed, undefined);
+  });
+}

@@ -66,6 +66,7 @@ import {
 import { replaySlotCapabilityRequirements } from '../../run-engine/slot-capability-requirements.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import { assertRunNotArchiving, isRunArchivingRefusal } from '../../run-lifecycle/archive-fence.js';
+import { cancelledSlotReplayRefusal } from '../../run-lifecycle/cancelled-slot-reclaim.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
@@ -957,6 +958,10 @@ async function replayRunStep(
     throw new Error(`Invalid runReplayStep triggeredBy: ${String(params.triggeredBy)}`);
   }
   const existing = getRun(params.runId);
+  if (existing) {
+    const reclaimed = cancelledSlotReplayRefusal(existing);
+    if (reclaimed) throw new Error(reclaimed);
+  }
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   if (existing.reviewWorkspaceTarget) assertNativeRunOwner(existing);
   const reviewBlock = staticReviewReplayBlock(existing, params);

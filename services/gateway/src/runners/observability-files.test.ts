@@ -457,3 +457,14 @@ test('promptTurnStartedFromHooks treats UserPromptSubmit as medium-confidence ac
     observedAt: NOW - 1_000,
   });
 });
+
+test('a bound terminal hook exposes the native turn failure to its monitor', () => {
+  const record = {
+    hook_event_name: 'StopFailure',
+    session_id: 'pi-task',
+    observedAt: NOW,
+    turnActive: false,
+    failure: 'OAuth refresh failed for anthropic: invalid_grant',
+  };
+  assert.equal(deriveRunnerSessionDeliveryState(record, 'pi-task')?.failure, record.failure);
+});

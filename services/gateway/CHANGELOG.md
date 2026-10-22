@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Reclaim cancelled replay holds safely when another run needs the slot, detect structured runner failures and check provider authentication before dispatch, and keep operator-driven development out of monitor nudges.
+
 - Admin people can supervise a pinned native worker after their identity is replaced; the worker keeps its original execution owner.
 
 - Completed reviewers without hooks can reach their posting gate through verified native process state. An explicit publication retry can retain a matching manual review receipt without posting again.

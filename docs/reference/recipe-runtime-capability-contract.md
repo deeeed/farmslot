@@ -258,6 +258,16 @@ plus a proof plan.
 
 ### Release parks and terminal cleanup
 
+A cancelled run retains its slot for replay until another run requests that slot. On an
+explicit request, or find-slot with no free eligible slot, the gateway MUST perform the
+existing owned cleanup, confirm it, and free ownership before the requester claims it.
+A pending request alone is not occupancy. Foreign ownership, successor reservations and
+in-flight release fences MUST retain their guards; failed cleanup MUST NOT grant readiness.
+Reclamation MUST preserve the checkout, cancelled record and evidence. The gateway MUST
+persist the read-only `Run.slotReclaimed` result before freeing ownership; later replay of
+that cancelled run MUST refuse with the slot and requesting run identity. Cancel alone
+MUST NOT mark the slot reclaimed.
+
 - A successful release-mode machine park, including `free-slot`, MUST release the
   run's slot occupancy and capability leases. Monitor and CI-watch runs MUST pause
   their engine; publication-gate runs retain their pending gate status.

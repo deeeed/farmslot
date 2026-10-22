@@ -314,3 +314,28 @@ On 10-19, four cancels at the human gate left their slots held. Their runs were 
 ### Public surface
 
 No new API, flag or field. After `run.cancel` the slot reads `held`, with the replay-or-release reason and `current_run_id` set to the run. `run.delete` and `run.archive` of a cancelled run release that slot, or refuse with the release guard's reason. `slotTeardownSkipped` names another active run that kept the slot, or a run-owned process that survived the stop. Command Center and Companion show the kept slot on the run view, with "Replay from <step>" and "Release slot" side by side, and in the fleet as "held by cancelled run <id>" with "Release slot". Both read the shared `cancelledRunSlotHold` model in `@farmslot/protocol`, and Release calls `slot.release` with the run as the expected owner and `forceReset`, the release delete does.
+
+## Amendment: reclaim cancelled replay holds on demand (2026-10-22)
+
+Status: Proposed. Lead approved this amendment's scope; paired review and lead acceptance are required before merge.
+
+Cancel still stops its run-owned resources and retains the checkout and slot for replay.
+That reservation lasts until another run needs the slot. An explicit slot request, or
+find-slot with no free eligible slot, invokes the same owned cancellation cleanup before
+claiming the cancelled holder's slot. A request that has not claimed the slot is not an
+occupant. A live owner, successor reservation, release fence or unconfirmed cleanup still
+prevents reclamation. Nothing resets, cleans or checks out the preserved repository during
+reclamation, and the cancelled run's record and evidence remain available.
+
+The gateway persists `Run.slotReclaimed` before releasing ownership, naming the slot,
+requesting run and time. Replay of that cancelled run then refuses with those details,
+even if the successor later releases the slot. A refused cleanup retains the hold and
+removes that marker while the cancelled run still owns the cleanup. This preserves the
+10-19 replay intent without requiring a manual release before a new selection can proceed.
+
+### Public surface
+
+No new command, flag or RPC. `run.create` and find-slot consume the guarded reclaim path;
+`run.replayStep` returns the explicit reclaimed-slot refusal. `Run.slotReclaimed` is an
+optional read-only result field owned by `@farmslot/protocol`. The normative rules are in
+[the resource contract](../reference/recipe-runtime-capability-contract.md#release-parks-and-terminal-cleanup).

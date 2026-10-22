@@ -179,6 +179,8 @@ export interface RunnerGracefulExitCapability {
 }
 
 export interface RunnerDefinition {
+  /** Structured provider authentication check before a worker process is launched. */
+  authCheck?: (vars: SlotVars, model?: string | null) => string;
   /** Structured execution receipts for finite project-owned tasks. */
   taskProgress?: RunnerTaskProgressReader;
   /** Empty-session reservation and explicit resume are available for managed worktree terminals. */
@@ -544,6 +546,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   pi: {
     id: 'pi',
+    authCheck: (vars, model) =>
+      `${shellQuote(vars.piPath || 'pi')} auth check --model ${shellQuote(model && model !== 'unknown' ? model : DEFAULT_PI_MODEL)} --json`,
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['pi'],
     headlessPrintFlags: ['-p', '--print'],
