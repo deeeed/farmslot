@@ -207,21 +207,29 @@ test('unconfirmed closeout does not admit another probe on the same node connect
 
 test('a probe that waits for reconnect retains the connection that actually executed it', async (t) => {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
-  await new Promise<void>((resolve) => server.once('listening', resolve));
-  const address = server.address();
-  assert.ok(address && typeof address !== 'string');
-  const peer = new Promise<WebSocket>((resolve) => server.once('connection', resolve));
-  const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
-  await new Promise<void>((resolve, reject) => client.once('open', resolve).once('error', reject));
-  const socket = await peer;
+  let client: WebSocket | undefined;
   t.after(async () => {
-    unregisterByWs(socket);
-    client.terminate();
-    socket.terminate();
+    client?.terminate();
+    for (const socket of server.clients) {
+      unregisterByWs(socket);
+      socket.terminate();
+    }
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
   });
+  await new Promise<void>((resolve, reject) =>
+    server.once('listening', resolve).once('error', reject),
+  );
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const peer = new Promise<WebSocket>((resolve) => server.once('connection', resolve));
+  const connection = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  client = connection;
+  await new Promise<void>((resolve, reject) =>
+    connection.once('open', resolve).once('error', reject),
+  );
+  const socket = await peer;
   let launches = 0;
   execute = async () => {
     launches++;
