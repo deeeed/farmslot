@@ -162,9 +162,10 @@ export default function SlotDiffViewerScreen() {
       diffRefreshRequestRef.current = requestId;
       if (
         !client ||
+        client.connectionState !== 'connected' ||
         !slotId ||
         pathParamError ||
-        runObservation.status !== 'ready' ||
+        (currentRunId && runObservation.status !== 'ready') ||
         slotRunObservation.status !== 'ready'
       ) {
         setDiffRead((previous) =>
@@ -204,6 +205,7 @@ export default function SlotDiffViewerScreen() {
     },
     [
       client,
+      currentRunId,
       pathParamError,
       slotId,
       runObservation.status,

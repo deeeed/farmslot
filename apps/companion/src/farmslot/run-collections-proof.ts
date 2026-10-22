@@ -184,6 +184,7 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
         platform: Platform.OS,
         startedAt,
         online: useConnectionStore.getState().client?.connectionState === 'connected',
+        connectionGeneration: useConnectionStore.getState().client?.connectionGeneration,
         workspaceKey: getResourceWorkspaceKey(),
         storedDetail,
         runsStatus: runStore.observation.status,

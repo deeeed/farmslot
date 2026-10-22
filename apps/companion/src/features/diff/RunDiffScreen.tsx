@@ -348,14 +348,14 @@ export default function DiffViewerScreen() {
         />
         <ResourceReadStatus observation={runObservation} label="run diff" />
         <ResourceReadStatus observation={recipeObservation} label="recipe runs" />
-        {runObservation.status === 'error' || recipeObservation.status === 'error' ? (
+        {runObservation.error || recipeObservation.error ? (
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel="Retry diff"
             onPress={() => {
-              if (runObservation.status === 'error' && runQuery)
-                void getResourceCache()?.retry(runQuery);
-              if (recipeObservation.status === 'error' && recipeQuery)
-                void getResourceCache()?.retry(recipeQuery);
+              const cache = getResourceCache();
+              if (runQuery && cache?.read(runQuery).error) void cache.retry(runQuery);
+              if (recipeQuery && cache?.read(recipeQuery).error) void cache.retry(recipeQuery);
             }}
           >
             <Text style={styles.backButtonText}>Retry</Text>

@@ -121,3 +121,16 @@ establish packaged publication, actual visual judgments or the full command matr
 Recipe files live under `docs/examples/recipes/farmslot/` for Command Center and
 `apps/companion/scripts/agentic/recipe/recipes/` for Companion. Unit tests support the
 recipes; they do not replace rendered or endpoint acceptance.
+
+## Native read recovery
+
+`run-read-recovery.recipe.json` covers idle slots with no current or retained run,
+plus failed refreshes in Artifact Viewer and Run Diff. A slot's live Git read
+requires a current slot binding; a full-run observation is required only when
+a run exists. Contextual Retry renders when either shared observation has an
+error and retries only queries that still have an error at the time of the click.
+The recipe faults only an owned private bundle manifest, restores its exact bytes
+and file mode, and verifies recovery on the same gateway connection. Each case
+has a failing pre-fix real-client proof. The new device runs use screenshots and
+traces with an explicit recording-off reason after the lead's recording retry cap.
+They do not claim new video evidence or whole-family acceptance.

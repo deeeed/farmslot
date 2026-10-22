@@ -105,9 +105,13 @@ export default function ArtifactViewerScreen() {
       <View style={[baseStyles.container, styles.center, { paddingBottom: insets.bottom }]}>
         <ResourceReadStatus observation={runObservation} label="run artifacts" />
         <Text style={baseStyles.textSecondary}>Loading...</Text>
-        {runObservation.status === 'error' ? (
-          <Pressable onPress={actions.retry}>
-            <Text>Retry</Text>
+        {runObservation.error ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry artifacts"
+            onPress={actions.retry}
+          >
+            <Text style={baseStyles.textSecondary}>Retry</Text>
           </Pressable>
         ) : null}
       </View>
@@ -145,9 +149,13 @@ export default function ArtifactViewerScreen() {
           <>
             <ResourceReadStatus observation={runObservation} label="run artifacts" />
             <ResourceReadStatus observation={recipeObservation} label="recipe evidence" />
-            {runObservation.status === 'error' || recipeObservation.status === 'error' ? (
-              <Pressable onPress={actions.retry}>
-                <Text>Retry</Text>
+            {runObservation.error || recipeObservation.error ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry artifacts"
+                onPress={actions.retry}
+              >
+                <Text style={baseStyles.textSecondary}>Retry</Text>
               </Pressable>
             ) : null}
             <ArtifactHeader

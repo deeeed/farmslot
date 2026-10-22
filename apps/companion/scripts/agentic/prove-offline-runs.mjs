@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { access, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +41,9 @@ const familyPhases = [
 ];
 assert(
   [
+    'unbound-slot-diff',
+    'retry-artifacts',
+    'retry-diff',
     'terminal-context',
     'slot-context',
     'seed-inbox',
@@ -167,6 +170,234 @@ async function restartNative() {
     ]);
   }
   await waitForSimulatorRecipeBridge({ platform });
+}
+
+if (['unbound-slot-diff', 'retry-artifacts', 'retry-diff'].includes(phase)) {
+  assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+  assert(process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR);
+  const device = createAgentDeviceClient({ stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR });
+  const deviceId = platform === 'ios' ? process.env.IOS_SIMULATOR : process.env.ADB_SERIAL;
+  const sessions = (await device.sessions.list()).filter(
+    (session) => session.device.id === deviceId,
+  );
+  assert.equal(sessions.length, 1);
+  const selection = { session: sessions[0].name, platform, target: 'mobile' };
+  const screen = () =>
+    device.capture.snapshot({ ...selection, interactiveOnly: false, forceFull: true });
+  const nativePhases = [];
+  let startedAt = Date.now();
+  const capture = async (name) => {
+    await device.capture.screenshot({
+      ...selection,
+      path: path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'screenshots', name),
+      stabilize: true,
+    });
+    nativePhases.push({ name, startedAt, endedAt: Date.now() });
+    startedAt = Date.now();
+  };
+  if (phase === 'unbound-slot-diff') {
+    const slotId = `offline-idle-diff-${randomUUID().slice(0, 8)}`;
+    const repo = path.join(home, 'native-review-fixes', slotId);
+    const poolFile = path.join(home, 'pool', `${slotId}.json`);
+    await mkdir(repo, { recursive: true });
+    const git = (...args) => execute('git', ['-C', repo, ...args]);
+    try {
+      await git('init');
+      await writeFile(path.join(repo, 'proof.txt'), 'Initial idle slot content\n');
+      await git('add', '--', 'proof.txt');
+      await git(
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'user.name=Farmslot Proof',
+        '-c',
+        'user.email=proof@invalid',
+        'commit',
+        '-m',
+        'test: seed idle diff fixture',
+      );
+      const marker = `UNBOUND_DIFF_${randomUUID().replaceAll('-', '')}`;
+      await writeFile(path.join(repo, 'proof.txt'), `${marker}\n`);
+      await writeFile(
+        poolFile,
+        JSON.stringify({
+          machine: slotId,
+          project: 'farmslot-farm',
+          platform: 'cli',
+          host: 'localhost',
+          ssh_user: process.env.USER,
+          os: 'darwin',
+          slots: [{ id: slotId, enabled: false, repo, session: `${slotId}-unused`, resources: {} }],
+        }),
+        { flag: 'wx' },
+      );
+      const binding = await rpc('run.forSlot', { slotId });
+      assert.equal(
+        binding.run,
+        null,
+        'This configured idle slot must have no current or retained run',
+      );
+      const backend = await rpc('git.diff', { slotId });
+      assert(
+        backend.diff.includes(marker),
+        'The real Git endpoint must report the working-tree edit',
+      );
+      await inbox(`workspace/slot/${slotId}/diff?path=proof.txt`);
+      const deadline = Date.now() + 20000;
+      let visible;
+      do {
+        const observed = await screen();
+        visible = observed.nodes.some((node) => node.label?.includes(marker));
+        if (visible) break;
+        await delay(200);
+      } while (Date.now() < deadline);
+      await capture('native-unbound-slot-diff.png');
+      assert(visible, 'An unbound slot must render its actual working-tree diff');
+      assert.equal((await rpc('run.forSlot', { slotId })).run, null);
+      console.log(
+        JSON.stringify({
+          result: 'PASS',
+          nativeUnboundSlotDiff: true,
+          slotId,
+          marker,
+          nativePhases,
+        }),
+      );
+    } finally {
+      await inbox();
+      await rm(poolFile, { force: true });
+      assert((await realpath(repo)).startsWith(`${home}/native-review-fixes/`));
+      await rm(repo, { recursive: true });
+    }
+  } else {
+    const diff = phase === 'retry-diff';
+    const kind = diff ? 'diff' : 'artifact';
+    const projection = (value) =>
+      diff ? value.diffProjectionMatches : value.artifactProjectionMatches;
+    const recipes = (value) => (diff ? value.diffRecipes : value.artifactRecipes);
+    assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE);
+    const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+    assert.equal(fixture.home, home);
+    const original = (await rpc('run.get', { runId: fixture.runId })).run;
+    assert.equal(original.readOnly, false, 'Never fault an imported run');
+    assert.equal(original.taskFile, fixture.taskFile);
+    const ref = original.artifactBundle;
+    assert(ref && /^[a-f0-9]{64}$/.test(ref.bundleDigest));
+    const manifestFile = path.join(
+      home,
+      'run-bundles',
+      'sha256',
+      ref.bundleDigest,
+      'manifest.json',
+    );
+    assert.equal(await realpath(manifestFile), manifestFile);
+    const originalManifest = await readFile(manifestFile, 'utf8');
+    const originalMode = (await stat(manifestFile)).mode & 0o777;
+    const manifest = JSON.parse(originalManifest);
+    assert(
+      manifest.runs.length && manifest.runs.every((run) => run.originalRunId === fixture.runId),
+    );
+    const faultyManifest = `${originalManifest} `;
+    const tag = `native-${kind}-retry-${randomUUID().slice(0, 8)}`;
+    let faultActive = false;
+    proofRef = `runs-cache:${diff ? 'diff' : 'artifacts'}:${fixture.runId}`;
+    try {
+      await inbox(`workspace/run/${fixture.runId}/${diff ? 'diff' : 'files'}`);
+      const initial = await until(
+        (value) =>
+          projection(value) &&
+          value.detail?.status === 'ready' &&
+          recipes(value)?.status === 'ready',
+        `The actual ${kind} view must first read current shared run and recipe data`,
+      );
+      assert(Number.isSafeInteger(initial.connectionGeneration));
+      await capture(`native-${kind}-retry-current.png`);
+      // Fault only this owned run's immutable metadata. The actual gateway refuses its digest.
+      await chmod(manifestFile, originalMode | 0o200);
+      faultActive = true;
+      await writeFile(manifestFile, faultyManifest);
+      await rpc('run.tags.set', { runId: fixture.runId, tags: [...(original.tags ?? []), tag] });
+      const stale = await until(
+        (value) =>
+          projection(value) &&
+          value.detail?.status === 'stale' &&
+          value.detail.error &&
+          recipes(value)?.status === 'stale' &&
+          recipes(value).error,
+        `A real failed refresh must retain ${kind} inputs as stale with an error`,
+      );
+      assert.equal(stale.detail.observedAt, initial.detail.observedAt);
+      assert.equal(recipes(stale).observedAt, recipes(initial).observedAt);
+      assert.equal(stale.connectionGeneration, initial.connectionGeneration);
+      assert.equal(await readFile(manifestFile, 'utf8'), faultyManifest);
+      await writeFile(manifestFile, originalManifest);
+      await chmod(manifestFile, originalMode);
+      faultActive = false;
+      await capture(`native-${kind}-retry-error.png`);
+      let retry;
+      const deadline = Date.now() + 15000;
+      do {
+        retry = (await screen()).nodes.find(
+          (node) =>
+            node.label === (diff ? 'Retry diff' : 'Retry artifacts') || node.label === 'Retry',
+        );
+        if (retry?.rect) break;
+        await delay(100);
+      } while (Date.now() < deadline);
+      assert(retry?.rect, `Stale ${kind} observations with errors must render a working Retry`);
+      const before = await snapshot();
+      assert(
+        before.detail.error && recipes(before).error,
+        'Require explicit Retry before any current read recovers',
+      );
+      await device.interactions.press({
+        ...selection,
+        x: retry.rect.x + retry.rect.width / 2,
+        y: retry.rect.y + retry.rect.height / 2,
+      });
+      const recovered = await until(
+        (value) =>
+          projection(value) &&
+          value.detail?.status === 'ready' &&
+          recipes(value)?.status === 'ready' &&
+          value.detail.data.run.tags?.includes(tag),
+        `Explicit ${kind} Retry must recover both failed shared reads without reconnecting`,
+      );
+      assert.equal(
+        recovered.startedAt,
+        initial.startedAt,
+        'Retry must preserve the native runtime',
+      );
+      assert.equal(
+        recovered.connectionGeneration,
+        initial.connectionGeneration,
+        'Retry must recover on the same gateway connection',
+      );
+      await capture(`native-${kind}-retry-recovered.png`);
+      console.log(
+        JSON.stringify({
+          result: 'PASS',
+          [diff ? 'nativeRunDiffRetry' : 'nativeArtifactRetry']: true,
+          retainedObservedAt: stale.detail.observedAt,
+          recoveredObservedAt: recovered.detail.observedAt,
+          connectionGeneration: recovered.connectionGeneration,
+          nativePhases,
+        }),
+      );
+    } finally {
+      if (faultActive) {
+        const current = await readFile(manifestFile, 'utf8');
+        assert(current === faultyManifest || current === originalManifest);
+        await writeFile(manifestFile, originalManifest);
+        await chmod(manifestFile, originalMode);
+      }
+      assert.equal(await readFile(manifestFile, 'utf8'), originalManifest);
+      assert.equal((await stat(manifestFile)).mode & 0o777, originalMode);
+      await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
+      await inbox();
+    }
+  }
+  process.exit(0);
 }
 
 if (phase === 'terminal-context') {

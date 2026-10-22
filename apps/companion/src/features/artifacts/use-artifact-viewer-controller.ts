@@ -228,10 +228,10 @@ export function useArtifactViewerController() {
       throw new Error('Wait for current evidence before acting.');
   }, [workspaceKey, scopeKey, runId, run, recipeQuery, recipeObservation]);
   const retry = useCallback(() => {
-    if (runObservation.status === 'error' && runQuery) void getResourceCache()?.retry(runQuery);
-    if (recipeObservation.status === 'error' && recipeQuery)
-      void getResourceCache()?.retry(recipeQuery);
-  }, [runObservation.status, recipeObservation.status, runQuery, recipeQuery]);
+    const cache = getResourceCache();
+    if (runQuery && cache?.read(runQuery).error) void cache.retry(runQuery);
+    if (recipeQuery && cache?.read(recipeQuery).error) void cache.retry(recipeQuery);
+  }, [runQuery, recipeQuery]);
   useEffect(() => {
     setSelectedRecipeRunId(
       requestedRecipeRunId === DECISION_EVIDENCE_RECIPE_RUN_PARAM
