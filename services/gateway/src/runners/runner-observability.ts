@@ -142,7 +142,12 @@ export function buildPiAuthCheckCommand(
     'scripts/runners',
     'pi-farmslot-providers.mjs',
   );
-  return `cd ${shellExpressionForRemotePath(vars.remoteRepo)} && node ${shellExpressionForRemotePath(helper)} ${shellExpressionForRemotePath(binary)} ${shellQuote(model)}`;
+  // Preserve the literal remote-root prefix consumed by execOnSlot's immutable
+  // support-bundle resolver. Expanding it to HOME here would bypass that owner.
+  const selectedHelper = helper.startsWith(`${REMOTE_AGENT_DIR}/`)
+    ? helper
+    : shellExpressionForRemotePath(helper);
+  return `cd ${shellExpressionForRemotePath(vars.remoteRepo)} && node ${selectedHelper} ${shellExpressionForRemotePath(binary)} ${shellQuote(model)}`;
 }
 
 /**

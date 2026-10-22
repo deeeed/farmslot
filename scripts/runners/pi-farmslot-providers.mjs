@@ -95,15 +95,7 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
 }
 
 /** Native auth excludes extensions; their authenticated model discovery is the admission check. */
-export async function checkPiProviderAuth(binary, model, env = process.env) {
-  const [provider, ...parts] = model.split('/');
-  if (parts.length && listPiProviderSources(env).some((source) => source.id === provider)) {
-    const catalog = await resolvePiProviderCatalog(env);
-    const available = catalog.find((source) => source.id === provider);
-    return available?.models.some((entry) => entry.id === parts.join('/'))
-      ? { status: 'ready', provider }
-      : { status: 'not_ready', provider, reason: 'provider_not_found' };
-  }
+function nativePiAuth(binary, model, env) {
   const result = spawnSync(binary, ['auth', 'check', '--model', model, '--json'], {
     env,
     encoding: 'utf8',
@@ -130,6 +122,20 @@ export async function checkPiProviderAuth(binary, model, env = process.env) {
     return { status: 'invalid', reason: 'auth_check_unavailable' };
   }
   return { status: 'invalid', reason: 'auth_check_unavailable' };
+}
+
+/** Optional extension discovery never overrides an authenticated native configuration. */
+export async function checkPiProviderAuth(binary, model, env = process.env) {
+  const native = nativePiAuth(binary, model, env);
+  if (native.status === 'ready') return native;
+  const [provider, ...parts] = model.split('/');
+  if (parts.length && listPiProviderSources(env).some((source) => source.id === provider)) {
+    const catalog = await resolvePiProviderCatalog(env);
+    const available = catalog.find((source) => source.id === provider);
+    if (available?.models.some((entry) => entry.id === parts.join('/')))
+      return { status: 'ready', provider };
+  }
+  return native;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

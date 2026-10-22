@@ -329,8 +329,8 @@ reclamation, and the cancelled run's record and evidence remain available.
 
 The gateway persists `Run.slotReclaimed` before releasing ownership, naming the slot,
 requesting run and time. Replay of that cancelled run then refuses with those details,
-even if the successor later releases the slot. A refused cleanup retains the hold and
-removes that marker while the cancelled run still owns the cleanup. This preserves the
+even if the successor later releases the slot. A refused cleanup retains both the hold and
+the marker so deferred cleanup cannot free an unprotected checkout. This preserves the
 10-19 replay intent without requiring a manual release before a new selection can proceed.
 
 ### Public surface

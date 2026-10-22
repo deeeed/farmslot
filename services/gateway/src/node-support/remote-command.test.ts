@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { SlotVars } from '../core/index.js';
+import { buildPiAuthCheckCommand } from '../runners/runner-observability.js';
+import { makeVars } from '../runners/test-fixtures.js';
 
 import type { NodeSupportIo } from './ensure.js';
 import {
@@ -155,6 +157,25 @@ test('a hook on a node without the current bundle runs from the bundle it just r
   await resolveRemoteFarmCommand(remoteVars('mini-ff-2'), HOOK, { io: node.io });
   assert.ok(node.calls.includes('writeFiles'), 'second slot gets its selection recorded');
   assert.ok(!node.calls.includes('write'), 'and the bundle is not republished');
+});
+
+test('remote auth resolves its current bundled helper before executing a stale loose node', async () => {
+  resetRemoteFarmCommandCache();
+  const node = fakeNode();
+  const vars = makeVars({
+    host: 'remote-fixture.local',
+    machine: 'remote-fixture',
+    projectName: PROJECT,
+  });
+  const command = buildPiAuthCheckCommand(vars, 'pi', 'ollama/fixture');
+  assert.equal(hasRemoteFarmRef(command), true);
+  const resolved = await resolveRemoteFarmCommand(vars, command, { io: node.io });
+  assert.match(
+    resolved,
+    /farmslot-node\/support\/[0-9a-f]{64}\/scripts\/runners\/pi-farmslot-providers\.mjs/,
+  );
+  assert.doesNotMatch(resolved, /node ~\/farmslot-node\/scripts/);
+  assert.ok(node.calls.includes('writeFiles'), 'current bundle is installed before auth');
 });
 
 test('concurrent hooks on one slot share a single publish', async () => {

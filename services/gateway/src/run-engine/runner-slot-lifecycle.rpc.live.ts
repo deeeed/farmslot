@@ -359,6 +359,8 @@ test(
         '-e',
         `
       import assert from 'node:assert/strict';
+      import fs from 'node:fs/promises';
+      import path from 'node:path';
       const { makeVars } = await import(${JSON.stringify(new URL('../runners/test-fixtures.js', import.meta.url).href)});
       const { assertRunnerAuthBeforeLaunch } = await import(${JSON.stringify(new URL('../runners/runner-auth.js', import.meta.url).href)});
       const { directory, piPath } = JSON.parse(process.argv[1]);
@@ -368,6 +370,13 @@ test(
         command_env: { unset: ['ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN',
           'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'XAI_API_KEY'] },
       }), /authentication failed before dispatch: credentials_not_configured/);
+      await fs.writeFile(path.join(directory, 'models.json'), JSON.stringify({ providers: {
+        ollama: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions',
+          apiKey: 'fixture-no-secret', models: [{ id: 'qwen2.5-coder' }] },
+      } }));
+      await assertRunnerAuthBeforeLaunch(makeVars({ piPath, repo: directory, remoteRepo: directory,
+        machineEnv: { PI_CODING_AGENT_DIR: directory, FARMSLOT_PI_OLLAMA_URL: 'http://127.0.0.1:9' },
+      }), 'pi', 'ollama/qwen2.5-coder', {});
     `,
         JSON.stringify({ directory, piPath }),
       ],
@@ -387,6 +396,7 @@ test(
         provider: 'anthropic',
         status: 'credentials_not_configured',
         modelTurns: 0,
+        nativeConfiguredProviderPassedWithDiscoveryUnavailable: true,
         credentialFilesReadOrChanged: false,
       }) + '\n',
     );
