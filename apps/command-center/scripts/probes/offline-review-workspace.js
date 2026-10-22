@@ -64,6 +64,7 @@ return {
   canonical: run?.id === view.runId && (view.readOnly ? true : run.decisions.includes(decision)),
   tags: run?.tags,
   decisionId: decision?.id,
+  actionIds: decision?.actions.map((action) => action.id),
   report: view._payload?.reviewMd,
   reportRendered: Boolean(
     view._payload?.reviewMd && view.textContent.includes(view._payload.reviewMd),

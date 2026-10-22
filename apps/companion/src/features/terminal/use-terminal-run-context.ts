@@ -13,11 +13,11 @@ import { currentFarmConnection } from '../../lib/connection-authority';
 import { getResourceCache, getResourceWorkspaceKey } from '../../lib/resource-cache';
 import { assertNativeRunReady } from '../../lib/run-collections';
 import {
-  buildCompanionTerminalTarget,
   type CompanionTerminalTargetParams,
   shouldUseBareTerminalSessionForRun,
 } from '../../lib/terminal-target';
 import { useConnectionStore } from '../../store/connection';
+import { useSlotNativeSession } from '../native-conversation/use-slot-native-session';
 
 /** Shared observations choose a target; terminal streams retain their existing owner. */
 export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
@@ -52,17 +52,14 @@ export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
     requestedSlotId: params.slotId ?? '',
     run: targetRun,
   });
-  const target = useMemo(
-    () =>
-      buildCompanionTerminalTarget({
-        slotId: params.slotId ?? '',
-        runId: params.runId ?? runId,
-        contextId: params.contextId,
-        role: params.role,
-        bareSession,
-      }),
-    [params.slotId, params.runId, params.contextId, params.role, runId, bareSession],
+  const native = useSlotNativeSession(
+    targetRun,
+    params.slotId ?? '',
+    params.contextId,
+    params.runId ?? runId,
+    { role: params.role, bareSession },
   );
+  const target = native.terminalTarget;
   const scopeKey = JSON.stringify([
     workspaceKey,
     params.slotId,
@@ -70,6 +67,11 @@ export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
     runId,
     params.contextId,
     params.role,
+    native.contextId,
+    native.target?.binding.sessionId,
+    native.target?.binding.leaseId,
+    native.target?.binding.generation,
+    target,
   ]);
   const scope = useRef(scopeKey);
   scope.current = scopeKey;
@@ -136,6 +138,7 @@ export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
     slot,
     recipes,
     targetRun,
+    native,
     target,
     scopeKey,
     ready,

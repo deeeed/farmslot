@@ -40,6 +40,10 @@ test('scope packet lists every file without granting an exception or treating an
   assert.ok(packet.includes('Any scope BLOCKER requires REQUEST_CHANGES, never APPROVE'));
   assert.ok(packet.includes('Warm reviews keep correctness checks on their saved delta'));
   assert.ok(buildDiffScopePacket([], 'missing base').includes('UNVERIFIED: missing base'));
+  assert.match(
+    buildDiffScopePacket(['src/order.ts'], undefined, { maxNits: 0 }),
+    /more than 0 nits requires COMMENT/,
+  );
 });
 
 test('whole-contribution inventory uses the publication merge base and includes deleted rename paths', (t) => {

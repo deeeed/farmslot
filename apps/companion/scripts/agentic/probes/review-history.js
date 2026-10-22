@@ -28,13 +28,14 @@ if (!panel) throw new Error('Review history is missing from native run detail');
 const run = panel.memoizedProps.run;
 const { run: saved } = await connection.client.request('run.get', { runId: run.id });
 const rounds = [];
+const fixes = [];
 const text = [];
 function contents(fiber) {
   if (!fiber) return;
-  if (fiber.type?.name === 'ReviewAttemptCard') {
+  if (fiber.type?.name === 'ReviewRoundCard') {
     const round = fiber.memoizedProps.round;
     rounds.push({
-      round: round.loopNumber,
+      round: round.roundNumber,
       runner: round.runner,
       model: round.model,
       mode: round.mode,
@@ -47,12 +48,28 @@ function contents(fiber) {
       resolution: round.resolution,
     });
   }
+  if (fiber.type?.name === 'ReviewFixCard') {
+    const fix = fiber.memoizedProps.fix;
+    fixes.push({
+      label: fix.label,
+      range: fix.range,
+      files: fix.files,
+      resolved: fix.resolved.length,
+    });
+  }
   if (fiber.tag === 6 && typeof fiber.memoizedProps === 'string') text.push(fiber.memoizedProps);
   contents(fiber.child);
   contents(fiber.sibling);
 }
 contents(panel.child);
-if (rounds.length < 4 || !text.join(' ').includes('Review round'))
-  throw new Error('Native run detail did not render four recorded rounds');
+if (rounds.length < 3 || !text.join(' ').includes('Review history') || !fixes.length)
+  throw new Error('Native run detail did not render recorded review and fix rounds');
 if (saved.id !== run.id) throw new Error('Rendered history does not belong to the live run');
-return { runId: run.id, status: saved.status, connected: true, screen: 'RunDetailScreen', rounds };
+return {
+  runId: run.id,
+  status: saved.status,
+  connected: true,
+  screen: 'RunDetailScreen',
+  rounds,
+  fixes,
+};

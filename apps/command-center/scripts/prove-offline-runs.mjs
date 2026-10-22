@@ -63,6 +63,7 @@ const gateway = new URL(profile.url);
 assert(['localhost', '127.0.0.1', '[::1]'].includes(gateway.hostname));
 assert.equal(Number(gateway.port), Number(process.env.GATEWAY_PORT));
 const { stdout: listeners } = await execute('lsof', [
+  '-nP',
   '-t',
   `-iTCP:${gateway.port}`,
   '-sTCP:LISTEN',
@@ -929,6 +930,11 @@ if (phase === 'review-workspace-web') {
       );
       assert(initial.reportRendered);
       assert.deepEqual(initial.included, [0]);
+      const confirmationButton = initial.buttons.find(
+        (button) => ['review-post', 'review-dismiss'].includes(button.id) && !button.disabled,
+      )?.id;
+      assert(confirmationButton, 'The canonical decision must offer a confirmation action');
+      const confirmationAction = confirmationButton.slice('review-'.length);
       await writeFile(
         path.join(artifacts, 'review-curation-before.json'),
         JSON.stringify(initial, null, 2),
@@ -944,8 +950,18 @@ if (phase === 'review-workspace-web') {
         (value) => current(value) && value.included.length === 0,
         'Actual comment curation must update',
       );
-      const armed = await cdp('click', route, selector('review-post'), '--observe-file', probe);
-      assert.equal(armed.observation.pendingConfirm, 'post', 'Arm the actual posting confirmation');
+      const armed = await cdp(
+        'click',
+        route,
+        selector(confirmationButton),
+        '--observe-file',
+        probe,
+      );
+      assert.equal(
+        armed.observation.pendingConfirm,
+        confirmationAction,
+        'Arm the actual review decision confirmation',
+      );
       const confirmationStarted = armed.clickedAt;
       const tag = `review-context-${randomUUID().slice(0, 8)}`;
       await observed.read('run.tags.set', { runId, tags: [tag] });
@@ -962,17 +978,17 @@ if (phase === 'review-workspace-web') {
       assert.equal(
         updated.pendingConfirm,
         null,
-        'Invalidation must retire the old posting confirmation',
+        'Invalidation must retire the old review decision confirmation',
       );
       assert.deepEqual(
         updated.included,
         [],
         'Unrelated run metadata must preserve reviewer curation',
       );
-      await cdp('click', route, selector('review-post'));
+      await cdp('click', route, selector(confirmationButton));
       await until(
         route,
-        (value) => value.pendingConfirm === 'post' && !value.busy,
+        (value) => value.pendingConfirm === confirmationAction && !value.busy,
         'The next tap must request a new confirmation rather than post',
       );
       assert.equal((await rpc('run.get', { runId })).run.decisions[0].resolvedAt, undefined);
@@ -1047,13 +1063,13 @@ if (phase === 'review-workspace-web') {
           await cdp(
             'click',
             otherRoute,
-            'run-detail >>> review-workspace:has([data-testid="review-post"]) [data-testid="review-run-age"]',
+            'run-detail >>> review-workspace:has([data-testid="review-dismiss"]) [data-testid="review-run-age"]',
           );
           assert((await snapshot(otherRoute)).savedVisible);
           await cdp(
             'click',
             otherRoute,
-            'run-detail >>> review-workspace:has([data-testid="review-post"]) .rw-md-section',
+            'run-detail >>> review-workspace:has([data-testid="review-dismiss"]) .rw-md-section',
           );
           assert(
             (await snapshot(otherRoute)).reportVisible,
@@ -1097,6 +1113,7 @@ if (phase === 'review-workspace-web') {
         action: phase,
         reviewWorkspaceCanonical: true,
         reviewConfirmationRetired: true,
+        reviewConfirmationAction: confirmationAction,
         reviewCommandErrorVisible: true,
         reviewOwnerReplyFenced: true,
         reviewColdOffline: true,

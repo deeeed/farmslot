@@ -44,6 +44,7 @@ import {
   type TmuxListResult,
   type TmuxWindow,
 } from '@farmslot/protocol';
+import { listSlotTmuxWindows, slotTmuxWindowTarget } from '@farmslot/review-dispatch';
 
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
@@ -126,6 +127,7 @@ import { useSlotWorkspaceTabs } from '../workspace-shared/slot-workspace-tabs';
 
 import {
   type MobileTmuxActionMethod,
+  SlotTerminalSessionPane,
   TerminalFullscreenWorkspaceRail,
   TerminalSteeringContextCard,
   TerminalWorkspaceCockpit,
@@ -137,7 +139,6 @@ import {
 } from './components/slot-terminal-view-controls';
 import {
   type TerminalSize,
-  TerminalViewSurface,
   type XtermTerminalViewHandle,
 } from './components/terminal-history-viewer';
 import { slotTerminalStyles as styles } from './styles/slot-terminal.styles';
@@ -297,6 +298,7 @@ export default function TerminalScreen() {
   const orientationControls = useTerminalOrientationControls(terminalFullscreen);
   const terminalContext = useTerminalRunContext({ slotId, runId, contextId, role });
   const targetRun = terminalContext.targetRun;
+  const native = terminalContext.native;
   const targetWarning =
     terminalContext.run.error?.message ??
     terminalContext.slot.error?.message ??
@@ -311,6 +313,7 @@ export default function TerminalScreen() {
   const terminalTargetParams = slotId || runId ? terminalContext.target : null;
   const contextRef = useRef(terminalContext);
   contextRef.current = terminalContext;
+
   const terminalTargetParamsRef = useRef<CompanionTerminalTargetParams | null>(
     terminalTargetParams,
   );
@@ -447,7 +450,8 @@ export default function TerminalScreen() {
   );
   const liveBadgeColor = streamModeColor(streamMode);
   const streamLabel =
-    streamMode === 'connecting' ? 'Connecting' : streamMode === 'ended' ? 'Ended' : 'Live';
+    native.target?.label ??
+    (streamMode === 'connecting' ? 'Connecting' : streamMode === 'ended' ? 'Ended' : 'Live');
   const terminalLabel = slotId || targetRun?.reviewWorkspace?.machine || 'Run terminal';
   const terminalInputDisabledReason = !terminalContext.ready
     ? 'Wait for current terminal run data'
@@ -460,7 +464,7 @@ export default function TerminalScreen() {
     run: targetRun,
     recipes: terminalContext.recipes,
     terminalReady: terminalContext.ready,
-    terminalTarget: terminalContext.target,
+    terminalTarget: terminalContext.target ?? undefined,
     terminalInputDisabledReason,
     terminalStream: streamMode,
     terminalControlBusy: isSendingControl,
@@ -475,7 +479,7 @@ export default function TerminalScreen() {
     run: targetRun,
     recipes: terminalContext.recipes,
     terminalReady: terminalContext.ready,
-    terminalTarget: terminalContext.target,
+    terminalTarget: terminalContext.target ?? undefined,
     terminalInputDisabledReason,
     terminalStream: streamMode,
     terminalControlBusy: isSendingControl,
@@ -608,6 +612,7 @@ export default function TerminalScreen() {
       terminalViewRef.current?.setStatus('Waiting for gateway connection.');
       return;
     }
+    if (native.target || native.unavailable || (contextId && !targetRun)) return;
     let disposed = false;
     const captured = terminalContext.capture();
     let target =
@@ -650,6 +655,7 @@ export default function TerminalScreen() {
         return;
       }
       target = terminalTargetParams!;
+
       terminalTargetParamsRef.current = target;
 
       try {
@@ -701,12 +707,35 @@ export default function TerminalScreen() {
     slotId,
     contextId,
     role,
+    native.contextId,
+    Boolean(native.target),
+    native.unavailable,
+    Boolean(targetRun),
   ]);
 
   useEffect(() => {
-    if (!focused || connectionStatus !== 'connected' || !terminalContext.streamReady) return;
+    if (
+      !focused ||
+      connectionStatus !== 'connected' ||
+      !terminalContext.streamReady ||
+      native.target ||
+      native.unavailable ||
+      (contextId && !targetRun)
+    )
+      return;
     loadInitialSnapshot();
-  }, [focused, connectionStatus, terminalContext.streamReady, lineCount, loadInitialSnapshot]);
+  }, [
+    focused,
+    connectionStatus,
+    terminalContext.streamReady,
+    terminalContext.scopeKey,
+    lineCount,
+    loadInitialSnapshot,
+    Boolean(native.target),
+    native.unavailable,
+    contextId,
+    Boolean(targetRun),
+  ]);
 
   const resolveTerminalTargetRun = useCallback(async (): Promise<Run | null> => {
     return contextRef.current.requireRun();
@@ -742,21 +771,18 @@ export default function TerminalScreen() {
   );
 
   const refreshTmuxWindows = useCallback(async () => {
-    const target = terminalTargetParamsRef.current;
-    if (
-      !client ||
-      !target?.slotId ||
-      connectionStatus !== 'connected' ||
-      !contextRef.current.ready
-    ) {
+    if (!client || !slotId || connectionStatus !== 'connected' || !contextRef.current.ready) {
       setTmuxWindows([]);
       return;
     }
     const captured = terminalContext.capture();
     try {
       terminalContext.requireRun();
-      const result = await client.request<TmuxListResult>(Methods.TMUX_LIST, target);
+      const result = await listSlotTmuxWindows(slotId, (method, params) =>
+        client.request<TmuxListResult>(method, params),
+      );
       if (!captured.current()) return;
+
       setTmuxWindows(result.windows);
       setTmuxError(null);
     } catch (error) {
@@ -781,7 +807,12 @@ export default function TerminalScreen() {
         if (!command) return;
         setActiveTmuxAction(label);
         setTmuxError(null);
-        await client.request(method, { ...command.target, ...params });
+        await client.request(method, {
+          ...(method === Methods.TMUX_SELECT_WINDOW
+            ? slotTmuxWindowTarget(slotId)
+            : command.target),
+          ...params,
+        });
         if (!command.current()) return;
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         if (!command.current()) return;
@@ -793,14 +824,14 @@ export default function TerminalScreen() {
         command?.finish(() => setActiveTmuxAction(null));
       }
     },
-    [activeTmuxAction, beginTerminalCommand, client, refreshTmuxWindows],
+    [activeTmuxAction, beginTerminalCommand, client, refreshTmuxWindows, slotId],
   );
 
   useEffect(() => {
     if (
       connectionStatus !== 'connected' ||
       !terminalContext.streamReady ||
-      (!showTerminalControls && !showTerminalOptions)
+      (!showTerminalControls && !showTerminalOptions && !native.tabs.length)
     )
       return;
     void refreshTmuxWindows();
@@ -811,6 +842,7 @@ export default function TerminalScreen() {
     showTerminalControls,
     showTerminalOptions,
     terminalTargetParams,
+    native.tabs.length,
   ]);
 
   const sendTerminalText = useCallback(
@@ -911,13 +943,16 @@ export default function TerminalScreen() {
     voiceStatus !== 'recording' &&
     voiceStatus !== 'transcribing' &&
     !voiceRecorderBusy;
-  const showInputBar = showTerminalControls || Boolean(controlError);
+  const showInputBar =
+    !native.target && !native.unavailable && (showTerminalControls || Boolean(controlError));
   const showVoiceComposer =
-    voiceComposerOpen ||
-    voiceStatus !== 'idle' ||
-    hasVoiceEditableInstruction ||
-    isPreparingVoiceRecorder ||
-    isFormattingVoice;
+    !native.target &&
+    !native.unavailable &&
+    (voiceComposerOpen ||
+      voiceStatus !== 'idle' ||
+      hasVoiceEditableInstruction ||
+      isPreparingVoiceRecorder ||
+      isFormattingVoice);
   const showVoiceProgressText =
     Boolean(voiceMessage) &&
     (isPreparingVoiceRecorder ||
@@ -1564,6 +1599,8 @@ export default function TerminalScreen() {
   }, []);
 
   const showFloatingVoiceButton =
+    !native.target &&
+    !native.unavailable &&
     !terminalInputDisabledReason &&
     !showInputBar &&
     !showVoiceComposer &&
@@ -1643,7 +1680,7 @@ export default function TerminalScreen() {
           />
         </>
       ) : null}
-      {!terminalFullscreen && (
+      {!terminalFullscreen && !native.target && !native.unavailable && (
         <ScrollView
           style={[styles.header, { maxHeight: terminalHeaderMaxHeight }]}
           contentContainerStyle={styles.headerContent}
@@ -1866,21 +1903,27 @@ export default function TerminalScreen() {
       )}
 
       <ResourceReadStatus observation={terminalContext.run} label="terminal run" />
-      <View style={styles.terminalArea}>
-        <TerminalViewSurface
-          key={terminalContext.scopeKey}
-          ref={terminalViewRef}
-          allowTouchKeyboard={allowTerminalTouchKeyboard}
-          initialText={lines.join('\r\n')}
-          mode={terminalViewMode}
-          onInput={handleTerminalInput}
-          onResize={handleTerminalResize}
-          rawHistoryText={terminalTailTextRef.current}
-          readOnlyReason={terminalInputDisabledReason}
-        />
-      </View>
+      <SlotTerminalSessionPane
+        key={terminalContext.scopeKey}
+        native={native}
+        windows={tmuxWindows}
+        disabled={
+          !terminalContext.ready || connectionStatus !== 'connected' || Boolean(activeTmuxAction)
+        }
+        onTmuxAction={runTmuxAction}
+        terminal={{
+          ref: terminalViewRef,
+          allowTouchKeyboard: allowTerminalTouchKeyboard,
+          initialText: lines.join('\r\n'),
+          mode: terminalViewMode,
+          onInput: handleTerminalInput,
+          onResize: handleTerminalResize,
+          rawHistoryText: terminalTailTextRef.current,
+          readOnlyReason: terminalInputDisabledReason,
+        }}
+      />
 
-      {!terminalInputDisabledReason && showVoiceComposer && (
+      {!native.target && !terminalInputDisabledReason && showVoiceComposer && (
         <View
           style={[
             styles.voicePanel,

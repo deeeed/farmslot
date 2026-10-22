@@ -6,6 +6,26 @@
   "type": "object",
   "required": ["name"],
   "properties": {
+    "approvalPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Shared verdict policy for external and paired reviews, re-evaluated on gate refresh.",
+      "properties": {
+        "maxNits": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 3
+        },
+        "minorVerdict": {
+          "enum": ["APPROVE", "COMMENT", "REQUEST_CHANGES"],
+          "default": "COMMENT"
+        },
+        "majorVerdict": {
+          "enum": ["APPROVE", "COMMENT", "REQUEST_CHANGES"],
+          "default": "REQUEST_CHANGES"
+        }
+      }
+    },
     "$schema": {
       "type": "string",
       "description": "JSON Schema reference for editor validation."

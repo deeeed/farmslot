@@ -96,6 +96,26 @@ test('terminal commands use current canonical inputs without rereads while the s
         shouldUseBareTerminalSessionForRun,
       },
       '../../store/connection': { useConnectionStore },
+      '../native-conversation/use-slot-native-session': {
+        useSlotNativeSession(
+          _run: Run | null,
+          slotId: string,
+          contextId: string | undefined,
+          runId: string | undefined,
+          options: { bareSession: boolean },
+        ) {
+          return {
+            contextId: contextId ?? '',
+            target: undefined,
+            terminalTarget: buildCompanionTerminalTarget({
+              slotId,
+              runId,
+              contextId,
+              bareSession: options.bareSession,
+            }),
+          };
+        },
+      },
     },
   );
   const render = (params: CompanionTerminalTargetParams = { slotId: 'slot-a' }) =>
@@ -156,6 +176,7 @@ test('terminal commands use current canonical inputs without rereads while the s
     assert.equal(captured.ownsView(), false);
     assert.throws(() => ready.requireRun(), /current terminal run/);
     const pinned = render({ slotId: 'slot-a', runId: 'run-a', contextId: 'exact-reviewer' });
+    assert(pinned.target);
     assert.equal(pinned.target.contextId, 'exact-reviewer');
     assert.equal(pinned.target.runId, 'run-a');
     assert.equal(

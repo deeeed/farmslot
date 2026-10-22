@@ -34,16 +34,14 @@ import '../recipe-graph/recipe-graph.js';
 import '../shared/evidence-reviewer.js';
 import '../shared/media-lightbox.js';
 import '../shared/diff-viewer-modal.js';
-import '../reviews/review-loop-timeline.js';
+import '../runs/review-history-panel.js';
 import './recipe-runner-controls.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
-import { summarizeReviewCounts } from '../../utils/review-gate-display.js';
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import { renderAcceptancePanel } from '../progress-tracker/acceptance-panel.js';
-import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
 import {
   type EvidenceReviewerJudgments,
   type EvidenceReviewerSelection,
@@ -74,7 +72,6 @@ import {
 } from './ready-workspace-lightbox.js';
 import {
   renderReadyInputArtifactViewer,
-  renderReadyReviewFlow,
   renderReadyReviewRequestModal,
 } from './ready-workspace-modal-renderers.js';
 import {
@@ -616,45 +613,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     });
   }
 
-  private _renderReviewFlow(payload: ReadyGatePayload) {
-    const reviewCounts = summarizeReviewCounts(payload);
-    return renderReadyReviewFlow({
-      reviews: payload.reviews ?? [],
-      passingReviews: reviewCounts.trustedPassingReviews,
-      reviewProgress: readyReviewRequestProgress(this._canonicalRun),
-      unresolvedFindings: reviewCounts.unresolvedFindings,
-      staleIgnoredReviews: reviewCounts.staleIgnoredReviews,
-      continuationActive: (this._canonicalRun?.agentContexts ?? []).some(
-        (context) =>
-          context.role === 'review-fix' &&
-          ['launching', 'working', 'waiting'].includes(context.status),
-      ),
-      activeReviewIds: new Set(
-        (this._canonicalRun?.agentContexts ?? []).flatMap((context) =>
-          context.role === 'review' &&
-          ['launching', 'working', 'waiting'].includes(context.status) &&
-          context.artifactScope
-            ? [context.artifactScope]
-            : [],
-        ),
-      ),
-      view: this._reviewFlowView,
-      selected: this._reviewFlowSelection,
-      reviewSummary: payload.reviewSummary,
-      artifactUrl: (artifact) => this._artifactUrl(artifact.path, artifact),
-      setView: (view) => {
-        this._reviewFlowView = view;
-      },
-      select: (selection) => {
-        this._reviewFlowSelection = selection;
-      },
-      openReviewArtifact: (detail) => this._openReviewArtifact(payload, detail),
-      openReviewDiff: (detail) =>
-        this._openDiffModal(
-          workspaceArtifactBasename(detail.artifact.path, 'Review diff'),
-          detail.artifact,
-        ),
-    });
+  private _renderReviewFlow() {
+    return this._canonicalRun
+      ? html`<review-history-panel .run=${this._canonicalRun}></review-history-panel>`
+      : nothing;
   }
 
   private _renderTopBar(payload: ReadyGatePayload) {
@@ -732,23 +694,6 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     });
   }
 
-  private _openReviewArtifact(
-    payload: ReadyGatePayload,
-    detail: ReviewLoopArtifactOpenDetail,
-  ): void {
-    const artifact = detail.artifact;
-    if (isWorkspaceDiffArtifact(artifact)) {
-      this._openDiffModal(workspaceArtifactBasename(artifact.path, 'Review diff'), artifact);
-      return;
-    }
-    if (this._opensInLightbox(artifact)) {
-      this._openArtifact(payload, artifact, {
-        paths: detail.artifacts.map((entry) => entry.path),
-        label: detail.label,
-      });
-    }
-  }
-
   _closeDiffModal(): void {
     this._diffModalOpen = false;
     this._syncViewStateToHash();
@@ -787,9 +732,9 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         return this._renderEvidenceTab(payload);
       case 'quality':
         return html`<div class="rdy-checks-tab">
-          ${this._renderPackagePanel(payload)}${this._renderReviewFlow(
+          ${this._renderPackagePanel(payload)}${this._renderReviewFlow()}${this._renderQualityTab(
             payload,
-          )}${this._renderQualityTab(payload)}
+          )}
         </div>`;
       case 'recipe':
         return this._renderRecipeTab(payload);

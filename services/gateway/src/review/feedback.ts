@@ -1,9 +1,18 @@
 import type { ReviewIssue } from '@farmslot/protocol';
+import {
+  assertReviewRecommendation,
+  isReviewSeverity,
+  type ReviewApprovalPolicy,
+  ReviewApprovalPolicyError,
+  reviewRecommendation,
+  type ReviewSeverity,
+} from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
+import { loadReviewApprovalPolicy } from './approval-policy.js';
 import { parseReviewIssueBullets } from './issues.js';
 import type { ReviewAgentResult } from './review-agent.js';
 
@@ -13,17 +22,21 @@ interface StructuredReviewFeedbackCandidate {
   schemaVersion?: unknown;
   verdict?: unknown;
   issues?: unknown;
+  recommendation?: unknown;
 }
 
 interface StructuredReviewIssueCandidate {
   file?: unknown;
   line?: unknown;
   description?: unknown;
+  severity?: unknown;
 }
 
 export function parseStructuredReviewFeedback(
   raw: string,
   resultRelPath: string,
+  policy?: Partial<ReviewApprovalPolicy>,
+  additionalIssues?: ReviewIssue[],
 ): ReviewAgentResult {
   let parsed: unknown;
   try {
@@ -60,14 +73,14 @@ export function parseStructuredReviewFeedback(
           issue.line === null ||
           (typeof issue.line === 'number' && Number.isInteger(issue.line) && issue.line > 0)) &&
         typeof issue.description === 'string' &&
-        issue.description.trim().length > 0
+        issue.description.trim().length > 0 &&
+        (issue.severity === undefined || isReviewSeverity(issue.severity))
       );
     }) ?? false;
   if (
     candidate.schemaVersion !== 1 ||
     (verdict !== 'pass' && verdict !== 'issues') ||
     !validIssues ||
-    (verdict === 'pass' && issues!.length !== 0) ||
     (verdict === 'issues' && issues!.length === 0)
   ) {
     return {
@@ -75,16 +88,55 @@ export function parseStructuredReviewFeedback(
       issues: [],
       incomplete: true,
       terminalInvalidReason:
-        `${resultRelPath} must match schemaVersion 1 with verdict pass + no issues, ` +
-        'or verdict issues + at least one { file, line?, description } issue',
+        `${resultRelPath} must match schemaVersion 1 with valid findings and verdict pass or issues; ` +
+        'an issues verdict requires at least one { file, line?, description, severity } finding',
     };
   }
   const normalizedIssues = (issues as StructuredReviewIssueCandidate[]).map((issue) => ({
     file: issue.file as string,
     ...(typeof issue.line === 'number' ? { line: issue.line } : {}),
     description: issue.description as string,
+    ...(issue.severity !== undefined ? { severity: issue.severity as ReviewSeverity } : {}),
   }));
-  return { verdict, issues: normalizedIssues };
+  try {
+    const findings = [
+      ...normalizedIssues,
+      ...(additionalIssues ?? []).filter(
+        (issue) =>
+          !normalizedIssues.some(
+            (existing) =>
+              existing.file === issue.file &&
+              existing.line === issue.line &&
+              existing.description === issue.description &&
+              existing.severity === issue.severity,
+          ),
+      ),
+    ];
+    const required = reviewRecommendation(findings, policy);
+    const recommendation =
+      candidate.recommendation === undefined
+        ? required
+        : assertReviewRecommendation(findings, candidate.recommendation, policy);
+    if ((verdict === 'pass') !== (required === 'APPROVE'))
+      throw new ReviewApprovalPolicyError(recommendation);
+    return {
+      verdict,
+      issues: normalizedIssues,
+      ...(candidate.recommendation !== undefined || additionalIssues !== undefined
+        ? { recommendation }
+        : {}),
+    };
+  } catch (error) {
+    return {
+      verdict: 'issues',
+      issues: [],
+      incomplete: true,
+      ...(error instanceof ReviewApprovalPolicyError
+        ? { recommendation: error.recommendation }
+        : {}),
+      terminalInvalidReason: `${resultRelPath}: ${(error as Error).message}`,
+    };
+  }
 }
 
 export async function readReviewFeedback(
@@ -106,7 +158,11 @@ export async function readReviewFeedback(
           result.exitCode === 0 ? `${resultRelPath} is empty` : `${resultRelPath} is missing`,
       };
     }
-    return parseStructuredReviewFeedback(raw, resultRelPath);
+    return parseStructuredReviewFeedback(
+      raw,
+      resultRelPath,
+      await loadReviewApprovalPolicy(vars.projectName),
+    );
   }
 
   const feedbackPath = `${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`;

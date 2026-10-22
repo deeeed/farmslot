@@ -5,6 +5,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 ## Unreleased
 
 - Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM, plus review command and cold-view proofs.
+- Prove frozen review finding navigation, review/fix timelines and native session tabs through the connected operator views.
+
 - Restore shared review finding links at their exact file and line, with explicit unavailable-source states.
 
 - Add connected review-history proof for round details and recorded fix diffs.

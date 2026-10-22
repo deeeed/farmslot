@@ -74,8 +74,6 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _refreshingPackage = false;
   @state() _publicationTarget: PublicationTarget = 'ready';
   @state() _reviewModalOpen = false;
-  @state() _reviewFlowSelection: 'overall' | string = 'overall';
-  @state() _reviewFlowView: 'chronological' | 'reviewer' = 'chronological';
   _reviewPicker = new ReviewDispatchViewModel({
     context: { allowedActions: ['request-review'], allowSequence: true },
   });

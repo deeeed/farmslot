@@ -192,3 +192,16 @@ This makes the existing "freeze resolved refs before execution" rule explicit fo
 ### Public surface
 
 No new field, command or export. The framework reads only the documented `ref` and `range` keys of the admitted scope; all other scope keys stay skill-owned.
+
+## Amendment 3: Shared review approval policy (2026-10-22)
+
+**Status:** Accepted (2026-10-22).
+**Implementation:** [#1432](https://github.com/deeeed/farmslot/pull/1432).
+
+### Decision and rationale
+
+One configurable policy governs verdicts in external and paired reviews. The gateway validates findings before opening or refreshing a gate, including inline locations at the reviewed head. This prevents approval of defects and reviews that GitHub cannot publish. The single normative contract is [Review policy](../reference/review-curation-and-results.md#approval-policy).
+
+### Consequences and public surface
+
+Projects may change `approvalPolicy` without restarting the gateway. `@farmslot/protocol` owns its defaults, validation, recommendation and instruction renderer; the gateway and shared review instructions consume them. Harnesses inherit this policy. Existing review and refresh commands remain unchanged. Contradictory results require correction before publication.

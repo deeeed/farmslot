@@ -16,6 +16,7 @@ import {
   toggleReviewFinding,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { refreshReviewGateView } from '@farmslot/review-dispatch';
 
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
@@ -165,7 +166,17 @@ export function useReviewPublication(
       } else if (operation === 'retry') {
         await client.request(Methods.PR_REVIEW_PUBLISH, { runId: run.id }, 120_000);
       } else {
-        await client.request(Methods.RUN_REFRESH_REVIEW_GATE, { runId: run.id });
+        const result = await refreshReviewGateView(
+          () => client.request<RunGetResult>(Methods.RUN_REFRESH_REVIEW_GATE, { runId: run.id }),
+          async () => {
+            if (!current() || !query) throw new Error('The review view changed during refresh.');
+            const state = await getResourceCache()?.retry(query);
+            if (state?.status !== 'ready' || !state.data)
+              throw state?.error ?? new Error('The current review run is unavailable.');
+            return state.data;
+          },
+        );
+        if (result.error) throw new Error(result.error);
       }
       if (current()) setAction({ scope: capturedScope, busy: false });
     } catch (error) {

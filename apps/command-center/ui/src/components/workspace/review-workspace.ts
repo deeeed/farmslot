@@ -13,6 +13,7 @@ import type {
   ReviewGatePayload,
   ReviewLineComment,
   RunDecision,
+  RunGetResult,
 } from '@farmslot/protocol';
 import {
   buildRunResolveDecisionParams,
@@ -25,7 +26,9 @@ import {
   reviewPostRecommendation,
   sourceObservationAge,
 } from '@farmslot/protocol';
+import { refreshReviewGateView } from '@farmslot/review-dispatch';
 
+import '../runs/review-history-panel.js';
 import '../diff-viewer/diff-review.js';
 import '../diff-viewer/code-viewer.js';
 import '../shared/media-lightbox.js';
@@ -642,7 +645,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private _handlePost() {
-    if (this._actionsPaused || !this._payload) return;
+    if (this._actionsPaused || this._refreshing || !this._postAvailable || !this._payload) return;
+
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
@@ -717,10 +721,19 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     );
     this._preservedIncludeEvidence = this._includeEvidence;
     try {
-      await gateway.request(Methods.RUN_REFRESH_REVIEW_GATE, { runId: command.runId });
-    } catch (err) {
-      if (command.current()) {
-        this._actionError = err instanceof Error ? err.message : String(err);
+      const refreshed = await refreshReviewGateView(
+        () =>
+          gateway.request<RunGetResult>(Methods.RUN_REFRESH_REVIEW_GATE, { runId: command.runId }),
+        async () => {
+          if (!command.current()) throw new Error('The review view changed during refresh.');
+          const state = await this._queries.run.retry();
+          if (state.status !== 'ready' || !state.data)
+            throw state.error ?? new Error('The current review run is unavailable.');
+          return state.data;
+        },
+      );
+      if (command.current() && refreshed.error) {
+        this._actionError = refreshed.error;
         this._preservedInclusion = undefined;
         this._preservedIncludeEvidence = undefined;
       }
@@ -819,7 +832,14 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
     return html`
       ${renderReviewWorkspaceStyles(this._recoveryPhase)} ${observations} ${this._renderTopBar()}
-      ${this._renderLoadingBanner()} ${this._branchMismatch ? this._renderBranchBanner() : nothing}
+      ${this._renderLoadingBanner()}
+      ${this.showHistory && this._queries.run.state.data?.run
+        ? html`<review-history-panel
+            .run=${this._queries.run.state.data.run}
+          ></review-history-panel>`
+        : nothing}
+      ${this._branchMismatch ? this._renderBranchBanner() : nothing}
+
       <div class="rw-split">
         ${this._isRecovering && observation.status !== 'stale'
           ? html`
@@ -1130,7 +1150,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         this._includeEvidence = includeEvidence;
       },
       posting: this._posting,
+      postAvailable: this._postAvailable,
       recovering: this._actionsPaused,
+
       refreshing: this._refreshing,
       proposing: this._proposing,
       proposeError: this._proposeError,
@@ -1139,7 +1161,17 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       proposeImprovement: () => this._handleProposeImprovement(),
       post: () => this._handlePost(),
       dismiss: () => this._handleDismiss(),
+      reviewerHref: this.reviewerHref,
+      reviewerUnavailable: this.reviewerUnavailable,
     });
+  }
+
+  private get _postAvailable() {
+    return Boolean(
+      this._queries.decision &&
+      !this._queries.decision.resolvedAt &&
+      this._queries.decision.actions.some((action) => action.id === 'post'),
+    );
   }
 
   private _renderDiffFiles() {

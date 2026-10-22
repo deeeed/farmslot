@@ -7,6 +7,7 @@ const error = 'Native runner emitted invalid JSON';
 const failedSession = '3c9dd59b-8912-416a-aa8e-f87a7102b8b4';
 const relaunchSession = 'f7c71b68-dd9c-4c9c-a27a-9c6ea1a5687f';
 let current: Run | undefined;
+let readOptions: { after?: number; limit?: number } | undefined;
 
 const binding = (sessionId: string) => ({
   sessionId,
@@ -73,8 +74,9 @@ mock.module('./node.js', {
     routeNativeExecution: async (
       _owner: string,
       _method: string,
-      params: { sessionId: string },
+      params: { sessionId: string; after?: number; limit?: number },
     ) => {
+      readOptions = { after: params.after, limit: params.limit };
       const healthy = healthySessions.has(params.sessionId);
       return {
         ...failedSnapshot,
@@ -126,6 +128,15 @@ const run = (runError: string, next: AgentContext): Run => ({
   ...makeRun({ id: '70bf7864-d119-4f5f-8fa3-e8106aaf81ab', status: 'reviewing' }),
   error: runError,
   agentContexts: [failed, next],
+});
+
+test('a native worker snapshot can continue its leased event history without changing the default read size', async () => {
+  const next = relaunch();
+  current = run('', next);
+  await readNativeWorkerSnapshot(current.id, 'review', next.id, { after: 42, limit: 500 });
+  assert.deepEqual(readOptions, { after: 42, limit: 500 });
+  await readNativeWorkerSnapshot(current.id, 'review', next.id);
+  assert.deepEqual(readOptions, { after: undefined, limit: 1 });
 });
 
 test('a running relaunch clears its predecessor failure, and a restart does not put it back', async () => {

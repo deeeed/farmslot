@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test, type TestContext } from 'node:test';
 
-import type { Principal } from '@farmslot/protocol';
+import type { NativeSessionEvent, Principal } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
@@ -23,8 +23,18 @@ type Ending =
   | 'incomplete'
   | 'verdict'
   | 'uncertain-launch'
-  | 'uncertain-delivery';
+  | 'uncertain-delivery'
+  | 'checklist-progress'
+  | 'tool-progress'
+  | 'paged-tools'
+  | 'foreign-tools'
+  | 'stale-checklist'
+  | 'accepted-start'
+  | 'inactive';
 let ending: Ending = 'verdict';
+let timeline: { now: number; polls: number; stepMs?: number } | undefined;
+let configuredInactivityMinutes: number | undefined;
+const readCursors: Array<number | undefined> = [];
 const vars = makeVars();
 const owner: Principal = {
   id: 'native-review-settlement-owner',
@@ -47,7 +57,12 @@ let stopFails = false;
 // The reviewer's host, slot files and runner are scripted; the run store and the
 // review round budget are real.
 mock.module('../core/config.js', {
-  namedExports: { ...config, loadProjectVars: async () => ({ projectJson: {} }) },
+  namedExports: {
+    ...config,
+    loadProjectVars: async () => ({
+      projectJson: { review: { review_inactivity_timeout_min: configuredInactivityMinutes } },
+    }),
+  },
 });
 // The reviewer's TASK.md, by path.
 const slotFiles = new Map<string, string>();
@@ -60,10 +75,38 @@ mock.module('../methods/dispatch/slot-file-write.js', {
 });
 mock.module('../run-engine/run-monitor.js', {
   namedExports: {
-    probeWorkerSignalForRun: async () =>
-      ending === 'timeout' || ending === 'exit' || ending === 'command-failed'
+    probeWorkerSignalForRun: async () => {
+      if (timeline) {
+        if (ending !== 'inactive' && timeline.polls >= 4) return { ok: true };
+        return {
+          ok: false,
+          code: 'non_terminal',
+          signal: {
+            role: 'review',
+            status: 'running',
+            timestamp: new Date(timeline.now).toISOString(),
+            checklistTiming: {
+              schemaVersion: 1,
+              events:
+                ending === 'checklist-progress' || ending === 'stale-checklist'
+                  ? [
+                      {
+                        stepNumber: timeline.polls,
+                        label: 'Inspect',
+                        checkedAt: new Date(
+                          ending === 'stale-checklist' ? 0 : timeline.now,
+                        ).toISOString(),
+                      },
+                    ]
+                  : [],
+            },
+          },
+        };
+      }
+      return ending === 'timeout' || ending === 'exit' || ending === 'command-failed'
         ? { ok: false, code: 'missing', message: 'no signal' }
-        : { ok: true },
+        : { ok: true };
+    },
   },
 });
 mock.module('../run-engine/stack-base.js', { namedExports: { stackPrBase: async () => null } });
@@ -84,7 +127,10 @@ mock.module('../runners/native/worker.js', {
       await upsertAgentContext(input.runId, 'review', {
         id: input.contextId,
         status: 'working',
-        nativeSession: binding,
+        nativeSession:
+          ending === 'accepted-start'
+            ? { ...binding, acceptedAt: new Date(0).toISOString() }
+            : binding,
       });
       // The host may have started the reviewer before its reply was lost.
       if (ending === 'uncertain-launch')
@@ -96,18 +142,62 @@ mock.module('../runners/native/worker.js', {
 });
 mock.module('../runners/native/worker-control.js', {
   namedExports: {
-    readNativeWorkerSnapshot: async () => ({
-      session:
-        ending === 'exit'
-          ? { state: 'closed', processStopped: true, error: 'reviewer process exited' }
-          : { state: 'running' },
-      commands:
-        ending === 'command-failed'
-          ? [{ commandId: binding.commandId, state: 'failed', outcome: 'failed' }]
-          : ending === 'timeout' || ending === 'exit'
-            ? []
-            : [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }],
-    }),
+    readNativeWorkerSnapshot: async (
+      _runId: string,
+      _role: string,
+      _contextId: string,
+      history?: { after?: number },
+    ) => {
+      if (timeline) {
+        readCursors.push(history?.after);
+        timeline.now += timeline.stepMs ?? 10 * 60_000;
+        timeline.polls++;
+        const events: NativeSessionEvent[] = [
+          {
+            sessionId: binding.sessionId,
+            generation: binding.generation,
+            commandId: ending === 'foreign-tools' ? 'earlier-command' : binding.commandId,
+            sequence: timeline.polls,
+            at: new Date(
+              ending === 'paged-tools' && timeline.polls === 1 ? 0 : timeline.now,
+            ).toISOString(),
+            type:
+              ending === 'accepted-start'
+                ? timeline.polls === 1
+                  ? 'command.accepted'
+                  : 'tool.completed'
+                : ['tool-progress', 'paged-tools', 'foreign-tools'].includes(ending)
+                  ? 'tool.completed'
+                  : 'text.delta',
+          },
+        ];
+        return {
+          session: { state: 'running' },
+          commands:
+            ending !== 'inactive' && timeline.polls >= 4
+              ? [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }]
+              : [],
+          events,
+          cursor: timeline.polls,
+          hasMore: ending === 'paged-tools' && timeline.polls === 1,
+        };
+      }
+      return {
+        session:
+          ending === 'exit'
+            ? { state: 'closed', processStopped: true, error: 'reviewer process exited' }
+            : { state: 'running' },
+        commands:
+          ending === 'command-failed'
+            ? [{ commandId: binding.commandId, state: 'failed', outcome: 'failed' }]
+            : ending === 'timeout' || ending === 'exit'
+              ? []
+              : [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }],
+        events: [],
+        cursor: 0,
+        hasMore: false,
+      };
+    },
   },
 });
 mock.module('../runners/native/worker-recovery.js', { namedExports: { resumeNativeWorker: noop } });
@@ -210,15 +300,103 @@ const review = (runId: string) =>
     model: 'opus',
     taskDir: 'tasks/review',
     runId,
-    reviewTimeoutMs: ending === 'timeout' ? 0 : 60_000,
+    reviewTimeoutMs:
+      ending === 'timeout' ? 0 : timeline ? (ending === 'inactive' ? 60 : 30) * 60_000 : 60_000,
     loopNumber: 1,
     validationDepth: 'static-code',
     mode: 'cold',
     reviewId: `pipeline-review-${runId}`,
   });
 
+for (const progress of ['checklist-progress', 'tool-progress', 'paged-tools'] as const) {
+  test(`a native reviewer with ${progress} survives its configured total-time boundary`, async (t) => {
+    ending = progress;
+    const clock = { now: 0, polls: 0 };
+    timeline = clock;
+    readCursors.length = 0;
+    t.mock.method(Date, 'now', () => clock.now);
+    t.after(() => {
+      timeline = undefined;
+    });
+    const run = await nativeRun(t);
+    const result = await review(run.id);
+    assert.equal(result.verdict, 'issues');
+    assert.equal(clock.polls >= 4, true);
+    assert.deepEqual(readCursors.slice(0, 4), [undefined, 1, 2, 3]);
+    const budget = await runReviewRoundBudget(getRun(run.id)!);
+    assert.equal(budget.used, 1);
+  });
+}
+
+test('a native reviewer with no checklist or tool progress fails at ten idle minutes, before a one-hour budget', async (t) => {
+  ending = 'inactive';
+  const clock = { now: 0, polls: 0 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /no checklist or tool progress for 600000ms/);
+  assert.equal(clock.polls, 1);
+});
+
+test('the native review inactivity window uses its project override', async (t) => {
+  ending = 'inactive';
+  configuredInactivityMinutes = 5;
+  const clock = { now: 0, polls: 0, stepMs: 5 * 60_000 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+    configuredInactivityMinutes = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /no checklist or tool progress for 300000ms/);
+  assert.equal(clock.polls, 1);
+});
+
+test('a previous native command cannot keep the current reviewer alive', async (t) => {
+  ending = 'foreign-tools';
+  const clock = { now: 0, polls: 0 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /no checklist or tool progress for 600000ms/);
+  assert.equal(clock.polls, 1);
+});
+
+test('re-reading old checklist marks and fresh signal heartbeats does not count as progress', async (t) => {
+  ending = 'stale-checklist';
+  const clock = { now: 0, polls: 0 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /no checklist or tool progress for 600000ms/);
+  assert.equal(clock.polls, 1);
+});
+
+test('a recovered native command gets its startup grace from its verified acceptance', async (t) => {
+  ending = 'accepted-start';
+  const clock = { now: 2 * 60 * 60_000, polls: 0, stepMs: 60_000 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+  });
+  const run = await nativeRun(t);
+  const result = await review(run.id);
+  assert.equal(result.verdict, 'issues');
+});
+
 for (const [end, reason] of [
-  ['timeout', /did not complete within 0ms/],
+  ['timeout', /no checklist or tool progress/],
   ['exit', /reviewer process exited/],
 ] as const) {
   test(`a reviewer ${end} settles its admitted round no-verdict`, async (t) => {

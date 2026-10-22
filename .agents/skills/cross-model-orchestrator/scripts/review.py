@@ -59,6 +59,8 @@ def _verdict(text, sha):
         return None
     if lines[0] == "VERDICT: APPROVE":
         return "APPROVE"
+    if lines[0] == "VERDICT: COMMENT":
+        return "COMMENT"
     if lines[0] == "VERDICT: REQUEST_CHANGES":
         return "REQUEST_CHANGES"
     return None
@@ -102,10 +104,11 @@ Saved range: {base}..{sha}
 Use git diff {base} {sha} to inspect the range. Verify the target commit, not an uncommitted working tree.
 
 Return plain text, without Markdown fences, beginning with EXACTLY these two lines:
-VERDICT: APPROVE or VERDICT: REQUEST_CHANGES
+VERDICT: APPROVE, VERDICT: COMMENT or VERDICT: REQUEST_CHANGES
 COMMIT: {sha}
 Choose one verdict on line 1. Then list blockers, improvements, evidence, and validation.
-Every blocker must name a realistic failure and its changed file and line. Nits never block.
+Apply the shared approval policy below. COMMENT records concrete asks and never authorizes merge.
+Every blocker must name a realistic failure and its changed file and line.
 Crafted input with no realistic source belongs in improvements unless it risks real funds or credentials.
 Do not reopen settled issues or unchanged code from earlier rounds, except for loss of real funds,
 credential exposure, or user-data loss. Check prior findings only to verify the named fixes.
@@ -361,7 +364,8 @@ def _locked_review(config, args, directory):
     round_dir.mkdir()
     fields = {"repo": args.repo, "pr": str(args.pr), "head": sha, "base": base, "round": str(number)}
     scope_script = Path(__file__).resolve().parents[4] / "packages/agent-runtime/scripts/review-diff-scope.cjs"
-    diff_scope = run(["node", str(scope_script), "packet", str(cwd), args.base, sha], cwd=cwd).stdout
+    approval_policy = config.get("projects", {}).get(args.repo, {}).get("approvalPolicy", {})
+    diff_scope = run(["node", str(scope_script), "packet", str(cwd), args.base, sha, json.dumps(approval_policy)], cwd=cwd).stdout
     prompt = _prompt(args.repo, args.pr, sha, base, number, mode, _previous(directory, state["rounds"]), diff_scope)
     prompt_file = round_dir / "prompt.md"
     _save_text(prompt_file, prompt)

@@ -1,7 +1,12 @@
 import { LitElement } from 'lit';
 import { property, state } from 'lit/decorators.js';
 
-import type { GitBranchDiffFile, ResourcePostureGateChoice, RunDecision } from '@farmslot/protocol';
+import type {
+  GitBranchDiffFile,
+  ResourcePostureGateChoice,
+  Run,
+  RunDecision,
+} from '@farmslot/protocol';
 
 import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
@@ -20,11 +25,15 @@ export abstract class ReviewWorkspaceState extends LitElement {
   }
 
   @property() runId = '';
+  @property({ attribute: false }) run?: Run;
+  @property({ type: Boolean }) showHistory = true;
   @property({ type: Boolean }) readOnly = false;
   @property({ type: Boolean }) workspaceView = false;
   @property({ attribute: false }) decision!: RunDecision;
   @property() slotId = '';
   @property() branch = ''; // expected branch from the run
+  @property() reviewerHref = '';
+  @property() reviewerUnavailable = '';
   /**
    * Operator resource-posture choice for this wait (ADR-054), supplied by the
    * gate section that mounts this workspace. Sent as the typed
@@ -40,6 +49,7 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @state() _includeEvidence = true;
   @state() _posting = false;
   @state() _refreshing = false;
+  @state() _refreshError = '';
   @state() _proposing = false;
   @state() _proposeError: string | null = null;
   @state() _actionError = '';

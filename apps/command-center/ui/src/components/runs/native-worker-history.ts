@@ -7,9 +7,8 @@ import type { AgentContext } from '@farmslot/protocol';
 import '../chat/native-session-view.js';
 
 import {
-  archivedNativeWorkerTargets,
   nativeWorkerAttemptKey,
-  type NativeWorkerViewTarget,
+  nativeWorkerTargets,
   selectedNativeWorkerTarget,
 } from '../chat/native-worker-target.js';
 
@@ -48,26 +47,13 @@ export class NativeWorkerHistory extends LitElement {
   `;
 
   render() {
-    const current: NativeWorkerViewTarget[] = this.contexts.flatMap((context) =>
-      !context.slotId && context.nativeSession?.generation
-        ? [
-            {
-              runId: context.runId,
-              contextId: context.id,
-              label: context.label,
-              binding: context.nativeSession,
-              readOnly: Boolean(context.nativeSession.closedAt || context.nativeSession.releasedAt),
-            },
-          ]
-        : [],
-    );
-    const attempts = [...current, ...archivedNativeWorkerTargets(this.contexts)];
+    const attempts = nativeWorkerTargets(this.contexts);
     if (!attempts.length) return nothing;
     const selected = selectedNativeWorkerTarget(attempts, this.selected);
     const selectedKey = selected ? nativeWorkerAttemptKey(selected) : '';
     return html`
       <label
-        >${current.length ? 'Reviewer conversation' : 'Previous worker attempts'}
+        >Worker conversations
         <select
           data-testid="native-worker-history-select"
           .value=${selectedKey}

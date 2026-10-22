@@ -262,6 +262,10 @@ export const terminalViewStyles = css`
     color: ${unsafeCSS(colors.textPrimary)};
   }
 
+  .tmux-win-btn[role='tab'] {
+    min-height: 44px;
+  }
+
   .tmux-win-btn.active {
     background: ${unsafeCSS(colors.accent)}22;
     color: ${unsafeCSS(colors.accent)};

@@ -74,7 +74,9 @@ const selection: NativeWorkerViewSelection = {
 const run = {
   id: 'run',
   status: 'monitoring',
-  agentContexts: [{ id: 'dev', label: 'Worker', role: 'primary', nativeSession: target.binding }],
+  agentContexts: [
+    { id: 'dev', runId: 'run', label: 'Worker', role: 'primary', nativeSession: target.binding },
+  ],
 } as Run;
 
 test('shared run selection preserves the pinned worker across unrelated metadata changes', () => {
@@ -109,6 +111,7 @@ test('a pinned historical lease stays read-only and cannot select its successor'
   };
   assert.deepEqual(nativeWorkerViewForRun(value, selection), {
     ...target,
+    label: 'Worker · Attempt 1',
     binding: historical,
     readOnly: true,
   });
