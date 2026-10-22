@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Validate review recommendations and RIGHT-side inline locations before gates and on refresh.
+
 - Download Jira image attachments into task assets even when supplied ticket data has no screenshot names.
 
 - Read-only reviewers skip repository settings and hooks. A reviewer that starts or finishes after its acknowledgement timeout resumes the original run and review round.

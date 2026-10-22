@@ -46,6 +46,10 @@ import {
   isIgnoredPoolFile,
   readPoolFiles,
 } from '@farmslot/protocol/node/slot-by-repo';
+import {
+  resolveApprovalPolicy,
+  type ReviewApprovalPolicy,
+} from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { SlotConfigError } from './error.js';
 import { referenceRepoKeysIn, referenceRepoPlaceholder } from './hooks.js';
@@ -212,6 +216,7 @@ export interface SlotVars {
 // ─── Raw project.json shape ───
 
 export interface RawProjectJson {
+  approvalPolicy?: Partial<ReviewApprovalPolicy>;
   recipe?: ProjectConfig['recipe'];
   name?: string;
   repo_url?: string;
@@ -841,6 +846,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateRoadmapConfig(projectJson, projectConfig);
   validateScriptedConfig(projectJson, projectConfig);
   validateEvalHarnessesConfig(projectJson, projectConfig);
+  resolveApprovalPolicy(projectJson.approvalPolicy);
   validateReviewConfig(projectJson, projectConfig);
   validatePublicationReviewConfig(projectJson, projectConfig);
   validatePrepareConfig(projectJson, projectConfig);

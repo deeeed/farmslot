@@ -37,6 +37,7 @@ import { findingsDigest } from '../core/findings-digest.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { assertQaCompletion } from '../qa/completion.js';
+import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import {
   reviewBudgetExtensionRefusal,
@@ -395,7 +396,11 @@ export async function reviewsWithValidResults(
     const artifact = reviewResultArtifactPath(review);
     const raw = artifact ? await readReviewResult(run, artifact) : undefined;
     if (raw) {
-      const result = parseStructuredReviewFeedback(raw, artifact!);
+      const result = parseStructuredReviewFeedback(
+        raw,
+        artifact!,
+        await loadReviewApprovalPolicy(run.project),
+      );
       if (!result.incomplete && result.verdict === review.verdict) valid.push(review);
     }
   }
@@ -430,7 +435,9 @@ async function acceptableHeadFindings(
       entry === review ? review : { artifactPaths: entry.artifactPaths },
     );
     const raw = artifact ? await source.reviewResult(run, artifact) : undefined;
-    const result = raw ? parseStructuredReviewFeedback(raw, artifact!) : undefined;
+    const result = raw
+      ? parseStructuredReviewFeedback(raw, artifact!, await loadReviewApprovalPolicy(run.project))
+      : undefined;
     if (!result || result.incomplete || result.verdict !== 'issues' || result.issues.length < count)
       return undefined;
     for (const issue of result.issues) {

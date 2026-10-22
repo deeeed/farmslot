@@ -7,6 +7,20 @@ This delivered contract is separate from the Proposed completed-evidence/storage
 work in [#967](https://github.com/deeeed/farmslot/pull/967). It does not accept or
 implement that proposal.
 
+## Approval policy
+
+**Status:** Proposed under ADR-058 Amendment 3. Applies to review-pr and paired reviews.
+
+Project `approvalPolicy`, also supported in the existing source runtime settings, overrides the shared defaults: `maxNits: 3`, `minorVerdict: "COMMENT"`, `majorVerdict: "REQUEST_CHANGES"`. `maxNits` MUST be a nonnegative integer; verdict overrides accept APPROVE, COMMENT or REQUEST_CHANGES. Invalid configuration MUST fail closed. The gateway MUST resolve current configuration when producing instructions, accepting results and refreshing a gate; no restart is required.
+
+With defaults, zero blockers, majors or minors and at most three nits permits APPROVE. Any minor or four nits requires COMMENT with concrete asks. A blocker or major requires REQUEST_CHANGES. Blockers always require REQUEST_CHANGES; otherwise the strictest applicable configured verdict wins.
+
+A minor is a real defect or gap: a wrong value, changed behavior without a test, a false PR-description claim or duplication of an existing helper. A nit changes only style or wording, with no behavior impact. Size alone MUST NOT be a finding. Unrelated concerns mixed in a PR are a minor with an ask to split.
+
+New findings MUST carry severity; legacy findings without it are treated as major. The shared resolver MUST generate reviewer instructions and validate the typed recommendation from the same findings and policy. An inconsistent result MUST NOT reach publication. Refresh MUST recompute the recommendation from revised findings; an invalid refresh MUST invalidate the old approval.
+
+Before a review reaches or refreshes its gate, every inline comment MUST resolve to an added or context line on the RIGHT side of the PR diff at the exact reviewed head. Use the existing diff-line resolver. Deleted lines, unchanged files, lines outside hunks and unavailable source MUST be refused. Out-of-diff findings stay in the review body and authoritative findings, without an invented inline location.
+
 ## Publication view
 
 An `engine_review_posting` decision with a review payload exposes all inline
@@ -79,6 +93,8 @@ posting controls. Reopen/reconnect reloads current authorized run detail and
 rejects stale responses from another connection or run.
 
 ## Public surface
+
+`@farmslot/protocol/review-approval-policy.cjs` provides `resolveApprovalPolicy`, `reviewRecommendation`, `assertReviewRecommendation`, `renderApprovalPolicy`, `isReviewSeverity`, `DEFAULT_APPROVAL_POLICY` and `ReviewApprovalPolicyError`, with typed declarations. This is an additive stable SDK export requiring a minor package release. Gateway result validation and review instructions consume it; harnesses inherit the policy. The shared `review-diff-scope.cjs instructions [project.json]` command also renders project overrides for ad hoc paired reviews; orchestration project entries may supply the same block to the packet renderer. No new gateway command or harness extension is required.
 
 `@farmslot/protocol` exports `savedReviewView` beside `reviewResultForRun` for the
 native saved-result reader. Both read existing Run fields and add no storage or RPC.

@@ -5,5 +5,11 @@ export interface DiffScopeCandidate {
 
 export const REVIEW_DIFF_SCOPE_RULE: string;
 export function diffScopeCandidates(files: readonly string[]): DiffScopeCandidate[];
-export function buildDiffScopePacket(files: readonly string[], unavailable?: string): string;
+export function buildDiffScopePacket(
+  files: readonly string[],
+  unavailable?: string,
+  approvalPolicy?: Partial<
+    import('@farmslot/protocol/review-approval-policy.cjs').ReviewApprovalPolicy
+  >,
+): string;
 export function gitDiffScopeFiles(repo: string, base: string, head: string): string[];

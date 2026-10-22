@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ReadyGatePayload, ReviewStatus } from '../src/contracts/runs.js';
-import { reviewFindingId } from '../src/runs/review-findings.js';
+import { openReviewFindingCount, reviewFindingId } from '../src/runs/review-findings.js';
 import { reviewPolicySatisfied, reviewRequirementDisplay } from '../src/runs/review-policy.js';
 
 const payload = (): ReadyGatePayload => ({
@@ -116,4 +116,30 @@ test('a required review qualifies only the frozen head, subject and separate ses
   assert.equal(reviewRequirementDisplay(gate).satisfied, true);
   review.reviewedReviewSubjectHash = 'old-subject';
   assert.equal(reviewRequirementDisplay(gate).satisfied, false);
+});
+
+test('permitted nits retained by a validated passing review do not become unresolved work', () => {
+  const review: ReviewStatus = {
+    id: 'nits',
+    mode: 'warm',
+    loopNumber: 1,
+    reviewerSessionId: 'session',
+    reviewedHeadSha: 'a'.repeat(40),
+    verdict: 'pass',
+    unresolvedCount: 0,
+    issues: Array.from({ length: 3 }, (_, index) => ({
+      file: 'src/a.ts',
+      description: `Wording ${index}`,
+      severity: 'nit',
+    })),
+  };
+  assert.equal(openReviewFindingCount(review), 0);
+  assert.equal(
+    reviewPolicySatisfied({ minimumReviews: 1, requestedBy: 'dispatch' }, [review]),
+    true,
+  );
+  assert.equal(
+    reviewRequirementDisplay({ ...payload(), reviews: [review] }).counts.unresolvedFindings,
+    0,
+  );
 });

@@ -283,7 +283,16 @@ export async function readReviewArtifacts(
         const sev = typeof c.severity === 'string' ? c.severity.toLowerCase() : 'comment';
         counts[sev] = (counts[sev] ?? 0) + 1;
       }
-      const parts = ['must_fix', 'suggestion', 'nitpick', 'comment']
+      const parts = [
+        'blocker',
+        'major',
+        'minor',
+        'nit',
+        'must_fix',
+        'suggestion',
+        'nitpick',
+        'comment',
+      ]
         .filter((s) => counts[s])
         .map((s) => `${counts[s]} ${s}`);
       result.lineCommentSummary = `${comments.length} comments: ${parts.join(', ')}`;

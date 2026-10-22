@@ -61,7 +61,7 @@ test('refresh preserves the fresh decision list and refuses an in-flight resolut
   await writeFile(
     path.join(root, 'artifacts/line-comments.json'),
     JSON.stringify({
-      comments: [{ path: 'src/a.ts', line: 2, body: 'New finding' }],
+      comments: [],
       recommendation: 'COMMENT',
     }),
   );

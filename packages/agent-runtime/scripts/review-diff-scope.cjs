@@ -1,6 +1,8 @@
 'use strict';
 
 const { execFileSync } = require('node:child_process');
+const { readFileSync } = require('node:fs');
+const { renderApprovalPolicy } = require('@farmslot/protocol/review-approval-policy.cjs');
 
 const sensitivePaths = [
   [
@@ -45,11 +47,13 @@ function diffScopeCandidates(files) {
   );
 }
 
-function buildDiffScopePacket(files, unavailable) {
+function buildDiffScopePacket(files, unavailable, approvalPolicy) {
   const unique = [...new Set(files)].sort();
   const candidates = diffScopeCandidates(unique);
   return [
     REVIEW_DIFF_SCOPE_RULE,
+    '',
+    renderApprovalPolicy(approvalPolicy),
     '',
     '### Whole-contribution path inventory',
     unavailable ? `UNVERIFIED: ${unavailable}` : JSON.stringify(unique),
@@ -90,9 +94,11 @@ module.exports = {
 };
 
 if (require.main === module) {
-  const [command, repo, base, head] = process.argv.slice(2);
-  if (command === 'instructions') process.stdout.write(`${REVIEW_DIFF_SCOPE_RULE}\n`);
-  else if (command === 'packet' && repo && base && head) {
+  const [command, repo, base, head, policyJson] = process.argv.slice(2);
+  if (command === 'instructions') {
+    const policy = repo ? JSON.parse(readFileSync(repo, 'utf8')).approvalPolicy : undefined;
+    process.stdout.write(`${REVIEW_DIFF_SCOPE_RULE}\n\n${renderApprovalPolicy(policy)}\n`);
+  } else if (command === 'packet' && repo && base && head) {
     let files = [];
     let unavailable;
     try {
@@ -101,9 +107,11 @@ if (require.main === module) {
       // Missing source is recorded in the packet; it never becomes a clean scan.
       unavailable = error instanceof Error ? error.message.split('\n')[0] : String(error);
     }
-    process.stdout.write(`${buildDiffScopePacket(files, unavailable)}\n`);
+    process.stdout.write(
+      `${buildDiffScopePacket(files, unavailable, policyJson ? JSON.parse(policyJson) : undefined)}\n`,
+    );
   } else
     throw new Error(
-      'Usage: review-diff-scope.cjs instructions | packet <repo> <publication-base> <head>',
+      'Usage: review-diff-scope.cjs instructions [project.json] | packet <repo> <publication-base> <head> [approval-policy-json]',
     );
 }

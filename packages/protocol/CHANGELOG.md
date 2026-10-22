@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share configurable review verdict policy and severity definitions across review instructions and result validation.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.64.0 - 2026-10-22

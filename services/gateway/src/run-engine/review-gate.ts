@@ -17,6 +17,10 @@ import {
   type Run,
   selectReviewFindings,
 } from '@farmslot/protocol';
+import {
+  assertReviewRecommendation,
+  ReviewApprovalPolicyError,
+} from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { farmslotRoot, getProjectField, resolveProjectTaskDirName } from '../core/config.js';
 import { fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
@@ -25,6 +29,8 @@ import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js'
 import { auditEvidenceQuality } from '../intelligence/engine.js';
 import { resolveDefaultPublicationAccount } from '../pr-monitoring/github-account.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
+import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
+import { assertReviewCommentLines } from '../review-publication/validate-comments.js';
 import {
   markReviewedFilesViewed,
   retainViewedFilesResult,
@@ -156,6 +162,17 @@ export async function executeReviewGate(runId: string): Promise<void> {
     ...new Set([...reviewInputArtifactPaths, ...reviewInputSnapshot.artifactPaths]),
   ];
   reviewSnapshot = reviewInputSnapshot.snapshot;
+  if (review.hasReview) {
+    assertReviewRecommendation(
+      review.lineComments,
+      review.recommendation,
+      await loadReviewApprovalPolicy(current.project),
+    );
+    if (review.lineComments.length) {
+      if (!reviewSnapshot) throw new Error('Review diff identity is unavailable');
+      await assertReviewCommentLines(current, review.lineComments, reviewSnapshot);
+    }
+  }
 
   // 3b. Upload artifacts and build evidence (non-fatal)
   let reviewArtifactUrls = new Map<string, string>();
@@ -626,17 +643,51 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
       throw Object.assign(new Error('Review changed during refresh.'), { code: 'REVIEW_CHANGED' });
     return { run: fresh, decision: current };
   };
+  const invalidateApproval = async (error: unknown): Promise<never> => {
+    if (error instanceof ReviewApprovalPolicyError) {
+      const target = freshTarget();
+      const actions = reviewPostingActions(null);
+      const invalidated = updateRun(runId, {
+        reviewResult: undefined,
+        decisions: target.run.decisions.map((entry) =>
+          entry.id === decision.id
+            ? {
+                ...entry,
+                payload: {
+                  ...(entry.payload as ReviewGatePayload),
+                  recommendation: error.recommendation,
+                },
+                description: `${error.message}. Correct the updated review result before publication.`,
+                actions,
+                context: { ...entry.context, gateActions: actions },
+              }
+            : entry,
+        ),
+      });
+      const evaluated = await refreshRunGateReadiness(invalidated);
+      await persistRunNow(evaluated, 'invalidate stale review approval');
+      broadcastFn(Events.RUN_UPDATED, { run: evaluated });
+    }
+    throw error;
+  };
   if (run.reviewWorkspace) {
-    if (run.reviewWorkspace.cleanedAt) return run;
-    const completion = await readReviewWorkspaceCompletion(runId);
+    const completion = await readReviewWorkspaceCompletion(runId).catch(invalidateApproval);
     if (!completion?.result || completion.signal.outcome !== 'success')
       throw new Error('Reviewer has not finished its updated result');
     const target = freshTarget();
+    const result = completion.result;
+    const actions = reviewPostingActions(result.reviewMd);
     const refreshed = updateRun(runId, {
-      reviewResult: completion.result,
+      reviewResult: result,
       decisions: target.run.decisions.map((entry) =>
         entry.id === decision.id
-          ? { ...entry, payload: { ...(entry.payload as ReviewGatePayload), ...completion.result } }
+          ? {
+              ...entry,
+              payload: { ...(entry.payload as ReviewGatePayload), ...result },
+              description: `**Recommendation:** ${result.recommendation}`,
+              actions,
+              context: { ...entry.context, gateActions: actions },
+            }
           : entry,
       ),
     });
@@ -647,6 +698,20 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   }
   await copyWorkerArtifacts(runId);
   const review = await readReviewArtifacts(runId);
+  try {
+    assertReviewRecommendation(
+      review.lineComments,
+      review.recommendation,
+      await loadReviewApprovalPolicy(run.project),
+    );
+    if (review.lineComments.length) {
+      const snapshot = (decision.payload as ReviewGatePayload).reviewSnapshot;
+      if (!snapshot) throw new Error('Review diff identity is unavailable');
+      await assertReviewCommentLines(run, review.lineComments, snapshot);
+    }
+  } catch (error) {
+    return invalidateApproval(error);
+  }
   const workerLearnings = await readTaskArtifactText(run, 'learnings.md');
 
   let artifactManifest: ArtifactRef[] | undefined;
@@ -674,9 +739,7 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
     workerLearnings,
     ...(artifactManifest ? { artifactManifest } : {}),
   };
-  const nextDescription = review.summary
-    ? `**Recommendation:** ${review.recommendation}\n**Line comments:** ${review.lineCommentSummary}\n\n${review.summary}`
-    : target.decision.description;
+  const nextDescription = `**Recommendation:** ${review.recommendation}\n**Line comments:** ${review.lineCommentSummary}\n\n${review.summary}`;
   const nextDecision = {
     ...target.decision,
     payload: nextPayload,
