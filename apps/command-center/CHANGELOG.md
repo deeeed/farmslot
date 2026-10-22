@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Verify blocked review-fix recovery through the existing Resume control and its rendered active state.
+
 - Restore shared review finding links at their exact file and line, with explicit unavailable-source states.
 
 - Add connected review-history proof for round details and recorded fix diffs.

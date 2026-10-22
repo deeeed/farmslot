@@ -512,7 +512,9 @@ export async function blockedRunResumableSignal(run: Run): Promise<BlockedRunRes
   const context = blockedWorkerContext(run);
   const probe = await probeWorkerSignalForRun(run.id, run.slotId, context);
   return {
-    signal: freshBlockedWorkerAttempt(run, probe, context, { acceptRunningBlockedAttempt: true }),
+    signal: freshBlockedWorkerAttempt(run, probe, context, {
+      acceptRunningBlockedAttempt: blockedWorkerRecoveryStep(run)?.name === PS.REVIEW,
+    }),
     probe,
     stepName: blockedWorkerRecoveryStep(run)?.name === PS.REVIEW ? PS.REVIEW : PS.MONITOR,
   };
