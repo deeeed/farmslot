@@ -36,6 +36,7 @@ assert(
     'slot-run-web',
     'dispatch-runs-web',
     'ready-workspace-web',
+    'review-workspace-web',
   ].includes(phase),
   'Select a run proof phase',
 );
@@ -668,6 +669,263 @@ async function detailBrowser(runId) {
     navigate,
     peek: () => cdp('eval', route, '--file', storeProbe),
   };
+}
+
+if (phase === 'review-workspace-web') {
+  const decision = ({ createdAt }) => ({
+    status: 'human-gating',
+    completedAt: undefined,
+    decisions: [
+      {
+        id: randomUUID(),
+        // This legacy context renders a review but is refused by the refresh endpoint.
+        // It cannot publish: there is no PR, worker, slot or posting waiter.
+        type: 'engine_human_gate',
+        title: 'Private review input proof',
+        description: 'Owned slot-free legacy review context',
+        createdAt,
+        actions: [
+          { id: 'post', label: 'Post', style: 'primary' },
+          { id: 'dismiss', label: 'Dismiss', style: 'secondary' },
+        ],
+        payload: {
+          kind: 'review',
+          prNumber: null,
+          repo: null,
+          recommendation: 'COMMENT',
+          reviewMd: 'Private canonical review workspace proof',
+          lineComments: [
+            {
+              path: 'private.txt',
+              line: 1,
+              side: 'RIGHT',
+              body: 'Private comment selection',
+              severity: 'minor',
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const result = await withRunFixture(decision, async ({ runId }) =>
+    withRunFixture(decision, async ({ runId: otherRunId, observed }) => {
+      const first = await detailBrowser(otherRunId);
+      const probe = path.join(
+        root,
+        'apps/command-center/scripts/probes/offline-review-workspace.js',
+      );
+      const snapshot = (route) => first.cdp('eval', route, '--file', probe);
+      const until = async (route, predicate, label) => {
+        const deadline = Date.now() + 45000;
+        let value;
+        do {
+          value = await snapshot(route);
+          if (predicate(value)) return value;
+          await delay(100);
+        } while (Date.now() < deadline);
+        assert.fail(`${label}: ${JSON.stringify(value)}`);
+      };
+      const current = (value) =>
+        value.mounted && value.canonical && value.run.status === 'ready' && !value.paused;
+      const otherInitial = await until(
+        first.route,
+        current,
+        'Cache the second actual review before the interrupted command',
+      );
+      const browser = await detailBrowser(runId);
+      const { cdp, route, base, artifacts } = browser;
+      const selector = (id) => `run-detail >>> review-workspace [data-testid="${id}"]`;
+      const initial = await until(
+        route,
+        current,
+        'The actual review must render its canonical full-run decision',
+      );
+      assert(initial.reportRendered);
+      assert.deepEqual(initial.included, [0]);
+      await writeFile(
+        path.join(artifacts, 'review-curation-before.json'),
+        JSON.stringify(initial, null, 2),
+      );
+      await cdp('screenshot', route, path.join(artifacts, 'review-curation-before.png'));
+      await cdp('click', route, 'run-detail >>> review-workspace .rw-ci input:not(:disabled)');
+      await writeFile(
+        path.join(artifacts, 'review-curation-after.json'),
+        JSON.stringify(await snapshot(route), null, 2),
+      );
+      await until(
+        route,
+        (value) => current(value) && value.included.length === 0,
+        'Actual comment curation must update',
+      );
+      const armed = await cdp('click', route, selector('review-post'), '--observe-file', probe);
+      assert.equal(armed.observation.pendingConfirm, 'post', 'Arm the actual posting confirmation');
+      const confirmationStarted = armed.clickedAt;
+      const tag = `review-context-${randomUUID().slice(0, 8)}`;
+      await observed.read('run.tags.set', { runId, tags: [tag] });
+      const updated = await until(
+        route,
+        (value) => current(value) && value.tags?.includes(tag),
+        'An external run update must reach the shared review',
+      );
+      const confirmationElapsedMs = Date.now() - confirmationStarted;
+      assert(
+        confirmationElapsedMs < 2500,
+        'Observe invalidation before the normal three-second confirmation timeout',
+      );
+      assert.equal(
+        updated.pendingConfirm,
+        null,
+        'Invalidation must retire the old posting confirmation',
+      );
+      assert.deepEqual(
+        updated.included,
+        [],
+        'Unrelated run metadata must preserve reviewer curation',
+      );
+      await cdp('click', route, selector('review-post'));
+      await until(
+        route,
+        (value) => value.pendingConfirm === 'post' && !value.busy,
+        'The next tap must request a new confirmation rather than post',
+      );
+      assert.equal((await rpc('run.get', { runId })).run.decisions[0].resolvedAt, undefined);
+      await cdp('click', route, selector('review-refresh'));
+      const refused = await until(
+        route,
+        (value) => value.errorRendered && !value.busy,
+        'The real refresh refusal must remain visible',
+      );
+      assert.match(refused.actionError, /No pending review_posting decision/);
+      await cdp(
+        'click',
+        route,
+        'run-detail >>> review-workspace [data-testid="review-action-error"]',
+      );
+      assert((await snapshot(route)).errorVisible);
+      await cdp('screenshot', route, path.join(artifacts, 'review-current-refusal.png'));
+      const storedProbe = path.join(
+        root,
+        'apps/command-center/scripts/probes/offline-run-detail-store.js',
+      );
+      const otherRoute = `run/${otherRunId}`;
+      base.hash = otherRoute;
+      await cdp('goto', base.href);
+      await until(otherRoute, current, 'Verify the second review before its offline render');
+      let stored;
+      const storeDeadline = Date.now() + 15000;
+      do {
+        stored = await cdp('eval', otherRoute, '--file', storedProbe);
+        if (stored.storedObservedAt === (await snapshot(otherRoute)).run.observedAt) break;
+        await delay(100);
+      } while (Date.now() < storeDeadline);
+      assert(stored.storedObservedAt, 'The second review must be written to actual SQLite');
+      base.hash = route;
+      await cdp('goto', base.href);
+      await until(route, current, 'Reopen the first review for the interrupted command');
+      let cold;
+      await withOwnedGatewayOffline(
+        async () => {
+          const disconnected = await until(
+            otherRoute,
+            (value) =>
+              value.mounted && value.run.status === 'stale' && value.paused && value.reportRendered,
+            'The second actual review must remain readable after disconnect',
+          );
+          assert.equal(
+            disconnected.actionError,
+            '',
+            'A former view command must not report into the mounted successor',
+          );
+          assert.equal(disconnected.busy, false);
+          base.searchParams.set('review-cold', randomUUID());
+          await cdp('goto', base.href);
+          cold = await until(
+            otherRoute,
+            (value) =>
+              value.mounted &&
+              value.run.status === 'stale' &&
+              value.paused &&
+              value.reportRendered &&
+              value.reportReadable &&
+              value.saved,
+            'A cold offline review must show saved facts with age',
+          );
+          assert.equal(cold.run.observedAt, stored.storedObservedAt);
+          assert(cold.buttons.length && cold.buttons.every((button) => button.disabled));
+          assert.equal(
+            cold.actionError,
+            '',
+            'A former view command cannot write its failure into the current review',
+          );
+          await cdp(
+            'click',
+            otherRoute,
+            'run-detail >>> review-workspace:has([data-testid="review-post"]) [data-testid="review-run-age"]',
+          );
+          assert((await snapshot(otherRoute)).savedVisible);
+          await cdp(
+            'click',
+            otherRoute,
+            'run-detail >>> review-workspace:has([data-testid="review-post"]) .rw-md-section',
+          );
+          assert(
+            (await snapshot(otherRoute)).reportVisible,
+            'The saved review report must remain legible in the viewport',
+          );
+          await cdp('screenshot', otherRoute, path.join(artifacts, 'review-cold-offline.png'));
+        },
+        {
+          beforeStop: async () => {
+            await cdp('click', route, selector('review-refresh'));
+            await until(
+              route,
+              (value) => value.busy,
+              'Keep the first actual refresh request pending',
+            );
+            base.hash = otherRoute;
+            await cdp('eval', route, `location.hash=${JSON.stringify(otherRoute)}; return true;`);
+            await until(
+              otherRoute,
+              (value) => value.mounted && value.runId === otherRunId,
+              'Navigate to the other cached review before the former command fails',
+            );
+          },
+        },
+      );
+      const recovered = await until(
+        otherRoute,
+        current,
+        'Reconnect must refresh the current review without replay',
+      );
+      assert.equal(recovered.actionError, '');
+      assert.equal(recovered.busy, false);
+      for (const id of [runId, otherRunId])
+        assert.equal(
+          (await rpc('run.get', { runId: id })).run.decisions[0].resolvedAt,
+          undefined,
+          'No confirmation or interrupted command may resolve either fixture',
+        );
+      return {
+        result: 'PASS',
+        action: phase,
+        reviewWorkspaceCanonical: true,
+        reviewConfirmationRetired: true,
+        reviewCommandErrorVisible: true,
+        reviewOwnerReplyFenced: true,
+        reviewColdOffline: true,
+        reviewDecisionsUnresolved: true,
+        runId,
+        otherRunId,
+        observedAt: cold.run.observedAt,
+        previousObservedAt: otherInitial.run.observedAt,
+        confirmationElapsedMs,
+        successfulPublicationProven: false,
+        gitContentProven: false,
+      };
+    }),
+  );
+  console.log(JSON.stringify(result));
+  process.exit(0);
 }
 
 if (phase === 'ready-workspace-web') {

@@ -23,6 +23,7 @@ import {
   reviewedFindingContext,
   reviewPostingFingerprint,
   reviewPostRecommendation,
+  sourceObservationAge,
 } from '@farmslot/protocol';
 
 import '../diff-viewer/diff-review.js';
@@ -61,6 +62,7 @@ import {
   reviewCommentsByFile,
   reviewThreadsForFile,
 } from './review-workspace-comment-model.js';
+import { ReviewWorkspaceQueries } from './review-workspace-queries.js';
 import { renderReviewWorkspaceStyles } from './review-workspace-renderers.js';
 import {
   renderReviewBranchBanner,
@@ -84,6 +86,84 @@ import {
 
 @customElement('review-workspace')
 export class ReviewWorkspace extends ReviewWorkspaceState {
+  readonly _queries = new ReviewWorkspaceQueries(this);
+  private _commandRequest?: object;
+  private _recoveryRequest?: object;
+  private _restoreReviewSource = false;
+  private _proposeScope?: { current(): boolean };
+
+  get _usesMockData(): boolean {
+    return window.location.hash.startsWith('#dev/');
+  }
+
+  _reviewInputsChanged(): void {
+    this.requestUpdate();
+  }
+
+  _retireReviewScope(): void {
+    this._commandRequest = undefined;
+    this._recoveryRequest = undefined;
+    this._posting = false;
+    this._refreshing = false;
+    this._checkingOut = false;
+    this._actionError = '';
+    this._preservedInclusion = undefined;
+    this._preservedIncludeEvidence = undefined;
+    this._clearProposingLatch();
+    this._proposeError = null;
+    this._confirmTimer.clear();
+    this._sourceLoadEpoch++;
+    this._initialized = false;
+    this._lastCurationFingerprint = '';
+    this._recoveryInFlight = false;
+    this._selectedFile = '';
+    this._selectedCommentIdx = -1;
+    this._diffFiles = [];
+    this._fileDiff = '';
+    this._fileDiffLoading = false;
+    this._diffLoading = false;
+    this._commentFileContent = '';
+    this._commentFileError = '';
+    this._commentFileLoading = false;
+    this._diffModalOpen = false;
+    this._diffModalUrl = '';
+    this._lightboxOpen = false;
+    this._artifactLightboxItems = null;
+  }
+
+  private get _actionsPaused(): boolean {
+    return this.readOnly || this._isRecovering || (!this._usesMockData && !this._queries.ready);
+  }
+
+  private _beginReviewCommand(actionId?: string) {
+    if (this._commandRequest) return;
+    try {
+      if (this._actionsPaused) throw new Error('Wait for current review inputs before acting.');
+      const decision = this._queries.requireDecision(actionId);
+      const captured = this._queries.capture();
+      const runId = this.runId;
+      const request = {};
+      this._confirmTimer.clear();
+      this._commandRequest = request;
+      this._actionError = '';
+      return {
+        runId,
+        decision,
+        current: () => this._commandRequest === request && captured.current(),
+        ownsView: () => this._commandRequest === request && captured.ownsView(),
+        finish: () => {
+          if (this._commandRequest !== request || !captured.ownsView()) return;
+          this._commandRequest = undefined;
+          this._posting = false;
+          this._refreshing = false;
+          this._checkingOut = false;
+        },
+      };
+    } catch (error) {
+      this._actionError = error instanceof Error ? error.message : String(error);
+      return;
+    }
+  }
   private readonly _testFilter = new DiffTestFilterController(this, {
     patterns: () => this._diffTestPatterns,
     onChange: () => this._onHideTestsChanged(),
@@ -102,7 +182,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     writeReviewWorkspaceHashState({
       tab: this._activeTab,
       source: comment
-        ? reviewCommentLocation(comment, this._payload.reviewSnapshot?.headSha ?? undefined)
+        ? reviewCommentLocation(comment, this._payload?.reviewSnapshot?.headSha ?? undefined)
         : this._selectedFile
           ? { file: this._selectedFile }
           : null,
@@ -120,7 +200,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       const index = reviewCommentIndex(
         this._comments,
         source,
-        this._payload.reviewSnapshot?.headSha ?? undefined,
+        this._payload?.reviewSnapshot?.headSha ?? undefined,
       );
       if (index < 0) {
         this._sourceLoadEpoch++;
@@ -142,8 +222,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     }
   }
 
-  private get _payload(): ReviewGatePayload {
-    return this.decision.payload as ReviewGatePayload;
+  private get _payload(): ReviewGatePayload | undefined {
+    const decision = this._queries.decision;
+    return decision?.payload?.kind === 'review' ? decision.payload : undefined;
   }
 
   private get _baseRef(): string {
@@ -172,15 +253,15 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private _openReviewInputDiff(): void {
     const diffPath =
-      this._payload.reviewSnapshot?.diffPath ??
-      this._payload.reviewInputArtifactPaths?.find(
+      this._payload?.reviewSnapshot?.diffPath ??
+      this._payload?.reviewInputArtifactPaths?.find(
         (path) => path.endsWith('diff.txt') || path.endsWith('.diff'),
       );
     if (!diffPath) return;
-    this._diffModalTitle = `Review input ${this._payload.reviewSnapshot?.headSha?.slice(0, 7) ?? 'diff'}`;
+    this._diffModalTitle = `Review input ${this._payload?.reviewSnapshot?.headSha?.slice(0, 7) ?? 'diff'}`;
     this._diffModalUrl =
-      this._payload.artifactUrls?.[diffPath] ??
-      this._payload.artifactUrls?.[workspaceArtifactBasename(diffPath)] ??
+      this._payload?.artifactUrls?.[diffPath] ??
+      this._payload?.artifactUrls?.[workspaceArtifactBasename(diffPath)] ??
       runArtifactUrl(this.runId, { path: diffPath });
     this._diffModalOpen = true;
   }
@@ -225,7 +306,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._unsubDecision = gateway.subscribe<{ runId: string; decision: RunDecision }>(
       Events.RUN_DECISION_NEW,
       (p) => {
-        if (p.runId !== this.runId) return;
+        if (p.runId !== this.runId || !this._proposeScope?.current()) return;
         if (p.decision?.type !== 'improvement') return;
         this._clearProposingLatch();
       },
@@ -233,7 +314,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._unsubImprovementFail = gateway.subscribe<{ runId: string; error: string }>(
       Events.RUN_IMPROVEMENT_FAILED,
       (p) => {
-        if (p.runId !== this.runId) return;
+        if (p.runId !== this.runId || !this._proposeScope?.current()) return;
         this._proposeError = p.error || 'Improvement analysis failed';
         this._clearProposingLatch();
       },
@@ -258,20 +339,47 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._proposingTimer = undefined;
     }
     this._proposing = false;
+    this._proposeScope = undefined;
   }
 
   private _lastCurationFingerprint = '';
 
-  willUpdate() {
-    if (this.decision) {
-      const next = reviewPostingFingerprint(this._payload);
-      if (this._lastCurationFingerprint && this._lastCurationFingerprint !== next)
+  willUpdate(changed: Map<string, unknown>) {
+    this._queries.sync();
+    if (changed.has('resourcePosture') || changed.has('postureBlockedReason'))
+      this._confirmTimer.clear();
+    const payload = this._payload;
+    if (payload) {
+      const next = reviewPostingFingerprint(payload);
+      if (this._lastCurationFingerprint !== next) {
+        this._restoreReviewSource = true;
         this._confirmTimer.clear();
-      this._lastCurationFingerprint = next;
+        const preserved = this._preservedInclusion;
+        this._preservedInclusion = undefined;
+        this._includedComments = new Set(
+          this._comments.flatMap((comment, index) =>
+            !preserved || preserved.get(this._commentKey(comment)) !== false ? [index] : [],
+          ),
+        );
+        this._includeEvidence = this._preservedIncludeEvidence ?? true;
+        this._preservedIncludeEvidence = undefined;
+        this._selectedRecommendation = reviewPostRecommendation(payload);
+        this._lastCurationFingerprint = next;
+        this._sourceLoadEpoch++;
+        this._commentFileContent = '';
+        this._commentFileError = '';
+        this._commentFileLoading = false;
+        this._fileDiff = '';
+        this._fileDiffLoading = false;
+        this._selectedCommentIdx = -1;
+        this._lightboxOpen = false;
+        this._artifactLightboxItems = null;
+        this._normalizeActiveTab();
+      }
     }
-    if (!this._initialized && this.decision) {
+    if (!this._initialized && payload) {
       this._includedComments = new Set(this._comments.map((_, i) => i));
-      this._selectedRecommendation = reviewPostRecommendation(this._payload);
+      this._selectedRecommendation = reviewPostRecommendation(payload);
       this._initialized = true;
       this._readTabFromHash();
       this._normalizeActiveTab();
@@ -280,29 +388,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   override updated(changed: Map<string, unknown>) {
-    if (changed.has('decision') && this._initialized) {
-      if (this._preservedInclusion) {
-        // Refresh in progress — preserve reviewer curation across payload replace.
-        // New comments (no match) default to included, matching initial seeding.
-        const snapshot = this._preservedInclusion;
-        this._preservedInclusion = undefined;
-        const next = new Set<number>();
-        this._comments.forEach((c, i) => {
-          const wasIncluded = snapshot.get(this._commentKey(c));
-          if (wasIncluded === undefined || wasIncluded) next.add(i);
-        });
-        this._includedComments = next;
-      } else {
-        this._includedComments = new Set(this._comments.map((_, i) => i));
-      }
-      if (this._preservedIncludeEvidence !== undefined) {
-        this._includeEvidence = this._preservedIncludeEvidence;
-        this._preservedIncludeEvidence = undefined;
-      } else {
-        this._includeEvidence = true;
-      }
-      this._selectedRecommendation = reviewPostRecommendation(this._payload);
-      this._normalizeActiveTab();
+    if (this._restoreReviewSource && this._initialized && this._payload) {
+      this._restoreReviewSource = false;
       if (!this._isRecovering) void this._restoreSourceFromHash();
     }
     // Re-check if slotId changes
@@ -323,6 +410,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private async _beginRecovery() {
+    if (!this._payload) return;
     if (!this.slotId && !this.workspaceView) {
       // No slot context (e.g. dev harness) — skip recovery, show content directly
       this._recoveryPhase = 'live';
@@ -339,6 +427,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     // burn an extra ~400ms branch-diff round trip per panel open.
     if (this._recoveryInFlight) return;
     this._recoveryInFlight = true;
+    const request = {};
+    this._recoveryRequest = request;
+    const captured = this._queries.capture();
 
     // Diff view has no dependency on fleet/runs/decisions bootstrap — fire git
     // RPCs immediately rather than blocking on waitForCoreHydration (which can
@@ -350,9 +441,12 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     try {
       await this._loadBranchDiff(epoch);
     } finally {
-      this._recoveryInFlight = false;
+      if (this._recoveryRequest === request && captured.ownsView()) {
+        this._recoveryInFlight = false;
+        this._recoveryRequest = undefined;
+      }
     }
-    if (!this._isRecovering) await this._restoreSourceFromHash();
+    if (captured.current() && !this._isRecovering) await this._restoreSourceFromHash();
   }
 
   // --- Data loading ---
@@ -362,6 +456,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     opts: { forceRefreshSlotBranch?: boolean } = {},
   ) {
     if (!this.slotId && !this.workspaceView) return;
+    const captured = this._queries.capture();
+    const current = () =>
+      captured.current() && epoch === this._recoveryEpoch && isRecoveryEpochCurrent(epoch);
     this._diffLoading = true;
     this._diffError = '';
     this._branchMismatch = false;
@@ -374,13 +471,13 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       // forceRefreshSlotBranch — slot-view's _liveGitData is event-driven and
       // can lag a checkout by hundreds of ms, which would otherwise leave the
       // diff view stuck on a stale mismatch banner.
-      if (this.slotId && this.branch && !this._payload.reviewSnapshot?.headSha) {
+      if (this.slotId && this.branch && !this._payload?.reviewSnapshot?.headSha) {
         let currentBranch = opts.forceRefreshSlotBranch ? '' : this.slotBranch;
         if (!currentBranch) {
           const status = await gateway.request<{ branch: string }>(Methods.GIT_STATUS, {
             slotId: this.slotId,
           });
-          if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+          if (!current()) return;
           currentBranch = status.branch;
         }
         this._slotBranch = currentBranch;
@@ -399,11 +496,11 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         ...committedReviewBranchDiffRequest(
           this.slotId,
           this._baseRef,
-          this._payload.reviewSnapshot,
+          this._payload?.reviewSnapshot,
         ),
         ...(this.workspaceView ? { runId: this.runId } : {}),
       });
-      if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      if (!current()) return;
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
       // Auto-select the first listed file with comments, or the first listed file
@@ -421,7 +518,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         this._fileDiff = '';
       }
     } catch (err) {
-      if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      if (!current()) return;
       console.error('[review-workspace] branch diff failed:', err);
       if (this.workspaceView) {
         // Saved evidence is independent of the Git source. Keep it readable when the source is unavailable.
@@ -435,12 +532,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         this._recoveryMessage = 'Review workspace failed to recover — retry when ready.';
       }
     } finally {
-      if (epoch === this._recoveryEpoch) this._diffLoading = false;
-      if (
-        epoch === this._recoveryEpoch &&
-        isRecoveryEpochCurrent(epoch) &&
-        this._recoveryPhase !== 'error'
-      ) {
+      if (captured.ownsView() && epoch === this._recoveryEpoch) this._diffLoading = false;
+      if (current() && this._recoveryPhase !== 'error') {
         this._recoveryPhase = 'live';
         this._recoveryMessage = '';
       }
@@ -451,13 +544,17 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private async _checkoutBranch() {
-    if (!this.slotId || !this.branch || this._isRecovering) return;
+    if (!this.slotId || !this.branch) return;
+    const command = this._beginReviewCommand();
+    if (!command) return;
     this._checkingOut = true;
     try {
+      this._queries.requireSlot();
       await gateway.request(Methods.SLOT_PREPARE, {
         slotId: this.slotId,
         branch: this.branch,
       });
+      if (!command.current()) return;
       // Reload diff after checkout. Force a fresh GIT_STATUS — the parent
       // slot-view's _liveGitData is event-driven and can still hold the
       // pre-checkout branch at this point, which would leave the workspace
@@ -465,9 +562,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._branchMismatch = false;
       await this._loadBranchDiff(undefined, { forceRefreshSlotBranch: true });
     } catch (err) {
-      console.error('[review-workspace] checkout failed:', err);
+      if (command.current()) this._actionError = err instanceof Error ? err.message : String(err);
     } finally {
-      this._checkingOut = false;
+      command.finish();
     }
   }
 
@@ -496,6 +593,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private async _selectFile(path: string, syncHash = true) {
     const epoch = ++this._sourceLoadEpoch;
+    const captured = this._queries.capture();
     this._selectedFile = path;
     // Clear comment selection when navigating via file tab (not comment click)
     this._selectedCommentIdx = -1;
@@ -512,23 +610,25 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
           this.slotId,
           path,
           this._baseRef,
-          this._payload.reviewSnapshot,
+          this._payload?.reviewSnapshot,
         ),
         ...(this.workspaceView ? { runId: this.runId } : {}),
       });
-      if (epoch === this._sourceLoadEpoch) this._fileDiff = result.diff;
+      if (captured.current() && epoch === this._sourceLoadEpoch) this._fileDiff = result.diff;
     } catch (err) {
-      console.error('[review-workspace] file diff failed:', err);
-      if (epoch === this._sourceLoadEpoch) this._fileDiff = '';
+      if (captured.current() && epoch === this._sourceLoadEpoch) {
+        this._fileDiff = '';
+        this._diffError = err instanceof Error ? err.message : String(err);
+      }
     } finally {
-      if (epoch === this._sourceLoadEpoch) this._fileDiffLoading = false;
+      if (captured.ownsView() && epoch === this._sourceLoadEpoch) this._fileDiffLoading = false;
     }
   }
 
   // --- Actions ---
 
   private _toggleComment(idx: number) {
-    if (this.readOnly || this._isRecovering) return;
+    if (this._actionsPaused) return;
     const next = new Set(this._includedComments);
     if (next.has(idx)) next.delete(idx);
     else next.add(idx);
@@ -540,11 +640,10 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private _handlePost() {
-    if (this.readOnly || this._isRecovering) return;
+    if (this._actionsPaused || !this._payload) return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
-    const decision = this.decision;
     const selectionData = {
       reviewFingerprint: reviewPostingFingerprint(this._payload),
       includedIndices: [...this._includedComments],
@@ -555,53 +654,59 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         : {}),
     };
     this._confirmAction('post', async () => {
+      const command = this._beginReviewCommand('post');
+      if (!command) return;
       this._posting = true;
       try {
         await gateway.request(
           Methods.RUN_RESOLVE_DECISION,
           buildRunResolveDecisionParams({
-            runId: this.runId,
-            decision,
+            runId: command.runId,
+            decision: command.decision,
             actionId: 'post',
             ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
             selectionData,
           }),
         );
       } catch (err) {
-        console.error('Failed to post review:', err);
+        if (command.current()) this._actionError = err instanceof Error ? err.message : String(err);
       } finally {
-        this._posting = false;
+        command.finish();
       }
     });
   }
 
   private _handleDismiss() {
-    if (this.readOnly || this._isRecovering) return;
+    if (this._actionsPaused) return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
     this._confirmAction('dismiss', async () => {
+      const command = this._beginReviewCommand('dismiss');
+      if (!command) return;
       this._posting = true;
       try {
         await gateway.request(
           Methods.RUN_RESOLVE_DECISION,
           buildRunResolveDecisionParams({
-            runId: this.runId,
-            decision: this.decision,
+            runId: command.runId,
+            decision: command.decision,
             actionId: 'dismiss',
             ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
           }),
         );
       } catch (err) {
-        console.error('Failed to dismiss review:', err);
+        if (command.current()) this._actionError = err instanceof Error ? err.message : String(err);
       } finally {
-        this._posting = false;
+        command.finish();
       }
     });
   }
 
   private async _handleRefresh() {
-    if (this._isRecovering || this._refreshing) return;
+    if (this._refreshing) return;
+    const command = this._beginReviewCommand();
+    if (!command) return;
     this._refreshing = true;
     // Snapshot reviewer's curation keyed on comment identity so it survives
     // the payload replace that refreshReviewGate triggers.
@@ -610,43 +715,54 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     );
     this._preservedIncludeEvidence = this._includeEvidence;
     try {
-      await gateway.request(Methods.RUN_REFRESH_REVIEW_GATE, { runId: this.runId });
+      await gateway.request(Methods.RUN_REFRESH_REVIEW_GATE, { runId: command.runId });
     } catch (err) {
-      console.error('Failed to refresh review artifacts:', err);
-      this._preservedInclusion = undefined;
-      this._preservedIncludeEvidence = undefined;
+      if (command.current()) {
+        this._actionError = err instanceof Error ? err.message : String(err);
+        this._preservedInclusion = undefined;
+        this._preservedIncludeEvidence = undefined;
+      }
     } finally {
-      this._refreshing = false;
+      command.finish();
     }
   }
 
   private async _handleProposeImprovement() {
-    if (this._isRecovering || this._proposing) return;
+    if (this._proposing) return;
+    const command = this._beginReviewCommand();
+    if (!command) return;
+    const scope = this._queries.capture();
+    this._proposeScope = scope;
     this._proposing = true;
     this._proposeError = null;
     // Latch stays held until the improvement decision arrives via RUN_DECISION_NEW
     // or the timeout fires — run.proposeImprovement is fire-and-forget, so the
     // RPC returning doesn't mean analysis finished.
     this._proposingTimer = setTimeout(() => {
-      this._clearProposingLatch();
+      if (this._proposeScope === scope && scope.ownsView()) this._clearProposingLatch();
     }, ReviewWorkspace.PROPOSING_TIMEOUT_MS);
     try {
       await gateway.request(Methods.RUN_PROPOSE_IMPROVEMENT, {
-        runId: this.runId,
+        runId: command.runId,
         rationale:
           'review-pr human gate — analyze what went wrong in the evidence review / recipe coverage and propose a recipe/process fix',
       });
     } catch (err) {
-      const msg = (err as Error).message || 'Unknown error';
-      console.error('Failed to propose improvement:', err);
-      this._proposeError = msg;
-      this._clearProposingLatch();
+      if (command.current()) {
+        this._proposeError = err instanceof Error ? err.message : String(err);
+        this._clearProposingLatch();
+      }
+    } finally {
+      command.finish();
     }
   }
 
   private async _handleRecipeRerun() {
+    if (this._actionsPaused) return;
+    const scope = this._queries.capture();
     this._setActiveTab('recipe');
     await this.updateComplete;
+    if (!scope.current() || this._actionsPaused) return;
     this.querySelector<RecipeOutputPanel>('recipe-output-panel')?.rerun();
   }
 
@@ -659,9 +775,38 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   // Styles injected in render() since we use light DOM
 
   override render() {
-    if (!this.decision) return html`<div class="diff-empty">No review decision</div>`;
+    const observation = this._queries.run.state;
+    const observations = this._usesMockData
+      ? nothing
+      : html`
+          ${observation.status === 'stale' && observation.observedAt !== undefined
+            ? html`<div class="rw-loading-banner" data-testid="review-run-age">
+                Saved review run, ${sourceObservationAge(observation.observedAt)}. Actions wait for
+                a current read.
+              </div>`
+            : nothing}
+          ${observation.error
+            ? html`<div role="alert" data-testid="review-run-error">
+                Could not read review run: ${observation.error.message}
+                <button @click=${() => this._queries.run.retry()}>Retry</button>
+              </div>`
+            : nothing}
+          ${observation.status === 'unsupported'
+            ? html`<div role="status">
+                Live review run updates are unavailable on this gateway.
+              </div>`
+            : nothing}
+          ${this._actionError
+            ? html`<div role="alert" data-testid="review-action-error">${this._actionError}</div>`
+            : nothing}
+        `;
+    if (!this._queries.decision)
+      return html`${observations}
+        <div class="diff-empty">No saved review decision is available.</div>`;
     const payload = this._payload;
-    if (!payload) return html`<div class="diff-empty">Invalid review payload</div>`;
+    if (!payload)
+      return html`${observations}
+        <div class="diff-empty">Invalid review payload</div>`;
     const recipeHost = createReviewWorkspaceRecipeHostEntry({
       runId: this.runId,
       slotId: this.slotId,
@@ -671,10 +816,10 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     const mediaArtifacts = this._mediaArtifacts;
 
     return html`
-      ${renderReviewWorkspaceStyles(this._recoveryPhase)} ${this._renderTopBar()}
+      ${renderReviewWorkspaceStyles(this._recoveryPhase)} ${observations} ${this._renderTopBar()}
       ${this._renderLoadingBanner()} ${this._branchMismatch ? this._renderBranchBanner() : nothing}
       <div class="rw-split">
-        ${this._isRecovering
+        ${this._isRecovering && observation.status !== 'stale'
           ? html`
               <div class="rw-recovery-overlay" role="status" aria-live="polite">
                 <div class="rw-recovery-card">
@@ -810,7 +955,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       slotBranch: this._slotBranch,
       branch: this.branch,
       checkingOut: this._checkingOut,
-      recovering: this._isRecovering,
+      recovering: this._isRecovering || (!this._usesMockData && !this._queries.ready),
       refresh: () => this._loadBranchDiff(undefined, { forceRefreshSlotBranch: true }),
       checkout: () => this._checkoutBranch(),
     });
@@ -921,7 +1066,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
                   ? html`<button
                       class="rw-recipe-toggle"
                       style="color:${colors.statusOk}"
-                      ?disabled=${!this.slotId}
+                      ?disabled=${!this.slotId || this._actionsPaused}
                       @click=${() => void this._handleRecipeRerun()}
                     >
                       Rerun Recipe
@@ -959,7 +1104,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   private _renderTopBar() {
     if (this.readOnly)
       return html`<div class="rw-top-bar">
-        <strong>${this._payload.recommendation}</strong
+        <strong>${this._payload?.recommendation}</strong
         ><span>Saved review · ${this._comments.length} line comments</span>
       </div>`;
     return renderReviewTopBar({
@@ -976,7 +1121,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         this._includeEvidence = includeEvidence;
       },
       posting: this._posting,
-      recovering: this._isRecovering,
+      recovering: this._actionsPaused,
       refreshing: this._refreshing,
       proposing: this._proposing,
       proposeError: this._proposeError,
@@ -1003,7 +1148,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private _renderCommentItem(c: ReviewLineComment, idx: number) {
     return renderReviewCommentItem({
-      readOnly: this.readOnly,
+      readOnly: this._actionsPaused,
       comment: c,
       selected: this._selectedCommentIdx === idx,
       included: this._includedComments.has(idx),
@@ -1015,6 +1160,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   private async _navigateToComment(c: ReviewLineComment, idx: number, syncHash = true) {
     if (this._isRecovering) return;
     const epoch = ++this._sourceLoadEpoch;
+    const captured = this._queries.capture();
     this._selectedCommentIdx = idx;
     this._selectedFile = c.path;
     this._revealLine = 0;
@@ -1023,7 +1169,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._commentFileLoading = true;
     this._fileDiffLoading = false;
     if (syncHash) this._syncSourceToHash();
-    const reviewedHead = this._payload.reviewSnapshot?.headSha?.trim();
+    const reviewedHead = this._payload?.reviewSnapshot?.headSha?.trim();
     if (!reviewedHead) {
       this._commentFileError =
         'The reviewed revision was not recorded. Source for this finding is unavailable.';
@@ -1037,23 +1183,23 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         ref: reviewedHead,
         path: c.path,
       });
-      if (epoch !== this._sourceLoadEpoch) return;
+      if (!captured.current() || epoch !== this._sourceLoadEpoch) return;
       this._commentFileContent = result.content;
       const context = reviewedFindingContext(result.content, c.line);
       if (context.available) this._revealLine = c.line;
       else this._commentFileError = context.note;
     } catch (error) {
-      if (epoch === this._sourceLoadEpoch)
+      if (captured.current() && epoch === this._sourceLoadEpoch)
         this._commentFileError =
           error instanceof Error ? error.message : 'Reviewed source is unavailable.';
     } finally {
-      if (epoch === this._sourceLoadEpoch) this._commentFileLoading = false;
+      if (captured.ownsView() && epoch === this._sourceLoadEpoch) this._commentFileLoading = false;
     }
   }
 
   private _renderCodePanel() {
     const comment = this._selectedCommentIdx >= 0 ? this._comments[this._selectedCommentIdx] : null;
-    const reviewedHead = this._payload.reviewSnapshot?.headSha;
+    const reviewedHead = this._payload?.reviewSnapshot?.headSha;
     const sourceHeader = comment
       ? html` <div class="rw-source-context" title=${reviewedHead ?? ''}>
           ${reviewedHead ? `Reviewed ${reviewedHead.slice(0, 8)}` : 'Reviewed revision unavailable'}

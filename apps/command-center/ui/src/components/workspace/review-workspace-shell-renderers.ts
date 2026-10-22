@@ -201,6 +201,7 @@ export function renderReviewTopBar(input: {
         : nothing}
       <span class="rw-spacer"></span>
       <button
+        data-testid="review-refresh"
         class="rw-panel-toggle"
         ?disabled=${input.posting || input.recovering || input.refreshing}
         title="Re-read review.md and line-comments.json from the worker. Preserves your comment selection."
@@ -226,6 +227,7 @@ export function renderReviewTopBar(input: {
           `
         : nothing}
       <button
+        data-testid="review-post"
         class="rw-action-btn ${input.pendingConfirm === 'post' ? 'rw-confirming' : 'rw-btn-post'}"
         ?disabled=${input.posting || input.recovering}
         @click=${input.post}
@@ -237,6 +239,7 @@ export function renderReviewTopBar(input: {
             : `Post to PR (${input.includedComments})`}
       </button>
       <button
+        data-testid="review-dismiss"
         class="rw-action-btn ${input.pendingConfirm === 'dismiss'
           ? 'rw-confirming'
           : 'rw-btn-dismiss'}"

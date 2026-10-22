@@ -12,6 +12,7 @@
 //   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
 //   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
 //   node scripts/cdp.mjs click <hash> <selector>       Click a control, searching shadow roots.
+//   node scripts/cdp.mjs click <hash> <selector> --observe-file <path>  Read a probe immediately after the real click.
 //   node scripts/cdp.mjs key <hash> <1-9|Enter|Escape|Tab> Send a real key to the focused control.
 //   node scripts/cdp.mjs select <hash> <selector> <value> Choose a styled choice or native select option.
 //   Selectors may cross shadow roots with >>>, e.g. native-session-view >>> textarea.
@@ -351,7 +352,7 @@ async function screenshotTab(hash, outputPath) {
   return { path: outputPath };
 }
 
-async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
+async function clickInTab(hash, selector, dialogChoice, expectedDialog, observationSource) {
   const tab = await findTab(hash);
   if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
   let dialog, dialogResult, dialogError;
@@ -404,6 +405,7 @@ async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     } while (Date.now() < clickDeadline);
     if (result.exceptionDetails) throw new Error('Click target unavailable before deadline');
+    const clickedAt = Date.now();
     for (const type of ['mousePressed', 'mouseReleased'])
       await call('Input.dispatchMouseEvent', {
         type,
@@ -415,6 +417,18 @@ async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
       await dialogResult;
       if (dialogError) throw dialogError;
       if (dialog === undefined) throw new Error('Expected confirmation dialog did not open');
+    }
+    if (observationSource !== undefined) {
+      const observed = await call('Runtime.evaluate', {
+        expression: `(async () => { ${observationSource}\n })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (observed.exceptionDetails)
+        throw new Error(
+          observed.exceptionDetails.exception?.description ?? observed.exceptionDetails.text,
+        );
+      return { clicked: selector, clickedAt, observation: observed.result.value };
     }
     return { clicked: selector };
   } finally {
@@ -664,10 +678,16 @@ try {
         : dialogFlag === '--dismiss-dialog'
           ? 'dismiss'
           : undefined;
-    if (dialogFlag && (!dialogChoice || expectedDialog === undefined))
+    const observe = dialogFlag === '--observe-file';
+    if (dialogFlag && ((!dialogChoice && !observe) || expectedDialog === undefined))
       die('click dialog option requires an exact expected message');
+    const observationSource = observe ? readFileSync(resolve(expectedDialog), 'utf8') : undefined;
     console.log(
-      JSON.stringify(await clickInTab(hash, selector, dialogChoice, expectedDialog), null, 2),
+      JSON.stringify(
+        await clickInTab(hash, selector, dialogChoice, expectedDialog, observationSource),
+        null,
+        2,
+      ),
     );
   } else if (cmd === 'fill' || cmd === 'select') {
     const [hash, selector, value] = rest;

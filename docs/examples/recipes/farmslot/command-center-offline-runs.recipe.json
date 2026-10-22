@@ -106,6 +106,18 @@
     {
       "id": "browser-shared-ready-workspace",
       "claim": "Actual gate workspace observes shared run/frozen evidence, retains cold offline gate facts and refuses stale actions."
+    },
+    {
+      "id": "browser-review-current-inputs",
+      "claim": "The actual review workspace shares the canonical full-run decision, preserves curation across metadata changes and retires old confirmations."
+    },
+    {
+      "id": "browser-review-command-refusal",
+      "claim": "An explicit review refresh refusal from the real gateway remains visible without resolving the decision."
+    },
+    {
+      "id": "browser-review-offline-owner",
+      "claim": "A cold offline review renders saved age with actions disabled; a former view command cannot write into its successor, and neither owned fixture decision resolves after reconnect."
     }
   ],
   "workflow": {
@@ -487,6 +499,40 @@
         "match": "\"coldWorkspaceGate\":true",
         "intent": "Require canonical run and frozen evidence ownership, visible refusal, saved age and reconnect without command replay.",
         "proves": ["browser-shared-ready-workspace"],
+        "next": "review-workspace-web"
+      },
+      "review-workspace-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs review-workspace-web",
+        "timeout_ms": 240000,
+        "intent": "Prove actual review input, command refusal and offline reply ownership.",
+        "next": "review-input-proof"
+      },
+      "review-input-proof": {
+        "action": "assert_output",
+        "source": "review-workspace-web",
+        "stream": "stdout",
+        "match": "\"reviewConfirmationRetired\":true",
+        "intent": "Require canonical updates, retained curation and a new confirmation.",
+        "proves": ["browser-review-current-inputs"],
+        "next": "review-refusal-proof"
+      },
+      "review-refusal-proof": {
+        "action": "assert_output",
+        "source": "review-workspace-web",
+        "stream": "stdout",
+        "match": "\"reviewCommandErrorVisible\":true",
+        "intent": "Require the real protocol refusal to remain visible.",
+        "proves": ["browser-review-command-refusal"],
+        "next": "review-owner-proof"
+      },
+      "review-owner-proof": {
+        "action": "assert_output",
+        "source": "review-workspace-web",
+        "stream": "stdout",
+        "match": "\"reviewOwnerReplyFenced\":true",
+        "intent": "Require cold saved facts and owner-bound interrupted command handling.",
+        "proves": ["browser-review-offline-owner"],
         "next": "done"
       }
     }

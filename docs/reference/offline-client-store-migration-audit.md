@@ -119,7 +119,7 @@ establish packaged publication, actual visual judgments or the full command matr
 
 ## Remaining acceptance
 
-- Finish workspace source controls and the combined browser proof; dispatch controls are accepted.
+- Complete the combined browser proof and whole-platform command matrix; focused publication, review and dispatch controls are accepted.
   Complete the remaining native conversation platform matrix. iOS component proof and controls pass; terminal, visual-review and artifact reader component evidence is recorded.
 - Migrate the remaining consumers of `run.forSlot` and `run.recipeRunsForSlot`; binding writers and dependencies now have isolated tests, live browser history and SlotView evidence.
 - Finish native context recipes and negative controls, then the browser, desktop,
@@ -144,3 +144,22 @@ and file mode, and verifies recovery on the same gateway connection. Each case
 has a failing pre-fix real-client proof. The new device runs use screenshots and
 traces with an explicit recording-off reason after the lead's recording retry cap.
 They do not claim new video evidence or whole-family acceptance.
+
+## Browser review workspace
+
+The review workspace observes the canonical full run, including its pending decision
+or saved review result. It preserves curation across unrelated metadata updates,
+clears confirmations on invalidation, and checks current actions before dispatch.
+Admitted commands retain their view and connection through ordinary observation
+staleness. Former-view replies and cleanup cannot modify a successor. Checkout also
+requires the shared current slot-run binding. Explicit artifact refresh and improvement
+operations retain their existing owners; Git reads remain content-owned and fence
+their replies. Native-session polling and Git freshness migration remain later slices.
+
+The browser recipe proves actual comment selection, external run updates, confirmation
+retirement before its normal timeout, visible protocol refusal, exact saved observation
+time on a cold offline document, readable saved report and disabled commands, and
+reconnect with neither owned fixture decision resolved. Confirmation, readiness and visible-refusal controls fail
+their intended assertions, restore the exact source and recover. This slot-free legacy
+review context cannot publish or start a worker; successful publication and Git content
+acceptance and wire-level command replay counting remain in the broader command and content matrices.
