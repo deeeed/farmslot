@@ -66,6 +66,7 @@ interface ReviewConfig {
   effort?: string;
   max_retries?: number;
   review_timeout_min?: number;
+  review_inactivity_timeout_min?: number;
   mode?: ReviewMode;
 }
 
@@ -533,6 +534,7 @@ export async function getReviewConfig(project: string): Promise<ReviewConfig> {
     effort: raw.effort,
     max_retries: raw.max_retries,
     review_timeout_min: raw.review_timeout_min,
+    review_inactivity_timeout_min: raw.review_inactivity_timeout_min,
     mode: parseReviewMode(raw.mode),
   };
 }
