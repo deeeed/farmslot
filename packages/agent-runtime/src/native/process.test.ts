@@ -175,10 +175,19 @@ test('an oversized image read keeps the runner and records the image size, not i
   assert.equal(await exited, undefined);
 });
 
-test('a runner event still over 1 MiB without its base64 payloads stops the runner', async (t) => {
-  const { messages, exited } = runLines(t, ['text', '{"type":"after"}']);
-  assert.equal((await exited)?.message, 'Native runner event exceeds 1 MiB');
-  assert.deepEqual(messages, []);
+test('an oversized non-image event reaches its adapter without stopping the runner', async (t) => {
+  const { child, messages, exited } = runLines(t, ['text', '{"type":"after"}']);
+  const runner: { stopped?: Error } = {};
+  void exited.then((error) => (runner.stopped = error ?? new Error('runner closed')));
+  const deadline = Date.now() + 10_000;
+  while (messages.length < 2 && !runner.stopped && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(runner.stopped, undefined, `runner stopped: ${runner.stopped?.message}`);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0]?.text, 'x'.repeat(1100000));
+  assert.deepEqual(messages[1], { type: 'after' });
+  await child.close();
+  assert.equal(await exited, undefined);
 });
 
 test('a large retained thread response resolves without becoming a runner event', async (t) => {
