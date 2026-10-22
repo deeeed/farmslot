@@ -660,6 +660,8 @@ async function slotPrepareInner(
   if (phaseEnabled('git') && !opts?.preserveBranch)
     await assertPrepareCommitsPublished(vars, branch || '', execOnSlot, {
       headOnRemote: detachedHeadOnRemote,
+      defaultBranch,
+      githubRepo: getProjectField(projectJson, 'ci.repo') || undefined,
     });
 
   if (!phaseEnabled('git')) {
