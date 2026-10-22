@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Include the shared approval policy in self-review and paired review instructions.
+- Reuse validated passing deterministic receipts for unchanged commands and inputs.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

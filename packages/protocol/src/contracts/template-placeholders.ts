@@ -2,7 +2,7 @@ import { enumerateChecklistCheckboxes } from '../checklist-target.js';
 
 /** One shared part for every PR-producing worker template. */
 const CI_PARITY_PART =
-  '- [ ] **CI parity** [DETERMINISTIC: ci.local_check]. Run `{{TASK_DIR}}/mark N` for this step. Mark executes the configured local CI command, records its exit code and log, and refuses completion on failure. Rerun this step after changing checked source.';
+  '- [ ] **CI parity** [DETERMINISTIC: ci.local_check]. Run `{{TASK_DIR}}/mark N` for this step. Mark reuses a valid passing receipt for unchanged inputs or runs the configured check. Failure blocks completion.';
 
 /**
  * `{{NAME}}` placeholder guard shared by every template renderer (task writer,

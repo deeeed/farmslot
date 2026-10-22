@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Share configurable review verdict policy and severity definitions across review instructions and result validation.
+- Keep the shared CI checklist step minimal and describe receipt reuse.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

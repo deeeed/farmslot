@@ -1917,7 +1917,10 @@ async function replayRunStep(
             assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
             assertNativeReplayCurrent();
             if (preserveReviewFix) {
-              await syncChecklistTargetForRole(vars, taskDirRel, 'review-fix');
+              await syncChecklistTargetForRole(vars, taskDirRel, 'review-fix', {
+                ciBaseRef: selectAgentContext(runForReviewFix, { role: 'review-fix' })
+                  ?.deliveryBaselineRef,
+              });
             } else {
               await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel, {
                 flowType: existing.flowType,

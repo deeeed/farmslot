@@ -69,6 +69,19 @@ test('mark executes the command, persists exit/log, and only then completes the 
   assert.match(fs.readFileSync(path.join(dir, check.logPath), 'utf8'), /local check passed/);
 });
 
+test('unchanged checked inputs reuse the passing receipt and log without executing again', (t) => {
+  const { dir } = fixture(t, 'printf run >> .task/proof/check-count');
+  assert.equal(deterministicChecks.execute(dir, 'CHECKLIST.md', 1), true);
+  const receipt = path.join(dir, 'artifacts/deterministic-checks/CHECKLIST.md/1.json');
+  const before = fs.readFileSync(receipt, 'utf8');
+  const check = JSON.parse(before);
+  const log = fs.readFileSync(path.join(dir, check.logPath), 'utf8');
+  assert.equal(deterministicChecks.execute(dir, 'CHECKLIST.md', 1), true);
+  assert.equal(fs.readFileSync(path.join(dir, 'check-count'), 'utf8'), 'run');
+  assert.equal(fs.readFileSync(receipt, 'utf8'), before);
+  assert.equal(fs.readFileSync(path.join(dir, check.logPath), 'utf8'), log);
+});
+
 test('uninitialized tracked submodules bind the recorded commit, including absent directories', (t) => {
   const { root, dir, invoke } = fixture(t);
   const modulePath = 'vendor/sdk with spaces';
@@ -170,7 +183,7 @@ test('on a complete signal, mark reruns the check for the current tree and keeps
   assert.notEqual(check.inputHash, first.inputHash);
   assert.equal(fs.readFileSync(signal, 'utf8'), completed);
   assert.equal(fs.readFileSync(path.join(dir, 'CHECKLIST.md'), 'utf8'), checklist);
-  assert.match(result.stdout, /refreshed the receipt of deterministic step 1 for the current tree/);
+  assert.match(result.stdout, /validated deterministic step 1 for the current tree/);
 });
 
 test('recorded logs and commands must match; deleting the declaration does not remove its gate', (t) => {

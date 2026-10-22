@@ -86,20 +86,28 @@ test('start preserves successful terminal verdicts', async (t) => {
   assert.equal(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'), completed);
 });
 
-test('a complete signal reruns a deterministic step for the current tree, keeping the signal and box', async (t) => {
-  const { root, dir, signal, receipt } = completedDeterministicTask(t, 'printf "check passed\\n"');
+test('a complete signal reuses unchanged checks and reruns changed inputs, keeping the signal and box', async (t) => {
+  const { root, dir, signal, receipt } = completedDeterministicTask(
+    t,
+    'printf run >> .task/check-count',
+  );
   const checklist = readFileSync(path.join(dir, 'CHECKLIST.md'), 'utf8');
   const logs = t.mock.method(console, 'log', () => {});
   assert.equal(await handleChecklist(['mark', dir, '1']), 0);
   const first = JSON.parse(readFileSync(receipt, 'utf8'));
+  const receiptBefore = readFileSync(receipt, 'utf8');
+  assert.equal(await handleChecklist(['mark', dir, '1']), 0);
+  assert.equal(readFileSync(path.join(dir, 'check-count'), 'utf8'), 'run');
+  assert.equal(readFileSync(receipt, 'utf8'), receiptBefore);
   writeFileSync(path.join(root, 'app.js'), 'export const value = 2;\n');
   assert.equal(await handleChecklist(['mark', dir, '1']), 0);
   const refreshed = JSON.parse(readFileSync(receipt, 'utf8'));
   assert.equal(refreshed.status, 'passed');
   assert.notEqual(refreshed.inputHash, first.inputHash);
+  assert.equal(readFileSync(path.join(dir, 'check-count'), 'utf8'), 'runrun');
   assert.equal(
     logs.mock.calls.at(-1)?.arguments[0],
-    'signal already terminal: status=complete; refreshed the receipt of deterministic step 1 for the current tree',
+    'signal already terminal: status=complete; validated deterministic step 1 for the current tree',
   );
   assert.equal(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'), signal);
   assert.equal(readFileSync(path.join(dir, 'CHECKLIST.md'), 'utf8'), checklist);

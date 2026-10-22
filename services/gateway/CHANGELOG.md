@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Validate review recommendations and RIGHT-side inline locations before gates and on refresh.
+- Freeze the pre-fix commit in review-fix and CI-fix checks, including recovery and replay.
+
 - Keep native reviewers running while bound checklist or tool activity progresses, and fail after the configured inactivity window instead of a fixed total-time boundary.
 
 - Complete frozen reviews with ignored tool state under `.agent/`, and register exact manual review posts during explicit reconciliation without posting again.

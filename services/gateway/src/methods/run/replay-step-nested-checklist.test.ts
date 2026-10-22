@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import { PipelineSteps as PS } from '@farmslot/protocol';
+import { type AgentContext, PipelineSteps as PS } from '@farmslot/protocol';
 
 // mock.module replaces a module wholesale, so a partial namedExports map silently
 // deletes every export the subject's import graph still needs. These namespace
@@ -90,8 +90,13 @@ const { CHECKLIST_TARGET_BY_AGENT_ROLE, CHECKLIST_TARGET_MANIFEST } =
 const { resolveWorkerTerminalContract } = await import('../../tasks/worker-terminal-contract.js');
 const { buildHandoffMetadata, ensureTaskRuntime } = await import('@farmslot/agent-runtime');
 
-for (const stepName of [PS.MONITOR, PS.REVIEW, PS.HUMAN_GATE]) {
-  test(`runReplayStep ${stepName} restores frozen dispatch policy without changing evidence`, async (t) => {
+for (const [stepName, retainedFix] of [
+  [PS.MONITOR, false],
+  [PS.REVIEW, false],
+  [PS.HUMAN_GATE, false],
+  [PS.REVIEW, true],
+] as const) {
+  test(`runReplayStep ${stepName} restores frozen policy${retainedFix ? ' and the retained fix base' : ''} without changing evidence`, async (t) => {
     workspace = await mkdtemp(path.join(os.tmpdir(), 'replay-nested-checklist-'));
     orchestratorTaskRoot = path.join(workspace, 'orchestrator-tasks');
     const taskRel = 'fix/replay-reset';
@@ -106,7 +111,7 @@ for (const stepName of [PS.MONITOR, PS.REVIEW, PS.HUMAN_GATE]) {
     const review = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
     await writeFile(path.join(taskDirOnSlot, review.checklist), '# review\n');
     const fix = CHECKLIST_TARGET_BY_AGENT_ROLE['review-fix'];
-    const fixChecklist = '# fix\n- [x] Current CI receipt\n';
+    const fixChecklist = '# fix\n- [x] Current CI receipt [DETERMINISTIC: ci.local_check]\n';
     const fixSignal = JSON.stringify({ status: 'complete', attemptId: 'retained-fix' });
     await writeFile(path.join(taskDirOnSlot, fix.checklist), fixChecklist);
     await writeFile(path.join(taskDirOnSlot, fix.signal), fixSignal);
@@ -157,7 +162,23 @@ for (const stepName of [PS.MONITOR, PS.REVIEW, PS.HUMAN_GATE]) {
     };
     const evidence = JSON.stringify(retained);
     await writeFile(path.join(taskDirOnSlot, 'retained-evidence.json'), evidence);
+    const fixContext: AgentContext = {
+      id: 'retained-fix',
+      runId: run.id,
+      slotId: 'macwork-ff-replay-checklist',
+      role: 'review-fix',
+      label: 'Fix',
+      runner: 'claude',
+      model: 'opus',
+      status: 'working',
+      target: null,
+      taskFile: `${taskDirOnSlot}/${fix.checklist}`,
+      deliveryBaselineRef: 'a'.repeat(40),
+      startedAt: '2026-10-22T00:00:00Z',
+      updatedAt: '2026-10-22T00:00:00Z',
+    };
     updateRun(run.id, {
+      agentContexts: retainedFix ? [fixContext] : [],
       status: 'failed',
       slotId: 'macwork-ff-replay-checklist',
       taskFile,
@@ -202,9 +223,21 @@ for (const stepName of [PS.MONITOR, PS.REVIEW, PS.HUMAN_GATE]) {
     // means CHECKLIST.md + SIGNAL.json to the mark engine.
     assert.equal(
       existsSync(path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST)),
-      stepName !== PS.REVIEW,
+      stepName !== PS.REVIEW || retainedFix,
     );
-    if (stepName === PS.HUMAN_GATE) {
+    if (retainedFix) {
+      const contract = JSON.parse(
+        await readFile(
+          path.join(taskDirOnSlot, 'inputs/worker-terminal-contract.REVIEW-FIX.json'),
+          'utf8',
+        ),
+      );
+      assert.equal(
+        contract.deterministicChecks[0].command,
+        `export FARMSLOT_CI_BASE_REF='${'a'.repeat(40)}'\nyarn ci:local`,
+      );
+    }
+    if (stepName === PS.HUMAN_GATE || retainedFix) {
       assert.equal(await readFile(path.join(taskDirOnSlot, fix.checklist), 'utf8'), fixChecklist);
       assert.equal(await readFile(path.join(taskDirOnSlot, fix.signal), 'utf8'), fixSignal);
     }
