@@ -382,10 +382,26 @@ export function reconcileReviewWorkspaceStartup(
           candidate?.target?.session === context.target?.session
         );
       };
-      const signal = await readReviewWorkspaceSignal(observed.id);
-      if (!stillCurrent()) continue;
-      const acceptance = signal ? null : await observeReviewPromptAcceptance(observed);
-      if ((!signal && !acceptance) || !stillCurrent()) continue;
+      let acknowledged: boolean;
+      try {
+        const signal = await readReviewWorkspaceSignal(observed.id);
+        if (!stillCurrent()) continue;
+        acknowledged = Boolean(signal || (await observeReviewPromptAcceptance(observed)));
+      } catch (error) {
+        // One node can be unavailable while other reviewers finish. Keep this
+        // attempt pending, expose its observation failure, and visit the others.
+        if (!stillCurrent()) continue;
+        const message = `Reviewer startup recovery is waiting: ${error instanceof Error ? error.message : String(error)}`;
+        if (getRun(observed.id)?.error !== message) {
+          await persistRunNow(
+            updateRun(observed.id, { error: message }),
+            'reviewer startup observation unavailable',
+          );
+          emit(Events.RUN_UPDATED, { run: getRun(observed.id) });
+        }
+        continue;
+      }
+      if (!acknowledged || !stillCurrent()) continue;
       // The timeout refunded this admission. Late execution consumes that same round.
       await clearReviewRoundSettlement(
         observed.id,

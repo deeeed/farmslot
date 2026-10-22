@@ -23,6 +23,7 @@ let acceptance: RunnerPromptAcceptance | null = null;
 let afterAcceptance: (() => void) | undefined;
 let launches = 0;
 let stops = 0;
+let unavailableRunId: string | undefined;
 const result: RunReviewResult = {
   recommendation: 'APPROVE',
   reviewMd: 'Frozen head reviewed.',
@@ -34,7 +35,10 @@ mock.module('./task.js', {
       launches++;
       throw new Error('Recovery must not recreate the task or dispatch a reviewer');
     },
-    readReviewWorkspaceSignal: async () => signal,
+    readReviewWorkspaceSignal: async (runId: string) => {
+      if (runId === unavailableRunId) throw new Error('Execution node is offline');
+      return signal;
+    },
     readReviewWorkspaceCompletion: async () =>
       signal?.status === 'complete' ? { signal, result } : null,
     collectReviewWorkspaceSubtaskMetrics: async () => null,
@@ -94,14 +98,15 @@ beforeEach(() => {
   afterAcceptance = undefined;
   launches = 0;
   stops = 0;
+  unavailableRunId = undefined;
 });
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, ticketOrPr = 'example/mobile#42') {
   const created = createRun(
     {
       project: 'farm',
       flowType: 'review-pr',
-      ticketOrPr: 'example/mobile#42',
+      ticketOrPr,
       runner: 'claude',
       model: 'opus',
       transport: 'tmux',
@@ -316,4 +321,35 @@ test('cleanup retains a reviewer waiting for late acknowledgement, including dis
   await reconcileReviewWorkspaceCleanup(() => {});
   assert.equal(stops, 0);
   assert.equal(getRun(run.id)?.reviewWorkspace?.cleanedAt, undefined);
+});
+
+test('an unavailable node retains its attempt while a healthy reviewer reaches its monitor', async (t) => {
+  const offline = await fixture(t, 'example/mobile#37961');
+  const healthy = await fixture(t, 'example/mobile#37146');
+  unavailableRunId = offline.run.id;
+  acceptance = {
+    runner: 'claude',
+    deliveryStartedAt: healthy.delivered,
+    sessionId: 'original-session',
+    sessionPath: '/sessions/original.jsonl',
+    observedAt: Date.now(),
+  };
+  const resumed: string[] = [];
+  await reconcileReviewWorkspaceStartup(
+    () => {},
+    (id) => resumed.push(id),
+  );
+  assert.deepEqual(resumed, [healthy.run.id]);
+  assert.equal(getRun(offline.run.id)?.status, 'reconciling');
+  assert.match(getRun(offline.run.id)?.error ?? '', /Execution node is offline/);
+  assert.equal((await runReviewRoundBudget(getRun(offline.run.id)!)).used, 0);
+  assert.equal((await runReviewRoundBudget(getRun(healthy.run.id)!)).used, 1);
+  unavailableRunId = undefined;
+  await reconcileReviewWorkspaceStartup(
+    () => {},
+    (id) => resumed.push(id),
+  );
+  assert.deepEqual(resumed, [healthy.run.id, offline.run.id]);
+  assert.equal(launches, 0);
+  assert.equal(stops, 0);
 });
