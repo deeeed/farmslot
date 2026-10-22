@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { NativeSessionInfo } from '@farmslot/protocol';
 
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { nativeDeliveryLabel } from '../../lib/native-conversation';
 
 import { NativeProfilePicker } from './components/NativeProfilePicker';
@@ -61,6 +62,19 @@ export function NativeConversationScreen({
             <Text style={styles.buttonText}>Refresh</Text>
           </Pressable>
         </View>
+        {vm.runObservation ? (
+          <ResourceReadStatus observation={vm.runObservation} label="conversation run" />
+        ) : null}
+        {vm.runObservation?.error ? (
+          <Pressable
+            testID="companion-native-run-retry"
+            accessibilityRole="button"
+            style={styles.button}
+            onPress={() => void actions.retryRun()}
+          >
+            <Text style={styles.buttonText}>Retry run</Text>
+          </Pressable>
+        ) : null}
         {vm.session ? (
           <Text selectable testID="companion-native-identity" style={styles.muted}>
             {vm.session.executionNodeId} · {vm.session.id}

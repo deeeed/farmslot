@@ -8,6 +8,8 @@ import {
 import type {
   FamilyObservabilityGetResult,
   FamilyObservabilitySnapshot,
+  NativeSessionInfo,
+  NativeSessionReadResult,
   Run,
   RunGetResult,
   RunRecipeRunsForRunResult,
@@ -22,6 +24,11 @@ import {
 
 import type { VisualReviewScreenState } from '../features/visual-review/visual-review-controller';
 import { nativeActiveRunsQuery, nativeDecisionsQuery } from '../lib/gateway-run-sync';
+import type { NativeTimelineEntry } from '../lib/native-conversation';
+import type {
+  NativeWorkerViewSelection,
+  NativeWorkerViewTarget,
+} from '../lib/native-worker-target';
 import { getResourceCache, getResourceWorkspaceKey } from '../lib/resource-cache';
 import { useConnectionStore } from '../store/connection';
 import { useDecisionStore } from '../store/decisions';
@@ -30,6 +37,38 @@ import { useRunStore } from '../store/runs';
 import type { FarmslotRecipeUiObserver } from './RecipeBridgeProvider';
 
 const startedAt = Date.now();
+interface ConversationProofFrame {
+  focused: boolean;
+  observation: ResourceQueryState<RunGetResult>;
+  selection: NativeWorkerViewSelection;
+  worker?: NativeWorkerViewTarget;
+  session?: NativeSessionInfo;
+  timeline: NativeTimelineEntry[];
+  cursor: number;
+  eventCount: number;
+  pageReadCount: number;
+  pageAfters: readonly number[];
+  commands: NativeSessionReadResult['commands'];
+  draft: string;
+  pendingCommandId?: string;
+  responses: readonly string[];
+  ready: boolean;
+  caughtUp: boolean;
+  writable: boolean;
+  canSend: boolean;
+  busy: boolean;
+}
+const conversationFrames = new Map<string, Set<() => ConversationProofFrame>>();
+/** Inspect the actual pinned conversation, without writing controls or query data. */
+export function observeNativeConversation(runId: string, read: () => ConversationProofFrame) {
+  const frames = conversationFrames.get(runId) ?? new Set<() => ConversationProofFrame>();
+  conversationFrames.set(runId, frames);
+  frames.add(read);
+  return () => {
+    frames.delete(read);
+    if (!frames.size && conversationFrames.get(runId) === frames) conversationFrames.delete(runId);
+  };
+}
 interface VisualReviewProofFrame {
   focused: boolean;
   run: Run | null;
@@ -153,7 +192,7 @@ async function storedNativeQuery(
 /** Read production projections and actual store diagnostics without issuing a query. */
 export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs) => {
   const match =
-    /^runs-cache:(detail|family|diff|artifacts|slot|slot-diff|terminal|visual):([a-f0-9-]{36})$/.exec(
+    /^runs-cache:(detail|family|diff|artifacts|slot|slot-diff|terminal|visual|conversation):([a-f0-9-]{36})$/.exec(
       refs[0] ?? '',
     );
   const detailId = match?.[2];
@@ -170,6 +209,12 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
   const runStore = useRunStore.getState();
   const decisionStore = useDecisionStore.getState();
   const cache = getResourceCache();
+  const conversation =
+    detailId && match?.[1] === 'conversation'
+      ? [...(conversationFrames.get(detailId) ?? [])]
+          .map((read) => read())
+          .find((value) => value.focused)
+      : undefined;
   const diagnostics = await nativeResourceStoreDiagnostics();
   const storedDetail =
     detailId && match?.[1] === 'terminal'
@@ -203,6 +248,53 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
         startedAt,
         online: useConnectionStore.getState().client?.connectionState === 'connected',
         connectionGeneration: useConnectionStore.getState().client?.connectionGeneration,
+        connectionProfileId: useConnectionStore.getState().activeProfileId,
+        connectionProfileIds: useConnectionStore.getState().profiles.map((profile) => profile.id),
+        ...(conversation
+          ? {
+              conversation: {
+                observation: conversation.observation,
+                canonical:
+                  conversation.observation ===
+                  cache?.read(resourceQuery<RunGetResult>('run.get', { runId: detailId })),
+                selection: conversation.selection,
+                worker: conversation.worker,
+                session: conversation.session
+                  ? {
+                      id: conversation.session.id,
+                      executionNodeId: conversation.session.executionNodeId,
+                      generation: conversation.session.generation,
+                      workerLeaseId: conversation.session.workerLeaseId,
+                      ownerPrincipalId: conversation.session.ownerPrincipalId,
+                      state: conversation.session.state,
+                      cwd: conversation.session.cwd,
+                    }
+                  : undefined,
+                cursor: conversation.cursor,
+                eventCount: conversation.eventCount,
+                pageReadCount: conversation.pageReadCount,
+                pageAfters: conversation.pageAfters,
+                timeline: conversation.timeline.slice(-50),
+                commands: conversation.commands.map(
+                  ({ commandId, generation, state, submitted, accepted }) => ({
+                    commandId,
+                    generation,
+                    state,
+                    submitted,
+                    accepted,
+                  }),
+                ),
+                draft: conversation.draft,
+                pendingCommandId: conversation.pendingCommandId,
+                responses: conversation.responses,
+                ready: conversation.ready,
+                caughtUp: conversation.caughtUp,
+                writable: conversation.writable,
+                canSend: conversation.canSend,
+                busy: conversation.busy,
+              },
+            }
+          : {}),
         ...(visual?.focused
           ? {
               visualState:

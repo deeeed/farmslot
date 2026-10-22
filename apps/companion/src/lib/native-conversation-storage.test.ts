@@ -116,3 +116,74 @@ test('failed writes reach callers and restoring readers, while later edits can r
   await storage.write('session', 'retry');
   assert.equal(await storage.read('session'), 'retry');
 });
+
+test('remounts wait for an unsent answer rollback while its submitter receives the failure', async () => {
+  const prepared = deferred();
+  const changed = deferred();
+  let saved: string | null = null;
+  const storage = createNativeConversationStorage({
+    getItem: async () => saved,
+    setItem: async (_key, value) => {
+      saved = value;
+    },
+  });
+  const submission = storage.transition('session', async () => {
+    await storage.write('session', 'answer reserved');
+    prepared.resolve();
+    await changed.promise;
+    await storage.write('session', 'answer not sent');
+    throw new Error('run binding changed before submission');
+  });
+  const failure = assert.rejects(submission, /run binding changed/);
+  await prepared.promise;
+  let restored = false;
+  const remount = storage.read('session').then((value) => {
+    restored = true;
+    return value;
+  });
+  await Promise.resolve();
+  assert.equal(restored, false);
+  changed.resolve();
+  await failure;
+  assert.equal(await remount, 'answer not sent');
+});
+
+test('a control transition refuses another action instead of queueing it and leaves other keys free', async () => {
+  const settled = deferred();
+  let called = false;
+  const storage = createNativeConversationStorage({
+    getItem: async () => null,
+    setItem: async () => undefined,
+  });
+  const first = storage.transition('session', () => settled.promise);
+  await assert.rejects(
+    storage.transition('session', async () => {
+      called = true;
+    }),
+    /controls are still settling/,
+  );
+  assert.equal(await storage.read('other-session'), null);
+  assert.equal(await storage.transition('other-session', async () => 'independent'), 'independent');
+  settled.resolve();
+  await first;
+  assert.equal(called, false);
+  assert.equal(await storage.transition('session', async () => 'explicit retry'), 'explicit retry');
+});
+
+test('a storage failure during control preparation also reaches a waiting remount', async () => {
+  const blocked = deferred();
+  const storage = createNativeConversationStorage({
+    getItem: async () => 'old controls',
+    setItem: async () => {
+      await blocked.promise;
+      throw new Error('disk full during preparation');
+    },
+  });
+  const submitter = assert.rejects(
+    storage.transition('session', () => storage.write('session', 'new controls')),
+    /disk full during preparation/,
+  );
+  const remount = assert.rejects(storage.read('session'), /disk full during preparation/);
+  blocked.resolve();
+  await Promise.all([submitter, remount]);
+});

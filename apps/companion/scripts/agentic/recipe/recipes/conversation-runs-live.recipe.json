@@ -1,0 +1,81 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native conversation shared run context",
+  "description": "Requires an owned private gateway, a real accepted native worker in a disposable workspace, and its verified fixture receipt. Drive the actual connection form, composer and Send. Delay unchanged real run/transcript responses through a loopback-only proxy, update the run through another client, and cancel/delete only that owned fixture. Restore the original profile and close the proxy. No UI/cache values are injected and no other worker receives input. Offline transcript persistence remains separate fleet/session acceptance.",
+  "proofTargets": [
+    {
+      "id": "conversation-shared-run",
+      "claim": "The actual pinned native conversation observes canonical run changes without rereading run.get on every transcript poll or resetting its cursor and draft."
+    },
+    {
+      "id": "conversation-current-inputs",
+      "claim": "A withheld real run reply leaves saved data visible and the actual Send disabled until current data returns."
+    },
+    {
+      "id": "conversation-explicit-command",
+      "claim": "One actual composer submission reaches the exact worker lease once, produces an assistant reply and reconciles its command receipt."
+    },
+    {
+      "id": "conversation-retired-page",
+      "claim": "A real nonempty transcript reply from a removed run cannot advance the current cursor or timeline; contextual Retry remains a read and sends no command."
+    }
+  ],
+  "workflow": {
+    "entry": "before",
+    "nodes": {
+      "before": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-conversation-before.png",
+        "intent": "Open the owned iOS session before the native worker proof.",
+        "next": "prove"
+      },
+      "prove": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-native-conversation-runs.mjs",
+        "timeout_ms": 360000,
+        "intent": "Drive the real composer and verify run, reply and command ownership.",
+        "next": "shared"
+      },
+      "shared": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeConversationShared\":true",
+        "intent": "Require canonical updates, preserved paging and no per-poll run reads.",
+        "proves": ["conversation-shared-run"],
+        "next": "ready"
+      },
+      "ready": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeConversationStaleDisabled\":true",
+        "intent": "Keep actual Send disabled while a real run reply is withheld.",
+        "proves": ["conversation-current-inputs"],
+        "next": "accepted"
+      },
+      "accepted": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeConversationAccepted\":true",
+        "intent": "Require one accepted command and the real worker's reply.",
+        "proves": ["conversation-explicit-command"],
+        "next": "retired"
+      },
+      "retired": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeConversationLatePageRetired\":true",
+        "intent": "Drop a real reply for the removed run without advancing its timeline.",
+        "proves": ["conversation-retired-page"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

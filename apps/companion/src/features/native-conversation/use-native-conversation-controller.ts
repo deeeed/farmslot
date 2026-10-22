@@ -1,8 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useIsFocused } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  isTerminalRunStatus,
   Methods,
   type NativeSessionInfo,
   type NativeSessionListResult,
@@ -12,7 +12,11 @@ import {
   type NativeSessionTargetParams,
   type RunGetResult,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { observeNativeConversation } from '../../farmslot/run-collections-proof';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
+import { currentFarmConnection } from '../../lib/connection-authority';
 import {
   appendNativePage,
   nativeCommandLockSettled,
@@ -25,8 +29,12 @@ import {
 } from '../../lib/native-conversation-storage';
 import {
   nativeWorkerViewControl,
+  nativeWorkerViewForRun,
+  type NativeWorkerViewSelection,
   type NativeWorkerViewTarget,
+  sameNativeWorkerViewBinding,
 } from '../../lib/native-worker-target';
+import { getResourceCache } from '../../lib/resource-cache';
 import { canOpenNativeConversation } from '../../lib/workspace-access';
 import { useConnectionStore } from '../../store/connection';
 
@@ -47,18 +55,19 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 const conversationStorage = createNativeConversationStorage(AsyncStorage);
 
 export function useNativeConversationController(params: NativeConversationParams) {
+  const focused = useIsFocused();
   const client = useConnectionStore((state) => state.client);
   const connection = useConnectionStore((state) => state.status);
   const profile = useConnectionStore((state) => state.activeProfileId);
   const gatewayUrl = useConnectionStore((state) => state.gatewayUrl);
   const principalId = useConnectionStore((state) => state.principalId);
   const access = useConnectionStore((state) => state.workspaceAccess);
+  const authorityEpoch = useConnectionStore((state) => state.authorityEpoch);
   const creation = useNativeSessionSetup(!params.sessionId);
   const [sessions, setSessions] = useState<NativeSessionInfo[]>([]);
   const [unavailable, setUnavailable] = useState<string[]>([]);
   const [snapshot, setSnapshot] = useState<NativeSessionReadResult>();
   const [transcript, setTranscript] = useState<NativeTranscript>({ events: [], cursor: 0 });
-  const [worker, setWorker] = useState<NativeWorkerViewTarget>();
   const [draft, setDraft] = useState(params.draft ?? '');
   const [pending, setPending] = useState<PendingCommand>();
   const [responses, setResponses] = useState<string[]>([]);
@@ -71,6 +80,8 @@ export function useNativeConversationController(params: NativeConversationParams
   const mutation = useRef(false);
   const draftRef = useRef(draft);
   const transcriptRef = useRef(transcript);
+  const pageReadCount = useRef(0);
+  const pageAfters = useRef<number[]>([]);
   const pendingRef = useRef(pending);
   const responsesRef = useRef(responses);
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
@@ -85,6 +96,48 @@ export function useNativeConversationController(params: NativeConversationParams
     contextId: params.contextId,
     leaseId: params.leaseId,
   });
+  const selection = useMemo<NativeWorkerViewSelection>(
+    () => ({
+      runId: params.runId ?? '',
+      contextId: params.contextId,
+      sessionId: params.sessionId,
+      executionNodeId: node,
+      leaseId: params.leaseId,
+      generation: params.generation,
+    }),
+    [params.runId, params.contextId, params.sessionId, params.leaseId, params.generation, node],
+  );
+  const runQuery = useMemo(
+    () =>
+      params.runId
+        ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: params.runId })
+        : undefined,
+    [params.runId],
+  );
+  const runObservation = useResourceQuery(runQuery);
+  const worker = useMemo(
+    () =>
+      runObservation.data && runQuery
+        ? nativeWorkerViewForRun(runObservation.data.run, selection)
+        : undefined,
+    [runObservation.data, runQuery, selection],
+  );
+  const currentWorker = useCallback((): NativeWorkerViewTarget | undefined => {
+    if (!runQuery) return;
+    const observed = getResourceCache()?.read(runQuery);
+    if (observed?.status !== 'ready' || !observed.data) return;
+    const target = nativeWorkerViewForRun(observed.data.run, selection);
+    if (!target) throw new Error('This run no longer contains the selected worker conversation.');
+    return target;
+  }, [runQuery, selection]);
+  const generation = client?.connectionGeneration;
+  const farmConnection = useMemo(
+    () =>
+      params.runId && client
+        ? currentFarmConnection(client, useConnectionStore.getState)
+        : undefined,
+    [client, generation, connection, profile, principalId, authorityEpoch, params.runId],
+  );
 
   useEffect(() => {
     alive.current = true;
@@ -142,9 +195,11 @@ export function useNativeConversationController(params: NativeConversationParams
     const current = () =>
       active &&
       client.connectionGeneration === generation &&
-      (client.authenticatedPrincipal?.id ?? null) === principalId;
+      (client.authenticatedPrincipal?.id ?? null) === principalId &&
+      (!farmConnection || farmConnection());
     const poll = async () => {
       if (polling || !current()) return;
+      clearTimeout(timer);
       polling = true;
       try {
         if (!params.sessionId) {
@@ -160,39 +215,19 @@ export function useNativeConversationController(params: NativeConversationParams
             ),
           );
         } else {
-          let target: NativeWorkerViewTarget | undefined;
-          if (params.runId) {
-            const { run } = await client.request<RunGetResult>(Methods.RUN_GET, {
-              runId: params.runId,
-            });
-            if (!current()) return;
-            const context = run.agentContexts?.find((item) => item.id === params.contextId);
-            const binding = [context?.nativeSession, ...(context?.nativeSessionHistory ?? [])].find(
-              (item) =>
-                item &&
-                item.sessionId === params.sessionId &&
-                item.executionNodeId === node &&
-                item.leaseId === params.leaseId,
-            );
-            if (!context || !binding)
-              throw new Error('This run no longer contains the selected worker conversation.');
-            target = {
-              runId: run.id,
-              contextId: context.id,
-              label: context.label,
-              binding: { ...binding, generation: params.generation ?? binding.generation },
-              readOnly:
-                isTerminalRunStatus(run.status) || !!binding.closedAt || !!binding.releasedAt,
-            };
-            setWorker(target);
+          const target = currentWorker();
+          if (params.runId && !target) {
+            setCaughtUp(false);
+            return;
           }
           for (let count = 0; count < 20; count++) {
+            const after = transcriptRef.current.cursor;
             const page: NativeSessionReadResult = await client.request<NativeSessionReadResult>(
               Methods.NATIVE_SESSION_READ,
               {
                 sessionId: params.sessionId,
                 executionNodeId: node,
-                ...(transcriptRef.current.cursor ? { after: transcriptRef.current.cursor } : {}),
+                ...(after ? { after } : {}),
                 ...(target
                   ? {
                       worker: {
@@ -206,7 +241,15 @@ export function useNativeConversationController(params: NativeConversationParams
                 limit: 200,
               },
             );
+            if (__DEV__) {
+              pageReadCount.current++;
+              pageAfters.current = [...pageAfters.current.slice(-19), after];
+            }
             if (!current()) return;
+            if (params.runId && !sameNativeWorkerViewBinding(target, currentWorker())) {
+              setCaughtUp(false);
+              return;
+            }
             if (page.session.id !== params.sessionId || page.session.executionNodeId !== node)
               throw new Error('Conversation replay returned another session or execution node.');
             if (
@@ -276,6 +319,8 @@ export function useNativeConversationController(params: NativeConversationParams
     node,
     storageKey,
     persist,
+    currentWorker,
+    farmConnection,
   ]);
 
   const session = snapshot?.session;
@@ -287,6 +332,7 @@ export function useNativeConversationController(params: NativeConversationParams
     caughtUp &&
     !pollError &&
     !snapshot?.scope?.released &&
+    (!params.runId || runObservation.status === 'ready') &&
     connection === 'connected' &&
     !['closed', 'failed', 'closing', 'starting'].includes(session.state) &&
     (session.workerManaged ? !!workerControl : !params.runId);
@@ -295,13 +341,40 @@ export function useNativeConversationController(params: NativeConversationParams
     executionNodeId: node,
     ...(workerControl ? { worker: workerControl } : {}),
   };
+  const assertCurrentControls = () => {
+    const live = useConnectionStore.getState();
+    if (
+      !client ||
+      !alive.current ||
+      live.client !== client ||
+      live.status !== 'connected' ||
+      client.connectionState !== 'connected' ||
+      client.connectionGeneration !== generation ||
+      live.activeProfileId !== profile ||
+      live.principalId !== principalId ||
+      live.authorityEpoch !== authorityEpoch
+    )
+      throw new Error('The conversation connection changed. Reopen it before acting.');
+    if (!params.runId) return;
+    if (!farmConnection?.()) throw new Error('The worker conversation connection changed.');
+    const current = currentWorker();
+    if (
+      !current ||
+      !sameNativeWorkerViewBinding(worker, current) ||
+      !nativeWorkerViewControl(current, session)
+    )
+      throw new Error('Wait for the current worker conversation before acting.');
+  };
   const mutate = async (action: () => Promise<void>) => {
     if (!client || !writable || mutation.current) return;
     mutation.current = true;
     setBusy(true);
     setError('');
     try {
-      await action();
+      await conversationStorage.transition(storageKey, async () => {
+        assertCurrentControls();
+        await action();
+      });
     } catch (cause) {
       if (alive.current) setError(message(cause));
     } finally {
@@ -321,16 +394,12 @@ export function useNativeConversationController(params: NativeConversationParams
         commandId: `mobile-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         text: draft.trim(),
       };
-      const generation = client!.connectionGeneration;
       pendingRef.current = command;
       setPending(command);
       draftRef.current = '';
       setDraft('');
       await persist('', command, responsesRef.current);
-      if (!alive.current || client!.connectionGeneration !== generation)
-        throw new Error(
-          'Gateway changed before submission. Reopen the original conversation to reconcile.',
-        );
+      assertCurrentControls();
       const { generation: _, ...request } = command;
       await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
     });
@@ -338,10 +407,8 @@ export function useNativeConversationController(params: NativeConversationParams
     mutate(async () => {
       const command = pendingRef.current;
       if (!command || !session || command.generation !== session.generation) return;
-      const generation = client!.connectionGeneration;
       await persist(draftRef.current, command, responsesRef.current);
-      if (!alive.current || client!.connectionGeneration !== generation)
-        throw new Error('Gateway changed before retry.');
+      assertCurrentControls();
       const { generation: _, ...request } = command;
       await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
     });
@@ -362,18 +429,84 @@ export function useNativeConversationController(params: NativeConversationParams
       )
         return;
       const answered = [...responsesRef.current, requestId];
-      const generation = client!.connectionGeneration;
       responsesRef.current = answered;
       setResponses(answered);
-      await persist(draftRef.current, pendingRef.current, answered);
-      if (!alive.current || client!.connectionGeneration !== generation)
-        throw new Error('Gateway changed before the response. The answer will not be resent.');
-      await client!.request(
-        Methods.NATIVE_SESSION_RESPOND,
-        { ...target, requestId, ...response },
-        30_000,
-      );
+      let issued = false;
+      try {
+        await persist(draftRef.current, pendingRef.current, answered);
+        assertCurrentControls();
+        issued = true;
+        await client!.request(
+          Methods.NATIVE_SESSION_RESPOND,
+          { ...target, requestId, ...response },
+          30_000,
+        );
+      } catch (cause) {
+        if (!issued) {
+          const unsent = responsesRef.current.filter((id) => id !== requestId);
+          responsesRef.current = unsent;
+          if (alive.current) setResponses(unsent);
+          try {
+            await persist(draftRef.current, pendingRef.current, unsent);
+          } catch (storageFailure) {
+            throw new AggregateError([cause, storageFailure], 'Cannot restore the unsent answer.');
+          }
+        }
+        throw cause;
+      }
     });
+  const entries = nativeTimeline(transcript.events);
+  const canSend = writable && session?.state === 'idle' && !pending && !busy && !!draft.trim();
+  const proof = useRef({
+    focused,
+    observation: runObservation,
+    selection,
+    worker,
+    session,
+    timeline: entries,
+    cursor: transcript.cursor,
+    eventCount: transcript.events.length,
+    pageReadCount: pageReadCount.current,
+    pageAfters: pageAfters.current,
+    commands: snapshot?.commands ?? [],
+    draft,
+    pendingCommandId: pending?.commandId,
+    responses,
+    ready,
+    caughtUp,
+    writable,
+    canSend,
+    busy,
+  });
+  proof.current = {
+    focused,
+    observation: runObservation,
+    selection,
+    worker,
+    session,
+    timeline: entries,
+    cursor: transcript.cursor,
+    eventCount: transcript.events.length,
+    pageReadCount: pageReadCount.current,
+    pageAfters: pageAfters.current,
+    commands: snapshot?.commands ?? [],
+    draft,
+    pendingCommandId: pending?.commandId,
+    responses,
+    ready,
+    caughtUp,
+    writable,
+    canSend,
+    busy,
+  };
+  useEffect(() => {
+    if (__DEV__ && params.runId)
+      return observeNativeConversation(params.runId, () => ({
+        ...proof.current,
+        pageReadCount: pageReadCount.current,
+        pageAfters: pageAfters.current,
+      }));
+  }, [params.runId, storageKey]);
   return {
     viewModel: {
       sessions,
@@ -381,7 +514,7 @@ export function useNativeConversationController(params: NativeConversationParams
       creation: creation.viewModel,
       resume: resume.viewModel,
       session,
-      entries: nativeTimeline(transcript.events),
+      entries,
       requests: snapshot?.pendingRequests ?? [],
       responses,
       draft,
@@ -392,7 +525,7 @@ export function useNativeConversationController(params: NativeConversationParams
       ready,
       connected: connection === 'connected',
       writable,
-      canSend: writable && session?.state === 'idle' && !pending && !busy && !!draft.trim(),
+      canSend,
       canStop:
         writable &&
         !!session?.capabilities.interrupt &&
@@ -401,6 +534,7 @@ export function useNativeConversationController(params: NativeConversationParams
       workerLabel: worker
         ? `${worker.label}${snapshot?.scope?.released || worker.readOnly ? ' · Task history' : ''}`
         : undefined,
+      runObservation: params.runId ? runObservation : undefined,
     },
     actions: {
       creation: creation.actions,
@@ -431,6 +565,16 @@ export function useNativeConversationController(params: NativeConversationParams
         },
       },
       refresh: () => refreshRef.current(),
+      retryRun: async () => {
+        if (!runQuery) return;
+        const cache = getResourceCache();
+        try {
+          if (cache?.read(runQuery).error) await cache.retry(runQuery);
+          if (alive.current) await refreshRef.current();
+        } catch (cause) {
+          if (alive.current) setError(message(cause));
+        }
+      },
       send,
       retry,
       respond,

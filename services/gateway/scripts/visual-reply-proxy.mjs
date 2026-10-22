@@ -4,15 +4,31 @@ import { createServer, request } from 'node:http';
 
 import WebSocket, { WebSocketServer } from 'ws';
 
-/** Private proof transport: hold one real terminal reply, without changing its bytes. */
-export async function createVisualReplyProxy({ upstreamPort, runId }) {
+/** Preserve the visual proof's terminal-only transport contract. */
+export function createVisualReplyProxy(options) {
+  return createRunReplyProxy({ ...options, method: 'terminal.send' });
+}
+
+/** Private proof transport: delay a scoped RPC response without changing its bytes. */
+export async function createRunReplyProxy({
+  upstreamPort,
+  runId,
+  method,
+  armed = true,
+  holdResponse = () => true,
+}) {
   assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1');
   assert(Number.isSafeInteger(upstreamPort) && upstreamPort > 0);
   assert.match(runId, /^[a-f0-9-]{36}$/);
+  const methods = new Set(['terminal.send', 'run.get', 'native.session.read']);
+  assert(methods.has(method));
+  let selected = { method, armed, holdResponse };
   let failure;
   let held;
   const pairs = new Set();
-  const evidence = { requests: 0, held: false, released: false, expired: false };
+  const fresh = () => ({ requests: 0, held: false, released: false, expired: false });
+  let evidence = fresh();
+  const counts = new Map();
   const digest = (bytes) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
   const server = createServer((incoming, outgoing) => {
     const forwarded = request(
@@ -43,17 +59,19 @@ export async function createVisualReplyProxy({ upstreamPort, runId }) {
     const pair = { downstream, upstream };
     pairs.add(pair);
     const waiting = [];
-    const targetIds = new Set();
+    const targetIds = new Map();
     downstream.on('message', (bytes, binary) => {
       if (!binary) {
         const frame = JSON.parse(String(bytes));
         if (
           frame.type === 'req' &&
-          frame.method === 'terminal.send' &&
-          frame.params?.runId === runId
+          (frame.params?.runId ?? frame.params?.worker?.runId) === runId
         ) {
-          evidence.requests++;
-          targetIds.add(frame.id);
+          counts.set(frame.method, (counts.get(frame.method) ?? 0) + 1);
+          if (frame.method === selected.method) {
+            evidence.requests++;
+            targetIds.set(frame.id, { method: frame.method, after: frame.params?.after ?? 0 });
+          }
         }
       }
       if (upstream.readyState === WebSocket.CONNECTING) waiting.push([bytes, binary]);
@@ -65,8 +83,17 @@ export async function createVisualReplyProxy({ upstreamPort, runId }) {
     });
     upstream.on('message', (bytes, binary) => {
       const frame = binary ? undefined : JSON.parse(String(bytes));
-      if (frame?.type === 'res' && targetIds.delete(frame.id) && !evidence.held) {
+      const pending = frame?.type === 'res' ? targetIds.get(frame.id) : undefined;
+      if (frame?.type === 'res') targetIds.delete(frame.id);
+      if (
+        pending?.method === selected.method &&
+        selected.armed &&
+        !evidence.held &&
+        selected.holdResponse(frame)
+      ) {
         evidence.held = true;
+        evidence.heldMethod = pending.method;
+        evidence.heldAfter = pending.after;
         evidence.responseOk = frame.ok;
         evidence.errorCode = frame.error?.code;
         evidence.errorMessage = frame.error?.message;
@@ -119,7 +146,18 @@ export async function createVisualReplyProxy({ upstreamPort, runId }) {
     port: server.address().port,
     state() {
       if (failure) throw failure;
-      return { ...evidence };
+      return { ...evidence, method: selected.method, counts: Object.fromEntries(counts) };
+    },
+    arm(options = {}) {
+      assert(!held, 'Release the current response before selecting another proof boundary');
+      const method = options.method ?? selected.method;
+      assert(methods.has(method));
+      selected = {
+        method,
+        armed: true,
+        holdResponse: options.holdResponse ?? selected.holdResponse,
+      };
+      evidence = fresh();
     },
     release,
     async close() {
