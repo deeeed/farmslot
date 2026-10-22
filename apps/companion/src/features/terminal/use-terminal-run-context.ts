@@ -8,6 +8,7 @@ import {
 } from '@farmslot/protocol';
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { observeNativeSlotFrame, type SlotProofFrame } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { getResourceCache, getResourceWorkspaceKey } from '../../lib/resource-cache';
@@ -18,6 +19,16 @@ import {
 } from '../../lib/terminal-target';
 import { useConnectionStore } from '../../store/connection';
 import { useSlotNativeSession } from '../native-conversation/use-slot-native-session';
+
+/** Keep the development probe current without changing its mounted subscription. */
+export function useTerminalProof(frame: SlotProofFrame): void {
+  const latest = useRef(frame);
+  latest.current = frame;
+  useEffect(() => {
+    if (__DEV__ && frame.run?.id)
+      return observeNativeSlotFrame('terminal', frame.run.id, () => latest.current);
+  }, [frame.run?.id]);
+}
 
 /** Shared observations choose a target; terminal streams retain their existing owner. */
 export function useTerminalRunContext(params: CompanionTerminalTargetParams) {

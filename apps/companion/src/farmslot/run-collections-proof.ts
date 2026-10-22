@@ -100,7 +100,7 @@ interface DiffProofFrame {
   recipes: ResourceQueryState<RunRecipeRunsForRunResult>;
 }
 const diffFrames = new Map<string, Set<() => DiffProofFrame>>();
-interface SlotProofFrame extends DiffProofFrame {
+export interface SlotProofFrame extends DiffProofFrame {
   history?: ResourceQueryState<SlotRunHistoryResult>;
   historyRunIds?: readonly string[];
   historyRuns?: readonly ResourceQueryState<RunGetResult>[];

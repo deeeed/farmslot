@@ -67,6 +67,7 @@ test('terminal commands use current canonical inputs without rereads while the s
     {
       '@farmslot/protocol': { Methods },
       '@farmslot/protocol/client-cache': { resourceQuery },
+      '../../farmslot/run-collections-proof': { observeNativeSlotFrame: () => undefined },
       '../../hooks/useResourceQuery': {
         useResourceQuery(query?: ResourceQuery<unknown>) {
           if (!query) return { status: 'loading' };

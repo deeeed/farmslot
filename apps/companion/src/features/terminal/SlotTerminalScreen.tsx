@@ -52,7 +52,6 @@ import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
-import { observeNativeSlotFrame } from '../../farmslot/run-collections-proof';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -142,7 +141,7 @@ import {
   type XtermTerminalViewHandle,
 } from './components/terminal-history-viewer';
 import { slotTerminalStyles as styles } from './styles/slot-terminal.styles';
-import { useTerminalRunContext } from './use-terminal-run-context';
+import { useTerminalProof, useTerminalRunContext } from './use-terminal-run-context';
 
 const LINE_COUNT_OPTIONS = [25, 50, 100, 200] as const;
 const TERMINAL_DATA_EVENT = 'terminal.data';
@@ -459,7 +458,7 @@ export default function TerminalScreen() {
       ? 'Read-only · terminal ended'
       : null;
 
-  const proofFrame = useRef({
+  useTerminalProof({
     focused,
     run: targetRun,
     recipes: terminalContext.recipes,
@@ -474,25 +473,6 @@ export default function TerminalScreen() {
     terminalInputCommands: inputCommands.current,
     terminalSubscriptionStarts: subscriptionStarts.current,
   });
-  proofFrame.current = {
-    focused,
-    run: targetRun,
-    recipes: terminalContext.recipes,
-    terminalReady: terminalContext.ready,
-    terminalTarget: terminalContext.target ?? undefined,
-    terminalInputDisabledReason,
-    terminalStream: streamMode,
-    terminalControlBusy: isSendingControl,
-    terminalControlError: controlError,
-    terminalSnapshotError: snapshotError,
-    readTerminalText: () => terminalViewRef.current?.inspect?.() ?? Promise.resolve(''),
-    terminalInputCommands: inputCommands.current,
-    terminalSubscriptionStarts: subscriptionStarts.current,
-  };
-  useEffect(() => {
-    if (__DEV__ && targetRun?.id)
-      return observeNativeSlotFrame('terminal', targetRun.id, () => proofFrame.current);
-  }, [targetRun?.id]);
 
   const loadInitialSnapshot = useCallback(async () => {
     const target = terminalTargetParamsRef.current;
