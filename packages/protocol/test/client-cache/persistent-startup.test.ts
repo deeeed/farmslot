@@ -7,10 +7,110 @@ import {
   createMemoryResourceStore,
   resourceQuery,
   type ResourceQueryState,
+  type ResourceStore,
 } from '../../src/client-cache/index.js';
 
 const scope = { gatewayUrl: 'ws://persistent.invalid/', principalId: 'p', principalGeneration: 0 };
 const query = { ...resourceQuery<{ value: string }>('sources.status'), persisted: true };
+
+test('a failed offline reconnect cannot discard saved data whose hydration is still pending', async () => {
+  const memory = createMemoryResourceStore();
+  const authority = { roles: [], workspaceAccess: 'farm' as const };
+  await memory.setMetadata({ scope, authority });
+  await memory.putQuery({ id: query.id, data: { value: 'saved' }, observedAt: 123, bytes: 17 });
+  let start!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    start = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const store: ResourceStore = {
+    ...memory,
+    get deleted() {
+      return memory.deleted;
+    },
+    async getQuery<T>(id: string) {
+      const saved = await memory.getQuery<T>(id);
+      start();
+      await held;
+      return saved;
+    },
+  };
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.connection.authority = authority;
+  const cache = createGatewayResourceCache({ transport, store });
+  const stop = cache.observe(query, () => undefined);
+  try {
+    await started;
+    transport.setConnection({ connected: false, id: 2 }, 'network');
+    release();
+    for (let i = 0; i < 20; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(cache.read(query).status, 'stale');
+    assert.equal(cache.read(query).data?.value, 'saved');
+    assert.equal(cache.read(query).observedAt, 123);
+    assert.equal(transport.requestCount, 0);
+  } finally {
+    release();
+    stop();
+    await cache.dispose();
+  }
+});
+
+for (const transition of ['sign-out', 'principal', 'authority'] as const) {
+  test(`pending hydration cannot restore data after ${transition} changes its owner`, async () => {
+    const memory = createMemoryResourceStore();
+    const authority = { roles: [], workspaceAccess: 'farm' as const };
+    await memory.setMetadata({ scope, authority });
+    await memory.putQuery({ id: query.id, data: { value: 'private' }, observedAt: 123, bytes: 19 });
+    let start!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const store: ResourceStore = {
+      ...memory,
+      get deleted() {
+        return memory.deleted;
+      },
+      async getQuery<T>(id: string) {
+        const saved = await memory.getQuery<T>(id);
+        start();
+        await held;
+        return saved;
+      },
+    };
+    const transport = new ResourceCacheConformanceTransport(scope);
+    transport.connection.authority = authority;
+    const cache = createGatewayResourceCache({ transport, store });
+    let transitioned = false;
+    let leaked = false;
+    const stop = cache.observe(query, (state) => {
+      if (transitioned && state.data) leaked = true;
+    });
+    try {
+      await started;
+      release();
+      await Promise.resolve();
+      transitioned = true;
+      if (transition === 'sign-out') transport.setConnection({ connected: false }, 'sign-out');
+      else if (transition === 'principal')
+        transport.setConnection({ scope: { ...scope, principalId: 'another' } });
+      else transport.setConnection({ authority: { roles: [], workspaceAccess: 'native' } });
+      for (let i = 0; i < 20; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(leaked, false, 'A queued old hydration must never publish after revocation');
+      assert.equal(cache.read(query).data, undefined);
+    } finally {
+      release();
+      stop();
+      await cache.dispose();
+    }
+  });
+}
 
 test('a late remembered offline identity opens and hydrates its stored result without network reads', async () => {
   const saved = createMemoryResourceStore();

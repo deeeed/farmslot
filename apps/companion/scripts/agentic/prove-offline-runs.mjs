@@ -41,6 +41,7 @@ const familyPhases = [
 ];
 assert(
   [
+    'terminal-context',
     'slot-context',
     'seed-inbox',
     'resolve-inbox',
@@ -166,6 +167,249 @@ async function restartNative() {
     ]);
   }
   await waitForSimulatorRecipeBridge({ platform });
+}
+
+if (phase === 'terminal-context') {
+  assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE && process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR);
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  assert.equal(fixture.home, home);
+  const original = (await rpc('run.get', { runId: fixture.runId })).run;
+  assert.equal(original.readOnly, false);
+  assert.equal(original.slotId, fixture.slotId);
+  const workerRepo = await realpath(fixture.workerRepo);
+  assert(workerRepo.startsWith(`${home}/`));
+  const pool = JSON.parse(
+    await readFile(path.join(home, 'pool/offline-mirror-proof.json'), 'utf8'),
+  );
+  const ownedSlot = pool.slots.find((slot) => slot.id === fixture.slotId);
+  assert.equal(ownedSlot.enabled, false);
+  assert.equal(await realpath(ownedSlot.repo), workerRepo);
+  const sessionName = ownedSlot.session;
+  const sessionsBefore = (
+    await execute('tmux', ['list-sessions', '-F', '#{socket_path}|#{pid}|#{session_name}'])
+  ).stdout
+    .trim()
+    .split('\n');
+  assert(
+    sessionsBefore.length &&
+      sessionsBefore.every((row) => row.split('|')[1] === sessionsBefore[0].split('|')[1]),
+    'Use one existing tmux server',
+  );
+  const existed = sessionsBefore.some((row) => row.split('|')[2] === sessionName);
+  const serverPid = sessionsBefore[0].split('|')[1];
+  const sessionInfo = async () => {
+    const { stdout } = await execute('tmux', [
+      'list-panes',
+      '-s',
+      '-t',
+      sessionName,
+      '-F',
+      '#{session_id}|#{session_created}|#{pane_pid}|#{pane_current_command}|#{pane_current_path}',
+    ]);
+    const rows = stdout.trim().split('\n');
+    assert.equal(rows.length, 1, 'Only the private idle shell belongs to the proof');
+    const [id, created, pid, command, cwd] = rows[0].split('|');
+    assert(['zsh', 'bash', 'sh'].includes(command));
+    assert.equal(await realpath(cwd), workerRepo);
+    let children = [];
+    const deadline = Date.now() + 5000;
+    do {
+      const processRows = (await execute('ps', ['-axo', 'pid=,ppid=,comm='])).stdout
+        .trim()
+        .split('\n');
+      children = processRows.filter((row) => row.trim().split(/\s+/)[1] === pid);
+      if (!children.length) break;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.equal(
+      children.length,
+      0,
+      `Never send keys to or retire an active worker: ${JSON.stringify(children)}`,
+    );
+    return { id, created, pid, command, cwd };
+  };
+  const device = createAgentDeviceClient({ stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR });
+  const deviceId = platform === 'ios' ? process.env.IOS_SIMULATOR : process.env.ADB_SERIAL;
+  const devices = (await device.sessions.list()).filter(
+    (session) => session.device.id === deviceId,
+  );
+  assert.equal(devices.length, 1);
+  const selection = { session: devices[0].name, platform, target: 'mobile' };
+  const nativeScreen = () =>
+    device.capture.snapshot({ ...selection, interactiveOnly: false, forceFull: true });
+  const button = async (enabled) => {
+    const deadline = Date.now() + 15000;
+    let found;
+    do {
+      found = (await nativeScreen()).nodes.find((node) => node.label === '^L');
+      if (found?.enabled === enabled && found.rect) return found;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`The actual terminal key must be enabled=${enabled}: ${JSON.stringify(found)}`);
+  };
+  const phases = [];
+  let phaseStart = Date.now();
+  const capture = async (name) => {
+    await device.capture.screenshot({
+      ...selection,
+      path: path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'screenshots', name),
+      stabilize: true,
+    });
+    phases.push({ name, startedAt: phaseStart, endedAt: Date.now() });
+    phaseStart = Date.now();
+  };
+  const route = `workspace/slot/${fixture.slotId}/terminal?runId=${fixture.runId}&keys=1&details=1`;
+  proofRef = `runs-cache:terminal:${fixture.runId}`;
+  const current = (value) =>
+    value.slotProjectionMatches &&
+    value.slotRecipesMatch &&
+    value.detail?.status === 'ready' &&
+    value.slotRecipes?.status === 'ready' &&
+    value.terminalReady;
+  let ownedSession;
+  let cold;
+  const tag = `native-terminal-${randomUUID().slice(0, 8)}`;
+  try {
+    await inbox(route);
+    const initial = await until(
+      (value) =>
+        current(value) &&
+        value.terminalStream === 'live' &&
+        !value.terminalInputDisabledReason &&
+        value.terminalBufferText?.includes(path.basename(workerRepo)),
+      'The actual terminal must subscribe only after current shared run inputs',
+    );
+    assert.deepEqual(initial.terminalTarget, { slotId: fixture.slotId, bareSession: true });
+    ownedSession = await sessionInfo();
+    if (!existed)
+      assert(
+        Number(ownedSession.created) >= Math.floor(phaseStart / 1000),
+        'Only retire the session created by this proof',
+      );
+    const clear = await button(true);
+    await device.interactions.press({
+      ...selection,
+      x: clear.rect.x + clear.rect.width / 2,
+      y: clear.rect.y + clear.rect.height / 2,
+    });
+    await until(
+      (value) =>
+        value.terminalInputCommands === 1 &&
+        !value.terminalControlBusy &&
+        !value.terminalControlError,
+      'The actual terminal key must send through the verified private idle shell',
+    );
+    await rpc('run.tags.set', { runId: fixture.runId, tags: [...(original.tags ?? []), tag] });
+    const updated = await until(
+      (value) => current(value) && value.detail.data.run.tags?.includes(tag),
+      'The rendered terminal run must follow an external write',
+    );
+    assert.equal(
+      updated.terminalSubscriptionStarts,
+      initial.terminalSubscriptionStarts,
+      'Ordinary run invalidation must not restart the terminal stream',
+    );
+    const committed = await until(
+      (value) => current(value) && value.storedDetail?.observedAt === value.detail.observedAt,
+      'The actual terminal full-run row must reach SQLite before the cold restart',
+    );
+    assert(committed.storedDetail.bytes > 0);
+    await capture('native-terminal-current.png');
+    await withOwnedGatewayOffline(async () => {
+      const stale = await until(
+        (value) =>
+          value.detail?.status === 'stale' &&
+          value.slotProjectionMatches &&
+          value.terminalInputDisabledReason,
+        'A disconnected terminal must retain run facts and pause its commands',
+      );
+      await button(false);
+      await capture('native-terminal-stale.png');
+      await restartNative();
+      await inbox(route);
+      cold = await until(
+        (value) =>
+          value.startedAt > initial.startedAt &&
+          value.detail?.status === 'stale' &&
+          value.slotProjectionMatches &&
+          value.terminalInputDisabledReason,
+        'A cold terminal must restore its actual saved run with commands paused',
+      );
+      assert.equal(cold.detail.observedAt, stale.detail.observedAt);
+      assert.equal(cold.diagnostics.integrity, 'ok');
+      const screen = await nativeScreen();
+      assert(
+        screen.nodes.some((node) => node.label?.includes('Saved terminal run')),
+        'The actual cold terminal must display its saved age',
+      );
+      await button(false);
+      await capture('native-terminal-cold.png');
+    });
+    await until(
+      (value) =>
+        current(value) && value.terminalStream === 'live' && !value.terminalInputDisabledReason,
+      'Terminal reconnect requires current run inputs before commands resume',
+    );
+    assert.equal(
+      (await snapshot()).terminalInputCommands,
+      0,
+      'Cold reconnect must never replay a terminal key',
+    );
+    await inbox(`${route}&contextId=offline-proof-missing-actor`);
+    const pinned = await until(
+      (value) => current(value) && value.terminalStream === 'ended' && value.terminalSnapshotError,
+      'An unavailable explicit actor must show the real gateway refusal',
+    );
+    assert.equal(pinned.terminalTarget.contextId, 'offline-proof-missing-actor');
+    assert.equal(pinned.terminalTarget.runId, fixture.runId);
+    assert.equal(pinned.terminalTarget.bareSession, undefined);
+    await until(
+      (value) =>
+        value.terminalSnapshotError &&
+        !value.terminalBufferText?.includes(path.basename(workerRepo)),
+      'Changing the terminal actor must clear the actual previous pane buffer',
+    );
+    await capture('native-terminal-pin-refused.png');
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        phase,
+        nativeTerminalShared: true,
+        nativeTerminalCommand: true,
+        nativeTerminalCold: true,
+        nativeTerminalSqlTimestamp: committed.storedDetail.observedAt,
+        nativeTerminalPinRefused: true,
+        nativeTerminalClearsPane: true,
+        noTerminalReplay: true,
+        nativePhases: phases,
+        observedAt: cold.detail.observedAt,
+      }),
+    );
+  } finally {
+    try {
+      await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
+      await inbox('runs');
+    } finally {
+      if (!existed) {
+        const rows = (
+          await execute('tmux', ['list-sessions', '-F', '#{pid}|#{session_name}'])
+        ).stdout
+          .trim()
+          .split('\n');
+        assert(
+          rows.every((row) => row.split('|')[0] === serverPid),
+          'Never change the tmux server',
+        );
+        if (rows.some((row) => row.split('|')[1] === sessionName)) {
+          const idle = await sessionInfo();
+          if (ownedSession) assert.equal(idle.id, ownedSession.id);
+          await execute('tmux', ['kill-session', '-t', idle.id]);
+        }
+      }
+    }
+  }
+  process.exit(0);
 }
 
 if (phase === 'slot-context') {

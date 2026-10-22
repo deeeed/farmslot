@@ -1,6 +1,10 @@
 import { Platform } from 'react-native';
 
-import { nativeResourceStoreDiagnostics } from '@farmslot/local-store/native';
+import {
+  nativeResourceQueryInfo,
+  type NativeResourceStoreDiagnostics,
+  nativeResourceStoreDiagnostics,
+} from '@farmslot/local-store/native';
 import type {
   FamilyObservabilityGetResult,
   FamilyObservabilitySnapshot,
@@ -13,6 +17,7 @@ import {
   type ResourceQuery,
   resourceQuery,
   type ResourceQueryState,
+  type StoredResourceQueryInfo,
 } from '@farmslot/protocol/client-cache';
 
 import { nativeActiveRunsQuery, nativeDecisionsQuery } from '../lib/gateway-run-sync';
@@ -44,12 +49,22 @@ interface SlotProofFrame extends DiffProofFrame {
   historyRunIds?: readonly string[];
   historyRuns?: readonly ResourceQueryState<RunGetResult>[];
   historyRecipes?: readonly ResourceQueryState<RunRecipeRunsForRunResult>[];
+  terminalReady?: boolean;
+  terminalTarget?: import('../lib/terminal-target').CompanionTerminalTargetParams;
+  terminalInputDisabledReason?: string | null;
+  terminalStream?: string;
+  terminalControlBusy?: boolean;
+  terminalControlError?: string | null;
+  terminalSnapshotError?: string | null;
+  readTerminalText?: () => Promise<string>;
+  terminalInputCommands?: number;
+  terminalSubscriptionStarts?: number;
 }
 const slotFrames = new Map<string, Set<() => SlotProofFrame>>();
 
 /** Inspect real slot workspace inputs without changing the mounted view or its cache. */
 export function observeNativeSlotFrame(
-  kind: 'slot' | 'slot-diff',
+  kind: 'slot' | 'slot-diff' | 'terminal',
   runId: string,
   read: () => SlotProofFrame,
 ) {
@@ -106,11 +121,24 @@ export function observeNativeFamilyFrame(familyId: string, read: () => FamilyPro
   };
 }
 
+/** Inspect metadata through the store's write queue; never create or adopt cache data. */
+async function storedNativeQuery(
+  diagnostics: NativeResourceStoreDiagnostics,
+  workspaceKey: string | undefined,
+  queryId: string,
+): Promise<StoredResourceQueryInfo | undefined> {
+  if (!workspaceKey) return undefined;
+  const scope = JSON.parse(workspaceKey).scope;
+  if (typeof scope !== 'string') throw new Error('The native resource owner has no store scope.');
+  return nativeResourceQueryInfo(scope, queryId, diagnostics.filename);
+}
+
 /** Read production projections and actual store diagnostics without issuing a query. */
 export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs) => {
-  const match = /^runs-cache:(detail|family|diff|artifacts|slot|slot-diff):([a-f0-9-]{36})$/.exec(
-    refs[0] ?? '',
-  );
+  const match =
+    /^runs-cache:(detail|family|diff|artifacts|slot|slot-diff|terminal):([a-f0-9-]{36})$/.exec(
+      refs[0] ?? '',
+    );
   const detailId = match?.[2];
   const family =
     match?.[1] === 'family' && detailId
@@ -124,6 +152,15 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
   const runStore = useRunStore.getState();
   const decisionStore = useDecisionStore.getState();
   const cache = getResourceCache();
+  const diagnostics = await nativeResourceStoreDiagnostics();
+  const storedDetail =
+    detailId && match?.[1] === 'terminal'
+      ? await storedNativeQuery(
+          diagnostics,
+          getResourceWorkspaceKey(),
+          resourceQuery('run.get', { runId: detailId }).id,
+        )
+      : undefined;
   const slotFrame = detailId
     ? [...(slotFrames.get(`${match?.[1]}:${detailId}`) ?? [])]
         .map((read) => read())
@@ -148,6 +185,7 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
         startedAt,
         online: useConnectionStore.getState().client?.connectionState === 'connected',
         workspaceKey: getResourceWorkspaceKey(),
+        storedDetail,
         runsStatus: runStore.observation.status,
         runsObservedAt: runStore.observation.observedAt,
         runs: runStore.runs.map(({ id, ticketOrPr, tags }) => ({ id, ticketOrPr, tags })),
@@ -170,6 +208,16 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
                   }),
                 ),
               slotRecipes: slotFrame.recipes,
+              terminalReady: slotFrame.terminalReady,
+              terminalTarget: slotFrame.terminalTarget,
+              terminalInputDisabledReason: slotFrame.terminalInputDisabledReason,
+              terminalStream: slotFrame.terminalStream,
+              terminalControlBusy: slotFrame.terminalControlBusy,
+              terminalControlError: slotFrame.terminalControlError,
+              terminalSnapshotError: slotFrame.terminalSnapshotError,
+              terminalBufferText: await slotFrame.readTerminalText?.(),
+              terminalInputCommands: slotFrame.terminalInputCommands,
+              terminalSubscriptionStarts: slotFrame.terminalSubscriptionStarts,
               slotHistory: slotFrame.history,
               slotHistoryReadCount: slotFrame.historyRunIds?.length,
               slotHistoryReadsReady: Boolean(
@@ -271,7 +319,7 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
               ),
             }
           : {}),
-        diagnostics: await nativeResourceStoreDiagnostics(),
+        diagnostics,
       },
     },
   };

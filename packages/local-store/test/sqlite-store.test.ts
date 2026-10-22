@@ -2,11 +2,16 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { type ResourceStore, runResourceStoreConformance } from '@farmslot/protocol/client-cache';
+import {
+  type ResourceStore,
+  resourceStoreScopeId,
+  runResourceStoreConformance,
+} from '@farmslot/protocol/client-cache';
 
 import { createExpoSqliteDriver } from '../src/native.js';
 import {
   createSqliteResourceStore,
+  readSqliteResourceQueryInfo,
   type ResourceSqliteDatabase,
   type SqliteValue,
 } from '../src/sqlite-store.js';
@@ -28,6 +33,59 @@ const scope = (profileId: string) => ({
   profileId,
   principalId: 'p',
   principalGeneration: 0,
+});
+
+test('query metadata inspection waits behind a writer and reads only its exact store scope', async () => {
+  const { sqlite, adapter } = database();
+  const store = await createSqliteResourceStore({ database: adapter, scope: scope('first') });
+  let start!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    start = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const run = adapter.run;
+  adapter.run = async (sql, params) => {
+    if (sql.startsWith('INSERT INTO resource_queries')) {
+      start();
+      await held;
+    }
+    await run(sql, params);
+  };
+  try {
+    const writing = store.putQuery({
+      id: 'query',
+      data: { value: 'private' },
+      observedAt: 123,
+      bytes: 19,
+    });
+    await started;
+    let completed = false;
+    const reading = readSqliteResourceQueryInfo(
+      adapter,
+      resourceStoreScopeId(scope('first')),
+      'query',
+    );
+    void reading.then(() => {
+      completed = true;
+    });
+    for (let i = 0; i < 3; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(completed, false);
+    release();
+    await writing;
+    assert.deepEqual({ ...(await reading) }, { id: 'query', observedAt: 123, bytes: 19 });
+    assert.equal(
+      await readSqliteResourceQueryInfo(adapter, resourceStoreScopeId(scope('other')), 'query'),
+      undefined,
+    );
+    assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM resource_stores').get()?.count, 1);
+  } finally {
+    release();
+    await store.close();
+    sqlite.close();
+  }
 });
 
 test('SQL store runs the exported cache/store conformance against real SQLite', async () => {

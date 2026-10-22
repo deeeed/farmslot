@@ -54,6 +54,8 @@ history remains explicit and bounded to 80 rows until the version-list migration
 
 | Native slot diff | Independent run/recipe reads and run-event payload adoption/refetch | Shared slot-run selection, persisted full run and recipe observation; Git diff stays with its content owner and scoped replies | Same native slot recipe proves actual current diff projection on both platforms. Cold unpinned slot selection/content remain for later slices |
 
+| Native slot terminal | Independent run.get/run.forSlot and recipe reads, run-event adoption, subscribe and command-time rereads | Shared canonical run selection and recipe observation; current command preconditions and owner/target-bound terminal view; stream subscription retains its own owner | `terminal-runs-live.recipe.json`; iOS and Android7/7 with verified recording timelines prove a real private-shell key, updates without stream restart, cold exact SQLite timestamp/age, no replay, actor refusal and clearing the previous pane. Notification, readiness and pane-scope controls fail their intended assertions, restore exactly and recover7/7 |
+
 Explicit mutations such as refreshing a publication package retain their command owners.
 They do not adopt returned run data. A shared observation supplies the resulting state.
 Local age clocks repaint saved timestamps without issuing network reads.

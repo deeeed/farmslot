@@ -148,6 +148,25 @@ export async function readSqliteStoreDiagnostics(
   });
 }
 
+/** Read metadata behind the same queue as writes, without opening another SQL connection. */
+export async function readSqliteResourceQueryInfo(
+  database: ResourceSqliteDatabase,
+  scopeId: string,
+  queryId: string,
+): Promise<StoredResourceQueryInfo | undefined> {
+  const owner = owners.get(database) ?? new DatabaseOwner(database);
+  owners.set(database, owner);
+  return owner.serial(
+    async () =>
+      (
+        await database.all<StoredResourceQueryInfo>(
+          'SELECT q.id, q.observed_at AS observedAt, q.bytes FROM resource_queries q JOIN resource_stores s ON s.id = q.store_id WHERE s.scope_id = ? AND q.id = ?',
+          [scopeId, queryId],
+        )
+      )[0],
+  );
+}
+
 /** A memory-only tab can revoke a scope held by the database owner. */
 export async function deleteSqliteResourceStoreScope(
   database: ResourceSqliteDatabase,

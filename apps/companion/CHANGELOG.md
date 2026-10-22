@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback and verified identity handling. Sources, run collections, full run details, slot workspaces and history, diff and artifact contexts, family views, saved reviews and decision workspaces share live observations; saved results show their age and actions wait for current reads. Requires a new native build with Expo SQLite.
+- Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback and verified identity handling. Sources, run collections, full run details, slot workspaces and history, terminal run context, diff and artifact contexts, family views, saved reviews and decision workspaces share live observations; saved results show their age and actions wait for current reads. Requires a new native build with Expo SQLite.
 - Add reproducible client-store baseline recipes with a dev-only native startup and websocket byte counter.
 - Show the existing shared review history panel on run detail while rounds run, as well as at the gate.
 

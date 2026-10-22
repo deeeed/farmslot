@@ -1,7 +1,12 @@
-import type { ResourceStore, ResourceStoreScope } from '@farmslot/protocol/client-cache';
+import type {
+  ResourceStore,
+  ResourceStoreScope,
+  StoredResourceQueryInfo,
+} from '@farmslot/protocol/client-cache';
 
 import {
   createSqliteResourceStore,
+  readSqliteResourceQueryInfo,
   readSqliteStoreDiagnostics,
   type ResourceSqliteDatabase,
   type SqliteValue,
@@ -93,4 +98,13 @@ export async function nativeResourceStoreDiagnostics(
     filename: opened.filename,
     ...(await readSqliteStoreDiagnostics(opened.driver)),
   };
+}
+
+export async function nativeResourceQueryInfo(
+  scopeId: string,
+  queryId: string,
+  databaseName = 'resources.sqlite',
+): Promise<StoredResourceQueryInfo | undefined> {
+  const opened = await database(databaseName);
+  return readSqliteResourceQueryInfo(opened.driver, scopeId, queryId);
 }

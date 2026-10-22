@@ -102,6 +102,7 @@ export function createGatewayResourceCache(
   let disposed = false;
   let version = 0;
   let storeVersion = 0;
+  let hydrationOwnerVersion = 0;
   let lastUsed = 0;
   let storageNotice: string | undefined;
   let needsStore = options.store === undefined && options.openStore !== undefined;
@@ -116,6 +117,7 @@ export function createGatewayResourceCache(
   function storeDeleted(): void {
     if (disposed || retiringStore) return;
     usable = false;
+    hydrationOwnerVersion++;
     version++;
     for (const entry of entries.values()) invalidate(entry, true);
     transport.resynchronize();
@@ -276,6 +278,9 @@ export function createGatewayResourceCache(
     )
       return;
     const ticket = ++version;
+    // Stored facts belong to an owner, not a socket attempt. Fence a revoked
+    // owner's pending I/O synchronously, before queued deletion can run.
+    if (revoke || scopeChanged || authorityChanged) hydrationOwnerVersion++;
     connection = next;
     usable = false;
     revisions.clear();
@@ -438,8 +443,8 @@ export function createGatewayResourceCache(
       await barrier;
       if (disposed || entry.hydrationSerial !== hydrationSerial || entries.get(query.id) !== entry)
         return;
-      const ticket = version;
       const incarnation = storeVersion;
+      const ownerVersion = hydrationOwnerVersion;
       const readingStore = store;
       try {
         const saved = query.persisted ? await readingStore.getQuery(query.id) : undefined;
@@ -447,8 +452,8 @@ export function createGatewayResourceCache(
           !disposed &&
           !readingStore.deleted &&
           entries.get(query.id) === entry &&
-          ticket === version &&
           incarnation === storeVersion &&
+          ownerVersion === hydrationOwnerVersion &&
           entry.hydrationSerial === hydrationSerial &&
           entry.state.status !== 'ready' &&
           saved &&
