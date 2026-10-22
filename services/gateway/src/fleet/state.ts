@@ -27,6 +27,7 @@ import {
   type TmuxWorkerFilterConfig,
   validateQaConfig,
 } from '@farmslot/protocol';
+import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
 import {
   declaredProjectNames,
@@ -289,6 +290,15 @@ interface TaskProgressOverlay {
 
 const taskProgressCache = new Map<string, TaskProgressOverlay>();
 
+function setSlotOverlay<T>(cache: Map<string, T>, slotId: string, value: T | undefined): void {
+  if (canonicalResourceJson(cache.get(slotId)) === canonicalResourceJson(value)) return;
+  if (value === undefined) cache.delete(slotId);
+  else cache.set(slotId, structuredClone(value));
+  // Readers apply current overlays to the retained base rows. Fence an older in-flight file read.
+  fleetReadVersion++;
+  slotResources.overlayChanged(slotId);
+}
+
 export function setTaskProgressOverlay(
   slotId: string,
   phase: string | null,
@@ -296,17 +306,17 @@ export function setTaskProgressOverlay(
   total: number,
 ): void {
   if (!phase || total === 0) {
-    taskProgressCache.delete(slotId);
+    clearTaskProgressOverlay(slotId);
     return;
   }
-  taskProgressCache.set(slotId, {
+  setSlotOverlay(taskProgressCache, slotId, {
     taskPhase: `${phase} ${completed}/${total}`,
     taskStepProgress: completed / total,
   });
 }
 
 export function clearTaskProgressOverlay(slotId: string): void {
-  taskProgressCache.delete(slotId);
+  setSlotOverlay(taskProgressCache, slotId, undefined);
 }
 
 // ─── PR Health overlay (populated by CI monitor ticks) ───
@@ -314,15 +324,11 @@ export function clearTaskProgressOverlay(slotId: string): void {
 const prHealthCache = new Map<string, SlotStatus['prHealth']>();
 
 export function setPrHealthOverlay(slotId: string, prHealth: SlotStatus['prHealth']): void {
-  if (!prHealth) {
-    prHealthCache.delete(slotId);
-    return;
-  }
-  prHealthCache.set(slotId, prHealth);
+  setSlotOverlay(prHealthCache, slotId, prHealth);
 }
 
 export function clearPrHealthOverlay(slotId: string): void {
-  prHealthCache.delete(slotId);
+  setSlotOverlay(prHealthCache, slotId, undefined);
 }
 
 // ─── Branch overlay (enriched by branch-watcher, not persisted to disk) ───
@@ -330,11 +336,11 @@ export function clearPrHealthOverlay(slotId: string): void {
 const branchOverlayCache = new Map<string, string>();
 
 export function setBranchOverlay(slotId: string, branch: string): void {
-  branchOverlayCache.set(slotId, branch);
+  setSlotOverlay(branchOverlayCache, slotId, branch);
 }
 
 export function clearBranchOverlay(slotId: string): void {
-  branchOverlayCache.delete(slotId);
+  setSlotOverlay(branchOverlayCache, slotId, undefined);
 }
 
 // ─── Raw JSON shape from .farm-status.json ───
@@ -573,9 +579,9 @@ function computeResourceRollup(slot: SlotStatus): ResourceRollup {
   return 'coherent';
 }
 
-function transformFleet(raw: RawStatus): FleetStatus {
-  const slots = raw.slots.map((s) => {
-    const slot = transformSlot(s);
+function withFleetOverlays(fleet: FleetStatus): FleetStatus {
+  const slots = fleet.slots.map((base) => {
+    const slot = { ...base };
     const overlay = taskProgressCache.get(slot.slot);
     if (overlay) {
       slot.taskPhase = overlay.taskPhase;
@@ -589,6 +595,14 @@ function transformFleet(raw: RawStatus): FleetStatus {
     if (branchOverride) {
       slot.branch = branchOverride;
     }
+    return slot;
+  });
+  return { ...fleet, slots, machines: getAllMachineHealth() };
+}
+
+function transformFleet(raw: RawStatus): FleetStatus {
+  const slots = raw.slots.map((s) => {
+    const slot = transformSlot(s);
     slot.resourceRollup = computeResourceRollup(slot);
     return slot;
   });
@@ -662,14 +676,12 @@ export async function loadFleetStatus(
     };
     if (version === fleetReadVersion) cachedFleet = next;
   }
-  next.machines = getAllMachineHealth();
-  return next;
+  return withFleetOverlays(next);
 }
 
 export function getCachedFleet(): FleetStatus | null {
   // Connection health is live state, independent of the status-file snapshot.
-  if (cachedFleet) cachedFleet.machines = getAllMachineHealth();
-  return cachedFleet;
+  return cachedFleet ? withFleetOverlays(cachedFleet) : null;
 }
 
 export function setCachedFleetForTests(fleet: FleetStatus | null): void {

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM, plus review command, cold-view and slot-writer proofs.
+- Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM, plus review command, cold-view and slot-fact/branch-writer proofs.
 - Prove linked-ticket search and pasted additional-ticket keys through the browser.
 
 - Let browser proofs set an exact narrow viewport and system appearance.

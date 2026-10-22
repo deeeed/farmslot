@@ -686,6 +686,7 @@ async function detailBrowser(runId) {
 
 if (phase === 'slot-facts-web') {
   assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+  assert.equal(process.env.FARMSLOT_BRANCH_WATCHERS, '1');
   assert(process.env.FARMSLOT_SLOT_RESOURCE_PROOF);
   const fixture = JSON.parse(await readFile(process.env.FARMSLOT_SLOT_RESOURCE_PROOF, 'utf8'));
   assert.equal(await realpath(fixture.home), home);
@@ -697,6 +698,15 @@ if (phase === 'slot-facts-web') {
     (slot) => slot.id === fixture.slotId,
   )?.mode;
   assert.equal(originalMode, 'custom');
+  const repo = await realpath(fixture.repo);
+  assert(repo.startsWith(`${home}/`), 'Only switch the disposable worker repository');
+  assert((await realpath(path.join(repo, '.git'))).startsWith(`${home}/`));
+  const git = async (...args) => (await execute('git', ['-C', repo, ...args])).stdout.trim();
+  assert.equal(await git('status', '--porcelain'), '');
+  const originalBranch = await git('symbolic-ref', '--short', 'HEAD');
+  const originalHead = await git('rev-parse', 'HEAD');
+  const proofBranch = `offline-overlay-${randomUUID()}`;
+  let branchCreated = false;
   const inspect = async () => {
     const fleet = (await rpc('fleet.status')).fleet;
     assert.equal(fleet.slots.length, 1, 'Use an isolated one-slot fleet');
@@ -795,19 +805,108 @@ if (phase === 'slot-facts-web') {
       before = after;
     }
     assert.equal((await inspect()).lifecycle, 'manual');
+    // Pool writes have a two-second hot-reload debounce. Branches must prove their own writer.
+    await delay(2500);
+    const statusFile = path.join(await realpath(process.env.FARMSLOT_ROOT), '.farm-status.json');
+    const beforeStatus = await readFile(statusFile);
+    if (
+      !(await cdp(
+        'eval',
+        route,
+        'return Boolean(document.querySelector(\'slot-view button[title="Info & Actions (Cmd+B)"].active\'));',
+      ))
+    )
+      await cdp('click', route, 'slot-view button[title="Info & Actions (Cmd+B)"]');
+    if (
+      !(await cdp(
+        'eval',
+        route,
+        "return Boolean(document.querySelector('slot-view .sv-info-grid'));",
+      ))
+    )
+      await cdp('click', route, 'slot-view .sv-section-header');
+    before = await until(
+      (value) => value.slotBranch === originalBranch && value.renderedBranch === originalBranch,
+      'The real branch watcher must publish the original branch',
+    );
+    const branchCycles = [];
+    for (const branch of [proofBranch, originalBranch]) {
+      const since = observed.changes.length;
+      if (branch === proofBranch) {
+        await git('switch', '-c', proofBranch);
+        branchCreated = true;
+      } else await git('switch', originalBranch);
+      const after = await until(
+        (value) =>
+          value.slotBranch === branch &&
+          value.renderedBranch === branch &&
+          value.reads?.slot.status === 'ready' &&
+          value.reads.slot.observedAt > before.reads.slot.observedAt,
+        'A branch overlay must refetch the existing canonical slot query without Refresh',
+      );
+      assert.equal(after.reads.slot.query.id, before.reads.slot.query.id);
+      const revision = (value) =>
+        value.reads.slot.resourceState.dependencies.find(
+          ({ key }) => key.family === 'slot' && key.slotId === fixture.slotId,
+        ).revision;
+      assert(revision(after) > revision(before), 'Branch overlay revision must advance');
+      assert.equal((await inspect()).branch, branch);
+      await observed.barrier();
+      const changes = observed.changes.slice(since);
+      assert(changes.some(({ key }) => key.family === 'slot' && key.slotId === fixture.slotId));
+      assert(
+        !changes.some(({ key }) => key.family === 'runs'),
+        'Branch overlays preserve run bindings',
+      );
+      branchCycles.push({
+        branch,
+        priorRevision: revision(before),
+        currentRevision: revision(after),
+        after,
+      });
+      await cdp(
+        'screenshot',
+        route,
+        path.join(artifacts, `branch-${branch === proofBranch ? 'changed' : 'restored'}.png`),
+      );
+      before = after;
+    }
+    await git('branch', '-D', proofBranch);
+    branchCreated = false;
+    assert.equal(await git('rev-parse', 'HEAD'), originalHead);
+    assert.equal(await git('status', '--porcelain'), '');
+    assert.deepEqual(
+      await readFile(statusFile),
+      beforeStatus,
+      'Branch overlays do not rewrite status',
+    );
     assert.deepEqual(await readFile(pool), beforePool);
     assert.equal((await stat(pool)).mode & 0o777, beforePoolMode);
     await writeFile(path.join(artifacts, 'slot-fact-cycles.json'), JSON.stringify(cycles, null, 2));
+    await writeFile(
+      path.join(artifacts, 'branch-overlay-cycles.json'),
+      JSON.stringify(branchCycles, null, 2),
+    );
     result = {
       result: 'PASS',
       slotFactsNotified: true,
       canonicalSlotContextRefetched: true,
       unchangedRunBindingsRetained: true,
+      branchOverlayNotifiedAndRead: true,
       wholeFleetMigrationComplete: false,
     };
   } catch (error) {
     failure = error;
   } finally {
+    if (branchCreated) {
+      try {
+        assert.equal(await git('rev-parse', proofBranch), originalHead);
+        await git('switch', originalBranch);
+        await git('branch', '-D', proofBranch);
+      } catch (error) {
+        cleanup.push(error);
+      }
+    }
     try {
       await inspect();
       await rpc('config.slot.update', { slotId: fixture.slotId, update: { mode: originalMode } });

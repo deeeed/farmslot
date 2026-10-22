@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Slot facts invalidate an open canonical workspace",
-  "description": "ADR-071 fleet migration writer proof. Run from the repository root against an isolated authenticated one-slot gateway and Command Center over CDP. Set FARMSLOT_OFFLINE_PROOF=1, FARMSLOT_DISABLE_ORCHESTRATION=1, FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, GATEWAY_PORT, FARMSLOT_PROJECTS_DIR, FARMSLOT_UI_URL, FARMSLOT_CDP_PORT and FARMSLOT_RUN_WEB_EVIDENCE_DIR. FARMSLOT_SLOT_RESOURCE_PROOF names a setup receipt with home, poolFile, slotId and repo. The pool must be inside the selected home's pool directory, the slot must start in custom mode, and the gateway must contain no runs. A second client changes only that slot's mode through config.slot.update; the helper verifies its actual canonical slot context refetches without Refresh, then restores the exact pool bytes. Use an existing terminal server; the fixture lifecycle must close only its own slot session. No devices or workers are launched and no UI values are injected. This does not claim whole fleet migration or offline fleet persistence.",
+  "title": "Slot facts and branch overlays invalidate an open canonical workspace",
+  "description": "ADR-071 fleet migration writer proof. Run from the repository root against an isolated authenticated one-slot gateway and Command Center over CDP. Set FARMSLOT_OFFLINE_PROOF=1, FARMSLOT_DISABLE_ORCHESTRATION=1, FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, GATEWAY_PORT, FARMSLOT_PROJECTS_DIR, FARMSLOT_UI_URL, FARMSLOT_CDP_PORT and FARMSLOT_RUN_WEB_EVIDENCE_DIR. FARMSLOT_SLOT_RESOURCE_PROOF names a setup receipt with home, poolFile, slotId and repo. The pool must be inside the selected home's pool directory, the slot must start in custom mode, and the gateway must contain no runs. A second client changes only that slot's mode through config.slot.update; the helper verifies its actual canonical slot context refetches without Refresh, then restores the exact pool bytes. Use an existing terminal server; the fixture lifecycle must close only its own slot session. No devices or workers are launched and no UI values are injected. This does not claim whole fleet migration or offline fleet persistence. Set FARMSLOT_BRANCH_WATCHERS=1. After the mode changes, the helper switches branches in the disposable worker repository and restores its original branch, commit and clean state. The real branch watcher must advance the same canonical slot query and render the branch in Slot Info. Task-progress and PR-health setters share the overlay path; this recipe does not claim live task/PR collector acceptance.",
   "proofTargets": [
     {
       "id": "slot-fact-notice",
@@ -10,6 +10,10 @@
     {
       "id": "canonical-slot-refetch",
       "claim": "The open production slot workspace refetches its same canonical query to cover the newer slot revision without Refresh."
+    },
+    {
+      "id": "branch-overlay-notice",
+      "claim": "A real branch change and restoration advance slot revisions, refetch the same canonical slot query and render the branch without Refresh or unrelated run notices."
     }
   ],
   "workflow": {
@@ -38,11 +42,20 @@
         "match": "\"canonicalSlotContextRefetched\":true",
         "intent": "Require the same current query to cover the newer slot revision in both mode transitions.",
         "proves": ["canonical-slot-refetch"],
-        "next": "done"
+        "next": "branch"
       },
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "branch": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"branchOverlayNotifiedAndRead\":true",
+        "intent": "Require the real branch watcher and the same canonical slot query to cover both branch transitions.",
+        "proves": ["branch-overlay-notice"],
+        "next": "done"
       }
     }
   }

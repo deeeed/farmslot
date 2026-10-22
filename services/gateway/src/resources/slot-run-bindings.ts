@@ -48,6 +48,18 @@ export class SlotResourceChanges {
     this.failed = true;
   }
 
+  /** In-memory enrichments change slot facts without changing persisted run ownership. */
+  overlayChanged(slotId: string): void {
+    const row = this.previous?.get(slotId);
+    const keys: ResourceKey[] = [
+      { family: 'slots', scope: 'farm' },
+      { family: 'slot', slotId },
+    ];
+    if (row?.project) keys.push({ family: 'slots', scope: 'farm', project: row.project });
+    if (row?.nodeId) keys.push({ family: 'slots', scope: 'farm', nodeId: row.nodeId });
+    for (const key of keys) this.revisions.advance(key);
+  }
+
   private invalidateSlots(
     ids: readonly string[],
     current?: ReadonlyMap<string, SlotResourceSnapshot>,

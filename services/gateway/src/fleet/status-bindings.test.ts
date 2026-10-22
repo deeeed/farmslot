@@ -38,6 +38,7 @@ mock.module('node:fs/promises', {
 const state = await import('../core/state.js');
 const { getCachedFleet, loadFleetStatus, onStateChange, startFileWatcher } =
   await import('./state.js');
+const overlays = await import('./state.js');
 const { markMachineOnline } = await import('./node-health.js');
 const { readWithResourceState, resourceRevisions } = await import('../resources/revisions.js');
 await import('../runtime/mock-pty.test-support.js');
@@ -45,6 +46,124 @@ const { runSlotHistory } = await import('../methods/run/slot-history.js');
 const { runForSlot, runRecipeRunsForSlot } = await import('../methods/run/context.js');
 const key = { family: 'runs', scope: 'farm' } as const;
 const rows = (owner: string | null) => ({ slots: [{ slot: 'proof', current_run_id: owner }] });
+
+test('overlay writers invalidate current slot facts and cached fleet without changing run bindings', async () => {
+  await state.rewriteStatusFile(() => ({
+    slots: [{ slot: 'proof', project: 'overlay-project', machine: 'overlay-node', branch: 'base' }],
+  }));
+  await loadFleetStatus(false, true);
+  const detail = { family: 'slot', slotId: 'proof' } as const;
+  const collection = { family: 'slots', scope: 'farm' } as const;
+  const beforeRuns = resourceRevisions.revision(key);
+  const prHealth = {
+    pr: 1,
+    conflict: false,
+    ciPassed: 1,
+    ciFailed: 1,
+    ciPending: 0,
+    ciTotal: 2,
+    updatedAt: '2026-10-23T00:00:00Z',
+  };
+  const cases = [
+    {
+      set: () => overlays.setTaskProgressOverlay('proof', 'Validate', 2, 5),
+      clear: () => overlays.clearTaskProgressOverlay('proof'),
+      field: 'taskPhase' as const,
+      expected: 'Validate 2/5',
+    },
+    {
+      set: () => overlays.setPrHealthOverlay('proof', prHealth),
+      clear: () => overlays.clearPrHealthOverlay('proof'),
+      field: 'prHealth' as const,
+      expected: prHealth,
+    },
+    {
+      set: () => overlays.setBranchOverlay('proof', 'changed'),
+      clear: () => overlays.clearBranchOverlay('proof'),
+      field: 'branch' as const,
+      expected: 'changed',
+    },
+  ];
+  for (const entry of cases) {
+    const before = resourceRevisions.revision(detail);
+    const beforeCollection = resourceRevisions.revision(collection);
+    const prior = (await loadFleetStatus(false, true)).slots[0][entry.field];
+    entry.set();
+    assert.equal(resourceRevisions.revision(detail), before + 1);
+    assert.equal(resourceRevisions.revision(collection), beforeCollection + 1);
+    assert.deepEqual(getCachedFleet()?.slots[0][entry.field], entry.expected);
+    assert.deepEqual((await loadFleetStatus(false, true)).slots[0][entry.field], entry.expected);
+    entry.set();
+    assert.equal(resourceRevisions.revision(detail), before + 1, 'Identical overlay stays quiet');
+    entry.clear();
+    assert.equal(resourceRevisions.revision(detail), before + 2);
+    assert.deepEqual((await loadFleetStatus(false, true)).slots[0][entry.field], prior);
+    entry.clear();
+    assert.equal(resourceRevisions.revision(detail), before + 2, 'Absent removal stays quiet');
+  }
+  for (const key of [
+    { family: 'slots', scope: 'farm', project: 'overlay-project' },
+    { family: 'slots', scope: 'farm', nodeId: 'overlay-node' },
+  ] as const)
+    assert(resourceRevisions.revision(key) >= 6);
+  assert.equal(resourceRevisions.revision(key), beforeRuns);
+});
+
+test('PR overlay comparisons retain scalar facts when the caller reuses its object', async () => {
+  await state.rewriteStatusFile(() => rows(null));
+  const health = {
+    pr: 1,
+    conflict: false,
+    ciPassed: 1,
+    ciFailed: 0,
+    ciPending: 0,
+    ciTotal: 1,
+    updatedAt: '2026-10-23T00:00:00Z',
+  };
+  overlays.setPrHealthOverlay('proof', health);
+  const before = resourceRevisions.revision({ family: 'slot', slotId: 'proof' });
+  health.ciFailed = 1;
+  assert.equal((await loadFleetStatus(false, true)).slots[0].prHealth?.ciFailed, 0);
+  overlays.setPrHealthOverlay('proof', health);
+  assert.equal(resourceRevisions.revision({ family: 'slot', slotId: 'proof' }), before + 1);
+  assert.equal((await loadFleetStatus(false, true)).slots[0].prHealth?.ciFailed, 1);
+  overlays.setPrHealthOverlay('proof', undefined);
+});
+
+test('an overlay write fences an older in-flight status-file observation', async () => {
+  await state.rewriteStatusFile(() => ({ slots: [{ slot: 'proof', branch: 'disk' }] }));
+  await loadFleetStatus(false, true);
+  let captured!: () => void;
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  holdNextRead = () => {
+    captured();
+    return gate;
+  };
+  const slow = loadFleetStatus(true, true);
+  await ready;
+  try {
+    overlays.setBranchOverlay('proof', 'overlay');
+    assert.equal(getCachedFleet()?.slots[0].branch, 'overlay');
+    await fs.writeFile(
+      state.statusFile,
+      JSON.stringify({ slots: [{ slot: 'proof', branch: 'new-disk' }] }),
+    );
+    await loadFleetStatus(true, true);
+    release();
+    await slow;
+    overlays.clearBranchOverlay('proof');
+    assert.equal(getCachedFleet()?.slots[0].branch, 'new-disk');
+  } finally {
+    release();
+    overlays.clearBranchOverlay('proof');
+  }
+});
 
 test('every serialized binding writer publishes only after the committed file is readable', async () => {
   await state.rewriteStatusFile(() => rows(null));

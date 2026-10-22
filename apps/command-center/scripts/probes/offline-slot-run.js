@@ -29,10 +29,15 @@ const reads = Object.fromEntries(
 const run = view._linkedRun;
 const lifecycle = view.querySelector('.sv-lifecycle-badge');
 const lifecycleRect = lifecycle?.getBoundingClientRect();
+const branchLabel = [...view.querySelectorAll('.sv-info-key')].find(
+  (element) => element.textContent?.trim() === 'Branch',
+);
 return {
   mounted: true,
   slotId: view.slotId,
   slotLifecycle: view._slot?.lifecycle,
+  slotBranch: view._slot?.branch,
+  renderedBranch: branchLabel?.nextElementSibling?.textContent?.trim(),
   renderedLifecycle: lifecycle?.textContent?.trim(),
   lifecycleVisible: Boolean(
     lifecycleRect &&
