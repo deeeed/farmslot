@@ -98,11 +98,23 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                 </li>`,
             )}
           </ul>
+          ${view.combinedApproval
+            ? html`<section aria-label="Evidence policy gaps being attested">
+                <h3>Evidence policy gaps being attested</h3>
+                <ul data-testid="combined-evidence-gaps">
+                  ${view.evidencePolicyReasons.map((reason) => html`<li>${reason.message}</li>`)}
+                </ul>
+              </section>`
+            : nothing}
           <label
-            >Reason for accepting these findings
+            >${view.combinedApproval
+              ? 'Reason for accepting findings and attesting evidence'
+              : 'Reason for accepting these findings'}
             <textarea
               data-testid="accept-findings-reason"
-              aria-label="Reason for accepting these findings"
+              aria-label=${view.combinedApproval
+                ? 'Reason for accepting findings and attesting evidence'
+                : 'Reason for accepting these findings'}
               .value=${input.attestationReason ?? ''}
               ?disabled=${disabled}
               @input=${(event: Event) =>
@@ -181,7 +193,9 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                   ? 'Submitting…'
                   : input.pendingConfirm === view.approval?.id
                     ? view.approval?.id === view.acceptFindings?.id
-                      ? 'Confirm accepting the findings and publish?'
+                      ? view.combinedApproval
+                        ? 'Confirm findings, evidence attestation and publish?'
+                        : 'Confirm accepting the findings and publish?'
                       : view.attestation
                         ? 'Confirm attestation and publish?'
                         : 'Confirm Publish?'

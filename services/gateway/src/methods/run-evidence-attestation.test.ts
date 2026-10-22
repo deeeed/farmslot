@@ -11,6 +11,8 @@ import {
   type Principal,
   type ReadyGatePrPackage,
   type RunDecision,
+  type RunGateReadiness,
+  type RunResolveDecisionParams,
 } from '@farmslot/protocol';
 
 import { manualTicketData } from '../run-completion/test-fixtures.js';
@@ -34,7 +36,8 @@ const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { makeReadyGatePackage, deleteTestRunIfPresent, retainRunFixture } =
   await import('../run-engine/test-fixtures.js');
 const { computeReadyGatePackageHash } = await import('../run-completion/ready-gate-package.js');
-const { withPublicationProvenance } = await import('../run-completion/evidence-attestation.js');
+const { withPublicationProvenance, assertEvidenceAttestationReceipt } =
+  await import('../run-completion/evidence-attestation.js');
 const { postProcessPRBody, replaceMarkdownSection } =
   await import('../run-completion/publication-artifacts.js');
 const { buildPublishGateReviewStatus } = await import('../run-engine/gate-policy.js');
@@ -465,4 +468,122 @@ test('accepted findings are recorded with the reason, head and approver, and dis
       () => assertAcceptedFindingsCurrent(saved, readiness),
       /no longer match the open findings/,
     );
+});
+
+export async function combinedFixture(t: test.TestContext) {
+  const f = await acceptFixture(t);
+  const readiness: RunGateReadiness = {
+    ...f.readiness,
+    identity: { ...f.readiness.identity, headSha: f.prepared.headSha },
+    reasons: [
+      ...f.readiness.reasons,
+      {
+        code: 'evidence-policy-unsatisfied',
+        prerequisite: 'evidence',
+        evidencePolicy: 'claim-verdict',
+        message: 'The finding describes missing production-state evidence.',
+      },
+    ],
+  };
+  if (f.decision.payload?.kind !== 'ready') throw new Error('Expected a ready gate fixture');
+  f.decision.payload.gateReadiness = readiness;
+  const params: RunResolveDecisionParams = {
+    ...f.params,
+    evidenceAttestationReason: 'I inspected and accept the evidence-policy gap.',
+  };
+  const resolve = (
+    request: RunResolveDecisionParams = params,
+    dependencies: Parameters<typeof runResolveDecision>[2] = {},
+  ) => f.resolve(request, { assertGatePrerequisites: async () => readiness, ...dependencies });
+  return { ...f, readiness, params, resolve };
+}
+
+test('combined approval records both person receipts and discloses both in one resolution', async (t) => {
+  const f = await combinedFixture(t);
+  const result = await f.resolve(f.params, { authorizeEvidenceAttestation: () => approver });
+  const saved = result.run.decisions[0]!;
+  assert.equal(saved.resolvedAction, APPROVE_PUBLISH_UNRESOLVED_ACTION);
+  assert.equal(saved.publicationApproval?.acceptedFindings?.digest, f.readiness.findingsDigest);
+  assert.deepEqual(saved.publicationApproval?.approver, approver);
+  assert.deepEqual(saved.evidenceAttestation?.approver, approver);
+  assert.equal(saved.evidenceAttestation?.packageHash, saved.publicationApproval?.packageHash);
+  assert.equal(saved.evidenceAttestation?.reason, f.params.evidenceAttestationReason);
+  assert.equal(saved.evidenceAttestation?.waivedReasons.length, 1);
+  assert.equal(saved.evidenceAttestation?.waivedReasons[0]!.code, 'evidence-policy-unsatisfied');
+  const body = withPublicationProvenance(result.run, '## Summary\n\nChange.');
+  assert.match(body, /### Accepted review findings/);
+  assert.match(body, /### Evidence policy attestation/);
+  assert.equal(withPublicationProvenance(result.run, body), body);
+});
+
+test('combined receipts must both remain bound to the person, package and current findings at finalize', async (t) => {
+  const f = await combinedFixture(t);
+  const result = await f.resolve(f.params, { authorizeEvidenceAttestation: () => approver });
+  const saved = result.run.decisions[0]!;
+  assertAcceptedFindingsCurrent(saved, f.readiness);
+  assertEvidenceAttestationReceipt(result.run, saved, f.prepared);
+  for (const missing of ['evidence', 'findings'] as const) {
+    const changed = structuredClone(saved);
+    if (missing === 'evidence') changed.evidenceAttestation = undefined;
+    else changed.publicationApproval!.acceptedFindings = undefined;
+    assert.throws(
+      () => assertEvidenceAttestationReceipt(result.run, changed, f.prepared),
+      /does not bind|do not bind/,
+    );
+  }
+  assert.throws(
+    () =>
+      assertAcceptedFindingsCurrent(saved, { ...f.readiness, findingsDigest: 'sha256:changed' }),
+    /no longer match/,
+  );
+  const changed = structuredClone(saved);
+  changed.evidenceAttestation!.approver = { ...approver, principalId: 'another-person' };
+  assert.throws(
+    () => assertEvidenceAttestationReceipt(result.run, changed, f.prepared),
+    /same person/,
+  );
+});
+
+test('combined approval refuses missing consent, changed findings and other blockers without either receipt', async (t) => {
+  for (const scenario of [
+    'missing-consent',
+    'blank-consent',
+    'stale-findings',
+    'extra-blocker',
+    'changed-package',
+  ] as const) {
+    const f = await combinedFixture(t);
+    const request = { ...f.params };
+    if (scenario === 'missing-consent') request.evidenceAttestationReason = undefined;
+    if (scenario === 'blank-consent') request.evidenceAttestationReason = ' ';
+    if (scenario === 'stale-findings') request.findingsDigest = 'sha256:stale';
+    if (scenario === 'extra-blocker')
+      f.readiness.reasons.push({
+        code: 'publication-secret-values',
+        prerequisite: 'evidence',
+        message: 'Secret scan finding',
+      });
+    if (scenario === 'changed-package') f.readiness.identity.packageHash = 'changed';
+    await assert.rejects(f.resolve(request, { authorizeEvidenceAttestation: () => approver }));
+    const saved = getRun(f.run.id)!.decisions[0]!;
+    assert.equal(saved.resolvedAt, undefined, scenario);
+    assert.equal(saved.evidenceAttestation, undefined, scenario);
+    assert.equal(saved.publicationApproval, undefined, scenario);
+  }
+});
+
+test('changing the person before combined consumption leaves both receipts unwritten', async (t) => {
+  const f = await combinedFixture(t);
+  let checks = 0;
+  await assert.rejects(
+    f.resolve(f.params, {
+      authorizeEvidenceAttestation: () =>
+        ++checks < 3 ? approver : { ...approver, credentialId: 'changed-device' },
+    }),
+    /approver changed/,
+  );
+  const saved = getRun(f.run.id)!.decisions[0]!;
+  assert.equal(saved.resolvedAt, undefined);
+  assert.equal(saved.evidenceAttestation, undefined);
+  assert.equal(saved.publicationApproval, undefined);
 });

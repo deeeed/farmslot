@@ -765,8 +765,9 @@ export async function createEngineDecision(
       if (resolvedAction === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION) {
         if (payload?.kind !== 'ready' || !payload.prPackage)
           throw new Error('Attested approval replay requires its publication package.');
-        assertEvidenceAttestationReceipt(run, existing, payload.prPackage);
       }
+      if (payload?.kind === 'ready' && payload.prPackage)
+        assertEvidenceAttestationReceipt(run, existing, payload.prPackage);
       assertAcceptedFindingsCurrent(existing, readiness);
       return resolvedAction!;
     }

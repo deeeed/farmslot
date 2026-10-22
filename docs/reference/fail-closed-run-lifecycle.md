@@ -75,8 +75,9 @@ person session with human-attestation authority may take it, with a written
 reason that is non-empty after trimming. Service, node and unauthenticated
 callers are refused.
 
-It yields only `review-fix-required` and `review-result-required`. Every other
-reason, including `review-result-invalid`, still refuses it. It is available only
+Outside the combined approval below, it yields only `review-fix-required` and
+`review-result-required`. Every other reason, including `review-result-invalid`,
+still refuses it. It is available only
 when the required number of reviews returned a valid structured result for the
 prepared package, every review reporting an open finding at the head returned
 one, at least one finding is open and no fix or review is running. Then the
@@ -90,6 +91,43 @@ and the finalize recheck refuse when the head's open findings have a different
 digest. The publication approval records the accepted findings and digest, the
 reason, the package head and the approver, and the published PR body discloses
 them under "Accepted review findings".
+
+### Combined findings acceptance and evidence attestation
+
+When readiness is `not-ready`, the gateway MAY offer one combined
+`approve-publish-unresolved` action only if checked findings and their
+`findingsDigest` exist, at least one `review-fix-required` reason explicitly
+allows that action, at least one attestable evidence-policy reason exists, and
+every reason belongs to those two groups. Attestable evidence reasons retain
+the existing `evidence-policy-unsatisfied` category and its `execution-verdict`,
+`claim-verdict` or `criterion-binding` policy. `review-result-required`, invalid
+reviews, missing media, secret-scan findings, deterministic failures, stale or
+unknown inputs and progressing work MUST NOT be waived by this combination.
+
+The shared availability and action-reason helpers MUST apply that exact rule at
+listing, resolution and finalization. Both clients MUST display a combined
+approval label, the checked findings and the evidence-policy reasons being
+attested. One confirmation and one written reason MAY cover both decisions.
+The request MUST carry non-empty `reason` and `evidenceAttestationReason`, the
+displayed `findingsDigest` and the existing frozen package selection. The CLI
+MUST require explicit `--attest-evidence` with this action and `--reason` to
+send both reason fields. A request that only accepts findings MUST refuse a
+mixed gate; it MUST NOT acquire evidence consent implicitly.
+
+Only the existing person-session human-attestation authority may approve. At
+consumption, the gateway MUST recheck that authority and the run generation,
+package hash, head, evidence selection, findings digest and complete reason set.
+It MUST atomically retain the existing accepted-findings publication approval
+and evidence-policy attestation before advancing. Any refusal MUST leave the
+decision unresolved and retain neither new receipt. Each receipt MUST identify
+the same person and frozen package, and retain its existing reason and scope.
+The evidence receipt waives only the checked evidence-policy reasons.
+
+Finalization MUST validate both receipts and the accepted findings against the
+approved package; a missing, stale or mismatched receipt MUST refuse publication.
+The published PR MUST disclose both the accepted findings and the evidence
+attestation using the existing renderers. Raw review results, claim verdicts and
+proof remain unchanged. Other approval modes retain their existing semantics.
 
 ### Claim confirmation and retained review findings
 

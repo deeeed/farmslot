@@ -390,12 +390,33 @@ export function GateActions({
               {`${finding.file}${finding.line ? `:${finding.line}` : ''}  ${finding.description}`}
             </Text>
           ))}
+          {view.combinedApproval ? (
+            <View
+              accessibilityLabel="Evidence policy gaps being attested"
+              testID="companion-combined-evidence-gaps"
+            >
+              <Text style={[gateStyles.label, { color: palette.text }]}>
+                Evidence policy gaps being attested
+              </Text>
+              {view.evidencePolicyReasons.map((reason, index) => (
+                <Text key={index} style={{ color: palette.text }}>
+                  {reason.message}
+                </Text>
+              ))}
+            </View>
+          ) : null}
           <Text style={[gateStyles.label, { color: palette.text }]}>
-            Reason for accepting these findings
+            {view.combinedApproval
+              ? 'Reason for accepting findings and attesting evidence'
+              : 'Reason for accepting these findings'}
           </Text>
           <TextInput
             testID="companion-accept-findings-reason"
-            accessibilityLabel="Reason for accepting these findings"
+            accessibilityLabel={
+              view.combinedApproval
+                ? 'Reason for accepting findings and attesting evidence'
+                : 'Reason for accepting these findings'
+            }
             multiline
             value={attestationReason}
             editable={!disabled && sendingActionId === null}
