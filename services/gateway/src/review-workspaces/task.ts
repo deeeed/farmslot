@@ -30,7 +30,9 @@ import {
 } from '@farmslot/protocol';
 import {
   isReviewSeverity,
+  normalizeReviewSeverity,
   renderApprovalPolicy,
+  renderReviewResultInstructions,
   resolveApprovalPolicy,
   ReviewApprovalPolicyError,
   type ReviewSeverity,
@@ -58,6 +60,7 @@ import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { nextReviewBudgetScopeBrief } from '../review/review-round-budget.js';
 import {
   assertReviewCommentLines,
+  assertReviewFindingBodies,
   readReviewCommentDiff,
 } from '../review-publication/validate-comments.js';
 import { mirrorWorkerSubtasks } from '../run-completion/artifact-mirror.js';
@@ -384,7 +387,7 @@ export async function materializeReviewWorkspaceTask(
       'Run ./mark start once, then read its SIGNAL.json attemptId. Use ./mark N for checklist progress.',
       'Write artifacts/review.md with VERDICT: APPROVE, REQUEST_CHANGES or COMMENT, exact COMMIT, findings, evidence and unchecked areas.',
       'Write artifacts/line-comments.json as {"comments":[{"path":"file","line":1,"body":"finding","severity":"major"}]}; use an empty comments array for a clean review.',
-      `Write ${RESULT} using schemaVersion 1, all findings in issues as {file,line,description,severity}, and recommendation matching the policy and report. Use verdict "pass" when the policy permits APPROVE, otherwise "issues". With no findings, issues is [].`,
+      renderReviewResultInstructions(RESULT),
       `Add runId ${JSON.stringify(run.id)}, workspaceId ${JSON.stringify(run.reviewWorkspace.workspaceId)}, headSha ${JSON.stringify(subject.headSha)}, baseSha ${JSON.stringify(subject.baseSha)}, attemptId copied from SIGNAL.json, and reportSha256 containing the SHA-256 of the exact review.md bytes.`,
       `Required artifacts: ${terminalContract.commands.complete.artifacts.join(', ')}.`,
       'Every inline entry must match an authoritative issue: path=file, body=description, line and severity. Out-of-diff findings stay in issues and the review body, without an inline entry.',
@@ -656,23 +659,16 @@ export async function readReviewWorkspaceCompletion(
     artifact.attemptId !== signal.attemptId
   )
     throw new Error('Static review result does not match its exact source/task/attempt identity');
-  const issues = artifact.issues as Array<{
-    file: string;
-    line: number;
-    description: string;
-    severity: string;
-  }>;
+  const issues = feedback.issues;
   if (
     issues.some(
       (issue) =>
         !isReviewSeverity(issue.severity) ||
-        !Number.isInteger(issue.line) ||
-        issue.line < 1 ||
         path.posix.isAbsolute(issue.file) ||
         !within('.', issue.file),
     )
   )
-    throw new Error('Static review findings require source-relative file/line and severity');
+    throw new Error('Static review findings require source-relative paths and canonical severity');
   const reviewMd = await confinedRead(io, taskDir, 'artifacts/review.md');
   if (!reviewMd.trim() || artifact.reportSha256 !== sha256(reviewMd))
     throw new Error('Static review report is missing or its digest changed');
@@ -697,29 +693,21 @@ export async function readReviewWorkspaceCompletion(
     throw new Error('Static review checklist is incomplete or changed beyond completion marks');
   const lineComments = resolveStaticReviewLineComments(
     feedback.verdict,
-    issues.map((issue) => ({
-      path: issue.file,
-      line: issue.line,
-      body: issue.description,
-      severity: issue.severity,
-    })),
+    issues.flatMap((issue) =>
+      issue.line === undefined
+        ? []
+        : [
+            {
+              path: issue.file,
+              line: issue.line,
+              body: issue.description,
+              severity: normalizeReviewSeverity(issue.severity),
+            },
+          ],
+    ),
     commentInput,
   );
-  const expectedComments = issues.map((issue) => ({
-    path: issue.file,
-    line: issue.line,
-    body: issue.description,
-    severity: issue.severity,
-  }));
-  for (const issue of expectedComments) {
-    if (
-      !lineComments.some((comment) => isDeepStrictEqual(issue, comment)) &&
-      !reviewMd.includes(issue.body)
-    )
-      throw new Error(
-        'Static review line comments disagree with its authoritative findings: out-of-diff findings must appear in the review body',
-      );
-  }
+  assertReviewFindingBodies(feedback.issues, lineComments, reviewMd);
   const recommendation = feedback.recommendation;
   if (!recommendation) throw new Error('Static review recommendation could not be validated');
   if (recommendation === 'APPROVE' && (blocked || feedback.verdict !== 'pass'))

@@ -26,3 +26,6 @@ export class ReviewApprovalPolicyError extends Error {
   recommendation: ReviewRecommendation;
   constructor(recommendation: ReviewRecommendation);
 }
+
+export function normalizeReviewSeverity(value: unknown): ReviewSeverity;
+export function renderReviewResultInstructions(resultPath: string): string;

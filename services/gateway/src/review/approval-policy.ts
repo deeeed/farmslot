@@ -9,6 +9,7 @@ export async function loadReviewApprovalPolicy(project: string) {
   try {
     return resolveApprovalPolicy((await loadProjectVars(project)).projectJson.approvalPolicy);
   } catch (error) {
+    // Legacy and ad hoc review rows without a project pack inherit the shared defaults.
     if (error instanceof Error && error.message.startsWith('Project config not found:'))
       return resolveApprovalPolicy();
     throw error;

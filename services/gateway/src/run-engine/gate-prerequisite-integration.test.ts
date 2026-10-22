@@ -158,5 +158,9 @@ test('static review gate validates its exact admitted report through the owner r
   );
   assert.equal((await check()).state, 'not-ready');
   await writeFile(path.join(root, 'artifacts/review.md'), `VERDICT: APPROVE\nCOMMIT: ${head}\n`);
+  await writeFile(
+    path.join(root, 'artifacts/review-result.json'),
+    JSON.stringify({ schemaVersion: 1, verdict: 'pass', recommendation: 'APPROVE', issues: [] }),
+  );
   assert.equal((await check()).state, 'ready');
 });

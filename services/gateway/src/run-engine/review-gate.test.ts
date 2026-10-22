@@ -59,6 +59,10 @@ test('refresh preserves the fresh decision list and refuses an in-flight resolut
   await writeFile(path.join(root, 'artifacts/review.md'), 'Recommendation: COMMENT\nNew report');
   await writeFile(path.join(root, 'artifacts/result.png'), 'review image');
   await writeFile(
+    path.join(root, 'artifacts/review-result.json'),
+    JSON.stringify({ schemaVersion: 1, verdict: 'pass', recommendation: 'COMMENT', issues: [] }),
+  );
+  await writeFile(
     path.join(root, 'artifacts/line-comments.json'),
     JSON.stringify({
       comments: [],
@@ -91,7 +95,11 @@ test('refresh preserves the fresh decision list and refuses an in-flight resolut
     createdAt: new Date().toISOString(),
     payload,
   };
-  updateRun(run.id, { taskFile: path.join(root, 'TASK.md'), decisions: [decision] });
+  updateRun(run.id, {
+    taskFile: path.join(root, 'TASK.md'),
+    decisions: [decision],
+    reviewResult: { recommendation: 'APPROVE', reviewMd: 'Original', lineComments: [] },
+  });
   const refreshing = refreshReviewGate(run.id);
   const sibling = { ...decision, id: 'sibling', type: 'engine_retrospective' as const };
   updateRun(run.id, { decisions: [decision, sibling] });
@@ -101,6 +109,8 @@ test('refresh preserves the fresh decision list and refuses an in-flight resolut
     ['posting', 'sibling'],
   );
   assert.match((refreshed.decisions[0].payload as ReviewGatePayload).reviewMd, /New report/);
+  assert.equal(refreshed.reviewResult?.recommendation, 'COMMENT');
+  assert.match(refreshed.reviewResult.reviewMd, /New report/);
   assert.ok(
     (refreshed.decisions[0].payload as ReviewGatePayload).artifactManifest?.find(
       (artifact) => artifact.path === 'artifacts/result.png',

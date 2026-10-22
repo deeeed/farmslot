@@ -17,7 +17,10 @@ import {
   type RunnerSessionUsage,
   type WorkerSignalChecklistTiming,
 } from '@farmslot/protocol';
-import type { ReviewRecommendation } from '@farmslot/protocol/review-approval-policy.cjs';
+import {
+  renderReviewResultInstructions,
+  type ReviewRecommendation,
+} from '@farmslot/protocol/review-approval-policy.cjs';
 import { executionModelFromSelection, reviewArtifactDir } from '@farmslot/review-dispatch';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
@@ -293,28 +296,6 @@ export function reReviewChecklistPrefix(params: {
       artifactScope: priorScope,
     }),
   ].join('\n');
-}
-
-function structuredReviewResultInstructions(resultRelPath: string): string {
-  return `
-
-## Machine-readable review result
-
-Write \`${resultRelPath}\` as JSON before completing:
-
-\`\`\`json
-{
-  "schemaVersion": 1,
-  "verdict": "pass",
-  "recommendation": "APPROVE",
-  "issues": []
-}
-\`\`\`
-
-For an issues verdict, set \`verdict\` to \`"issues"\` and include at least one
-\`{ "file": "path", "line": 1, "description": "specific finding", "severity": "minor" }\` entry.
-Use verdict pass when the shared approval policy permits APPROVE, otherwise issues. The recommendation must match that policy. Retain permitted nits in issues even with verdict pass.
-The JSON verdict and issues are authoritative; the Markdown file is the human-readable report.`;
 }
 
 /** A native reviewer's context id starts with this; a launch with the same inputs reattaches to it. */
@@ -631,7 +612,7 @@ export function scopeReviewFeedbackPath(
       ? scoped
       : `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
   return resultRelPath
-    ? `${feedbackScoped.trimEnd()}${structuredReviewResultInstructions(resultRelPath)}`
+    ? `${feedbackScoped.trimEnd()}${renderReviewResultInstructions(resultRelPath)}`
     : feedbackScoped;
 }
 

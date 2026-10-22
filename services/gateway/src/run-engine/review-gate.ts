@@ -17,10 +17,7 @@ import {
   type Run,
   selectReviewFindings,
 } from '@farmslot/protocol';
-import {
-  assertReviewRecommendation,
-  ReviewApprovalPolicyError,
-} from '@farmslot/protocol/review-approval-policy.cjs';
+import { ReviewApprovalPolicyError } from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { farmslotRoot, getProjectField, resolveProjectTaskDirName } from '../core/config.js';
 import { fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
@@ -29,7 +26,6 @@ import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js'
 import { auditEvidenceQuality } from '../intelligence/engine.js';
 import { resolveDefaultPublicationAccount } from '../pr-monitoring/github-account.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
-import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
 import { assertReviewCommentLines } from '../review-publication/validate-comments.js';
 import {
   markReviewedFilesViewed,
@@ -163,11 +159,6 @@ export async function executeReviewGate(runId: string): Promise<void> {
   ];
   reviewSnapshot = reviewInputSnapshot.snapshot;
   if (review.hasReview) {
-    assertReviewRecommendation(
-      review.lineComments,
-      review.recommendation,
-      await loadReviewApprovalPolicy(current.project),
-    );
     if (review.lineComments.length) {
       if (!reviewSnapshot) throw new Error('Review diff identity is unavailable');
       await assertReviewCommentLines(current, review.lineComments, reviewSnapshot);
@@ -655,7 +646,8 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
                 ...entry,
                 payload: {
                   ...(entry.payload as ReviewGatePayload),
-                  recommendation: error.recommendation,
+                  recommendation:
+                    error.recommendation === 'APPROVE' ? 'COMMENT' : error.recommendation,
                 },
                 description: `${error.message}. Correct the updated review result before publication.`,
                 actions,
@@ -697,13 +689,8 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
     return evaluated;
   }
   await copyWorkerArtifacts(runId);
-  const review = await readReviewArtifacts(runId);
+  const review = await readReviewArtifacts(runId).catch(invalidateApproval);
   try {
-    assertReviewRecommendation(
-      review.lineComments,
-      review.recommendation,
-      await loadReviewApprovalPolicy(run.project),
-    );
     if (review.lineComments.length) {
       const snapshot = (decision.payload as ReviewGatePayload).reviewSnapshot;
       if (!snapshot) throw new Error('Review diff identity is unavailable');
@@ -749,7 +736,20 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   };
   const nextDecisions = target.run.decisions.map((d) => (d.id === decision.id ? nextDecision : d));
 
-  const evaluated = await refreshRunGateReadiness(updateRun(runId, { decisions: nextDecisions }));
+  const evaluated = await refreshRunGateReadiness(
+    updateRun(runId, {
+      decisions: nextDecisions,
+      reviewResult: {
+        ...target.run.reviewResult,
+        recommendation: review.recommendation,
+        reviewMd: review.reviewMd,
+        lineComments: review.lineComments,
+        reviewSnapshot: nextPayload.reviewSnapshot,
+        ...(artifactManifest ? { artifactManifest } : {}),
+      },
+    }),
+  );
+  await persistRunNow(evaluated, 'refresh primary review gate');
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — review gate refreshed (rec=${review.recommendation}, comments=${review.lineComments.length})`,

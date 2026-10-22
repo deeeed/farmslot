@@ -313,6 +313,10 @@ test('refreshReviewGate does not let worker artifacts overwrite gateway-owned pa
     'Recommendation: APPROVE\n\n## Summary\nWorker review updated\n',
   );
   await writeFile(path.join(workerTaskDir, 'artifacts/line-comments.json'), '[]\n');
+  await writeFile(
+    path.join(workerTaskDir, 'artifacts/review-result.json'),
+    JSON.stringify({ schemaVersion: 1, verdict: 'pass', recommendation: 'APPROVE', issues: [] }),
+  );
   await writeFile(path.join(workerTaskDir, 'artifacts/pr-package.json'), '{"owner":"worker"}\n');
   await writeFile(path.join(workerTaskDir, 'artifacts/review-loop-1/review.diff'), 'worker diff\n');
   await writeFile(

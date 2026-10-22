@@ -81,6 +81,12 @@ test('refresh invalidates stale APPROVE and then projects revised minor and majo
   assert.equal((current.decisions[0].payload as ReviewGatePayload).recommendation, 'COMMENT');
   assert.equal(current.reviewResult, undefined);
   assert(!current.decisions[0].actions.some((action) => action.id === 'post'));
+  latest = new ReviewApprovalPolicyError('APPROVE');
+  await assert.rejects(refreshReviewGate(run.id), /require APPROVE/);
+  assert.equal(
+    (getRun(run.id)!.decisions[0].payload as ReviewGatePayload).recommendation,
+    'COMMENT',
+  );
   for (const recommendation of ['COMMENT', 'REQUEST_CHANGES'] as const) {
     latest = {
       signal: { status: 'complete', outcome: 'success', timestamp: new Date().toISOString() },

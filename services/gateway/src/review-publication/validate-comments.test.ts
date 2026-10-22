@@ -5,7 +5,7 @@ import type { ReviewDiffSnapshot } from '@farmslot/protocol';
 
 import { makeRun } from '../run-completion/test-fixtures.js';
 
-import { assertReviewCommentLines } from './validate-comments.js';
+import { assertReviewCommentLines, assertReviewFindingBodies } from './validate-comments.js';
 
 const snapshot: ReviewDiffSnapshot = {
   baseSha: 'a'.repeat(40),
@@ -52,4 +52,14 @@ test('inline review comments resolve to added or context lines at the frozen hea
     }),
     /head is unavailable/,
   );
+});
+
+test('a body-only finding keeps its ask without inventing an inline line', () => {
+  const issue = {
+    file: 'PR description',
+    description: 'Remove the unsupported coverage claim',
+    severity: 'minor' as const,
+  };
+  assert.doesNotThrow(() => assertReviewFindingBodies([issue], [], issue.description));
+  assert.throws(() => assertReviewFindingBodies([issue], [], 'No findings'), /review body/);
 });

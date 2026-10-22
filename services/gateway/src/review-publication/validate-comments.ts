@@ -1,4 +1,5 @@
-import type { ReviewDiffSnapshot, ReviewLineComment, Run } from '@farmslot/protocol';
+import type { ReviewDiffSnapshot, ReviewIssue, ReviewLineComment, Run } from '@farmslot/protocol';
+import { normalizeReviewSeverity } from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { gitExec } from '../methods/git.js';
 import { workspaceReviewGit } from '../review-workspaces/git.js';
@@ -20,7 +21,7 @@ export async function readReviewCommentDiff(run: Run, snapshot: ReviewDiffSnapsh
   return (
     await gitExec(
       run.slotId ?? '',
-      ['diff', `${snapshot.baseSha}...${snapshot.headSha}`, '--', file],
+      ['diff', `${snapshot.baseSha}...${snapshot.headSha}`, '--', `:(literal)${file}`],
       { maxBuffer: 10 * 1024 * 1024 },
       deps,
     )
@@ -45,4 +46,25 @@ export async function assertReviewCommentLines(
       }
     }),
   );
+}
+
+/** Body-only findings must survive publication when there is no inline location. */
+export function assertReviewFindingBodies(
+  issues: ReviewIssue[],
+  comments: ReviewLineComment[],
+  report: string,
+): void {
+  for (const issue of issues) {
+    const inline = comments.some(
+      (comment) =>
+        comment.path === issue.file &&
+        comment.line === issue.line &&
+        comment.body === issue.description &&
+        normalizeReviewSeverity(comment.severity) === normalizeReviewSeverity(issue.severity),
+    );
+    if (!inline && !report.includes(issue.description))
+      throw new Error(
+        'Review line comments disagree with authoritative findings: body-only findings must appear in the review body',
+      );
+  }
 }

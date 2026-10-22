@@ -34,15 +34,20 @@ function resolveApprovalPolicy(value) {
   return policy;
 }
 
+function normalizeReviewSeverity(value) {
+  const legacy = { must_fix: 'major', suggestion: 'minor', nitpick: 'nit', comment: 'nit' };
+  const severity = legacy[value] ?? value ?? 'major';
+  if (!isReviewSeverity(severity))
+    throw new Error('Review severity must be blocker, major, minor or nit');
+  return severity;
+}
+
 function reviewRecommendation(findings, value) {
   const policy = resolveApprovalPolicy(value);
   const counts = { blocker: 0, major: 0, minor: 0, nit: 0 };
   for (const finding of findings) {
     // Older results omitted severity; they cannot grant an approval.
-    const legacy = { must_fix: 'major', suggestion: 'minor', nitpick: 'nit', comment: 'nit' };
-    const severity = legacy[finding.severity] ?? finding.severity ?? 'major';
-    if (!severities.includes(severity))
-      throw new Error('Review severity must be blocker, major, minor or nit');
+    const severity = normalizeReviewSeverity(finding.severity);
     counts[severity]++;
   }
   const required = ['APPROVE'];
@@ -81,7 +86,32 @@ function renderApprovalPolicy(value) {
   ].join('\n');
 }
 
+function renderReviewResultInstructions(resultRelPath) {
+  return `
+
+## Machine-readable review result
+
+Write \`${resultRelPath}\` as JSON before completing:
+
+\`\`\`json
+{
+  "schemaVersion": 1,
+  "verdict": "pass",
+  "recommendation": "APPROVE",
+  "issues": []
+}
+\`\`\`
+
+For an issues verdict, set \`verdict\` to \`"issues"\` and include at least one
+\`{ "file": "path", "line": 1, "description": "specific finding", "severity": "minor" }\` entry.
+Use verdict pass when the shared approval policy permits APPROVE, otherwise issues. The recommendation must match that policy. Retain permitted nits in issues even with verdict pass.
+Omit line for body-only findings without a source location.
+The JSON verdict and issues are authoritative; the Markdown file is the human-readable report.`;
+}
+
 module.exports = {
+  normalizeReviewSeverity,
+  renderReviewResultInstructions,
   isReviewSeverity,
   DEFAULT_APPROVAL_POLICY,
   resolveApprovalPolicy,
