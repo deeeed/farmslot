@@ -68,7 +68,10 @@ import { replaySlotCapabilityRequirements } from '../../run-engine/slot-capabili
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import { assertRunNotArchiving, isRunArchivingRefusal } from '../../run-lifecycle/archive-fence.js';
 import { cancelledSlotReplayRefusal } from '../../run-lifecycle/cancelled-slot-reclaim.js';
-import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
+import {
+  acquireRunTransition,
+  withRunTransition,
+} from '../../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -941,9 +944,9 @@ export async function runReplayStep(
   emit: Emit,
   hooks: RunReplayStepHooks = {},
 ): Promise<RunReplayStepResult> {
-  // Cancelled replay and demand reclamation must admit exactly one owner before
-  // either path awaits cleanup or revives a worker. Blocked-resume callers already
-  // hold their transition and do not enter this cancelled-only bracket.
+  // Cancelled replay serializes demand reclamation before any cleanup. Other
+  // terminal replays protect only claim-to-revive below, so preflight remains
+  // interruptible by force-complete. Blocked resume already holds its transition.
   if (getRun(params.runId)?.status === 'cancelled')
     return withRunTransition(params.runId, () => replayRunStepCoalesced(params, emit, hooks, true));
   return replayRunStepCoalesced(params, emit, hooks);
@@ -1366,6 +1369,7 @@ async function replayRunStep(
 
   let reclaimedSlotId: string | null = null;
   let reclaimedSlotEpoch: number | null = null;
+  let releaseClaimTransition: (() => Promise<void>) | undefined;
   let priorOwnedSlotFields: Record<string, unknown> | null = null;
   const priorRunSlotId = existing.slotId ?? null;
   const selectionGeneration = existing.engineState?.generation;
@@ -1448,7 +1452,14 @@ async function replayRunStep(
           const release = await slotRelease(
             { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
             () => {},
-            rollbackReclaimedSlotReleaseOptions(existing.status, params.runId, reclaimedSlotEpoch),
+            {
+              ...rollbackReclaimedSlotReleaseOptions(
+                existing.status,
+                params.runId,
+                reclaimedSlotEpoch,
+              ),
+              machineTransitionHeld,
+            },
           );
           if (!release.released) {
             const current = await readSlotRow(reclaimedSlotId);
@@ -1644,6 +1655,10 @@ async function replayRunStep(
     } else {
       const replaySlotId = recoverReplaySlotId(replaySnapshot, targetIdx, findSlotIdx, prepareIdx);
       if (replaySlotId) {
+        if (!machineTransitionHeld && isTerminalRunStatus(existing.status)) {
+          releaseClaimTransition = await acquireRunTransition(params.runId);
+          machineTransitionHeld = true;
+        }
         // Re-claim only when the slot is free or still owned by this run. A released run
         // can keep stale agentContext.slotId history after its slot is reassigned; blindly
         // writing slot status here would steal that physical worker from the new run.
@@ -2257,6 +2272,12 @@ async function replayRunStep(
     // launchAttempt differs (N vs N+1 requeue).
     await persistRunNow(getRun(params.runId)!, 'replay-revive');
     revived = true;
+    if (releaseClaimTransition) {
+      const release = releaseClaimTransition;
+      releaseClaimTransition = undefined;
+      await release();
+      machineTransitionHeld = false;
+    }
     if (gateReentry) gateReentry.revived = true;
     const lockToDrop = softLock;
     if (lockToDrop) {
@@ -2316,5 +2337,7 @@ async function replayRunStep(
       }
     }
     throw err;
+  } finally {
+    await releaseClaimTransition?.();
   }
 }

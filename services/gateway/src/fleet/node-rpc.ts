@@ -143,10 +143,13 @@ export class NodeRpcTimeoutError extends NodeTransportUnavailableError {
 
 /** The command was sent, but its original connection did not confirm process closeout. */
 export class NodeExecUnconfirmedError extends NodeTransportUnavailableError {
+  readonly #executionConnection: WebSocket | undefined;
+
   constructor(
     machine: string,
     readonly requestId: string,
     reason: NodeTransportUnavailableReason,
+    executionConnection?: WebSocket,
   ) {
     super(
       machine,
@@ -154,6 +157,11 @@ export class NodeExecUnconfirmedError extends NodeTransportUnavailableError {
       `Execution ${requestId} on ${machine} has unconfirmed closeout (${reason}); preserve its resources until verified.`,
     );
     this.name = 'NodeExecUnconfirmedError';
+    this.#executionConnection = executionConnection;
+  }
+
+  get executionConnection(): WebSocket | undefined {
+    return this.#executionConnection;
   }
 }
 
@@ -249,7 +257,9 @@ function sendNodeRequestStreaming(
     let cancelling = false;
     let stopObservingAbort = () => {};
     const fail = (reason: NodeTransportUnavailableReason) => {
-      takePendingRequest(id)?.reject(new NodeExecUnconfirmedError(node.machine, id, reason));
+      takePendingRequest(id)?.reject(
+        new NodeExecUnconfirmedError(node.machine, id, reason, node.ws),
+      );
     };
     const cancel = () => {
       const request = pending.get(id);

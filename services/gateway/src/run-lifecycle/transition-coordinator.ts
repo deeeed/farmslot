@@ -81,6 +81,27 @@ export const withMachineRunTransition = <T>(machine: string, operation: Transiti
 export const withRunTransition = <T>(runId: string, operation: TransitionOperation<T>) =>
   runTransitionCoordinator.withRun(runId, operation);
 
+/** Hold the existing transition across replay's claim-to-revive interval. */
+export async function acquireRunTransition(runId: string): Promise<() => Promise<void>> {
+  let entered!: () => void;
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const completion = withRunTransition(runId, async () => {
+    entered();
+    await held;
+  });
+  await Promise.race([ready, completion]);
+  return async () => {
+    release();
+    await completion;
+  };
+}
+
 export const withRunTransitionWhileMachineHeld = <T>(
   runId: string,
   operation: TransitionOperation<T>,
