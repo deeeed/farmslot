@@ -10,6 +10,7 @@
 //   node scripts/cdp.mjs login <hash>                 Fill the auth form from an explicit test profile.
 //   node scripts/cdp.mjs screenshot <hash> <path>      Capture a PNG screenshot of a page tab.
 //   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
+//   node scripts/cdp.mjs appearance <hash> <dark|light> Emulate system appearance.
 //   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
 //   node scripts/cdp.mjs click <hash> <selector>       Click a control, searching shadow roots.
 //   node scripts/cdp.mjs select <hash> <selector> <value> Choose a styled choice or native select option.
@@ -286,7 +287,28 @@ async function viewportTab(hash, width, height) {
   try {
     const { windowId } = await call('Browser.getWindowForTarget', { targetId: tab.id });
     await call('Browser.setContentsSize', { windowId, width, height });
+    await call('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
     return { width, height };
+  } finally {
+    close();
+  }
+}
+
+async function appearanceTab(hash, appearance) {
+  if (!['dark', 'light'].includes(appearance)) die('Use dark or light appearance');
+  const tab = await findTab(hash);
+  if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+  const { call, close } = await connect(tab.webSocketDebuggerUrl);
+  try {
+    await call('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-color-scheme', value: appearance }],
+    });
+    return { appearance };
   } finally {
     close();
   }
@@ -636,6 +658,10 @@ try {
     if (!hash || width === undefined || height === undefined)
       die('usage: cdp.mjs viewport <hash> <width> <height>');
     console.log(JSON.stringify(await viewportTab(hash, Number(width), Number(height)), null, 2));
+  } else if (cmd === 'appearance') {
+    const [hash, appearance] = rest;
+    if (!hash || !appearance) die('usage: cdp.mjs appearance <hash> <dark|light>');
+    console.log(JSON.stringify(await appearanceTab(hash, appearance), null, 2));
   } else if (cmd === 'screenshot') {
     const [hash, outputPath] = rest;
     if (!hash || !outputPath) die('usage: cdp.mjs screenshot <hash|-|route> <output.png>');
@@ -648,7 +674,7 @@ try {
     console.log(JSON.stringify(result, null, 2));
   } else {
     die(
-      'usage: cdp.mjs <tabs | goto | eval | close | focus | login | click | fill | select | viewport | screenshot | gateway> ...',
+      'usage: cdp.mjs <tabs | goto | eval | close | focus | login | click | fill | select | viewport | appearance | screenshot | gateway> ...',
     );
   }
 } catch (err) {

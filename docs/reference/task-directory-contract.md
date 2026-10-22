@@ -21,6 +21,23 @@ acceptance array in source order. Paragraph boundaries exclude unrelated prose.
 Existing structured criteria remain authoritative. Generated TASK.md and
 `inputs/handoff.json` MUST consume that same normalized array.
 
+## Run checklist progress
+
+Command Center and Companion MUST retain the run pipeline and, when its current
+step has structured checklist data, show a thinner bar beneath it with
+`completedSteps/totalSteps` and `currentStep`. They MUST NOT derive totals from
+pipeline segments or hint text. Without checklist data, no sub-bar is rendered;
+the compact strip reserves its height so live updates do not move the run row.
+A finished run or idle person gate MUST NOT display the previous review's checklist.
+
+Both clients consume the `@farmslot/review-dispatch` run-checklist view model and
+one renderer per platform for list and detail. They hydrate through existing
+`task.progress` and follow `task.progress.updated`, matching the run, slot and
+active checklist. Checklist or attempt changes invalidate cached progress.
+Slot-free review workspaces use their existing empty slot id and run id.
+These additive UI helpers are exported by `@farmslot/review-dispatch`; there are
+no new CLI flags, persisted fields, harness requirements or wire version changes.
+
 ## Two documents, one checklist
 
 The task document says **what** the work is. The execution checklist says **how** to do it, step by step. Only the checklist has steps.

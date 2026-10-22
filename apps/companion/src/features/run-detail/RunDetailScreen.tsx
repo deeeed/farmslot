@@ -31,6 +31,7 @@ import {
   humanGateBlockingReason,
   pendingOutputReview,
   runActivityView,
+  runChecklistProgressTarget,
   runResultsSummary,
   runTerminalView,
 } from '@farmslot/review-dispatch';
@@ -172,7 +173,13 @@ export default function RunDetailScreen() {
   const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
+  const progressKey = run ? (runChecklistProgressTarget(run)?.key ?? run.id) : '';
+  const [taskProgressSnapshot, setTaskProgressSnapshot] = useState<{
+    key: string;
+    progress: TaskProgressStructured | null;
+  } | null>(null);
+  const taskProgress =
+    taskProgressSnapshot?.key === progressKey ? taskProgressSnapshot.progress : null;
   // The acceptance ledger (ADR-060) rides the same progress read and broadcast.
   const [acceptanceStatus, setAcceptanceStatus] = useState<AcceptanceStatusLedger | null>(null);
   const [acceptanceCriteria, setAcceptanceCriteria] = useState<AcceptanceCriterionRef[] | null>(
@@ -386,7 +393,7 @@ export default function RunDetailScreen() {
     return client
       .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
       .then((result) => {
-        setTaskProgress(result.structured ?? null);
+        setTaskProgressSnapshot({ key: progressKey, progress: result.structured ?? null });
         setAcceptanceStatus(result.acceptanceStatus ?? null);
         setAcceptanceCriteria(result.acceptanceCriteria ?? null);
         setAcceptanceStatusError(result.acceptanceStatusError ?? null);
@@ -395,25 +402,25 @@ export default function RunDetailScreen() {
       .catch((err: Error) => {
         setTaskProgressError(`Task progress unavailable: ${err.message}`);
       });
-  }, [client, run?.id, run?.slotId, run?.reviewWorkspace?.workspaceId]);
+  }, [client, progressKey, run?.id, run?.slotId, run?.reviewWorkspace?.workspaceId]);
 
   useEffect(() => {
     if (!isTimelineTab || !client || !run) return;
     const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
       const update = payload as TaskProgressUpdatedPayload;
       if (!shouldAcceptTaskProgressUpdate(run, update)) return;
-      setTaskProgress(update.progress.structured ?? null);
+      setTaskProgressSnapshot({ key: progressKey, progress: update.progress.structured ?? null });
       setAcceptanceStatus(update.progress.acceptanceStatus ?? null);
       setAcceptanceCriteria(update.progress.acceptanceCriteria ?? null);
       setAcceptanceStatusError(update.progress.acceptanceStatusError ?? null);
       setTaskProgressError(null);
     });
     return unsub;
-  }, [client, isTimelineTab, run]);
+  }, [client, isTimelineTab, progressKey, run]);
 
   useEffect(() => {
     if (!isTimelineTab || !isWorkerProgressActive(run)) {
-      setTaskProgress(null);
+      setTaskProgressSnapshot(null);
       setAcceptanceStatus(null);
       setAcceptanceCriteria(null);
       setAcceptanceStatusError(null);
@@ -1181,6 +1188,7 @@ export default function RunDetailScreen() {
             {(run.steps ?? []).length > 0 && (
               <RunPipelineFull
                 run={run}
+                taskProgress={activeTaskProgress}
                 onStepPress={(_name, i) =>
                   setExpandedStep((current) => {
                     const key = `${run.steps[i].name}-${i}`;

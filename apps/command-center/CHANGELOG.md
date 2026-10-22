@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Let browser proofs set an exact narrow viewport and system appearance.
+
 - Prove frozen review finding navigation, review/fix timelines and native session tabs through the connected operator views.
 
 - Restore shared review finding links at their exact file and line, with explicit unavailable-source states.

@@ -37,7 +37,11 @@ import {
   Methods,
   sortRunsForFamilyView,
 } from '@farmslot/protocol';
-import { pendingOutputReview, type VisualJudgmentFeedback } from '@farmslot/review-dispatch';
+import {
+  pendingOutputReview,
+  runChecklistProgressTarget,
+  type VisualJudgmentFeedback,
+} from '@farmslot/review-dispatch';
 
 import './native-worker-history.js';
 import './failure-triage-panel.js';
@@ -439,7 +443,9 @@ export class RunDetail extends RunDetailState {
       this._selectedSlotId = null;
     }
     const activeTaskChanged =
-      prev?.id === this.run?.id && prev?.activeTaskFile !== this.run?.activeTaskFile;
+      prev?.id === this.run?.id &&
+      (prev && runChecklistProgressTarget(prev)?.key) !==
+        (this.run && runChecklistProgressTarget(this.run)?.key);
     if (activeTaskChanged) {
       this._taskProgressRequestSeq++;
       this._taskProgressLoading = false;
