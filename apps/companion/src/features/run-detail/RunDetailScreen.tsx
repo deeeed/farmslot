@@ -28,6 +28,8 @@ import {
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
+  acceptsRunChecklistProgress,
+  ChecklistProgressReads,
   humanGateBlockingReason,
   pendingOutputReview,
   runActivityView,
@@ -173,7 +175,11 @@ export default function RunDetailScreen() {
   const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const progressKey = run ? (runChecklistProgressTarget(run)?.key ?? run.id) : '';
+  const progressKey = run
+    ? `${readIdentity}:${runChecklistProgressTarget(run)?.key ?? run.id}`
+    : '';
+  const taskProgressReads = useRef(new ChecklistProgressReads());
+  taskProgressReads.current.select(progressKey);
   const [taskProgressSnapshot, setTaskProgressSnapshot] = useState<{
     key: string;
     progress: TaskProgressStructured | null;
@@ -390,9 +396,11 @@ export default function RunDetailScreen() {
   const fetchTaskProgress = useCallback(() => {
     const params = taskProgressRequestForRun(run);
     if (!client || !params) return Promise.resolve();
+    const read = taskProgressReads.current.begin(progressKey);
     return client
       .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
       .then((result) => {
+        if (!taskProgressReads.current.isCurrent(read)) return;
         setTaskProgressSnapshot({ key: progressKey, progress: result.structured ?? null });
         setAcceptanceStatus(result.acceptanceStatus ?? null);
         setAcceptanceCriteria(result.acceptanceCriteria ?? null);
@@ -400,6 +408,7 @@ export default function RunDetailScreen() {
         setTaskProgressError(null);
       })
       .catch((err: Error) => {
+        if (!taskProgressReads.current.isCurrent(read)) return;
         setTaskProgressError(`Task progress unavailable: ${err.message}`);
       });
   }, [client, progressKey, run?.id, run?.slotId, run?.reviewWorkspace?.workspaceId]);
@@ -409,7 +418,10 @@ export default function RunDetailScreen() {
     const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
       const update = payload as TaskProgressUpdatedPayload;
       if (!shouldAcceptTaskProgressUpdate(run, update)) return;
-      setTaskProgressSnapshot({ key: progressKey, progress: update.progress.structured ?? null });
+      if (acceptsRunChecklistProgress(run, update)) {
+        taskProgressReads.current.invalidate();
+        setTaskProgressSnapshot({ key: progressKey, progress: update.progress.structured ?? null });
+      }
       setAcceptanceStatus(update.progress.acceptanceStatus ?? null);
       setAcceptanceCriteria(update.progress.acceptanceCriteria ?? null);
       setAcceptanceStatusError(update.progress.acceptanceStatusError ?? null);

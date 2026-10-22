@@ -38,6 +38,7 @@ import {
   sortRunsForFamilyView,
 } from '@farmslot/protocol';
 import {
+  acceptsRunChecklistProgress,
   pendingOutputReview,
   runChecklistProgressTarget,
   type VisualJudgmentFeedback,
@@ -252,7 +253,11 @@ export class RunDetail extends RunDetailState {
           taskProgressUpdateTargetsRun(this.run ?? null, p) &&
           shouldAcceptTaskProgressUpdate(this.run, p)
         ) {
-          this.taskProgress = p.progress.structured;
+          if (this.run && acceptsRunChecklistProgress(this.run, p)) {
+            this._taskProgressRequestSeq++;
+            this._taskProgressLoading = false;
+            this.taskProgress = p.progress.structured;
+          }
           // The ledger rides the same broadcast; absent means the run has none,
           // so it clears rather than keeping a stale panel.
           this.acceptanceStatus = p.progress.acceptanceStatus ?? null;

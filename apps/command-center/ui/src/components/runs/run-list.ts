@@ -25,7 +25,11 @@ import {
   slotMachineMap,
   summarizeRunEvidence,
 } from '@farmslot/protocol';
-import { acceptsRunChecklistProgress, runChecklistProgressTarget } from '@farmslot/review-dispatch';
+import {
+  acceptsRunChecklistProgress,
+  ChecklistProgressReads,
+  runChecklistProgressTarget,
+} from '@farmslot/review-dispatch';
 import { projectColor } from '@farmslot/theme';
 
 import './run-pipeline-mini.js';
@@ -175,6 +179,7 @@ export class RunList extends RunListState {
   @state() private taskProgressErrorsByRun = new Map<string, string>();
   private progressClock?: number;
   private progressConnection = getState().connection;
+  private readonly checklistReads = new Map<string, ChecklistProgressReads>();
   private readonly onNarrowChange = () => {
     this.narrowViewport = this.narrowMedia?.matches ?? false;
   };
@@ -214,8 +219,10 @@ export class RunList extends RunListState {
       (update) => {
         const run = this.runs.find((candidate) => candidate.id === update.runId);
         if (run && update.progress.structured && acceptsRunChecklistProgress(run, update)) {
+          const key = runChecklistProgressTarget(run)!.key;
+          this.checklistReads.get(key)?.invalidate();
           this.taskProgressByRun = new Map(this.taskProgressByRun).set(
-            runChecklistProgressTarget(run)!.key,
+            key,
             update.progress.structured,
           );
         }
@@ -250,15 +257,26 @@ export class RunList extends RunListState {
     await Promise.all(
       targets.map(async ({ key, params }) => {
         this.taskProgressFetches.add(key);
+        let reads = this.checklistReads.get(key);
+        if (!reads) {
+          reads = new ChecklistProgressReads();
+          reads.select(key);
+          this.checklistReads.set(key, reads);
+        }
+        const read = reads.begin(key);
         try {
           const progress = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, params);
-          if (progress.structured && !this.taskProgressByRun.has(key)) {
-            this.taskProgressByRun = new Map(this.taskProgressByRun).set(key, progress.structured);
+          if (reads.isCurrent(read)) {
+            const next = new Map(this.taskProgressByRun);
+            if (progress.structured) next.set(key, progress.structured);
+            else next.delete(key);
+            this.taskProgressByRun = next;
             const errors = new Map(this.taskProgressErrorsByRun);
             errors.delete(key);
             this.taskProgressErrorsByRun = errors;
           }
         } catch (error) {
+          if (!reads.isCurrent(read)) return;
           // No checklist is shown on failure; a later refresh may read it again.
           this.taskProgressFetches.delete(key);
           this.taskProgressErrorsByRun = new Map(this.taskProgressErrorsByRun).set(

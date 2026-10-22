@@ -6,7 +6,7 @@ import {
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 
-import { taskProgressPercent } from './checklist-progress.js';
+import { ciFixTaskProgress, taskProgressPercent } from './checklist-progress.js';
 import { runActivityView, runReviewActivityContext } from './run-activity.js';
 
 export interface RunChecklistProgressTarget {
@@ -67,20 +67,15 @@ export function runChecklistProgressView(
   progress: TaskProgressStructured | null | undefined,
 ): RunChecklistProgressView | null {
   if (!runChecklistProgressTarget(run)) return null;
-  let completed = progress?.completedSteps;
-  let total = progress?.totalSteps;
-  let label = progress?.currentStep;
-  if (!progress) {
-    const output = run.steps.find((step) => step.name === 'ci-watch')?.outputs;
-    const fix = output?.fixProgress;
-    if (output?.fixInProgress === true && fix && typeof fix === 'object') {
-      if ('completed' in fix && typeof fix.completed === 'number') completed = fix.completed;
-      if ('total' in fix && typeof fix.total === 'number') total = fix.total;
-      if ('currentLabel' in fix && typeof fix.currentLabel === 'string') label = fix.currentLabel;
-    }
-  }
+  const ci = run.steps.find(
+    (step) => step.name === 'ci-watch' && step.status === 'running',
+  )?.outputs;
+  const effective = progress ?? (ci?.fixInProgress === true ? ciFixTaskProgress(ci) : undefined);
+  const completed = effective?.completedSteps;
+  const total = effective?.totalSteps;
+  let label = effective?.currentStep;
   if (!total || completed === undefined) return null;
-  const current = progress?.phases
+  const current = effective?.phases
     .flatMap((phase) => phase.steps)
     .find((step) => step.status === 'running');
   label =
