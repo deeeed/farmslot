@@ -405,3 +405,47 @@ test('a retained result activates only for its matching head and closure and sta
   await stampPipelineVisualReviews(run, sources, 'a'.repeat(40));
   assert.deepEqual(run.visualJudgmentReceipts, first);
 });
+
+test('a released replay result does not prevent the current admitted reviewer from stamping', async () => {
+  const { run, reviewer, snapshot } = fixture();
+  reviewer.pipelineVisualReviewResult = collectPipelineVisualResult(run, reviewer, snapshot);
+  reviewer.reviewResultValidatedAt = '2026-10-16T00:02:00Z';
+  reviewer.status = 'complete';
+  const released = structuredClone(reviewer);
+  released.id = 'released-review';
+  released.nativeSession!.commandId = 'released-command';
+  released.pipelineVisualReviewResult!.binding = {
+    ...released.pipelineVisualReviewResult!.binding,
+    contextId: released.id,
+    commandId: released.nativeSession!.commandId,
+  };
+  released.nativeSession!.releasedAt = '2026-10-16T00:01:00Z';
+  run.agentContexts = [released, reviewer];
+
+  await stampPipelineVisualReviews(
+    run,
+    [{ input, artifactPrefix: 'artifacts/recipe/' }],
+    'a'.repeat(40),
+  );
+
+  assert.equal(run.visualJudgmentReceipts?.length, 1);
+  assert.equal(run.visualJudgmentReceipts![0]!.pipeline?.contextId, reviewer.id);
+  assert.equal(run.visualJudgmentReceipts![0]!.pipeline?.commandId, 'review-command');
+});
+
+test('only released results leave visual claims pending instead of failing package preparation', async () => {
+  const { run, reviewer, snapshot } = fixture();
+  reviewer.pipelineVisualReviewResult = collectPipelineVisualResult(run, reviewer, snapshot);
+  reviewer.reviewResultValidatedAt = '2026-10-16T00:02:00Z';
+  reviewer.status = 'complete';
+  reviewer.nativeSession!.releasedAt = '2026-10-16T00:03:00Z';
+
+  await stampPipelineVisualReviews(
+    run,
+    [{ input, artifactPrefix: 'artifacts/recipe/' }],
+    'a'.repeat(40),
+  );
+
+  assert.equal(run.visualJudgmentReceipts?.length ?? 0, 0);
+  assert.throws(() => pipelineReviewerBinding(run, reviewer), /independent admitted/);
+});
