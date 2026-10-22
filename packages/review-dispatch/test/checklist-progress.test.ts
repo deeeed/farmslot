@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { TaskProgressStructured } from '@farmslot/protocol';
 
-import { checklistProgressView } from '../src/checklist-progress.js';
+import { ChecklistProgressReads, checklistProgressView } from '../src/checklist-progress.js';
 
 function progress(): TaskProgressStructured {
   const steps = [
@@ -78,4 +78,43 @@ test('missing structured progress retains the fallback context without inventing
   assert.equal(view?.percent, null);
   assert.equal(view?.counts, null);
   assert.equal(view?.heading, 'Worker Progress');
+});
+
+test('reconnect hydration replaces cached counts, while a live event wins over an in-flight read', async () => {
+  const reads = new ChecklistProgressReads();
+  reads.select('same-attempt');
+  let completed = 2;
+  const reconnect = reads.begin('same-attempt');
+  await Promise.resolve().then(() => {
+    if (reads.isCurrent(reconnect)) completed = 4;
+  });
+  assert.equal(completed, 4);
+  const pending = reads.begin('same-attempt');
+  reads.invalidate();
+  completed = 5;
+  await Promise.resolve().then(() => {
+    if (reads.isCurrent(pending)) completed = 3;
+  });
+  assert.equal(completed, 5);
+});
+
+test('an old attempt resolving after its replacement cannot hide the new progress snapshot', async () => {
+  const reads = new ChecklistProgressReads();
+  let snapshot = { key: 'A', completed: 2 };
+  reads.select('A');
+  const older = reads.begin('A');
+  let finishOlder = () => {};
+  const oldResponse = new Promise<void>((resolve) => {
+    finishOlder = resolve;
+  }).then(() => {
+    if (reads.isCurrent(older)) snapshot = { key: 'A', completed: 3 };
+  });
+  reads.select('B');
+  const newer = reads.begin('B');
+  await Promise.resolve().then(() => {
+    if (reads.isCurrent(newer)) snapshot = { key: 'B', completed: 4 };
+  });
+  finishOlder();
+  await oldResponse;
+  assert.deepEqual(snapshot, { key: 'B', completed: 4 });
 });

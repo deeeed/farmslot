@@ -5,12 +5,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add the experimental ADR-071 resource query cache and store seam, persisted Sources/run/decision observations with shared retention bounds, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases. Accepted observations remain saved when a connection pauses or a view closes. Saved facts hydrate through offline reconnect attempts, while authority changes fence pending storage reads.
-- Share configurable review verdict policy and severity definitions across review instructions and result validation.
-- Keep the shared CI checklist step minimal and describe receipt reuse.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.65.0 - 2026-10-22
+## 0.65.0 - 2026-10-23
+
+- Share configurable review verdict policy and severity definitions across review instructions and result validation.
+- Keep the shared CI checklist step minimal and describe receipt reuse.
 
 - Share the held worker recovery step so Resume follows a blocked review-fix without restarting completed primary work.
 

@@ -5,6 +5,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 ## Unreleased
 
 - Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM, plus review command and cold-view proofs.
+- Let browser proofs set an exact narrow viewport and system appearance.
+
 - Verify blocked review-fix recovery through the existing Resume control and its rendered active state.
 
 - Prove frozen review finding navigation, review/fix timelines and native session tabs through the connected operator views.
