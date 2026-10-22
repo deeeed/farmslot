@@ -142,11 +142,21 @@ class ReviewTests(unittest.TestCase):
         self.assertIn("Review ONLY this saved delta", prompt)
         self.assertIn("Do not reopen settled issues", prompt)
         self.assertIn("user-data loss", prompt)
-        self.assertIn("Nits never block", prompt)
+        self.assertIn("Apply the shared approval policy", prompt)
         self.assertIn("Round 1, claude", prompt)
         self.assertIn("## Diff scope", prompt)
         scope_commands = [command for command in self.commands if command[0] == "node"]
-        self.assertTrue(all(command[-2] == "main" for command in scope_commands))
+        self.assertTrue(all(command[4] == "main" for command in scope_commands))
+
+    def test_comment_is_a_valid_nonapproval_and_project_policy_reaches_the_renderer(self):
+        self.config["projects"] = {self.args.repo: {"approvalPolicy": {"maxNits": 0}}}
+        self.verdicts["codex"] = "COMMENT"
+        state = review.review(self.config, self.args)
+        self.assertEqual("needs_changes", state["status"])
+        self.assertEqual("COMMENT", state["reviewers"]["codex"]["verdict"])
+        self.assertFalse(review.parse_verdict(self.directory() / "codex.md", self.head))
+        packet = next(command for command in self.commands if command[0] == "node")
+        self.assertEqual({"maxNits": 0}, json.loads(packet[-1]))
 
     def test_real_reviewer_failure_cannot_inherit_prior_approval(self):
         review.review(self.config, self.args)

@@ -31,6 +31,10 @@ import {
   type TaskSchemaPhase,
   type TemplateProvenance,
 } from '@farmslot/protocol';
+import {
+  renderApprovalPolicy,
+  renderReviewResultInstructions,
+} from '@farmslot/protocol/review-approval-policy.cjs';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 import { normalizeRawRuntimeCapabilities, resolveEffectiveDomain } from '@farmslot/slot-config';
 
@@ -1194,7 +1198,11 @@ export async function writeTaskFile(
             : 'text';
   const addendum = await readTaskDocumentAddendum(projectVars.projectTemplatesDir);
   const { executionTemplate: _reference, ...portableProvenance } = templateProvenance;
-  const additions = await appendTaskContext('');
+  const additions =
+    (await appendTaskContext('')) +
+    (run.flowType === 'review-pr'
+      ? `\n\n${renderApprovalPolicy(projectVars.projectJson.approvalPolicy)}\n\n${renderReviewResultInstructions('artifacts/review-result.json')}`
+      : '');
   const taskDocumentAdditions =
     !splitChecklist && vars.MODE === 'interactive'
       ? `${additions}\n${buildOperatorWaitInstructions(vars.TASK_DIR)}\n`
@@ -1205,6 +1213,11 @@ export async function writeTaskFile(
   const terminalContract = resolveWorkerTerminalContract(workerTerminalConfig, run.flowType, {
     mode: run.mode ?? undefined,
   });
+  if (
+    run.flowType === 'review-pr' &&
+    !terminalContract.commands.complete.artifacts.includes('artifacts/review-result.json')
+  )
+    terminalContract.commands.complete.artifacts.push('artifacts/review-result.json');
   terminalContract.recordedEvidenceContractVersion = run.recordedEvidenceContractVersion ?? 0;
   const humanGate =
     run.steps.some((step) => step.name === 'human-gate' && step.status !== 'skipped') &&

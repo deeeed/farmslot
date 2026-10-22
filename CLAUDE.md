@@ -81,9 +81,9 @@ check; it cannot see a contract you failed to update or a second consumer of a c
 
 Every self-review, review and review-pr consumes the shared policy from `node packages/agent-runtime/scripts/review-diff-scope.cjs instructions`. Use its `packet <repository> <publication-base> <head>` command for the scope inventory. This includes ad hoc repository reviews outside generated task documents; keep the definition in the runtime rather than copying it here or into project packs.
 
-**Every PR must get at least one `/review` round (independent code-reviewer agent) before being suggested for merge.** This applies to PRs opened by Claude — no self-approval, no "ready to merge" straight from a green CI. Fix blocking findings; nits are non-blocking follow-ups. If review uncovers new issues, push a follow-up commit to the same branch and confirm typecheck + CDP still pass.
+**Every PR must get at least one `/review` round (independent code-reviewer agent) before being suggested for merge.** This applies to PRs opened by Claude — no self-approval, no "ready to merge" straight from a green CI. Address findings required by the shared approval policy. If review uncovers new issues, push a follow-up commit to the same branch and confirm typecheck + CDP still pass.
 
-**Cross-model review is mandatory on top of the worker's own review pass.** Use [.agents/skills/cross-model-orchestrator](.agents/skills/cross-model-orchestrator/SKILL.md) for independent Codex and Claude reviews of the same HEAD SHA. Top-level verdict files must approve that exact SHA. Review round 2+ covers the delta; escalate at round 4 and stop at round 5. Once both verdicts approve and CI is green, freeze the approved head. Nits do not block. Worker self-review alone is not sufficient.
+**Cross-model review is mandatory on top of the worker's own review pass.** Use [.agents/skills/cross-model-orchestrator](.agents/skills/cross-model-orchestrator/SKILL.md) for independent Codex and Claude reviews of the same HEAD SHA. Top-level verdict files must approve that exact SHA. Review round 2+ covers the delta; escalate at round 4 and stop at round 5. Once both verdicts approve and CI is green, freeze the approved head. Worker self-review alone is not sufficient.
 
 ### PR Ship Checklist — HARD RULE
 
@@ -96,7 +96,7 @@ Before saying a farmslot PR is ready (or suggesting merge):
 2. **CI green** — wait for `gh pr checks` on the PR (hygiene + quality gates for the touched area). Do not claim ready while checks are pending, failed, or skipped-only for the relevant packages.
 3. **Independent review** — run at least one independent code-reviewer agent against the **same HEAD SHA** that is on the PR.
 4. **Cross-model review** — run at least one review with a **different** model family against that same SHA (see rule above).
-5. **Fix blocking findings** — record nits as non-blocking follow-ups. Re-run typecheck (and CDP for UI) after follow-up commits.
+5. **Address required findings** — follow the shared approval policy. Re-run typecheck (and CDP for UI) after follow-up commits.
 
 If Arthur only says "open a PR", open it, then **continue** through this checklist before reporting completion. A PR URL alone is not done.
 

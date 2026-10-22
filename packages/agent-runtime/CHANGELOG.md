@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Include the shared approval policy in self-review and paired review instructions.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.37.2 - 2026-10-22

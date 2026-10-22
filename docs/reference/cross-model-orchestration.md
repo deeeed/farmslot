@@ -41,12 +41,12 @@ each pane to one canonical PR; first use of an existing pane needs `reviews.clea
 Fresh subprocess reviews record the fallback. Only top-level `codex.md` and `claude.md` authorize progress:
 
 ```text
-VERDICT: APPROVE|REQUEST_CHANGES
+VERDICT: APPROVE|COMMENT|REQUEST_CHANGES
 COMMIT: <full SHA>
 ```
 
 Round history and JSON logs cannot override those files. Blockers require a realistic
-failure. Nits become follow-ups. Settled code is reopened only for funds, credentials,
+failure. Verdicts follow the [shared approval policy](review-curation-and-results.md#approval-policy); `COMMENT` never approves a merge. Project entries may supply `approvalPolicy` to the shared renderer. Settled code is reopened only for funds, credentials,
 or user-data loss. Escalate at round 4; stop at round 5 with a design or scope diagnosis.
 
 Both approvals freeze the head. `ready` checks CI and the merge gate, then writes

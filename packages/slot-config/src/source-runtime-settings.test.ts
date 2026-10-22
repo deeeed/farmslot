@@ -97,3 +97,22 @@ test('a pack-copied project reads its policy from runtime settings, a hand-manag
     auto_dispatch: { enabled: true },
   });
 });
+
+test('source runtime settings retain and validate approval policy overrides', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'approval-policy-settings-'));
+  const previous = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = root;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  await writeSourceRuntimeSettings('policy-test', { approvalPolicy: { maxNits: 0 } });
+  const expected = { maxNits: 0, minorVerdict: 'COMMENT', majorVerdict: 'REQUEST_CHANGES' };
+  assert.deepEqual((await readSourceRuntimeSettings('policy-test')).approvalPolicy, expected);
+  await assert.rejects(
+    writeSourceRuntimeSettings('policy-test', { approvalPolicy: { maxNits: -1 } }),
+    /Invalid approvalPolicy/,
+  );
+  assert.deepEqual((await readSourceRuntimeSettings('policy-test')).approvalPolicy, expected);
+});
