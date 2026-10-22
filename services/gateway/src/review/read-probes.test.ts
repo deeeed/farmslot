@@ -1,0 +1,175 @@
+import assert from 'node:assert/strict';
+import os from 'node:os';
+import { mock, test } from 'node:test';
+
+import type { Run } from '@farmslot/protocol';
+
+await import('../runtime/mock-pty.test-support.js');
+const config = await import('../core/config.js');
+const execution = await import('../core/exec.js');
+const { NodeExecUnconfirmedError } = await import('../fleet/node-rpc.js');
+const templates = await import('./templates.js');
+const { makeVars } = await import('../runners/test-fixtures.js');
+const vars = makeVars({ projectName: 'read-probes', remoteRepo: '/fixture/terminal' });
+let execute: typeof execution.execOnSlot = async () => ({ stdout: '', stderr: '', exitCode: 0 });
+mock.module('../core/config.js', {
+  namedExports: {
+    ...config,
+    loadSlotVars: async () => vars,
+    resolveProjectRuntimeDir: async () => 'temp/farmslot',
+  },
+});
+mock.module('../core/exec.js', {
+  namedExports: {
+    ...execution,
+    execOnSlot: (...args: Parameters<typeof execute>) => execute(...args),
+  },
+});
+mock.module('./templates.js', {
+  namedExports: { ...templates, resolveWorkerTaskDir: async () => 'temp/tasks/chart' },
+});
+// The gateway facade can load the probe before module mocks are installed.
+// Re-import its real implementation with the mocked execution boundary.
+const probeModule: string = '../core/read-probes.js?bounded-read-probes';
+const probes: typeof import('../core/read-probes.js') = await import(probeModule);
+mock.module('../core/read-probes.js', { namedExports: { ...probes } });
+const reviewedModule: string = './reviewed-inputs.js?bounded-read-probes';
+const { readReviewedInputs }: typeof import('./reviewed-inputs.js') = await import(reviewedModule);
+const observabilityModule: string = '../runners/observability-files.js?bounded-read-probes';
+const { readRunnerObservabilityFiles }: typeof import('../runners/observability-files.js') =
+  await import(observabilityModule);
+const run: Pick<Run, 'id' | 'project' | 'taskFile' | 'slotId'> = {
+  id: 'chart-read-probe',
+  project: vars.projectName,
+  taskFile: '/fixture/TASK.md',
+  slotId: vars.slotId,
+};
+
+function latch() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+async function flush() {
+  for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+test('concurrent gate readers share one slow evidence fingerprint, then refresh after settlement', async () => {
+  const hold = latch();
+  let fingerprints = 0;
+  execute = async () => {
+    fingerprints++;
+    await hold.promise;
+    return { stdout: 'frozen-head\nevidence hash\n', stderr: '', exitCode: 0 };
+  };
+  const readers = Array.from({ length: 100 }, () => readReviewedInputs(run));
+  try {
+    await flush();
+    assert.equal(fingerprints, 1, 'one pending node command per run');
+  } finally {
+    hold.release();
+    await Promise.all(readers);
+  }
+  await readReviewedInputs(run);
+  assert.equal(fingerprints, 2, 'settled values do not mask later evidence changes');
+});
+
+test('concurrent progress consumers share the same slow hooks and statusline read', async () => {
+  const hold = latch();
+  let hooks = 0;
+  let statuslines = 0;
+  execute = async (_slot, command) => {
+    if (command.includes('install.json')) return { stdout: 'external', stderr: '', exitCode: 0 };
+    if (command.includes('tail -c')) hooks++;
+    else statuslines++;
+    await hold.promise;
+    return { stdout: '{}', stderr: '', exitCode: 0 };
+  };
+  const readers = Array.from({ length: 100 }, () => readRunnerObservabilityFiles(vars));
+  try {
+    await flush();
+    assert.equal(hooks, 1, 'activity, turn and background reads share the hooks command');
+    assert.equal(statuslines, 1);
+  } finally {
+    hold.release();
+    await Promise.all(readers);
+  }
+  await readRunnerObservabilityFiles(vars);
+  assert.equal(hooks, 2);
+});
+
+test(
+  'a timed-out probe retains its flight until the owned process is killed and reaped',
+  { timeout: 10_000 },
+  async () => {
+    const started = latch();
+    const aborted = latch();
+    let launches = 0;
+    let childPid = 0;
+    execute = async (_slot, command, options) => {
+      assert.ok(options && typeof options === 'object');
+      assert.ok(options.signal, 'the transport must own cancellation and closeout');
+      assert.equal(options.noRetry, true, 'a lost reply must not resend the read');
+      launches++;
+      options.signal.addEventListener('abort', aborted.release, { once: true });
+      return execution.execLocal(command, {
+        ...options,
+        cwd: os.tmpdir(),
+        onOutput: (stream, value) => {
+          if (stream === 'stdout') {
+            childPid = Number(value.trim());
+            started.release();
+          }
+        },
+      });
+    };
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    const script =
+      'process.on("SIGTERM",()=>{});process.stdout.write(String(process.pid));setInterval(()=>{},1000)';
+    const command = `exec ${quote(process.execPath)} -e ${quote(script)}`;
+    const probeVars = { ...vars, remoteRepo: os.tmpdir() };
+    const reads = Array.from({ length: 100 }, () =>
+      probes.readSlotProbe(probeVars, command, 'reap-fixture', 500),
+    );
+    const settled = Promise.allSettled(reads);
+    await started.promise;
+    await aborted.promise;
+    const lateReader = probes.readSlotProbe(probeVars, command, 'reap-fixture', 500);
+    const lateResult = Promise.allSettled([lateReader]);
+    try {
+      assert.equal(launches, 1, 'abort begins cleanup, it does not release the flight');
+      assert.ok(childPid > 0);
+    } finally {
+      const results = [...(await settled), ...(await lateResult)];
+      assert.ok(results.every((result) => result.status === 'rejected'));
+    }
+    assert.equal(launches, 1);
+    assert.throws(
+      () => process.kill(childPid, 0),
+      { code: 'ESRCH' },
+      'the process has been reaped before readers settle',
+    );
+  },
+);
+
+test('unconfirmed closeout does not admit another probe on the same node connection', async () => {
+  const failure = new NodeExecUnconfirmedError(vars.machine, 'fixture-request', 'timeout');
+  let launches = 0;
+  execute = async () => {
+    launches++;
+    throw failure;
+  };
+  await assert.rejects(
+    probes.readSlotProbe(vars, 'fixture read', 'unconfirmed-fixture', 100),
+    (error: unknown) => error === failure,
+  );
+  const results = await Promise.allSettled(
+    Array.from({ length: 100 }, () =>
+      probes.readSlotProbe(vars, 'fixture read', 'unconfirmed-fixture', 100),
+    ),
+  );
+  assert.ok(results.every((result) => result.status === 'rejected' && result.reason === failure));
+  assert.equal(launches, 1);
+});

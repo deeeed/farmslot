@@ -3,6 +3,7 @@ import path from 'node:path';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { readSlotProbe } from '../core/read-probes.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 
 import type {
@@ -332,9 +333,11 @@ export async function runnerObservabilityDirForSlot(vars: SlotVars): Promise<str
       ? runtimeDir
       : path.posix.join(vars.remoteRepo, runtimeDir);
   const legacy = path.posix.join(legacyRuntime, '.observability');
-  const probe = await execOnSlot(
+  const probe = await readSlotProbe(
     vars,
     `if [ -f ${shellExpressionForRemotePath(path.posix.join(external, 'install.json'))} ]; then printf external; fi`,
+    'runner-observability-directory',
+    10_000,
   );
   return probe.stdout.trim() === 'external' ? external : legacy;
 }
@@ -349,8 +352,8 @@ export async function readRunnerObservabilityFiles(
   const hooksPath = `${obsDir}/hooks.jsonl`;
   const statuslinePath = `${obsDir}/statusline.json`;
   const [hooksResult, statuslineResult] = await Promise.all([
-    execOnSlot(vars, `tail -c 65536 ${hooksPath} 2>/dev/null || true`),
-    execOnSlot(vars, `cat ${statuslinePath} 2>/dev/null || true`),
+    readSlotProbe(vars, `tail -c 65536 ${hooksPath} 2>/dev/null || true`, 'runner-hooks', 10_000),
+    readSlotProbe(vars, `cat ${statuslinePath} 2>/dev/null || true`, 'runner-statusline', 10_000),
   ]);
   return {
     hooksRaw: hooksResult.stdout,

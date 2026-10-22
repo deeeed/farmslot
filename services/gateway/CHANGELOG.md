@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Bound concurrent evidence and progress reads during node recovery, and preserve replayed review slot claims while fleet refresh completes.
+
 - Resume a blocked review-fix through its held review step and show fresh worker progress without restarting the completed primary worker.
 
 - Resume an accepted publication review request when its lost gate loop is reconciling, preserving its selected reviewer and retained package.

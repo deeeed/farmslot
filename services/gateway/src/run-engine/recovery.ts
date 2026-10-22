@@ -24,6 +24,7 @@ import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../core/state.js';
 import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
 import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
+import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { runDecisionWaitingStatus, type RunProgressObservation } from '../runners/run-progress.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 import { withSourcePlanning } from '../sources/runtime.js';
@@ -1185,7 +1186,7 @@ function releasingFenceAgeMs(since: unknown, nowMs: number): number | null {
  * nothing can advance a settled blocked run, so its fence is reclaimable.
  */
 async function interruptedBlockedReleaseOwner(
-  deps: RunRecoveryCollaborators,
+  deps: OrphanRecoveryCollaborators,
   slotId: string,
   active: Run[],
 ): Promise<Run | undefined> {
@@ -1197,7 +1198,23 @@ async function interruptedBlockedReleaseOwner(
   return activeRunSlotIds(active, owner.id).has(slotId) ? undefined : owner;
 }
 
-export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Promise<void> {
+type OrphanRecoveryCollaborators = Pick<
+  RunRecoveryCollaborators,
+  | 'listRuns'
+  | 'loadFleetStatus'
+  | 'isTerminalTeardownInFlight'
+  | 'readSlotField'
+  | 'getRun'
+  | 'updateRun'
+  | 'stopRunOwnedWorkers'
+  | 'resetSlot'
+  | 'resetSlotIf'
+  | 'updateSlotStatusIf'
+  | 'broadcast'
+  | 'retryOccupiedRunSlot'
+>;
+
+export async function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators): Promise<void> {
   const { runs: active } = deps.listRuns({ active: true });
   // The shared occupancy predicate, not an inline status filter. A run whose
   // park freed its slot (ADR-054 `free-slot`) keeps `slotId` as its restore
@@ -1322,9 +1339,37 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
       console.log(`[run-engine] reconcile: ${slot.slot} awaits closed-run resource cleanup`);
       continue;
     }
+    const resetIfStillOrphaned = () =>
+      deps.resetSlotIf(slot.slot, (row) => {
+        // Fleet refresh may have awaited a slow or reconnecting node while a
+        // replay reclaimed this slot. Recheck at the serialized write, after
+        // that run's lifecycle transition has finished.
+        if (
+          row.current_run_id !== ownerId ||
+          row.lifecycle !== slot.lifecycle ||
+          (row.phase ?? null) !== (slot.phase ?? null) ||
+          row.phase === SLOT_PHASE_RELEASING ||
+          deps.isTerminalTeardownInFlight(slot.slot) ||
+          activeRunSlotIds(deps.listRuns({ active: true }).runs).has(slot.slot)
+        )
+          return false;
+        const currentOwner = typeof ownerId === 'string' ? deps.getRun(ownerId) : undefined;
+        return !(
+          currentOwner &&
+          (isCompletionPrerequisiteFailure(currentOwner) ||
+            isHeldForResultDecision(currentOwner) ||
+            (currentOwner.output?.closedAt &&
+              (currentOwner.output.cleanupPending || currentOwner.output.closeError)))
+        );
+      });
+    const reset =
+      typeof ownerId === 'string'
+        ? await withRunTransition(ownerId, resetIfStillOrphaned)
+        : await resetIfStillOrphaned();
     console.log(
-      `[run-engine] reconcile: orphaned ${slot.slot} (${slot.lifecycle}/${slot.phase}) → ready`,
+      reset
+        ? `[run-engine] reconcile: orphaned ${slot.slot} (${slot.lifecycle}/${slot.phase}) → ready`
+        : `[run-engine] reconcile: ${slot.slot} ownership changed while refreshing; left alone`,
     );
-    await deps.resetSlot(slot.slot);
   }
 }
