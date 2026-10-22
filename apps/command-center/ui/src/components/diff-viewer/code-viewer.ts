@@ -2,7 +2,7 @@ import { html, LitElement, render, type RootPart } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import type * as monaco from 'monaco-editor';
 
-import type { Diagnostic, PRReviewThread } from '@farmslot/protocol';
+import { type Diagnostic, type PRReviewThread, reviewedFindingContext } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
@@ -344,11 +344,7 @@ export class CodeViewer extends LitElement {
 
   private _revealRequestedLine() {
     if (!this._editor || !monacoApi) return;
-    if (
-      !Number.isSafeInteger(this.revealLine) ||
-      this.revealLine < 1 ||
-      this.revealLine > (this._editor.getModel()?.getLineCount() ?? 0)
-    ) {
+    if (!reviewedFindingContext(this.content, this.revealLine).available) {
       this._revealDecorations?.clear();
       return;
     }
@@ -472,13 +468,9 @@ export class CodeViewer extends LitElement {
   }
 
   private _anchoredCommentThreads() {
-    const lineCount = this._editor?.getModel()?.getLineCount() ?? 0;
     return this.commentThreads.filter(
       (thread) =>
-        thread.line !== null &&
-        Number.isSafeInteger(thread.line) &&
-        thread.line > 0 &&
-        thread.line <= lineCount,
+        thread.line !== null && reviewedFindingContext(this.content, thread.line).available,
     );
   }
 

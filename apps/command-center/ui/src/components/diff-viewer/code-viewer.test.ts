@@ -86,6 +86,7 @@ interface Viewer {
   _editor?: typeof editor;
   updated(changed: Map<string, unknown>): void;
   firstUpdated(): Promise<void>;
+  _anchoredCommentThreads(): PRReviewThread[];
 }
 
 test('a line comment selected before Monaco loads reveals its exact line and inline thread', async () => {
@@ -151,44 +152,58 @@ test('a line comment selected before Monaco loads reveals its exact line and inl
   assert.equal(positions.at(-1)?.lineNumber, 479, 'later comments in the same file still reveal');
 });
 
-test('a finding at 479 cannot be clamped to the end of a 223-line file', () => {
-  modelLineCount = 223;
-  const previousPositions = positions.length;
-  const previousDecorations = decorated.length;
-  const viewer = Object.create(CodeViewer.prototype) as Viewer;
-  Object.assign(viewer, {
-    requestUpdate() {},
-    _editor: editor,
-    revealLine: 479,
-    commentThreads: [
-      {
-        id: 'finding-479',
-        path: 'usePerpsCloseAllCalculations.ts',
-        line: 479,
-        resolved: false,
-        outdated: false,
-        comments: [
-          {
-            id: 2,
-            body: 'Finding at its real line',
-            author: 'reviewer',
-            createdAt: '2026-10-22',
-            updatedAt: '2026-10-22',
-          },
-        ],
-      },
-    ] satisfies PRReviewThread[],
-    showComments: true,
-    _viewZoneIds: [],
-    _viewZoneDomNodes: [],
-    _disposeCommentBodies() {},
+for (const [sourceLines, findingLine] of [
+  [223, 479],
+  [223, 224],
+  [570, 571],
+]) {
+  test(`finding ${findingLine} cannot anchor after ${sourceLines} newline-terminated source lines`, () => {
+    modelLineCount = sourceLines + 1;
+    const previousPositions = positions.length;
+    const previousDecorations = decorated.length;
+    const viewer = Object.create(CodeViewer.prototype) as Viewer;
+    Object.assign(viewer, {
+      requestUpdate() {},
+      _editor: editor,
+      content:
+        Array.from({ length: sourceLines }, (_, index) => `source line ${index + 1}`).join('\n') +
+        '\n',
+      revealLine: findingLine,
+      commentThreads: [
+        {
+          id: 'finding',
+          path: 'usePerpsCloseAllCalculations.ts',
+          line: findingLine,
+          resolved: false,
+          outdated: false,
+          comments: [
+            {
+              id: 2,
+              body: 'Finding at its real line',
+              author: 'reviewer',
+              createdAt: '2026-10-22',
+              updatedAt: '2026-10-22',
+            },
+          ],
+        },
+      ] satisfies PRReviewThread[],
+      showComments: true,
+      _viewZoneIds: [],
+      _viewZoneDomNodes: [],
+      _disposeCommentBodies() {},
+    });
+    assert.deepEqual(
+      viewer._anchoredCommentThreads(),
+      [],
+      'only real source lines can receive a comment zone',
+    );
+    viewer.updated(
+      new Map<string, unknown>([
+        ['revealLine', 0],
+        ['commentThreads', []],
+      ]),
+    );
+    assert.equal(positions.length, previousPositions, 'no cursor at a nonexistent trailing line');
+    assert.equal(decorated.length, previousDecorations, 'no comment decoration clamped to EOF');
   });
-  viewer.updated(
-    new Map<string, unknown>([
-      ['revealLine', 0],
-      ['commentThreads', []],
-    ]),
-  );
-  assert.equal(positions.length, previousPositions, 'no misleading cursor at line 223');
-  assert.equal(decorated.length, previousDecorations, 'no comment decoration clamped to EOF');
-});
+}
