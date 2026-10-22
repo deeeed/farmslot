@@ -58,7 +58,7 @@ history remains explicit and bounded to 80 rows until the version-list migration
 
 | Native visual review | Independent full-run and recipe-inventory reads, including command-time run RPCs | Shared source/target full-run and recipe observations; HTTP source/image bytes retain their owner; current canonical command inputs and owner/connection/reply fences | `visual-runs-live.recipe.json`; iOS/Android7/7 with actual note input, external run update, safe finished-run refusal, stale disabled controls and reconnect without replay. Notification and disabled-Send product controls fail intended assertions, restore exactly and recover7/7; cold source/image bytes remain for content caching |
 
-| Native conversation run context | Full-run lookup on every transcript poll and a local worker-binding copy | Shared full-run observation, exact current task binding before commands and after journal writes, fenced cursor replies and contextual run Retry | `conversation-runs-live.recipe.json` is added; live worker acceptance remains pending. Binding/history and journal handover regressions support the implementation. Native session list/read polling and transcript persistence remain in the fleet/session slice |
+| Native conversation run context | Full-run lookup on every transcript poll and a local worker-binding copy | Shared full-run observation, exact current task binding before commands and after journal writes, fenced cursor replies and contextual run Retry | `conversation-runs-live.recipe.json`; iOS7/7 with actual accepted worker input, stale disabled Send, cursor continuity and a real late page rejected after run removal. Poll/readiness/late-page controls fail intended assertions, restore exactly and recover7/7. Android and broader platform acceptance remain; native session list/read polling and transcript persistence remain in the fleet/session slice |
 
 Explicit mutations such as refreshing a publication package retain their command owners.
 They do not adopt returned run data. A shared observation supplies the resulting state.
@@ -120,7 +120,7 @@ establish packaged publication, actual visual judgments or the full command matr
 ## Remaining acceptance
 
 - Finish workspace source controls and the combined browser proof; dispatch controls are accepted.
-  Complete native conversation reader client proof. Terminal, visual-review and artifact reader component evidence is recorded.
+  Complete the remaining native conversation platform matrix. iOS component proof and controls pass; terminal, visual-review and artifact reader component evidence is recorded.
 - Migrate the remaining consumers of `run.forSlot` and `run.recipeRunsForSlot`; binding writers and dependencies now have isolated tests, live browser history and SlotView evidence.
 - Finish native context recipes and negative controls, then the browser, desktop,
   iOS and Android authority/profile and connected-stale command matrix.

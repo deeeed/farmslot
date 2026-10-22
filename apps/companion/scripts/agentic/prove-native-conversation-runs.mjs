@@ -113,10 +113,14 @@ async function press(identifier) {
   });
 }
 async function fill(identifier, text, verify = true) {
-  await reveal(identifier);
+  await until(
+    () => reveal(identifier),
+    (node) => node.enabled !== false,
+    `The actual native input must be enabled: ${identifier}`,
+    10000,
+  );
   await device.interactions.fill({ ...selection, selector: `id="${identifier}"`, text, verify });
 }
-const keyboard = () => device.command.keyboard({ ...selection, action: 'dismiss' });
 async function rpc(method, params = {}) {
   const { stdout } = await execute(
     process.execPath,
@@ -180,15 +184,13 @@ try {
     (value) => value.nodes.some((node) => node.identifier === 'companion-native-connection-screen'),
     'Open actual connection settings',
   );
-  await press('companion-connection-manual-toggle');
+  if (!(await screen()).nodes.some((node) => node.identifier === 'companion-native-profile-name'))
+    await press('companion-connection-manual-toggle');
   await fill('companion-native-profile-name', `Offline native ${randomUUID().slice(0, 8)}`);
-  await keyboard();
   await fill('companion-native-profile-url', `ws://127.0.0.1:${proxy.port}`);
-  await keyboard();
   await press('companion-native-auth-token');
   // Secure input is masked by accessibility; the subsequent authenticated native read verifies it.
   await fill('companion-native-profile-secret', credential, false);
-  await keyboard();
   profileChanged = true;
   await press('companion-native-profile-save');
   await until(
@@ -231,7 +233,6 @@ try {
   const token = `NATIVE_REPLY_${randomUUID().replaceAll('-', '')}`;
   const prompt = `Reply exactly ${token}. Do not use tools or modify files.`;
   await fill('companion-native-draft', prompt);
-  await keyboard();
   const drafted = await until(
     conversation,
     (value) => matches(value) && value.conversation.draft === prompt && value.conversation.canSend,
@@ -319,10 +320,12 @@ try {
   await capture('native-conversation-accepted.png');
   const finalToken = `LATE_NATIVE_${randomUUID().replaceAll('-', '')}`;
   await fill('companion-native-draft', `Reply exactly ${finalToken}. Do not use tools.`);
-  await keyboard();
   const beforeLate = await until(
     conversation,
-    (value) => matches(value) && value.conversation.canSend,
+    (value) =>
+      matches(value) &&
+      value.conversation.draft === `Reply exactly ${finalToken}. Do not use tools.` &&
+      value.conversation.canSend,
     'Prepare an actual late-page request',
   );
   proxy.arm({
