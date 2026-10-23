@@ -303,7 +303,9 @@ MUST NOT mark the slot reclaimed.
   One-shot activations MUST include persisted run ownership; an absent record
   MUST NOT release another caller's active references. Durable archive receipts
   release archived owners. A complete inventory from the journal's owning run
-  store MAY release deleted owners; another store's absence MUST NOT do so. It MUST prune other
+  store MAY release deleted owners; another store's absence MUST NOT do so.
+  Inventory generations MUST be allocated before capture and survive process
+  restarts. An older snapshot MUST NOT release a newer journal observation. It MUST prune other
   completed bundle directories.
   Publication, verification, selection and pruning MUST serialize on the execution
   node. Unknown selection state MUST refuse pruning; staging directories, active

@@ -408,6 +408,7 @@ test('only the owning run inventory releases a deleted run journal', async (t) =
   const selected = await f.pointer('slot', hash('b'));
   const parity = path.join(f.home, 'ci-parity');
   await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('a')}/projects/fixture"\n`);
+  let generation = 0;
   const activate = (active: boolean, scope: string, runIds: string[]) =>
     exec('/bin/sh', [
       '-c',
@@ -419,7 +420,7 @@ test('only the owning run inventory releases a deleted run journal', async (t) =
           selectionPaths: [selected],
           runHashes: [],
           activeRuns: active ? [{ runId: 'deleted-owner', paths: [parity] }] : [],
-          runInventory: { scope, runIds },
+          runInventory: { scope, runIds, generation: String(++generation) },
         },
         verifyCommand: 'true',
       }),
@@ -436,5 +437,48 @@ test('only the owning run inventory releases a deleted run journal', async (t) =
     await present(path.join(f.root, hash('a'))),
     false,
     'a removed run does not leak its journal indefinitely',
+  );
+});
+
+test('an older inventory executing last cannot release newer active references', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b']) await f.bundle(hash(id));
+  const selected = await f.pointer('slot', hash('b'));
+  const parity = path.join(f.home, 'ci-parity');
+  await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('a')}/projects/fixture"\n`);
+  const command = (id: string, generation: string, active: boolean, endedRunIds: string[] = []) =>
+    buildNodeSupportActivationCommand({
+      supportDir: path.join(f.root, hash(id)),
+      supportHash: hash(id),
+      selectionPath: selected,
+      references: {
+        selectionPaths: [selected],
+        runHashes: [],
+        activeRuns: active ? [{ runId: 'new-owner', paths: [parity] }] : [],
+        endedRunIds,
+        runInventory: { scope: 'owning-gateway', generation, runIds: active ? ['new-owner'] : [] },
+      },
+      verifyCommand: 'true',
+    });
+  const stale = command('c', '1', false);
+  await exec('/bin/sh', ['-c', command('b', '2', true)]);
+  await f.bundle(hash('c'));
+  await exec('/bin/sh', ['-c', stale]);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'stale absence cannot release a newer owner',
+  );
+  await exec('/bin/sh', ['-c', command('c', '1', false, ['new-owner'])]);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'a stale terminal receipt cannot release a newer owner',
+  );
+  await exec('/bin/sh', ['-c', command('c', '3', false)]);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    false,
+    'a fresh owning inventory can release a deleted owner',
   );
 });

@@ -88,4 +88,10 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
   ]);
   assert.deepEqual(references.endedRunIds, ['archived-owner', 'ended']);
   assert.deepEqual(references.runInventory?.runIds, ['archived-owner', 'active', 'ended']);
+  const next = await Promise.all([
+    nodeSupportRetentionReferences(await loadSlotVars('fixture-1')),
+    nodeSupportRetentionReferences(await loadSlotVars('fixture-1')),
+  ]);
+  assert.equal(references.runInventory?.generation, '1');
+  assert.deepEqual(next.map((value) => value.runInventory?.generation).sort(), ['2', '3']);
 });

@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { isTerminalRunStatus, resolveRunSlotId, type Run } from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
@@ -21,6 +23,7 @@ export interface NodeSupportRetentionReferences {
 }
 
 export interface RunSupportInventory {
+  generation: string;
   scope: string;
   runIds: string[];
 }
@@ -86,12 +89,39 @@ export async function persistedNodeSupportRuns(directory: string): Promise<Run[]
   return runs;
 }
 
+const execFileAsync = promisify(execFile);
+
+/** Fence snapshots across gateway and one-shot processes, including restarts. */
+async function nextInventoryGeneration(directory: string): Promise<string> {
+  const script = `import fcntl,os,sys
+from pathlib import Path
+root=Path(sys.argv[1]);root.mkdir(parents=True,exist_ok=True)
+with (root/'.node-support-inventory.lock').open('a') as lock:
+ fcntl.flock(lock,fcntl.LOCK_EX)
+ counter=root/'.node-support-inventory-generation'
+ generation=int(counter.read_text())+1 if counter.exists() else 1
+ temporary=counter.with_name(counter.name+'.'+str(os.getpid())+'.tmp')
+ with temporary.open('w') as output:
+  output.write(str(generation));output.flush();os.fsync(output.fileno())
+ os.replace(temporary,counter)
+ directory=os.open(root,os.O_RDONLY)
+ try:os.fsync(directory)
+ finally:os.close(directory)
+ print(generation)
+`;
+  const { stdout } = await execFileAsync('python3', ['-c', script, directory], { timeout: 30_000 });
+  const generation = stdout.trim();
+  if (!/^[1-9][0-9]*$/.test(generation)) throw new Error('Invalid support inventory generation');
+  return generation;
+}
+
 export async function nodeSupportRetentionReferences(
   vars: SlotVars,
 ): Promise<NodeSupportRetentionReferences> {
   // Transport probes import this module while runner observability is initializing.
   // Read the run store only for an activation, after that import graph has settled.
   const { listRuns, runsDirectory, getArchivedRuns } = await import('../runs/store.js');
+  const generation = await nextInventoryGeneration(runsDirectory());
   // Loaded records win over disk while their latest status is being persisted.
   const runs = [
     ...new Map(
@@ -141,6 +171,7 @@ export async function nodeSupportRetentionReferences(
     selectionPaths,
     activeRuns,
     runInventory: {
+      generation,
       scope: createHash('sha256')
         .update(hostname())
         .update('\0')
@@ -194,6 +225,7 @@ with (root/'.activation.lock').open('a') as lock:
   print(json.dumps({'reader':d['supportHash']}));sys.exit(0)
  keep=set(d['references']['runHashes']);keep.add(d['supportHash'])
  active=root/'.active-run-references';active.mkdir(exist_ok=True)
+ inventory=d['references'].get('runInventory',{})
  pattern=re.compile(rb'/farmslot-node/support/([a-f0-9]{64})(?=$|[\\s/"\\x27\\x5c])')
  def inspect(reference,hashes):
   try:
@@ -217,18 +249,23 @@ with (root/'.activation.lock').open('a') as lock:
  for run in d['references'].get('activeRuns',[]):
   name=hashlib.sha256(run['runId'].encode()).hexdigest()+'.json'
   record=active/name
-  hashes=set(json.loads(record.read_text())['hashes']) if record.exists() else set()
+  previous=json.loads(record.read_text()) if record.exists() else {}
+  hashes=set(previous.get('hashes',[]))
+  generation=int(inventory.get('generation','0'))
+  if previous.get('scope')==inventory.get('scope'):generation=max(generation,int(previous.get('generation','0')))
   for reference in run['paths']:inspect(Path(reference).expanduser(),hashes)
   if any(not re.fullmatch('[a-f0-9]{64}',value) for value in hashes):raise ValueError('Invalid active support reference')
   temporary=record.with_name(record.name+'.'+str(os.getpid())+'.tmp')
-  temporary.write_text(json.dumps({'runId':run['runId'],'hashes':sorted(hashes),'scope':d['references'].get('runInventory',{}).get('scope')}));os.replace(temporary,record)
+  temporary.write_text(json.dumps({'runId':run['runId'],'hashes':sorted(hashes),'scope':inventory.get('scope'),'generation':str(generation)}));os.replace(temporary,record)
   keep.update(hashes)
  # Absence from another caller's inventory is not evidence that a run ended.
  for record in active.glob('*.json'):
   saved=json.loads(record.read_text())
-  inventory=d['references'].get('runInventory',{})
-  deleted=inventory.get('scope') and saved.get('scope')==inventory['scope'] and saved['runId'] not in inventory['runIds']
-  if saved['runId'] in d['references'].get('endedRunIds',[]) or deleted:record.unlink()
+  same=inventory.get('scope') and saved.get('scope')==inventory['scope']
+  newer=same and int(inventory['generation'])>int(saved.get('generation','0'))
+  ended=saved['runId'] in d['references'].get('endedRunIds',[])
+  deleted=same and saved['runId'] not in inventory['runIds']
+  if (ended or deleted) and (newer or not saved.get('scope')):record.unlink()
   else:keep.update(saved['hashes'])
  for lease in readers.glob('*.json'):
   if not re.fullmatch('[a-f0-9]{64}\\.json',lease.name):continue
