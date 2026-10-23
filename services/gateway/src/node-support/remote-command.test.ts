@@ -34,8 +34,11 @@ function fakeNode(opts: { failUpload?: boolean } = {}) {
   const calls: string[] = [];
   let manifest: string | null = null;
   const io: NodeSupportIo = {
+    retentionReferences: async () => ({ selectionPaths: [], runHashes: [] }),
     exec: async (_vars, cmd) => {
       calls.push(`exec:${cmd.slice(0, 20)}`);
+      if (cmd.startsWith(': farmslot-node-support-activate') && cmd.includes('"selectionPath":'))
+        calls.push('select');
       const homeResult = fakeSupportHomeResult(cmd);
       if (homeResult) return homeResult;
       if (cmd.includes('mktemp -d')) {
@@ -155,7 +158,7 @@ test('a hook on a node without the current bundle runs from the bundle it just r
 
   // Another slot on the same machine still has its own selection written.
   await resolveRemoteFarmCommand(remoteVars('mini-ff-2'), HOOK, { io: node.io });
-  assert.ok(node.calls.includes('writeFiles'), 'second slot gets its selection recorded');
+  assert.ok(node.calls.includes('select'), 'second slot gets its selection recorded');
   assert.ok(!node.calls.includes('write'), 'and the bundle is not republished');
 });
 
@@ -245,6 +248,7 @@ function gatedNode(opts: { failUpload?: boolean } = {}) {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
   const io: NodeSupportIo = {
+    retentionReferences: async () => ({ selectionPaths: [], runHashes: [] }),
     exec: async (_vars, cmd) =>
       fakeSupportHomeResult(cmd) ??
       (cmd.includes('mktemp -d')
@@ -413,7 +417,14 @@ test('read-only prerequisite cache cannot suppress later slot bundle selection',
     selectSlot: false,
   });
   assert.equal(node.calls.includes('select'), false);
+  assert.match(command, /fcntl\.LOCK_SH/);
+  const calls = node.calls.length;
+  assert.equal(
+    await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io, selectSlot: false }),
+    command,
+  );
+  assert.equal(node.calls.length, calls, 'the protected read-only command can use its cache');
   const selected = await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
-  assert.equal(selected, command);
+  assert.match(selected, /^bash .*\/support\/[a-f0-9]{64}\//);
   assert.equal(node.calls.filter((call) => call === 'select').length, 1);
 });

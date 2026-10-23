@@ -1,0 +1,175 @@
+import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import type { Run } from '@farmslot/protocol';
+import { isRecord } from '@farmslot/protocol/recipe';
+
+import { loadMachineSlots, loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
+import { shellQuote } from '../core/tmux.js';
+import { nodeSupportHashPath } from '../runners/runner-observability.js';
+
+export interface NodeSupportRetentionReferences {
+  selectionPaths: string[];
+  runHashes: string[];
+}
+
+export const NODE_SUPPORT_COMMAND_CACHE_MS = 10 * 60_000;
+// Covers the cache window plus bounded delivery; running commands also hold a read lock.
+export const NODE_SUPPORT_READER_RETAIN_MS = 2 * NODE_SUPPORT_COMMAND_CACHE_MS;
+
+/** Historical outputs can refer to an older bundle than the slot now selects. */
+function supportHashes(values: readonly unknown[]): string[] {
+  const hashes = new Set<string>();
+  const visit = (value: unknown): void => {
+    if (typeof value === 'string') {
+      if (/^[a-f0-9]{64}$/.test(value)) hashes.add(value);
+      for (const match of value.matchAll(
+        /\/farmslot-node\/support\/([a-f0-9]{64})(?=$|[\s/"'\\])/g,
+      ))
+        hashes.add(match[1]);
+    } else if (Array.isArray(value)) value.forEach(visit);
+    else if (value && typeof value === 'object') Object.values(value).forEach(visit);
+  };
+  values.forEach(visit);
+  return [...hashes];
+}
+
+export function referencedNodeSupportHashes(runs: readonly Run[]): string[] {
+  return supportHashes(runs.filter((run) => !run.archivedAt));
+}
+
+/** One-shot activators do not have the gateway's run store loaded in memory. */
+export async function persistedNodeSupportHashes(directory: string): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
+    throw error;
+  }
+  const hashes = new Set<string>();
+  for (const name of names.filter((name) => name.endsWith('.json'))) {
+    let content: string;
+    try {
+      content = await readFile(path.join(directory, name), 'utf8');
+    } catch (error) {
+      // Archiving can remove a run after the directory inventory. It retains no bundle here.
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+      throw error;
+    }
+    // Corrupt records have unknown references, so pruning must still fail closed.
+    const record: unknown = JSON.parse(content);
+    if (!isRecord(record)) throw new Error(`Unreadable node-support run references: ${name}`);
+    if (!record.archivedAt) for (const hash of supportHashes([record])) hashes.add(hash);
+  }
+  return [...hashes];
+}
+
+export async function nodeSupportRetentionReferences(
+  vars: SlotVars,
+): Promise<NodeSupportRetentionReferences> {
+  // Transport probes import this module while runner observability is initializing.
+  // Read the run store only for an activation, after that import graph has settled.
+  const { listRuns, runsDirectory } = await import('../runs/store.js');
+  const selectionPaths = [];
+  for (const slot of await loadMachineSlots(vars.machine)) {
+    // Disabled slots retain their selection too. An unreadable config refuses
+    // pruning instead of guessing that the slot holds no bundle.
+    const selected = await loadSlotVars(slot.id);
+    const project = await loadProjectVars(selected.projectName);
+    selectionPaths.push(nodeSupportHashPath(selected.remoteRepo, project.runtimeDir));
+  }
+  return {
+    selectionPaths,
+    runHashes: [
+      ...new Set([
+        ...referencedNodeSupportHashes(listRuns().runs),
+        ...(await persistedNodeSupportHashes(runsDirectory())),
+      ]),
+    ],
+  };
+}
+
+export interface NodeSupportActivationParams {
+  supportDir: string;
+  supportHash: string;
+  selectionPath?: string;
+  readerTtlMs?: number;
+  references: NodeSupportRetentionReferences;
+  publishCommand?: string;
+  verifyCommand: string;
+}
+
+/** Publish, verify, select and prune under one node-owned lock, including other gateways. */
+export function buildNodeSupportActivationCommand(params: NodeSupportActivationParams): string {
+  const payload = { ...params, supportRoot: path.posix.dirname(params.supportDir) };
+  const script = `import fcntl,json,os,re,shutil,subprocess,sys,time
+from pathlib import Path
+d=json.loads(sys.argv[1]);root=Path(d['supportRoot']);root.mkdir(parents=True,exist_ok=True)
+assert not root.is_symlink()
+with (root/'.activation.lock').open('a') as lock:
+ end=time.monotonic()+30
+ while True:
+  try:
+   fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+  except BlockingIOError:
+   if time.monotonic()>=end:raise TimeoutError('Node support activation lock timeout')
+   time.sleep(.05)
+ if d.get('publishCommand'):subprocess.run(['/bin/sh','-c',d['publishCommand']],check=True)
+ target=Path(d['supportDir'])
+ if not target.is_dir():sys.exit(75)
+ assert json.loads((target/'manifest.json').read_text())['hash']==d['supportHash']
+ subprocess.run(['/bin/sh','-c',d['verifyCommand']],check=True)
+ readers=root/'.readers';readers.mkdir(exist_ok=True)
+ if d.get('readerTtlMs'):
+  lease=readers/(d['supportHash']+'.json')
+  previous=json.loads(lease.read_text())['expiresAt'] if lease.exists() else 0
+  temporary=lease.with_name(lease.name+'.'+str(os.getpid())+'.tmp')
+  temporary.write_text(json.dumps({'expiresAt':max(previous,time.time()+d['readerTtlMs']/1000)}));os.replace(temporary,lease)
+  print(json.dumps({'reader':d['supportHash']}));sys.exit(0)
+ keep=set(d['references']['runHashes']);keep.add(d['supportHash'])
+ for lease in readers.glob('*.json'):
+  if not re.fullmatch('[a-f0-9]{64}\\.json',lease.name):continue
+  if json.loads(lease.read_text())['expiresAt']>time.time():keep.add(lease.stem)
+  else:lease.unlink()
+ paths=set(d['references']['selectionPaths']);paths.add(d['selectionPath'])
+ # Read every pointer before changing anything. Unknown selection is not absence.
+ for name in paths:
+  try:value=Path(name).expanduser().read_text().strip()
+  except FileNotFoundError:continue
+  if not re.fullmatch('[a-f0-9]{64}',value):raise ValueError('Invalid node support selection: '+name)
+  if name!=d['selectionPath']:keep.add(value)
+ selection=Path(d['selectionPath']).expanduser();selection.parent.mkdir(parents=True,exist_ok=True)
+ temporary=selection.with_name(selection.name+'.'+str(os.getpid())+'.tmp')
+ try:
+  temporary.write_text(d['supportHash']+'\\n');os.chmod(temporary,0o644);os.replace(temporary,selection)
+ finally:
+  temporary.unlink(missing_ok=True)
+ removed=[]
+ for bundle in root.iterdir():
+  if not re.fullmatch('[a-f0-9]{64}',bundle.name) or not bundle.is_dir() or bundle.is_symlink():continue
+  if bundle.name in keep or (root/'.locks'/(bundle.name+'.lock')).exists():continue
+  shutil.rmtree(bundle);removed.append(bundle.name)
+ print(json.dumps({'selected':d['supportHash'],'removed':removed}))
+`;
+  return `: farmslot-node-support-activate\npython3 -c ${shellQuote(script)} ${shellQuote(JSON.stringify(payload))}`;
+}
+
+/** A cached read keeps its files through execution, even if its cache lease expires meanwhile. */
+export function wrapNodeSupportReadCommand(command: string, supportDir: string): string {
+  const script = `import fcntl,json,os,signal,subprocess,sys
+from pathlib import Path
+d=json.loads(sys.argv[1]);bundle=Path(d['supportDir'])
+with (bundle.parent/'.activation.lock').open('a') as lock:
+ fcntl.flock(lock,fcntl.LOCK_SH)
+ if not bundle.is_dir():raise RuntimeError('Read-only node support bundle is unavailable')
+ shell=sys.argv[2]
+ flags={'zsh':['-f'],'bash':['--noprofile','--norc']}.get(Path(shell).name,[])
+ result=subprocess.run([shell,*flags,'-c',d['command']])
+ if result.returncode<0:
+  if -result.returncode!=signal.SIGKILL:signal.signal(-result.returncode,signal.SIG_DFL)
+  os.kill(os.getpid(),-result.returncode)
+ sys.exit(result.returncode)
+`;
+  return `python3 -c ${shellQuote(script)} ${shellQuote(JSON.stringify({ command, supportDir }))} "$0"`;
+}

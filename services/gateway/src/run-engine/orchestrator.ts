@@ -230,6 +230,17 @@ export async function cleanupSlotAfterRunFailure(
   teardownWorker?: (slotId: string) => Promise<void>,
   options: { preserveRetainedWorker?: boolean } = {},
 ): Promise<void> {
+  const failed = getRun(runId);
+  if (failed?.status === 'failed') {
+    const { ownsRunSlotCleanup, readSlotRow } = await import('../core/index.js');
+    if (ownsRunSlotCleanup(await readSlotRow(slotId), runId)) {
+      // Resetting the row alone loses the cleanup authority while detached
+      // workers, dev servers and devices remain alive on the slot.
+      const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
+      await releaseCompletedRunSlot(failed);
+      return;
+    }
+  }
   const { slotOwnershipReleaseFields, transitionSlotStatus } = await import('../core/index.js');
   // Object holder rather than a `let`: assignments inside the decide closure
   // are invisible to control-flow narrowing on a plain local.
@@ -1351,7 +1362,15 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       },
       collaborators: terminalCollaborators(
         Events.RUN_COMPLETED,
-        release ? () => runDeferredSlotRelease(release) : null,
+        release
+          ? () => runDeferredSlotRelease(release)
+          : async (run) => {
+              // A successful CI end without a successor still ends the slot's
+              // runtime, even when its final step did not defer a release.
+              const { releaseCompletedRunSlot } =
+                await import('../methods/run/lifecycle-control.js');
+              await releaseCompletedRunSlot(run);
+            },
       ),
     });
   }
