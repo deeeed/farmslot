@@ -253,10 +253,11 @@ test('a cached read-only bundle survives another activation and preserves comman
     (error) => error instanceof Error && 'code' in error && error.code === 7,
   );
   assert.equal(await readFile(path.join(f.root, hash('a'), 'payload'), 'utf8'), 'retained\n');
+  // Observe the wrapper's signal before an outer shell can convert it to exit 137.
   await assert.rejects(
     exec('/bin/sh', [
       '-c',
-      wrapNodeSupportReadCommand('kill -KILL $$', path.join(f.root, hash('a'))),
+      `exec ${wrapNodeSupportReadCommand('kill -KILL $$', path.join(f.root, hash('a')))}`,
     ]),
     (error) => error instanceof Error && 'signal' in error && error.signal === 'SIGKILL',
   );
