@@ -21,7 +21,7 @@ import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotCopyDir, slotCopyFile, slotFileExists, slotListDir } from '../core/slot-io.js';
 import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
-import { assertReviewFindingBodies } from '../review-publication/validate-comments.js';
+import { appendReviewFindingBodies } from '../review-publication/validate-comments.js';
 import {
   createRunArtifactAcquisition,
   readOptionalRetainedRunText,
@@ -358,7 +358,11 @@ export async function readReviewArtifacts(
       if (feedback.recommendation) throw new ReviewApprovalPolicyError(feedback.recommendation);
       throw new Error(feedback.terminalInvalidReason);
     }
-    assertReviewFindingBodies(feedback.issues, result.lineComments, result.reviewMd);
+    result.reviewMd = appendReviewFindingBodies(
+      feedback.issues,
+      result.lineComments,
+      result.reviewMd,
+    );
     if (!feedback.recommendation || feedback.recommendation !== result.recommendation)
       throw new ReviewApprovalPolicyError(feedback.recommendation ?? 'COMMENT');
   }

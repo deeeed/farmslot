@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Append authoritative findings missing from a review's body or inline comments instead of blocking publication over paraphrased wording.
+
 - Give a native reviewer with valid findings but no terminal signal one durable completion turn in the same saved conversation, preserving its admission and reconciling delivery after restart.
 
 - Allow one person approval to accept checked review findings and attest eligible evidence-policy gaps, retaining and validating both receipts.
