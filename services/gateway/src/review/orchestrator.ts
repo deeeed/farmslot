@@ -124,6 +124,7 @@ import {
   reviewAttemptFromResult,
 } from './snapshots.js';
 import { expandReviewFixTemplate, getReviewConfig, resolveWorkerTaskDir } from './templates.js';
+import { UncommittedReviewFixError } from './uncommitted-fix-error.js';
 import {
   ensureTmuxTargetReadyForRelaunch,
   isWorkerAlive,
@@ -410,7 +411,11 @@ async function executeOwnedReview(
         });
     if (recoveredFixResult) {
       hasReusableReviewResult =
-        recoveredFixResult.verdict === 'pass' || recoveredFixResult.verdict === 'issues';
+        recoveredFixResult.verdict === 'pass' ||
+        recoveredFixResult.verdict === 'issues' ||
+        recoveredFixResult.attempts?.some(
+          (attempt) => attempt.verdict === 'pass' || attempt.verdict === 'issues',
+        ) === true;
       return {
         ...recoveredFixResult,
         usage: recoveredFixResult.attempts?.at(-1)?.usage,
@@ -1230,22 +1235,38 @@ export async function runReviewRetryLoop({
       );
       // ADR-063 Amendment 5: the re-review continues the lineage that raised the findings.
       const rereview = reReviewContinuation(result);
-      result = await deps.runReviewAgent(
-        vars,
-        reviewRunner,
-        model,
-        taskDir,
-        slotId,
-        runId,
-        reviewTimeoutMs,
-        nextLoopNumber,
-        validationDepth,
-        artifactScope,
-        rereview ? 'warm' : mode,
-        effort,
-        result.reviewId,
-        rereview,
-      );
+      try {
+        result = await deps.runReviewAgent(
+          vars,
+          reviewRunner,
+          model,
+          taskDir,
+          slotId,
+          runId,
+          reviewTimeoutMs,
+          nextLoopNumber,
+          validationDepth,
+          artifactScope,
+          rereview ? 'warm' : mode,
+          effort,
+          result.reviewId,
+          rereview,
+        );
+      } catch (error) {
+        if (!(error instanceof UncommittedReviewFixError)) throw error;
+        return {
+          ...priorResult,
+          verdict: 'blocked',
+          reason: workerBlockReason ?? error.message,
+          fixDelta: fixDelta.snapshot,
+          attempts,
+          retryCount,
+          maxRetries,
+          feedbackSent: true,
+          recoveryContinuationPending: false,
+          durationMs: Date.now() - start,
+        };
+      }
       const retryAttempt: ReviewAttempt = {
         ...reviewAttemptFromResult(
           result,
@@ -2252,22 +2273,39 @@ async function recoverReviewFixPass({
       lineage && reviewedHeadSha
         ? { lastReviewedHeadSha: reviewedHeadSha, priorIssues: issues }
         : undefined;
-    const retryResult = await runReviewAgent(
-      vars,
-      reviewRunner,
-      model,
-      taskDir,
-      slotId,
-      runId,
-      reviewTimeoutMs,
-      recheckLoop,
-      validationDepth,
-      artifactScope,
-      rereview ? 'warm' : mode,
-      effort,
-      lineage,
-      rereview,
-    );
+    let retryResult: ReviewAgentResult;
+    try {
+      retryResult = await runReviewAgent(
+        vars,
+        reviewRunner,
+        model,
+        taskDir,
+        slotId,
+        runId,
+        reviewTimeoutMs,
+        recheckLoop,
+        validationDepth,
+        artifactScope,
+        rereview ? 'warm' : mode,
+        effort,
+        lineage,
+        rereview,
+      );
+    } catch (error) {
+      if (!(error instanceof UncommittedReviewFixError)) throw error;
+      return {
+        ...priorResult,
+        verdict: 'blocked',
+        reason: workerBlockReason ?? error.message,
+        fixDelta: fixDelta.snapshot,
+        attempts: [initialAttempt],
+        retryCount: recoveredRetryCount,
+        maxRetries,
+        feedbackSent: true,
+        recoveryContinuationPending: false,
+        durationMs: Date.now() - start,
+      };
+    }
     const seededReviewResult = {
       ...retryResult,
       fixDelta: fixDelta.snapshot,

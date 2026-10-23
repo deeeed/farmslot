@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Project CI-watch deadlines from existing monitor clocks without changing polling or timeout behavior.
+- Refuse a re-review before spending a round when its reviewed HEAD is unchanged and the slot still has uncommitted fixes.
 - Keep bundles referenced by active slot fixtures until their run ends, including after support selections advance or fixtures refresh.
 
 - Project current-attempt checklist timing and preserve step durations in monthly analytics.

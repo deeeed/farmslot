@@ -14,6 +14,7 @@ import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.j
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { hasUserSlotChanges } from '../fleet/slot-scaffolding.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
@@ -113,6 +114,7 @@ import {
   TerminalReviewArtifactError,
   terminalReviewArtifactErrorForCompletion,
 } from './terminal-result.js';
+import { UncommittedReviewFixError } from './uncommitted-fix-error.js';
 
 type NativeReviewInput = {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -320,6 +322,26 @@ async function runNativeReviewAttempt(
         admit();
         await new Promise((resolve) => setTimeout(resolve, WARM_BUSY_POLL_MS));
       }
+    }
+  }
+  const lastReviewedHeadSha = input.rereview?.lastReviewedHeadSha ?? retained?.lastReviewedHeadSha;
+  if (!recovering && lastReviewedHeadSha) {
+    const tree = await execOnSlot(
+      vars,
+      'git rev-parse HEAD && git status --porcelain=v1 -z --untracked-files=all',
+      { timeout: 10_000 },
+    );
+    if (tree.exitCode !== 0)
+      throw new Error('Re-review preflight failed: could not read HEAD and worktree status.');
+    const separator = tree.stdout.indexOf('\n');
+    if (tree.stdout.slice(0, separator).trim() === lastReviewedHeadSha) {
+      const { projectJson } = await loadProjectVars(original.project);
+      const dirtyPaths = tree.stdout
+        .slice(separator + 1)
+        .split('\0')
+        .filter((entry) => entry && hasUserSlotChanges(entry, projectJson));
+      if (dirtyPaths.length > 0)
+        throw new UncommittedReviewFixError(lastReviewedHeadSha, dirtyPaths);
     }
   }
   const target = targetForChecklistBasename(reviewerChecklistBasename(contextId));
