@@ -26,7 +26,7 @@ import {
   reviewPostRecommendation,
   sourceObservationAge,
 } from '@farmslot/protocol';
-import { refreshReviewGateView } from '@farmslot/review-dispatch';
+import { refreshReviewGateView, reviewGateRefreshBlocksPost } from '@farmslot/review-dispatch';
 
 import '../runs/review-history-panel.js';
 import '../diff-viewer/diff-review.js';
@@ -108,6 +108,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._recoveryRequest = undefined;
     this._posting = false;
     this._refreshing = false;
+    this._refreshError = '';
     this._checkingOut = false;
     this._actionError = '';
     this._preservedInclusion = undefined;
@@ -645,8 +646,13 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private _handlePost() {
-    if (this._actionsPaused || this._refreshing || !this._postAvailable || !this._payload) return;
-
+    if (
+      this._actionsPaused ||
+      reviewGateRefreshBlocksPost(this._refreshing, this._refreshError) ||
+      !this._postAvailable ||
+      !this._payload
+    )
+      return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
@@ -720,6 +726,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._comments.map((c, i) => [this._commentKey(c), this._includedComments.has(i)]),
     );
     this._preservedIncludeEvidence = this._includeEvidence;
+    this._refreshError = '';
     try {
       const refreshed = await refreshReviewGateView(
         () =>
@@ -732,10 +739,15 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
           return state.data;
         },
       );
-      if (command.current() && refreshed.error) {
-        this._actionError = refreshed.error;
-        this._preservedInclusion = undefined;
-        this._preservedIncludeEvidence = undefined;
+      if (command.ownsView()) {
+        this._refreshError = command.current()
+          ? (refreshed.error ?? '')
+          : 'Gateway connection changed. Refresh review again before posting.';
+        if (this._refreshError) {
+          this._actionError = this._refreshError;
+          this._preservedInclusion = undefined;
+          this._preservedIncludeEvidence = undefined;
+        }
       }
     } finally {
       command.finish();
@@ -1137,6 +1149,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         ><span>Saved review · ${this._comments.length} line comments</span>
       </div>`;
     return renderReviewTopBar({
+      run: this.run,
       comments: this._comments,
       includedComments: this._includedComments.size,
       selectedRecommendation: this._selectedRecommendation,
@@ -1151,8 +1164,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       },
       posting: this._posting,
       postAvailable: this._postAvailable,
+      postBlocked: reviewGateRefreshBlocksPost(this._refreshing, this._refreshError),
       recovering: this._actionsPaused,
-
       refreshing: this._refreshing,
       proposing: this._proposing,
       proposeError: this._proposeError,
@@ -1161,8 +1174,6 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       proposeImprovement: () => this._handleProposeImprovement(),
       post: () => this._handlePost(),
       dismiss: () => this._handleDismiss(),
-      reviewerHref: this.reviewerHref,
-      reviewerUnavailable: this.reviewerUnavailable,
     });
   }
 

@@ -4,8 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback and verified identity handling. Sources, fleet, run collections, full run details, slot workspaces and history, terminal and native-conversation run context, visual-review run context, diff and artifact contexts, family views, saved reviews and decision workspaces share live observations; saved results show their age and actions wait for current reads. Visual feedback retains replies in flight during refresh and prevents resending an accepted draft. Conversation controls keep their exact task binding and preserve unsent answers when a refresh interrupts submission. Idle slot diffs load without a bound run, and retained artifact/diff read failures offer Retry. Requires a new native build with Expo SQLite.
-- Add reproducible client-store baseline recipes with a dev-only native startup and websocket byte counter.
+- Keep review posting blocked after a failed refresh until the revised review is loaded.
+
 - Show one combined findings and evidence approval and send both explicit reason fields from either gate surface.
 
 - Show the same covered Jira tickets in run cards and detail, and find runs by any linked key.
@@ -58,6 +58,9 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - A run that needs a decision shows it in the decision workspace with the same reason, findings or refused prerequisite, delivered head or report, and three actions as Command Center; an action that can't be taken shows why, and Accept needs a written reason. The Review queue labels it Needs decision, opens it with Open decision, and skips the held output review. When the gateway re-presents the decision (new output, a granted review round, a restart), the open workspace follows the new one and stays on it. Its run card says Needs decision instead of Failed.
 - The evidence workspace reads a `review` criterion as "Checked in review" or "Awaiting code review" instead of its raw verdict (ADR-062 Amendment 18).
+
+- Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback and verified identity handling. Sources, fleet, run collections, full run details, slot workspaces and history, terminal and native-conversation run context, visual-review run context, diff and artifact contexts, family views, saved reviews and decision workspaces share live observations; saved results show their age and actions wait for current reads. Visual feedback retains replies in flight during refresh and prevents resending an accepted draft. Conversation controls keep their exact task binding and preserve unsent answers when a refresh interrupts submission. Idle slot diffs load without a bound run, and retained artifact/diff read failures offer Retry. Requires a new native build with Expo SQLite.
+- Add reproducible client-store baseline recipes with a dev-only native startup and websocket byte counter.
 
 ## 0.8.2 - 2026-10-16
 

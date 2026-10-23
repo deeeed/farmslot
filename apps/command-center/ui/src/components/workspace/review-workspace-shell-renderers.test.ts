@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { GitBranchDiffFile } from '@farmslot/protocol';
+import type { GitBranchDiffFile, Run } from '@farmslot/protocol';
 
 import { FakeControllerHost } from '../../testing/fake-controller-host.js';
 import { litText } from '../../testing/lit-text.js';
@@ -91,8 +91,10 @@ test('renderReviewDiffFiles shows the all-hidden state even with a test file sti
   );
 });
 
-test('a refreshed gate without Post renders no publication control', () => {
-  const input: Parameters<typeof renderReviewTopBar>[0] = {
+function reviewInput(
+  overrides: Partial<Parameters<typeof renderReviewTopBar>[0]> = {},
+): Parameters<typeof renderReviewTopBar>[0] {
+  return {
     comments: [],
     includedComments: 0,
     selectedRecommendation: 'COMMENT',
@@ -112,7 +114,81 @@ test('a refreshed gate without Post renders no publication control', () => {
     proposeImprovement: () => undefined,
     post: () => undefined,
     dismiss: () => undefined,
+    ...overrides,
   };
+}
+
+test('a refreshed gate without Post renders no publication control', () => {
+  const input = reviewInput();
   assert.doesNotMatch(litText(renderReviewTopBar(input)), /Post to PR/);
   assert.match(litText(renderReviewTopBar({ ...input, postAvailable: true })), /Post to PR/);
+});
+
+test('every review workspace derives Ask reviewer from its run without parent link wiring', () => {
+  const run: Run = {
+    id: 'review-run',
+    familyId: 'review-run',
+    flowType: 'review-pr',
+    lane: 'production',
+    status: 'human-gating',
+    project: 'fixture',
+    ticketOrPr: 'example/repo#1',
+    slotId: 'review-slot',
+    branch: 'feature',
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: '2026-10-23T00:00:00Z',
+    updatedAt: '2026-10-23T00:00:00Z',
+    agentContexts: [
+      {
+        id: 'retained-reviewer',
+        runId: 'review-run',
+        slotId: 'review-slot',
+        label: 'Reviewer',
+        role: 'review',
+        status: 'waiting',
+        target: { session: 'review', window: 'review', target: 'review:review.0' },
+      },
+    ],
+  };
+  assert.match(
+    litText(renderReviewTopBar(reviewInput({ run }))),
+    /href=#slot\/review-slot\?runId=review-run&contextId=retained-reviewer/,
+  );
+  const context = run.agentContexts?.[0];
+  assert(context);
+  const nativeRun: Run = {
+    ...run,
+    slotId: null,
+    reviewWorkspace: {
+      workspaceId: 'workspace',
+      machine: 'review-node',
+      executionNodeId: 'review-node',
+      checkoutPath: '/fixture/source',
+      taskPath: '/fixture/task',
+      artifactPath: '/fixture/task/artifacts',
+    },
+    agentContexts: [
+      {
+        ...context,
+        slotId: null,
+        target: null,
+        nativeSession: {
+          sessionId: 'native-review',
+          executionNodeId: 'review-node',
+          ownerPrincipalId: 'person',
+          generation: 'generation',
+          leaseId: 'lease',
+          commandId: 'original',
+          acceptedAt: '2026-10-23T00:00:00Z',
+        },
+      },
+    ],
+  };
+  assert.match(
+    litText(renderReviewTopBar(reviewInput({ run: nativeRun }))),
+    /href=#terminal\?run=review-run&contextId=retained-reviewer/,
+  );
 });

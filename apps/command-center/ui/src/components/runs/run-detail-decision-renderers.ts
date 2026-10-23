@@ -24,7 +24,6 @@ import {
   pendingResultDecision,
   type ResultDecision,
   resultDecisionView,
-  runReviewerView,
   runTerminalView,
 } from '@farmslot/review-dispatch';
 
@@ -402,17 +401,6 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
         | undefined)
     : undefined;
   const terminalTarget = runTerminalView(run).target;
-  const reviewer = runReviewerView(run);
-  const reviewerHref =
-    reviewer.disabledReason || !reviewer.context
-      ? ''
-      : reviewer.target?.slotId
-        ? slotViewHash({
-            slotId: reviewer.target.slotId,
-            runId: run.id,
-            contextId: reviewer.context.id,
-          })
-        : `#terminal?run=${encodeURIComponent(run.id)}&contextId=${encodeURIComponent(reviewer.context.id)}`;
 
   return html`
     <div
@@ -501,8 +489,6 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                         branch=${run.branch ?? ''}
                         .resourcePosture=${context.posture.choice}
                         .postureBlockedReason=${context.postureBlockedReason}
-                        .reviewerHref=${reviewerHref}
-                        .reviewerUnavailable=${reviewer.disabledReason ?? ''}
                       ></review-workspace>
                     `
                   : html`
