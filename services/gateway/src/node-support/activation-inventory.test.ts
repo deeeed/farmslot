@@ -93,5 +93,15 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
     nodeSupportRetentionReferences(await loadSlotVars('fixture-1')),
   ]);
   assert.equal(references.runInventory?.generation, '1');
-  assert.deepEqual(next.map((value) => value.runInventory?.generation).sort(), ['2', '3']);
+  assert.equal(references.runInventory?.capturedThrough, '2');
+  assert.deepEqual(
+    next
+      .flatMap((value) => [value.runInventory?.generation, value.runInventory?.capturedThrough])
+      .sort(),
+    ['3', '4', '5', '6'],
+  );
+  for (const value of next) {
+    assert.ok(value.runInventory);
+    assert.ok(BigInt(value.runInventory.capturedThrough) > BigInt(value.runInventory.generation));
+  }
 });

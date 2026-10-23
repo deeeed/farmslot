@@ -420,7 +420,12 @@ test('only the owning run inventory releases a deleted run journal', async (t) =
           selectionPaths: [selected],
           runHashes: [],
           activeRuns: active ? [{ runId: 'deleted-owner', paths: [parity] }] : [],
-          runInventory: { scope, runIds, generation: String(++generation) },
+          runInventory: {
+            scope,
+            runIds,
+            generation: String(++generation),
+            capturedThrough: String(++generation),
+          },
         },
         verifyCommand: 'true',
       }),
@@ -456,12 +461,17 @@ test('an older inventory executing last cannot release newer active references',
         runHashes: [],
         activeRuns: active ? [{ runId: 'new-owner', paths: [parity] }] : [],
         endedRunIds,
-        runInventory: { scope: 'owning-gateway', generation, runIds: active ? ['new-owner'] : [] },
+        runInventory: {
+          scope: 'owning-gateway',
+          generation,
+          capturedThrough: String(BigInt(generation) + 1n),
+          runIds: active ? ['new-owner'] : [],
+        },
       },
       verifyCommand: 'true',
     });
   const stale = command('c', '1', false);
-  await exec('/bin/sh', ['-c', command('b', '2', true)]);
+  await exec('/bin/sh', ['-c', command('b', '3', true)]);
   await f.bundle(hash('c'));
   await exec('/bin/sh', ['-c', stale]);
   assert.equal(
@@ -475,10 +485,52 @@ test('an older inventory executing last cannot release newer active references',
     true,
     'a stale terminal receipt cannot release a newer owner',
   );
-  await exec('/bin/sh', ['-c', command('c', '3', false)]);
+  await exec('/bin/sh', ['-c', command('c', '5', false)]);
   assert.equal(
     await present(path.join(f.root, hash('a'))),
     false,
     'a fresh owning inventory can release a deleted owner',
+  );
+});
+
+test('overlapping captures cannot release an observation completed after their start', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b']) await f.bundle(hash(id));
+  const selected = await f.pointer('slot', hash('b'));
+  const parity = path.join(f.home, 'ci-parity');
+  await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('a')}/projects/fixture"\n`);
+  const capture = (id: string, generation: string, capturedThrough: string, active: boolean) =>
+    buildNodeSupportActivationCommand({
+      supportDir: path.join(f.root, hash(id)),
+      supportHash: hash(id),
+      selectionPath: selected,
+      references: {
+        selectionPaths: [selected],
+        runHashes: [],
+        activeRuns: active ? [{ runId: 'overlapping-owner', paths: [parity] }] : [],
+        runInventory: {
+          scope: 'owning-gateway',
+          generation,
+          capturedThrough,
+          runIds: active ? ['overlapping-owner'] : [],
+        },
+      },
+      verifyCommand: 'true',
+    });
+  // A starts first; B captures absence; the run starts; A observes it and finishes last.
+  const absence = capture('c', '2', '3', false);
+  await exec('/bin/sh', ['-c', capture('b', '1', '4', true)]);
+  await f.bundle(hash('c'));
+  await exec('/bin/sh', ['-c', absence]);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'an overlapping absence cannot release the later observation',
+  );
+  await exec('/bin/sh', ['-c', capture('c', '5', '6', false)]);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    false,
+    'a capture starting after the observation can release it',
   );
 });

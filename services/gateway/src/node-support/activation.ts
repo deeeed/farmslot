@@ -24,6 +24,7 @@ export interface NodeSupportRetentionReferences {
 
 export interface RunSupportInventory {
   generation: string;
+  capturedThrough: string;
   scope: string;
   runIds: string[];
 }
@@ -172,6 +173,7 @@ export async function nodeSupportRetentionReferences(
     activeRuns,
     runInventory: {
       generation,
+      capturedThrough: await nextInventoryGeneration(runsDirectory()),
       scope: createHash('sha256')
         .update(hostname())
         .update('\0')
@@ -251,7 +253,7 @@ with (root/'.activation.lock').open('a') as lock:
   record=active/name
   previous=json.loads(record.read_text()) if record.exists() else {}
   hashes=set(previous.get('hashes',[]))
-  generation=int(inventory.get('generation','0'))
+  generation=int(inventory.get('capturedThrough','0'))
   if previous.get('scope')==inventory.get('scope'):generation=max(generation,int(previous.get('generation','0')))
   for reference in run['paths']:inspect(Path(reference).expanduser(),hashes)
   if any(not re.fullmatch('[a-f0-9]{64}',value) for value in hashes):raise ValueError('Invalid active support reference')
