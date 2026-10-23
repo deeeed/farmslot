@@ -74,6 +74,7 @@ import {
   validateTicketRef,
 } from '../methods/dispatch/ticket-ref.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
+import { publishPlanningResources } from '../resources/planning-changes.js';
 import { normalizeRunner, runnerSupportsModel } from '../runners/registry.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { isWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
@@ -278,6 +279,7 @@ export async function flushBacklogForTests(): Promise<void> {
 }
 
 function broadcastBacklog(): void {
+  publishPlanningResources('backlog');
   _broadcast?.(Events.BACKLOG_UPDATED, {
     items: listBacklogItems({ includeArchived: true }).items,
   });

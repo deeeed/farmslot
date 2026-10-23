@@ -37,6 +37,24 @@ export function canReadResourceKey(
     case 'progress':
       method = Methods.TASK_PROGRESS;
       break;
+    case 'planning':
+      switch (key.collection) {
+        case 'backlog':
+          method = Methods.BACKLOG_LIST;
+          break;
+        case 'roadmap':
+          method = Methods.ROADMAP_LIST;
+          break;
+        case 'work-graphs':
+          method = Methods.WORK_GRAPH_LIST;
+          break;
+        case 'dispatch-queue':
+          method = Methods.DISPATCH_QUEUE_LIST;
+          break;
+        default:
+          return false;
+      }
+      break;
     case 'decisions':
     case 'decision':
       method = Methods.DECISION_LIST;

@@ -50,6 +50,7 @@ import {
 } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
+import { publishPlanningResources } from '../resources/planning-changes.js';
 import {
   assertReviewWorkspaceAdmitted,
   assertReviewWorkspacePlacement,
@@ -1006,6 +1007,7 @@ export function reorderItems(itemIds: string[], originator: WorkOriginator): Que
 }
 
 function broadcastQueue(): void {
+  publishPlanningResources('dispatch-queue');
   _broadcast?.('queue.updated', { items: listItems() });
 }
 
@@ -1634,7 +1636,7 @@ async function tryDispatchNextOnce(): Promise<void> {
       if (idx >= 0) {
         queue.splice(idx, 1);
         schedulePersist('auto-dispatch-success');
-        _broadcast('queue.updated', { items: listItems() });
+        broadcastQueue();
       }
     } catch (err) {
       if (err instanceof QueueClaimLostError) {
@@ -1663,7 +1665,7 @@ async function tryDispatchNextOnce(): Promise<void> {
           console.error(
             `[dispatch-queue] cancelling invalid queued item ${item.id.slice(0, 8)}: ${(err as Error).message}`,
           );
-          _broadcast('queue.updated', { items: listItems() });
+          broadcastQueue();
         }
         return;
       }

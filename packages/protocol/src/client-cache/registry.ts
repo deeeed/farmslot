@@ -28,8 +28,88 @@ function requiredId(params: unknown, field: string): string {
   return value;
 }
 
+function planningObservationParams(params: unknown): Record<string, unknown> {
+  if (params == null) return {};
+  if (typeof params !== 'object' || Array.isArray(params))
+    throw new Error('Planning observations require an object');
+  const { forceRefresh, ...observation } = params as Record<string, unknown>;
+  if (forceRefresh !== undefined && forceRefresh !== false)
+    throw new Error('Planning observations cannot forceRefresh');
+  return observation;
+}
+
+function roadmapListObservationParams(params: unknown): Record<string, unknown> {
+  const observation = planningObservationParams(params);
+  if (observation.search !== undefined && observation.search !== '')
+    throw new Error('Roadmap searches are not persisted observations');
+  delete observation.search;
+  return observation;
+}
+
 /** Closed to runtime registration. Each migration changes its owning definition here. */
 export const RESOURCE_QUERY_DEFINITIONS = {
+  [Methods.DISPATCH_QUEUE_LIST]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: 1, maxBytes: 2 * mb },
+    live: true,
+    normalizeParams: planningObservationParams,
+    dependencies: () => [{ family: 'planning', collection: 'dispatch-queue' }],
+  },
+  [Methods.WORK_GRAPH_LIST]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 2 * mb },
+    live: true,
+    normalizeParams: planningObservationParams,
+    dependencies: () => [{ family: 'planning', collection: 'work-graphs' }],
+  },
+  [Methods.WORK_GRAPH_GET]: {
+    persisted: false,
+    maxBytes: 2 * mb,
+    live: true,
+    normalizeParams: planningObservationParams,
+    dependencies: (params: unknown) => [
+      {
+        family: 'planning',
+        collection: 'work-graphs',
+        itemId: requiredId(params, 'graphId'),
+      },
+    ],
+  },
+  [Methods.BACKLOG_LIST]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 2 * mb },
+    live: true,
+    normalizeParams: planningObservationParams,
+    dependencies: () => [{ family: 'planning', collection: 'backlog' }],
+  },
+  [Methods.ROADMAP_LIST]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 2 * mb },
+    live: true,
+    normalizeParams: roadmapListObservationParams,
+    dependencies: () => [
+      { family: 'planning', collection: 'roadmap' },
+      { family: 'planning', collection: 'backlog' },
+      { family: 'runs', scope: 'farm' },
+    ],
+  },
+  [Methods.ROADMAP_GET]: {
+    persisted: false,
+    maxBytes: 2 * mb,
+    live: true,
+    normalizeParams: planningObservationParams,
+    dependencies: (params: unknown) => [
+      { family: 'planning', collection: 'roadmap' },
+      { family: 'planning', collection: 'roadmap', itemId: requiredId(params, 'itemId') },
+      { family: 'planning', collection: 'backlog' },
+      { family: 'planning', collection: 'work-graphs' },
+      { family: 'runs', scope: 'farm' },
+    ],
+  },
   [Methods.SOURCES_STATUS]: {
     persisted: true,
     maxBytes: 2 * mb,

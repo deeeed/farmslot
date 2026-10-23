@@ -27,7 +27,12 @@ export type ResourceKey =
     }
   | { family: 'profiles'; nodeId: string; ownerId: string }
   | { family: 'configuration' | 'pr-automation' | 'analytics'; scope: 'farm'; project?: string }
-  | { family: 'planning'; project?: string; itemId?: string }
+  | {
+      family: 'planning';
+      collection: 'backlog' | 'roadmap' | 'work-graphs' | 'dispatch-queue';
+      project?: string;
+      itemId?: string;
+    }
   | { family: 'assessment'; scope: 'farm'; assessmentId?: string }
   | { family: 'copilot'; ownerId: string; sessionId?: string }
   | { family: 'gateway-update'; scope: 'gateway' }
