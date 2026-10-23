@@ -5,16 +5,14 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { AgentContext, Run } from '@farmslot/protocol';
+import { checklistProgressIsLive, checklistProgressView } from '@farmslot/review-dispatch';
 
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { makeRun } from '../methods/run/test-fixtures.js';
 import { joinSchemaWithMarkdown } from '../methods/task.js';
 
-import {
-  attachChecklistTiming,
-  checklistTimingContext,
-  parseChecklistTiming,
-} from './checklist-timing.js';
+import { checklistTimingContext, parseChecklistTiming } from './checklist-timing.js';
+import { attachChecklistTiming } from './checklist-timing-read.js';
 import { generateTaskSchema } from './writer.js';
 
 const start = '2026-10-23T01:00:00Z';
@@ -150,4 +148,54 @@ test('parent and child timing parser ignores malformed mark events', () => {
     })?.events,
     [{ stepNumber: 1, label: 'Prepare', checkedAt: mark }],
   );
+});
+
+test('blocked and cancelled parents freeze unfinished children without changing child ownership', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'checklist-timing-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const cancelled of [false, true]) {
+    const progress = joinSchemaWithMarkdown(generateTaskSchema(markdown, 'dev'), markdown);
+    const child = joinSchemaWithMarkdown(generateTaskSchema(markdown, 'dev'), markdown);
+    child.timing = {
+      schemaVersion: 1,
+      startedAt: start,
+      events: [{ stepNumber: 1, label: 'Prepare', checkedAt: mark }],
+    };
+    progress.phases[0].steps[1].subtask = {
+      id: 'child',
+      status: 'running',
+      source: { kind: 'inline', sha256: 'a', renderedSha256: 'b' },
+      progress: child,
+      lastEventAt: mark,
+    };
+    const run = makeRun({
+      status: cancelled ? 'cancelled' : 'blocked',
+      completedAt: cancelled ? finish : undefined,
+      agentContexts: [context()],
+    });
+    await writeFile(
+      path.join(root, 'SIGNAL.json'),
+      JSON.stringify({
+        status: cancelled ? 'running' : 'blocked',
+        timestamp: finish,
+        checklistTiming: {
+          schemaVersion: 1,
+          events: [{ stepNumber: 1, label: 'Prepare', checkedAt: mark }],
+        },
+      }),
+    );
+    await attachChecklistTiming(
+      ORCHESTRATOR_LOCALITY,
+      path.join(root, 'CHECKLIST.md'),
+      progress,
+      run,
+    );
+    assert.equal(child.timing.finishedAt, finish);
+    assert.equal(progress.phases[0].steps[1].subtask?.status, 'running');
+    assert.equal(checklistProgressIsLive(progress), false);
+    const at = (time: string) =>
+      checklistProgressView(child, { nowMs: Date.parse(time) })!.phases[0].rows[1];
+    assert.equal(at('2026-10-23T02:00:00Z').duration, '1m 38s');
+    assert.equal(at('2026-10-23T03:00:00Z').duration, '1m 38s');
+  }
 });

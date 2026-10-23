@@ -94,6 +94,10 @@ changed. Completed durations use `deriveChecklistStepDurations`; elapsed time
 stops at the recorded finish. Retained worker metrics supply historical timing
 after finalize.
 
+A stopped parent also stops elapsed time on unfinished child rows, without
+changing the child's recorded ownership or signal status. Progress and monthly
+analytics use the same attempt boundary to exclude marks from before a resume.
+
 Monthly `events-YYYY-MM.ndjson` records add optional `checklistSteps`, containing
 the primary worker's step number, label and duration in milliseconds, derived
 from retained `Run.metrics.checklistTiming` and its worker attempt start. This

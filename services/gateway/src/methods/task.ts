@@ -38,7 +38,7 @@ import { readReviewWorkspaceProgress } from '../review-workspaces/task.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
-import { attachChecklistTiming } from '../tasks/checklist-timing.js';
+import { attachChecklistTiming } from '../tasks/checklist-timing-read.js';
 import { attachOperations } from '../tasks/operations.js';
 import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
 import { WORKER_MIRROR_SUFFIX } from '../tasks/sidecars.js';

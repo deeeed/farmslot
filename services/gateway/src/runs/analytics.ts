@@ -23,7 +23,7 @@ import {
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { farmslotRoot } from '../fleet/state.js';
-import { checklistTimingContext } from '../tasks/checklist-timing.js';
+import { checklistTimingContext, checklistTimingForAttempt } from '../tasks/checklist-timing.js';
 
 import { getAllRuns, shouldUseIsolatedRunsDir } from './store.js';
 
@@ -235,9 +235,10 @@ export function buildAnalyticsRecord(
   const ci = ciOutputs(run);
   const tokens = workerTokens(run);
   const worker = checklistTimingContext(run, 'CHECKLIST.md');
+  const startedAt = worker?.attemptStartedAt ?? worker?.startedAt;
   const checklistSteps = deriveChecklistStepDurations(
-    run.metrics?.checklistTiming,
-    worker?.attemptStartedAt ?? worker?.startedAt,
+    checklistTimingForAttempt(run.metrics?.checklistTiming, startedAt),
+    startedAt,
   );
 
   return {

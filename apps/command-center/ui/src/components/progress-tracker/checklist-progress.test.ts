@@ -5,7 +5,7 @@ import type { TaskProgressStructured, TaskStepSubtaskProgress } from '@farmslot/
 
 import { litBinding, litText } from '../../testing/lit-text.js';
 
-import { renderChecklistProgress } from './progress-tracker.js';
+import { renderChecklistProgress, renderTrackerStepRow } from './progress-tracker.js';
 import { SubtaskOpenState } from './subtask-block.js';
 
 function childUnit(id: string, childStepName: string): TaskStepSubtaskProgress {
@@ -87,7 +87,14 @@ test('checklist rows render muted trailing durations for parent and child throug
   });
   assert.match(litText(rendered), /8m 22s/);
   assert.match(litText(rendered), /1m 38s/);
-  assert.match(litText(rendered), /38s/);
+  const child = progress.phases[0].steps[1].subtask!.progress;
+  const childRow = renderTrackerStepRow(
+    child.phases[0].steps[0],
+    new SubtaskOpenState().scope('timed'),
+    true,
+    child.timing,
+  );
+  assert.match(litText(childRow), /class="substep-duration"[^>]*>38s<\/span>/);
   assert.match(litText(rendered), /1m 0s/);
 });
 

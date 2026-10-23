@@ -1,3 +1,5 @@
+import type { WorkerSignalChecklistStepDuration } from '../transport/signal.js';
+
 import type { FlowType, RunLane, RunStatus } from './runs.js';
 
 // ─── Pipeline-ops analytics ───
@@ -92,7 +94,7 @@ export interface RunAnalyticsRecord {
   resultDecision?: 'accepted' | 'closed' | null;
   steps: AnalyticsStepRecord[];
   /** Primary worker checklist mark durations, retained in monthly NDJSON after task pruning. */
-  checklistSteps?: import('../transport/signal.js').WorkerSignalChecklistStepDuration[];
+  checklistSteps?: WorkerSignalChecklistStepDuration[];
   /** completedAt − createdAt. */
   wallMs: number | null;
   /** wallMs − Σ step durations: queue + human-gate + CI waiting. */

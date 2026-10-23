@@ -8,7 +8,7 @@ import type { TaskProgressParams, TaskProgressResult } from '@farmslot/protocol'
 
 import { GatewayClient } from '../packages/cli/src/gateway-client.js';
 import { resolveGatewayTarget } from '../packages/cli/src/gateway-profiles.js';
-import { attachChecklistTiming } from '../services/gateway/src/tasks/checklist-timing.js';
+import { attachChecklistTiming } from '../services/gateway/src/tasks/checklist-timing-read.js';
 
 const [profile, portArg, output] = process.argv.slice(2);
 if (!profile || !output || !Number.isInteger(Number(portArg)))

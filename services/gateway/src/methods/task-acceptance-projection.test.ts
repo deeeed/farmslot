@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
+import type { Run } from '@farmslot/protocol';
+
 import '../runtime/mock-pty.test-support.js';
 
 // Same fixture shape as task-subtask-projection.test.ts: mock.module replaces a
@@ -13,6 +15,8 @@ import '../runtime/mock-pty.test-support.js';
 import * as realConfig from '../core/config.js';
 import * as realFleetState from '../fleet/state.js';
 import * as realRunStore from '../runs/store.js';
+
+import { makeRun } from './run/test-fixtures.js';
 
 let repoRoot = '';
 
@@ -40,7 +44,7 @@ mock.module('../fleet/state.js', {
 });
 
 // Runs a test registers by id; every other lookup finds none.
-const runs = new Map<string, unknown>();
+const runs = new Map<string, Run>();
 
 mock.module('../runs/store.js', {
   namedExports: {
@@ -244,12 +248,16 @@ function writeReleasedRun(options: { workerMirror: boolean }) {
     path.join(taskDir, 'artifacts', 'evidence-manifest.json'),
     JSON.stringify({ standalone: [{ label: 'Teardown', covers: ['ac1'], file: 'teardown.png' }] }),
   );
-  runs.set('run-released', {
-    id: 'run-released',
-    project: 'demo',
-    flowType: 'dev',
-    taskFile: path.join(taskDir, 'TASK.md'),
-  });
+  runs.set(
+    'run-released',
+    makeRun({
+      id: 'run-released',
+      project: 'demo',
+      flowType: 'dev',
+      status: 'done',
+      taskFile: path.join(taskDir, 'TASK.md'),
+    }),
+  );
   return fixture;
 }
 
@@ -294,12 +302,15 @@ test('a recorded task file outside the project task root is not read', async () 
   const fixture = writeReleasedRun({ workerMirror: true });
   const outside = mkdtempSync(path.join(os.tmpdir(), 'gw-outside-task-'));
   writeFileSync(path.join(outside, 'TASK.md'), '# Task\n');
-  runs.set('run-outside', {
-    id: 'run-outside',
-    project: 'demo',
-    flowType: 'dev',
-    taskFile: path.join(outside, 'TASK.md'),
-  });
+  runs.set(
+    'run-outside',
+    makeRun({
+      id: 'run-outside',
+      project: 'demo',
+      flowType: 'dev',
+      taskFile: path.join(outside, 'TASK.md'),
+    }),
+  );
   try {
     await assert.rejects(
       taskProgress({ slotId: 'slot-acceptance', runId: 'run-outside' }),
