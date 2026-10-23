@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Retain the original worker and slot when COMPLETE or FINALIZE refuses a publish package, including failed output capture or a result-decision write failure, so recovery can continue in place.
 - Name the selected recipe attempt and the one-attempt rule when publication declarations mix after or standalone proof from another attempt recorded by the same run.
 - Ignore read-only historical run records during node-support retention scans, and preserve all bundles when an unreadable inventory prevents pruning without blocking reviews.
 - Let managed native reviewers run commands without approval prompts, preserving run tiers, worker policy and sandbox write scope. Upgrade every native host to `@farmslot/agent-runtime` 0.38.2 before activating this gateway policy; older hosts reject reviewer launches.

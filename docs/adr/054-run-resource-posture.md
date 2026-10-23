@@ -363,6 +363,13 @@ non-terminal CI-watch holds remain warm.
 This supersedes terminal resource keep-warm and pre-finalize failed-worker
 retention in earlier release rules and ADR-038. Blocked decision holds are unchanged.
 
+Refused COMPLETE or FINALIZE prerequisites and publish packages remain recoverable
+under [ADR-065](065-fail-closed-run-lifecycle.md), Amendments 6 and 7. They retain
+the same worker, slot, checkout and leases for in-place repair and replay, including
+when no delivered result can be recorded or a result-decision write fails. Terminal
+cleanup MUST NOT retire that worker merely because the run reads `failed`. Existing
+operator close, discard, cancel and archive guards still own confirmed teardown.
+
 At node-support activation, retain bundles selected by any slot or referenced by
 any non-archived run, including completed, failed and cancelled records. Delete
 other completed bundles. References include support paths still embedded in active
