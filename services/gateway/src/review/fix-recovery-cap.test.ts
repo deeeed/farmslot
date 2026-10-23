@@ -6,6 +6,7 @@ import { after, mock, test, type TestContext } from 'node:test';
 
 import type { runNativeReviewAgent } from './native-review-agent.js';
 import type { ReviewAgentResult } from './review-agent.js';
+import { UncommittedReviewFixError } from './uncommitted-fix-error.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const repo = await mkdtemp(path.join(os.tmpdir(), 'fix-recovery-cap-'));
@@ -58,7 +59,7 @@ const { REVIEW_FIX_CHECKLIST_TARGET, taskDirRelPath } =
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { deleteTestRunIfPresent } = await import('../run-engine/test-fixtures.js');
 
-async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, string>) {
+async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, string>, atCap = true) {
   const run = createRun({
     project,
     flowType: 'dev',
@@ -73,11 +74,12 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
       slots: [...(current?.slots ?? []).filter((entry) => entry.slot !== vars.slotId), ...rows],
     }));
   t.after(async () => {
+    nativeReviewer = async () => ({ verdict: 'pass', issues: [] });
     await slotRow([]);
     await deleteTestRunIfPresent(run.id);
   });
   await slotRow([{ slot: vars.slotId, current_run_id: run.id }]);
-  for (const reason of ['timeout', 'invalid JSON', 'lost on restart']) {
+  for (const reason of atCap ? ['timeout', 'invalid JSON', 'lost on restart'] : []) {
     await admitReviewRound(run.id, reason);
     await settleReviewRoundNoVerdict(run.id, reason, reason);
   }
@@ -150,6 +152,29 @@ test('a recovered fix the worker blocked keeps its block at the no-verdict cap',
   assert.equal(result.feedbackSent, true);
   assert.equal(result.recoveryContinuationPending, false);
 });
+
+for (const status of ['complete', 'blocked']) {
+  test(`a recovered uncommitted ${status} fix stays blocked without a new review attempt`, async (t) => {
+    const refusal = new UncommittedReviewFixError('a'.repeat(40), [' M a.ts']);
+    nativeReviewer = async () => {
+      throw refusal;
+    };
+    const { run, result, launches } = await recoveredFixAtCap(
+      t,
+      {
+        status,
+        reason: 'needs staging access',
+      },
+      false,
+    );
+    assert.equal(launches, 1, 'the native preflight refuses before admission');
+    assert.equal(result.verdict, 'blocked');
+    assert.equal(result.reason, status === 'blocked' ? 'needs staging access' : refusal.message);
+    assert.equal(result.issues?.length, 1);
+    assert.equal(result.attempts?.length, 1, 'only the prior review is retained');
+    assert.equal(getRun(run.id)?.reviewRoundAdmissions?.length ?? 0, 0);
+  });
+}
 
 test('a REVIEW re-entry with all rounds admitted reattaches to the running re-review', async (t) => {
   // TAT-4158 run 4237202e at 20:36Z: a restart re-entered REVIEW while the loop-2 re-review of

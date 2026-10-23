@@ -371,7 +371,7 @@ const reviewerTask = (runId: string, contextId: string) => {
 const reviewers = (runId: string): AgentContext[] =>
   getRun(runId)!.agentContexts!.filter((context) => context.role === 'review');
 
-for (const status of [' M a.ts\n', 'M  a.ts\n', '?? new.ts\n']) {
+for (const status of [' M a.ts\0', 'M  a.ts\0', '?? new.ts\0']) {
   test(`an unchanged-head re-review refuses uncommitted work (${status.trim()}) without spending a round`, async (t) => {
     const run = await prePublishRun(t);
     await review(run.id);
@@ -391,6 +391,14 @@ for (const status of [' M a.ts\n', 'M  a.ts\n', '?? new.ts\n']) {
     assert.equal(dispatches[1]?.retainedFrom?.contextId, dispatches[0]!.contextId);
   });
 }
+
+test('generated untracked slot support does not block an evidence re-review', async (t) => {
+  const run = await prePublishRun(t);
+  await review(run.id);
+  worktreeStatus = '?? .agent/generated.json\0?? .claude/CLAUDE.local.md\0';
+  await reReview(run.id);
+  assert.equal(dispatches.length, 2);
+});
 
 test('a changed committed head can be re-reviewed while other work remains dirty', async (t) => {
   const run = await prePublishRun(t);
