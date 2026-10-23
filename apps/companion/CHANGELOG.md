@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Share persisted worker checklist observations across run-list rows and retain their source errors through offline recovery.
+
 - Keep review posting blocked after a failed refresh until the revised review is loaded.
 
 - Show one combined findings and evidence approval and send both explicit reason fields from either gate surface.

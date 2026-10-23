@@ -159,6 +159,22 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     live: true,
     dependencies: () => [{ family: 'capabilities' }, { family: 'sources', scope: 'farm' }],
   },
+  [Methods.TASK_PROGRESS]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 2 * mb },
+    live: true,
+    dependencies: (params: unknown) => {
+      const runId = params && typeof params === 'object' ? Reflect.get(params, 'runId') : undefined;
+      if (typeof runId === 'string' && runId)
+        return [
+          { family: 'progress', runId },
+          { family: 'run', runId },
+          { family: 'artifacts', runId },
+        ];
+      return [{ family: 'slot', slotId: requiredId(params, 'slotId') }];
+    },
+  },
 } satisfies Record<string, ResourceQueryDefinition>;
 
 export type ResourceReadMethod = keyof typeof RESOURCE_QUERY_DEFINITIONS;

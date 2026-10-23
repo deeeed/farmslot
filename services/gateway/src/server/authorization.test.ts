@@ -1009,6 +1009,11 @@ test('resource.changed uses the key read authorization and read replies carry re
         { key: { family: 'pressure', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
         { key: { family: 'capabilities' }, revision: 1, kind: 'updated' },
         {
+          key: { family: 'progress', runId: 'changed-run', contextId: 'review' },
+          revision: 1,
+          kind: 'updated',
+        },
+        {
           key: { family: 'capability', capabilityId: 'changed-capability' },
           revision: 1,
           kind: 'updated',
@@ -1033,6 +1038,11 @@ test('resource.changed uses the key read authorization and read replies carry re
       { key: { family: 'node', scope: 'farm' }, revision: 1, kind: 'updated' },
       { key: { family: 'pressure', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
       { key: { family: 'capabilities' }, revision: 1, kind: 'updated' },
+      {
+        key: { family: 'progress', runId: 'changed-run', contextId: 'review' },
+        revision: 1,
+        kind: 'updated',
+      },
       {
         key: { family: 'capability', capabilityId: 'changed-capability' },
         revision: 1,

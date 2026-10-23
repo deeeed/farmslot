@@ -57,6 +57,8 @@ export class RunPipelineMini extends LitElement {
   @property() flowType: FlowType = 'fix-bug';
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
   @property() taskProgressError?: string;
+  @property({ type: Boolean }) taskProgressStale = false;
+  @property() taskProgressAge = '';
   @state() private transferProgress: FileTransferUiEntry | null = null;
 
   private _unsubTransfer: (() => void) | null = null;
@@ -217,6 +219,8 @@ export class RunPipelineMini extends LitElement {
             .run=${this.run}
             .progress=${this.taskProgress}
             .error=${this.taskProgressError}
+            .stale=${this.taskProgressStale}
+            .age=${this.taskProgressAge}
           ></run-checklist-progress>`
         : null}
     `;

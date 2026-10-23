@@ -186,3 +186,26 @@ test('capability catalog and status queries share registry/source dependencies a
     ]);
   }
 });
+
+test('task progress shares run/context observations and keeps slot-only reads scoped', () => {
+  const query = resourceQuery('task.progress', {
+    slotId: 'slot',
+    runId: 'run',
+    contextId: 'review',
+  });
+  assert.equal(query.live, true);
+  assert.equal(query.persisted, true);
+  assert.deepEqual(query.dependencies, [
+    { family: 'progress', runId: 'run' },
+    { family: 'run', runId: 'run' },
+    { family: 'artifacts', runId: 'run' },
+  ]);
+  assert.deepEqual(resourceQuery('task.progress', { slotId: 'slot' }).dependencies, [
+    { family: 'slot', slotId: 'slot' },
+  ]);
+  assert.deepEqual(
+    resourceQuery('task.progress', { slotId: '', runId: 'workspace' }).dependencies[0],
+    { family: 'progress', runId: 'workspace' },
+  );
+  assert.throws(() => resourceQuery('task.progress'), /requires slotId/);
+});

@@ -159,7 +159,13 @@ export function RunPipelineMini({ run }: { run: Run }) {
           ) : null}
         </View>
       </View>
-      <RunChecklistProgress run={run} progress={checklist?.progress} error={checklist?.error} />
+      <RunChecklistProgress
+        run={run}
+        progress={checklist?.progress}
+        error={checklist?.error}
+        stale={checklist?.stale}
+        observedAt={checklist?.observedAt}
+      />
     </View>
   );
 }

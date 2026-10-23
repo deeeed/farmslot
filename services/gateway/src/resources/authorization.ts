@@ -34,6 +34,9 @@ export function canReadResourceKey(
     case 'capability':
       method = Methods.RUNTIME_CAPABILITY_STATUS;
       break;
+    case 'progress':
+      method = Methods.TASK_PROGRESS;
+      break;
     case 'decisions':
     case 'decision':
       method = Methods.DECISION_LIST;

@@ -51,6 +51,7 @@ assert(
     'slot-facts-web',
     'fleet-store-web',
     'capabilities-web',
+    'progress-web',
   ].includes(phase),
   'Select a run proof phase',
 );
@@ -600,10 +601,22 @@ async function observeResources({ clientKind = 'ui', token = profile.credential.
   }
 }
 
-async function withRunFixture(build, prove) {
+async function withRunFixture(build, prove, slotBinding = null) {
   assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
   assert.equal(process.env.FARMSLOT_RUNS_DIR, path.join(home, 'runs'));
   assert((await realpath(process.env.FARMSLOT_RUNS_DIR)).startsWith(`${home}/`));
+  if (slotBinding) {
+    const fixture = JSON.parse(await readFile(process.env.FARMSLOT_SLOT_RESOURCE_PROOF));
+    assert.equal(await realpath(fixture.home), home);
+    assert.equal(slotBinding.slotId, fixture.slotId);
+    const repo = await realpath(fixture.repo);
+    assert(repo.startsWith(`${home}/`));
+    const relative = path.relative(
+      path.join(repo, '.task'),
+      path.resolve(repo, '.task', slotBinding.taskFile),
+    );
+    assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+  }
   const runId = randomUUID();
   const runFile = path.join(process.env.FARMSLOT_RUNS_DIR, `${runId}.json`);
   let seeded = false;
@@ -646,8 +659,8 @@ async function withRunFixture(build, prove) {
         ...(await build({ runId, now, createdAt })),
       };
       assert.equal(run.id, runId);
-      assert.equal(run.slotId, null);
-      assert.equal(run.taskFile, null);
+      assert.equal(run.slotId, slotBinding?.slotId ?? null);
+      assert.equal(run.taskFile, slotBinding?.taskFile ?? null);
       await writeFile(runFile, JSON.stringify(run, null, 2), { flag: 'wx', mode: 0o600 });
       seeded = true;
     });
@@ -718,6 +731,218 @@ async function detailBrowser(runId) {
     navigate,
     peek: () => cdp('eval', route, '--file', storeProbe),
   };
+}
+
+if (phase === 'progress-web') {
+  assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_SLOT_RESOURCE_PROOF));
+  assert.equal(await realpath(fixture.home), home);
+  assert.equal(await realpath(process.env.FARMSLOT_ROOT), await realpath(fixture.root));
+  const repo = await realpath(fixture.repo);
+  assert(repo.startsWith(`${home}/`));
+  const statusFile = path.join(fixture.root, '.farm-status.json');
+  const original = await readFile(statusFile);
+  const originalMode = (await stat(statusFile)).mode & 0o777;
+  const raw = JSON.parse(original);
+  const slot = raw.slots.find(({ slot }) => slot === fixture.slotId);
+  assert(slot && !slot.current_run_id && !slot.task_file);
+  const taskRel = `dev/cache-progress-${randomUUID()}`;
+  const taskDir = path.join(repo, '.task', taskRel);
+  await mkdir(taskDir, { recursive: true });
+  const checklist = path.join(taskDir, 'CHECKLIST.md');
+  const initialMarkdown =
+    '# Owned progress\n\n- [ ] **1. observe owned changes**\n- [ ] **2. verify recovery**\n';
+  await writeFile(path.join(taskDir, 'TASK.md'), '# Owned offline progress proof\n', {
+    flag: 'wx',
+  });
+  await writeFile(checklist, initialMarkdown, { flag: 'wx' });
+  const cdp = async (...args) =>
+    JSON.parse(
+      (
+        await execute(
+          process.execPath,
+          [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+          { timeout: 30000, maxBuffer: 2 * 1024 * 1024 },
+        )
+      ).stdout,
+    );
+  const route = 'runs';
+  const probe = path.join(root, 'apps/command-center/scripts/probes/offline-progress.js');
+  const base = new URL(process.env.FARMSLOT_UI_URL);
+  base.searchParams.set('progress-proof', randomUUID());
+  const until = async (ready, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await cdp('eval', route, '--file', probe);
+      if (ready(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const artifacts = process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR;
+  assert(artifacts);
+  await mkdir(artifacts, { recursive: true });
+  const revision = (value) =>
+    value.resourceState?.dependencies.find(({ key }) => key.family === 'progress')?.revision ?? -1;
+  try {
+    const result = await withRunFixture(
+      async ({ runId, createdAt }) => {
+        Object.assign(slot, {
+          lifecycle: 'busy',
+          phase: 'working',
+          current_run_id: runId,
+          task_file: taskRel,
+          current_flow_type: 'dev',
+          current_ticket_or_pr: 'Owned progress proof',
+        });
+        await writeFile(statusFile, JSON.stringify(raw, null, 2));
+        return {
+          slotId: fixture.slotId,
+          taskFile: path.join(taskDir, 'TASK.md'),
+          project: slot.project,
+          status: 'monitoring',
+          completedAt: undefined,
+          steps: [{ name: 'monitor', status: 'running', startedAt: createdAt }],
+        };
+      },
+      async ({ runId, observed }) => {
+        base.hash = `runs?tab=all&progressRun=${runId}`;
+        await cdp('goto', base.href);
+        await cdp('focus', route);
+        const initial = await until(
+          (value) =>
+            value.canonical &&
+            value.freshness === 'ready' &&
+            value.completed === 0 &&
+            value.rendered,
+          'The real run row must render its canonical current checklist',
+        );
+        await writeFile(checklist, initialMarkdown.replace('- [ ] **1.', '- [x] **1.'));
+        const changed = await until(
+          (value) =>
+            value.freshness === 'ready' &&
+            value.completed === 1 &&
+            value.rendered &&
+            revision(value) > revision(initial),
+          'An owned checklist write must advance the progress stamp and update the existing run row',
+        );
+        const index = path.join(taskDir, 'subtasks', 'index.json');
+        await mkdir(path.dirname(index), { recursive: true });
+        await assert.rejects(access(index), (error) => error.code === 'ENOENT');
+        await writeFile(index, '{invalid-owned-subtask-registry');
+        await until(
+          (value) => value.freshness === 'stale' && value.completed === 1 && value.errorRendered,
+          'A failed progress projection must retain counts with a visible read error',
+        );
+        // Drain duplicate events before deletion is the only new filesystem write.
+        await delay(2500);
+        const failed = await cdp('eval', route, '--file', probe);
+        assert(failed.errorRendered && failed.freshness === 'stale');
+        await observed.barrier();
+        const failedRevision = Math.max(
+          revision(failed),
+          ...observed.changes
+            .filter(({ key }) => key.family === 'progress' && key.runId === runId && !key.contextId)
+            .map(({ revision }) => revision),
+        );
+        await rm(index);
+        const registryRestored = await until(
+          (value) =>
+            value.freshness === 'ready' &&
+            value.completed === 1 &&
+            !value.error &&
+            revision(value) > failedRevision,
+          'A repaired task source must restore its canonical observation',
+        );
+        await delay(2500);
+        await rm(checklist);
+        await until(
+          (value) =>
+            value.freshness === 'ready' &&
+            value.markdown === '# Owned offline progress proof\n' &&
+            value.completed === undefined &&
+            revision(value) > revision(registryRestored),
+          'Removing the watched checklist must retire its saved counts and render the task fallback',
+        );
+        const missingChecklist = await cdp('eval', route, '--file', probe);
+        await writeFile(checklist, initialMarkdown.replace('- [ ] **1.', '- [x] **1.'));
+        await until(
+          (value) =>
+            value.freshness === 'ready' &&
+            value.completed === 1 &&
+            value.rendered &&
+            revision(value) > revision(missingChecklist),
+          'Recreating the watched checklist must restore current progress without Refresh',
+        );
+        const ledger = path.join(taskDir, 'artifacts', 'acceptance-status.json');
+        await assert.rejects(access(ledger), (error) => error.code === 'ENOENT');
+        await writeFile(ledger, '{invalid-owned-acceptance-ledger');
+        await until(
+          (value) => value.freshness === 'ready' && value.ledgerError,
+          'A changed acceptance sidecar must reach the canonical progress projection',
+        );
+        await delay(2500);
+        const ledgerFault = await cdp('eval', route, '--file', probe);
+        assert(ledgerFault.ledgerError);
+        await rm(ledger);
+        const restored = await until(
+          (value) =>
+            value.freshness === 'ready' &&
+            !value.ledgerError &&
+            value.completed === 1 &&
+            revision(value) > revision(ledgerFault),
+          'Removing an observed acceptance sidecar must clear its read error without another write',
+        );
+        const outage = await withOwnedGatewayOffline(async () => {
+          const stale = await until(
+            (value) => value.freshness === 'stale' && value.completed === 1,
+            'Disconnected progress must retain the saved checklist',
+          );
+          base.searchParams.set('progress-cold', randomUUID());
+          await cdp('goto', base.href);
+          await cdp('focus', route);
+          const cold = await until(
+            (value) =>
+              value.canonical &&
+              value.freshness === 'stale' &&
+              value.completed === 1 &&
+              value.staleRendered,
+            'Cold offline startup must render saved progress and its age',
+          );
+          assert.equal(cold.observedAt, stale.observedAt);
+          await cdp('screenshot', route, path.join(artifacts, 'progress-cold-offline.png'));
+          return cold;
+        });
+        const recovered = await until(
+          (value) => value.freshness === 'ready' && value.completed === 1 && !value.error,
+          'Restarted gateway must refresh progress before declaring it current',
+        );
+        assert.notEqual(recovered.resourceState.epoch, changed.resourceState.epoch);
+        await writeFile(
+          path.join(artifacts, 'progress-cycles.json'),
+          JSON.stringify({ initial, changed, restored, outage, recovered }, null, 2),
+        );
+        return {
+          progressNotified: true,
+          progressFailureVisible: true,
+          progressSourceRemovals: true,
+          coldProgressRestored: true,
+        };
+      },
+      { slotId: fixture.slotId, taskFile: path.join(taskDir, 'TASK.md') },
+    );
+    console.log(JSON.stringify({ result: 'PASS', action: phase, ...result }));
+  } finally {
+    await withOwnedGatewayOffline(async () => {
+      await writeFile(statusFile, original);
+      await chmod(statusFile, originalMode);
+      await rm(taskDir, { recursive: true });
+      assert.deepEqual(await readFile(statusFile), original);
+      assert.equal((await stat(statusFile)).mode & 0o777, originalMode);
+    });
+  }
+  process.exit(0);
 }
 
 if (phase === 'capabilities-web') {

@@ -12,10 +12,8 @@ import type {
   RunListResult,
   RunRehydratePrNumberResult,
   TaskProgressResult,
-  TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
-  Events,
   groupRunsByFamily,
   Methods,
   normalizeRunTags,
@@ -27,11 +25,7 @@ import {
   summarizeRunEvidence,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
-import {
-  acceptsRunChecklistProgress,
-  ChecklistProgressReads,
-  runChecklistProgressTarget,
-} from '@farmslot/review-dispatch';
+import { runChecklistProgressTarget } from '@farmslot/review-dispatch';
 import { projectColor } from '@farmslot/theme';
 
 import './run-pipeline-mini.js';
@@ -186,8 +180,7 @@ export class RunList extends RunListState {
   static styles = [runListStyles, flowBadgeStyles, workInventoryTableStyles];
 
   private narrowMedia?: MediaQueryList;
-  private unsubProgress?: () => void;
-  private readonly taskProgressFetches = new Set<string>();
+  private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
   @state() private taskProgressErrorsByRun = new Map<string, string>();
   private progressClock?: number;
   private savedAgeClock?: number;
@@ -201,8 +194,6 @@ export class RunList extends RunListState {
     this.familyRunsError = state.error?.message ?? null;
     this.syncSavedAgeClock();
   });
-  private progressConnection = getState().connection;
-  private readonly checklistReads = new Map<string, ChecklistProgressReads>();
   private readonly onNarrowChange = () => {
     this.narrowViewport = this.narrowMedia?.matches ?? false;
   };
@@ -239,27 +230,9 @@ export class RunList extends RunListState {
       this.fleet = s.fleet;
       this.hydrating = isHydrating(s, 'runs');
       this.bootstrapFailed = s.bootstrapFailed.runs;
-      if (s.connection === 'connected' && this.progressConnection !== 'connected') {
-        this.taskProgressFetches.clear();
-      }
-      this.progressConnection = s.connection;
-      void this.fetchInitialTaskProgress(s.runs);
+      this.syncTaskProgress(s.runs);
     });
-    this.unsubProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
-      Events.TASK_PROGRESS_UPDATED,
-      (update) => {
-        const run = this.runs.find((candidate) => candidate.id === update.runId);
-        if (run && update.progress.structured && acceptsRunChecklistProgress(run, update)) {
-          const key = runChecklistProgressTarget(run)!.key;
-          this.checklistReads.get(key)?.invalidate();
-          this.taskProgressByRun = new Map(this.taskProgressByRun).set(
-            key,
-            update.progress.structured,
-          );
-        }
-      },
-    );
-    void this.fetchInitialTaskProgress(this.runs);
+    this.syncTaskProgress(this.runs);
     window.addEventListener('hashchange', this._onHashChange);
     if (typeof window.matchMedia === 'function') {
       this.narrowMedia = window.matchMedia('(max-width: 860px)');
@@ -277,48 +250,47 @@ export class RunList extends RunListState {
     window.clearInterval(this.savedAgeClock);
     this.savedAgeClock = undefined;
     this.unsub?.();
-    this.unsubProgress?.();
+    for (const query of this.progressQueries.values()) {
+      query.hostDisconnected();
+      this.removeController(query);
+    }
+    this.progressQueries.clear();
     this.narrowMedia?.removeEventListener('change', this.onNarrowChange);
     window.removeEventListener('hashchange', this._onHashChange);
   }
 
-  private async fetchInitialTaskProgress(runs: readonly Run[]): Promise<void> {
-    const targets = runs.flatMap((run) => {
-      const target = runChecklistProgressTarget(run);
-      return target && !this.taskProgressFetches.has(target.key) ? [target] : [];
-    });
-    await Promise.all(
-      targets.map(async ({ key, params }) => {
-        this.taskProgressFetches.add(key);
-        let reads = this.checklistReads.get(key);
-        if (!reads) {
-          reads = new ChecklistProgressReads();
-          reads.select(key);
-          this.checklistReads.set(key, reads);
-        }
-        const read = reads.begin(key);
-        try {
-          const progress = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, params);
-          if (reads.isCurrent(read)) {
-            const next = new Map(this.taskProgressByRun);
-            if (progress.structured) next.set(key, progress.structured);
-            else next.delete(key);
-            this.taskProgressByRun = next;
-            const errors = new Map(this.taskProgressErrorsByRun);
-            errors.delete(key);
-            this.taskProgressErrorsByRun = errors;
-          }
-        } catch (error) {
-          if (!reads.isCurrent(read)) return;
-          // No checklist is shown on failure; a later refresh may read it again.
-          this.taskProgressFetches.delete(key);
-          this.taskProgressErrorsByRun = new Map(this.taskProgressErrorsByRun).set(
-            key,
-            error instanceof Error ? error.message : String(error),
-          );
-        }
+  private syncTaskProgress(runs: readonly Run[]): void {
+    const targets = new Map(
+      runs.flatMap((run) => {
+        const target = runChecklistProgressTarget(run);
+        return target ? [[target.key, target] as const] : [];
       }),
     );
+    for (const [key, query] of this.progressQueries) {
+      if (targets.has(key)) continue;
+      query.hostDisconnected();
+      this.removeController(query);
+      this.progressQueries.delete(key);
+      this.taskProgressByRun.delete(key);
+      this.taskProgressErrorsByRun.delete(key);
+    }
+    for (const [key, target] of targets) {
+      if (this.progressQueries.has(key)) continue;
+      let query: ResourceQueryController<TaskProgressResult>;
+      query = new ResourceQueryController<TaskProgressResult>(this, (state) => {
+        if (!query || this.progressQueries.get(key) !== query) return;
+        const progress = new Map(this.taskProgressByRun);
+        if (state.data?.structured) progress.set(key, state.data.structured);
+        else progress.delete(key);
+        this.taskProgressByRun = progress;
+        const errors = new Map(this.taskProgressErrorsByRun);
+        if (state.error) errors.set(key, state.error.message);
+        else errors.delete(key);
+        this.taskProgressErrorsByRun = errors;
+      });
+      this.progressQueries.set(key, query);
+      query.setQuery(resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, target.params));
+    }
   }
 
   async refreshTagFilter() {
@@ -994,6 +966,11 @@ export class RunList extends RunListState {
             runChecklistProgressTarget(run)?.key ?? '',
           )}
           .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
+          .taskProgressStale=${this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')
+            ?.state.status !== 'ready'}
+          .taskProgressAge=${sourceObservationAge(
+            this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state.observedAt,
+          )}
         ></run-pipeline-mini>
         <run-tag-editor kind="tickets" .run=${run}></run-tag-editor>
         <span class="pipeline-label">${pipelineLabel}</span>

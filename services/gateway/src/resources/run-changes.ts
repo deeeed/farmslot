@@ -15,6 +15,21 @@ export interface RunResourceSnapshot {
   decisionExpiresAt?: number;
 }
 
+/** Worker files are already readable when their owning watcher reports a change. */
+export function publishProgressResources(
+  slotId: string,
+  runId?: string | null,
+  contextId?: string,
+  revisions = resourceRevisions,
+): void {
+  if (runId) {
+    revisions.advance({ family: 'progress', runId });
+    if (contextId) revisions.advance({ family: 'progress', runId, contextId });
+  }
+  // Slot-only readers have no recorded run to use as their progress identity.
+  if (slotId) revisions.advance({ family: 'slot', slotId });
+}
+
 /** Capture before an in-place write so former membership is invalidated too. */
 export function captureRunResources(run: RunResourceRecord): RunResourceSnapshot {
   const decisionExpiresAt = completedDecisionExpiresAt(run);

@@ -31,6 +31,7 @@ import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { clearTaskProgressOverlay, loadFleetStatus } from '../fleet/state.js';
 import { taskProgress } from '../methods/task.js';
+import { publishProgressResources } from '../resources/run-changes.js';
 import { listRuns } from '../runs/store.js';
 
 import { ACCEPTANCE_STATUS_FILENAME, acceptanceStatusPathFor } from './acceptance-status.js';
@@ -90,6 +91,7 @@ interface SlotWatch {
   acceptanceStatusWatcher?: FSWatcher; // chokidar watcher for local (acceptance-status.json)
   /** `subtasks/index.json` beside this context's checklist — the child registry. */
   subtaskIndexFilePath: string;
+  subtaskRegistryPresent?: boolean;
   /**
    * Local only: ONE non-recursive chokidar watch on the `subtasks/` DIRECTORY,
    * dispatched by basename. A watch registered on a not-yet-existing FILE is
@@ -412,7 +414,9 @@ export async function watchSlot(
 
         // Watch task markdown with chokidar
         const chokidarWatcher = watch(contextTaskPath, { persistent: false, ignoreInitial: true });
+        chokidarWatcher.on('add', () => debouncedUpdate(key));
         chokidarWatcher.on('change', () => debouncedUpdate(key));
+        chokidarWatcher.on('unlink', () => debouncedUpdate(key));
         sw.watcher = chokidarWatcher;
 
         // Watch signal with chokidar (watches for creation + changes)
@@ -447,6 +451,7 @@ export async function watchSlot(
         };
         acceptanceWatcher.on('add', onArtifactsEntry);
         acceptanceWatcher.on('change', onArtifactsEntry);
+        acceptanceWatcher.on('unlink', onArtifactsEntry);
         sw.acceptanceStatusWatcher = acceptanceWatcher;
         // Same readiness wait as the child directory: until the initial scan
         // finishes the OS watch is not armed, and a verdict recorded in that gap
@@ -485,6 +490,7 @@ export async function watchSlot(
         };
         subtasksDirWatcher.on('add', onSubtasksEntry);
         subtasksDirWatcher.on('change', onSubtasksEntry);
+        subtasksDirWatcher.on('unlink', onSubtasksEntry);
         sw.subtasksDirWatcher = subtasksDirWatcher;
 
         activeWatches.set(key, sw);
@@ -1015,6 +1021,10 @@ async function computeAndEmit(
   const sw = activeWatches.get(key);
   if (!sw) return;
 
+  // The source write, including removal or corrupt content, must retire a saved
+  // read even when parsing cannot produce a legacy progress payload.
+  publishProgressResources(sw.slotId, sw.runId, sw.contextId);
+
   try {
     if (!options.fromSubtask && !options.fromAcceptance) {
       // Read fresh content if not provided
@@ -1244,12 +1254,21 @@ async function rebindSubtaskUnitWatches(key: string, content?: string): Promise<
     console.error(
       `[task-watcher] cannot read subtask registry for ${key}: ${(err as Error).message}`,
     );
+    sw.subtaskRegistryPresent = true;
     // A registry that exists but cannot be parsed is still a registry: the
     // progress read must run so the failure reaches clients as a read error
     // rather than as silence.
     return true;
   }
-  if (!index) return false;
+  if (!index) {
+    // Initial absence is quiet; removing a previously observed registry changes
+    // the projection and must clear its child watches and any saved read error.
+    if (!sw.subtaskRegistryPresent) return false;
+    await closeSubtaskUnitWatchers(sw);
+    sw.subtaskRegistryPresent = false;
+    return true;
+  }
+  sw.subtaskRegistryPresent = true;
 
   await closeSubtaskUnitWatchers(sw);
   // Each context watches only the children of ITS OWN checklist: a unit parented

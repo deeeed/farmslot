@@ -11,8 +11,10 @@
 // `task.progress` reports them.
 
 import { Events, type TaskProgressResult, type TaskStepProgress } from '@farmslot/protocol';
+import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
 import { taskProgress } from '../methods/task.js';
+import { publishProgressResources } from '../resources/run-changes.js';
 import { hashChecklistCheckboxes } from '../tasks/checklist-hash.js';
 
 import { refreshReviewWorkspaceView } from './task.js';
@@ -116,6 +118,7 @@ export function createReviewWorkspaceProgressPublisher(
   let lastParent: string | null = null;
   let lastChildren: string | null = null;
   let lastLedger: string | null = null;
+  let lastObservation: string | undefined;
 
   return {
     async publish(): Promise<TaskProgressResult | null> {
@@ -127,6 +130,12 @@ export function createReviewWorkspaceProgressPublisher(
       try {
         progress = await deps.readProgress(runId);
       } catch (err) {
+        if (options.isCurrent?.() === false) return null;
+        const observation = `error:${err instanceof Error ? err.message : String(err)}`;
+        if (observation !== lastObservation) {
+          lastObservation = observation;
+          publishProgressResources('', runId, 'review');
+        }
         // The monitor step owns the run's outcome; a progress read is
         // observability beside it and must not decide the run failed. Reported at
         // error level, not warn, because the alternative reading — a corrupt child
@@ -140,6 +149,12 @@ export function createReviewWorkspaceProgressPublisher(
         return null;
       }
       if (options.isCurrent?.() === false) return null;
+
+      const observation = canonicalResourceJson(progress);
+      if (observation !== lastObservation) {
+        lastObservation = observation;
+        publishProgressResources('', runId, 'review');
+      }
 
       const parent = hashChecklistCheckboxes(progress.markdown);
       const children = childSignature(progress);
