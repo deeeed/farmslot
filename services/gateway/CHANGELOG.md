@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Accept clean detached before captures at the recorded dispatch head, and name the failing provenance field when baseline validation refuses a capture.
+
 - Keep root-qualified evidence selections scoped to the root artifact instead of matching nested recipe files with the same name.
 
 - Give a native reviewer with valid findings but no terminal signal one durable completion turn in the same saved conversation, preserving its admission and reconciling delivery after restart.
