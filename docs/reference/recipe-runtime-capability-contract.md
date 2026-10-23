@@ -311,6 +311,9 @@ MUST NOT mark the slot reclaimed.
   Publication, verification, selection and pruning MUST serialize on the execution
   node. Unknown selection state MUST refuse pruning; staging directories, active
   publishers and paths outside the bundle root MUST remain untouched.
+  Read-only and unconvertible historical run records MUST NOT count as live owners.
+  An unreadable run inventory MUST disable pruning and journal release without
+  blocking verified bundle delivery or review execution.
   Cached read-only consumers MUST retain their bundle without changing any slot
   selection, and executing readers MUST prevent pruning until they exit.
   Device shutdown MUST share the registry acquisition lock and check device

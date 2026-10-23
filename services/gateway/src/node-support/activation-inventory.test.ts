@@ -66,6 +66,14 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
     path.join(runs, 'runtime-capabilities-7777.json'),
     JSON.stringify({ schemaVersion: 1, capabilities: [] }),
   );
+  await writeFile(
+    path.join(runs, 'historical.json'),
+    JSON.stringify({
+      id: 'historical',
+      readOnly: true,
+      conversionStatus: 'unconvertible-historical',
+    }),
+  );
   await mkdir(path.join(runs, 'archive'));
   await writeFile(
     path.join(runs, 'archive/archived-owner.json'),

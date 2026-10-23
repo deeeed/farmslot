@@ -65,9 +65,25 @@ test('one-shot activation retains persisted non-archived run references without 
       archivedAt: 'now',
     }),
   );
+  for (const [id, fields] of [
+    ['read-only', { readOnly: true }],
+    ['unconvertible', { conversionStatus: 'unconvertible-historical' }],
+    ['legacy', { readOnly: true, conversionStatus: 'unconvertible-historical' }],
+  ] as const) {
+    await writeFile(path.join(directory, `${id}.json`), JSON.stringify({ id, ...fields }));
+  }
   assert.deepEqual(referencedNodeSupportHashes(await persistedNodeSupportRuns(directory)), [
     hash('a'),
   ]);
+  assert.deepEqual(
+    referencedNodeSupportHashes([
+      {
+        ...makeRun({ steps: [{ name: 'prepare', status: 'done', outputs: { hash: hash('d') } }] }),
+        readOnly: true,
+      },
+    ]),
+    [],
+  );
   // A listed entry whose target vanished produces the same read-time ENOENT as archiving.
   await symlink(path.join(directory, 'removed-run'), path.join(directory, 'vanished.json'));
   assert.deepEqual(referencedNodeSupportHashes(await persistedNodeSupportRuns(directory)), [
@@ -177,6 +193,35 @@ test('an unreadable selection or failed verification prevents activation and pru
   );
   assert.equal((await readFile(mine, 'utf8')).trim(), hash('a'));
   assert.ok((await readdir(f.root)).includes(hash('a')));
+});
+
+test('unknown run inventory selects verified support without pruning bundles or retention journals', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b', 'c'].map(hash)) await f.bundle(id);
+  const mine = await f.pointer('mine', hash('a'));
+  const journal = path.join(f.root, '.active-run-references', 'unknown.json');
+  await mkdir(path.dirname(journal));
+  await writeFile(journal, 'unreadable retained ownership');
+  const params = {
+    supportDir: path.join(f.root, hash('b')),
+    supportHash: hash('b'),
+    selectionPath: mine,
+    references: null,
+    verifyCommand: 'false',
+  };
+  await assert.rejects(exec('/bin/sh', ['-c', buildNodeSupportActivationCommand(params)]));
+  assert.equal((await readFile(mine, 'utf8')).trim(), hash('a'));
+  const result = await exec('/bin/sh', [
+    '-c',
+    buildNodeSupportActivationCommand({ ...params, verifyCommand: 'true' }),
+  ]);
+  assert.deepEqual(JSON.parse(result.stdout), { selected: hash('b'), removed: [] });
+  assert.equal((await readFile(mine, 'utf8')).trim(), hash('b'));
+  assert.deepEqual(
+    (await readdir(f.root)).filter((id) => /^[a-f0-9]{64}$/.test(id)).sort(),
+    ['a', 'b', 'c'].map(hash),
+  );
+  assert.equal(await readFile(journal, 'utf8'), 'unreadable retained ownership');
 });
 
 test('pruning ignores staging, active publishers and symlinks outside the bundle root', async (t) => {
