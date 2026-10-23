@@ -6,6 +6,7 @@ import {
   ANALYTICS_RECORD_SCHEMA_VERSION,
   type AnalyticsQueryParams,
   type AnalyticsQueryResult,
+  deriveChecklistStepDurations,
   type DurationStats,
   FAILURE_REASONS,
   type FailureReason,
@@ -22,6 +23,7 @@ import {
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { checklistTimingContext } from '../tasks/checklist-timing.js';
 
 import { getAllRuns, shouldUseIsolatedRunsDir } from './store.js';
 
@@ -232,6 +234,11 @@ export function buildAnalyticsRecord(
   const failureReason = notFailed ? null : classifyFailureReason(run, failedStep);
   const ci = ciOutputs(run);
   const tokens = workerTokens(run);
+  const worker = checklistTimingContext(run, 'CHECKLIST.md');
+  const checklistSteps = deriveChecklistStepDurations(
+    run.metrics?.checklistTiming,
+    worker?.attemptStartedAt ?? worker?.startedAt,
+  );
 
   return {
     schemaVersion: ANALYTICS_RECORD_SCHEMA_VERSION,
@@ -254,6 +261,7 @@ export function buildAnalyticsRecord(
     failureReason,
     resultDecision,
     steps,
+    ...(checklistSteps.length ? { checklistSteps } : {}),
     wallMs,
     idleMs,
     nudgeCount: run.metrics?.nudgeCount ?? 0,

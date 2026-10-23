@@ -69,6 +69,28 @@ test('the progress panel nests a child unit under its parent step', () => {
   assert.match(rendered, /Read the diff/);
 });
 
+test('checklist rows render muted trailing durations for parent and child through the same model', () => {
+  const progress = parentProgress(childUnit('child', 'Read the diff'));
+  progress.timing = {
+    schemaVersion: 1,
+    startedAt: '2026-10-23T01:00:00Z',
+    events: [{ stepNumber: 1, label: 'Reproduce', checkedAt: '2026-10-23T01:08:22Z' }],
+  };
+  progress.phases[0].steps[1].subtask!.progress.timing = {
+    schemaVersion: 1,
+    startedAt: '2026-10-23T01:08:22Z',
+    events: [{ stepNumber: 1, label: 'Read the diff', checkedAt: '2026-10-23T01:09:00Z' }],
+  };
+  const rendered = renderChecklistProgress(progress, {
+    nowMs: Date.parse('2026-10-23T01:10:00Z'),
+    openScope: new SubtaskOpenState().scope('timed'),
+  });
+  assert.match(litText(rendered), /8m 22s/);
+  assert.match(litText(rendered), /1m 38s/);
+  assert.match(litText(rendered), /38s/);
+  assert.match(litText(rendered), /1m 0s/);
+});
+
 test('child steps do not inflate the parent counts', () => {
   const state = new SubtaskOpenState();
   const rendered = litText(

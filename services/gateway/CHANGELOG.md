@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Project current-attempt checklist timing and preserve step durations in monthly analytics.
+
 - Let PR completion prove fresh acceptance when the published parent's approved package omits its retained ledger, instead of blocking dispatch.
 
 - Append authoritative findings missing from a review's body or inline comments instead of blocking publication over paraphrased wording.

@@ -13,6 +13,7 @@ import path from 'node:path';
 
 import {
   isSettledSubtaskStatus,
+  isTerminalWorkerSignalStatus,
   isWorkerSignalStatus,
   SUBTASK_ID_PATTERN,
   SUBTASK_INDEX_FILE,
@@ -23,13 +24,14 @@ import {
   type TaskProgressStructured,
   type TaskStepProgress,
   type TaskStepSubtaskProgress,
-  type WorkerSignalChecklistEvent,
   type WorkerSignalChecklistTiming,
   type WorkerSignalParentLink,
   type WorkerSignalStatus,
 } from '@farmslot/protocol';
 
 import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
+
+import { parseChecklistTiming } from './checklist-timing.js';
 
 /**
  * How long a `running` child may go without a mark event before the gateway
@@ -222,26 +224,7 @@ export interface SubtaskSignalRead {
   lastEventAt: string | null;
   /** The child's append-only mark history, when it carries a valid one. */
   checklistTiming?: WorkerSignalChecklistTiming;
-}
-
-function parseChecklistTiming(value: unknown): WorkerSignalChecklistTiming | null {
-  if (!isPlainRecord(value) || value.schemaVersion !== 1 || !Array.isArray(value.events)) {
-    return null;
-  }
-  const events: WorkerSignalChecklistEvent[] = [];
-  for (const raw of value.events) {
-    if (!isPlainRecord(raw)) continue;
-    const { stepNumber, label, checkedAt } = raw;
-    if (typeof stepNumber !== 'number' || !Number.isInteger(stepNumber)) continue;
-    if (typeof label !== 'string' || typeof checkedAt !== 'string') continue;
-    events.push({ stepNumber, label, checkedAt });
-  }
-  const source = value.source;
-  return {
-    schemaVersion: 1,
-    ...(typeof source === 'string' ? { source } : {}),
-    events,
-  };
+  timestamp?: string;
 }
 
 /** Narrow one child signal's JSON to what the projection and metrics need. */
@@ -257,6 +240,7 @@ export function parseSubtaskSignal(raw: unknown): SubtaskSignalRead {
     status: isWorkerSignalStatus(raw.status) ? raw.status : null,
     lastEventAt: latest ?? (typeof timestamp === 'string' ? timestamp : null),
     ...(timing ? { checklistTiming: timing } : {}),
+    ...(typeof timestamp === 'string' ? { timestamp } : {}),
   };
 }
 
@@ -317,6 +301,15 @@ export function buildSubtaskEntry(
 ): TaskStepSubtaskProgress {
   const lastEventAt = signal?.lastEventAt ?? null;
   const status = projectSubtaskStatus(signal?.status ?? null, lastEventAt, nowMs);
+  progress.timing = {
+    schemaVersion: 1,
+    ...signal?.checklistTiming,
+    events: signal?.checklistTiming?.events ?? [],
+    startedAt: unit.registeredAt,
+    ...(isTerminalWorkerSignalStatus(signal?.status) && (signal?.timestamp ?? lastEventAt)
+      ? { finishedAt: signal?.timestamp ?? lastEventAt ?? undefined }
+      : {}),
+  };
   return {
     id: unit.id,
     // A registered child with no readable signal has not reported yet; it is
