@@ -36,7 +36,7 @@ export function resolveSelectedEvidenceRef(
   const relative = exactEvidenceKeys(selectedKey)[0];
   const matches = exact.length
     ? exact
-    : relative.includes('/')
+    : normalizeEvidenceKey(selectedKey).includes('/')
       ? []
       : evidenceManifest.filter(
           (artifact) => path.posix.basename(exactEvidenceKeys(artifact.path)[0]) === relative,
