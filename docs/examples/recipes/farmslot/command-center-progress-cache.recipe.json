@@ -4,6 +4,14 @@
   "description": "Use the isolated one-slot CLI fixture selected by FARMSLOT_OFFLINE_PROOF=1, FARMSLOT_DISABLE_ORCHESTRATION=1, FARMSLOT_HOME, FARMSLOT_ROOT, FARMSLOT_RUNS_DIR, FARMSLOT_PROJECTS_DIR, FARMSLOT_SLOT_RESOURCE_PROOF, FARMSLOT_GATEWAY_PROFILE, FARMSLOT_CDP_PORT, FARMSLOT_UI_URL and FARMSLOT_RUN_WEB_EVIDENCE_DIR. Keep FARMSLOT_MONITOR_FLEET_POLL_MS=600000 and run with a surviving owned gateway tsx watcher. Setup seeds one owned monitoring run and its slot binding while the gateway is stopped; no worker or model starts. Real file edits and a corrupt child registry reach the production task watcher and actual run-list checklist row. No UI/cache values are injected. Finally restore exact status bytes/permissions and remove the owned run/task directory. Native progress and remaining views require their own acceptance.",
   "proofTargets": [
     {
+      "id": "progressErrorRetained",
+      "claim": "Disconnect preserves the saved checklist and its visible read failure until a successful current read replaces it."
+    },
+    {
+      "id": "progressOwnershipIsolated",
+      "claim": "Missing runs fail closed and reused slots preserve old worker, reviewer and selected-step progress without exposing successor bytes."
+    },
+    {
       "id": "progressNotified",
       "claim": "An actual owned worker checklist edit updates the canonical run row with a newer progress stamp."
     },
@@ -59,6 +67,24 @@
         "match": "\"coldProgressRestored\":true",
         "intent": "Cold offline startup renders saved checklist counts and age; gateway restart refreshes them before readiness returns.",
         "proves": ["coldProgressRestored"],
+        "next": "progressErrorRetained"
+      },
+      "progressErrorRetained": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"progressErrorRetained\":true",
+        "intent": "Disconnect after a real failed progress projection and verify that saved counts and the read error remain visible.",
+        "proves": ["progressErrorRetained"],
+        "next": "progressOwnershipIsolated"
+      },
+      "progressOwnershipIsolated": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"progressOwnershipIsolated\":true",
+        "intent": "Read missing, retired and successor runs through the real gateway, including retained role and selected-step artifacts.",
+        "proves": ["progressOwnershipIsolated"],
         "next": "done"
       },
       "progressSourceRemovals": {

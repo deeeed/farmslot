@@ -43,6 +43,46 @@ test('an older connection response cannot replace newer ready data', async () =>
   }
 });
 
+test('read errors survive disconnect and cached refresh until a successful replacement', async () => {
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  const stop = cache.observe(query, () => {});
+  try {
+    const first = cache.retry(query);
+    (await transport.nextRead()).reject('TIMEOUT');
+    await first;
+    transport.setConnection({ connected: false }, 'network');
+    await cache.retry(query);
+    assert.equal(cache.read(query).error?.code, 'TIMEOUT');
+    assert.equal(transport.requestCount, 1);
+
+    transport.setConnection({ connected: true, id: 2 });
+    const reconnect = cache.retry(query);
+    const next = await transport.nextRead();
+    assert.equal(cache.read(query).status, 'loading');
+    assert.equal(cache.read(query).error, undefined, 'A connected cold read clears its error');
+    next.resolve({ value: 'saved' });
+    await reconnect;
+
+    const refresh = cache.retry(query);
+    (await transport.nextRead()).reject('TIMEOUT');
+    await refresh;
+    transport.advance(1);
+    const retry = cache.retry(query);
+    const replacement = await transport.nextRead();
+    assert.equal(cache.read(query).status, 'stale');
+    assert.equal(cache.read(query).error?.code, 'TIMEOUT');
+    assert.equal(cache.read(query).data?.value, 'saved');
+    replacement.resolve({ value: 'recovered' }, 1);
+    assert.equal((await retry).status, 'ready');
+    assert.equal(cache.read(query).error, undefined);
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
+
 test('an unknown dependency conservatively schedules one follow-up', async () => {
   const transport = new ResourceCacheConformanceTransport(scope);
   transport.setConnection({ connected: true, id: 1 });

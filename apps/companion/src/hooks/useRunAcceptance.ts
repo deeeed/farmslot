@@ -1,13 +1,5 @@
-/**
- * Reads a run's acceptance criteria and ledger (ADR-060) from `task.progress`,
- * the same source the run detail timeline uses. Unlike the timeline it reads
- * whether or not the worker is active: a run parked at a gate is exactly when
- * the ledger is reviewed. A progress broadcast for the run triggers a re-read
- * rather than replacing the data, so an update that carries no acceptance
- * fields can never empty the criteria. Each reconnect re-reads too, since
- * broadcasts sent while disconnected never arrive.
- */
-import { useEffect, useMemo, useRef, useState } from 'react';
+/** Shared current-owner observations provide acceptance data and command readiness. */
+import { useMemo } from 'react';
 
 import {
   createEvidenceReviewModel,
@@ -18,7 +10,6 @@ import {
   type AcceptanceCriterionRef,
   type AcceptanceEvidenceLink,
   type AcceptanceStatusLedger,
-  Events,
   Methods,
   type OutputReviewPayload,
   type Run,
@@ -26,20 +17,16 @@ import {
   type RunRecipeRunsForRunResult,
   type SelfPrincipalSummary,
   type TaskProgressResult,
-  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import type { GatewayClient } from '../lib/gateway-client';
-import { isGatewayBackgroundPauseError } from '../lib/recoverable-errors';
 import { getResourceCache } from '../lib/resource-cache';
 import { assertNativeRunReady } from '../lib/run-collections';
-import { taskProgressRequestForRun, taskProgressUpdateTargetsRun } from '../lib/task-progress';
+import { taskProgressRequestForRun } from '../lib/task-progress';
 import { type AcceptanceLedgerView, acceptanceLedgerView } from '../lib/task-progress-view';
 import { recordVisualClaimReview } from '../lib/visual-claim-review';
-import { useConnectionStore } from '../store/connection';
 
-import { useConnectedTransport } from './useConnectedTransport';
 import { useResourceQuery } from './useResourceQuery';
 
 export interface RunAcceptance {
@@ -95,10 +82,6 @@ export function useRunAcceptance(
   run: RunAcceptanceSource | null,
   options: { recipeRunId?: string; reportSnapshot?: OutputReviewPayload; decisionId?: string } = {},
 ): RunAcceptance {
-  const [data, setData] = useState<AcceptanceData | null>(null);
-  const [requestError, setRequestError] = useState<string | null>(null);
-  const [broadcasts, setBroadcasts] = useState(0);
-  const requestRef = useRef(0);
   const runId = run?.id;
   const fullRunQuery = useMemo(
     () => (runId ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId }) : undefined),
@@ -107,7 +90,6 @@ export function useRunAcceptance(
   const fullRunObservation = useResourceQuery(fullRunQuery);
   const slotId = run?.slotId;
   const workspaceId = run?.reviewWorkspace?.workspaceId;
-  const updatedAt = run?.updatedAt;
   const gate = options.decisionId
     ? run?.decisions?.find(({ id }) => id === options.decisionId)
     : undefined;
@@ -137,73 +119,13 @@ export function useRunAcceptance(
   const evidenceRequestError = evidenceObservation.error?.message ?? null;
   const target = taskProgressRequestForRun(run);
   const noSurface = Boolean(run) && !target;
-  const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
-  const connection = useConnectedTransport();
-
-  // Another gateway or principal makes the ledger on screen someone else's answer.
-  useEffect(() => {
-    requestRef.current += 1;
-    setData(null);
-    setRequestError(null);
-  }, [
-    authorityEpoch,
-    runId,
-    slotId,
-    workspaceId,
-    options.recipeRunId,
-    options.decisionId,
-    evidenceSnapshotHash,
-  ]);
-
-  useEffect(() => {
-    if (!client || !target) return;
-    if (connection === null) {
-      // Drop reads in flight; the next connected transport re-reads.
-      requestRef.current += 1;
-      return;
-    }
-    const requestId = requestRef.current + 1;
-    requestRef.current = requestId;
-    if (!data) setRequestError(null);
-    client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, target)
-      .then((result) => {
-        if (requestRef.current !== requestId) return;
-        setData(result);
-        setRequestError(null);
-      })
-      .catch((err: Error) => {
-        if (requestRef.current !== requestId) return;
-        if (isGatewayBackgroundPauseError(err)) {
-          // Backgrounding pauses gateway requests; the last ledger read stays the
-          // Gateway's answer until the next refresh replaces it.
-          console.warn(`Acceptance criteria refresh paused: ${err.message}`);
-          return;
-        }
-        setRequestError(`Acceptance criteria unavailable: ${err.message}`);
-      });
-    // `target` is derived from the run fields listed here.
-    // Receiving data must not trigger another read; it only controls cold-error feedback.
-  }, [
-    broadcasts,
-    client,
-    connection,
-    runId,
-    slotId,
-    workspaceId,
-    updatedAt,
-    options.recipeRunId,
-    options.decisionId,
-    evidenceSnapshotHash,
-  ]);
-
-  useEffect(() => {
-    if (!client || !run) return;
-    return client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      if (!taskProgressUpdateTargetsRun(run, payload as TaskProgressUpdatedPayload)) return;
-      setBroadcasts((count) => count + 1);
-    });
-  }, [client, runId, slotId, workspaceId]);
+  const progressQuery = useMemo(
+    () => (target ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, target) : undefined),
+    [runId, slotId, workspaceId],
+  );
+  const progressObservation = useResourceQuery(progressQuery);
+  const data: AcceptanceData | null = progressObservation.data ?? null;
+  const requestError = progressObservation.error?.message ?? null;
 
   const evidencePending = run?.status
     ? runEvidencePending({
@@ -257,18 +179,21 @@ export function useRunAcceptance(
       commandsReady:
         client?.connectionState === 'connected' &&
         fullRunObservation.status === 'ready' &&
-        evidenceObservation.status === 'ready',
+        evidenceObservation.status === 'ready' &&
+        progressObservation.status === 'ready',
       loading: !data && !error,
       evidenceLoading: !evidence && !error && !evidenceRequestError,
       evidenceError: error ?? evidenceRequestError,
       retry() {
-        setBroadcasts((value) => value + 1);
+        if (progressQuery) void getResourceCache()?.retry(progressQuery);
         if (evidenceQuery) void getResourceCache()?.retry(evidenceQuery);
       },
       evidenceModel,
       reviewer: client?.authenticatedPrincipal ?? null,
       async recordVisualReview(claimId, verdict, reason) {
         if (!runId) throw new Error('The current run is unavailable.');
+        if (!progressQuery || getResourceCache()?.read(progressQuery).status !== 'ready')
+          throw new Error('Wait for current acceptance data before acting.');
         assertNativeRunReady(runId, fullRunObservation.data?.run);
         if (evidenceObservation.status !== 'ready')
           throw new Error('Wait for current evidence before acting.');
@@ -299,6 +224,8 @@ export function useRunAcceptance(
     evidenceQuery,
     evidenceObservation.status,
     fullRunObservation,
+    progressQuery,
+    progressObservation.status,
     run?.output,
     run?.links,
     evidencePending,

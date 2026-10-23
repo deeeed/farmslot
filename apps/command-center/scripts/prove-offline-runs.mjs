@@ -20,6 +20,7 @@ import { promisify } from 'node:util';
 import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
 
 import { withOwnedGatewayOffline } from './owned-gateway-outage.mjs';
+import { proveProgressHistory } from './prove-progress-history.mjs';
 
 const execute = promisify(execFile);
 const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
@@ -891,7 +892,11 @@ if (phase === 'progress-web' || phase === 'remote-progress-web') {
           steps: [{ name: 'monitor', status: 'running', startedAt: createdAt }],
         };
       },
-      async ({ runId, observed }) => {
+      async ({ runId, runFile, observed }) => {
+        if (!remote && process.env.FARMSLOT_PROGRESS_HISTORY_CONTROL) {
+          await proveProgressHistory({ fixture, projects, runId, runFile, observeResources });
+          assert.fail('The focused progress control unexpectedly succeeded');
+        }
         const proveRegistry = async () => {
           const index = path.join(taskDir, 'subtasks', 'index.json');
           await mkdir(path.dirname(index), { recursive: true });
@@ -1081,11 +1086,23 @@ if (phase === 'progress-web' || phase === 'remote-progress-web') {
           'Removing an observed acceptance sidecar must clear its read error without another write',
         );
         if (remote) await proveNodeError();
+        const outageIndex = path.join(taskDir, 'subtasks', 'index.json');
+        if (!remote) {
+          await writeFile(outageIndex, '{invalid-owned-disconnect-registry');
+          await until(
+            (value) => value.freshness === 'stale' && value.completed === 1 && value.errorRendered,
+            'A failed read must be visible before the owned disconnect',
+          );
+        }
         const outage = await withOwnedGatewayOffline(async () => {
           const stale = await until(
-            (value) => value.freshness === 'stale' && value.completed === 1,
-            'Disconnected progress must retain the saved checklist',
+            (value) =>
+              value.freshness === 'stale' &&
+              value.completed === 1 &&
+              (remote || value.errorRendered),
+            'Disconnected progress must retain the saved checklist and its last read error',
           );
+          if (!remote) await rm(outageIndex);
           base.searchParams.set('progress-cold', randomUUID());
           await cdp('goto', base.href);
           await cdp('focus', route);
@@ -1111,7 +1128,12 @@ if (phase === 'progress-web' || phase === 'remote-progress-web') {
           path.join(artifacts, 'progress-cycles.json'),
           JSON.stringify({ initial, changed, restored, outage, recovered }, null, 2),
         );
+        const history = remote
+          ? {}
+          : await proveProgressHistory({ fixture, projects, runId, runFile, observeResources });
         return {
+          ...history,
+          ...(!remote ? { progressErrorRetained: true } : {}),
           progressNotified: true,
           progressFailureVisible: true,
           progressSourceRemovals: true,

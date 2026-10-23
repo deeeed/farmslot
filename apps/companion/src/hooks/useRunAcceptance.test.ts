@@ -97,6 +97,13 @@ function mount(request: (method: string) => Promise<unknown>) {
       client.connectionState = connected ? 'connected' : 'disconnected';
       transport.setConnection({ connected, id: connected ? 2 : 1 });
     },
+    invalidateProgress() {
+      transport.publish({
+        version: 1,
+        epoch: 'conformance-epoch',
+        changes: [{ key: { family: 'progress', runId: run.id }, revision: 1, kind: 'updated' }],
+      });
+    },
     async cleanup() {
       hook.cleanup();
       for (const stop of observers.values()) stop();
@@ -138,7 +145,7 @@ test('cold Retry shows loading until the unchanged run acceptance read arrives',
   await settle();
   assert.equal(reads, 1);
   retry(failed);
-  mounted.render();
+  await settle();
   const waiting = mounted.render();
   assert.equal(waiting.error, null, 'A cold Retry must clear its old request error while loading');
   assert.equal(waiting.view, null);
@@ -192,18 +199,21 @@ test('Retry preserves a cached acceptance read and its error until the refresh a
   assert.notEqual(waiting.view, null);
   await settle();
   assert.equal(reads, 3);
+  assert.equal(mounted.render().error, failed.error, 'Keep the saved read error during refresh');
   finish(progress);
   await settle();
   assert.equal(mounted.render().error, null);
 });
 
-test('retry fences a response that began before the latest failed read', async (t) => {
+test('Retry shares an in-flight read and an invalidation schedules one current follow-up', async (t) => {
   let reads = 0;
   let finish: (result: unknown) => void = () => assert.fail('first request did not start');
   const old = new Promise<unknown>((resolve) => {
     finish = resolve;
   });
   const mounted = mount(async (method) => {
+    if (method === Methods.RUN_RECIPE_RUNS_FOR_RUN)
+      return { recipeRuns: [], selectedRecipeRunId: null };
     assert.equal(method, Methods.TASK_PROGRESS);
     if (++reads === 1) return old;
     throw new Error('current read failure');
@@ -212,10 +222,15 @@ test('retry fences a response that began before the latest failed read', async (
   retry(mounted.render());
   mounted.render();
   await settle();
-  assert.equal(reads, 2);
+  assert.equal(reads, 1, 'Retry must share the in-flight progress read');
+  mounted.invalidateProgress();
   finish(progress);
   await settle();
+  assert.equal(reads, 2, 'An invalidated response needs one follow-up read');
   assert.match(String(mounted.render().error), /current read failure/);
+  assert.equal(mounted.render().commandsReady, false);
+  await settle();
+  assert.equal(reads, 2, 'The failed follow-up must not enter a retry loop');
 });
 
 test('a disconnected cold Retry keeps its error until a connected read starts', async (t) => {
@@ -247,6 +262,7 @@ test('a disconnected cold Retry keeps its error until a connected read starts', 
   assert.equal(reads, 1);
   mounted.setConnected(true);
   mounted.render();
+  await settle();
   const waiting = mounted.render();
   assert.equal(waiting.error, null);
   assert.equal(waiting.view, null);
@@ -328,8 +344,8 @@ test('a failed evidence refresh preserves the retained selection until a success
   const waiting = mounted.render();
   assert.equal(
     waiting.evidenceError,
-    null,
-    'Explicit Retry clears the shared read error while retaining its saved evidence',
+    failed.evidenceError,
+    'Keep the last evidence error visible until its saved observation is replaced',
   );
   assert.equal(
     waiting.commandsReady,

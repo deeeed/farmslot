@@ -140,9 +140,7 @@ export function createGatewayResourceCache(
     entry.pending?.controller.abort();
     entry.pending = undefined;
     entry.dirty = true;
-    entry.state = clear
-      ? { status: 'loading' }
-      : { ...entry.state, status: 'stale', error: undefined };
+    entry.state = clear ? { status: 'loading' } : { ...entry.state, status: 'stale' };
     notify(entry);
   }
 
@@ -399,7 +397,7 @@ export function createGatewayResourceCache(
       for (const entry of targets) {
         if (!affected.length) entry.unknownGeneration++;
         entry.dirty = true;
-        entry.state = { ...entry.state, status: 'stale', error: undefined };
+        entry.state = { ...entry.state, status: 'stale' };
         notify(entry);
         if (!entry.pending) schedule(entry);
       }
@@ -516,7 +514,9 @@ export function createGatewayResourceCache(
     entry.state = {
       ...entry.state,
       status: entry.state.data === undefined ? 'loading' : 'stale',
-      error: undefined,
+      // A cold connected retry can show loading; saved data keeps its last
+      // failure visible until a successful read replaces that observation.
+      error: entry.state.data === undefined ? undefined : entry.state.error,
     };
     notify(entry);
     pending.promise = (async () => {

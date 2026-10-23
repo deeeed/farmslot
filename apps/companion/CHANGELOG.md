@@ -64,7 +64,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback and verified identity handling. Sources, fleet, run collections, full run details, slot workspaces and history, terminal and native-conversation run context, visual-review run context, diff and artifact contexts, family views, saved reviews and decision workspaces share live observations; saved results show their age and actions wait for current reads. Visual feedback retains replies in flight during refresh and prevents resending an accepted draft. Conversation controls keep their exact task binding and preserve unsent answers when a refresh interrupts submission. Idle slot diffs load without a bound run, and retained artifact/diff read failures offer Retry. Requires a new native build with Expo SQLite.
 - Add reproducible client-store baseline recipes with a dev-only native startup and websocket byte counter.
 
-- Share persisted worker checklist observations across run-list rows and retain their source errors through offline recovery.
+- Share persisted worker checklist observations across run-list rows and acceptance panels, retaining their source errors through offline recovery. Acceptance and visual-review actions wait for current progress and evidence reads.
 
 ## 0.8.2 - 2026-10-16
 

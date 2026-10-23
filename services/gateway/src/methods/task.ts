@@ -8,6 +8,8 @@ import path from 'node:path';
 import {
   DEFAULT_TASK_DIR,
   enumerateChecklistCheckboxes,
+  type Run,
+  type SlotStatus,
   type TaskPhaseProgress,
   type TaskProgressParams,
   type TaskProgressResult,
@@ -25,6 +27,7 @@ import {
   resolveTaskPaths,
   resolveTaskRelDir,
 } from '../core/config.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import {
   ORCHESTRATOR_LOCALITY,
   slotFileExists,
@@ -37,7 +40,10 @@ import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
 import { attachOperations } from '../tasks/operations.js';
-import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
+import {
+  resolveTaskProgressMarkdownPath,
+  resolveTaskProgressMarkdownPathForSlot,
+} from '../tasks/progress-path.js';
 import { WORKER_MIRROR_SUFFIX } from '../tasks/sidecars.js';
 import {
   attachSubtaskToStep,
@@ -49,6 +55,71 @@ import {
 import { generateTaskSchema } from '../tasks/writer.js';
 
 export async function taskProgress(params: TaskProgressParams): Promise<TaskProgressResult> {
+  const requested = params.runId ? getRun(params.runId) : undefined;
+  if (params.runId && !requested)
+    throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${params.runId}`);
+  const runIdentity = requested ? progressRunIdentity(requested, params) : undefined;
+  const slot = params.slotId
+    ? (await loadFleetStatus(false, true)).slots.find((row) => row.slot === params.slotId)
+    : undefined;
+  const slotIdentity = JSON.stringify([slot?.currentRunId, slot?.taskFile]);
+  const live =
+    !requested ||
+    !params.slotId ||
+    (requested.slotId === params.slotId && slot?.currentRunId === requested.id);
+  const result = live
+    ? await readTaskProgress(params, slot, requested)
+    : await recordedRunProgress(params, requested);
+  if (!result)
+    throw new GatewayMethodError(
+      'PROGRESS_OWNER_CHANGED',
+      `Run ${params.runId} no longer owns slot ${params.slotId}, and its recorded progress is unavailable.`,
+    );
+  if (requested) {
+    const current = getRun(requested.id);
+    if (!current) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${requested.id}`);
+    if (progressRunIdentity(current, params) !== runIdentity)
+      throw new GatewayMethodError(
+        'PROGRESS_OWNER_CHANGED',
+        'The progress owner changed during the read.',
+      );
+  }
+  if (live && params.slotId) {
+    const current = (await loadFleetStatus(false, true)).slots.find(
+      (row) => row.slot === params.slotId,
+    );
+    if (JSON.stringify([current?.currentRunId, current?.taskFile]) !== slotIdentity)
+      throw new GatewayMethodError(
+        'PROGRESS_OWNER_CHANGED',
+        'The slot binding changed during the progress read.',
+      );
+  }
+  return result;
+}
+
+function progressRunIdentity(run: Run, params: TaskProgressParams): string {
+  const context = selectAgentContext(run, params);
+  if ((params.contextId || params.role || params.target) && !context)
+    throw new GatewayMethodError('NOT_FOUND', 'The requested progress context no longer exists.');
+  return JSON.stringify([
+    run.slotId,
+    run.flowType,
+    run.taskFile,
+    run.activeTaskFile,
+    run.reviewWorkspace,
+    context?.id,
+    context?.taskFile,
+    context?.attemptStartedAt,
+    context?.status,
+    params.taskFile ? declaredProgressFiles(run) : undefined,
+  ]);
+}
+
+async function readTaskProgress(
+  params: TaskProgressParams,
+  slot: SlotStatus | undefined,
+  requested: Run | undefined,
+): Promise<TaskProgressResult> {
   if (!params.slotId && params.runId) {
     if (params.taskFile) throw new Error('Workspace progress uses the run’s recorded task');
     // A slot-free review workspace (ADR-058) reads through its own confined task
@@ -71,16 +142,26 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
     await attachAcceptanceStatus(source.io, source.checklistPath, result);
     return result;
   }
-  const fleet = await loadFleetStatus();
-  const slot = fleet.slots.find((s) => s.slot === params.slotId);
   if (!params.taskFile && !slot?.taskFile) {
-    const recorded = params.runId ? await recordedRunProgress(params.slotId, params.runId) : null;
+    const recorded = requested ? await recordedRunProgress(params, requested) : null;
     if (recorded) return recorded;
     throw new Error(`No task file for slot ${params.slotId}`);
   }
 
   if (params.taskFile) {
+    const requestedFile = params.taskFile;
     const vars = await loadSlotVars(params.slotId);
+    if (
+      requested &&
+      !declaredProgressFiles(requested).some(
+        (file) =>
+          path.resolve(vars.remoteRepo, file) === path.resolve(vars.remoteRepo, requestedFile),
+      )
+    )
+      throw new GatewayMethodError(
+        'NOT_FOUND',
+        'The requested progress file is not recorded for this run.',
+      );
     // An explicit TASK.md (Slot View passes the worker context's task file) still
     // resolves to the sibling CHECKLIST.md when it exists; role checklists pass through.
     const effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(
@@ -94,9 +175,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       contextId: params.contextId,
       markdown,
     };
-    const flowType =
-      (params.runId ? getRun(params.runId)?.flowType : undefined) ??
-      taskFlowTypeFromPath(params.taskFile);
+    const flowType = requested?.flowType ?? taskFlowTypeFromPath(params.taskFile);
     await progressFromChecklist(vars, effectiveMdPath, flowType, markdown, result);
     return result;
   }
@@ -109,7 +188,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
   // Use activeTaskFile if the run has declared a variant (e.g. REVIEW.md)
   // activeTaskFile is absolute — extract just the filename and resolve within the task dir
   const activeRun = params.runId
-    ? getRun(params.runId)
+    ? requested
     : slot.currentRunId
       ? (getRun(slot.currentRunId) ??
         listRuns({ active: true }).runs.find((r) => r.slotId === params.slotId))
@@ -193,24 +272,74 @@ async function progressFromChecklist(
  * acceptance data is reported, never the template's unchecked steps.
  */
 async function recordedRunProgress(
-  slotId: string,
-  runId: string,
+  params: TaskProgressParams,
+  run: Run,
 ): Promise<TaskProgressResult | null> {
-  const run = getRun(runId);
-  if (!run?.taskFile) return null;
+  if (!run.taskFile) return null;
   const projectVars = await loadProjectVarsOrNull(run.project, 'recorded task progress', run.id);
   const taskRoot = getOrchestratorTaskRoot(run.project, projectVars?.projectJson ?? null);
-  if (resolveTaskRelDir(run.taskFile, taskRoot) === null) return null;
+  const relativeTaskDir = resolveTaskRelDir(run.taskFile, taskRoot);
+  if (relativeTaskDir === null) return null;
   const io = ORCHESTRATOR_LOCALITY;
   if (!(await slotFileExists(io, run.taskFile))) return null;
-  const effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(io, run.taskFile);
+  const context = selectAgentContext(run, params);
+  const candidate =
+    params.taskFile ??
+    (params.contextId || params.role || params.target ? context?.taskFile : run.activeTaskFile) ??
+    run.taskFile;
+  if (params.taskFile) {
+    if (!declaredProgressFiles(run).includes(params.taskFile))
+      throw new GatewayMethodError(
+        'NOT_FOUND',
+        'The requested progress file is not recorded for this run.',
+      );
+  }
+  const directory = path.dirname(run.taskFile);
+  let recorded = candidate;
+  if (candidate !== run.taskFile) {
+    const normalized = candidate.replaceAll('\\', '/');
+    const marker = `/${relativeTaskDir}/`;
+    const offset = normalized.lastIndexOf(marker);
+    const relative =
+      path.isAbsolute(normalized) && !path.relative(directory, normalized).startsWith('..')
+        ? path.relative(directory, normalized)
+        : offset >= 0
+          ? normalized.slice(offset + marker.length)
+          : normalized.startsWith(`${relativeTaskDir}/`)
+            ? normalized.slice(relativeTaskDir.length + 1)
+            : null;
+    if (!relative || path.isAbsolute(relative) || relative.split('/').includes('..')) return null;
+    recorded = path.join(directory, relative);
+  }
+  const effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(io, recorded);
   const workerCopy = `${effectiveMdPath}${WORKER_MIRROR_SUFFIX}`;
-  const markdown = (await slotFileExists(io, workerCopy))
-    ? await slotReadFile(io, workerCopy)
-    : null;
-  const result: TaskProgressResult = { slotId, markdown: markdown ?? '' };
+  const immutableArtifact =
+    params.taskFile &&
+    run.steps.some((row) => row.outputs?.taskProgressArtifactPath === params.taskFile);
+  const markdown = immutableArtifact
+    ? await slotReadFile(io, effectiveMdPath)
+    : (await slotFileExists(io, workerCopy))
+      ? await slotReadFile(io, workerCopy)
+      : null;
+  const result: TaskProgressResult = {
+    slotId: params.slotId,
+    role: context?.role,
+    contextId: context?.id,
+    markdown: markdown ?? '',
+  };
   await progressFromChecklist(io, effectiveMdPath, run.flowType, markdown, result);
   return result;
+}
+
+function declaredProgressFiles(run: Run): string[] {
+  return [
+    run.taskFile,
+    run.activeTaskFile,
+    ...(run.agentContexts ?? []).map((row) => row.taskFile),
+    ...run.steps.map((row) => row.outputs?.taskProgressArtifactPath),
+  ]
+    .filter((file): file is string => typeof file === 'string' && file.length > 0)
+    .flatMap((file) => [file, resolveTaskProgressMarkdownPath(file)]);
 }
 
 /**

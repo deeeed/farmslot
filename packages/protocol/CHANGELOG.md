@@ -12,7 +12,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Add the opt-in node file-watch observation contract for explicit deletion and read failures, retaining the existing content-event shape for coordinated node and gateway upgrades.
 
-- Add the experimental ADR-071 resource query cache and store seam, persisted Sources/run/decision/fleet/node/capability/progress observations with shared retention bounds, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases. Accepted observations remain saved when a connection pauses or a view closes. Saved facts hydrate through offline reconnect attempts, while authority changes fence pending storage reads. Fleet observations share one 2 MB query and leave force-refresh commands outside the cache.
+- Add the experimental ADR-071 resource query cache and store seam, persisted Sources/run/decision/fleet/node/capability/progress observations with shared retention bounds, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases. Accepted observations remain saved when a connection pauses or a view closes. Saved facts hydrate through offline reconnect attempts, while authority changes fence pending storage reads. Fleet observations share one 2 MB query and leave force-refresh commands outside the cache. Read errors survive disconnects, and saved-data refreshes retain the last failure until a successful replacement arrives.
 
 ## 0.68.0
 
