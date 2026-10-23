@@ -1,6 +1,8 @@
 import {
+  deriveChecklistStepDurations,
   enumerateChecklistCheckboxes,
   type Run,
+  type TaskChecklistTiming,
   type TaskProgressStructured,
   type TaskStepProgress,
 } from '@farmslot/protocol';
@@ -23,6 +25,8 @@ export interface ChecklistProgressFallback {
 export interface ChecklistRowView {
   step: TaskStepProgress;
   icon: string;
+  duration: string | null;
+  live: boolean;
 }
 
 export interface ChecklistPhaseView {
@@ -47,6 +51,7 @@ export interface ChecklistProgressView {
 }
 
 export interface ChecklistProgressOptions {
+  nowMs?: number;
   activeStep?: PipelineProgressStep;
   activeTaskBasename?: string | null;
   markdown?: string;
@@ -54,9 +59,31 @@ export interface ChecklistProgressOptions {
   fallback?: ChecklistProgressFallback | null;
 }
 
-export function checklistProgressRow(step: TaskStepProgress): ChecklistRowView {
+export function checklistProgressRow(
+  step: TaskStepProgress,
+  timing?: TaskChecklistTiming,
+  nowMs = Date.now(),
+): ChecklistRowView {
+  const marks = [...(timing?.events ?? [])].sort((a, b) => a.checkedAt.localeCompare(b.checkedAt));
+  const completed = deriveChecklistStepDurations(timing, timing?.startedAt).find(
+    (mark) => mark.stepNumber === step.index,
+  );
+  const start = marks.at(-1)?.checkedAt ?? timing?.startedAt;
+  const startMs = start ? Date.parse(start) : Number.NaN;
+  const endMs = timing?.finishedAt ? Date.parse(timing.finishedAt) : nowMs;
+  const live = step.status === 'running' && Number.isFinite(startMs) && !timing?.finishedAt;
+  const durationMs =
+    step.status === 'done' &&
+    completed &&
+    (timing?.startedAt || marks[0]?.stepNumber !== step.index)
+      ? completed.durationMs
+      : step.status === 'running' && Number.isFinite(startMs) && Number.isFinite(endMs)
+        ? Math.max(0, endMs - startMs)
+        : null;
   return {
     step,
+    duration: durationMs === null ? null : checklistDurationLabel(durationMs),
+    live,
     icon:
       step.status === 'done'
         ? 'v'
@@ -66,6 +93,30 @@ export function checklistProgressRow(step: TaskStepProgress): ChecklistRowView {
             ? '-'
             : '.',
   };
+}
+
+function checklistDurationLabel(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  return hours
+    ? `${hours}h ${minutes % 60}m ${seconds % 60}s`
+    : minutes
+      ? `${minutes}m ${seconds % 60}s`
+      : `${seconds}s`;
+}
+
+/** Both renderers tick only while a checklist or one of its children has live elapsed time. */
+export function checklistProgressIsLive(
+  progress: TaskProgressStructured | null | undefined,
+): boolean {
+  return !!progress?.phases.some((phase) =>
+    phase.steps.some(
+      (step) =>
+        checklistProgressRow(step, progress.timing).live ||
+        checklistProgressIsLive(step.subtask?.progress),
+    ),
+  );
 }
 
 export function taskProgressPercent(
@@ -129,7 +180,7 @@ export function checklistProgressView(
       counts: `${phase.completedSteps}/${phase.totalSteps}`,
       complete: phase.completedSteps === phase.totalSteps,
       running: phase.steps.some((step) => step.status === 'running'),
-      rows: phase.steps.map(checklistProgressRow),
+      rows: phase.steps.map((step) => checklistProgressRow(step, progress?.timing, options.nowMs)),
     })),
     waiting: total === 0,
     message: total ? null : (options.fallback?.meta ?? null),

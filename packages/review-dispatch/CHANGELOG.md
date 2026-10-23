@@ -2,11 +2,17 @@
 
 ## Unreleased
 
+- Show completed checklist durations and live current-step elapsed time in both operator apps.
+
 - Share publication blocking while a review refresh is pending or failed.
 
 - Share current-checklist counts, item labels and attempt identity for run progress in both clients.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.17.0 - 2026-10-23
+
+- Share completed checklist durations and live current-step elapsed time between both operator clients.
 
 ## 0.16.0 - 2026-10-23
 

@@ -4,11 +4,17 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Expose checklist timing in task progress and per-step worker durations in monthly analytics.
+
 - Share source-first, deduplicated run reference links between Command Center and Companion; show shared total and current-step elapsed time on the existing metadata line.
 
 - Add shared linked-ticket lookup and operator ticket metadata on runs without changing frozen task inputs.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.69.0 - 2026-10-23
+
+- Expose current-attempt checklist timing and monthly worker step durations; wire protocol remains 0.63.0.
 
 ## 0.68.0
 

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Project current-attempt checklist timing and preserve step durations in monthly analytics.
+
 - Stop workers and slot runtimes when runs finish, fail or are cancelled, while preserving live stacked children, fix rounds and replay checkouts.
 - Prune unused node-support bundles during activation, retaining slot selections and references from every non-archived run.
 - Fetch published branch refs before prepare checks commits in a single-branch clone.

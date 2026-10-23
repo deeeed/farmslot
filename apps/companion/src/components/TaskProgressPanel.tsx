@@ -5,6 +5,7 @@ import type { Run, TaskProgressStructured } from '@farmslot/protocol';
 import {
   type ChecklistPhaseView,
   type ChecklistProgressFallback,
+  checklistProgressIsLive,
   checklistProgressView,
 } from '@farmslot/review-dispatch';
 
@@ -14,7 +15,12 @@ import { colors, fonts, radii, spacing } from '../lib/theme';
 
 import { TaskSubtaskBlock } from './TaskSubtaskBlock';
 
-function renderPhases(phases: ChecklistPhaseView[], runId?: string, nested = false) {
+function renderPhases(
+  phases: ChecklistPhaseView[],
+  runId?: string,
+  nested = false,
+  nowMs?: number,
+) {
   return phases.map((phase) => (
     <View key={phase.name} style={styles.phase}>
       <View style={styles.phaseHeader}>
@@ -34,7 +40,7 @@ function renderPhases(phases: ChecklistPhaseView[], runId?: string, nested = fal
         </Text>
         <Text style={styles.phaseCount}>{phase.counts}</Text>
       </View>
-      {phase.rows.map(({ step, icon }) => (
+      {phase.rows.map(({ step, icon, duration, live }) => (
         <React.Fragment key={`${phase.name}-${step.index}`}>
           <View style={[styles.step, step.status === 'running' && styles.runningStep]}>
             <Text style={[styles.stepIcon, { color: taskStepStatusColor(step.status) }]}>
@@ -48,22 +54,33 @@ function renderPhases(phases: ChecklistPhaseView[], runId?: string, nested = fal
             >
               {step.name}
             </Text>
+            {duration ? (
+              <Text
+                style={styles.duration}
+                testID={live ? 'checklist-elapsed' : 'checklist-duration'}
+              >
+                {duration}
+              </Text>
+            ) : null}
           </View>
           {step.subtask && !nested ? (
             <TaskSubtaskBlock
               key={subtaskBlockKey(runId, step.subtask.id)}
               subtask={step.subtask}
-              renderProgress={renderChildProgress}
+              renderProgress={(progress) =>
+                renderPhases(
+                  checklistProgressView(progress, { nowMs })?.phases ?? [],
+                  undefined,
+                  true,
+                  nowMs,
+                )
+              }
             />
           ) : null}
         </React.Fragment>
       ))}
     </View>
   ));
-}
-
-function renderChildProgress(progress: TaskProgressStructured) {
-  return renderPhases(checklistProgressView(progress)?.phases ?? [], undefined, true);
 }
 
 /** Native renderer of the same compact checklist view used by Command Center. */
@@ -80,7 +97,15 @@ export function TaskProgressPanel({
   error?: string | null;
   compact?: boolean;
 }) {
+  const [nowMs, setNowMs] = React.useState(Date.now);
+  const live = checklistProgressIsLive(progress);
+  React.useEffect(() => {
+    if (!live) return;
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [live]);
   const view = checklistProgressView(progress, {
+    nowMs,
     activeStep: activeTaskProgressStepId(run, progress),
     activeTaskBasename: run?.activeTaskFile?.split('/').pop(),
     fallback: summary,
@@ -96,7 +121,7 @@ export function TaskProgressPanel({
           {'\n'}Waiting for the worker checklist.
         </Text>
       ) : null}
-      {renderPhases(view.phases, run?.id)}
+      {renderPhases(view.phases, run?.id, false, nowMs)}
     </View>
   );
 }
@@ -145,6 +170,13 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   settledStep: { color: colors.textSecondary },
+  duration: {
+    fontFamily: fonts.mono,
+    fontSize: fonts.sizeSm,
+    color: colors.textSecondary,
+    fontVariant: ['tabular-nums'],
+    lineHeight: 18,
+  },
   error: { color: colors.statusWarn, fontSize: fonts.sizeSm, marginBottom: spacing.sm },
   waiting: { color: colors.textSecondary, fontSize: fonts.sizeSm },
 });

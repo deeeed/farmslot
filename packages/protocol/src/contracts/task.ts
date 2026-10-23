@@ -1,4 +1,4 @@
-import type { WorkerSignalStatus } from '../transport/signal.js';
+import type { WorkerSignalChecklistTiming, WorkerSignalStatus } from '../transport/signal.js';
 
 export type TaskStepStatus = 'pending' | 'done' | 'running' | 'skipped';
 
@@ -38,11 +38,20 @@ export interface TaskProgressStructured {
   phases: TaskPhaseProgress[];
   completedSteps: number;
   totalSteps: number;
+  /** Mark history and attempt boundaries for this checklist, including child checklists. */
+  timing?: TaskChecklistTiming;
   /** Optional task-local command observations from the harness. */
   operations?: TaskOperation[];
   operationsError?: string;
   currentPhase: string | null;
   currentStep: string | null;
+}
+
+export interface TaskChecklistTiming extends WorkerSignalChecklistTiming {
+  /** Current attempt start, never the first launch of a reused reviewer context. */
+  startedAt?: string;
+  /** Stops elapsed time when this attempt ends or blocks. */
+  finishedAt?: string;
 }
 
 export interface TaskPhaseProgress {

@@ -5,7 +5,7 @@ import type { TaskProgressStructured, TaskStepSubtaskProgress } from '@farmslot/
 
 import { litBinding, litText } from '../../testing/lit-text.js';
 
-import { renderChecklistProgress } from './progress-tracker.js';
+import { renderChecklistProgress, renderTrackerStepRow } from './progress-tracker.js';
 import { SubtaskOpenState } from './subtask-block.js';
 
 function childUnit(id: string, childStepName: string): TaskStepSubtaskProgress {
@@ -67,6 +67,35 @@ test('the progress panel nests a child unit under its parent step', () => {
   assert.match(rendered, /Review the diff/);
   assert.match(rendered, /perps-review/);
   assert.match(rendered, /Read the diff/);
+});
+
+test('checklist rows render muted trailing durations for parent and child through the same model', () => {
+  const progress = parentProgress(childUnit('child', 'Read the diff'));
+  progress.timing = {
+    schemaVersion: 1,
+    startedAt: '2026-10-23T01:00:00Z',
+    events: [{ stepNumber: 1, label: 'Reproduce', checkedAt: '2026-10-23T01:08:22Z' }],
+  };
+  progress.phases[0].steps[1].subtask!.progress.timing = {
+    schemaVersion: 1,
+    startedAt: '2026-10-23T01:08:22Z',
+    events: [{ stepNumber: 1, label: 'Read the diff', checkedAt: '2026-10-23T01:09:00Z' }],
+  };
+  const rendered = renderChecklistProgress(progress, {
+    nowMs: Date.parse('2026-10-23T01:10:00Z'),
+    openScope: new SubtaskOpenState().scope('timed'),
+  });
+  assert.match(litText(rendered), /8m 22s/);
+  assert.match(litText(rendered), /1m 38s/);
+  const child = progress.phases[0].steps[1].subtask!.progress;
+  const childRow = renderTrackerStepRow(
+    child.phases[0].steps[0],
+    new SubtaskOpenState().scope('timed'),
+    true,
+    child.timing,
+  );
+  assert.match(litText(childRow), /class="substep-duration"[^>]*>38s<\/span>/);
+  assert.match(litText(rendered), /1m 0s/);
 });
 
 test('child steps do not inflate the parent counts', () => {

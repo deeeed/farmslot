@@ -257,12 +257,16 @@ export class OperationClock implements ReactiveController {
   constructor(
     private host: ReactiveControllerHost,
     private progress: () => TaskProgressStructured | undefined | null,
+    private needsUpdate: () => boolean = () => false,
   ) {
     host.addController(this);
   }
   hostConnected(): void {
     this.timer = setInterval(() => {
-      if (this.progress()?.operations?.some((operation) => operation.status === 'running'))
+      if (
+        this.needsUpdate() ||
+        this.progress()?.operations?.some((operation) => operation.status === 'running')
+      )
         this.host.requestUpdate();
     }, 1000);
   }

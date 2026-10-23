@@ -227,6 +227,73 @@ test('sink append + read round-trips', async () => {
   assert.ok(records.some((r) => r.runId === 'rt-1'));
 });
 
+test('monthly NDJSON retains checklist step durations after task pruning, using the worker attempt', async () => {
+  const run = makeRun({
+    id: 'checklist-timing-export',
+    agentContexts: [
+      {
+        id: 'worker',
+        role: 'fix-bug',
+        label: 'Worker',
+        status: 'complete',
+        slotId: null,
+        runId: 'checklist-timing-export',
+        taskFile: '.task/TASK.md',
+        startedAt: '2026-06-21T10:00:00Z',
+        attemptStartedAt: '2026-06-22T10:00:00Z',
+      },
+    ],
+  });
+  run.metrics.checklistTiming = {
+    schemaVersion: 1,
+    source: 'CHECKLIST.md',
+    events: [
+      { stepNumber: 1, label: 'Prepare', checkedAt: '2026-06-22T10:08:22Z' },
+      { stepNumber: 2, label: 'Inspect', checkedAt: '2026-06-22T10:10:00Z' },
+    ],
+  };
+  const record = buildAnalyticsRecord(run);
+  assert.deepEqual(record.checklistSteps, [
+    { stepNumber: 1, label: 'Prepare', durationMs: 502_000 },
+    { stepNumber: 2, label: 'Inspect', durationMs: 98_000 },
+  ]);
+  await appendAnalyticsRecord(record);
+  const { records } = await readAllAnalyticsRecords();
+  assert.deepEqual(
+    records.find((item) => item.runId === run.id)?.checklistSteps,
+    record.checklistSteps,
+  );
+  assert.equal(buildAnalyticsRecord(makeRun()).checklistSteps, undefined);
+});
+
+test('monthly checklist durations exclude marks before a resumed attempt, matching live progress', () => {
+  const run = makeRun({
+    agentContexts: [
+      {
+        id: 'worker',
+        role: 'fix-bug',
+        label: 'Worker',
+        status: 'complete',
+        slotId: null,
+        runId: 'run-1',
+        taskFile: '.task/TASK.md',
+        startedAt: '2026-06-22T10:00:00Z',
+        attemptStartedAt: '2026-06-22T11:00:00Z',
+      },
+    ],
+  });
+  run.metrics.checklistTiming = {
+    schemaVersion: 1,
+    events: [
+      { stepNumber: 1, label: 'Earlier work', checkedAt: '2026-06-22T10:05:00Z' },
+      { stepNumber: 2, label: 'Resume work', checkedAt: '2026-06-22T11:04:00Z' },
+    ],
+  };
+  assert.deepEqual(buildAnalyticsRecord(run).checklistSteps, [
+    { stepNumber: 2, label: 'Resume work', durationMs: 240_000 },
+  ]);
+});
+
 test('emit is idempotent via analyticsEmittedAt', async () => {
   const run = makeRun({ id: 'idem-1' });
   const first = emitAnalyticsForTerminalRun(run);

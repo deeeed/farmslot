@@ -135,6 +135,20 @@ let nextProgress: () => TaskProgressResult = () => {
   throw new Error('no progress fixture installed');
 };
 
+test('a signal mark arriving after the checkbox still publishes its timing', async () => {
+  const h = harness();
+  const progress = projection({ parentChecked: true });
+  nextProgress = () => progress;
+  await h.publisher.publish();
+  h.advance();
+  progress.structured!.timing = {
+    schemaVersion: 1,
+    events: [{ stepNumber: 1, label: 'run the domain review', checkedAt: '2026-09-20T09:05:00Z' }],
+  };
+  assert.equal(await h.publisher.publish(), progress);
+  assert.equal(h.emitted.length, 2);
+});
+
 test('the first read publishes progress and refreshes the view', async () => {
   const h = harness();
   nextProgress = () =>
