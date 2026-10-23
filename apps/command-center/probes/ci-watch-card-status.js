@@ -11,6 +11,7 @@ function walk(root) {
         if (text.scrollWidth > text.clientWidth + 1) throw new Error('CI line overflows');
         rows.push({
           runId: element.run?.id,
+          source: element.run?.ticketOrPr,
           label: text.textContent.trim(),
           title: text.title,
           nowMs: element.nowMs,
@@ -23,5 +24,14 @@ function walk(root) {
   }
 }
 walk(document);
+const inconsistent = rows.find((row) => row.source === 'CI-3');
+const fixing = rows.find((row) => row.source === 'CI-4');
+if (
+  inconsistent &&
+  (/worker fixing/.test(inconsistent.label) || !/next check/.test(inconsistent.label))
+)
+  throw new Error('A phase alone must not advertise an active worker');
+if (fixing && !/worker fixing/.test(fixing.label))
+  throw new Error('Explicit active worker state must show the fixing activity');
 if (!rows.length) throw new Error('No CI-watch summary is visible');
 return { rows, viewport: { width: innerWidth, height: innerHeight } };

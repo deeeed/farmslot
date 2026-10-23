@@ -154,6 +154,37 @@ for (const project of ['progress-proof', 'total-proof']) {
   monitors.push(monitorCI(run.id, 1, 'example/repository', controller.signal));
   runs.push(run.id);
 }
+// Setup-time output fixtures exercise the shared worker-state rule through RPC.
+// They do not launch or claim to have launched a worker.
+for (const fixing of [false, true]) {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'progress-proof',
+    ticketOrPr: fixing ? 'CI-4' : 'CI-3',
+    mode: 'interactive',
+  });
+  updateRun(run.id, {
+    status: 'ci-watching',
+    summary: fixing ? 'Worker fix explicitly active' : 'Phase without active worker flag',
+    steps: run.steps.map((step) => ({
+      ...step,
+      status: step.name === 'ci-watch' ? 'running' : 'done',
+      outputs:
+        step.name === 'ci-watch'
+          ? {
+              phase: 'fixing',
+              fixInProgress: fixing,
+              checkSummary: { passed: 23, failed: 1, pending: 5, skipped: 0, total: 29 },
+              failedNames: ['run-security-scan'],
+              nextPollAt: new Date(Date.now() + 180_000).toISOString(),
+              progressTimeoutAt: new Date(Date.now() + 47 * 60_000).toISOString(),
+              totalTimeoutAt: new Date(Date.now() + 360 * 60_000).toISOString(),
+            }
+          : undefined,
+    })),
+  });
+  runs.push(run.id);
+}
 const auth = createGatewayAuthRuntime();
 initializeGatewayIdentity(auth, { host: '127.0.0.1' });
 const principal = auth.writer.createPrincipal({ type: 'service', displayName: 'CI card proof' }, [

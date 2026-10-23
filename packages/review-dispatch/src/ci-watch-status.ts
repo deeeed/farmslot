@@ -26,6 +26,11 @@ function remaining(ms: number): string {
   return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;
 }
 
+/** A worker fix is active only when both recorded phase and explicit flag agree. */
+export function isCIWatchWorkerFixActive(phase: unknown, fixInProgress: unknown): boolean {
+  return fixInProgress === true && (phase === 'fixing' || phase === 'waiting_for_worker');
+}
+
 /** The same recorded check snapshot and engine deadlines on web and native run cards. */
 export function ciWatchStatusView(
   run: Run | null | undefined,
@@ -62,7 +67,7 @@ export function ciWatchStatusView(
     );
     return { label: parts.join(' · '), description: parts.join(' · '), live: false };
   }
-  const fixing = phase === 'fixing' || phase === 'waiting_for_worker' || out.fixInProgress === true;
+  const fixing = isCIWatchWorkerFixActive(phase, out.fixInProgress);
   const pollAt = timestamp(out.nextPollAt);
   parts.push(
     fixing
@@ -79,7 +84,7 @@ export function ciWatchStatusView(
   if (progressAt !== undefined && totalAt !== undefined) {
     const timeoutAt = Math.min(progressAt, totalAt);
     parts.push(timeoutAt <= nowMs ? 'timeout due' : `times out in ${remaining(timeoutAt - nowMs)}`);
-    description = `No-progress timeout in ${remaining(progressAt - nowMs)}; total timeout in ${remaining(totalAt - nowMs)}`;
+    description = `No-progress timeout ${progressAt <= nowMs ? 'due' : `in ${remaining(progressAt - nowMs)}`}; total timeout ${totalAt <= nowMs ? 'due' : `in ${remaining(totalAt - nowMs)}`}`;
   } else {
     parts.push('timeout unavailable');
   }

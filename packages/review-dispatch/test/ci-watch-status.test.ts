@@ -73,12 +73,24 @@ test('all-green checks still explain actionable feedback and an active fix', () 
     failedNames: [],
     actionableBotCommentCount: 2,
     phase: 'waiting_for_worker',
+    fixInProgress: true,
     nextPollAt: null,
   });
   assert.match(
     ciWatchStatusView(input, now)?.label ?? '',
     /^CI 29\/29 · 2 actionable comments · worker fixing/,
   );
+});
+
+test('the card and existing CI panels require matching phase and explicit worker state', () => {
+  for (const outputs of [
+    { phase: 'polling', fixInProgress: true },
+    { phase: 'fixing', fixInProgress: false },
+    { phase: undefined, fixInProgress: true },
+  ]) {
+    assert.doesNotMatch(ciWatchStatusView(run(outputs), now)?.label ?? '', /worker fixing/);
+    assert.match(ciWatchStatusView(run(outputs), now)?.label ?? '', /next check 3m/);
+  }
 });
 
 test('decisions and pauses stop countdowns; terminal or unrelated runs omit the CI line', () => {

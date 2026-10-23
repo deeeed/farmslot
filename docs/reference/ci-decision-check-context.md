@@ -49,8 +49,8 @@ The existing CI monitor MUST project optional `progressTimeoutAt` and
 come from its current no-progress and total-window clocks plus configured limits,
 including progress resets and an operator's existing Keep waiting action. This
 adds observation only; timeout, polling, fix and decision behavior is unchanged.
-Defaults are two hours without progress and six hours total; project overrides
-remain authoritative. Clients MUST use the earlier recorded deadline, never
+The no-progress default is two hours. Total defaults to the larger of six hours
+or three configured no-progress windows; project overrides remain authoritative. Clients MUST use the earlier recorded deadline, never
 reconstruct a total window from the run or step start, or invent default limits
 for a legacy record. Past deadlines say timeout is due until the engine raises
 its decision. Countdown clocks stop when the run is no longer watching.
