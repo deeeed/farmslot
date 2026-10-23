@@ -30,7 +30,16 @@ type Ending =
   | 'foreign-tools'
   | 'stale-checklist'
   | 'accepted-start'
-  | 'inactive';
+  | 'inactive'
+  | 'completion-turn'
+  | 'completion-unfinished'
+  | 'completion-live'
+  | 'completion-restart'
+  | 'completion-closed-restart'
+  | 'completion-deferred'
+  | 'completion-interrupted'
+  | 'completion-invalid-idle'
+  | 'completion-invalid';
 let ending: Ending = 'verdict';
 let timeline: { now: number; polls: number; stepMs?: number } | undefined;
 let configuredInactivityMinutes: number | undefined;
@@ -53,6 +62,12 @@ const noop = async () => {};
 // Reviewer contexts whose process the agent stopped, and whether that stop fails.
 const stopped: string[] = [];
 let stopFails = false;
+const completionCommands: string[] = [];
+let loseCompletionReply = false;
+let completionLaunches = 0;
+let completionActivityPages: NativeSessionEvent[][] | undefined;
+let deferredClock: { now: number; polls: number } | undefined;
+const completionCase = () => ending.startsWith('completion-');
 
 // The reviewer's host, slot files and runner are scripted; the run store and the
 // review round budget are real.
@@ -75,7 +90,22 @@ mock.module('../methods/dispatch/slot-file-write.js', {
 });
 mock.module('../run-engine/run-monitor.js', {
   namedExports: {
-    probeWorkerSignalForRun: async () => {
+    probeWorkerSignalForRun: async (runId: string) => {
+      if (completionCase()) {
+        const context = getRun(runId)!.agentContexts?.find((entry) => entry.role === 'review');
+        if (
+          ending !== 'completion-unfinished' &&
+          ending !== 'completion-interrupted' &&
+          ending !== 'completion-closed-restart' &&
+          context?.nativeSession?.commandId !== binding.commandId
+        )
+          return { ok: true };
+        return {
+          ok: false,
+          code: 'non_terminal',
+          signal: { status: 'running', timestamp: new Date().toISOString() },
+        };
+      }
       if (timeline) {
         if (ending !== 'inactive' && timeline.polls >= 4) return { ok: true };
         return {
@@ -124,11 +154,24 @@ mock.module('../runners/native/worker.js', {
       if (stopFails) throw new Error('native worker stop is unconfirmed');
     },
     dispatchNativeWorker: async (input: { runId: string; contextId: string }) => {
+      const current = getRun(input.runId)!.agentContexts?.find(
+        (entry) => entry.id === input.contextId,
+      );
+      if (current?.nativeSession?.closedAt)
+        throw new Error('Native worker task lease is closed; use explicit recovery');
+      if (
+        getRun(input.runId)!.agentContexts?.find((entry) => entry.id === input.contextId)
+          ?.nativeCommandId
+      )
+        return;
+      if (completionCase()) completionLaunches++;
       await upsertAgentContext(input.runId, 'review', {
         id: input.contextId,
         status: 'working',
-        nativeSession:
-          ending === 'accepted-start'
+        runnerSessionId: 'saved-review-conversation',
+        nativeSession: completionCase()
+          ? { ...binding, acceptedAt: new Date().toISOString() }
+          : ending === 'accepted-start'
             ? { ...binding, acceptedAt: new Date(0).toISOString() }
             : binding,
       });
@@ -148,6 +191,47 @@ mock.module('../runners/native/worker-control.js', {
       _contextId: string,
       history?: { after?: number },
     ) => {
+      if (completionCase()) {
+        const current = getRun(_runId)!.agentContexts!.find((entry) => entry.role === 'review')!;
+        const continued = current.nativeSession!.commandId !== binding.commandId;
+        return {
+          session: {
+            state:
+              ending === 'completion-closed-restart'
+                ? 'closed'
+                : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                  ? 'idle'
+                  : 'closed',
+            processStopped:
+              ending === 'completion-closed-restart' ||
+              (!continued && !['completion-live', 'completion-invalid-idle'].includes(ending)),
+            nativeSessionId: 'saved-review-conversation',
+          },
+          commands: [
+            {
+              commandId: current.nativeSession!.commandId,
+              generation: current.nativeSession!.generation,
+              accepted: true,
+              state:
+                continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                  ? 'completed'
+                  : 'failed',
+              outcome:
+                continued && ending === 'completion-interrupted'
+                  ? 'interrupted'
+                  : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                    ? 'completed'
+                    : 'failed',
+            },
+          ],
+          events: completionActivityPages?.[history?.after ?? 0] ?? [],
+          pendingRequests: [],
+          cursor: completionActivityPages ? (history?.after ?? 0) + 1 : 0,
+          hasMore: completionActivityPages
+            ? (history?.after ?? 0) + 1 < completionActivityPages.length
+            : false,
+        };
+      }
       if (timeline) {
         readCursors.push(history?.after);
         timeline.now += timeline.stepMs ?? 10 * 60_000;
@@ -200,7 +284,57 @@ mock.module('../runners/native/worker-control.js', {
     },
   },
 });
-mock.module('../runners/native/worker-recovery.js', { namedExports: { resumeNativeWorker: noop } });
+mock.module('../runners/native/worker-recovery.js', {
+  namedExports: {
+    resumeNativeWorker: async (
+      runId: string,
+      options: { contextId: string; commandId?: string; text: string },
+    ) => {
+      assert.ok(options.commandId, 'completion must reserve a stable command before recovery');
+      const context = getRun(runId)!.agentContexts!.find(
+        (entry) => entry.id === options.contextId,
+      )!;
+      assert.equal(context.nativeCommandId, options.commandId);
+      assert.equal(context.nativeCommandText, options.text);
+      if (deferredClock) {
+        deferredClock.now += 600001;
+        if (++deferredClock.polls > 2)
+          throw new Error('Deferred completion bypassed the inactivity watchdog');
+        return;
+      }
+      completionCommands.push(options.commandId);
+      if (loseCompletionReply) {
+        loseCompletionReply = false;
+        await upsertAgentContext(runId, 'review', {
+          id: context.id,
+          nativeSession: {
+            ...context.nativeSession!,
+            recovery: {
+              fromGeneration: context.nativeSession!.generation!,
+              commandId: options.commandId,
+              text: options.text,
+            },
+          },
+        });
+        throw new NativeWorkerOperationUncertainError(
+          'delivery',
+          'completion reply lost',
+          undefined,
+        );
+      }
+      await upsertAgentContext(runId, 'review', {
+        id: context.id,
+        nativeSession: {
+          ...context.nativeSession!,
+          commandId: options.commandId,
+          generation: 'continued-generation',
+          recovery: undefined,
+          ...(ending === 'completion-closed-restart' ? { closedAt: new Date().toISOString() } : {}),
+        },
+      });
+    },
+  },
+});
 mock.module('../security/native-worker-owner.js', {
   namedExports: { assertNativeRunOwner: () => {} },
 });
@@ -215,9 +349,16 @@ mock.module('../tasks/watcher.js', { namedExports: { unwatchContext: noop } });
 mock.module('./feedback.js', {
   namedExports: {
     readReviewFeedback: async () =>
-      ending === 'incomplete'
-        ? { verdict: 'pass', issues: [], incomplete: true }
-        : { verdict: 'issues', issues: [{ file: 'a.ts', description: 'finding' }] },
+      ['completion-invalid', 'completion-invalid-idle'].includes(ending)
+        ? {
+            verdict: 'issues',
+            issues: [],
+            incomplete: true,
+            terminalInvalidReason: 'invalid scoped review result',
+          }
+        : ending === 'incomplete'
+          ? { verdict: 'pass', issues: [], incomplete: true }
+          : { verdict: 'issues', issues: [{ file: 'a.ts', description: 'finding' }] },
   },
 });
 mock.module('./native-reviewer-approvals.js', {
@@ -246,6 +387,16 @@ mock.module('./snapshots.js', {
       artifactPaths: [],
     }),
     removeSlotFiles: noop,
+    readPersistedReviewSnapshot: async () => ({
+      snapshot: {
+        source: 'local-git',
+        baseSha: 'b'.repeat(40),
+        headSha: 'a'.repeat(40),
+        diffPath: 'artifacts/review.diff',
+        capturedAt: new Date().toISOString(),
+      },
+      artifactPaths: [],
+    }),
   },
 });
 mock.module('./templates.js', {
@@ -300,13 +451,41 @@ const review = (runId: string) =>
     model: 'opus',
     taskDir: 'tasks/review',
     runId,
-    reviewTimeoutMs:
-      ending === 'timeout' ? 0 : timeline ? (ending === 'inactive' ? 60 : 30) * 60_000 : 60_000,
+    reviewTimeoutMs: ['timeout', 'completion-invalid-idle', 'completion-interrupted'].includes(
+      ending,
+    )
+      ? 0
+      : timeline
+        ? (ending === 'inactive' ? 60 : 30) * 60_000
+        : 60_000,
     loopNumber: 1,
     validationDepth: 'static-code',
     mode: 'cold',
     reviewId: `pipeline-review-${runId}`,
   });
+
+test('a failed native turn with valid findings receives one completion turn in the same admission', async (t) => {
+  ending = 'completion-turn';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  const result = await review(run.id);
+  assert.equal(result.verdict, 'issues');
+  assert.equal(completionCommands.length, 1);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.equal(context.runnerSessionId, 'saved-review-conversation');
+  assert.equal(context.nativeSession?.sessionId, binding.sessionId);
+  assert.equal(context.nativeSession?.leaseId, binding.leaseId);
+  assert.equal(context.nativeSession?.commandId, completionCommands[0]);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
+});
+
+test('an unfinished completion turn fails instead of allocating another turn', async (t) => {
+  ending = 'completion-unfinished';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /completion turn.*terminal signal/);
+  assert.equal(completionCommands.length, 1);
+});
 
 for (const progress of ['checklist-progress', 'tool-progress', 'paged-tools'] as const) {
   test(`a native reviewer with ${progress} survives its configured total-time boundary`, async (t) => {
@@ -327,6 +506,140 @@ for (const progress of ['checklist-progress', 'tool-progress', 'paged-tools'] as
     assert.equal(budget.used, 1);
   });
 }
+
+test('a clean idle native turn also finishes its missing signal in the same conversation', async (t) => {
+  ending = 'completion-live';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionCommands.length, 1);
+});
+
+test('restart after an uncertain completion reply reuses its reserved command and admission', async (t) => {
+  ending = 'completion-restart';
+  completionCommands.length = 0;
+  completionLaunches = 0;
+  loseCompletionReply = true;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /completion reply lost/);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.equal(context.status, 'waiting');
+  assert.ok(context.nativeCommandId);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionLaunches, 1);
+  assert.deepEqual(completionCommands, [context.nativeCommandId, context.nativeCommandId]);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
+});
+
+test('invalid scoped result never gets an automatic completion turn', async (t) => {
+  ending = 'completion-invalid';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /stopped without a valid terminal signal/);
+  assert.equal(completionCommands.length, 0);
+  assert.equal(
+    getRun(run.id)!.agentContexts?.find((entry) => entry.role === 'review')?.status,
+    'failed',
+  );
+});
+
+test('an idle native turn with invalid artifacts retains its normal inactivity failure', async (t) => {
+  ending = 'completion-invalid-idle';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /no checklist or tool progress/);
+  assert.equal(completionCommands.length, 0);
+});
+
+test('deferred completion delivery still reaches the inactivity watchdog', async (t) => {
+  ending = 'completion-deferred';
+  const clock = { now: Date.now(), polls: 0 };
+  deferredClock = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    deferredClock = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /no checklist or tool progress/);
+  assert.equal(clock.polls, 1);
+});
+
+test('an interrupted completion fails with its terminal-signal reason', async (t) => {
+  ending = 'completion-interrupted';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /completion turn.*terminal signal/);
+  assert.equal(completionCommands.length, 1);
+});
+
+test('restart settles a stopped unfinished completion without redispatching its closed lease', async (t) => {
+  ending = 'completion-closed-restart';
+  completionCommands.length = 0;
+  completionLaunches = 0;
+  loseCompletionReply = true;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /completion reply lost/);
+  await assert.rejects(review(run.id), /completion turn.*terminal signal/);
+  assert.equal(completionLaunches, 1);
+  assert.equal(completionCommands.length, 2);
+  assert.equal(completionCommands[0], completionCommands[1]);
+});
+
+test('restart recovery enforces the completion inactivity limit and drains fresh tool activity', async (t) => {
+  ending = 'completion-turn';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await review(run.id);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  const acceptedAt = Date.parse(context.nativeSession!.acceptedAt!);
+  const now = acceptedAt + 600001;
+  t.mock.method(Date, 'now', () => now);
+  ending = 'completion-unfinished';
+  const control = await import('../runners/native/worker-control.js');
+  const monitor = await import('../run-engine/run-monitor.js');
+  const { continueNativeReviewCompletion } = await import('./native-review-completion.js');
+  const read = await control.readNativeWorkerSnapshot(run.id, 'review', context.id);
+  const snapshot = {
+    ...read,
+    commands: read.commands.map((command) => ({
+      ...command,
+      state: 'accepted' as const,
+      outcome: undefined,
+    })),
+  };
+  const probe = await monitor.probeWorkerSignalForRun(run.id, vars.slotId, context);
+  const input = {
+    runId: run.id,
+    vars,
+    context,
+    snapshot,
+    probe,
+    assertCurrent: () => {},
+    enforceProgressTimeout: true,
+  };
+  await assert.rejects(continueNativeReviewCompletion(input), /inactivity limit/);
+  const event: NativeSessionEvent = {
+    sessionId: context.nativeSession!.sessionId,
+    generation: context.nativeSession!.generation!,
+    commandId: context.nativeCommandId!,
+    sequence: 1,
+    at: new Date(now).toISOString(),
+    type: 'tool.completed',
+  };
+  completionActivityPages = [[event]];
+  t.after(() => {
+    completionActivityPages = undefined;
+  });
+  assert.equal(
+    await continueNativeReviewCompletion({
+      ...input,
+      snapshot: { ...snapshot, cursor: 0, hasMore: true },
+    }),
+    false,
+  );
+  assert.equal(completionCommands.length, 1);
+});
 
 test('a native reviewer with no checklist or tool progress fails at ten idle minutes, before a one-hour budget', async (t) => {
   ending = 'inactive';

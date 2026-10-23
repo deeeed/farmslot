@@ -38,6 +38,7 @@ import { slotCopyFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { REQUESTED_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { readReviewFeedback } from '../review/feedback.js';
+import { withNativeReviewOperation } from '../review/native-review-operation.js';
 import type { ReviewResult } from '../review/orchestrator.js';
 import {
   persistReviewOutputArtifacts,
@@ -70,6 +71,7 @@ import {
 import { persistReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
 import { copyWorkerArtifacts } from './review-artifacts.js';
 import { reviewerContextEffort } from './review-plan.js';
+import { probeWorkerSignalForRun } from './run-monitor.js';
 
 export { isTerminalReviewArtifactError, TerminalReviewArtifactError };
 
@@ -681,12 +683,53 @@ async function ingestRecoveredReviewer(
 ): Promise<RecoveredReviewerAction> {
   let native: NativeSessionReadResult | undefined;
   if (ctx.nativeSession?.generation && !ctx.nativeSession.closedAt) {
+    const assertCurrent = () => {
+      if (options.shouldAbort?.()) throw new Error('Recovered reviewer completion was superseded');
+    };
+    if (ctx.nativeCommandId && ctx.nativeCommandText && ctx.nativeSession.recovery) {
+      const { resumeNativeWorker } = await import('../runners/native/worker-recovery.js');
+      await resumeNativeWorker(runId, {
+        purpose: 'review',
+        contextId: ctx.id,
+        commandId: ctx.nativeCommandId,
+        text: ctx.nativeCommandText,
+        assertCurrent,
+      });
+      ctx = getRun(runId)!.agentContexts!.find((entry) => entry.id === ctx.id)!;
+    }
     const binding = ctx.nativeSession;
+    if (!binding) throw new Error('Recovered reviewer lost its native binding');
     const read =
       options.readers?.native ??
       (await import('../runners/native/worker-control.js')).readNativeWorkerSnapshot;
     native = await read(runId, 'review', ctx.id);
     if (options.shouldAbort?.()) return null;
+    const probe = await probeWorkerSignalForRun(runId, vars.slotId, ctx);
+    const { continueNativeReviewCompletion, NativeReviewCompletionError } =
+      await import('../review/native-review-completion.js');
+    try {
+      const continued = await withNativeReviewOperation(getRun(runId)!, () =>
+        continueNativeReviewCompletion({
+          runId,
+          vars,
+          context: ctx,
+          snapshot: native!,
+          probe,
+          assertCurrent,
+          enforceProgressTimeout: true,
+        }),
+      );
+      if (continued) return null;
+    } catch (error) {
+      if (error instanceof NativeReviewCompletionError) {
+        if (await markRecoveredReviewerContext(runId, ctx, 'failed', { error: error.message })) {
+          await (await import('../runners/native/worker.js')).cancelNativeWorkerContext(runId, ctx);
+          await settleRecoveredReviewerNoVerdict(runId, ctx, error.message);
+        }
+        return null;
+      }
+      throw error;
+    }
     const command = native.commands.find(
       (entry) => entry.commandId === binding.commandId && entry.generation === binding.generation,
     );
