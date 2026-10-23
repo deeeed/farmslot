@@ -2,6 +2,7 @@ export * from './account-session.js';
 export * from './artifact-links.js';
 export * from './catalog.js';
 export * from './checklist-progress.js';
+export * from './ci-watch-status.js';
 export * from './execution.js';
 export * from './native-worker-target.js';
 export * from './provenance.js';

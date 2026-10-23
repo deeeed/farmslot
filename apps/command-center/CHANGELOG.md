@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add read-only CI-watch card proof for check counts and live poll/timeout text.
+
 - Add a read-only browser probe for completed checklist durations and live step timing.
 
 - Verify compact source and covered-ticket rows with one and six tickets; show shared total and current-step elapsed time on the existing metadata line.

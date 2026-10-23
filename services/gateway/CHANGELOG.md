@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Project CI-watch deadlines from existing monitor clocks without changing polling or timeout behavior.
+
 - Project current-attempt checklist timing and preserve step durations in monthly analytics.
 
 - Stop workers and slot runtimes when runs finish, fail or are cancelled, while preserving live stacked children, fix rounds and replay checkouts.
