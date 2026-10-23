@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Prove Ask reviewer routing and failed-refresh publication blocking through the browser.
+
 - Prove linked-ticket search and pasted additional-ticket keys through the browser.
 
 - Let browser proofs set an exact narrow viewport and system appearance.

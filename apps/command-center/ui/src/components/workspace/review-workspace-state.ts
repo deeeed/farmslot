@@ -32,8 +32,6 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @property({ attribute: false }) decision!: RunDecision;
   @property() slotId = '';
   @property() branch = ''; // expected branch from the run
-  @property() reviewerHref = '';
-  @property() reviewerUnavailable = '';
   /**
    * Operator resource-posture choice for this wait (ADR-054), supplied by the
    * gate section that mounts this workspace. Sent as the typed

@@ -1,5 +1,10 @@
 import type { Run } from '@farmslot/protocol';
 
+/** Once a refresh starts, publication waits for a successful result readback. */
+export function reviewGateRefreshBlocksPost(refreshing: boolean, error?: string | null): boolean {
+  return refreshing || Boolean(error);
+}
+
 /** A policy refusal can still commit revised findings. Read them back before showing the error. */
 export async function refreshReviewGateView(
   refresh: () => Promise<{ run: Run }>,

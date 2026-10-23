@@ -1,10 +1,12 @@
 import { html, nothing } from 'lit';
 
-import type { GitBranchDiffFile, ReviewLineComment } from '@farmslot/protocol';
+import type { GitBranchDiffFile, ReviewLineComment, Run } from '@farmslot/protocol';
+import { runReviewerView } from '@farmslot/review-dispatch';
 
 import { colors } from '../../styles/theme-tokens.js';
 import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
 import type { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 
 import { workspaceArtifactBasename } from './workspace-artifacts.js';
 import type { ReviewWorkspaceTab } from './workspace-url-state.js';
@@ -138,6 +140,7 @@ export function renderReviewTabBar(input: {
 }
 
 export function renderReviewTopBar(input: {
+  run?: Run;
   comments: ReviewLineComment[];
   includedComments: number;
   selectedRecommendation: string;
@@ -148,6 +151,7 @@ export function renderReviewTopBar(input: {
   setIncludeEvidence: (includeEvidence: boolean) => void;
   posting: boolean;
   postAvailable: boolean;
+  postBlocked?: boolean;
   recovering: boolean;
   refreshing: boolean;
   proposing: boolean;
@@ -157,10 +161,20 @@ export function renderReviewTopBar(input: {
   proposeImprovement: () => void;
   post: () => void;
   dismiss: () => void;
-  reviewerHref?: string;
-  reviewerUnavailable?: string;
 }) {
   const counts = reviewSeverityCounts(input.comments);
+  const run = input.run;
+  const reviewer = run ? runReviewerView(run) : null;
+  const reviewerHref =
+    run && reviewer?.context && !reviewer.disabledReason
+      ? reviewer.target?.slotId
+        ? slotViewHash({
+            slotId: reviewer.target.slotId,
+            runId: run.id,
+            contextId: reviewer.context.id,
+          })
+        : `#terminal?run=${encodeURIComponent(run.id)}&contextId=${encodeURIComponent(reviewer.context.id)}`
+      : '';
   return html`
     <div class="rw-top-bar">
       <div class="rw-rec-selector">
@@ -203,25 +217,29 @@ export function renderReviewTopBar(input: {
           `
         : nothing}
       <span class="rw-spacer"></span>
-      ${input.reviewerHref
-        ? html`<a class="rw-action-btn" data-testid="ask-reviewer" href=${input.reviewerHref}
+      ${reviewerHref
+        ? html`<a
+            class="rw-action-btn rw-btn-reviewer-action"
+            data-testid="ask-reviewer"
+            href=${reviewerHref}
             >Ask reviewer</a
           >`
         : html`<button
-            class="rw-action-btn"
+            class="rw-action-btn rw-btn-reviewer-action"
             data-testid="ask-reviewer"
             disabled
-            title=${input.reviewerUnavailable ?? 'Reviewer session unavailable'}
+            title=${reviewer?.disabledReason ?? 'Reviewer session unavailable'}
           >
             Ask reviewer
           </button>`}
       <button
-        class="rw-panel-toggle"
+        class="rw-action-btn rw-btn-reviewer-action"
+        data-testid="refresh-review"
         ?disabled=${input.posting || input.recovering || input.refreshing}
-        title="Re-read review.md and line-comments.json from the worker. Preserves your comment selection."
+        title="Show the reviewer's latest comments and recommendation"
         @click=${input.refresh}
       >
-        ${input.refreshing ? 'Refreshing…' : '↻ Refresh artifacts'}
+        ${input.refreshing ? 'Refreshing…' : 'Refresh review'}
       </button>
       ${input.hasLearnings
         ? html`
@@ -245,7 +263,8 @@ export function renderReviewTopBar(input: {
             class="rw-action-btn ${input.pendingConfirm === 'post'
               ? 'rw-confirming'
               : 'rw-btn-post'}"
-            ?disabled=${input.posting || input.recovering || input.refreshing}
+            ?disabled=${input.posting || input.recovering || input.refreshing || input.postBlocked}
+            title=${input.postBlocked ? 'Refresh the review successfully before posting.' : ''}
             @click=${input.post}
           >
             ${input.posting

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Open the retained reviewer from every review workspace and keep Post disabled after a failed review refresh.
+
 - Find runs by every covered Jira key and show editable operator ticket links in run detail.
 
 - Show current-checklist progress beneath the pipeline in run lists and detail.

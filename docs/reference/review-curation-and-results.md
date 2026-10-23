@@ -68,6 +68,10 @@ After asynchronous refresh reads, re-read the pending decision. Refuse a
 resolved/replaced id or a changed starting fingerprint, before updating its
 payload or retained result. This applies to both workspace and slot refresh.
 
+While a refresh is pending, or its latest result is an error, both clients MUST
+keep Post disabled. A failed readback keeps the displayed review and an explicit
+Refresh review action. Starting refresh invalidates an armed Post confirmation.
+
 Every publication path captures finding list, report, recommendation and reviewed
 source from the accepted decision synchronously when the gate await returns.
 These fingerprinted fields are immutable; later quality/upload metadata is not
@@ -93,6 +97,10 @@ posting controls. Reopen/reconnect reloads current authorized run detail and
 rejects stale responses from another connection or run.
 
 ## Public surface
+
+`@farmslot/review-dispatch` exports `reviewGateRefreshBlocksPost` for Command
+Center's review workspace and Companion's publication controller. This additive
+view-model helper requires a minor package release; it adds no RPC or storage.
 
 `@farmslot/protocol/review-approval-policy.cjs` provides `resolveApprovalPolicy`, `reviewRecommendation`, `assertReviewRecommendation`, `renderApprovalPolicy`, `renderReviewResultInstructions`, `isReviewSeverity`, `normalizeReviewSeverity`, `DEFAULT_APPROVAL_POLICY` and `ReviewApprovalPolicyError`, with typed declarations. This is an additive stable SDK export requiring a minor package release. Gateway result validation and review instructions consume it; harnesses inherit the policy. The shared `review-diff-scope.cjs instructions [project.json]` command also renders project overrides for ad hoc paired reviews; orchestration project entries may supply the same block to the packet renderer. No new gateway command or harness extension is required.
 

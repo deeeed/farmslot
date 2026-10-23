@@ -88,6 +88,8 @@ per-finding resolution claim.
 `loadReviewHistoryArtifacts` and `mergeReviewHistoryArtifacts` retain known facts
 during refresh failures. `refreshReviewGateView` reads the current gate after a
 refused refresh, because that refusal may have committed revised findings.
+`reviewGateRefreshBlocksPost` keeps Post disabled during a pending or failed
+refresh in Command Center's review workspace and Companion's publication controller.
 `runRecoveredReviewFailures` supplies the same warning and reason to both mini
 pipelines without changing the run's engine state.
 

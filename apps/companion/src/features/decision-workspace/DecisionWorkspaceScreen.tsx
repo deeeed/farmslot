@@ -1983,6 +1983,7 @@ export default function DecisionDetailScreen({
                       (!reviewPublication.curation ||
                         reviewPublication.disabled ||
                         reviewPublication.busy ||
+                        reviewPublication.postBlocked ||
                         !decisionWithRunContext?.runMeta)) ||
                     (!!slotPicker && action.id === 'pick' && !slotPicker.selectedSlotId);
                   if (action.id === 'request-review') {
