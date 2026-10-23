@@ -70,7 +70,6 @@ export abstract class TerminalViewState extends LitElement {
   protected _unsubMode?: () => void;
   protected _unsubConn?: () => void;
   protected _unsubExit?: () => void;
-  protected _unsubTaskProgress?: () => void;
   protected _resizeObserver?: ResizeObserver;
   protected _xtermDataDisposable?: { dispose(): void };
   protected _xtermSelectionDisposable?: { dispose(): void };

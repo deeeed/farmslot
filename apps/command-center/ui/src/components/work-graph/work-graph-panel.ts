@@ -3,9 +3,11 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
   BacklogItem,
+  BacklogListResult,
   BacklogUpdateInput,
   ConfigProjectsResult,
   ConfigTemplateOptionsResult,
+  DispatchQueueListResult,
   ProjectConfig,
   QueueItem,
   Run,
@@ -13,11 +15,12 @@ import type {
   WorkEdge,
   WorkerTemplateOption,
   WorkGraphActivateResult,
+  WorkGraphListResult,
   WorkGraphProjection,
   WorkGraphSchedulerTickResult,
   WorkNode,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Methods, sourceObservationAge } from '@farmslot/protocol';
 
 import '../shared/dispatch-config-editor.js';
 import '../shared/linked-run-summary.js';
@@ -25,7 +28,16 @@ import '../shared/slot-choice-row.js';
 import '../shared/slot-choice-list.js';
 
 import { gateway } from '../../gateway-client.js';
-import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
+import {
+  type AppState,
+  backlogQuery,
+  getState,
+  type GlobalFilters,
+  queueQuery,
+  subscribe,
+  workGraphsQuery,
+} from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
@@ -36,6 +48,7 @@ import type {
 } from '../shared/dispatch-config-editor.js';
 import { summarizeBacklogDispatchConfig } from '../shared/dispatch-config-summary.js';
 import { labelWithRef } from '../shared/item-ref.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import {
   applyWorkInventorySort,
@@ -134,6 +147,21 @@ export class WorkGraphPanel extends LitElement {
   @state() private schedulerBusyKey = '';
   @state() private schedulerMessage = '';
   @state() private schedulerError = '';
+  private readonly graphQuery = new ResourceQueryController<WorkGraphListResult>(this, () =>
+    this.sync(getState()),
+  );
+  private readonly backlogQuery = new ResourceQueryController<BacklogListResult>(this, () =>
+    this.sync(getState()),
+  );
+  private readonly queueQuery = new ResourceQueryController<DispatchQueueListResult>(this, () =>
+    this.sync(getState()),
+  );
+  private get commandsReady(): boolean {
+    return this.graphQuery.ready && this.backlogQuery.ready && this.queueQuery.ready;
+  }
+  private get authoritativeGraphs(): boolean {
+    return this.demoGraphs !== null || this.graphQuery.ready;
+  }
   private unsub?: () => void;
   private readonly onHashChange = () => this.applyUrlStateFromHash();
   private readonly onKeydown = (event: KeyboardEvent) => {
@@ -147,6 +175,9 @@ export class WorkGraphPanel extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this.graphQuery.setQuery(workGraphsQuery);
+    this.backlogQuery.setQuery(backlogQuery);
+    this.queueQuery.setQuery(queueQuery);
     this.applyUrlStateFromHash();
     this.sync(getState());
     this.unsub = subscribe((state) => this.sync(state));
@@ -163,9 +194,9 @@ export class WorkGraphPanel extends LitElement {
 
   private sync(state: AppState) {
     const hadNoActiveGraphs = this.activeGraphs().length === 0;
-    this.graphs = state.workGraphs;
-    this.backlogItems = state.backlogItems;
-    this.queueItems = state.queueItems;
+    this.graphs = this.graphQuery.state.data?.graphs ?? [];
+    this.backlogItems = this.backlogQuery.state.data?.items ?? [];
+    this.queueItems = this.queueQuery.state.data?.items ?? [];
     this.runs = state.runs;
     this.slots = state.fleet?.slots ?? [];
     this.globalFilters = state.globalFilters;
@@ -175,6 +206,7 @@ export class WorkGraphPanel extends LitElement {
     if (hadNoActiveGraphs && graphs.length > 0) {
       this.applyUrlStateFromHash();
     }
+    if (!this.authoritativeGraphs) return;
     const projects = new Set(graphs.map((graph) => graph.graph.project));
     if (this.selectedProject && !projects.has(this.selectedProject)) this.selectedProject = '';
     const filtered = this.selectedProject
@@ -220,7 +252,7 @@ export class WorkGraphPanel extends LitElement {
     this.sortKey = sort.key;
     this.sortDirection = sort.direction;
     // Before graphs hydrate, keep raw URL selection and never rewrite the hash.
-    if (this.activeGraphs().length === 0) {
+    if (!this.authoritativeGraphs || this.activeGraphs().length === 0) {
       this.selectedGraphId = rawGraphId;
       this.selectedNodeKey = rawGraphId && rawNodeId ? `${rawGraphId}:${rawNodeId}` : '';
       return;
@@ -249,19 +281,21 @@ export class WorkGraphPanel extends LitElement {
     if (route !== 'work-graphs') return;
     if (this.selectedProject) params.set(WORK_GRAPH_PROJECT_PARAM, this.selectedProject);
     else params.delete(WORK_GRAPH_PROJECT_PARAM);
-    // Always re-resolve against the filtered project set before persisting.
+    // Saved or pending observations cannot confirm that a selected graph or node is gone.
     const filtered = this.filteredActiveGraphs();
-    const resolved = resolveWorkGraphHashSelection({
-      filteredGraphIds: filtered.map((graph) => graph.graph.id),
-      rawGraphId: this.selectedGraphId,
-      rawNodeId: this.selectedNodeKey.split(':')[1] ?? '',
-      nodeExists: (graphId, nodeId) =>
-        Boolean(
-          filtered
-            .find((graph) => graph.graph.id === graphId)
-            ?.nodes.some((node) => node.id === nodeId),
-        ),
-    });
+    const resolved = this.authoritativeGraphs
+      ? resolveWorkGraphHashSelection({
+          filteredGraphIds: filtered.map((graph) => graph.graph.id),
+          rawGraphId: this.selectedGraphId,
+          rawNodeId: this.selectedNodeKey.split(':')[1] ?? '',
+          nodeExists: (graphId, nodeId) =>
+            Boolean(
+              filtered
+                .find((graph) => graph.graph.id === graphId)
+                ?.nodes.some((node) => node.id === nodeId),
+            ),
+        })
+      : { selectedGraphId: this.selectedGraphId, selectedNodeKey: this.selectedNodeKey };
     if (resolved.selectedGraphId !== this.selectedGraphId) {
       this.selectedGraphId = resolved.selectedGraphId;
     }
@@ -305,6 +339,11 @@ export class WorkGraphPanel extends LitElement {
 
   private setProjectFilter(project: string) {
     this.selectedProject = project;
+    if (!this.authoritativeGraphs) {
+      this.showInventoryList = true;
+      this.writeUrlState();
+      return;
+    }
     const graphs = this.activeGraphs().filter(
       (graph) => !project || graph.graph.project === project,
     );
@@ -708,6 +747,7 @@ export class WorkGraphPanel extends LitElement {
     this.configBusyItemId = item.id;
     this.configError = '';
     try {
+      this.backlogQuery.requireReady();
       await gateway.request(Methods.BACKLOG_UPDATE, { itemId: item.id, ...patch });
     } catch (error) {
       this.configError = error instanceof Error ? error.message : String(error);
@@ -755,7 +795,12 @@ export class WorkGraphPanel extends LitElement {
     this.schedulerBusyKey = busyKey;
     this.schedulerMessage = '';
     this.schedulerError = '';
+    const workspace = getResourceWorkspaceKey();
+    const epoch = gateway.connectionEpoch;
     try {
+      this.graphQuery.requireReady();
+      this.backlogQuery.requireReady();
+      this.queueQuery.requireReady();
       if (graph.graph.status === 'paused') {
         this.schedulerMessage = 'Graph is paused. Resume it before dispatching this node.';
         return;
@@ -764,6 +809,8 @@ export class WorkGraphPanel extends LitElement {
         await gateway.request<WorkGraphActivateResult>(Methods.WORK_GRAPH_ACTIVATE, {
           graphId: graph.graph.id,
         });
+        if (workspace !== getResourceWorkspaceKey() || epoch !== gateway.connectionEpoch)
+          throw new Error('The planning workspace changed.');
         const result = await gateway.request<WorkGraphSchedulerTickResult>(
           Methods.WORK_GRAPH_SCHEDULER_TICK,
           { graphId: graph.graph.id, forceEnqueue: true },
@@ -893,7 +940,8 @@ export class WorkGraphPanel extends LitElement {
   private renderDispatchConfig(view: WorkGraphNodeExecutionView) {
     const item = view.backlogItem;
     if (!item) return nothing;
-    const disabled = !view.editableConfig || this.configBusyItemId === item.id;
+    const disabled =
+      !this.commandsReady || !view.editableConfig || this.configBusyItemId === item.id;
     return html`
       <div class="config-editor">
         <div class="config-head">
@@ -907,7 +955,7 @@ export class WorkGraphPanel extends LitElement {
         <button
           class="config-edit-button"
           type="button"
-          ?disabled=${disabled}
+          ?disabled=${!this.commandsReady || disabled}
           @click=${() => this.openDispatchConfigModal(item)}
         >
           Edit dispatch config
@@ -934,7 +982,7 @@ export class WorkGraphPanel extends LitElement {
       : null;
     const nodeView = item.workNodeId ? overlay?.byNodeId.get(item.workNodeId) : undefined;
     const editableConfig = nodeView?.editableConfig ?? true;
-    const disabled = !editableConfig || this.configBusyItemId === item.id;
+    const disabled = !this.commandsReady || !editableConfig || this.configBusyItemId === item.id;
     return this.renderDispatchConfigModal(item, disabled);
   }
 
@@ -995,7 +1043,7 @@ export class WorkGraphPanel extends LitElement {
                 type="number"
                 min="1"
                 .value=${String(item.priority)}
-                ?disabled=${disabled}
+                ?disabled=${!this.commandsReady || disabled}
                 @change=${(event: Event) =>
                   this.updateBacklogConfig(item, {
                     priority: Number((event.target as HTMLInputElement).value),
@@ -1006,7 +1054,7 @@ export class WorkGraphPanel extends LitElement {
               <input
                 type="checkbox"
                 .checked=${item.autoDispatch !== false}
-                ?disabled=${disabled}
+                ?disabled=${!this.commandsReady || disabled}
                 @change=${(event: Event) =>
                   this.updateBacklogConfig(item, {
                     autoDispatch: (event.target as HTMLInputElement).checked,
@@ -1117,7 +1165,8 @@ export class WorkGraphPanel extends LitElement {
               <button
                 class="primary-action"
                 type="button"
-                ?disabled=${this.schedulerBusyKey === this.nodeKey(graph, node.id)}
+                ?disabled=${!this.commandsReady ||
+                this.schedulerBusyKey === this.nodeKey(graph, node.id)}
                 title="Dispatches this graph node when dependencies are satisfied. Internally this runs the WorkGraph scheduler so graph metadata stays intact."
                 @click=${() => this.scheduleGraphNode(graph, node)}
               >
@@ -1318,7 +1367,9 @@ export class WorkGraphPanel extends LitElement {
       ? allGraphs.filter((graph) => graph.graph.project === this.selectedProject)
       : allGraphs;
     const graphIds = graphs.map((graph) => graph.graph.id);
-    const { selectedId } = resolveWorkGraphSelection(graphIds, this.selectedGraphId);
+    const { selectedId } = this.authoritativeGraphs
+      ? resolveWorkGraphSelection(graphIds, this.selectedGraphId)
+      : { selectedId: this.selectedGraphId };
     const effectiveSelectedId = selectedId || this.selectedGraphId;
     const selectedGraph = graphs.find((graph) => graph.graph.id === effectiveSelectedId) ?? null;
     // Inventory is canonical when nothing is selected, the operator asked for
@@ -1358,6 +1409,19 @@ export class WorkGraphPanel extends LitElement {
           ${projects.map((project) => html`<option value=${project}>${project}</option>`)}
         </select>
       </div>
+      ${!this.demoGraphs && this.graphQuery.state.status === 'stale'
+        ? html`<p data-testid="work-graphs-stale">
+            Saved work graphs, ${sourceObservationAge(this.graphQuery.state.observedAt)}. Actions
+            wait for a current read.
+          </p>`
+        : nothing}
+      ${!this.demoGraphs && this.graphQuery.state.error
+        ? html`<p data-testid="work-graphs-read-error">
+            ${this.graphQuery.state.error.message}<button @click=${() => this.graphQuery.retry()}>
+              Retry
+            </button>
+          </p>`
+        : nothing}
       ${body} ${this.renderOpenDispatchConfigModal()}
     `;
   }

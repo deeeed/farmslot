@@ -1,4 +1,4 @@
-import { css, html, LitElement, unsafeCSS } from 'lit';
+import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import type {
@@ -33,9 +33,8 @@ import type {
   SlotStatus,
   TaskProgressResult,
   TaskProgressStructured,
-  TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { Events, Methods, primaryRoleForFlow, sourceObservationAge } from '@farmslot/protocol';
+import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
@@ -116,6 +115,9 @@ export class FleetCanvas extends LitElement {
   @state() private nodeInfo: Map<string, NodeInfo> = new Map();
   @state() private gatewayProtocolVersion = '';
   @state() private slotProgress: Map<string, TaskProgressStructured> = new Map();
+  @state() private progressObservations = new Map<string, ResourceQueryState<TaskProgressResult>>();
+  private progressAgeTimer?: ReturnType<typeof setInterval>;
+  private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
   @state() private slotRuns: Map<string, Run> = new Map();
   @state() private machineHealthMap: Map<string, MachineHealth> = new Map();
   @state() private slotResourceStatus: Map<string, Map<string, ResourceStatus>> = new Map();
@@ -153,14 +155,12 @@ export class FleetCanvas extends LitElement {
   private _resourcePressureRecoveryTimer?: ReturnType<typeof setTimeout>;
   private unsub?: () => void;
   private _unsubConnState?: () => void;
-  private _unsubProgress?: () => void;
   private _unsubRunUpdated?: () => void;
   private _unsubRunCreated?: () => void;
   private _unsubNodeHealth?: () => void;
   private _unsubResourceStatus?: () => void;
   private _unsubThumbnails?: () => void;
   private _unsubMachinePauseUpdated?: () => void;
-  private _progressTimer?: ReturnType<typeof setInterval>;
   private _onHashChange = () => this._readUrlParams();
   private readonly nodeQuery = new ResourceQueryController<NodesListResult>(this, (result) => {
     const nodes = result.data?.nodes ?? [];
@@ -333,22 +333,6 @@ export class FleetCanvas extends LitElement {
         this.machinePauseConnectionStale = true;
       }
     });
-    // Subscribe to real-time task progress events
-    this._unsubProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
-      Events.TASK_PROGRESS_UPDATED,
-      (p) => {
-        const slot = this.slots.find((candidate) => candidate.slot === p.slotId);
-        const flowRole = primaryRoleForFlow(slot?.currentFlowType);
-        const matchesCurrentRun = !!slot?.currentRunId && p.runId === slot.currentRunId;
-        const matchesPrimaryWorker = !p.contextId || p.role === 'primary' || p.role === flowRole;
-        if (p.progress.structured && matchesCurrentRun && matchesPrimaryWorker) {
-          const next = new Map(this.slotProgress);
-          next.set(p.slotId, p.progress.structured);
-          this.slotProgress = next;
-        }
-      },
-    );
-
     // Rebuild slotRuns when runs change
     this._unsubRunUpdated = gateway.subscribe(Events.RUN_UPDATED, () => this.buildSlotRuns());
     this._unsubRunCreated = gateway.subscribe(Events.RUN_CREATED, () => this.buildSlotRuns());
@@ -406,10 +390,6 @@ export class FleetCanvas extends LitElement {
         console.warn(`[fleet-canvas] thumbnail fetch failed:`, (err as Error).message);
       });
 
-    // Fetch progress on init + poll as fallback (60s)
-    this.fetchAllProgress();
-    this._progressTimer = setInterval(() => this.fetchAllProgress(), 60_000);
-
     // Restore view params from URL, fall back to localStorage for migration
     this._readUrlParams();
     window.addEventListener('hashchange', this._onHashChange);
@@ -466,7 +446,15 @@ export class FleetCanvas extends LitElement {
     super.disconnectedCallback();
     this.unsub?.();
     this._unsubConnState?.();
-    this._unsubProgress?.();
+    for (const query of this.progressQueries.values()) {
+      query.hostDisconnected();
+      this.removeController(query);
+    }
+    this.progressQueries.clear();
+    this.slotProgress = new Map();
+    this.progressObservations = new Map();
+    clearInterval(this.progressAgeTimer);
+    this.progressAgeTimer = undefined;
     this._unsubRunUpdated?.();
     this._unsubRunCreated?.();
     this._unsubNodeHealth?.();
@@ -474,7 +462,6 @@ export class FleetCanvas extends LitElement {
     this._unsubThumbnails?.();
     this._unsubMachinePauseUpdated?.();
     if (this._machinePauseEventTimer) clearTimeout(this._machinePauseEventTimer);
-    if (this._progressTimer) clearInterval(this._progressTimer);
     window.removeEventListener('hashchange', this._onHashChange);
   }
 
@@ -522,19 +509,7 @@ export class FleetCanvas extends LitElement {
     ) {
       void this._fetchProviderAccounts();
     }
-    // Refresh progress when working slots change
-    const prevWorking = new Set(
-      prev.filter((sl) => sl.lifecycle === 'busy' && sl.taskFile).map((sl) => sl.slot),
-    );
-    const newWorking = new Set(
-      this.slots.filter((sl) => sl.lifecycle === 'busy' && sl.taskFile).map((sl) => sl.slot),
-    );
-    if (
-      prevWorking.size !== newWorking.size ||
-      [...newWorking].some((id) => !prevWorking.has(id))
-    ) {
-      this.fetchAllProgress();
-    }
+    this.syncProgressQueries();
     // Fetch resource data when slots arrive and we're in resource view
     if (
       this.groupBy === 'resource' &&
@@ -571,30 +546,82 @@ export class FleetCanvas extends LitElement {
     this.slotRuns = next;
   }
 
-  private async fetchAllProgress() {
-    const workingSlots = this.slots.filter((s) => s.lifecycle === 'busy' && s.taskFile);
-    if (workingSlots.length === 0) {
-      if (this.slotProgress.size > 0) this.slotProgress = new Map();
-      return;
-    }
-    const next = new Map<string, TaskProgressStructured>();
-    await Promise.all(
-      workingSlots.map(async (s) => {
-        try {
-          const res = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-            slotId: s.slot,
-            ...(s.currentRunId ? { runId: s.currentRunId } : {}),
-          });
-          if (res.structured) next.set(s.slot, res.structured);
-        } catch (err) {
-          console.warn(
-            `[fleet-canvas] task progress fetch failed for ${s.slot}:`,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-      }),
+  private syncProgressQueries(): void {
+    const targets = new Map(
+      this.slots
+        .filter((slot) => slot.lifecycle === 'busy' && slot.taskFile)
+        .map((slot) => [slot.slot, slot]),
     );
-    this.slotProgress = next;
+    for (const [slotId, query] of this.progressQueries) {
+      if (targets.has(slotId)) continue;
+      query.hostDisconnected();
+      this.removeController(query);
+      this.progressQueries.delete(slotId);
+      this.slotProgress.delete(slotId);
+      this.progressObservations.delete(slotId);
+    }
+    for (const [slotId, slot] of targets) {
+      let query = this.progressQueries.get(slotId);
+      if (!query) {
+        query = new ResourceQueryController<TaskProgressResult>(this, (state) => {
+          if (!query || this.progressQueries.get(slotId) !== query) return;
+          const progress = new Map(this.slotProgress);
+          if (state.data?.structured) progress.set(slotId, state.data.structured);
+          else progress.delete(slotId);
+          this.slotProgress = progress;
+          this.progressObservations = new Map(this.progressObservations).set(slotId, state);
+          this.syncProgressAgeClock();
+        });
+        this.progressQueries.set(slotId, query);
+      }
+      query.setQuery(
+        resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
+          slotId,
+          ...(slot.currentRunId ? { runId: slot.currentRunId } : {}),
+        }),
+      );
+    }
+    this.syncProgressAgeClock();
+  }
+
+  private syncProgressAgeClock(): void {
+    const saved = [...this.progressObservations.values()].some(
+      (state) => state.data && state.status !== 'ready',
+    );
+    if (saved && !this.progressAgeTimer)
+      this.progressAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
+    else if (!saved) {
+      clearInterval(this.progressAgeTimer);
+      this.progressAgeTimer = undefined;
+    }
+  }
+
+  private renderProgressReadStatus() {
+    return [...this.progressObservations].map(([slotId, state]) => {
+      const query = this.progressQueries.get(slotId);
+      if (!query?.belongsToWorkspace || state.status === 'ready' || state.status === 'loading')
+        return nothing;
+      return html`<span
+        class="rehydrating-banner"
+        data-fleet-progress-slot=${slotId}
+        data-progress-state=${state.status}
+      >
+        ${slotId}:
+        ${state.data ? html`Saved progress, ${sourceObservationAge(state.observedAt)}.` : nothing}
+        ${state.status === 'unsupported'
+          ? 'Progress updates are unavailable on this gateway.'
+          : nothing}
+        ${state.error
+          ? html`<span role="alert">Progress read failed: ${state.error.message}</span>
+              <button
+                ?disabled=${gateway.connectionState !== 'connected'}
+                @click=${() => query.retry()}
+              >
+                Retry reading progress
+              </button>`
+          : nothing}
+      </span>`;
+    });
   }
 
   private async fetchResourceData() {
@@ -1262,7 +1289,7 @@ export class FleetCanvas extends LitElement {
           placeholder="search slots..."
           @input=${(e: Event) => (this.search = (e.target as HTMLInputElement).value)}
         />
-        ${this.renderFleetRefreshTrigger()}
+        ${this.renderFleetRefreshTrigger()} ${this.renderProgressReadStatus()}
         ${this.fleetObservation.status === 'stale' && this.fleetObservation.data
           ? html`<span class="rehydrating-banner" data-fleet-freshness="stale">
               Saved fleet, ${sourceObservationAge(this.fleetObservation.observedAt, this.now)}.

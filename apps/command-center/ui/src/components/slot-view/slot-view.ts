@@ -7,8 +7,9 @@ import type {
   Run,
   SlotActionSummary,
   SlotStatus,
+  TaskProgressResult,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Methods, sourceObservationAge } from '@farmslot/protocol';
 
 import '../workspace/file-tree.js';
 import '../progress-tracker/progress-tracker.js';
@@ -46,6 +47,7 @@ import {
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderSlotPreparePreconditionStrip } from '../shared/slot-prepare-precondition-strip.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 
@@ -75,12 +77,12 @@ import {
   toggleSlotViewSidebar,
 } from './slot-view-control-effects.js';
 import {
+  applySlotViewTaskProgress,
+  bindSlotViewTaskProgress,
   fetchSlotViewActions,
   fetchSlotViewRepoPath,
   fetchSlotViewResources,
-  fetchSlotViewStructuredProgress,
   loadSlotViewSlot,
-  parseSlotViewTaskSteps,
 } from './slot-view-data-effects.js';
 import {
   openSlotViewEditor,
@@ -220,6 +222,17 @@ import {
 @customElement('slot-view')
 export class SlotView extends SlotViewRecipePresenter {
   readonly _runQueries = new SlotViewRunQueries(this);
+  private progressAgeTimer?: ReturnType<typeof setInterval>;
+  readonly _progressQuery = new ResourceQueryController<TaskProgressResult>(this, (state) => {
+    this._progressObservation = state;
+    if (state.data && state.status !== 'ready' && !this.progressAgeTimer)
+      this.progressAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
+    else if (!state.data || state.status === 'ready') {
+      clearInterval(this.progressAgeTimer);
+      this.progressAgeTimer = undefined;
+    }
+    applySlotViewTaskProgress(this);
+  });
   /** The editor's diff tab; opened from the tree and search too, so it filters itself. */
   readonly _testFilter = new DiffTestFilterController(this, {
     patterns: () => this._branchDiffTestPatterns,
@@ -285,12 +298,16 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   disconnectedCallback() {
+    clearInterval(this.progressAgeTimer);
+    this.progressAgeTimer = undefined;
     super.disconnectedCallback();
     disconnectSlotView(this);
   }
 
   willUpdate(changed: Map<string, unknown>) {
     handleSlotViewWillUpdate(this, changed);
+    if (['slotId', '_slot', '_linkedRun', 'fileEntries'].some((key) => changed.has(key)))
+      bindSlotViewTaskProgress(this);
   }
 
   updated(changed: Map<string, unknown>) {
@@ -415,11 +432,11 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   async _parseTaskSteps() {
-    await parseSlotViewTaskSteps(this);
+    bindSlotViewTaskProgress(this);
   }
 
   async _fetchStructuredProgress() {
-    await fetchSlotViewStructuredProgress(this);
+    bindSlotViewTaskProgress(this);
   }
 
   _agentContexts(): AgentContextSummary[] {
@@ -908,6 +925,34 @@ export class SlotView extends SlotViewRecipePresenter {
     return renderEditor(this);
   }
 
+  private _renderProgressStatus() {
+    const observation = this._progressObservation;
+    if (
+      !this._progressQuery.belongsToWorkspace ||
+      !this._slot?.taskFile ||
+      observation.status === 'ready' ||
+      observation.status === 'loading'
+    )
+      return nothing;
+    return html`<div role="status" data-slot-view-progress=${observation.status}>
+      ${observation.data
+        ? html`Saved progress, ${sourceObservationAge(observation.observedAt)}.`
+        : nothing}
+      ${observation.status === 'unsupported'
+        ? 'Progress updates are unavailable on this gateway.'
+        : nothing}
+      ${observation.error
+        ? html`<span role="alert">Progress read failed: ${observation.error.message}</span>
+            <button
+              ?disabled=${gateway.connectionState !== 'connected'}
+              @click=${() => this._progressQuery.retry()}
+            >
+              Retry reading progress
+            </button>`
+        : nothing}
+    </div>`;
+  }
+
   override render() {
     const slot = this._slot;
     if (this._loading && !slot) {
@@ -933,7 +978,8 @@ export class SlotView extends SlotViewRecipePresenter {
                 : '',
           })
         : nothing}
-      ${renderSlotPrepareBanner(this)} ${renderSlotViewBody(this, { hasResources })}
+      ${renderSlotPrepareBanner(this)} ${this._renderProgressStatus()}
+      ${renderSlotViewBody(this, { hasResources })}
       <slot-history-modal
         .disabled=${this._isRecoveryBlocked}
         slot-id=${this.slotId}

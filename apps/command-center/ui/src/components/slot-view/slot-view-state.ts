@@ -12,8 +12,10 @@ import type {
   SlotActionSummary,
   SlotResource,
   SlotStatus,
+  TaskProgressResult,
   TaskProgressStructured,
 } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 import type { ChecklistProgressStep } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
@@ -54,6 +56,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _taskSteps: ChecklistProgressStep[] = [];
   @state() _taskProgress = 0;
   @state() _structuredProgress?: TaskProgressStructured;
+  @state() _progressObservation: ResourceQueryState<TaskProgressResult> = { status: 'loading' };
   @state() _selectedAgentContextId = 'primary';
   @state() _tmuxSessionSelection: string | null = null;
   @state() _selectedAgentContextIds: Record<string, string> = {};
@@ -232,7 +235,6 @@ export abstract class SlotViewState extends LitElement {
   // --- Subscriptions ---
   _unsubState?: () => void;
   _unsubConn?: () => void;
-  _unsubTaskProgress?: () => void;
   _unsubResourceStatus?: () => void;
   _unsubPrepareTracker?: () => void;
   _liveInitPending = false;

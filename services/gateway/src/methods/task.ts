@@ -106,6 +106,7 @@ function progressRunIdentity(run: Run, params: TaskProgressParams): string {
     run.flowType,
     run.taskFile,
     run.activeTaskFile,
+    run.nativeOwnerPrincipalId,
     run.reviewWorkspace,
     context?.id,
     context?.taskFile,
@@ -121,13 +122,12 @@ async function readTaskProgress(
   requested: Run | undefined,
 ): Promise<TaskProgressResult> {
   if (!params.slotId && params.runId) {
-    if (params.taskFile) throw new Error('Workspace progress uses the run’s recorded task');
     // A slot-free review workspace (ADR-058) reads through its own confined task
     // directory, but everything beside the checklist is the same contract a slot
     // run has: child checklist units under `subtasks/` and the acceptance ledger
     // (ADR-060). Same read layers, same projection, so a static review reports a
     // child under its parent step exactly as a slot worker does.
-    const source = await readReviewWorkspaceProgress(params.runId);
+    const source = await readReviewWorkspaceProgress(params.runId, undefined, params.taskFile);
     const schema = generateTaskSchema(source.markdown, 'review-pr');
     const structured = joinSchemaWithMarkdown(schema, source.markdown);
     const result: TaskProgressResult = {
@@ -137,8 +137,10 @@ async function readTaskProgress(
       markdown: source.markdown,
       structured,
     };
-    await attachSubtaskProgress(source.io, source.checklistPath, 'review-pr', structured);
-    await attachOperations(source.io, source.checklistPath, structured);
+    if (!params.taskFile) {
+      await attachSubtaskProgress(source.io, source.checklistPath, 'review-pr', structured);
+      await attachOperations(source.io, source.checklistPath, structured);
+    }
     await attachAcceptanceStatus(source.io, source.checklistPath, result);
     return result;
   }

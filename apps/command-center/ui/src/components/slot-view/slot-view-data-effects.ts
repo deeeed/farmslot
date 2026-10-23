@@ -5,12 +5,15 @@ import type {
   TaskProgressResult,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { type ChecklistProgressStep, checklistProgressView } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
 import { getState } from '../../state.js';
 
 import type { SlotView } from './slot-view.js';
+import { isSlotViewContextPinUnresolved } from './slot-view-linked-run-model.js';
+import { getSlotViewHashParam, requestedRunFromHash } from './slot-view-url-state.js';
 
 export function loadSlotViewSlot(view: SlotView): void {
   const fleet = getState().fleet;
@@ -21,8 +24,7 @@ export function loadSlotViewSlot(view: SlotView): void {
       void view._fetchResources();
       void view._fetchSlotActions();
       if (view._shouldShowTaskUI()) {
-        void view._parseTaskSteps();
-        void view._fetchStructuredProgress();
+        bindSlotViewTaskProgress(view);
         // Auto-open task panel when slot has active work (overrides stale localStorage)
         view._taskPanelOpen = true;
       } else {
@@ -83,62 +85,55 @@ export async function fetchSlotViewActions(view: SlotView): Promise<void> {
   }
 }
 
-export async function parseSlotViewTaskSteps(view: SlotView): Promise<void> {
-  try {
-    const selectedContext = view._taskAgentContext();
-    const requestedRunId = view._linkedRun?.id ?? null;
-    const requestedTaskFile = selectedContext?.taskFile ?? null;
-    const snap = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-      slotId: view.slotId,
-      ...(view._linkedRun ? { runId: view._linkedRun.id } : {}),
-      ...(selectedContext?.taskFile ? { taskFile: selectedContext.taskFile } : {}),
-    });
-    if (
-      (view._linkedRun?.id ?? null) !== requestedRunId ||
-      (view._taskAgentContext()?.taskFile ?? null) !== requestedTaskFile
-    ) {
-      return;
-    }
-    const steps: ChecklistProgressStep[] = [];
-    for (const line of snap.markdown.split('\n')) {
-      const match = line.match(/^- \[([ x])\] (.+)/);
-      if (match) {
-        steps.push({ text: match[2], checked: match[1] === 'x' });
-      }
-    }
-    view._taskSteps = steps;
-    view._taskProgress = (checklistProgressView(undefined, { steps })?.percent ?? 0) / 100;
-  } catch (err) {
-    console.warn(
-      '[slot-view] parse task steps failed:',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
+/** Bind one read for the active checklist; terminal/history tab choices do not retarget it. */
+export function bindSlotViewTaskProgress(view: SlotView): void {
+  const run = view._linkedRun;
+  const slot = view._slot?.slot === view.slotId ? view._slot : null;
+  const selected = view._taskAgentContext();
+  const requestedRunId = requestedRunFromHash();
+  const unresolved = isSlotViewContextPinUnresolved({
+    run,
+    requestedRunId,
+    requestedContextId: getSlotViewHashParam('contextId'),
+    slotId: view.slotId,
+  });
+  const manualSlot = slot && !slot.currentRunId && !requestedRunId;
+  view._progressQuery.setQuery(
+    view._isLive &&
+      slot &&
+      (run || manualSlot) &&
+      !unresolved &&
+      (selected?.taskFile || run?.activeTaskFile || run?.taskFile || slot.taskFile)
+      ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
+          slotId: view.slotId,
+          ...(run ? { runId: run.id } : {}),
+          ...(selected?.taskFile ? { taskFile: selected.taskFile } : {}),
+        })
+      : undefined,
+  );
+  // Link/owner transitions can clear copied fields while the same query stays bound.
+  applySlotViewTaskProgress(view);
 }
 
-export async function fetchSlotViewStructuredProgress(view: SlotView): Promise<void> {
-  try {
-    const selectedContext = view._taskAgentContext();
-    const requestedRunId = view._linkedRun?.id ?? null;
-    const requestedTaskFile = selectedContext?.taskFile ?? null;
-    const result = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-      slotId: view.slotId,
-      ...(view._linkedRun ? { runId: view._linkedRun.id } : {}),
-      ...(selectedContext?.taskFile ? { taskFile: selectedContext.taskFile } : {}),
-    });
-    if (
-      (view._linkedRun?.id ?? null) !== requestedRunId ||
-      (view._taskAgentContext()?.taskFile ?? null) !== requestedTaskFile
-    ) {
-      return;
-    }
-    if (result.structured) {
-      view._structuredProgress = result.structured;
-    }
-  } catch (err) {
-    console.warn(
-      '[slot-view] structured progress fetch failed:',
-      err instanceof Error ? err.message : String(err),
-    );
+export function applySlotViewTaskProgress(view: SlotView): void {
+  const result = view._progressQuery.belongsToWorkspace
+    ? view._progressQuery.state.data
+    : undefined;
+  const previous = view._structuredProgress;
+  view._structuredProgress = result?.structured;
+  const steps: ChecklistProgressStep[] = [];
+  for (const line of (result?.markdown ?? '').split('\n')) {
+    const match = line.match(/^- \[([ x])\] (.+)/);
+    if (match) steps.push({ text: match[2], checked: match[1] === 'x' });
   }
+  view._taskSteps = steps;
+  view._taskProgress = (checklistProgressView(result?.structured, { steps })?.percent ?? 0) / 100;
+  // A new shared observation replaces the former progress-event trigger.
+  if (
+    result?.structured &&
+    result.structured !== previous &&
+    view._pinnedFolder &&
+    view._progressQuery.ready
+  )
+    void view._loadPinnedEntries();
 }

@@ -7,19 +7,29 @@ import type {
   ScriptOutput,
   SlotHealth,
   SlotStatus,
+  TaskProgressResult,
   TaskProgressStructured,
 } from '@farmslot/protocol';
-import { Events, Methods } from '@farmslot/protocol';
+import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import '../terminal/terminal-view.js';
 import '../progress-tracker/progress-tracker.js';
 import '../workspace/slot-workspace.js';
 
 import { gateway } from '../../gateway-client.js';
-import { getState, subscribe } from '../../state.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
+import {
+  getState,
+  isFleetCurrent,
+  onWorkspaceOwnerChange,
+  requireCurrentFleet,
+  subscribe,
+} from '../../state.js';
 import { colors, lifecycleColor } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { slotDetailStyles } from './slot-detail-styles.js';
 
@@ -57,15 +67,34 @@ export class SlotDetail extends LitElement {
   @state() private _actionExitCode: number | null = null;
   @state() private _pendingConfirm: string | null = null;
   @state() private _structuredProgress?: TaskProgressStructured;
+  @state() private progressObservation: ResourceQueryState<TaskProgressResult> = {
+    status: 'loading',
+  };
+  private progressAgeTimer?: ReturnType<typeof setInterval>;
+  private readonly progressQuery = new ResourceQueryController<TaskProgressResult>(
+    this,
+    (state) => {
+      this.progressObservation = state;
+      if (state.data && state.status !== 'ready' && !this.progressAgeTimer)
+        this.progressAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
+      else if (!state.data || state.status === 'ready') {
+        clearInterval(this.progressAgeTimer);
+        this.progressAgeTimer = undefined;
+      }
+      this._structuredProgress = state.data?.structured;
+    },
+  );
   @state() private _repoPath = '';
   @state() private _editor: EditorId = 'cursor';
   @state() private _viewTab: 'detail' | 'workspace' = 'detail';
   @state() private _terminalOpen = true;
 
-  private _unsubSlot?: () => void;
   private _unsubOutput?: () => void;
   private _unsubComplete?: () => void;
   private _unsubState?: () => void;
+  private _unsubOwner?: () => void;
+  private _slotScope = '';
+  private _scopeVersion = 0;
   private readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
     setPendingConfirm: (pending) => {
@@ -80,34 +109,23 @@ export class SlotDetail extends LitElement {
     const saved = localStorage.getItem(EDITOR_PREF_KEY);
     if (saved && EDITORS.some((e) => e.id === saved)) this._editor = saved as EditorId;
     if (this.initialTab) this._viewTab = this.initialTab;
-    if (this.slotId) this._loadSlot();
-
-    // Re-load slot when fleet data arrives or updates (e.g., after page refresh or reconnect)
-    this._unsubState = subscribe((s) => {
-      if (s.fleet && this.slotId) {
-        const fresh = s.fleet.slots.find((sl) => sl.slot === this.slotId);
-        if (fresh) this._slot = fresh;
-        if (!this._slot) this._loadSlot();
-      }
+    this._loadSlot();
+    this._unsubState = subscribe(() => {
+      this._loadSlot();
+      this.requestUpdate();
     });
-
-    this._unsubSlot = gateway.subscribe(Events.SLOT_CHANGED, (payload: unknown) => {
-      const slot = payload as SlotStatus;
-      if (slot.slot === this.slotId) {
-        this._slot = slot;
-      }
-    });
+    this._unsubOwner = onWorkspaceOwnerChange(() => this._applySlot(null));
 
     this._unsubOutput = gateway.subscribe(Events.SCRIPT_OUTPUT, (payload: unknown) => {
       const data = payload as ScriptOutput;
-      if (data.requestId === this._actionRequestId) {
+      if (this._actionRequestId && data.requestId === this._actionRequestId) {
         this._actionOutput = [...this._actionOutput, data.data];
       }
     });
 
     this._unsubComplete = gateway.subscribe(Events.SCRIPT_COMPLETE, (payload: unknown) => {
       const data = payload as ScriptComplete;
-      if (data.requestId === this._actionRequestId) {
+      if (this._actionRequestId && data.requestId === this._actionRequestId) {
         this._actionRunning = false;
         this._actionExitCode = data.exitCode;
         // Refresh slot status after action completes
@@ -117,58 +135,99 @@ export class SlotDetail extends LitElement {
   }
 
   disconnectedCallback() {
+    this._scopeVersion++;
+    this._actionRequestId = '';
+    clearInterval(this.progressAgeTimer);
+    this.progressAgeTimer = undefined;
     super.disconnectedCallback();
-    this._unsubSlot?.();
     this._unsubOutput?.();
     this._unsubComplete?.();
     this._unsubState?.();
+    this._unsubOwner?.();
     this._confirmTimer.clear();
   }
 
-  updated(changed: Map<string, unknown>) {
-    if (changed.has('slotId') && this.slotId) {
-      this._loadSlot();
+  protected override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('slotId')) this._loadSlot();
+    if (changed.has('slotId') || changed.has('_slot')) {
+      const slot = this._slot?.slot === this.slotId ? this._slot : null;
+      this.progressQuery.setQuery(
+        slot?.taskFile
+          ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
+              slotId: this.slotId,
+              ...(slot.currentRunId ? { runId: slot.currentRunId } : {}),
+            })
+          : undefined,
+      );
+      this._structuredProgress = this.progressQuery.belongsToWorkspace
+        ? this.progressQuery.state.data?.structured
+        : undefined;
     }
   }
 
   private _loadSlot() {
-    // Load slot data from fleet store (instant, no RPC needed)
-    const fleet = getState().fleet;
-    if (!fleet) return; // Fleet not loaded yet — keep _loading true, subscription will retry
-    const stored = fleet.slots.find((s) => s.slot === this.slotId);
-    if (stored) {
-      this._slot = stored;
-      if (stored.lifecycle === 'busy' && stored.taskFile) {
-        this._parseTaskSteps(stored.taskFile);
-      }
-      this._fetchRepoPath(stored.machine);
-    }
+    const stored = getState().fleet?.slots.find((slot) => slot.slot === this.slotId) ?? null;
+    const previousScope = this._slotScope;
+    this._applySlot(stored);
+    if (stored && previousScope !== this._slotScope) void this._fetchRepoPath(stored.machine);
     this._loading = false;
   }
 
-  private async _fetchRepoPath(machine: string) {
-    try {
-      const res = await gateway.request<ConfigPoolResult>(Methods.CONFIG_POOL, { machine });
-      const slotCfg = res.pool.slots.find((s) => s.id === this.slotId);
-      if (slotCfg) this._repoPath = slotCfg.repo;
-    } catch {
-      /* pool config unavailable */
+  private _applySlot(slot: SlotStatus | null): void {
+    const scope = JSON.stringify([
+      getResourceWorkspaceKey(),
+      gateway.resourceConnectionId,
+      this.slotId,
+      slot?.currentRunId,
+      slot?.taskFile,
+    ]);
+    if (scope !== this._slotScope) {
+      this._slotScope = scope;
+      this._scopeVersion++;
+      this._confirmTimer.clear();
+      this._actionRequestId = '';
+      this._actionRunning = false;
+      this._actionOutput = [];
+      this._actionExitCode = null;
+      this._checks = [];
+      this._repoPath = '';
+    }
+    this._slot = slot;
+    if (!slot) {
+      this.progressQuery.setQuery(undefined);
+      this._structuredProgress = undefined;
     }
   }
 
-  private async _parseTaskSteps(_taskFile: string) {
+  private _captureScope(): () => boolean {
+    const version = this._scopeVersion;
+    const slotId = this.slotId;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    return () =>
+      this.isConnected &&
+      this._scopeVersion === version &&
+      this.slotId === slotId &&
+      getResourceWorkspaceKey() === owner &&
+      gateway.resourceConnectionId === connection;
+  }
+
+  private async _fetchRepoPath(machine: string) {
+    const current = this._captureScope();
+    const slotId = this.slotId;
     try {
-      const result = await gateway.request<import('@farmslot/protocol').TaskProgressResult>(
-        Methods.TASK_PROGRESS,
-        { slotId: this.slotId },
-      );
-      this._structuredProgress = result.structured;
+      const res = await gateway.request<ConfigPoolResult>(Methods.CONFIG_POOL, { machine });
+      if (!current()) return;
+      const slotCfg = res.pool.slots.find((s) => s.id === slotId);
+      if (slotCfg) this._repoPath = slotCfg.repo;
     } catch {
-      /* ignore — slot may not have a parseable task file */
+      // Without pool configuration there is no path to offer the editor.
+      if (current()) this._repoPath = '';
     }
   }
 
   private async _runAction(method: string, params: Record<string, unknown>) {
+    const current = this._captureScope();
     const requestId = `slot-action-${crypto.randomUUID()}`;
     this._actionOutput = [];
     this._actionRunning = true;
@@ -176,7 +235,10 @@ export class SlotDetail extends LitElement {
     this._actionRequestId = requestId;
 
     try {
+      this._requireCurrentSlot();
+      if (params.slotId !== this.slotId) throw new Error('The selected slot changed.');
       await gateway.request(method, { ...params, requestId }, SLOT_OPERATION_TIMEOUT_MS);
+      if (!current() || this._actionRequestId !== requestId) return;
       // Some slot methods stream script.complete; others complete only via the
       // RPC response. Treat the response as the fallback completion signal so
       // the older slot-detail action panel does not spin forever.
@@ -186,6 +248,7 @@ export class SlotDetail extends LitElement {
         this._loadSlot();
       }
     } catch (err: unknown) {
+      if (!current() || this._actionRequestId !== requestId) return;
       this._actionRunning = false;
       const msg = err instanceof Error ? err.message : 'Action failed';
       this._actionOutput = [`ERROR: ${msg}`];
@@ -193,7 +256,19 @@ export class SlotDetail extends LitElement {
   }
 
   private _confirmAction(actionId: string, fn: () => void) {
-    this._confirmTimer.confirm(actionId, fn);
+    try {
+      this._applySlot(this._requireCurrentSlot());
+      this._confirmTimer.confirm(actionId, fn);
+    } catch (error) {
+      this._confirmTimer.clear();
+      this._actionOutput = [`ERROR: ${(error as Error).message}`];
+    }
+  }
+
+  private _requireCurrentSlot(): SlotStatus {
+    const slot = requireCurrentFleet().slots.find((row) => row.slot === this.slotId);
+    if (!slot) throw new Error('The slot is no longer in the current fleet.');
+    return slot;
   }
 
   private _prepare() {
@@ -284,6 +359,29 @@ export class SlotDetail extends LitElement {
 
   private get _isLocal(): boolean {
     return this._slot?.health.ssh === 'LOCAL';
+  }
+
+  private _renderProgressStatus() {
+    const observation = this.progressObservation;
+    if (!(this.progressQuery.belongsToWorkspace && Boolean(this._slot?.taskFile))) return nothing;
+    if (observation.status === 'ready' || observation.status === 'loading') return nothing;
+    return html`<div class="progress-strip" data-slot-detail-progress=${observation.status}>
+      ${observation.data
+        ? html`Saved progress, ${sourceObservationAge(observation.observedAt)}.`
+        : nothing}
+      ${observation.status === 'unsupported'
+        ? 'Progress updates are unavailable on this gateway.'
+        : nothing}
+      ${observation.error
+        ? html`<span role="alert">Progress read failed: ${observation.error.message}</span>
+            <button
+              ?disabled=${gateway.connectionState !== 'connected'}
+              @click=${() => this.progressQuery.retry()}
+            >
+              Retry reading progress
+            </button>`
+        : nothing}
+    </div>`;
   }
 
   private _renderDetail() {
@@ -379,28 +477,28 @@ export class SlotDetail extends LitElement {
           <div class="actions-row">
             <button
               class="action-btn ${this._pendingConfirm === 'prepare' ? 'confirming' : 'primary'}"
-              ?disabled=${this._actionRunning}
+              ?disabled=${this._actionRunning || !isFleetCurrent()}
               @click=${this._prepare}
             >
               ${this._pendingConfirm === 'prepare' ? 'Confirm Prepare?' : 'Prepare'}
             </button>
             <button
               class="action-btn ${this._pendingConfirm === 'release' ? 'confirming' : ''}"
-              ?disabled=${this._actionRunning}
+              ?disabled=${this._actionRunning || !isFleetCurrent()}
               @click=${() => this._release(false)}
             >
               ${this._pendingConfirm === 'release' ? 'Confirm Release?' : 'Release'}
             </button>
             <button
               class="action-btn ${this._pendingConfirm === 'release-warm' ? 'confirming' : ''}"
-              ?disabled=${this._actionRunning}
+              ?disabled=${this._actionRunning || !isFleetCurrent()}
               @click=${() => this._release(true)}
             >
               ${this._pendingConfirm === 'release-warm' ? 'Confirm?' : 'Release --keep-warm'}
             </button>
             <button
               class="action-btn ${this._pendingConfirm === 'recycle' ? 'confirming' : 'danger'}"
-              ?disabled=${this._actionRunning}
+              ?disabled=${this._actionRunning || !isFleetCurrent()}
               @click=${this._recycle}
             >
               ${this._pendingConfirm === 'recycle' ? 'Confirm Recycle?' : 'Recycle'}
@@ -420,6 +518,7 @@ export class SlotDetail extends LitElement {
                         <button
                           class="action-btn danger"
                           style="margin-top:8px"
+                          ?disabled=${this._actionRunning || !isFleetCurrent()}
                           @click=${() => this._recycle(true)}
                         >
                           Force Reset
@@ -445,6 +544,7 @@ export class SlotDetail extends LitElement {
             : ''}
         </div>
 
+        ${this._renderProgressStatus()}
         ${slot.lifecycle === 'busy' && this._structuredProgress?.totalSteps
           ? html`<div class="section">
               <progress-tracker

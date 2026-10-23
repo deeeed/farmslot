@@ -3,7 +3,6 @@
 import type {
   BacklogItem,
   BacklogListResult,
-  BacklogUpdatedPayload,
   ConfigProjectsResult,
   DecisionListResult,
   DispatchQueueListResult,
@@ -18,7 +17,6 @@ import type {
   PRStatus,
   PRUpdatedPayload,
   QueueItem,
-  QueueUpdatedPayload,
   Run,
   RunDeletedPayload,
   RunFamilyReadinessSummary,
@@ -27,7 +25,6 @@ import type {
   RunProjectAnalyticsSummary,
   WorkGraphListResult,
   WorkGraphProjection,
-  WorkGraphUpdatedPayload,
 } from '@farmslot/protocol';
 import {
   buildRunFamilyReadinessSummaries,
@@ -466,6 +463,13 @@ export const runHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, {
 export const activeRunsQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, { active: true });
 export const decisionsQuery = resourceQuery<DecisionListResult>(Methods.DECISION_LIST);
 export const fleetQuery = resourceQuery<FleetStatusResult>(Methods.FLEET_STATUS);
+export const backlogQuery = resourceQuery<BacklogListResult>(Methods.BACKLOG_LIST, {
+  includeArchived: true,
+});
+export const workGraphsQuery = resourceQuery<WorkGraphListResult>(Methods.WORK_GRAPH_LIST, {
+  includeArchived: true,
+});
+export const queueQuery = resourceQuery<DispatchQueueListResult>(Methods.DISPATCH_QUEUE_LIST);
 
 let collectionCache: GatewayResourceCache | undefined;
 let collectionWorkspaceKey: string | undefined;
@@ -496,6 +500,9 @@ function bindFarmCollections(): void {
   state.fleet = null;
   state.runs = [];
   state.decisions = [];
+  state.backlogItems = [];
+  state.workGraphs = [];
+  state.queueItems = [];
   if (!cache || !farm) {
     notify();
     return;
@@ -522,6 +529,33 @@ function bindFarmCollections(): void {
               route: `#slot/${slot.slot}`,
             });
       }
+      notify();
+    }),
+  );
+  collectionObservers.push(
+    cache.observe(backlogQuery, (result) => {
+      if (!current()) return;
+      state.backlogItems = result.data?.items ?? [];
+      state.hydrated = { ...state.hydrated, backlog: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, backlog: Boolean(result.error) };
+      notify();
+    }),
+  );
+  collectionObservers.push(
+    cache.observe(workGraphsQuery, (result) => {
+      if (!current()) return;
+      state.workGraphs = result.data?.graphs ?? [];
+      state.hydrated = { ...state.hydrated, workGraphs: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, workGraphs: Boolean(result.error) };
+      notify();
+    }),
+  );
+  collectionObservers.push(
+    cache.observe(queueQuery, (result) => {
+      if (!current()) return;
+      state.queueItems = result.data?.items ?? [];
+      state.hydrated = { ...state.hydrated, queue: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, queue: Boolean(result.error) };
       notify();
     }),
   );
@@ -893,21 +927,6 @@ export function initState(): void {
     }
   });
 
-  // Queue events
-  gateway.subscribe<QueueUpdatedPayload>(Events.QUEUE_UPDATED, (p) => {
-    if (p.items) deferEvent('queue', () => updateQueueItems(p.items));
-  });
-
-  // Backlog events
-  gateway.subscribe<BacklogUpdatedPayload>(Events.BACKLOG_UPDATED, (p) => {
-    if (p.items) deferEvent('backlog', () => updateBacklogItems(p.items));
-  });
-
-  // Work graph events
-  gateway.subscribe<WorkGraphUpdatedPayload>(Events.WORK_GRAPH_UPDATED, (p) => {
-    if (p.graph) deferEvent('workGraphs', () => upsertWorkGraph(p.graph));
-  });
-
   // GitHub API rate-limit telemetry (github-client.ts emits after each call).
   gateway.subscribe<GitHubRateLimitPayload>(Events.GITHUB_RATE_LIMIT, (p) => {
     updateGitHubQuota(p);
@@ -1081,35 +1100,26 @@ async function runFetchInitialState(
   )
     .catch(() => markFailed('runs'))
     .finally(() => markReady('runs'));
-  const queueJob = gateway
-    .request<DispatchQueueListResult>(Methods.DISPATCH_QUEUE_LIST, {})
-    .then((r) => {
-      if (stillCurrent() && r.items) updateQueueItems(r.items);
-    })
-    .catch(() => {
-      if (stillCurrent()) updateQueueItems([]);
-      markFailed('queue');
-    })
+  const queueJob = (
+    cache
+      ? cache.retry(queueQuery)
+      : Promise.reject(new Error('Offline planning store is unavailable'))
+  )
+    .catch(() => markFailed('queue'))
     .finally(() => markReady('queue'));
-  const backlogJob = gateway
-    .request<BacklogListResult>(Methods.BACKLOG_LIST, { includeArchived: true })
-    .then((r) => {
-      if (stillCurrent() && r.items) updateBacklogItems(r.items);
-    })
-    .catch(() => {
-      if (stillCurrent()) updateBacklogItems([]);
-      markFailed('backlog');
-    })
+  const backlogJob = (
+    cache
+      ? cache.retry(backlogQuery)
+      : Promise.reject(new Error('Offline planning store is unavailable'))
+  )
+    .catch(() => markFailed('backlog'))
     .finally(() => markReady('backlog'));
-  const workGraphsJob = gateway
-    .request<WorkGraphListResult>(Methods.WORK_GRAPH_LIST, { includeArchived: true })
-    .then((r) => {
-      if (stillCurrent() && r.graphs) updateWorkGraphs(r.graphs);
-    })
-    .catch(() => {
-      if (stillCurrent()) updateWorkGraphs([]);
-      markFailed('workGraphs');
-    })
+  const workGraphsJob = (
+    cache
+      ? cache.retry(workGraphsQuery)
+      : Promise.reject(new Error('Offline planning store is unavailable'))
+  )
+    .catch(() => markFailed('workGraphs'))
     .finally(() => markReady('workGraphs'));
   const projectsJob = gateway
     .request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
