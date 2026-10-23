@@ -322,6 +322,21 @@ async function runNativeReviewAttempt(
       }
     }
   }
+  const lastReviewedHeadSha = input.rereview?.lastReviewedHeadSha ?? retained?.lastReviewedHeadSha;
+  if (!recovering && lastReviewedHeadSha) {
+    const tree = await execOnSlot(
+      vars,
+      'git rev-parse HEAD && git status --porcelain=v1 --untracked-files=normal',
+      { timeout: 10_000 },
+    );
+    if (tree.exitCode !== 0)
+      throw new Error('Re-review preflight failed: could not read HEAD and worktree status.');
+    const [head, ...changes] = tree.stdout.split('\n');
+    if (head?.trim() === lastReviewedHeadSha && changes.some((line) => line.trim()))
+      throw new Error(
+        `Re-review refused: fix not committed. HEAD is still ${lastReviewedHeadSha.slice(0, 8)} and the slot worktree is dirty. Commit the fix before requesting a re-review.`,
+      );
+  }
   const target = targetForChecklistBasename(reviewerChecklistBasename(contextId));
   const feedbackRelPath = reviewerFeedbackRelPath(contextId);
   const resultRelPath = reviewerResultRelPath(contextId);

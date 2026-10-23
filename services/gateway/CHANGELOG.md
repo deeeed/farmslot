@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Refuse a re-review before spending a round when its reviewed HEAD is unchanged and the slot still has uncommitted fixes.
+
 - Project current-attempt checklist timing and preserve step durations in monthly analytics.
 
 - Stop workers and slot runtimes when runs finish, fail or are cancelled, while preserving live stacked children, fix rounds and replay checkouts.
