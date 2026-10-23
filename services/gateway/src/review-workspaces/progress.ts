@@ -120,6 +120,8 @@ export function createReviewWorkspaceProgressPublisher(
   let lastLedger: string | null = null;
   let lastObservation: string | undefined;
 
+  let lastTiming: string | null = null;
+
   return {
     async publish(): Promise<TaskProgressResult | null> {
       if (options.isCurrent?.() === false) return null;
@@ -159,7 +161,14 @@ export function createReviewWorkspaceProgressPublisher(
       const parent = hashChecklistCheckboxes(progress.markdown);
       const children = childSignature(progress);
       const ledger = ledgerSignature(progress);
-      if (parent === lastParent && children === lastChildren && ledger === lastLedger) return null;
+      const timing = JSON.stringify(progress.structured?.timing ?? null);
+      if (
+        parent === lastParent &&
+        children === lastChildren &&
+        ledger === lastLedger &&
+        timing === lastTiming
+      )
+        return null;
       // A child drove this update when its own state moved and no parent box did:
       // the acceptance rule needs the parent checklist to tell a live child from
       // one whose parent checklist is no longer the active one.
@@ -168,6 +177,7 @@ export function createReviewWorkspaceProgressPublisher(
       lastParent = parent;
       lastChildren = children;
       lastLedger = ledger;
+      lastTiming = timing;
 
       try {
         await deps.refreshView(runId);

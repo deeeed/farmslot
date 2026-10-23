@@ -1,10 +1,15 @@
 import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { TaskProgressStructured, TaskStepProgress } from '@farmslot/protocol';
+import type {
+  TaskChecklistTiming,
+  TaskProgressStructured,
+  TaskStepProgress,
+} from '@farmslot/protocol';
 import type { PipelineProgressStep } from '@farmslot/protocol/checklist-target';
 import {
   type ChecklistProgressFallback,
+  checklistProgressIsLive,
   type ChecklistProgressOptions,
   checklistProgressRow,
   type ChecklistProgressStep,
@@ -33,16 +38,23 @@ export function renderTrackerStepRow(
   step: TaskStepProgress,
   openScope: SubtaskOpenScope,
   nested = false,
+  timing?: TaskChecklistTiming,
+  nowMs?: number,
 ): TemplateResult {
+  const row = checklistProgressRow(step, timing, nowMs);
   return html`
     <div class="substep ${step.status}">
-      <span class="substep-icon">${checklistProgressRow(step).icon}</span>
+      <span class="substep-icon">${row.icon}</span>
       <span class="substep-name">${step.name}</span>
+      ${row.duration
+        ? html`<span class="substep-duration" data-live=${row.live}>${row.duration}</span>`
+        : nothing}
     </div>
     ${step.subtask && !nested
       ? renderSubtaskBlock(
           step.subtask,
-          (childStep) => renderTrackerStepRow(childStep, openScope, true),
+          (childStep) =>
+            renderTrackerStepRow(childStep, openScope, true, step.subtask?.progress.timing, nowMs),
           openScope,
         )
       : nothing}
@@ -99,7 +111,15 @@ export function renderChecklistProgress(
                   >${phase.name}</span
                 ><span class="phase-count">${phase.counts}</span>
               </div>
-              ${phase.rows.map(({ step }) => renderTrackerStepRow(step, options.openScope))}
+              ${phase.rows.map(({ step }) =>
+                renderTrackerStepRow(
+                  step,
+                  options.openScope,
+                  false,
+                  progress?.timing,
+                  options.nowMs,
+                ),
+              )}
             </div>`,
         )}
   </div>`;
@@ -107,7 +127,11 @@ export function renderChecklistProgress(
 
 @customElement('progress-tracker')
 export class ProgressTracker extends LitElement {
-  private readonly _operationClock = new OperationClock(this, () => this.structured);
+  private readonly _operationClock = new OperationClock(
+    this,
+    () => this.structured,
+    () => checklistProgressIsLive(this.structured),
+  );
   private readonly subtaskOpen = new SubtaskOpenState();
   @property({ attribute: false }) openScope?: SubtaskOpenScope;
   @property() markdown = '';
@@ -187,6 +211,16 @@ export class ProgressTracker extends LitElement {
         width: 12px;
         text-align: center;
         flex-shrink: 0;
+      }
+      .substep-name {
+        flex: 1;
+        min-width: 0;
+      }
+      .substep-duration {
+        color: ${unsafeCSS(colors.textSecondary)};
+        white-space: nowrap;
+        font-weight: 400;
+        font-variant-numeric: tabular-nums;
       }
       .substep.done .substep-icon {
         color: ${unsafeCSS(colors.statusOk)};

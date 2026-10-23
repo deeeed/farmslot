@@ -283,6 +283,31 @@ MUST NOT mark the slot reclaimed.
   registry's provider/process ownership checks. An unrelated workspace blocker
   MUST NOT defer every capability. A foreign lease or unverifiable provider
   identity MUST remain protected and report its reason.
+- Runs reaching `done`, `cancelled` or `failed` MUST also stop their owned worker
+  and configured slot runtimes through existing shutdown hooks, including dev
+  servers, Metro, browser helpers and the configured simulator. An absent or
+  unknown resource-watch status MUST NOT skip shutdown. Successful CI completion
+  without a successor MUST perform cleanup even when no step deferred a release.
+- A live stacked child, fix round, foreign owner, successor reservation or foreign
+  capability lease MUST prevent teardown of its resources. Shutdown MUST recheck
+  the expected owner, slot epoch and replay generation before each resource.
+  Failed shutdown MUST be recorded and MUST NOT publish the slot ready. Terminal
+  visibility MUST NOT wait for cleanup. Cancel MUST preserve its checkout,
+  evidence and replay hold while stopping the runtime. Non-terminal gate and
+  CI-watch holds retain their existing resource policy.
+- Node-support activation MUST retain every bundle selected by any slot,
+  including disabled slots, and every bundle referenced by a non-archived run,
+  regardless of run status. It MUST prune other completed bundle directories.
+  Publication, verification, selection and pruning MUST serialize on the execution
+  node. Unknown selection state MUST refuse pruning; staging directories, active
+  publishers and paths outside the bundle root MUST remain untouched.
+  Cached read-only consumers MUST retain their bundle without changing any slot
+  selection, and executing readers MUST prevent pruning until they exit.
+  Device shutdown MUST share the registry acquisition lock and check device
+  ownership across slots on the machine. A re-targeted foreign device lease MUST
+  remain protected. Runtime cleanup MUST use the shared confirmed shutdown path,
+  including skipped-hook and post-shutdown health checks, without deleting replay
+  storage.
 - A deferred terminal workspace cleanup MUST keep a durable cleanup identity and
   slot epoch. Reconciliation MUST recheck it through the same cleanup owner and
   use a conditional release. A live owner, changed epoch, unknown identity or

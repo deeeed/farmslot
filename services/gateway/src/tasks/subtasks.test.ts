@@ -177,6 +177,7 @@ test('parseSubtaskSignal narrows an untyped child signal and finds its newest ma
     {
       status: 'running',
       lastEventAt: '2026-09-19T10:05:00Z',
+      timestamp: '2026-09-19T10:00:00Z',
       checklistTiming: {
         schemaVersion: 1,
         source: 'subtasks/ci-parity.md',
@@ -191,6 +192,7 @@ test('parseSubtaskSignal narrows an untyped child signal and finds its newest ma
   assert.deepEqual(parseSubtaskSignal({ status: 'blocked', timestamp: '2026-09-19T10:00:00Z' }), {
     status: 'blocked',
     lastEventAt: '2026-09-19T10:00:00Z',
+    timestamp: '2026-09-19T10:00:00Z',
   });
   // A status outside the signal union is not a status.
   assert.equal(parseSubtaskSignal({ status: 'stale' }).status, null);

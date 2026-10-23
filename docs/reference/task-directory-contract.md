@@ -78,6 +78,36 @@ Slot-free review workspaces use their existing empty slot id and run id.
 These additive UI helpers are exported by `@farmslot/review-dispatch`; there are
 no new CLI flags, persisted fields, harness requirements or wire version changes.
 
+### Checklist row durations
+
+The expanded Worker progress panel in both clients MUST show completed checklist
+durations as muted trailing text and live elapsed time on the current row. Both
+renderers consume the same `@farmslot/review-dispatch` checklist row model. Missing
+timing MUST leave the duration blank rather than inventing a value.
+
+`TaskProgressStructured.timing` carries the existing `SIGNAL.json` mark history,
+the current attempt's `startedAt` when known, and `finishedAt` when stopped. It
+belongs to that exact checklist and context; a warm reviewer MUST NOT reuse its
+first launch as the current attempt start. Child units use their registration
+time. A signal-only timing update MUST publish progress even if no checkbox
+changed. Completed durations use `deriveChecklistStepDurations`; elapsed time
+stops at the recorded finish. Retained worker metrics supply historical timing
+after finalize.
+
+A stopped parent also stops elapsed time on unfinished child rows, without
+changing the child's recorded ownership or signal status. Progress and monthly
+analytics use the same attempt boundary to exclude marks from before a resume.
+
+Monthly `events-YYYY-MM.ndjson` records add optional `checklistSteps`, containing
+the primary worker's step number, label and duration in milliseconds, derived
+from retained `Run.metrics.checklistTiming` and its worker attempt start. This
+additive field does not change analytics schema version 2. Existing aggregate
+query results and bundle exports are unchanged.
+
+These optional contracts belong to `@farmslot/protocol`; both apps and monthly
+analytics are the consumers. The SDK and shared view-model require fresh minor
+releases. There is no new harness writer, CLI flag or wire version.
+
 ## Two documents, one checklist
 
 The task document says **what** the work is. The execution checklist says **how** to do it, step by step. Only the checklist has steps.

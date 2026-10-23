@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 
-import { cancelledRunHoldReason, type Run } from '@farmslot/protocol';
+import {
+  cancelledRunHoldReason,
+  FLOW_STEPS,
+  type Run,
+  type SlotResource,
+} from '@farmslot/protocol';
 
 // mock.module replaces a module wholesale, so the real namespaces are spread in
 // and only the slot row, project vars, exec layer, worker stop, run store,
@@ -63,6 +68,12 @@ let slotProcesses: SlotProcess[] = [];
 let leases: Array<Record<string, unknown>> = [];
 /** The gateway's watched resource processes on the slot (resourceId -> pid). */
 let activeResources = new Map<string, { pid: number }>();
+let configuredResources: SlotResource[] = [];
+let stoppedResources: string[] = [];
+let shutdownFailure: string | null = null;
+let shutdownSkipped = false;
+let resourceStillHealthy = false;
+let onResolveResources: (() => void) | null = null;
 
 function browserSessionCensus() {
   const live = slotProcesses.filter((proc) => proc.alive);
@@ -255,6 +266,25 @@ mock.module('../methods/runtime-capabilities.js', {
   namedExports: {
     ...realRuntimeCapabilities,
     getRuntimeCapabilityRegistry: () => ({
+      withSlotResourceShutdown: async <T>(
+        _slotId: string,
+        owner: string,
+        _resourceId: string,
+        _device: boolean,
+        shutdown: () => Promise<T>,
+      ) =>
+        leases.some((lease) => {
+          const leaseOwner = lease.owner;
+          return (
+            leaseOwner &&
+            typeof leaseOwner === 'object' &&
+            'runId' in leaseOwner &&
+            leaseOwner.runId !== owner &&
+            lease.state === 'acquired'
+          );
+        })
+          ? { ok: false, reason: 'Another runtime capability owner still uses this slot' }
+          : { ok: true, value: await shutdown() },
       settledStatus: async () => ({
         catalog: [],
         leases,
@@ -270,7 +300,24 @@ mock.module('../methods/runtime-capabilities.js', {
 
 const realResourceManager = await import('../fleet/resource-manager.js');
 mock.module('../fleet/resource-manager.js', {
-  namedExports: { ...realResourceManager, getActiveResources: () => activeResources },
+  namedExports: {
+    ...realResourceManager,
+    getActiveResources: () => activeResources,
+    resolveSlotResources: async () => {
+      onResolveResources?.();
+      return configuredResources;
+    },
+    executeResourceControl: async (_slotId: string, resourceId: string, action: string) => {
+      assert.equal(action, 'shutdown');
+      stoppedResources.push(resourceId);
+      if (shutdownSkipped) return { ok: true, detail: 'skipped (port not configured)' };
+      return {
+        ok: resourceId !== shutdownFailure,
+        detail: resourceId === shutdownFailure ? 'still running' : 'stopped',
+      };
+    },
+    executeResourceHealth: async () => ({ ok: resourceStillHealthy }),
+  },
 });
 
 const realRelease = await import('../methods/slot/release.js');
@@ -327,6 +374,100 @@ beforeEach(() => {
   runUpdates = [];
   slotAgentKills = [];
   slotAgentKillError = null;
+  configuredResources = [];
+  stoppedResources = [];
+  shutdownFailure = null;
+  shutdownSkipped = false;
+  resourceStillHealthy = false;
+  onResolveResources = null;
+});
+
+function slotRuntimeResources(): SlotResource[] {
+  return ['dev-server', 'browser', 'ios-sim'].map((id) => ({
+    id,
+    definition: {
+      type: id === 'ios-sim' ? 'device' : id === 'browser' ? 'browser' : 'dev-server',
+      label: id,
+      controllable: true,
+      streamable: false,
+      hooks: { shutdown: 'stop-owned-fixture' },
+    },
+    // Detached services can have no watcher, including after node reconnect.
+    status: 'unknown',
+  }));
+}
+
+for (const status of ['done', 'failed', 'cancelled'] as const) {
+  test(`${status} stops the slot runtime and an idle worker without a recorded conversation`, async () => {
+    run.status = status;
+    configuredResources = slotRuntimeResources();
+    workerBlocker = 'Worker dev has no exact pane identity; cleanup deferred';
+    if (status === 'cancelled') {
+      const cancel = defaultCancelCollaborators();
+      await cancel.releaseCapabilities(run);
+      await cancel.releaseSlot(run);
+      assertKeptForReplay();
+    } else {
+      assert.equal((await releaseCompletedRunSlot(run)).released, true);
+    }
+    assert.deepEqual(slotAgentKills, [SLOT_ID]);
+    assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
+  });
+}
+
+for (const status of ['monitoring', 'reviewing'] as const) {
+  test(`terminal cleanup preserves a live ${status} stacked child or fix round`, async () => {
+    run.status = 'done';
+    configuredResources = slotRuntimeResources();
+    otherRuns = [{ ...run, id: 'live-child', parentRunId: run.id, status }];
+    workerBlocker = 'Worker dev has no exact pane identity; cleanup deferred';
+    assert.equal((await releaseCompletedRunSlot(run)).released, false);
+    assert.deepEqual(slotAgentKills, []);
+    assert.deepEqual(stoppedResources, []);
+  });
+}
+
+test('a failed runtime shutdown is recorded and does not publish the slot ready', async () => {
+  run.status = 'done';
+  configuredResources = slotRuntimeResources();
+  shutdownFailure = 'dev-server';
+  const result = await releaseCompletedRunSlot(run);
+  assert.equal(result.released, false);
+  assert.match(result.skipped ?? '', /dev-server.*still running/);
+  assert.notEqual(slotRow?.lifecycle, 'ready');
+  assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
+});
+
+test('a skipped shutdown and a surviving healthy resource retain cleanup ownership', async () => {
+  run.status = 'done';
+  configuredResources = slotRuntimeResources().slice(0, 1);
+  shutdownSkipped = true;
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.notEqual(slotRow?.lifecycle, 'ready');
+  shutdownSkipped = false;
+  resourceStillHealthy = true;
+  configuredResources[0].definition.hooks!.health = 'fixture-health';
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.match(String(slotRow?.held_reason), /still running/);
+});
+
+test('a successor claiming the slot before runtime shutdown keeps all resources', async () => {
+  run.status = 'done';
+  configuredResources = slotRuntimeResources();
+  onResolveResources = () => {
+    slotRow = { current_run_id: 'successor', slot_epoch: 2, phase: 'working' };
+  };
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.deepEqual(stoppedResources, []);
+  assert.equal(slotRow?.current_run_id, 'successor');
+});
+
+test('a foreign capability lease keeps its runtime during terminal cleanup', async () => {
+  run.status = 'done';
+  configuredResources = slotRuntimeResources();
+  leases = [{ owner: { runId: 'live-child' }, state: 'acquired' }];
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.deepEqual(stoppedResources, []);
 });
 
 test('cancel during or after prepare stops the run prepare-scope holder', async () => {
@@ -420,6 +561,7 @@ test('a completed run whose holder survives keeps the slot held with the reason'
 
 test('terminal cleanup releases providers independently of a surviving worker hold', async () => {
   workerBlocker = 'Worker primary pane ownership changed; cleanup deferred';
+  slotAgentKillError = new Error(workerBlocker);
   const result = await releaseCompletedRunSlot(run);
   assert.equal(result.released, false);
   assert.equal(providerCleanups, 1);
@@ -434,6 +576,7 @@ for (const status of ['failed', 'cancelled'] as const) {
   test(`an identified ${status} cleanup hold is freed after its worker disappears`, async () => {
     run.status = status;
     workerBlocker = 'worker still alive';
+    slotAgentKillError = new Error(workerBlocker);
     await releaseCompletedRunSlot(run);
     assert.equal(
       slotRow?.current_run_id ?? null,
@@ -495,6 +638,7 @@ test('an archived terminal owner can finish an identified hold without changing 
 
 test('a surviving worker keeps the identified hold across reconciliation', async () => {
   workerBlocker = 'worker still alive';
+  slotAgentKillError = new Error(workerBlocker);
   await releaseCompletedRunSlot(run);
   assert.equal(await retryOccupiedRunSlot(SLOT_ID), false);
   assert.equal(slotRow?.phase, 'occupied');
@@ -908,3 +1052,39 @@ for (const state of ['successor', 'handoff'] as const) {
     assert.equal(run.slotReclaimed, undefined);
   });
 }
+
+test('the engine cleans up a successful CI end that deferred no slot release', async () => {
+  const { makeRun } = await import('../run-engine/test-fixtures.js');
+  Object.assign(
+    run,
+    makeRun({
+      id: RUN_ID,
+      slotId: SLOT_ID,
+      flowType: 'dev',
+      mode: 'interactive',
+      status: 'ci-watching',
+      steps: FLOW_STEPS.dev.map((name) => ({ name, status: 'done' })),
+    }),
+  );
+  configuredResources = slotRuntimeResources();
+  const { initRunEngine, startRun } = await import('../run-engine/orchestrator.js');
+  const published: string[] = [];
+  initRunEngine(() => {
+    published.push(run.status);
+  });
+  await startRun(RUN_ID);
+  assert.equal(run.status, 'done');
+  assert.equal(published[0], 'done');
+  assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
+  assert.equal(slotRow?.lifecycle, 'ready');
+});
+
+test('the engine failure path stops the runtime before dropping its slot ownership', async () => {
+  const { makeRun } = await import('../run-engine/test-fixtures.js');
+  Object.assign(run, makeRun({ id: RUN_ID, slotId: SLOT_ID, status: 'failed' }));
+  configuredResources = slotRuntimeResources();
+  const { cleanupSlotAfterRunFailure } = await import('../run-engine/orchestrator.js');
+  await cleanupSlotAfterRunFailure(SLOT_ID, RUN_ID, 'review failure');
+  assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
+  assert.equal(slotRow?.lifecycle, 'ready');
+});

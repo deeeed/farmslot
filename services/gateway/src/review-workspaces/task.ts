@@ -60,8 +60,8 @@ import { collectSupportFiles } from '../node-support/files.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { nextReviewBudgetScopeBrief } from '../review/review-round-budget.js';
 import {
+  appendReviewFindingBodies,
   assertReviewCommentLines,
-  assertReviewFindingBodies,
   readReviewCommentDiff,
 } from '../review-publication/validate-comments.js';
 import { mirrorWorkerSubtasks } from '../run-completion/artifact-mirror.js';
@@ -708,7 +708,6 @@ export async function readReviewWorkspaceCompletion(
     ),
     commentInput,
   );
-  assertReviewFindingBodies(feedback.issues, lineComments, reviewMd);
   const recommendation = feedback.recommendation;
   if (!recommendation) throw new Error('Static review recommendation could not be validated');
   if (recommendation === 'APPROVE' && (blocked || feedback.verdict !== 'pass'))
@@ -759,7 +758,7 @@ export async function readReviewWorkspaceCompletion(
     signal: { ...signal, role: 'review', contextId: 'review' },
     result: {
       recommendation: recommendation as RunReviewResult['recommendation'],
-      reviewMd,
+      reviewMd: appendReviewFindingBodies(issues, lineComments, reviewMd),
       lineComments,
       artifactManifest: await scanArtifacts(viewer),
       reviewSnapshot: {

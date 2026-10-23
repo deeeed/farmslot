@@ -72,8 +72,14 @@ function fakeIo(opts: { remoteManifestHash: string | null }): {
 } {
   const rec: Recorded = { execs: [], written: [], manifests: [] };
   const io: NodeSupportIo = {
+    retentionReferences: async () => ({ selectionPaths: [], runHashes: [] }),
     exec: async (_vars, cmd) => {
       rec.execs.push(cmd);
+      if (cmd.startsWith(': farmslot-node-support-activate')) {
+        const selection = /"selectionPath":"([^"]+)"/.exec(cmd)?.[1];
+        if (selection)
+          rec.written.push({ base: path.dirname(selection), paths: [path.basename(selection)] });
+      }
       const homeResult = fakeSupportHomeResult(cmd);
       if (homeResult) return homeResult;
       if (cmd.includes('mktemp -d')) {
@@ -105,19 +111,21 @@ function fakeIo(opts: { remoteManifestHash: string | null }): {
 }
 
 const kind = (cmd: string) =>
-  isSupportHomeCommand(cmd)
-    ? 'resolve-home'
-    : cmd.includes('mktemp -d')
-      ? 'incoming'
-      : cmd.includes('shasum -a 256')
-        ? 'verify'
-        : cmd.includes('.locks')
-          ? 'publish'
-          : cmd.startsWith('rm -rf')
-            ? 'discard'
-            : cmd.startsWith('[ -f ') && cmd.includes('install-runner-observability.mjs')
-              ? 'presence'
-              : 'other';
+  cmd.startsWith(': farmslot-node-support-activate')
+    ? 'activate'
+    : isSupportHomeCommand(cmd)
+      ? 'resolve-home'
+      : cmd.includes('mktemp -d')
+        ? 'incoming'
+        : cmd.includes('shasum -a 256')
+          ? 'verify'
+          : cmd.includes('.locks')
+            ? 'publish'
+            : cmd.startsWith('rm -rf')
+              ? 'discard'
+              : cmd.startsWith('[ -f ') && cmd.includes('install-runner-observability.mjs')
+                ? 'presence'
+                : 'other';
 
 test("a bundle carries the pack's templates and pack-rooted template sources for hosted task init", async (t) => {
   const name = 'ensure-templates-test';
@@ -180,7 +188,7 @@ test('a slot on a stale bundle gets the current bundle published and selected; l
     'resolve-home',
     'incoming',
     'verify',
-    'publish',
+    'activate',
     'verify',
   ]);
   const manifest = JSON.parse(rec.manifests[0]) as {
@@ -204,7 +212,7 @@ test('a slot on a stale bundle gets the current bundle published and selected; l
   // Next launch on the same slot: one presence check, pointer rewritten, no publish.
   const again = await ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io });
   assert.equal(again?.published, false);
-  assert.deepEqual(rec.execs.slice(5).map(kind), ['resolve-home', 'presence']);
+  assert.deepEqual(rec.execs.slice(5).map(kind), ['resolve-home', 'presence', 'activate']);
   assert.equal(rec.written.length, 3, 'the pointer is written on every launch');
   assert.deepEqual(rec.written.at(-1)!.paths, ['node-support-hash']);
 });
@@ -218,12 +226,12 @@ test('a slot whose node already holds the current bundle is checked and repointe
   const { io, rec } = fakeIo({ remoteManifestHash: current!.hash });
   const state = await ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io });
   assert.equal(state?.published, false);
-  assert.deepEqual(rec.execs.map(kind), ['resolve-home', 'presence']);
+  assert.deepEqual(rec.execs.map(kind), ['resolve-home', 'presence', 'activate']);
   assert.equal(rec.written.length, 1);
   assert.deepEqual(rec.written[0].paths, ['node-support-hash']);
   // Prepare asks for the full checksum verification.
   await ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io, verify: 'full' });
-  assert.deepEqual(rec.execs.slice(2).map(kind), ['resolve-home', 'verify']);
+  assert.deepEqual(rec.execs.slice(3).map(kind), ['resolve-home', 'verify', 'activate']);
 });
 
 test('a bundle whose files are gone is reported and never selected', async () => {

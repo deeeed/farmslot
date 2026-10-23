@@ -343,7 +343,9 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
       path.join(f.task, 'artifacts/review-result.json'),
       JSON.stringify(findingsResult),
     );
-    await assert.rejects(readReviewWorkspaceCompletion(f.run.id, f.deps), /line comments disagree/);
+    const bodyFallback = await readReviewWorkspaceCompletion(f.run.id, f.deps);
+    assert(bodyFallback?.result?.reviewMd.includes(finding.description));
+    assert.deepEqual(bodyFallback?.result?.lineComments, []);
     await writeFile(
       path.join(f.task, 'artifacts/line-comments.json'),
       JSON.stringify({
@@ -378,6 +380,28 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
     assert.equal(await readFile(path.join(view, 'artifacts/review.md'), 'utf8'), formattedReport);
     assert.equal(recovered?.signal.attemptId, started.attemptId);
     delete f.run.reviewWorkspace!.cleanedAt;
+    const bodyOnlyFinding = {
+      file: 'PR description',
+      description: 'Remove the unsupported coverage claim from the PR description.',
+      severity: 'nit',
+    };
+    const paraphrasedReport = report.replace('No findings.', 'Tighten the PR summary.');
+    await writeFile(path.join(f.task, 'artifacts/review.md'), paraphrasedReport);
+    await writeFile(
+      path.join(f.task, 'artifacts/review-result.json'),
+      JSON.stringify({
+        ...result,
+        issues: [bodyOnlyFinding],
+        reportSha256: digest(paraphrasedReport),
+      }),
+    );
+    await writeFile(path.join(f.task, 'artifacts/line-comments.json'), '{"comments":[]}');
+    const composed = await readReviewWorkspaceCompletion(f.run.id, f.deps);
+    assert.equal(composed?.result?.recommendation, 'APPROVE');
+    assert(composed?.result?.reviewMd.includes(paraphrasedReport.trim()));
+    assert(composed?.result?.reviewMd.includes(bodyOnlyFinding.description));
+    assert.deepEqual(composed?.result?.lineComments, []);
+    assert.equal(await readFile(path.join(view, 'artifacts/review.md'), 'utf8'), paraphrasedReport);
     await writeFile(path.join(f.task, 'artifacts/review.md'), report);
     await writeFile(
       path.join(f.task, 'artifacts/review-result.json'),

@@ -43,6 +43,12 @@ import {
   RUNNER_OBSERVABILITY_SUPPORT_PATHS,
 } from '../runners/runner-observability.js';
 
+import {
+  buildNodeSupportActivationCommand,
+  NODE_SUPPORT_READER_RETAIN_MS,
+  type NodeSupportRetentionReferences,
+  nodeSupportRetentionReferences,
+} from './activation.js';
 import { collectSupportFiles, type NodeSupportFile, supportHash } from './files.js';
 import { resolveNodeSupportPaths } from './paths.js';
 import {
@@ -70,6 +76,8 @@ export interface NodeSupportIo {
   readFile: typeof slotReadFile;
   writeFile: typeof slotWriteFile;
   writeFiles: typeof slotWriteFiles;
+  /** The same selected-slot and live-run inventory, injectable with the node I/O. */
+  retentionReferences?: (vars: SlotVars) => Promise<NodeSupportRetentionReferences>;
 }
 
 const defaultIo: NodeSupportIo = {
@@ -258,18 +266,36 @@ export async function ensureNodeSupportBundle(
 
   // Always rewritten: another gateway or a prepare may have repointed the slot
   // since this process last looked, and the write is one small file.
-  const persistSelection = async (how: 'published' | 'current') => {
+  const activateBundle = async (how: 'published' | 'current', publishCommand?: string) => {
     const selection = nodeSupportHashPath(vars.remoteRepo, runtimeDir);
-    await io.writeFiles(vars, path.posix.dirname(selection), [
-      {
-        path: path.posix.basename(selection),
-        content: Buffer.from(`${manifest.hash}\n`).toString('base64'),
-        mode: 0o644,
-      },
-    ]);
-    console.log(
-      `[node-support] ${vars.slotId} now on bundle ${manifest.hash.slice(0, 8)} (${how}, ${files.length} files)`,
+    const readOnly = options.selectSlot === false;
+    const references = readOnly
+      ? { selectionPaths: [], runHashes: [] }
+      : await (io.retentionReferences ?? nodeSupportRetentionReferences)(vars);
+    const result = await io.exec(
+      vars,
+      buildNodeSupportActivationCommand({
+        supportDir,
+        supportHash: manifest.hash,
+        selectionPath: readOnly ? undefined : selection,
+        readerTtlMs: readOnly ? NODE_SUPPORT_READER_RETAIN_MS : undefined,
+        references,
+        publishCommand,
+        verifyCommand:
+          publishCommand || verifyMode === 'full'
+            ? buildNodeSupportVerifyCommand({ supportDir, manifestPath, files })
+            : presenceCommand(supportDir, manifestPath),
+      }),
+      { timeout: 180_000 },
     );
+    // Another activation may have pruned a bundle checked before taking its lock.
+    // Re-materialize it rather than selecting a directory that no longer exists.
+    if (result.exitCode === 75) return false;
+    if (result.exitCode !== 0) throw new Error(`Node support activation failed: ${result.stderr}`);
+    console.log(
+      `[node-support] ${vars.slotId} ${readOnly ? 'verified read-only' : 'now on'} bundle ${manifest.hash.slice(0, 8)} (${how}, ${files.length} files)`,
+    );
+    return true;
   };
   const verifyChecksums = async (dir: string, manifestFile: string): Promise<boolean> => {
     const result = await io.exec(
@@ -278,17 +304,17 @@ export async function ensureNodeSupportBundle(
     );
     return result.exitCode === 0;
   };
-  const verifyPresence = async (dir: string, manifestFile: string): Promise<boolean> => {
+  const presenceCommand = (dir: string, manifestFile: string): string => {
     const required = [
       manifestFile,
       ...RUNNER_OBSERVABILITY_SUPPORT_PATHS.map((relativePath) =>
         path.posix.join(dir, relativePath),
       ),
     ];
-    const result = await io.exec(
-      vars,
-      required.map((file) => `[ -f ${shellExpressionForRemotePath(file)} ]`).join(' && '),
-    );
+    return required.map((file) => `[ -f ${shellExpressionForRemotePath(file)} ]`).join(' && ');
+  };
+  const verifyPresence = async (dir: string, manifestFile: string): Promise<boolean> => {
+    const result = await io.exec(vars, presenceCommand(dir, manifestFile));
     return result.exitCode === 0;
   };
   const verifyCurrent = (dir: string, manifestFile: string) =>
@@ -300,9 +326,10 @@ export async function ensureNodeSupportBundle(
       if (!(await verifyCurrent(supportDir, manifestPath))) {
         throw new Error(`Node support bundle corrupt for ${manifest.hash}`);
       }
-      if (options.selectSlot !== false) await persistSelection('current');
-      step('support', `Node support bundle current (${files.length} files)`);
-      return { supportDir, hash: manifest.hash, published: false, paths: supportPaths };
+      if (await activateBundle('current')) {
+        step('support', `Node support bundle current (${files.length} files)`);
+        return { supportDir, hash: manifest.hash, published: false, paths: supportPaths };
+      }
     }
   }
 
@@ -346,15 +373,16 @@ export async function ensureNodeSupportBundle(
     await discardIncoming();
     throw new Error(`Node support incoming verification failed for ${manifest.hash}`);
   }
-  const publishResult = await io.exec(
-    vars,
-    buildNodeSupportPublishCommand({
-      incomingDir,
-      manifestPath,
-      supportDir,
-      supportHash: manifest.hash,
-    }),
-  );
+  const publishCommand = buildNodeSupportPublishCommand({
+    incomingDir,
+    manifestPath,
+    supportDir,
+    supportHash: manifest.hash,
+  });
+  const publishResult = {
+    exitCode: (await activateBundle('published', publishCommand)) ? 0 : 75,
+    stderr: '',
+  };
   if (publishResult.exitCode !== 0) {
     const cleanupResult = await discardIncoming();
     const cleanupDetail =
@@ -368,7 +396,6 @@ export async function ensureNodeSupportBundle(
   if (!(await verifyChecksums(supportDir, manifestPath))) {
     throw new Error(`Node support publish verification failed for ${manifest.hash}`);
   }
-  if (options.selectSlot !== false) await persistSelection('published');
   step('support', `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`);
   return { supportDir, hash: manifest.hash, published: true, paths: supportPaths };
 }

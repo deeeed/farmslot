@@ -825,6 +825,35 @@ export class RuntimeCapabilityRegistry {
     return this.status({ slotId });
   }
 
+  /** Terminal slot shutdown shares the acquisition lock and cross-slot device guard. */
+  async withSlotResourceShutdown<T>(
+    slotId: string,
+    ownerRunId: string,
+    resourceId: string,
+    device: boolean,
+    shutdown: () => Promise<T>,
+  ): Promise<{ ok: true; value: T } | { ok: false; reason: string }> {
+    return this.mutate(async () => {
+      const leases = this.options.store.snapshot().leases.filter(leaseNeedsRetention);
+      if (leases.some((lease) => lease.slotId === slotId && lease.owner.runId !== ownerRunId))
+        return { ok: false, reason: 'Another runtime capability owner still uses this slot' };
+      if (device) {
+        if (!this.options.assertTargetAvailable)
+          return { ok: false, reason: 'Device ownership inspection is unavailable' };
+        const reason = await this.options.assertTargetAvailable({
+          slotId,
+          ownerRunId,
+          capabilityId: resourceId,
+          parameters: {},
+          claimsDevice: true,
+          activeLeases: leases,
+        });
+        if (reason) return { ok: false, reason };
+      }
+      return { ok: true, value: await shutdown() };
+    });
+  }
+
   /** Run eviction must retain every unresolved provider, even after slot detach. */
   async assertRunReleased(ownerRunId: string): Promise<void> {
     await this.initialize();

@@ -129,6 +129,31 @@ async function progressFor(fixture: Fixture) {
   return taskProgress({ slotId: 'slot-projection', taskFile: fixture.taskFileRel });
 }
 
+test('explicit checklist reads carry parent mark timing and child registration boundaries', async (t) => {
+  const fixture = writeFixture({ lastEventAt: '2026-09-19T09:02:00Z' });
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+  const timing = {
+    schemaVersion: 1,
+    source: 'CHECKLIST.md',
+    events: [{ stepNumber: 1, label: '1. read the ticket', checkedAt: '2026-09-19T09:01:00Z' }],
+  };
+  writeFileSync(
+    path.join(fixture.root, path.dirname(fixture.taskFileRel), 'SIGNAL.json'),
+    JSON.stringify({
+      status: 'running',
+      timestamp: '2026-09-19T09:01:00Z',
+      checklistTiming: timing,
+    }),
+  );
+  const result = await progressFor(fixture);
+  assert.deepEqual(result.structured?.timing?.events, timing.events);
+  const child = result.structured?.phases
+    .flatMap((phase) => phase.steps)
+    .find((step) => step.index === 2)?.subtask?.progress;
+  assert.equal(child?.timing?.startedAt, '2026-09-19T09:00:00Z');
+  assert.equal(child?.timing?.events[0].checkedAt, '2026-09-19T09:02:00Z');
+});
+
 function stepsOf(result: Awaited<ReturnType<typeof taskProgress>>) {
   return (result.structured?.phases ?? []).flatMap((phase) => phase.steps);
 }

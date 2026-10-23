@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add a read-only browser probe for completed checklist durations and live step timing.
+
 - Verify compact source and covered-ticket rows with one and six tickets; show shared total and current-step elapsed time on the existing metadata line.
 
 - Prove Ask reviewer routing and failed-refresh publication blocking through the browser.

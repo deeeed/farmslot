@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test, type TestContext } from 'node:test';
 
-import type { Run, RunDecision } from '@farmslot/protocol';
+import { ACCEPTANCE_STATUS_ARTIFACT, type Run, type RunDecision } from '@farmslot/protocol';
 
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
 
@@ -52,7 +52,7 @@ mock.module('../core/prompt-templates.js', {
 });
 
 const { makeRun, makeReadyGatePackage } = await import('../run-engine/test-fixtures.js');
-const { runBundleStore } = await import('./retained-artifacts.js');
+const { readRetainedRunText, runBundleStore } = await import('./retained-artifacts.js');
 const { computeReadyGatePackageHash, sha256Text } = await import('./ready-gate-package.js');
 const {
   readInheritedAcceptanceCandidate: readInheritedAcceptanceSource,
@@ -180,6 +180,22 @@ test('PR completion selects the approved original parent and records its head an
     await readInheritedAcceptanceSource(f.child),
     'CI follow-up dispatch may overlap the parent settling',
   );
+});
+
+test('a published parent whose package omits its retained ledger leaves fresh acceptance to the child', async (t) => {
+  const f = await fixture(t);
+  assert.ok(parent);
+  f.prepared.evidenceManifest = [];
+  f.prepared.packageHash = computeReadyGatePackageHash(f.prepared);
+  const gate = parent.engineState?.publishGate;
+  assert.ok(gate);
+  gate.approvedPackageHash = f.prepared.packageHash;
+  assert.equal(
+    await readRetainedRunText(parent, ACCEPTANCE_STATUS_ARTIFACT, f.prepared.artifactBundle),
+    f.raw,
+  );
+  assert.equal(await readInheritedAcceptanceSource(f.child), null);
+  assert.equal(await readQualifiedInheritedAcceptance(f.child), null);
 });
 
 test('a no-criteria child with a ledger-free parent remains ready without inherited provenance', async (t) => {

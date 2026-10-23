@@ -6,6 +6,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Bind run report visual judgments to the pending output-review snapshot and block submissions when evidence, progress or review context changes.
 
+- Show completed checklist durations and live current-step elapsed time in Worker progress.
+
 - Keep run source and covered tickets on one compact line without duplicate ticket pills; show shared total and current-step elapsed time on the existing metadata line.
 
 - Keep review posting blocked after a failed refresh until the revised review is loaded.

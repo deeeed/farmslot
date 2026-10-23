@@ -5,6 +5,9 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Document resource revision stamps and the resource change event in the generated gateway API reference.
+
+- Document checklist row timing and monthly analytics step durations.
+
 - Document the operator-added linked-ticket metadata method in the gateway API reference.
 
 - The fail-closed run lifecycle reference describes accepting review findings at the publish gate (ADR-065 Amendment 8).

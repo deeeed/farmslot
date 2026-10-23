@@ -935,14 +935,23 @@ export async function assertPublicationManifestOwnership(
               !provenanceBytes ||
               capturedDigest('product-provenance.json') !==
                 createHash('sha256').update(provenanceBytes).digest('hex') ||
-              !isRecord(provenance) ||
-              provenance.git_ref !== baseline.baseSha ||
-              provenance.dirty !== false ||
-              (baseline.branch && provenance.branch !== baseline.branch)
+              !isRecord(provenance)
             )
               throw new RecordedEvidenceReadError(
                 'evidence-selection-invalid',
                 `Publication declaration ${file} belongs to another recipe attempt. Before evidence must be captured by this run on its unchanged baseline.`,
+              );
+            const invalidProvenanceField =
+              (provenance.git_ref !== baseline.baseSha && 'git_ref') ||
+              (provenance.dirty !== false && 'dirty') ||
+              (baseline.branch &&
+                provenance.branch !== baseline.branch &&
+                provenance.branch !== 'detached' &&
+                'branch');
+            if (invalidProvenanceField)
+              throw new RecordedEvidenceReadError(
+                'evidence-selection-invalid',
+                `Baseline product-provenance.json for ${file} failed ${invalidProvenanceField} validation. Before evidence must be captured by this run on its unchanged baseline.`,
               );
             beforeRoots.add(directory);
           }

@@ -369,6 +369,7 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
     releaseRunOwnedCapabilities,
     releaseRunSlotOwnership,
     settleFailedRunSlotCleanup,
+    shutdownRunSlotResources,
     stopRunOwnedTmuxAndWatches,
   } = await import('../../run-lifecycle/slot-teardown.js');
   const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
@@ -377,7 +378,8 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
   let fence = { before: await readSlotRow(slotId) };
   try {
     await releaseRunOwnedCapabilities(run);
-    blocker = await recordSlotTeardownBlocker(run, workerBlocker);
+    const runtimeBlocker = await shutdownRunSlotResources(run);
+    blocker = await recordSlotTeardownBlocker(run, workerBlocker ?? runtimeBlocker);
     fence = await fenceRunSlotCleanup(run, blocker);
     const { broadcastEvent } = await import('../../server.js');
     const released = await releaseRunSlotOwnership(run, fence, blocker);

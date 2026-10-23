@@ -72,7 +72,7 @@ interface ResourceShutdownOutcome {
   torn: boolean;
 }
 
-async function shutdownResource(
+export async function shutdownSlotResource(
   slotId: string,
   resourceId: string,
   hasShutdownHook: boolean,
@@ -257,7 +257,13 @@ async function runCleanup(slotId: string, reason: string): Promise<SlotCleanupRe
   for (const r of ordered) {
     const hasShutdownHook = !!r.definition.hooks?.shutdown;
     const hasHealthHook = !!r.definition.hooks?.health;
-    const outcome = await shutdownResource(slotId, r.id, hasShutdownHook, hasHealthHook, pending);
+    const outcome = await shutdownSlotResource(
+      slotId,
+      r.id,
+      hasShutdownHook,
+      hasHealthHook,
+      pending,
+    );
     outcomes.push(outcome);
   }
 

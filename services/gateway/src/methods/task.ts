@@ -6,6 +6,7 @@
 import path from 'node:path';
 
 import {
+  type AgentContext,
   DEFAULT_TASK_DIR,
   enumerateChecklistCheckboxes,
   type Run,
@@ -39,6 +40,7 @@ import { readReviewWorkspaceProgress } from '../review-workspaces/task.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
+import { attachChecklistTiming } from '../tasks/checklist-timing-read.js';
 import { attachOperations } from '../tasks/operations.js';
 import {
   resolveTaskProgressMarkdownPath,
@@ -140,6 +142,12 @@ async function readTaskProgress(
     if (!params.taskFile) {
       await attachSubtaskProgress(source.io, source.checklistPath, 'review-pr', structured);
       await attachOperations(source.io, source.checklistPath, structured);
+      await attachChecklistTiming(
+        source.io,
+        source.checklistPath,
+        structured,
+        getRun(params.runId),
+      );
     }
     await attachAcceptanceStatus(source.io, source.checklistPath, result);
     return result;
@@ -178,7 +186,17 @@ async function readTaskProgress(
       markdown,
     };
     const flowType = requested?.flowType ?? taskFlowTypeFromPath(params.taskFile);
-    await progressFromChecklist(vars, effectiveMdPath, flowType, markdown, result);
+    const runId = params.runId ?? slot?.currentRunId;
+    const run = runId ? getRun(runId) : undefined;
+    await progressFromChecklist(
+      vars,
+      effectiveMdPath,
+      flowType,
+      markdown,
+      result,
+      run,
+      run ? selectAgentContext(run, params) : null,
+    );
     return result;
   }
 
@@ -234,7 +252,10 @@ async function readTaskProgress(
       reconcileFinalStepFromSignal(result.structured);
     }
   }
-  if (result.structured) await attachOperations(vars, effectiveMdPath, result.structured);
+  if (result.structured) {
+    await attachOperations(vars, effectiveMdPath, result.structured);
+    await attachChecklistTiming(vars, effectiveMdPath, result.structured, activeRun, context);
+  }
   await attachAcceptanceStatus(vars, effectiveMdPath, result);
 
   return result;
@@ -251,6 +272,8 @@ async function progressFromChecklist(
   flowType: string,
   markdown: string | null,
   result: TaskProgressResult,
+  run?: Run,
+  context?: AgentContext | null,
 ): Promise<void> {
   if (markdown !== null) {
     const schema = generateTaskSchema(markdown, flowType);
@@ -258,6 +281,7 @@ async function progressFromChecklist(
       result.structured = joinSchemaWithMarkdown(schema, markdown);
       await attachSubtaskProgress(io, mdPath, flowType, result.structured);
       await attachOperations(io, mdPath, result.structured);
+      await attachChecklistTiming(io, mdPath, result.structured, run, context);
     }
   }
   await attachAcceptanceStatus(io, mdPath, result);
@@ -329,7 +353,7 @@ async function recordedRunProgress(
     contextId: context?.id,
     markdown: markdown ?? '',
   };
-  await progressFromChecklist(io, effectiveMdPath, run.flowType, markdown, result);
+  await progressFromChecklist(io, effectiveMdPath, run.flowType, markdown, result, run, context);
   return result;
 }
 
