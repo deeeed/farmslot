@@ -626,6 +626,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       () => gateway.request(Methods.RUN_GET, { runId }),
     );
     if (!isRecoveryEpochCurrent(epoch) || this.runId !== runId || !this.isConnected) {
+      if (this.runId === runId)
+        this._refreshError = 'Gateway connection changed. Refresh review again before posting.';
       this._refreshing = false;
       return;
     }
