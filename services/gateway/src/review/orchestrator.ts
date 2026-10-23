@@ -411,7 +411,11 @@ async function executeOwnedReview(
         });
     if (recoveredFixResult) {
       hasReusableReviewResult =
-        recoveredFixResult.verdict === 'pass' || recoveredFixResult.verdict === 'issues';
+        recoveredFixResult.verdict === 'pass' ||
+        recoveredFixResult.verdict === 'issues' ||
+        recoveredFixResult.attempts?.some(
+          (attempt) => attempt.verdict === 'pass' || attempt.verdict === 'issues',
+        ) === true;
       return {
         ...recoveredFixResult,
         usage: recoveredFixResult.attempts?.at(-1)?.usage,

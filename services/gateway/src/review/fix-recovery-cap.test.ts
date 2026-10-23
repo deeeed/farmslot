@@ -74,6 +74,7 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
       slots: [...(current?.slots ?? []).filter((entry) => entry.slot !== vars.slotId), ...rows],
     }));
   t.after(async () => {
+    resetWarmReviewerSessionsForTest();
     nativeReviewer = async () => ({ verdict: 'pass', issues: [] });
     await slotRow([]);
     await deleteTestRunIfPresent(run.id);
@@ -113,12 +114,37 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
       },
     ],
   });
+  const retainedScope = {
+    runId: run.id,
+    reviewId: 'refusal-lineage',
+    familyId: run.id,
+    project,
+    ownerPrincipalId: null,
+    transport: 'native' as const,
+    taskDir,
+    artifactScope: null,
+    runner: 'claude',
+    model: 'opus',
+    effort: null,
+  };
+  if (!atCap)
+    registerWarmReviewerSession({
+      ...retainedScope,
+      contextId: 'prior-reviewer',
+      windowName: '',
+      slotId: vars.slotId,
+      runnerSessionId: 'retained-reviewer',
+      runnerSessionPath: null,
+      lastLoopNumber: 1,
+      lastReviewedHeadSha: 'a'.repeat(40),
+    });
   const launchesBefore = reviewerLaunches;
   const result = await executeReview(run.id, vars.slotId, {
     reviewRunner: 'claude',
     validationDepth: 'static-code',
+    reviewId: 'refusal-lineage',
   });
-  return { run, result, launches: reviewerLaunches - launchesBefore };
+  return { run, result, launches: reviewerLaunches - launchesBefore, retainedScope };
 }
 
 test('a fix recovered after a restart at the no-verdict cap is not re-reviewed automatically', async (t) => {
@@ -159,7 +185,7 @@ for (const status of ['complete', 'blocked']) {
     nativeReviewer = async () => {
       throw refusal;
     };
-    const { run, result, launches } = await recoveredFixAtCap(
+    const { run, result, launches, retainedScope } = await recoveredFixAtCap(
       t,
       {
         status,
@@ -167,6 +193,7 @@ for (const status of ['complete', 'blocked']) {
       },
       false,
     );
+    assert.equal(claimWarmReviewerSession(retainedScope)?.runnerSessionId, 'retained-reviewer');
     assert.equal(launches, 1, 'the native preflight refuses before admission');
     assert.equal(result.verdict, 'blocked');
     assert.equal(result.reason, status === 'blocked' ? 'needs staging access' : refusal.message);

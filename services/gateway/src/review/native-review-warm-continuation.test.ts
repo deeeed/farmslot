@@ -372,7 +372,7 @@ const reviewers = (runId: string): AgentContext[] =>
   getRun(runId)!.agentContexts!.filter((context) => context.role === 'review');
 
 for (const status of [' M a.ts\0', 'M  a.ts\0', '?? new.ts\0']) {
-  test(`an unchanged-head re-review refuses uncommitted work (${status.trim()}) without spending a round`, async (t) => {
+  test(`an unchanged-head re-review refuses uncommitted work (${status.replaceAll('\0', '').trim()}) without spending a round`, async (t) => {
     const run = await prePublishRun(t);
     await review(run.id);
     const admissions = [...(getRun(run.id)!.reviewRoundAdmissions ?? [])];
