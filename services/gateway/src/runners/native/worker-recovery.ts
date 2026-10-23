@@ -21,6 +21,7 @@ import { isLocal, loadProjectVars, loadSlotVars, readSlotRow } from '../../core/
 import { acquireNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { slotRealpath } from '../../core/slot-io.js';
 import { shellQuote } from '../../core/tmux.js';
+import { isNodeTransportUnavailableError } from '../../fleet/node-rpc.js';
 import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { normalizeWorkerSignal } from '../../tasks/worker-signals.js';
@@ -28,6 +29,7 @@ import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-command.js';
 
 import { routeNativeExecution } from './node.js';
 import { assertNativeWorkerSnapshot, nativeWorkerLiveStatus } from './worker-control.js';
+import { NativeWorkerOperationUncertainError } from './worker-error.js';
 import { prepareNativeWorkerLaunch } from './worker-launch.js';
 
 /** Run Resume preserves a live worker; a stopped worker resumes its exact saved conversation. */
@@ -45,7 +47,13 @@ export async function resumeNativeWorker(
     | { purpose: 'blocked-worker'; commandId: string; assertCurrent: () => void }
     | { purpose: 'handoff'; contextId: string; assertCurrent: () => void }
     | { purpose: 'review-fix'; assertCurrent?: () => void }
-    | { purpose: 'review'; contextId: string; text: string; assertCurrent?: () => void },
+    | {
+        purpose: 'review';
+        contextId: string;
+        text: string;
+        commandId?: string;
+        assertCurrent?: () => void;
+      },
 ): Promise<void> {
   const slotId = getRun(runId)?.slotId;
   if (!slotId) throw new Error('Native worker recovery requires its owned slot');
@@ -96,6 +104,14 @@ async function resumeNativeWorkerExclusive(
   );
   if (options?.purpose === 'review' && context?.role !== 'review')
     throw new Error('Native reviewer recovery requires its exact reviewer context');
+  const completion = options?.purpose === 'review' && options.commandId ? options : null;
+  if (
+    completion &&
+    (run.status === 'paused' ||
+      context?.nativeCommandId !== completion.commandId ||
+      context?.nativeCommandText !== completion.text)
+  )
+    throw new Error('Native reviewer completion instruction changed');
   const fix = selectAgentContext(run, { role: 'review-fix' });
   const activeFix =
     options?.purpose !== 'review' &&
@@ -141,9 +157,14 @@ async function resumeNativeWorkerExclusive(
   const assertRunCurrent = () => {
     options?.assertCurrent?.();
     const current = getRun(runId);
-    const currentBinding = current?.agentContexts?.find(
-      (item) => item.id === context.id,
-    )?.nativeSession;
+    const currentContext = current?.agentContexts?.find((item) => item.id === context.id);
+    const currentBinding = currentContext?.nativeSession;
+    if (
+      completion &&
+      (currentContext?.nativeCommandId !== completion.commandId ||
+        currentContext?.nativeCommandText !== completion.text)
+    )
+      throw new Error('Native reviewer completion instruction changed');
     if (
       !current ||
       current.status !== run.status ||
@@ -207,6 +228,8 @@ async function resumeNativeWorkerExclusive(
       throw new Error('Native worker generation changed without a recorded recovery intent');
   };
   verify(snapshot.session);
+  if (completion && snapshot.session.processStopped && !snapshot.session.capabilities.resume)
+    throw new Error('Native reviewer completion cannot resume this saved conversation');
   const monitorOutputs = run.steps.find((step) => step.name === 'monitor')?.outputs;
   const heldSignal = normalizeWorkerSignal(monitorOutputs?.workerSignal);
   const continueHeld =
@@ -215,17 +238,33 @@ async function resumeNativeWorkerExclusive(
     heldSignal.ok &&
     ['blocked', 'failed'].includes(heldSignal.signal.status);
   const continueLive =
-    continueHeld && snapshot.session.state === 'idle' && !snapshot.session.processStopped;
-  if (options?.purpose === 'blocked-worker' || options?.purpose === 'parking') {
-    if (binding.recovery && binding.recovery.commandId !== options.commandId)
+    (continueHeld || Boolean(completion)) &&
+    snapshot.session.state === 'idle' &&
+    !snapshot.session.processStopped;
+  const explicitCommandId =
+    completion?.commandId ??
+    (options?.purpose === 'blocked-worker' || options?.purpose === 'parking'
+      ? options.commandId
+      : undefined);
+  if (explicitCommandId) {
+    const commandId = explicitCommandId;
+    if (binding.recovery && binding.recovery.commandId !== commandId)
       throw new Error('Another native worker recovery must be reconciled first');
-    const receipt = snapshot.commands.find((command) => command.commandId === options.commandId);
+    const receipt = snapshot.commands.find((command) => command.commandId === commandId);
     if (receipt?.accepted) {
-      if (binding.recovery) await save({ recovery: undefined });
+      if (completion)
+        await save({
+          recovery: undefined,
+          commandId: completion.commandId,
+          generation: snapshot.session.generation,
+          acceptedAt: binding.recovery?.requestedAt ?? binding.acceptedAt,
+          closedAt: snapshot.session.processStopped ? new Date().toISOString() : undefined,
+        });
+      else if (binding.recovery) await save({ recovery: undefined });
       return;
     }
     if (
-      options.purpose === 'blocked-worker' &&
+      options?.purpose === 'blocked-worker' &&
       !binding.recovery &&
       !snapshot.session.processStopped
     )
@@ -269,6 +308,7 @@ async function resumeNativeWorkerExclusive(
     await save({
       recovery: {
         fromGeneration: binding.generation!,
+        ...(completion ? { requestedAt: new Date().toISOString() } : {}),
         commandId: continueHeld
           ? createHash('sha256')
               .update(
@@ -285,7 +325,7 @@ async function resumeNativeWorkerExclusive(
             ? options.commandId
             : options?.purpose === 'handoff'
               ? binding.commandId
-              : randomUUID(),
+              : (completion?.commandId ?? randomUUID()),
         ...(continueLive ? { continueLive: true } : {}),
         ...(continueHeld
           ? {
@@ -359,7 +399,7 @@ async function resumeNativeWorkerExclusive(
       recovery: { ...intent, requestedAt: intent.requestedAt ?? new Date().toISOString() },
     });
     await admit();
-    const resumed = (await routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_RESUME, {
+    const resumeParams = {
       ...sessionTarget,
       ...nativeProfileSessionParams(binding.profile),
       generation: intent.fromGeneration,
@@ -373,7 +413,23 @@ async function resumeNativeWorkerExclusive(
       ...(options?.purpose === 'parking' && options.relocation
         ? { relocation: options.relocation }
         : {}),
-    })) as { session: NativeSessionInfo };
+    };
+    let resumed: { session: NativeSessionInfo };
+    try {
+      resumed = (await routeNativeExecution(
+        binding.ownerPrincipalId,
+        NATIVE_WORKER_RESUME,
+        resumeParams,
+      )) as { session: NativeSessionInfo };
+    } catch (error) {
+      if (completion && isNodeTransportUnavailableError(error))
+        throw new NativeWorkerOperationUncertainError(
+          'launch',
+          'Native reviewer completion resume is unconfirmed; reconcile its reserved command',
+          error,
+        );
+      throw error;
+    }
     verify(resumed.session);
     snapshot = { ...snapshot, session: resumed.session };
   }
@@ -396,7 +452,7 @@ async function resumeNativeWorkerExclusive(
     await save({ recovery: undefined });
     return;
   }
-  const result = (await routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_SEND, {
+  const sendParams = {
     ...sessionTarget,
     generation: binding.generation,
     leaseId: binding.leaseId,
@@ -404,7 +460,26 @@ async function resumeNativeWorkerExclusive(
     text:
       intent.text ??
       `Continue the current task in ${context.taskFile}. Preserve completed work and do not repeat completed steps.`,
-  })) as NativeSessionSendResult;
+  };
+  const ownerId = binding.ownerPrincipalId;
+  const send = () =>
+    routeNativeExecution(
+      ownerId,
+      NATIVE_WORKER_SEND,
+      sendParams,
+    ) as Promise<NativeSessionSendResult>;
+  let result: NativeSessionSendResult;
+  try {
+    result = await send();
+  } catch (error) {
+    if (completion)
+      throw new NativeWorkerOperationUncertainError(
+        'delivery',
+        'Native reviewer completion acceptance is unconfirmed',
+        error,
+      );
+    throw error;
+  }
   if (result.commandId !== intent.commandId)
     throw new Error('Native recovery returned another command receipt');
   let accepted = result.accepted;
@@ -418,6 +493,12 @@ async function resumeNativeWorkerExclusive(
       throw new Error('Native continuation failed before acceptance');
     accepted = receipt?.accepted === true;
   }
+  if (!accepted && completion)
+    throw new NativeWorkerOperationUncertainError(
+      'delivery',
+      'Native reviewer completion acceptance is unconfirmed; reconcile its reserved command',
+      undefined,
+    );
   if (!accepted)
     throw new Error('Native continuation acceptance is unconfirmed; retry reconciliation');
   if (intent.contextId) {
@@ -444,6 +525,7 @@ async function resumeNativeWorkerExclusive(
   }
   await save({
     recovery: undefined,
+    ...(completion ? { acceptedAt: intent.requestedAt ?? new Date().toISOString() } : {}),
     ...(options?.purpose === 'review' ? { commandId: intent.commandId } : {}),
   });
 }

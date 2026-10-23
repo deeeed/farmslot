@@ -43,6 +43,7 @@ import { unwatchContext } from '../tasks/watcher.js';
 
 import { finishReviewCleanup } from './cleanup.js';
 import { readReviewFeedback } from './feedback.js';
+import { continueNativeReviewCompletion } from './native-review-completion.js';
 import {
   assertNativeReviewOperationCurrent,
   captureNativeReviewOperationCheck,
@@ -515,21 +516,37 @@ async function runNativeReviewAttempt(
           : await readNativeWorkerSnapshot(runId, 'review', contextId);
         if (pendingRecovery || snapshot?.session.processStopped) {
           admit();
-          await resumeNativeWorker(runId, {
-            purpose: 'review',
-            contextId,
-            assertCurrent: admit,
-            text:
-              reviewChecklistMarkPrompt(
-                taskDir,
-                taskMdPath,
-                target,
-                feedbackRelPath,
-                resultRelPath,
-              ) +
-              '\nContinue this reviewer attempt and preserve completed work. Read its reviewer-specific execution contract. Do NOT run /review.' +
-              REFUSED_APPROVALS,
-          });
+          const completing = context.nativeCommandId && context.nativeCommandText;
+          const continued =
+            !completing &&
+            snapshot &&
+            existingTerminal &&
+            (await continueNativeReviewCompletion({
+              runId,
+              context,
+              vars,
+              snapshot,
+              probe: existingTerminal,
+              assertCurrent: admit,
+            }));
+          if (!continued)
+            await resumeNativeWorker(runId, {
+              purpose: 'review',
+              contextId,
+              assertCurrent: admit,
+              ...(completing ? { commandId: context.nativeCommandId } : {}),
+              text: completing
+                ? context.nativeCommandText!
+                : reviewChecklistMarkPrompt(
+                    taskDir,
+                    taskMdPath,
+                    target,
+                    feedbackRelPath,
+                    resultRelPath,
+                  ) +
+                  '\nContinue this reviewer attempt and preserve completed work. Read its reviewer-specific execution contract. Do NOT run /review.' +
+                  REFUSED_APPROVALS,
+            });
         }
       }
       const source =
@@ -608,7 +625,7 @@ async function runNativeReviewAttempt(
       }
     }
     context = getRun(runId)!.agentContexts!.find((candidate) => candidate.id === contextId)!;
-    const reviewBinding = context.nativeSession!;
+    let reviewBinding = context.nativeSession!;
     progress = startProgressWatcher(vars, `${vars.remoteRepo}/${taskMdPath}`, runId, 'Review', {
       contextId,
       role: 'review',
@@ -679,9 +696,24 @@ async function runNativeReviewAttempt(
         for (const event of probe.signal?.checklistTiming?.events ?? [])
           recordProgress(event.checkedAt);
       }
-      if (probe.ok && command?.state === 'completed' && command.outcome === 'completed') break;
       if (!probe.ok && probe.code === 'artifact_contract')
         throw new TerminalReviewArtifactError(probe.message);
+      if (
+        await continueNativeReviewCompletion({
+          runId,
+          context,
+          vars,
+          snapshot,
+          probe,
+          assertCurrent: admit,
+        })
+      ) {
+        context = admit().agentContexts!.find((candidate) => candidate.id === contextId)!;
+        reviewBinding = context.nativeSession!;
+        eventCursor = undefined;
+        continue;
+      }
+      if (probe.ok && command?.state === 'completed' && command.outcome === 'completed') break;
       if (['closed', 'failed'].includes(snapshot.session.state) || command?.outcome === 'failed') {
         const reason =
           snapshot.session.error ?? 'Native reviewer stopped without a valid terminal signal';
@@ -835,7 +867,8 @@ async function runNativeReviewAttempt(
     context =
       getRun(runId)?.agentContexts?.find((candidate) => candidate.id === contextId) ?? context;
     const failure =
-      error instanceof NativeReviewResumeFailure
+      error instanceof NativeReviewResumeFailure ||
+      (context?.nativeCommandId && isUncertainReviewerOperation(error))
         ? error
         : await nativeReviewerFailure(error, async () => {
             admit();
@@ -856,7 +889,11 @@ async function runNativeReviewAttempt(
           markAgentContextStatus(
             runId,
             'review',
-            isTerminalReviewArtifactError(failure) ? 'blocked' : 'failed',
+            context?.nativeCommandId && isUncertainReviewerOperation(failure)
+              ? 'waiting'
+              : isTerminalReviewArtifactError(failure)
+                ? 'blocked'
+                : 'failed',
             { id: contextId },
           ),
         );
