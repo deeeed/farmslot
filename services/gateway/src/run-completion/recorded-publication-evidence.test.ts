@@ -384,7 +384,7 @@ test('task declarations cannot select a retained artifact owned by another recip
   });
 });
 
-async function baselineFixture(t: TestContext, baselineLog?: string) {
+async function baselineFixture(t: TestContext, baselineLog?: string, provenanceBranch?: string) {
   const { createRecipeRunner, createStandardCoreAdapters, readRecordedEvidencePackage } =
     await import('@farmslot/recipe-runner');
   const { buildRunRecord } = await import('../runs/store.js');
@@ -470,7 +470,12 @@ async function baselineFixture(t: TestContext, baselineLog?: string) {
   });
   const baseSha = 'a'.repeat(40);
   const branch = 'feature';
-  const provenance = { schemaVersion: 1, git_ref: baseSha, dirty: false, branch };
+  const provenance = {
+    schemaVersion: 1,
+    git_ref: baseSha,
+    dirty: false,
+    branch: provenanceBranch ?? branch,
+  };
   for (const root of [baselineRoot, headRoot]) {
     const dir = path.join(taskDir, 'artifacts', root);
     await writeFile(path.join(dir, 'proof.png'), `capture ${root}`);
@@ -678,6 +683,23 @@ test('same-run clean baseline freezes as before evidence without supplying head 
   await assert.rejects(verifyFrozenPublicationEvidence(f.run, inventory, keys), /hash mismatch/);
 });
 
+test('a clean detached baseline at the dispatch head remains valid before evidence', async (t) => {
+  const f = await baselineFixture(t, undefined, 'detached');
+  assert.equal(f.provenance.git_ref, f.run.worktreeHeadAtDispatch);
+  assert.equal(f.provenance.dirty, false);
+  assert.notEqual(f.provenance.branch, f.run.branch);
+  await retainRunFixture(f.run);
+  const effective = await readEvidenceManifest(f.run);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    effective,
+    1,
+    publicationBaselineContext(f.run),
+  );
+  assert(inventory.some((entry) => entry.path === `artifacts/${f.baselineRoot}/proof.png`));
+});
+
 test('selected baseline text is scanned without promoting baseline verdicts', async (t) => {
   const value = `private_key = ${'1'.repeat(64)}`;
   const f = await baselineFixture(t, value);
@@ -763,10 +785,13 @@ test('baseline declarations refuse other roles, source changes and incomplete ca
   await retainRunFixture(f.run);
   await assert.rejects(readEvidenceManifest(f.run), /belongs to another recipe attempt/);
   await writeFile(f.declarationPath, JSON.stringify(f.declaration));
-  for (const provenance of [
-    { ...f.provenance, dirty: true },
-    { ...f.provenance, git_ref: 'b'.repeat(40) },
-    { ...f.provenance, branch: 'another-run' },
+  for (const { provenance, field } of [
+    { provenance: { ...f.provenance, branch: 'detached', dirty: true }, field: 'dirty' },
+    {
+      provenance: { ...f.provenance, branch: 'detached', git_ref: 'b'.repeat(40) },
+      field: 'git_ref',
+    },
+    { provenance: { ...f.provenance, branch: 'another-run' }, field: 'branch' },
   ]) {
     const ref = f.inventory.find(
       (entry) => entry.path === `artifacts/${f.baselineRoot}/product-provenance.json`,
@@ -777,7 +802,10 @@ test('baseline declarations refuse other roles, source changes and incomplete ca
       JSON.stringify(provenance),
     );
     await retainRunFixture(f.run);
-    await assert.rejects(readEvidenceManifest(f.run), /belongs to another recipe attempt/);
+    await assert.rejects(
+      readEvidenceManifest(f.run),
+      new RegExp(`product-provenance\\.json.*${field}`),
+    );
   }
   await writeFile(
     path.join(f.taskDir, 'artifacts', f.baselineRoot, 'product-provenance.json'),
