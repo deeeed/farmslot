@@ -3,6 +3,9 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import { register } from 'tsx/esm/api';
 
 import {
   D05FixtureOwner,
@@ -95,7 +98,15 @@ test('dry resolver aggregates absent inputs without disclosing credential values
   assert.equal(await optionalStat(path.join(root, 'projects')), undefined);
 });
 
-test('preflight validates the actual recipe and action manifest before a device is imported', async () => {
+test('preflight validates the actual recipe and action manifest before a device is imported', async (t) => {
+  // CI runs host tests without emitted workspace packages. Resolve the same public
+  // validator against checkout source, as the repository TypeScript suites do.
+  const imported = [];
+  const unregister = register({
+    tsconfig: fileURLToPath(new URL('../../../../services/gateway/tsconfig.json', import.meta.url)),
+    onImport: (url) => imported.push(url),
+  });
+  t.after(unregister);
   const recipe = JSON.parse(
     await readFile(
       new URL('./recipe/recipes/recorded-visual-runs-live.recipe.json', import.meta.url),
@@ -107,6 +118,7 @@ test('preflight validates the actual recipe and action manifest before a device 
   );
   const params = { detail_title: 'Owned offline closeout fixture' };
   assert.deepEqual(await d05RecipeErrors(recipe, manifest, params), []);
+  assert(imported.some((url) => url.endsWith('/packages/protocol/src/index.ts')));
   recipe.paramsSchema.properties.detail_title.minLength = 1;
   assert(
     (await d05RecipeErrors(recipe, manifest, params)).some((finding) =>
