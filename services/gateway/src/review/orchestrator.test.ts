@@ -38,6 +38,7 @@ import {
 } from './orchestrator.js';
 import type { ReReviewContinuation, ReviewAgentResult } from './review-agent.js';
 import { admitReviewRound, settleReviewRoundNoVerdict } from './review-round-budget.js';
+import { UncommittedReviewFixError } from './uncommitted-fix-error.js';
 
 test('deferred handoffs name a missing prior-task receipt instead of claiming worker activity', async (t) => {
   const warnings: string[] = [];
@@ -1893,6 +1894,32 @@ test('runReviewRetryLoop: returns blocked without re-review when a blocked fix c
   assert.equal(result.attempts?.[1]?.fixDelta?.diffHash, 'hash-2');
   assert.equal(calls.reviewAgent, 0);
 });
+
+for (const status of ['complete', 'blocked'] as const) {
+  test(`runReviewRetryLoop: an uncommitted ${status} fix blocks without a review attempt`, async () => {
+    const { deps } = buildDeps({
+      reviewVerdicts: [],
+      fixSignals: [{ status, reason: 'needs staging access', timestamp: new Date().toISOString() }],
+    });
+    const refusal = new UncommittedReviewFixError('a'.repeat(40), [' M a.ts']);
+    deps.runReviewAgent = async () => {
+      throw refusal;
+    };
+    const result = await runReviewRetryLoop({
+      ...baseArgs,
+      maxRetries: 2,
+      reviewResult: { verdict: 'issues', issues: ISSUES },
+      retryCount: 0,
+      deps,
+    });
+    assert.equal(result.verdict, 'blocked');
+    assert.equal(result.reason, status === 'blocked' ? 'needs staging access' : refusal.message);
+    assert.deepEqual(result.issues, ISSUES);
+    assert.equal(result.attempts?.length, 1, 'only the prior review is recorded');
+    assert.equal(result.feedbackSent, true);
+    assert.equal(result.recoveryContinuationPending, false);
+  });
+}
 
 test('runReviewRetryLoop: re-reviews partial changes before preserving a worker blocker', async () => {
   const { deps, calls } = buildDeps({
