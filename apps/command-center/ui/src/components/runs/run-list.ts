@@ -21,6 +21,7 @@ import {
   normalizeRunTags,
   resolveRunSlotId,
   runDisplayStatus,
+  runElapsedTimeView,
   type RunFamilyGroup,
   slotMachineMap,
   summarizeRunEvidence,
@@ -871,9 +872,12 @@ export class RunList extends RunListState {
         title=${`Project: ${run.project}`}
         >${run.project}</span
       >`,
-      html`<span class="item-ref" data-testid="runs-ref" title=${run.ticketOrPr}
-        >${run.ticketOrPr}</span
-      >`,
+      html`<run-tag-editor
+        kind="tickets"
+        compact
+        data-testid="runs-ref"
+        .run=${run}
+      ></run-tag-editor>`,
       html`<span class="slot-id" data-testid="runs-slot" title=${slotId ?? 'unassigned'}
         >${slotId ?? '—'}</span
       >`,
@@ -892,8 +896,9 @@ export class RunList extends RunListState {
           )}
           .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
         ></run-pipeline-mini>
-        <run-tag-editor kind="tickets" .run=${run}></run-tag-editor>
-        <span class="pipeline-label">${pipelineLabel}</span>
+        <span class="pipeline-label" data-testid="runs-timing" title=${pipelineLabel}
+          >${runElapsedTimeView(run).label}</span
+        >
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
           ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
           <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>

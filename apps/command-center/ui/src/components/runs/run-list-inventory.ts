@@ -25,7 +25,7 @@ export const RUN_INVENTORY_COLUMNS: WorkInventoryColumnDef<RunInventorySortKey>[
   { key: 'status', label: 'Lifecycle', width: '140px', testId: 'runs-sort-status' },
   { key: 'flow', label: 'Flow', width: '58px', testId: 'runs-sort-flow' },
   { key: 'project', label: 'Project', width: 'minmax(100px, 140px)', testId: 'runs-sort-project' },
-  { key: 'ref', label: 'Ref', width: '110px', testId: 'runs-sort-ref' },
+  { key: 'ref', label: 'Ref', width: 'minmax(160px, 1fr)', testId: 'runs-sort-ref' },
   { key: 'slot', label: 'Slot', width: '120px', testId: 'runs-sort-slot' },
   { key: 'runner', label: 'Runner / model', width: '140px', testId: 'runs-sort-runner' },
   { key: 'updated', label: 'Updated', width: '86px', testId: 'runs-sort-updated' },

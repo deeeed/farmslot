@@ -12,6 +12,7 @@ import {
 import {
   deriveRunLifecycleView,
   type Run,
+  runElapsedTimeView,
   type RunStep,
   runStepDisplayDetail,
   type RunStepDisplayStatus,
@@ -63,13 +64,27 @@ function stepDuration(step: RunStep): string | null {
   return formatStepDuration(Math.max(0, Date.now() - startedAt));
 }
 
-function usePipelineClock(running: boolean) {
+function usePipelineClock(running: boolean, intervalMs = 1000) {
   const [, tick] = useState(0);
   useEffect(() => {
     if (!running) return;
-    const timer = setInterval(() => tick((value) => value + 1), 1000);
+    const timer = setInterval(() => tick((value) => value + 1), intervalMs);
     return () => clearInterval(timer);
-  }, [running]);
+  }, [running, intervalMs]);
+}
+
+export function RunElapsedTime({ run }: { run: Run }) {
+  const timing = runElapsedTimeView(run);
+  usePipelineClock(timing.live, 60000);
+  return (
+    <Text
+      testID="run-elapsed-time"
+      numberOfLines={1}
+      style={{ color: colors.textMuted, fontSize: fonts.sizeSm, flexShrink: 1 }}
+    >
+      {timing.label}
+    </Text>
+  );
 }
 
 export function RunPipelineMini({ run }: { run: Run }) {

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show each run source and covered ticket once as compact inline Jira/PR links; show shared total and current-step elapsed time on the existing metadata line.
+
 - Open the retained reviewer from every review workspace and keep Post disabled after a failed review refresh.
 
 - Show one combined findings and evidence approval with both scopes and one written reason.
