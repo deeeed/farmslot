@@ -74,7 +74,7 @@ function usePipelineClock(running: boolean, intervalMs = 1000) {
 }
 
 export function RunElapsedTime({ run }: { run: Run }) {
-  const timing = runElapsedTimeView(run);
+  const timing = runElapsedTimeView({ ...run, steps: runActivityView(run)?.steps ?? run.steps });
   usePipelineClock(timing.live, 60000);
   return (
     <Text

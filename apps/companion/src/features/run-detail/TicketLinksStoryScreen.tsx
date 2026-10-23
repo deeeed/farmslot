@@ -25,18 +25,33 @@ export function TicketLinksStoryScreen() {
               flowType: 'dev',
               lane: 'production',
               project: 'fixture',
-              status: count === 1 ? 'reviewing' : 'done',
+              status: count === 1 ? 'fixing' : 'done',
               slotId: null,
               branch: 'fixture',
               taskFile: null,
               steps: [
                 {
-                  name: 'review',
+                  name: 'human-gate',
                   status: count === 1 ? 'running' : 'done',
-                  startedAt: new Date(capturedAt - 18 * 60000).toISOString(),
+                  startedAt: new Date(capturedAt - 74 * 60000).toISOString(),
                 },
               ],
               decisions: [],
+              agentContexts:
+                count === 1
+                  ? [
+                      {
+                        id: 'review-fix',
+                        runId: 'inline-tickets-1',
+                        role: 'review-fix',
+                        label: 'Fix',
+                        status: 'working',
+                        slotId: null,
+                        startedAt: new Date(capturedAt - 74 * 60000).toISOString(),
+                        attemptStartedAt: new Date(capturedAt - 18 * 60000).toISOString(),
+                      },
+                    ]
+                  : [],
               metrics: { runner: null, model: null, nudgeCount: 0 },
               createdAt: new Date(capturedAt - 134 * 60000).toISOString(),
               updatedAt: new Date(capturedAt).toISOString(),

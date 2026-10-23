@@ -2580,7 +2580,9 @@ All checks passed.`;
 
   private renderRuns() {
     let runs = mockRuns();
-    if (new URLSearchParams(location.hash.split('?')[1]).get('tickets') === 'inline') {
+    if (
+      new URLSearchParams(location.hash.split('?')[1]).get('demo')?.startsWith('inline-tickets')
+    ) {
       runs = [1, 6].map((count, index) => ({
         ...runs[index],
         id: `inline-tickets-${count}`,
@@ -2590,17 +2592,32 @@ All checks passed.`;
         linkedTicketRefs: Array.from({ length: count }, (_, i) => `TEAM-${100 + i}`),
         links: [{ label: 'Jira', url: 'https://tracker.example/browse/TEAM-100' }],
         summary: `${count} covered ticket${count === 1 ? '' : 's'}`,
-        status: count === 1 ? 'reviewing' : 'done',
+        status: count === 1 ? 'fixing' : 'done',
         createdAt: new Date(Date.now() - 134 * 60000).toISOString(),
         startedAt: new Date(Date.now() - 134 * 60000).toISOString(),
         completedAt: count === 6 ? new Date().toISOString() : undefined,
         steps: [
           {
-            name: 'review',
+            name: 'human-gate',
             status: count === 1 ? 'running' : 'done',
-            startedAt: new Date(Date.now() - 18 * 60000).toISOString(),
+            startedAt: new Date(Date.now() - 74 * 60000).toISOString(),
           },
         ],
+        agentContexts:
+          count === 1
+            ? [
+                {
+                  id: 'review-fix',
+                  runId: 'inline-tickets-1',
+                  role: 'review-fix',
+                  label: 'Fix',
+                  status: 'working',
+                  slotId: null,
+                  startedAt: new Date(Date.now() - 74 * 60000).toISOString(),
+                  attemptStartedAt: new Date(Date.now() - 18 * 60000).toISOString(),
+                },
+              ]
+            : [],
       }));
     }
     // Inject mock runs into state so run-list picks them up

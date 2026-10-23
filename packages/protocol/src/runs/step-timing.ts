@@ -24,12 +24,9 @@ export function runElapsedTimeView(
   const current = live
     ? run.steps.find((step) => step.status === 'running' && step.startedAt)
     : null;
-  const stepName =
-    current?.name === 'pre-gate-publication-review-active'
-      ? 'review'
-      : current?.name === 'pre-gate-publication-review-fix'
-        ? 'fix'
-        : current?.name;
+  const stepName = current?.name
+    .replace(/^(?:pre|post)-gate-publication-review-active$/, 'review')
+    .replace(/^(?:pre|post)-gate-publication-review-fix$/, 'fix');
   return {
     live,
     label: current?.startedAt

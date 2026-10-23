@@ -29,6 +29,7 @@ import {
 import {
   acceptsRunChecklistProgress,
   ChecklistProgressReads,
+  runActivityView,
   runChecklistProgressTarget,
 } from '@farmslot/review-dispatch';
 import { projectColor } from '@farmslot/theme';
@@ -813,6 +814,7 @@ export class RunList extends RunListState {
   }
 
   private renderCard(run: Run, showCheckbox: boolean) {
+    const timing = runElapsedTimeView({ ...run, steps: runActivityView(run)?.steps ?? run.steps });
     const fc = runDisplayColor(run);
     const sc = runStatusColor(run.status);
     const isSelected = this.manageMode
@@ -897,7 +899,7 @@ export class RunList extends RunListState {
           .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
         ></run-pipeline-mini>
         <span class="pipeline-label" data-testid="runs-timing" title=${pipelineLabel}
-          >${runElapsedTimeView(run).label}</span
+          >${timing.label}</span
         >
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
           ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}

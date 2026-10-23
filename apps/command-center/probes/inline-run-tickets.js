@@ -61,9 +61,9 @@ const entries = [...list.shadowRoot.querySelectorAll('run-tag-editor[kind="ticke
     return record;
   });
 if (!entries.some((entry) => entry.count === 1) || !entries.some((entry) => entry.count === 6))
-  throw new Error('Open #dev/runs?tickets=inline for one- and six-ticket cases');
+  throw new Error('Open #dev/runs?demo=inline-tickets for one- and six-ticket cases');
 let liveClock;
-if (new URLSearchParams(location.hash.split('?')[1]).get('clock') === '1') {
+if (new URLSearchParams(location.hash.split('?')[1]).get('demo') === 'inline-tickets-clock') {
   const read = (id) =>
     list.shadowRoot
       .querySelector(`[data-testid="runs-row-${id}"] [data-testid="runs-timing"]`)

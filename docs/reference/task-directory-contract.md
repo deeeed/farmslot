@@ -42,7 +42,9 @@ appears once. A PR source is linked first, followed by covered tickets. The shar
 `runLinkedTicketsView.references` owns this order and destinations. Long lines
 scroll horizontally so additional tickets do not increase row height.
 The existing metadata line also shows total wall time from `startedAt` or `createdAt`,
-plus elapsed wall time from the running step's `startedAt`. Both apps MUST use
+plus elapsed wall time from the running step's `startedAt`. Clients pass the
+steps from the existing `runActivityView` so review and fix attempts share the
+pipeline's current actor and attempt start. Both apps MUST use
 `runElapsedTimeView` and tick live labels at least once per minute. Terminal totals
 freeze at `completedAt`, falling back to `statusChangedAt` or `updatedAt` on older records.
 
