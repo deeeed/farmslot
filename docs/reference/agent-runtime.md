@@ -62,6 +62,50 @@ and node use `@farmslot/agent-runtime`'s existing `NativeSessionClient` startup;
 the supervisor and shared process census own reconciliation. There is no new CLI
 flag, RPC or harness configuration. A consuming runtime upgrade is required.
 
+## Native reviewer completion turn
+
+[ADR-057 Amendment 4](../adr/057-structured-runner-transports.md#amendment-4-one-completion-turn-for-an-unfinished-native-reviewer-2026-10-23)
+owns this completion policy, accepted after paired policy review on 2026-10-23.
+
+- The gateway MUST offer exactly one automatic completion turn when the current
+  admitted native command has ended, the reviewer's own current signal is
+  nonterminal, and its scoped result passes the existing artifact validator. Both
+  completed and failed commands qualify. An interrupted command, pending native
+  request, invalid artifact, stale signal or unconfirmed turn ending MUST refuse.
+- The gateway MUST persist the completion instruction and stable command identity
+  on the existing reviewer context before delivering it. A restart, repeated poll
+  or lost acknowledgment MUST reconcile that same reservation and receipt. Neither
+  an accepted command nor an uncertain receipt authorizes a second instruction.
+- A live idle reviewer MUST receive the instruction through the existing native
+  worker control boundary. A stopped process MUST have confirmed cleanup and
+  verified saved-conversation resume before delivery. Owner, node, lease, launch
+  settings, runner, model, account profile and saved runner session MUST match.
+  Resume MAY establish a new native process generation; its ownership checks and
+  durable recovery intent MUST still apply. No fresh-conversation fallback is allowed.
+- The continuation MUST retain the original review admission, reviewed base/head,
+  task, scoped checklist/signal and completed artifacts. It MUST NOT reset checklist
+  progress, launch a new review round or repeat the reviewed diff. The instruction
+  asks the reviewer to finish the existing checklist and terminal mark.
+- After acceptance, monitoring and schema-bound visual-result collection MUST
+  use the completion command's verified receipt and generation. The original
+  failed command remains failed in history. A successful completion still requires
+  a valid terminal signal and all existing result and visual validation.
+- If that one continuation ends without a valid terminal signal, the gateway MUST
+  fail the attempt with a clear completion-turn reason. The existing inactivity and
+  review budgets remain active. Cancellation, pause, supersession, a released lease,
+  changed task or foreign slot ownership MUST prevent delivery and adoption.
+- Initial launch uncertainty, missing results and invalid terminal artifacts retain
+  their current failure/reconciliation behavior. This policy does not authorize
+  parsing runner output, changing providers or editing credentials.
+
+### Public surface
+
+The gateway consumes existing native worker send/resume operations and the durable
+command journal. Existing reviewer instruction fields carry the reservation. There
+is no new public RPC, CLI flag, SDK export, record field or harness setting, and no
+runtime package or native-host update is required. WARM/COLD and round accounting
+remain governed by ADR-063.
+
 ## Task Directory
 
 A runtime-compatible task directory contains:

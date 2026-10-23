@@ -4,8 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot facts, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire. Slot facts, overlays, node-health, resource status and snapshot age invalidate their fleet and scoped readers without refetching unchanged run bindings. Failed fleet reads report source errors instead of caching an empty fleet. Node registration, replacement and disconnect advance inventory and per-node revisions. Capability catalog and committed lease changes update their shared readers. Worker checklist and review-workspace observations notify shared progress readers, including source failures and recovery.
-- Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
+- Give a native reviewer with valid findings but no terminal signal one durable completion turn in the same saved conversation, preserving its admission and reconciling delivery after restart.
+
 - Allow one person approval to accept checked review findings and attest eligible evidence-policy gaps, retaining and validating both receipts.
 
 - Prepare publication gates from current admitted visual reviews, skipping retained results whose replayed command was released.
@@ -72,6 +72,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Reclaim cancelled replay holds safely when another run needs the slot, detect structured runner failures and check provider authentication before dispatch, and keep operator-driven development out of monitor nudges.
+
+- Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot facts, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire. Slot facts, overlays, node-health, resource status and snapshot age invalidate their fleet and scoped readers without refetching unchanged run bindings. Failed fleet reads report source errors instead of caching an empty fleet. Node registration, replacement and disconnect advance inventory and per-node revisions. Capability catalog and committed lease changes update their shared readers. Worker checklist and review-workspace observations notify shared progress readers, including source failures and recovery.
+- Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
 
 ## 0.30.0 - 2026-10-21
 

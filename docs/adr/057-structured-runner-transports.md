@@ -195,3 +195,50 @@ On a loaded machine, a single slow `ps` is not evidence that ownership was lost.
 ### Public surface
 
 No API, flag or field. The change is in `@farmslot/agent-runtime` `native/process-tree.ts`, where the observer census and the synchronous reads now use separate deadlines. It ships as a runtime patch, and every node needs the runtime update and a native host restart.
+
+## Amendment 4: one completion turn for an unfinished native reviewer, 2026-10-23
+
+**Status:** Accepted 2026-10-23 under the lead's standing approval after paired policy review.
+
+### Decision
+
+When an admitted native reviewer ends its turn after writing a valid review result
+but leaves its own signal nonterminal, the gateway requests one completion turn in
+the same saved conversation before failing the review. This includes a failed turn
+whose result artifacts are valid, such as a provider capacity failure after the
+report was written. A still-running turn stays under the existing progress watchdog.
+
+The existing native owner reserves that completion instruction durably before
+delivery. Reconnection and uncertain replies reconcile the same command receipt;
+they do not grant another turn. A live idle conversation receives the command
+through its current lease. A stopped process resumes only after confirmed cleanup
+and verification of the same saved conversation and launch settings. Unsupported or
+unverifiable resume fails with the recorded reason, without starting a fresh review.
+
+Preserve the review admission, reviewed input, task, checklist attempt, owner,
+execution node, runner, model and account profile. The completion command has its
+own receipt. Completion and schema-bound visual-result readers consume that
+command and its verified process generation. The first command's failure remains
+in history. The follow-up must finish the existing task-local terminal contract;
+artifacts alone never establish completion. A second unfinished turn fails clearly.
+Cancellation, interruption, supersession, lost ownership and invalid artifacts do
+not authorize a continuation. Existing progress and review budgets still apply.
+
+### Rationale and consequences
+
+A reviewer can finish its findings and report, then lose its turn before running
+the final mark. Immediate failure discards usable work and forces another review.
+One durable completion command preserves that work while bounding automatic
+recovery. Its retries retain the same identity across gateway restarts.
+
+This finishes the original review attempt. It does not change WARM/COLD selection,
+review ranges or round accounting under ADR-063. Normative rules live in
+[Agent runtime](../reference/agent-runtime.md#native-reviewer-completion-turn).
+
+### Public surface
+
+The gateway's native review controller consumes the existing private worker
+send/resume capability and command journal. Existing reviewer instruction fields
+record the reservation; no public field, RPC, CLI flag, SDK export or harness
+configuration is added. Harnesses retain the same task-local mark contract. This
+gateway-only fix requires no runtime publication or native-host restart.
