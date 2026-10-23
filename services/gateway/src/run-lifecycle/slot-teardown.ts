@@ -378,8 +378,13 @@ export async function releaseRunOwnedCapabilities(run: Run): Promise<void> {
 
 export async function stopRunOwnedTmuxAndWatches(
   run: Run,
-  { stopUnverifiedWorkers = false }: { stopUnverifiedWorkers?: boolean } = {},
+  {
+    stopUnverifiedWorkers = ['done', 'failed', 'cancelled'].includes(run.status),
+  }: { stopUnverifiedWorkers?: boolean } = {},
 ): Promise<string | null> {
+  // A stacked child or fix round can still be using this run's worker pane.
+  const ownershipBlocker = await slotOwnershipBlocker(run);
+  if (ownershipBlocker) return ownershipBlocker;
   let blocker = await stopRunOwnedTmuxWorkers(run);
   if (!run.slotId) return blocker;
   const slotId = run.slotId;
@@ -428,6 +433,53 @@ export async function stopRunOwnedTmuxAndWatches(
   }
   await archiveRunnerSessionsForSlotRelease({ vars, runId: run.id });
   return [blocker, prepareBlocker, browserBlocker].filter(Boolean).join('; ') || null;
+}
+
+/** Stop configured slot infrastructure after its terminal run has released its leases. */
+export async function shutdownRunSlotResources(run: Run): Promise<string | null> {
+  if (!run.slotId) return null;
+  const slotId = run.slotId;
+  const ownershipBlocker = await slotOwnershipBlocker(run);
+  if (ownershipBlocker) return ownershipBlocker;
+  const before = await readSlotRow(slotId);
+  const generation = run.engineState?.generation;
+  const stillOwned = async () => {
+    const current = await readSlotRow(slotId);
+    const currentRun = await getRunWithArchived(run.id);
+    return (
+      ownsRunSlotCleanup(current, run.id) &&
+      current?.slot_epoch === before?.slot_epoch &&
+      currentRun?.engineState?.generation === generation &&
+      !(await slotOwnershipBlocker(run))
+    );
+  };
+  const { executeResourceControl, resolveSlotResources } =
+    await import('../fleet/resource-manager.js');
+  const resources = await resolveSlotResources(slotId);
+  const { getRuntimeCapabilityRegistry } = await import('../methods/runtime-capabilities.js');
+  const { leases } = await getRuntimeCapabilityRegistry().settledStatus(slotId);
+  if (
+    leases.some(
+      (lease) =>
+        lease.owner.runId !== run.id &&
+        (lease.state === 'acquired' || lease.keepWarmUntil || lease.providerCleanupDeferred),
+    )
+  )
+    return 'Another runtime capability owner still uses this slot';
+  const failures: string[] = [];
+  for (const resource of resources) {
+    if (!resource.definition.controllable || !resource.definition.hooks?.shutdown) continue;
+    if (!(await stillOwned())) return 'Slot ownership changed before runtime shutdown';
+    // A detached service may be unobserved after reconnect. Its declared shutdown
+    // hook, rather than a cached running status, owns stopping it and its helpers.
+    const result = await executeResourceControl(slotId, resource.id, 'shutdown', undefined, run.id);
+    if (!result.ok) failures.push(`${resource.id}: ${result.detail ?? 'shutdown not confirmed'}`);
+  }
+  if (!(await stillOwned())) return 'Slot ownership changed during runtime shutdown';
+  // Leases have now been released, so they no longer hide detached browser helpers.
+  const browserBlocker = await reapSlotBrowserSession(await loadSlotVars(slotId), { stillOwned });
+  if (browserBlocker) failures.push(browserBlocker);
+  return failures.join('; ') || null;
 }
 
 /** Foreign occupancy prevents destructive cleanup, but does not retain a terminal run's pointer. */

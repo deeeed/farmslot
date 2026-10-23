@@ -34,8 +34,10 @@ function fakeNode(opts: { failUpload?: boolean } = {}) {
   const calls: string[] = [];
   let manifest: string | null = null;
   const io: NodeSupportIo = {
+    retentionReferences: async () => ({ selectionPaths: [], runHashes: [] }),
     exec: async (_vars, cmd) => {
       calls.push(`exec:${cmd.slice(0, 20)}`);
+      if (cmd.startsWith(': farmslot-node-support-activate')) calls.push('select');
       const homeResult = fakeSupportHomeResult(cmd);
       if (homeResult) return homeResult;
       if (cmd.includes('mktemp -d')) {
@@ -155,7 +157,7 @@ test('a hook on a node without the current bundle runs from the bundle it just r
 
   // Another slot on the same machine still has its own selection written.
   await resolveRemoteFarmCommand(remoteVars('mini-ff-2'), HOOK, { io: node.io });
-  assert.ok(node.calls.includes('writeFiles'), 'second slot gets its selection recorded');
+  assert.ok(node.calls.includes('select'), 'second slot gets its selection recorded');
   assert.ok(!node.calls.includes('write'), 'and the bundle is not republished');
 });
 
@@ -245,6 +247,7 @@ function gatedNode(opts: { failUpload?: boolean } = {}) {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
   const io: NodeSupportIo = {
+    retentionReferences: async () => ({ selectionPaths: [], runHashes: [] }),
     exec: async (_vars, cmd) =>
       fakeSupportHomeResult(cmd) ??
       (cmd.includes('mktemp -d')

@@ -196,6 +196,43 @@ export async function assertPrepareCommitsPublished(
     const preservedByLocalBranch = ref === 'HEAD' && head.exitCode === 1;
     const unpushed = await findUnpushedSlotCommits(vars, ref, exec, { preservedByLocalBranch });
     if (!unpushed.length) continue;
+    // A single-branch clone fetches only its configured main ref. Publication
+    // from another checkout need not leave this slot a tracking ref for the PR.
+    const localBranch = ref === 'HEAD' ? head.stdout.trim() : branch;
+    if (localBranch) {
+      const upstream = await exec(
+        vars,
+        `${git} for-each-ref --format='%(upstream:remotename)%09%(upstream:remoteref)' ${shellQuote(`refs/heads/${localBranch}`)}`,
+      );
+      if (upstream.exitCode !== 0)
+        throw new Error(`Cannot inspect published branch ${localBranch}`);
+      const [remote = 'origin', configuredRef] = upstream.stdout.trim().split('\t');
+      const publishedRemote = remote || 'origin';
+      const publishedRef = configuredRef || `refs/heads/${localBranch}`;
+      const advertised = await exec(
+        vars,
+        `${git} ls-remote --exit-code --heads ${shellQuote(publishedRemote)} ${shellQuote(publishedRef)}`,
+        { timeout: 30_000 },
+      );
+      if (advertised.exitCode !== 0 && advertised.exitCode !== 2)
+        throw new Error(
+          `Cannot verify published branch ${localBranch}: ${advertised.stderr || advertised.stdout}`,
+        );
+      if (publishedRemote !== '.' && advertised.stdout.trim()) {
+        const tracking = `refs/remotes/${publishedRemote}/${publishedRef.replace(/^refs\/heads\//, '')}`;
+        const fetched = await exec(
+          vars,
+          `${git} fetch --no-prune --no-tags ${shellQuote(publishedRemote)} ${shellQuote(`+${publishedRef}:${tracking}`)}`,
+          { timeout: 120_000 },
+        );
+        if (fetched.exitCode !== 0)
+          throw new Error(
+            `Cannot fetch published branch ${localBranch}: ${fetched.stderr || fetched.stdout}`,
+          );
+        if (!(await findUnpushedSlotCommits(vars, ref, exec, { preservedByLocalBranch })).length)
+          continue;
+      }
+    }
     const commits = await findUnpushedSlotCommits(vars, ref, exec, {
       preservedByLocalBranch,
       patchBase: `origin/${defaultBranch}`,

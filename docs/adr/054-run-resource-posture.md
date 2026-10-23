@@ -339,3 +339,47 @@ No new command, flag or RPC. `run.create` and find-slot consume the guarded recl
 `run.replayStep` returns the explicit reclaimed-slot refusal. `Run.slotReclaimed` is an
 optional read-only result field owned by `@farmslot/protocol`. The normative rules are in
 [the resource contract](../reference/recipe-runtime-capability-contract.md#release-parks-and-terminal-cleanup).
+
+## Amendment: terminal runs stop slot runtimes (2026-10-23)
+
+Status: Proposed. Lead assigned the shutdown policy and ADR-054 routing; acceptance follows paired review.
+
+### Decision
+
+When a run reaches `done`, `cancelled` or `failed`, the engine stops its worker and
+configured slot runtime through the existing owned cleanup and resource shutdown
+hooks. This includes detached dev servers, browsers and console helpers, Metro
+and the configured simulator, even when no resource watcher still reports them.
+Successful CI completion without a successor owes the same cleanup. Publishing
+the terminal run remains ahead of cleanup.
+
+A live stacked child, fix round, successor reservation or foreign capability
+owner keeps the resources it still owns. Cleanup rechecks slot ownership and
+epoch before each resource shutdown. Unconfirmed shutdown is recorded and cannot
+publish slot readiness. Cancel retains its checkout, evidence and replay hold;
+retaining a checkout does not retain a running runtime. Existing gate and
+non-terminal CI-watch holds remain warm.
+
+This supersedes terminal resource keep-warm and pre-finalize failed-worker
+retention in earlier release rules and ADR-038. Blocked decision holds are unchanged.
+
+At node-support activation, retain bundles selected by any slot or referenced by
+any non-archived run, including completed, failed and cancelled records. Delete
+other completed bundles. Publication, selection and pruning share a node-local
+lock so concurrent activations cannot remove each other's selected bytes.
+Unreadable selections refuse pruning; staging directories and active publishers
+are protected. No periodic or manual deletion path is added.
+
+### Rationale and consequences
+
+Terminal runs left detached services, idle workers and booted simulators running
+for hours or days. Completion could omit release, failure could reset only the
+slot row, and lease cleanup did not stop resident slot resources. Terminal cleanup
+now uses the same declared shutdown hooks as explicit resource control. Cold
+reuse may need to boot resources again; another live owner remains protected.
+
+### Public surface
+
+No new CLI command, RPC, flag, SDK export or project field. Existing terminal
+transitions, slot cleanup outcomes and resource shutdown hooks carry the change.
+Clients and downstream harnesses consume the existing resource and slot contract.
