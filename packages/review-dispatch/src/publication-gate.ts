@@ -10,11 +10,13 @@ import {
   acceptReviewFindingsAvailable,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  COMBINED_FINDINGS_EVIDENCE_APPROVAL_ACTION,
   type DecisionAction,
   evidenceAttestationAvailable,
   type GateDecisionFields,
   gateDisplayReasons,
   gateWaitReason,
+  isEvidencePolicyReason,
   isPublishApprovalAction,
   isValidEvidenceAttestationReason,
   latestReview,
@@ -308,7 +310,14 @@ export function publicationGateView(input: PublicationGateInput) {
       ? input.actions.filter((action) => !isPublishApprovalAction(action.id))
       : input.actions
   ).filter((action) => action.id !== APPROVE_PUBLISH_UNRESOLVED_ACTION || !offeredAccept);
-  const acceptFindings = offeredAccept ?? null;
+  const combinedApproval =
+    Boolean(offeredAccept) &&
+    evidenceAttestationAvailable(input.readiness, APPROVE_PUBLISH_UNRESOLVED_ACTION);
+  const acceptFindings = offeredAccept
+    ? combinedApproval
+      ? { ...offeredAccept, ...COMBINED_FINDINGS_EVIDENCE_APPROVAL_ACTION }
+      : offeredAccept
+    : null;
   const offeredNormal = actions.find((action) =>
     ['approve-publish', 'approve-publish-evidence-refresh', 'ready'].includes(action.id),
   );
@@ -393,7 +402,9 @@ export function publicationGateView(input: PublicationGateInput) {
       ? (sendBackRecovery ?? 'Issues found')
       : blockedReason ||
         (accepting
-          ? 'Publishing accepts the open review findings.'
+          ? combinedApproval
+            ? 'Publishing accepts the findings and attests the evidence-policy gaps.'
+            : 'Publishing accepts the open review findings.'
           : attestation
             ? 'Evidence attestation is available.'
             : 'Ready to publish'),
@@ -408,6 +419,10 @@ export function publicationGateView(input: PublicationGateInput) {
     sendBack: sendBack ?? null,
     attestation,
     acceptFindings,
+    combinedApproval,
+    evidencePolicyReasons: combinedApproval
+      ? (input.readiness?.reasons.filter(isEvidencePolicyReason) ?? [])
+      : [],
     findings: acceptFindings ? (input.readiness?.findings ?? []) : [],
     refreshRequired,
     reviewIssues,

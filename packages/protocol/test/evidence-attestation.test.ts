@@ -10,9 +10,11 @@ import {
   evidenceAttestationAvailable,
   evidenceAttestationReason,
   gateActionsForReadiness,
+  gateReasonsForAction,
   isEvidenceAttestationApprover,
   isEvidencePolicyReason,
   isPublishApprovalAction,
+  publicationApprovalReasonFields,
   sameEvidenceAttestationApprover,
 } from '../src/index.js';
 
@@ -134,7 +136,6 @@ test('accepting review findings needs the checked findings and yields only the r
   for (const withheld of [
     { ...accepting, findings: [] },
     { ...accepting, findingsDigest: undefined },
-    { ...accepting, reasons: [...accepting.reasons, ...policy.reasons] },
     {
       ...accepting,
       reasons: [{ ...accepting.reasons[0]!, allowedReviewOverrides: [] }],
@@ -168,5 +169,90 @@ test('accepting review findings needs the checked findings and yields only the r
       actionId: 'hold',
     }).findingsDigest,
     undefined,
+  );
+});
+
+test('one combined approval accepts findings and attests only the accompanying evidence-policy gap', () => {
+  const combined: RunGateReadiness = {
+    ...policy,
+    reasons: [
+      {
+        code: 'review-fix-required',
+        prerequisite: 'review',
+        message: 'Review rounds spent: 2 issues open',
+        allowedReviewOverrides: [APPROVE_PUBLISH_UNRESOLVED_ACTION],
+      },
+      { ...policy.reasons[0]!, evidencePolicy: 'claim-verdict' },
+    ],
+    findings: [
+      { reviewId: 'review', file: 'evidence-manifest.json', description: 'Missing state proof' },
+    ],
+    findingsDigest: 'sha256:findings',
+  };
+  assert.equal(acceptReviewFindingsAvailable(combined), true);
+  assert.equal(evidenceAttestationAvailable(combined), false);
+  assert.equal(evidenceAttestationAvailable(combined, APPROVE_PUBLISH_UNRESOLVED_ACTION), true);
+  assert.deepEqual(gateReasonsForAction(combined, APPROVE_PUBLISH_UNRESOLVED_ACTION), []);
+  assert.deepEqual(
+    gateActionsForReadiness(
+      [
+        { id: APPROVE_PUBLISH_UNRESOLVED_ACTION },
+        { id: APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION },
+        { id: 'hold' },
+      ],
+      combined,
+    ).map(({ id }) => id),
+    [APPROVE_PUBLISH_UNRESOLVED_ACTION, 'hold'],
+  );
+  for (const code of [
+    'review-result-required',
+    'review-result-invalid',
+    'evidence-invalid',
+    'publication-secret-values',
+    'deterministic-not-passed',
+    'acceptance-incomplete',
+    'run-work-progressing',
+  ]) {
+    const withheld: RunGateReadiness = {
+      ...combined,
+      reasons: [
+        ...combined.reasons,
+        { code, prerequisite: 'evidence', message: 'Another prerequisite still blocks.' },
+      ],
+    };
+    assert.equal(acceptReviewFindingsAvailable(withheld), false, code);
+    assert.equal(
+      evidenceAttestationAvailable(withheld, APPROVE_PUBLISH_UNRESOLVED_ACTION),
+      false,
+      code,
+    );
+    assert.ok(gateReasonsForAction(withheld, APPROVE_PUBLISH_UNRESOLVED_ACTION).length > 0, code);
+  }
+  for (const withheld of [
+    { ...combined, state: 'collecting' as const },
+    { ...combined, findings: [] },
+    { ...combined, findingsDigest: undefined },
+    {
+      ...combined,
+      reasons: [{ ...combined.reasons[0]!, allowedReviewOverrides: [] }, combined.reasons[1]!],
+    },
+  ])
+    assert.equal(acceptReviewFindingsAvailable(withheld), false);
+  const fields = publicationApprovalReasonFields(
+    APPROVE_PUBLISH_UNRESOLVED_ACTION,
+    'I accept and attest.',
+    true,
+  );
+  assert.deepEqual(fields, {
+    reason: 'I accept and attest.',
+    evidenceAttestationReason: 'I accept and attest.',
+  });
+  assert.deepEqual(
+    publicationApprovalReasonFields(APPROVE_PUBLISH_UNRESOLVED_ACTION, 'Accept only.'),
+    { reason: 'Accept only.' },
+  );
+  assert.equal(
+    evidenceAttestationReason(APPROVE_PUBLISH_UNRESOLVED_ACTION, fields.evidenceAttestationReason),
+    'I accept and attest.',
   );
 });

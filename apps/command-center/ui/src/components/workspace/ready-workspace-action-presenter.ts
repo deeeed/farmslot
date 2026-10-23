@@ -8,10 +8,10 @@ import type {
   RunRefreshPublishPackageResult,
 } from '@farmslot/protocol';
 import {
-  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
-  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   buildRunResolveDecisionParams,
+  evidenceAttestationAvailable,
   Methods,
+  publicationApprovalReasonFields,
   withArtifactBundleDigest,
 } from '@farmslot/protocol';
 import {
@@ -896,12 +896,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           runId: this.runId,
           decision: command.decision,
           actionId,
-          ...(actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
-            ? { evidenceAttestationReason: this._evidenceAttestationReason }
-            : {}),
-          ...(actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION
-            ? { reason: this._evidenceAttestationReason }
-            : {}),
+          ...publicationApprovalReasonFields(
+            actionId,
+            this._evidenceAttestationReason,
+            evidenceAttestationAvailable(payload?.gateReadiness, actionId),
+          ),
           ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
           publicationTarget: this._publicationTarget,
           selectedEvidenceKeys: payload ? this._selectedEvidenceKeysForSubmit(payload) : [],

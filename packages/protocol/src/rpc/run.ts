@@ -627,7 +627,7 @@ export interface RunResolveDecisionParams {
   runId: string;
   decisionId: string;
   actionId: string;
-  /** Written human explanation, accepted only by evidence-attested publish approval. */
+  /** Explicit written evidence consent for evidence-attested or combined findings approval. */
   evidenceAttestationReason?: string;
   /**
    * Written reason for a result decision (`accept-result` requires one) or for accepting

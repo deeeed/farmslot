@@ -95,3 +95,52 @@ test('review and feedback are visible primary actions; inline blockers suppress 
   assert.doesNotMatch(inline, /Current-head review required|Request review/);
   assert.match(inline, /Send back to agent/);
 });
+
+test('combined confirmation names the findings and evidence-policy gap being attested', () => {
+  const readiness: RunGateReadiness = {
+    state: 'not-ready',
+    identity: { runId: 'run', generation: 1 },
+    reasons: [
+      {
+        code: 'review-fix-required',
+        prerequisite: 'review',
+        message: 'Two open findings',
+        allowedReviewOverrides: ['approve-publish-unresolved'],
+      },
+      {
+        code: 'evidence-policy-unsatisfied',
+        prerequisite: 'evidence',
+        evidencePolicy: 'claim-verdict',
+        message: 'The production-state evidence is missing.',
+      },
+    ],
+    findings: [
+      {
+        reviewId: 'review',
+        file: 'evidence-manifest.json',
+        description: 'Supply production-state proof or accept the gap.',
+      },
+    ],
+    findingsDigest: 'sha256:shown',
+  };
+  const text = litText(
+    renderPublicationGatePanel({
+      actions: [{ id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' }],
+      readiness,
+      busy: false,
+      pendingConfirm: null,
+      reviewDisabled: false,
+      changeReason: () => undefined,
+      chooseAttestation: () => undefined,
+      invoke: () => undefined,
+      requestReview: () => undefined,
+      acceptingFindings: true,
+      attestationReason: 'I accept and attest.',
+    }),
+  );
+  assert.match(text, /Accept findings, attest evidence and publish/);
+  assert.match(text, /Supply production-state proof or accept the gap/);
+  assert.match(text, /The production-state evidence is missing/);
+  assert.match(text, /combined-evidence-gaps/);
+  assert.match(text, /Reason for accepting findings and attesting evidence/);
+});

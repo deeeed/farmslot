@@ -7,6 +7,7 @@ import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  evidenceAttestationAvailable,
   isValidEvidenceAttestationReason,
   Methods,
   type Run,
@@ -256,15 +257,23 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         return;
       }
       // Bound to the package on screen now, the one the operator is confirming.
+      const confirmedReasons = gateActionReasons(
+        action.id,
+        attestationReason,
+        evidenceAttestationAvailable(
+          decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
+          action.id,
+        ),
+      );
       const confirmed = decisionResolveRequest(
         decisionDetailFromRun(run, decision),
         action.id,
         null,
         selectionData,
-        gateActionReasons(action.id, attestationReason).evidenceAttestationReason,
-        gateActionReasons(action.id, attestationReason).reason,
+        confirmedReasons.evidenceAttestationReason,
+        confirmedReasons.reason,
       );
-      Alert.alert('Confirm action', `Send "${action.id}" for ${decision.title}?`, [
+      Alert.alert('Confirm action', `${action.label} for ${decision.title}?`, [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Send',
@@ -299,13 +308,23 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
             }
             // A package refreshed while the confirmation was open is not the one
             // the operator reviewed.
+            const latestReasons = gateActionReasons(
+              action.id,
+              latest.attestationReason,
+              evidenceAttestationAvailable(
+                latest.decision.payload?.kind === 'ready'
+                  ? latest.decision.payload.gateReadiness
+                  : undefined,
+                action.id,
+              ),
+            );
             const now = decisionResolveRequest(
               decisionDetailFromRun(latest.run, latest.decision),
               action.id,
               null,
               selectionData,
-              gateActionReasons(action.id, latest.attestationReason).evidenceAttestationReason,
-              gateActionReasons(action.id, latest.attestationReason).reason,
+              latestReasons.evidenceAttestationReason,
+              latestReasons.reason,
             );
             if (JSON.stringify(now) !== JSON.stringify(confirmed)) {
               Alert.alert(action.label, 'The publish package changed; review it again.');

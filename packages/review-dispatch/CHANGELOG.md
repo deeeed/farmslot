@@ -6,6 +6,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.15.0 - 2026-10-23
+
+- Show combined findings acceptance and evidence attestation with both scopes and one written reason in the shared publication gate.
+
 ## 0.14.0 - 2026-10-22
 
 - Add shared current-checklist progress for run lists and detail.

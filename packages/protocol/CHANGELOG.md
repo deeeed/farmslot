@@ -9,6 +9,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.67.0 - 2026-10-23
+
+- Share one explicit person approval for accepted review findings and attestable evidence-policy gaps, with both receipt reason fields.
+
+The SDK release keeps the node-gateway wire protocol at 0.63.0.
+
 ## 0.66.0 - 2026-10-23
 
 - Add linked-run ticket metadata, shared lookup and the metadata setter contract.

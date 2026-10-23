@@ -8,6 +8,7 @@ import {
   type AcceptanceStatusLedger,
   acceptReviewFindingsAvailable,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  COMBINED_FINDINGS_EVIDENCE_APPROVAL_ACTION,
   type DecisionAction,
   digestRecipeDocument,
   effectiveRequiredReviewCount,
@@ -924,7 +925,12 @@ export function projectRunGateActions(
   definitions: DecisionAction[],
   readiness: RunGateReadiness,
 ): { actions: DecisionAction[]; readiness: RunGateReadiness } {
-  const actions = gateActionsForReadiness(definitions, readiness);
+  const actions = gateActionsForReadiness(definitions, readiness).map((action) =>
+    action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION &&
+    evidenceAttestationAvailable(readiness, action.id)
+      ? { ...action, ...COMBINED_FINDINGS_EVIDENCE_APPROVAL_ACTION }
+      : action,
+  );
   const offered = new Set(actions.map(({ id }) => id));
   return {
     actions,

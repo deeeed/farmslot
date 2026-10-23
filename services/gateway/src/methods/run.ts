@@ -1967,7 +1967,9 @@ export async function resolveRunDecision(
   );
   if (params.selectionData && Object.hasOwn(params.selectionData, 'evidenceAttestation'))
     throw new Error('Evidence attestation receipts are gateway-owned. Supply only a reason.');
-  const attestedApproval = params.actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
+  const attestedApproval =
+    params.actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION ||
+    (acceptingFindings && attestationReason !== undefined);
   const publicationPrincipal = isPublishApprovalAction(params.actionId)
     ? currentSessionPrincipal()
     : undefined;
@@ -2226,12 +2228,21 @@ export async function resolveRunDecision(
         gatePayload.kind === 'ready' ? (gatePayload.prPackage ?? null) : null,
         params.actionId,
       );
+      if (
+        readiness &&
+        acceptingFindings &&
+        evidenceAttestationAvailable(readiness, params.actionId) &&
+        !attestedApproval
+      )
+        throw new Error(
+          'Combined approval requires explicit evidence attestation and its written reason.',
+        );
       if (attestedApproval) {
         const prepared = gatePayload.kind === 'ready' ? gatePayload.prPackage : undefined;
         if (
           !readiness ||
           !prepared ||
-          !evidenceAttestationAvailable(readiness) ||
+          !evidenceAttestationAvailable(readiness, params.actionId) ||
           readiness.identity.runId !== existing.id ||
           readiness.identity.generation !== gateGeneration ||
           readiness.identity.packageHash !== prepared.packageHash
@@ -2300,7 +2311,6 @@ export async function resolveRunDecision(
           'AUTH_FORBIDDEN',
           'Evidence attestation caller changed during validation.',
         );
-      decision.evidenceAttestation = attestation;
     }
     if (
       acceptedFindings &&
@@ -2349,6 +2359,8 @@ export async function resolveRunDecision(
       }
     }
 
+    // Both person authorities have passed before either receipt is written.
+    if (attestation) decision.evidenceAttestation = attestation;
     // The gate shows the description approval publishes, not the reviewed one.
     const readyPayload = decision.payload as ReadyGatePayload | undefined;
     if (isPublishApprovalAction(params.actionId) && readyPayload?.kind === 'ready') {

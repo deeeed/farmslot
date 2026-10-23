@@ -205,3 +205,16 @@ test('accepting review findings sends the typed reason and the digest of the fin
     /Load the publish run before accepting review findings/,
   );
 });
+
+test('combined consent sends one written reason in both existing receipt fields', () => {
+  assert.deepEqual(
+    gateActionReasons(APPROVE_PUBLISH_UNRESOLVED_ACTION, 'I accept and attest.', true),
+    {
+      reason: 'I accept and attest.',
+      evidenceAttestationReason: 'I accept and attest.',
+    },
+  );
+  assert.deepEqual(gateActionReasons(APPROVE_PUBLISH_UNRESOLVED_ACTION, 'I accept only.'), {
+    reason: 'I accept only.',
+  });
+});
