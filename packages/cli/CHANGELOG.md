@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Require explicit --attest-evidence consent when accepting review findings together with evidence-policy gaps.
+
 - `farmslot run gate --action request-review` continues the runner's latest available review WARM and refuses an unavailable retained session unless `--review-mode cold` is given. Review history shows the reason and compared ranges for earlier delta-scoped fallbacks.
 - `farmslot run gate <runId> --action approve-publish-unresolved --reason <text>` accepts a gate's open review findings and publishes; `run gate` lists those findings. A missing `--reason` is refused before the request.
 - `farmslot run extend-review-budget` prints the reviewer attempts that ended without a verdict next to the review rounds once there is one.

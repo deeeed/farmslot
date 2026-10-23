@@ -14,6 +14,7 @@ import {
   deriveRunLifecycleView,
   DISPATCHABLE_AGENT_ROLES,
   type EventFrame,
+  evidenceAttestationAvailable,
   failedRunCancelEffects,
   type HumanGrade,
   isAllowedRunDecisionAction,
@@ -25,6 +26,7 @@ import {
   Methods,
   observedReviewSessionContinuity,
   pendingResultDecision,
+  publicationApprovalReasonFields,
   REJECT_VISUAL_CLAIM_ACTION,
   type ResultDecisionPayload,
   type ReviewChainEntry,
@@ -109,6 +111,7 @@ export function assertRunGateActionAvailable(
 export interface RunGateCliOptions {
   action?: string;
   reason?: string;
+  attestEvidence?: boolean;
   claim?: string;
   recipeRun?: string;
   judgmentKind?: import('@farmslot/protocol').RecipeVisualJudgmentKind;
@@ -181,6 +184,17 @@ export function buildRunGateParams(
   // (ADR-065 Amendments 7 and 8); the shared builder binds the findings shown.
   if (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION && !options.reason?.trim())
     throw new Error('Accepting review findings requires --reason.');
+  if (options.attestEvidence && actionId !== APPROVE_PUBLISH_UNRESOLVED_ACTION)
+    throw new Error('--attest-evidence requires --action approve-publish-unresolved.');
+  if (
+    actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION &&
+    evidenceAttestationAvailable(
+      decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
+      actionId,
+    ) &&
+    !options.attestEvidence
+  )
+    throw new Error('Combined approval requires explicit --attest-evidence and --reason.');
   if (
     decision.payload?.kind === 'result-decision' ||
     actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION
@@ -191,6 +205,9 @@ export function buildRunGateParams(
       actionId,
       selectionData,
       ...(options.reason !== undefined ? { reason: options.reason } : {}),
+      ...(options.attestEvidence
+        ? publicationApprovalReasonFields(actionId, options.reason ?? '', true)
+        : {}),
     });
   return buildRunResolveDecisionParams({
     runId: run.id,
@@ -879,6 +896,10 @@ export function registerRunCommand(program: Command): void {
       'Written reason for evidence attestation, accepting review findings (approve-publish-unresolved), human claim review or a result decision',
     )
     .option('--claim <id>', 'Registered claim for human evidence review')
+    .option(
+      '--attest-evidence',
+      'Also attest the listed evidence-policy gaps when accepting review findings',
+    )
     .option('--recipe-run <id>', 'Selected recorded execution for human evidence review')
     .option('--judgment-kind <kind>', 'Visual review kind: person-reviewed or lead-agent-reviewed')
     .option('--runner <runner>', 'Review runner for request-review')

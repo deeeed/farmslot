@@ -1,5 +1,7 @@
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  evidenceAttestationAvailable,
   type EvidencePolicyAttestation,
   isEvidenceAttestationApprover,
   isEvidencePolicyReason,
@@ -7,6 +9,7 @@ import {
   type ReadyGatePrPackage,
   type Run,
   type RunDecision,
+  sameEvidenceAttestationApprover,
 } from '@farmslot/protocol';
 
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
@@ -21,7 +24,16 @@ export function assertEvidenceAttestationReceipt(
   decision: RunDecision | undefined,
   prepared: ReadyGatePrPackage,
 ): EvidencePolicyAttestation | undefined {
-  if (decision?.resolvedAction !== APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION) return undefined;
+  if (!decision) return undefined;
+  const combined =
+    decision?.resolvedAction === APPROVE_PUBLISH_UNRESOLVED_ACTION &&
+    (decision.evidenceAttestation !== undefined ||
+      evidenceAttestationAvailable(
+        decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
+        decision.resolvedAction,
+      ));
+  if (decision?.resolvedAction !== APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION && !combined)
+    return undefined;
   const receipt = decision.evidenceAttestation;
   if (
     !receipt ||
@@ -45,6 +57,20 @@ export function assertEvidenceAttestationReceipt(
       selectedEvidenceKeys: receipt.selectedEvidenceKeys,
     },
   });
+  if (combined) {
+    const approval = decision.publicationApproval;
+    if (
+      !approval?.acceptedFindings ||
+      !approval.approver ||
+      approval.packageHash !== receipt.packageHash ||
+      approval.headSha !== prepared.headSha ||
+      approval.principalId !== receipt.approver.principalId ||
+      !sameEvidenceAttestationApprover(approval.approver, receipt.approver)
+    )
+      throw new Error(
+        'The combined approval receipts do not bind the same person and publication package.',
+      );
+  }
   return receipt;
 }
 

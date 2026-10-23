@@ -486,3 +486,46 @@ test('open findings or a running fix withhold every publish approval, overrides 
     'Review fix in progress.',
   );
 });
+
+test('combined approval uses the checked mixed reasons without a second acceptance-only block', () => {
+  const readiness: RunGateReadiness = {
+    ...ACCEPTABLE,
+    reasons: [
+      ...ACCEPTABLE.reasons,
+      {
+        code: 'evidence-policy-unsatisfied',
+        prerequisite: 'evidence',
+        evidencePolicy: 'claim-verdict',
+        message: 'AC-4 production-state proof is missing.',
+      },
+    ],
+  };
+  const actions: DecisionAction[] = [
+    {
+      id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
+      label: 'Accept findings, attest evidence and publish',
+      style: 'danger',
+    },
+  ];
+  const guard = {
+    acceptanceReasons: ['AC-4 requires production-state proof'],
+    reviewReasons: ['Open findings'],
+  };
+  assert.deepEqual(withheld(actions, guard, readiness), [
+    [APPROVE_PUBLISH_UNRESOLVED_ACTION, null],
+  ]);
+  assert.notEqual(
+    withheld(actions, guard, {
+      ...readiness,
+      reasons: [
+        ...readiness.reasons,
+        {
+          code: 'acceptance-incomplete',
+          prerequisite: 'acceptance',
+          message: 'An AC has no registered verdict.',
+        },
+      ],
+    })[0]![1],
+    null,
+  );
+});

@@ -943,3 +943,47 @@ test('each review blocker carries plain copy and its offered action', () => {
   assert.equal(view.primaryActions[0].id, 'request-review');
   assert.deepEqual(view.secondaryActions, []);
 });
+
+test('the mixed gate shows one combined approval with both scopes and one written reason', () => {
+  const readiness: RunGateReadiness = {
+    ...evidenceOnly,
+    reasons: [
+      {
+        code: 'review-fix-required',
+        prerequisite: 'review',
+        message: 'Findings remain open',
+        allowedReviewOverrides: [APPROVE_PUBLISH_UNRESOLVED_ACTION],
+      },
+      ...evidenceOnly.reasons,
+    ],
+    findings: [
+      {
+        reviewId: 'review',
+        file: 'evidence-manifest.json',
+        description: 'The production-state proof is missing.',
+      },
+    ],
+    findingsDigest: 'sha256:findings',
+  };
+  const input = {
+    readiness,
+    actions: [
+      { id: APPROVE_PUBLISH_UNRESOLVED_ACTION, label: 'Accept findings', style: 'danger' as const },
+      EVIDENCE_ATTESTATION_ACTION,
+    ],
+    acceptingFindings: true,
+  };
+  const pending = publicationGateView(input);
+  assert.equal(pending.combinedApproval, true);
+  assert.equal(pending.approval?.label, 'Accept findings, attest evidence and publish');
+  assert.deepEqual(pending.findings, readiness.findings);
+  assert.deepEqual(pending.evidencePolicyReasons, evidenceOnly.reasons);
+  assert.equal(pending.attestation, null);
+  assert.equal(pending.blockedReason, 'Enter a reason before accepting the findings.');
+  const confirmed = publicationGateView({
+    ...input,
+    attestationReason: 'I accept these findings and attest the stated gap.',
+  });
+  assert.equal(confirmed.blockedReason, '');
+  assert.match(confirmed.status, /accepts.*findings.*attests/);
+});

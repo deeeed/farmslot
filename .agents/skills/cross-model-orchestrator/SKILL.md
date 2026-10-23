@@ -107,7 +107,12 @@ tell the lead before pushing again. At round 5, write `STOPPED <owner/repo>#<n> 
 
 Two exact-head approvals freeze further work. Check CI and emit
 `MERGE-READY <owner/repo>#<n> <full SHA>` immediately when green. New requests and hardening become
-FOLLOW-UPS. Only merge-conflict resolutions may change a frozen head, reviewed with
+FOLLOW-UPS. Required CI/test fixes may use `review --approved-delta`: both reviewers
+must reuse their saved PR-bound `reviews.lanes` sessions, WARM on the last reviewed
+head to the new head. Missing or unavailable sessions are refused, with no fresh
+fallback. Record new-head verdicts within the existing round budget. See the
+[contract](../../../docs/reference/cross-model-orchestration.md#review-and-merge).
+Merge-conflict resolutions remain separately reviewed with
 `--conflict-only --conflict-files <paths...>` against the saved frozen head. The first resolution
 saves its allowed files; subsequent conflict rounds cannot widen that manifest. For a merge from
 main, save `git rev-parse AUTO_MERGE` before resolving and pass that immutable tree as

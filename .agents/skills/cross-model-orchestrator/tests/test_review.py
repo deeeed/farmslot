@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import common
 import review
 
 
@@ -59,7 +60,7 @@ class ReviewTests(unittest.TestCase):
         elif argv[0] == "node" and argv[1].endswith("review-diff-scope.cjs"):
             output = "## Diff scope\nShared packet for entire contribution"
         elif argv[:3] == ["git", "diff", "--name-only"]:
-            output = "\0".join(self.conflict_paths) + "\0"
+            output = "\0".join(self.conflict_paths) + ("\0" if self.conflict_paths else "")
         else:
             self.assertTrue(reviewer_command(argv), f"Unexpected test subprocess: {argv}")
             reviewer = argv[0]
@@ -330,6 +331,162 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual("claude-session", state["reviewer_bindings"]["claude"]["session_id"])
         self.assertEqual(4, sent.call_count)
         self.assertEqual([], [command for command in self.commands if reviewer_command(command)])
+
+    def test_approved_delta_keeps_warm_sessions_and_records_new_head(self):
+        _, sent, _, _ = self.configure_lanes()
+        self.verdicts = {name: "APPROVE" for name in review.REVIEWERS}
+        first = review.review(self.config, self.args)
+        bindings = first["reviewer_bindings"]
+        frozen = self.head
+        self.head = "b" * 40
+        self.args.approved_delta = True
+        state = review.review(self.config, self.args)
+        self.assertEqual("approved-delta", state["rounds"][-1]["mode"])
+        self.assertEqual(frozen, state["rounds"][-1]["base"])
+        self.assertEqual(self.head, state["frozen_sha"])
+        self.assertEqual(bindings, state["reviewer_bindings"])
+        prompt = (self.directory() / "r2" / "prompt.md").read_text()
+        self.assertIn("WARM", prompt)
+        self.assertIn("CI/test fixes", prompt)
+        for name in review.REVIEWERS:
+            self.assertEqual("retained", state["reviewers"][name]["continuity"])
+            self.assertTrue(review.parse_verdict(self.directory() / f"{name}.md", self.head))
+            self.assertFalse(review.parse_verdict(self.directory() / f"{name}.md", frozen))
+        self.assertEqual(4, sent.call_count)
+        self.assertEqual([], [command for command in self.commands if reviewer_command(command)])
+
+    def test_approved_delta_requires_prior_approval_and_a_real_new_delta(self):
+        _, sent, _, _ = self.configure_lanes()
+        self.args.approved_delta = True
+        with self.assertRaisesRegex(RuntimeError, "existing frozen approval"):
+            review.review(self.config, self.args)
+        self.assertEqual(0, sent.call_count)
+        self.args.approved_delta = False
+        self.verdicts = {name: "APPROVE" for name in review.REVIEWERS}
+        review.review(self.config, self.args)
+        self.args.approved_delta = True
+        with self.assertRaisesRegex(RuntimeError, "changed head"):
+            review.review(self.config, self.args)
+        self.head = "b" * 40
+        self.conflict_paths = []
+        with self.assertRaisesRegex(RuntimeError, "changed review inputs"):
+            review.review(self.config, self.args)
+        self.assertEqual(2, sent.call_count)
+        self.assertEqual(1, self.state()["round"])
+        self.assertFalse((self.directory() / "r2").exists())
+
+    def test_approved_delta_never_falls_back_to_fresh_commands(self):
+        self.verdicts = {name: "APPROVE" for name in review.REVIEWERS}
+        review.review(self.config, self.args)
+        self.head = "b" * 40
+        self.args.approved_delta = True
+        before = len([argv for argv in self.commands if reviewer_command(argv)])
+        with self.assertRaisesRegex(RuntimeError, "saved retained reviewers"):
+            review.review(self.config, self.args)
+        self.assertEqual(before, len([argv for argv in self.commands if reviewer_command(argv)]))
+        self.assertEqual(1, self.state()["round"])
+
+    def test_approved_delta_checks_both_retained_sessions_before_dispatch(self):
+        observed, sent, observe, _ = self.configure_lanes()
+        self.verdicts = {name: "APPROVE" for name in review.REVIEWERS}
+        review.review(self.config, self.args)
+        self.head = "b" * 40
+        self.args.approved_delta = True
+        for problem in ["missing", "foreign-session", "busy", "question", "queued"]:
+            with self.subTest(problem=problem):
+                def unavailable(config, lane_id):
+                    item = observe(config, lane_id)
+                    if lane_id == "claude-lane":
+                        if problem == "missing":
+                            return {"status": "missing", "state": "missing"}
+                        if problem == "foreign-session":
+                            item["observation"]["session_id"] = "another-pr-session"
+                        else:
+                            item["phase"] = problem
+                    return item
+                observed.side_effect = unavailable
+                with patch.object(review.lanes, "launch") as launched:
+                    with self.assertRaises(RuntimeError):
+                        review.review(self.config, self.args)
+                self.assertEqual(0, launched.call_count)
+                self.assertEqual(2, sent.call_count)
+                self.assertEqual(1, self.state()["round"])
+                self.assertFalse((self.directory() / "r2").exists())
+
+    def test_approved_delta_fix_round_uses_last_reviewed_head(self):
+        self.configure_lanes()
+        self.verdicts = {name: "APPROVE" for name in review.REVIEWERS}
+        review.review(self.config, self.args)
+        self.args.approved_delta = True
+        self.head = "b" * 40
+        self.verdicts["codex"] = "COMMENT"
+        state = review.review(self.config, self.args)
+        self.assertEqual("needs_changes", state["status"])
+        self.assertEqual("a" * 40, state["frozen_sha"])
+        self.head = "c" * 40
+        self.verdicts["codex"] = "APPROVE"
+        state = review.review(self.config, self.args)
+        self.assertEqual("b" * 40, state["rounds"][-1]["base"])
+        self.assertEqual(self.head, state["frozen_sha"])
+
+    def test_approved_delta_keeps_the_round_limit_and_excludes_conflict_mode(self):
+        self.configure_lanes()
+        for number in range(1, 5):
+            self.head = f"{number:040x}"
+            review.review(self.config, self.args)
+        self.verdicts = {name: "APPROVE" for name in review.REVIEWERS}
+        review.review(self.config, self.args)
+        self.head = "b" * 40
+        self.args.approved_delta = True
+        self.args.conflict_only = True
+        with self.assertRaisesRegex(ValueError, "cannot be combined"):
+            review.review(self.config, self.args)
+        self.args.conflict_only = False
+        with self.assertRaisesRegex(RuntimeError, "maximum 5"):
+            review.review(self.config, self.args)
+        self.assertEqual(5, self.state()["round"])
+
+    def test_approved_delta_uses_real_git_history_without_reviewing_a_rewrite(self):
+        def git(*args):
+            return subprocess.check_output([
+                "git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.com",
+                "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args,
+            ], cwd=self.root, text=True, stderr=subprocess.DEVNULL).strip()
+
+        git("init", "-b", "main")
+        source = self.root / "example.test.py"
+        source.write_text("assert True\n")
+        git("add", source.name)
+        git("commit", "-m", "initial fixture")
+        self.head = git("rev-parse", "HEAD")
+        frozen = self.head
+        _, sent, _, _ = self.configure_lanes()
+        self.verdicts = {name: "APPROVE" for name in review.REVIEWERS}
+        original = self.run_command
+
+        def real_git(argv, **kwargs):
+            return common.run(argv, **kwargs) if argv[0] == "git" else original(argv, **kwargs)
+
+        with patch.object(review, "run", side_effect=real_git):
+            review.review(self.config, self.args)
+            source.write_text("assert True\nassert 1 == 1\n")
+            git("add", source.name)
+            git("commit", "-m", "fix fixture assertion")
+            self.head = git("rev-parse", "HEAD")
+            self.args.approved_delta = True
+            state = review.review(self.config, self.args)
+            self.assertEqual(frozen, state["rounds"][-1]["base"])
+            self.assertEqual(self.head, state["frozen_sha"])
+            git("checkout", "--orphan", "rewrite")
+            source.write_text("assert 2 == 2\n")
+            git("add", source.name)
+            git("commit", "-m", "unrelated fixture history")
+            self.head = git("rev-parse", "HEAD")
+            with self.assertRaisesRegex(RuntimeError, "git failed"):
+                review.review(self.config, self.args)
+        self.assertEqual(4, sent.call_count)
+        self.assertEqual(2, self.state()["round"])
+        self.assertFalse((self.directory() / "r3").exists())
 
     def test_lane_session_cannot_be_rebound_to_another_pr(self):
         _, sent, _, _ = self.configure_lanes()
