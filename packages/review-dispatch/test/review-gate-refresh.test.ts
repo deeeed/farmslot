@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import { refreshReviewGateView } from '../src/review-gate-refresh.js';
+import { refreshReviewGateView, reviewGateRefreshBlocksPost } from '../src/review-gate-refresh.js';
 
 test('a refused refresh reads the revised gate without starting or retrying a review', async () => {
   const run: Run = {
@@ -55,4 +55,30 @@ test('a refused refresh reads the revised gate without starting or retrying a re
     false,
   );
   assert.equal(result.error, 'Revised finding requires COMMENT');
+  assert.equal(reviewGateRefreshBlocksPost(false, result.error), true);
+
+  // An infrastructure failure may read back an unchanged gate that still offers Post.
+  const oldGate: Run = {
+    ...run,
+    decisions: run.decisions.map((decision) => ({
+      ...decision,
+      actions: [{ id: 'post', label: 'Post', style: 'primary' }],
+    })),
+  };
+  const failed = await refreshReviewGateView(
+    async () => {
+      throw new Error('Gateway unavailable');
+    },
+    async () => ({ run: oldGate }),
+  );
+  assert.equal(failed.run?.decisions[0].actions[0].id, 'post');
+  assert.equal(reviewGateRefreshBlocksPost(false, failed.error), true);
+  assert.equal(reviewGateRefreshBlocksPost(true, null), true);
+  const refreshed = await refreshReviewGateView(
+    async () => ({ run: oldGate }),
+    async () => {
+      throw new Error('Successful refresh must not need a fallback read');
+    },
+  );
+  assert.equal(reviewGateRefreshBlocksPost(false, refreshed.error), false);
 });

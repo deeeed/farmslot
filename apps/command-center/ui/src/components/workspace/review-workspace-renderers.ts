@@ -16,6 +16,7 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
     }
     review-workspace .rw-top-bar {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: ${spacing.md};
       padding: ${spacing.sm} ${spacing.lg};
@@ -87,6 +88,18 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
     review-workspace .rw-action-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+    review-workspace .rw-btn-reviewer-action {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      box-sizing: border-box;
+      flex-shrink: 0;
+      white-space: nowrap;
+      text-decoration: none;
+      background: ${colors.bgSurface};
+      color: ${colors.textPrimary};
+      border: 1px solid ${colors.accent}66;
     }
     review-workspace .rw-action-btn:hover:not(:disabled) {
       opacity: 0.85;

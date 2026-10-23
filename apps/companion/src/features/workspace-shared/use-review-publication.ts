@@ -15,7 +15,7 @@ import {
   savedReviewView,
   toggleReviewFinding,
 } from '@farmslot/protocol';
-import { refreshReviewGateView } from '@farmslot/review-dispatch';
+import { refreshReviewGateView, reviewGateRefreshBlocksPost } from '@farmslot/review-dispatch';
 
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { loadReviewFindingSource, reviewFindingSourceRequest } from '../../lib/review-curation';
@@ -47,6 +47,7 @@ export function useReviewPublication(
   const fingerprint = payload ? reviewPostingFingerprint(payload) : '';
   const identity = `${run?.id}:${decision?.id}:${fingerprint}:${profileId}:${epoch}:${client?.connectionGeneration}:${context}`;
   const savedIdentity = `${run?.id}:${profileId}:${epoch}:${context}`;
+  const refreshIdentity = `${savedIdentity}:${decision?.id}:${fingerprint}`;
   const scope = useRef({ client, identity });
   if (scope.current.client !== client || scope.current.identity !== identity)
     scope.current = { client, identity };
@@ -58,6 +59,11 @@ export function useReviewPublication(
     };
   }, []);
   const [action, setAction] = useState<{ scope: object; busy: boolean; error?: string }>();
+  const [refreshState, setRefreshState] = useState<{
+    identity: string;
+    pending: boolean;
+    error: string | null;
+  }>();
   const initial = useRef<{ fingerprint: string; state: ReviewCurationState | null }>({
     fingerprint: '',
     state: null,
@@ -77,6 +83,13 @@ export function useReviewPublication(
   const currentSource = source?.scope === scope.current ? source : undefined;
   const pending = useRef<object | undefined>(undefined);
   const currentAction = action?.scope === scope.current ? action : undefined;
+  const currentRefresh = refreshState?.identity === refreshIdentity ? refreshState : undefined;
+  const postBlocked = reviewGateRefreshBlocksPost(
+    currentRefresh?.pending ?? false,
+    currentRefresh?.error,
+  );
+  const postBlockedRef = useRef(postBlocked);
+  postBlockedRef.current = postBlocked;
   const storedRun = useRunStore((state) => state.runs.find((item) => item.id === run?.id));
   const effectiveRun = reviewRunForDisplay(run, storedRun);
   const savedCandidate = !payload && effectiveRun ? savedReviewView(effectiveRun) : null;
@@ -98,7 +111,7 @@ export function useReviewPublication(
     return () =>
       active.current &&
       scope.current === capturedScope &&
-      (!bindSelection || curationRef.current === capturedCuration) &&
+      (!bindSelection || (!postBlockedRef.current && curationRef.current === capturedCuration)) &&
       isCurrentConnection();
   };
   const curationRef = useRef(curation);
@@ -189,10 +202,13 @@ export function useReviewPublication(
       } else if (operation === 'retry') {
         await retryReviewPublication(client, run.id, current, useRunStore.getState().upsertRun);
       } else {
+        setRefreshState({ identity: refreshIdentity, pending: true, error: null });
         const result = await refreshReviewGateView(
           () => client.request<RunGetResult>(Methods.RUN_REFRESH_REVIEW_GATE, { runId: run.id }),
           () => client.request<RunGetResult>(Methods.RUN_GET, { runId: run.id }),
         );
+        if (current())
+          setRefreshState({ identity: refreshIdentity, pending: false, error: result.error });
         if (current() && result.run) {
           useRunStore.getState().upsertRun(result.run);
           onRefreshed?.(result.run);
@@ -248,7 +264,11 @@ export function useReviewPublication(
       void execute('refresh');
     },
     busy: currentAction?.busy ?? false,
-    error: viewModel?.state === 'published' ? undefined : currentAction?.error,
+    postBlocked,
+    error:
+      viewModel?.state === 'published'
+        ? undefined
+        : (currentAction?.error ?? currentRefresh?.error ?? undefined),
     disabled: status !== 'connected' || Boolean(payload && !run),
     retry: () => {
       void execute('retry');

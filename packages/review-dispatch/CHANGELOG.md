@@ -2,9 +2,15 @@
 
 ## Unreleased
 
+- Share publication blocking while a review refresh is pending or failed.
+
 - Share current-checklist counts, item labels and attempt identity for run progress in both clients.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.16.0 - 2026-10-23
+
+- Share publication blocking during pending or failed review refreshes.
 
 ## 0.15.0 - 2026-10-23
 

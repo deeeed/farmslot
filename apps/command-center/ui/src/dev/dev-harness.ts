@@ -2710,6 +2710,25 @@ All checks passed.`;
       createdAt: new Date().toISOString(),
       payload: mockPayload,
     };
+    const reviewRun: Run = {
+      ...mockRuns()[0],
+      id: 'mock-run-1',
+      flowType: 'review-pr',
+      status: 'human-gating',
+      slotId: 'runner-browser-1',
+      decisions: [mockDecision],
+      agentContexts: [
+        {
+          id: 'fixture-reviewer',
+          runId: 'mock-run-1',
+          role: 'review',
+          label: 'Reviewer',
+          status: 'waiting',
+          slotId: 'runner-browser-1',
+          target: { session: 'fixture', window: 'review', target: 'fixture:review.0' },
+        },
+      ],
+    };
     return html`
       <p class="section-label">Review workspace (mock APPROVE with 3 line comments)</p>
       <div
@@ -2717,7 +2736,7 @@ All checks passed.`;
       >
         <review-workspace
           runId="mock-run-1"
-          slotId="runner-browser-1"
+          .run=${reviewRun}
           .decision=${mockDecision}
         ></review-workspace>
       </div>

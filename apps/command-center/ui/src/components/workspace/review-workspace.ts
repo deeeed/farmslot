@@ -24,7 +24,7 @@ import {
   reviewPostingFingerprint,
   reviewPostRecommendation,
 } from '@farmslot/protocol';
-import { refreshReviewGateView } from '@farmslot/review-dispatch';
+import { refreshReviewGateView, reviewGateRefreshBlocksPost } from '@farmslot/review-dispatch';
 
 import '../runs/review-history-panel.js';
 import '../diff-viewer/diff-review.js';
@@ -542,7 +542,13 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private _handlePost() {
-    if (this.readOnly || this._isRecovering || this._refreshing || !this._postAvailable) return;
+    if (
+      this.readOnly ||
+      this._isRecovering ||
+      reviewGateRefreshBlocksPost(this._refreshing, this._refreshError) ||
+      !this._postAvailable
+    )
+      return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
@@ -604,6 +610,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private async _handleRefresh() {
     if (this._isRecovering || this._refreshing) return;
+    this._confirmTimer.clear();
     this._refreshing = true;
     // Snapshot reviewer's curation keyed on comment identity so it survives
     // the payload replace that refreshReviewGate triggers.
@@ -619,6 +626,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       () => gateway.request(Methods.RUN_GET, { runId }),
     );
     if (!isRecoveryEpochCurrent(epoch) || this.runId !== runId || !this.isConnected) {
+      if (this.runId === runId)
+        this._refreshError = 'Gateway connection changed. Refresh review again before posting.';
       this._refreshing = false;
       return;
     }
@@ -985,6 +994,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         ><span>Saved review · ${this._comments.length} line comments</span>
       </div>`;
     return renderReviewTopBar({
+      run: this.run,
       comments: this._comments,
       includedComments: this._includedComments.size,
       selectedRecommendation: this._selectedRecommendation,
@@ -999,6 +1009,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       },
       posting: this._posting,
       postAvailable: this._postAvailable,
+      postBlocked: reviewGateRefreshBlocksPost(this._refreshing, this._refreshError),
       recovering: this._isRecovering,
       refreshing: this._refreshing,
       proposing: this._proposing,
@@ -1008,8 +1019,6 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       proposeImprovement: () => this._handleProposeImprovement(),
       post: () => this._handlePost(),
       dismiss: () => this._handleDismiss(),
-      reviewerHref: this.reviewerHref,
-      reviewerUnavailable: this.reviewerUnavailable,
     });
   }
 
