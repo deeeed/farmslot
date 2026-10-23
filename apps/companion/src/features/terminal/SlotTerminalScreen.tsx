@@ -31,19 +31,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AGENT_ROLES,
   type CopilotFormatInstructionResult,
-  Events,
   extractRunArtifactManifest,
   Methods,
   type Run,
   type RunRecipeRunsForRunResult,
   type TaskProgressResult,
-  type TaskProgressStructured,
-  type TaskProgressUpdatedPayload,
   type TerminalData,
   type TerminalSnapshotResult,
   type TmuxListResult,
   type TmuxWindow,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { listSlotTmuxWindows, slotTmuxWindowTarget } from '@farmslot/review-dispatch';
 
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
@@ -52,6 +50,7 @@ import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -64,6 +63,7 @@ import {
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
+import { getResourceCache } from '../../lib/resource-cache';
 import {
   hasRunWorkspaceDiff,
   selectSlotRecipeArtifactsForPreviewScope,
@@ -73,7 +73,6 @@ import {
   fallbackTaskProgressSummary,
   isSlotWorkerProgressActive,
   isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { slotTerminalRunnerPane, type TerminalControlKey } from '../../lib/terminal-controls';
@@ -307,8 +306,21 @@ export default function TerminalScreen() {
     ? targetRecipeRuns.reduce((count, group) => count + artifactsForRecipeRun(group).length, 0)
     : null;
   const targetRecipeAvailabilityError = terminalContext.recipes.error?.message ?? null;
-  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
-  const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
+  const progressQuery = useMemo(() => {
+    const target = taskProgressRequestForRun(targetRun);
+    return target
+      ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
+          ...target,
+          ...(contextId ? { contextId } : {}),
+          ...(role ? { role } : {}),
+        })
+      : undefined;
+  }, [targetRun?.id, targetRun?.slotId, targetRun?.reviewWorkspace?.workspaceId, contextId, role]);
+  const progressObservation = useResourceQuery(progressQuery);
+  const taskProgress = progressObservation.data?.structured ?? null;
+  const taskProgressError = progressObservation.error
+    ? `Task progress unavailable: ${progressObservation.error.message}`
+    : null;
   const terminalTargetParams = slotId || runId ? terminalContext.target : null;
   const contextRef = useRef(terminalContext);
   contextRef.current = terminalContext;
@@ -363,8 +375,6 @@ export default function TerminalScreen() {
     setControlError(null);
     setTmuxError(null);
     setTmuxWindows([]);
-    setTaskProgress(null);
-    setTaskProgressError(null);
     setSnapshotRole(null);
     setSnapshotContextId(null);
     setSnapshotError(null);
@@ -500,54 +510,6 @@ export default function TerminalScreen() {
       setSnapshotError(`Snapshot failed: ${getErrorMessage(error)}`);
     }
   }, [client, replaceTerminalTail, terminalContext.scopeKey]);
-
-  const fetchTaskProgress = useCallback(() => {
-    const params = taskProgressRequestForRun(targetRun);
-    if (!client || !params || !contextRef.current.ready) return Promise.resolve();
-    const captured = terminalContext.capture();
-    return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
-      .then((result) => {
-        if (!captured.current()) return;
-        setTaskProgress(result.structured ?? null);
-        setTaskProgressError(null);
-      })
-      .catch((error: Error) => {
-        if (!captured.current()) return;
-        setTaskProgressError(`Task progress unavailable: ${error.message}`);
-      });
-  }, [
-    client,
-    targetRun?.id,
-    targetRun?.slotId,
-    targetRun?.reviewWorkspace?.workspaceId,
-    terminalContext.scopeKey,
-  ]);
-
-  useEffect(() => {
-    if (!client || !targetRun) return;
-    const captured = terminalContext.capture();
-    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      const update = payload as TaskProgressUpdatedPayload;
-      if (!captured.current() || !shouldAcceptTaskProgressUpdate(targetRun, update)) return;
-      setTaskProgress(update.progress.structured ?? null);
-      setTaskProgressError(null);
-    });
-    return unsub;
-  }, [client, targetRun, terminalContext.scopeKey]);
-
-  useEffect(() => {
-    if (!isWorkerProgressActive(targetRun)) {
-      setTaskProgress(null);
-      setTaskProgressError(null);
-      return;
-    }
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchTaskProgress, targetRun]);
 
   const handleTerminalInput = useCallback(
     (data: string) => {
@@ -1883,6 +1845,18 @@ export default function TerminalScreen() {
       )}
 
       <ResourceReadStatus observation={terminalContext.run} label="terminal run" />
+      {progressQuery ? (
+        <ResourceReadStatus observation={progressObservation} label="task progress" />
+      ) : null}
+      {progressObservation.error && progressQuery ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Retry task progress"
+          onPress={() => void getResourceCache()?.retry(progressQuery)}
+        >
+          <Text style={styles.warningRetryText}>Retry</Text>
+        </Pressable>
+      ) : null}
       <SlotTerminalSessionPane
         key={terminalContext.scopeKey}
         native={native}

@@ -53,6 +53,7 @@ assert(
     'fleet-store-web',
     'capabilities-web',
     'progress-web',
+    'progress-detail-web',
     'remote-progress-web',
   ].includes(phase),
   'Select a run proof phase',
@@ -741,8 +742,9 @@ async function detailBrowser(runId) {
   };
 }
 
-if (phase === 'progress-web' || phase === 'remote-progress-web') {
+if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phase)) {
   const remote = phase === 'remote-progress-web';
+  const detail = phase === 'progress-detail-web';
   const controlTarget = remote ? process.env.FARMSLOT_REMOTE_FILE_CONTROL : undefined;
   assert([undefined, 'deletion', 'read-error'].includes(controlTarget));
   assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
@@ -843,8 +845,12 @@ if (phase === 'progress-web' || phase === 'remote-progress-web') {
         )
       ).stdout,
     );
-  const route = 'runs';
-  const probe = path.join(root, 'apps/command-center/scripts/probes/offline-progress.js');
+  let route = 'runs';
+  const probe = path.join(
+    root,
+    'apps/command-center/scripts/probes',
+    detail ? 'offline-progress-detail.js' : 'offline-progress.js',
+  );
   const base = new URL(process.env.FARMSLOT_UI_URL);
   base.searchParams.set('progress-proof', randomUUID());
   const until = async (ready, label) => {
@@ -974,7 +980,8 @@ if (phase === 'progress-web' || phase === 'remote-progress-web') {
           );
         };
         if (remote) await waitNode();
-        base.hash = `runs?tab=all&progressRun=${runId}`;
+        if (detail) route = `run/${runId}`;
+        base.hash = detail ? route : `runs?tab=all&progressRun=${runId}`;
         await cdp('goto', base.href);
         await cdp('focus', route);
         const initial = await until(
@@ -994,6 +1001,22 @@ if (phase === 'progress-web' || phase === 'remote-progress-web') {
             revision(value) > revision(initial),
           'An owned checklist write must advance the progress stamp and update the existing run row',
         );
+        if (detail) {
+          const idle = await cdp('idle-reads', route, '11000', '["task.progress"]');
+          assert.equal(idle.total, 0, 'An idle run detail must make no periodic progress reads');
+          const settled = await cdp('eval', route, '--file', probe);
+          assert.equal(
+            settled.freshness,
+            'ready',
+            'The idle measurement must keep a usable progress query',
+          );
+          assert.equal(
+            settled.connectionId,
+            changed.connectionId,
+            'The idle measurement cannot hide a reconnect',
+          );
+          await writeFile(path.join(artifacts, 'progress-detail-idle.json'), JSON.stringify(idle));
+        }
         if (controlTarget === 'deletion') {
           await proveRegistry();
           assert.fail('The focused deletion control unexpectedly succeeded');
@@ -1130,9 +1153,77 @@ if (phase === 'progress-web' || phase === 'remote-progress-web') {
         );
         const history = remote
           ? {}
-          : await proveProgressHistory({ fixture, projects, runId, runFile, observeResources });
+          : await proveProgressHistory({
+              fixture,
+              projects,
+              runId,
+              runFile,
+              observeResources,
+              ...(detail
+                ? {
+                    proveSelection: async () => {
+                      base.searchParams.set('selected-progress', randomUUID());
+                      base.hash = `${route}?step=review`;
+                      await cdp('goto', base.href);
+                      const selected = await until(
+                        (value) =>
+                          value.selectedFreshness === 'ready' &&
+                          value.selectedCanonical &&
+                          value.selectedCompleted === 1 &&
+                          value.selectedRendered,
+                        'A reused slot must render the old run selected-step artifact from its canonical query',
+                      );
+                      await withOwnedGatewayOffline(async () => {
+                        await until(
+                          (value) =>
+                            value.selectedFreshness === 'stale' &&
+                            value.selectedRendered &&
+                            value.actionsBlocked,
+                          'Disconnected selected-step history must remain visible and stale',
+                        );
+                        base.searchParams.set('selected-cold', randomUUID());
+                        await cdp('goto', base.href);
+                        const cold = await until(
+                          (value) =>
+                            value.selectedFreshness === 'stale' &&
+                            value.selectedCanonical &&
+                            value.selectedCompleted === 1 &&
+                            value.selectedRendered &&
+                            value.actionsBlocked,
+                          'Cold offline run detail must restore the selected-step query and inspector',
+                        );
+                        assert.equal(
+                          cold.selectedObservedAt,
+                          selected.selectedObservedAt,
+                          'Cold selected-step progress keeps its original observation time',
+                        );
+                        await cdp(
+                          'eval',
+                          route,
+                          'document.querySelector("run-detail")?.shadowRoot?.querySelector("step-inspector")?.scrollIntoView({block:"center"}); return true;',
+                        );
+                        await cdp(
+                          'screenshot',
+                          route,
+                          path.join(artifacts, 'selected-progress-cold-offline.png'),
+                        );
+                      });
+                      await until(
+                        (value) =>
+                          value.selectedFreshness === 'ready' &&
+                          value.selectedCanonical &&
+                          value.selectedCompleted === 1 &&
+                          value.selectedRendered,
+                        'Reconnect must restore selected-step readiness without changing its selection',
+                      );
+                      return { selectedProgressRestored: true };
+                    },
+                  }
+                : {}),
+            });
         return {
           ...history,
+          ...(detail ? { detailProgressIdle: true } : {}),
           ...(!remote ? { progressErrorRetained: true } : {}),
           progressNotified: true,
           progressFailureVisible: true,

@@ -51,7 +51,6 @@ export abstract class RunDetailState extends LitElement {
   @state() _now = Date.now();
   @state() selectedStep: RunStep | null = null;
   @state() selectedStepProgress: TaskProgressStructured | null = null;
-  _selectedStepProgressKey = '';
   @state() _pendingConfirm: string | null = null;
   @state() _decisionResolveError: { runId: string; decisionId: string; message: string } | null =
     null;
@@ -98,12 +97,8 @@ export abstract class RunDetailState extends LitElement {
   @state() _evidenceLightboxItems: LightboxItem[] = [];
   /** What the open lightbox steps through: the run's output, or one criterion's evidence. */
   @state() _evidenceLightboxScope = RUN_OUTPUT_SCOPE;
-  /** A worker-progress read (which carries the acceptance data) is in flight. */
+  /** Acceptance data has no cached value or error while its shared query loads. */
   @state() _taskProgressLoading = false;
-  /** A finished run's acceptance data was read once for a criterion link. */
-  _acceptanceRequested = false;
-  /** That read is queued to start after the current update. */
-  _acceptanceFetchQueued = false;
   /** The criterion whose evidence the open lightbox steps through, if any. */
   _evidenceLightboxCriterionId: string | null = null;
   /** The criterion's files were asked for as a gallery instead of the recording review. */
@@ -117,13 +112,10 @@ export abstract class RunDetailState extends LitElement {
   _jumpTimer?: ReturnType<typeof setTimeout>;
   _pendingRecipeRunSelectionId = '';
   unsub?: () => void;
-  unsubProgress?: () => void;
   unsubCI?: () => void;
   _clock?: ReturnType<typeof setInterval>;
   _suppressHashSync = false;
   _lastRequestedRunId = '';
-  _taskProgressRequestSeq = 0;
-  _lastTaskProgressFetchAt = 0;
   _liveTimeoutRequestSeq = 0;
   _lastLiveTimeoutFetchAt = 0;
   _liveTimeoutKey = '';

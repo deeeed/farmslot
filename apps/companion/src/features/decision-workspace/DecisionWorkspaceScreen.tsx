@@ -15,7 +15,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
-  Events,
   evidenceAttestationAvailable,
   improvementApplyOutcome,
   type ImprovementApplyResult,
@@ -33,8 +32,6 @@ import {
   type RuntimePostureStatusResult,
   slotPickerViewModel,
   type TaskProgressResult,
-  type TaskProgressStructured,
-  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
@@ -113,7 +110,6 @@ import {
   effectiveTaskProgressForRun,
   fallbackTaskProgressSummary,
   isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { baseStyles, colors, spacing } from '../../lib/theme';
@@ -251,6 +247,15 @@ export default function DecisionDetailScreen({
   );
   const sourceObservation = useResourceQuery(sourceQuery);
   const sourceRun = sourceObservation.data?.run ?? null;
+  const progressQuery = useMemo(() => {
+    const target = taskProgressRequestForRun(sourceRun);
+    return target ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, target) : undefined;
+  }, [sourceRun?.id, sourceRun?.slotId, sourceRun?.reviewWorkspace?.workspaceId]);
+  const progressObservation = useResourceQuery(progressQuery);
+  const taskProgress = progressObservation.data?.structured ?? null;
+  const taskProgressError = progressObservation.error
+    ? `Task progress unavailable: ${progressObservation.error.message}`
+    : null;
   const sourceDecision = sourceRun?.decisions.find(({ id }) => id === resolvedDecisionId);
   const decision = useMemo<DecisionDetail | null>(
     () =>
@@ -267,6 +272,7 @@ export default function DecisionDetailScreen({
   const error =
     actionError ??
     sourceObservation.error?.message ??
+    progressObservation.error?.message ??
     decisionsObservation.error?.message ??
     (decisionsObservation.status === 'ready' &&
     (!sourceRunId || sourceObservation.status === 'ready') &&
@@ -294,8 +300,6 @@ export default function DecisionDetailScreen({
       lineageOptions,
     });
   }, [resolvedDecisionId, reviewPicker, sourceRun]);
-  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
-  const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const [loadingDocument, setLoadingDocument] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<{ decisionId: string; slotId: string } | null>(
     null,
@@ -310,8 +314,6 @@ export default function DecisionDetailScreen({
     setViewerUri(null);
     setDocumentViewer(null);
     setLoadingDocument(null);
-    setTaskProgress(null);
-    setTaskProgressError(null);
   }, [scopeKey]);
 
   const refreshDecision = useCallback(() => {
@@ -322,10 +324,11 @@ export default function DecisionDetailScreen({
     void Promise.all([
       cache.retry(nativeDecisionsQuery),
       ...(sourceQuery ? [cache.retry(sourceQuery)] : []),
+      ...(progressQuery ? [cache.retry(progressQuery)] : []),
     ]).catch((failure: unknown) => {
       if (current()) setError(failure instanceof Error ? failure.message : String(failure));
     });
-  }, [sourceQuery, captureCurrent]);
+  }, [sourceQuery, progressQuery, captureCurrent]);
 
   useEffect(() => {
     return () => {
@@ -549,55 +552,6 @@ export default function DecisionDetailScreen({
     : null;
   const recipeAvailabilityError = recipeObservation.error?.message ?? null;
 
-  const fetchTaskProgress = useCallback(() => {
-    const params = taskProgressRequestForRun(sourceRun);
-    if (!client || !params) return Promise.resolve();
-    const current = captureCurrent();
-    return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
-      .then((result) => {
-        if (!current()) return;
-        setTaskProgress(result.structured ?? null);
-        setTaskProgressError(null);
-      })
-      .catch((err: Error) => {
-        if (!current()) return;
-        setTaskProgressError(`Task progress unavailable: ${err.message}`);
-      });
-  }, [
-    client,
-    sourceRun?.id,
-    sourceRun?.slotId,
-    sourceRun?.reviewWorkspace?.workspaceId,
-    captureCurrent,
-    scopeKey,
-  ]);
-
-  useEffect(() => {
-    if (!client || !sourceRun) return;
-    const current = captureCurrent();
-    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      if (!current()) return;
-      const update = payload as TaskProgressUpdatedPayload;
-      if (!shouldAcceptTaskProgressUpdate(sourceRun, update)) return;
-      setTaskProgress(update.progress.structured ?? null);
-      setTaskProgressError(null);
-    });
-    return unsub;
-  }, [client, sourceRun, captureCurrent, scopeKey]);
-
-  useEffect(() => {
-    if (!isWorkerProgressActive(sourceRun)) {
-      setTaskProgress(null);
-      setTaskProgressError(null);
-      return;
-    }
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchTaskProgress, sourceRun]);
   const markOutputClaimUntestable = async (claimId: string, reason: string) => {
     const gate = sourceRun?.decisions.find(
       ({ id }) => id === (outputReviewDecision?.id ?? resolvedDecisionId),
@@ -1057,6 +1011,9 @@ export default function DecisionDetailScreen({
     <View style={baseStyles.container}>
       <ResourceReadStatus observation={decisionsObservation} label="decisions" />
       {sourceRunId ? <ResourceReadStatus observation={sourceObservation} label="run" /> : null}
+      {progressQuery ? (
+        <ResourceReadStatus observation={progressObservation} label="task progress" />
+      ) : null}
       {!embedded ? (
         <Stack.Screen
           options={{

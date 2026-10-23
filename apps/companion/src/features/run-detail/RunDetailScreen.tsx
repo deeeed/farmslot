@@ -1,16 +1,13 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { createEvidenceReviewModel, runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
-  type AcceptanceCriterionRef,
-  type AcceptanceStatusLedger,
   cancelledRunSlotChoices,
   deriveRunLifecycleView,
-  Events,
   extractRunArtifactManifest,
   isSlotFreedByPark,
   isTerminalRunStatus,
@@ -22,17 +19,12 @@ import {
   type RunRecipeRunsForRunResult,
   type RunStep,
   type TaskProgressResult,
-  type TaskProgressStructured,
-  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
-  acceptsRunChecklistProgress,
-  ChecklistProgressReads,
   humanGateBlockingReason,
   pendingOutputReview,
   runActivityView,
-  runChecklistProgressTarget,
   runResultsSummary,
   runTerminalView,
 } from '@farmslot/review-dispatch';
@@ -68,7 +60,6 @@ import {
   effectiveTaskProgressForRun,
   fallbackTaskProgressSummary,
   isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { baseStyles, colors, spacing } from '../../lib/theme';
@@ -150,17 +141,6 @@ export default function RunDetailScreen() {
   const fleetSlots = useFleetStore((s) => s.fleet?.slots);
   const profileId = useConnectionStore((s) => s.activeProfileId);
   const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
-  const scopeKey = JSON.stringify([resolvedRunId, profileId, authorityEpoch]);
-  const scope = useRef({ key: scopeKey, client });
-  if (scope.current.key !== scopeKey || scope.current.client !== client)
-    scope.current = { key: scopeKey, client };
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
   const requestedRecipeRunId = Array.isArray(recipeRun)
     ? (recipeRun[0] ?? null)
     : (recipeRun ?? null);
@@ -199,24 +179,25 @@ export default function RunDetailScreen() {
   // The open output review's snapshot is what the retained report is checked against.
   const outputReview = useMemo(() => pendingOutputReview(run), [run]);
   const [actionError, setError] = useState<string | null>(null);
+  const progressQuery = useMemo(() => {
+    const target = taskProgressRequestForRun(run);
+    return target ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, target) : undefined;
+  }, [run?.id, run?.slotId, run?.reviewWorkspace?.workspaceId]);
+  const progressObservation = useResourceQuery(progressQuery);
+  const taskProgress = progressObservation.data?.structured ?? null;
+  const acceptanceStatus = progressObservation.data?.acceptanceStatus ?? null;
+  const acceptanceCriteria = progressObservation.data?.acceptanceCriteria ?? null;
+  const acceptanceStatusError =
+    progressObservation.error?.message ?? progressObservation.data?.acceptanceStatusError ?? null;
+  const taskProgressError = progressObservation.error
+    ? `Task progress unavailable: ${progressObservation.error.message}`
+    : null;
   const error =
-    actionError ?? runObservation.error?.message ?? recipeObservation.error?.message ?? null;
-  const progressKey = run ? `${scopeKey}:${runChecklistProgressTarget(run)?.key ?? run.id}` : '';
-  const taskProgressReads = useRef(new ChecklistProgressReads());
-  taskProgressReads.current.select(progressKey);
-  const [taskProgressSnapshot, setTaskProgressSnapshot] = useState<{
-    key: string;
-    progress: TaskProgressStructured | null;
-  } | null>(null);
-  const taskProgress =
-    taskProgressSnapshot?.key === progressKey ? taskProgressSnapshot.progress : null;
-  // The acceptance ledger (ADR-060) rides the same progress read and broadcast.
-  const [acceptanceStatus, setAcceptanceStatus] = useState<AcceptanceStatusLedger | null>(null);
-  const [acceptanceCriteria, setAcceptanceCriteria] = useState<AcceptanceCriterionRef[] | null>(
-    null,
-  );
-  const [acceptanceStatusError, setAcceptanceStatusError] = useState<string | null>(null);
-  const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
+    actionError ??
+    runObservation.error?.message ??
+    recipeObservation.error?.message ??
+    progressObservation.error?.message ??
+    null;
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [replayingStepName, setReplayingStepName] = useState<string | null>(null);
   const requestedArtifactPath = Array.isArray(artifact) ? (artifact[0] ?? '') : (artifact ?? '');
@@ -282,89 +263,14 @@ export default function RunDetailScreen() {
   const retryRun = useCallback(async () => {
     if (runQuery) await getResourceCache()?.retry(runQuery);
     if (recipeQuery) await getResourceCache()?.retry(recipeQuery);
-  }, [runQuery, recipeQuery]);
+    if (progressQuery) await getResourceCache()?.retry(progressQuery);
+  }, [runQuery, recipeQuery, progressQuery]);
 
   useEffect(() => {
     setError(null);
     setExpandedStep(null);
     setReplayingStepName(null);
-    setTaskProgressSnapshot(null);
-    setAcceptanceStatus(null);
-    setAcceptanceCriteria(null);
-    setAcceptanceStatusError(null);
-    setTaskProgressError(null);
   }, [resolvedRunId, profileId, authorityEpoch]);
-
-  const fetchTaskProgress = useCallback(() => {
-    const params = taskProgressRequestForRun(run);
-    if (!client || !params) return Promise.resolve();
-    const owner = scope.current;
-    const read = taskProgressReads.current.begin(progressKey);
-    const connected = currentFarmConnection(client);
-    const current = () =>
-      mounted.current &&
-      scope.current === owner &&
-      taskProgressReads.current.isCurrent(read) &&
-      connected();
-    return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
-      .then((result) => {
-        if (!current()) return;
-        setTaskProgressSnapshot({ key: progressKey, progress: result.structured ?? null });
-        setAcceptanceStatus(result.acceptanceStatus ?? null);
-        setAcceptanceCriteria(result.acceptanceCriteria ?? null);
-        setAcceptanceStatusError(result.acceptanceStatusError ?? null);
-        setTaskProgressError(null);
-      })
-      .catch((err: Error) => {
-        if (!current()) return;
-        setTaskProgressError(`Task progress unavailable: ${err.message}`);
-      });
-  }, [
-    client,
-    progressKey,
-    run?.id,
-    run?.slotId,
-    run?.reviewWorkspace?.workspaceId,
-    profileId,
-    authorityEpoch,
-  ]);
-
-  useEffect(() => {
-    if (!isTimelineTab || !client || !run) return;
-    const owner = scope.current;
-    const connected = currentFarmConnection(client);
-    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      if (!mounted.current || scope.current !== owner || !connected()) return;
-      const update = payload as TaskProgressUpdatedPayload;
-      if (!shouldAcceptTaskProgressUpdate(run, update)) return;
-      if (acceptsRunChecklistProgress(run, update)) {
-        taskProgressReads.current.invalidate();
-        setTaskProgressSnapshot({ key: progressKey, progress: update.progress.structured ?? null });
-      }
-      setAcceptanceStatus(update.progress.acceptanceStatus ?? null);
-      setAcceptanceCriteria(update.progress.acceptanceCriteria ?? null);
-      setAcceptanceStatusError(update.progress.acceptanceStatusError ?? null);
-      setTaskProgressError(null);
-    });
-    return unsub;
-  }, [client, isTimelineTab, progressKey, run]);
-
-  useEffect(() => {
-    if (!isTimelineTab || !isWorkerProgressActive(run)) {
-      setTaskProgressSnapshot(null);
-      setAcceptanceStatus(null);
-      setAcceptanceCriteria(null);
-      setAcceptanceStatusError(null);
-      setTaskProgressError(null);
-      return;
-    }
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchTaskProgress, isTimelineTab, run]);
 
   const goBackOrRuns = useCallback(() => {
     if (router.canGoBack()) {
@@ -529,6 +435,8 @@ export default function RunDetailScreen() {
     reason?: string,
   ) => {
     assertNativeRunReady(run.id, run);
+    if (!progressQuery || getResourceCache()?.read(progressQuery).status !== 'ready')
+      throw new Error('Wait for current acceptance data before acting.');
     if (recipeObservation.status !== 'ready')
       throw new Error('Wait for current evidence before acting.');
     await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
@@ -628,6 +536,9 @@ export default function RunDetailScreen() {
     <View style={baseStyles.container}>
       <ResourceReadStatus observation={runObservation} label="run" />
       <ResourceReadStatus observation={recipeObservation} label="run evidence" />
+      {progressQuery ? (
+        <ResourceReadStatus observation={progressObservation} label="task progress" />
+      ) : null}
       <Animated.ScrollView
         testID="companion-screen-run-detail"
         collapsable={false}
@@ -1116,13 +1027,18 @@ export default function RunDetailScreen() {
                 evidenceModel={evidenceModel}
                 judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
                 onRecordVisualReview={
-                  runObservation.status === 'ready' && recipeObservation.status === 'ready'
+                  runObservation.status === 'ready' &&
+                  recipeObservation.status === 'ready' &&
+                  progressObservation.status === 'ready'
                     ? recordRunVisualReview
                     : undefined
                 }
                 acceptanceStatus={acceptanceStatus}
                 acceptanceCriteria={acceptanceCriteria}
                 error={acceptanceStatusError}
+                onRetry={
+                  progressQuery ? () => void getResourceCache()?.retry(progressQuery) : undefined
+                }
                 onOpenEvidence={openAcceptanceEvidence}
               />
             ) : null}
@@ -1235,7 +1151,9 @@ export default function RunDetailScreen() {
         evidenceModel={evidenceModel}
         judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
         onRecordVisualReview={
-          runObservation.status === 'ready' && recipeObservation.status === 'ready'
+          runObservation.status === 'ready' &&
+          recipeObservation.status === 'ready' &&
+          progressObservation.status === 'ready'
             ? recordRunVisualReview
             : undefined
         }

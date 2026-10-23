@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  Events,
   type FamilyObservabilityArtifact,
   type FamilyObservabilityGetResult,
   type FamilyObservabilityRunSummary,
@@ -11,8 +10,6 @@ import {
   type RunGetResult,
   type RunRecipeRunsForRunResult,
   type TaskProgressResult,
-  type TaskProgressStructured,
-  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
@@ -44,7 +41,6 @@ import {
   effectiveTaskProgressForRun,
   fallbackTaskProgressSummary,
   isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import {
@@ -127,8 +123,6 @@ export function useFamilyWorkspaceController() {
     body: string;
   } | null>(null);
   const [evidenceFilter, setEvidenceFilter] = useState<FamilyEvidenceFilter>('all');
-  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
-  const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const documentAbortRef = useRef<AbortController | null>(null);
   const requestedRecipeRunId = routeParamString(recipeRun).trim();
   const requestedArtifactPath = routeParamString(artifact).trim();
@@ -175,6 +169,15 @@ export function useFamilyWorkspaceController() {
   );
   const selectedRunObservation = useResourceQuery(selectedQuery);
   const selectedFullRun = selectedRunObservation.data?.run ?? null;
+  const progressQuery = useMemo(() => {
+    const target = taskProgressRequestForRun(selectedFullRun);
+    return target ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, target) : undefined;
+  }, [selectedFullRun?.id, selectedFullRun?.slotId, selectedFullRun?.reviewWorkspace?.workspaceId]);
+  const progressObservation = useResourceQuery(progressQuery);
+  const taskProgress = progressObservation.data?.structured ?? null;
+  const taskProgressError = progressObservation.error
+    ? `Task progress unavailable: ${progressObservation.error.message}`
+    : null;
   const familyRunIdsKey = (
     snapshot?.runs.map(({ runId }) => runId) ?? (selectedId ? [selectedId] : [])
   ).join(',');
@@ -230,6 +233,7 @@ export function useFamilyWorkspaceController() {
     actionError ??
     familyObservation.error?.message ??
     selectedRunObservation.error?.message ??
+    progressObservation.error?.message ??
     recipeObservations.find((observed) => observed.error)?.error?.message ??
     null;
   const retryFamily = useCallback(async () => {
@@ -239,6 +243,7 @@ export function useFamilyWorkspaceController() {
     const queries: ResourceQuery[] = [
       ...(familyQuery ? [familyQuery] : []),
       ...(selectedQuery ? [selectedQuery] : []),
+      ...(progressQuery ? [progressQuery] : []),
       ...recipeQueries,
     ];
     const failed = queries.filter((query) => cache.read(query).error);
@@ -247,7 +252,7 @@ export function useFamilyWorkspaceController() {
         cache.retry(query),
       ),
     );
-  }, [familyQuery, selectedQuery, recipeQueries]);
+  }, [familyQuery, selectedQuery, progressQuery, recipeQueries]);
   const profileId = useConnectionStore((state) => state.activeProfileId);
   const authorityEpoch = useConnectionStore((state) => state.authorityEpoch);
   const viewKey = JSON.stringify([familyId, selectedId, profileId, authorityEpoch]);
@@ -273,59 +278,7 @@ export function useFamilyWorkspaceController() {
     setError(null);
     setViewerUri(null);
     setDocumentViewer(null);
-    setTaskProgress(null);
-    setTaskProgressError(null);
   }, [viewKey]);
-
-  const fetchTaskProgress = useCallback(() => {
-    const params = taskProgressRequestForRun(selectedFullRun);
-    if (!client || !params) return Promise.resolve();
-    const current = captureCurrent();
-    return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
-      .then((result) => {
-        if (!current()) return;
-        setTaskProgress(result.structured ?? null);
-        setTaskProgressError(null);
-      })
-      .catch((err: Error) => {
-        if (!current()) return;
-        setTaskProgressError(`Task progress unavailable: ${err.message}`);
-      });
-  }, [
-    client,
-    selectedFullRun?.id,
-    selectedFullRun?.slotId,
-    selectedFullRun?.reviewWorkspace?.workspaceId,
-    captureCurrent,
-    viewKey,
-  ]);
-
-  useEffect(() => {
-    if (!client || !selectedFullRun) return;
-    const current = captureCurrent();
-    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      if (!current()) return;
-      const update = payload as TaskProgressUpdatedPayload;
-      if (!shouldAcceptTaskProgressUpdate(selectedFullRun, update)) return;
-      setTaskProgress(update.progress.structured ?? null);
-      setTaskProgressError(null);
-    });
-    return unsub;
-  }, [client, selectedFullRun, captureCurrent, viewKey]);
-
-  useEffect(() => {
-    if (!isWorkerProgressActive(selectedFullRun)) {
-      setTaskProgress(null);
-      setTaskProgressError(null);
-      return;
-    }
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchTaskProgress, selectedFullRun]);
 
   const runForArtifact = useCallback(
     (artifact: FamilyObservabilityArtifact) => {
@@ -717,6 +670,7 @@ export function useFamilyWorkspaceController() {
     status: 'ready' as const,
     familyObservation,
     selectedRunObservation,
+    progressObservation,
     selectedRecipeObservation,
     retryFamily,
     snapshot,

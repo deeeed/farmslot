@@ -20,6 +20,7 @@
 //   node scripts/cdp.mjs close <hash>                 Close a matching tab.
 //   node scripts/cdp.mjs gateway <method> [paramsJson] Send a JSON-RPC request to ws://localhost:7777.
 //   node scripts/cdp.mjs baseline <hash> <cold|reconnect|diff> [gate-route] Measure actual websocket reads.
+//   node scripts/cdp.mjs idle-reads <hash> <ms> <methodsJson> Count outgoing reads in a settled page.
 //
 // Env:
 //   FARMSLOT_CDP_PORT   CDP port (default 9323).
@@ -38,7 +39,10 @@ import WebSocket from 'ws';
 
 import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
 
-import { measureOfflineClientStore } from './offline-client-store-baseline.mjs';
+import {
+  measureOfflineClientStore,
+  observeIdleGatewayReads,
+} from './offline-client-store-baseline.mjs';
 
 const CDP_PORT = process.env.FARMSLOT_CDP_PORT ?? '9323';
 // Must match debug-chrome.sh: it verifies which process owns CDP at this exact
@@ -742,6 +746,24 @@ try {
     }
     const result = await screenshotTab(hash, outputPath, options);
     console.log(JSON.stringify(result, null, 2));
+  } else if (cmd === 'idle-reads') {
+    const [hash, duration, methodsJson] = rest;
+    if (!hash || !duration || !methodsJson)
+      die('usage: cdp.mjs idle-reads <hash> <ms> <methodsJson>');
+    const tab = await findTab(hash);
+    if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+    console.log(
+      JSON.stringify(
+        await observeIdleGatewayReads({
+          connect,
+          tab,
+          durationMs: Number(duration),
+          methods: JSON.parse(methodsJson),
+        }),
+        null,
+        2,
+      ),
+    );
   } else if (cmd === 'baseline') {
     const [hash, phase, route, matchJson] = rest;
     if (!hash || !phase) die('usage: cdp.mjs baseline <hash> <cold|reconnect|diff> [gate-route]');

@@ -1,7 +1,40 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { measureOfflineClientStore } from './offline-client-store-baseline.mjs';
+import {
+  measureOfflineClientStore,
+  observeIdleGatewayReads,
+} from './offline-client-store-baseline.mjs';
+
+test('idle measurement counts matching outgoing reads without retaining request payloads', async () => {
+  let closed = false;
+  const result = await observeIdleGatewayReads({
+    methods: ['task.progress'],
+    durationMs: 10,
+    tab: { webSocketDebuggerUrl: 'ws://fixture/' },
+    connect: async (_url, receive) => ({
+      async call(method) {
+        assert.equal(method, 'Network.enable');
+        for (const [direction, frame] of [
+          ['Sent', { type: 'req', method: 'task.progress', params: { runId: 'private-run' } }],
+          ['Sent', { type: 'req', method: 'gateway.ping' }],
+          ['Received', { type: 'res', method: 'task.progress' }],
+        ])
+          receive({
+            method: `Network.webSocketFrame${direction}`,
+            params: { response: { opcode: 1, payloadData: JSON.stringify(frame) } },
+          });
+      },
+      close() {
+        closed = true;
+      },
+    }),
+  });
+  assert.deepEqual(result.counts, { 'task.progress': 1 });
+  assert.equal(result.total, 1);
+  assert(!JSON.stringify(result).includes('private-run'));
+  assert(closed);
+});
 
 function fixture(frames, { closeCount = 1 } = {}) {
   let receive;

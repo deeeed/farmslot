@@ -12,6 +12,7 @@ export async function proveProgressHistory({
   runId,
   runFile,
   observeResources,
+  proveSelection,
 }) {
   const control = process.env.FARMSLOT_PROGRESS_HISTORY_CONTROL;
   assert([undefined, 'missing', 'retained'].includes(control));
@@ -133,7 +134,7 @@ export async function proveProgressHistory({
     const successor = await read({ runId: successorId });
     assert.equal(successor.structured?.totalSteps, 1);
     assert(successor.markdown.includes('successor-only progress'));
-    return { progressOwnershipIsolated: true };
+    return { progressOwnershipIsolated: true, ...(await proveSelection?.()) };
   } finally {
     actor?.close();
     await withOwnedGatewayOffline(async () => {

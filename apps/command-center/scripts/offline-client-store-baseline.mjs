@@ -1,6 +1,39 @@
 // CDP measurements retain counts and timings, never payloads or credentials.
 import assert from 'node:assert/strict';
 
+/** Count real outgoing read frames in a settled page, without retaining payloads. */
+export async function observeIdleGatewayReads({ connect, tab, methods, durationMs = 11000 }) {
+  assert(
+    Array.isArray(methods) &&
+      methods.length &&
+      methods.every((method) => typeof method === 'string'),
+  );
+  assert(Number.isSafeInteger(durationMs) && durationMs > 0 && durationMs <= 60000);
+  const counts = Object.fromEntries(methods.map((method) => [method, 0]));
+  let active = false;
+  const client = await connect(tab.webSocketDebuggerUrl, ({ method, params }) => {
+    if (!active || method !== 'Network.webSocketFrameSent' || params.response.opcode !== 1) return;
+    const raw = params.response.payloadData;
+    if (!raw.startsWith('{')) return;
+    const frame = JSON.parse(raw);
+    if (frame.type === 'req' && Object.hasOwn(counts, frame.method)) counts[frame.method]++;
+  });
+  const started = performance.now();
+  try {
+    active = true;
+    await client.call('Network.enable');
+    await new Promise((resolve) => setTimeout(resolve, durationMs));
+    return {
+      elapsedMs: Math.round(performance.now() - started),
+      counts,
+      total: Object.values(counts).reduce((sum, count) => sum + count, 0),
+    };
+  } finally {
+    active = false;
+    client.close();
+  }
+}
+
 /** Measure production reads triggered by navigation, reload, or a socket disconnect. */
 export async function measureOfflineClientStore({ connect, tab, phase, route, gatewayUrl, match }) {
   assert(['cold', 'reconnect', 'diff'].includes(phase), 'Expected cold, reconnect or diff');

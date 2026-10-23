@@ -12,7 +12,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Find runs by every covered Jira key and show editable operator ticket links in run detail.
 
-- Show current-checklist progress beneath the pipeline in run lists and detail.
+- Show current-checklist progress beneath the pipeline in run lists and detail. Run detail and selected-step history share persisted queries, retain read errors and saved age offline, and follow changes without per-view polling.
 
 - Resume the blocked worker through the gateway’s validated recovery action, including held review fixes.
 

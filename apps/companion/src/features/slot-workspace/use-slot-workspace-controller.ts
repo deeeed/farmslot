@@ -13,7 +13,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  Events,
   extractRunArtifactManifest,
   type FamilyObservabilityGetResult,
   Methods,
@@ -23,7 +22,6 @@ import {
   type SlotRunHistoryEntry,
   type SlotRunHistoryResult,
   type TaskProgressResult,
-  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
@@ -53,7 +51,7 @@ import {
   fallbackTaskProgressSummary,
   isSlotWorkerProgressActive,
   isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
+  taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import {
   selectPrimaryWorkspaceDecision,
@@ -149,6 +147,15 @@ export function useSlotWorkspaceController() {
   );
   const runObservation = useResourceQuery(runQuery);
   const currentRun = runObservation.data?.run ?? null;
+  const progressQuery = useMemo(() => {
+    const target = taskProgressRequestForRun(currentRun);
+    return target ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, target) : undefined;
+  }, [currentRun?.id, currentRun?.slotId, currentRun?.reviewWorkspace?.workspaceId]);
+  const progressObservation = useResourceQuery(progressQuery);
+  const taskProgress = progressObservation.data ?? null;
+  const taskProgressError = progressObservation.error
+    ? `Task progress unavailable: ${progressObservation.error.message}`
+    : null;
   const recipeQuery = useMemo(
     () =>
       workspaceRunId
@@ -260,6 +267,7 @@ export function useSlotWorkspaceController() {
     [
       historyObservation,
       runObservation,
+      progressObservation,
       recipeObservation,
       familyObservation,
       ...historyRecipes,
@@ -270,6 +278,7 @@ export function useSlotWorkspaceController() {
     const queries: Array<ResourceQuery<unknown> | undefined> = [
       historyQuery,
       runQuery,
+      progressQuery,
       recipeQuery,
       familyQuery,
       ...historyRecipeQueries,
@@ -303,22 +312,6 @@ export function useSlotWorkspaceController() {
     if (__DEV__ && workspaceRunId)
       return observeNativeSlotFrame('slot', workspaceRunId, () => frame.current);
   }, [workspaceRunId]);
-  const [progress, setProgress] = useState<{
-    scope: string;
-    value?: TaskProgressResult;
-    error?: string;
-  }>();
-  const taskProgress = progress?.scope === selectionScope ? (progress.value ?? null) : null;
-  const taskProgressError = progress?.scope === selectionScope ? (progress.error ?? null) : null;
-  const progressScope = useRef(selectionScope);
-  progressScope.current = selectionScope;
-  const active = useRef(true);
-  useEffect(() => {
-    active.current = true;
-    return () => {
-      active.current = false;
-    };
-  }, []);
   const [navLayout, setNavLayout] = useState<WorkspaceStickyNavLayout | null>(null);
   const [stickyNavVisible, setStickyNavVisibleState] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
@@ -371,62 +364,6 @@ export function useSlotWorkspaceController() {
     const { y, height } = event.nativeEvent.layout;
     setNavLayout({ y, height });
   }, []);
-
-  const fetchTaskProgress = useCallback(async () => {
-    if (!client || !id || !workspaceRunId || runObservation.status !== 'ready') return;
-    const generation = client.connectionGeneration;
-    const current = () =>
-      active.current &&
-      progressScope.current === selectionScope &&
-      workspaceKey === getResourceWorkspaceKey() &&
-      generation === client.connectionGeneration;
-    try {
-      const result = await client.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-        slotId: id,
-        runId: workspaceRunId,
-      });
-      if (current()) setProgress({ scope: selectionScope, value: result });
-    } catch (err) {
-      if (current())
-        setProgress((previous) => ({
-          scope: selectionScope,
-          value: previous?.scope === selectionScope ? previous.value : undefined,
-          error: `Task progress unavailable: ${(err as Error).message}`,
-        }));
-    }
-  }, [client, id, workspaceRunId, runObservation.status, selectionScope, workspaceKey]);
-
-  useEffect(() => {
-    if (!client || !id || !workspaceRunId || !taskProgressTrackingActive) return;
-    return client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      const update = payload as TaskProgressUpdatedPayload;
-      if (
-        currentRun
-          ? !shouldAcceptTaskProgressUpdate(currentRun, update)
-          : update.slotId !== id || update.runId !== workspaceRunId
-      )
-        return;
-      if (progressScope.current === selectionScope && workspaceKey === getResourceWorkspaceKey())
-        setProgress({ scope: selectionScope, value: update.progress });
-    });
-  }, [
-    client,
-    currentRun,
-    id,
-    taskProgressTrackingActive,
-    workspaceRunId,
-    selectionScope,
-    workspaceKey,
-  ]);
-
-  useEffect(() => {
-    if (!taskProgressTrackingActive) return;
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchTaskProgress, taskProgressTrackingActive]);
 
   const activeTaskProgress = effectiveTaskProgressForRun(currentRun, taskProgress?.structured);
   const shouldShowTaskProgress =
@@ -533,6 +470,7 @@ export function useSlotWorkspaceController() {
     taskProgressError,
     currentRun,
     runObservation,
+    progressObservation,
     historyObservation,
     recipeObservation,
     retryRead,

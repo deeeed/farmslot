@@ -23,6 +23,7 @@ export default function SlotWorkspaceScreen() {
     taskProgressError,
     currentRun,
     runObservation,
+    progressObservation,
     historyObservation,
     recipeObservation,
     retryRead,
@@ -112,6 +113,7 @@ export default function SlotWorkspaceScreen() {
         <ResourceReadStatus observation={runObservation} label="slot run" />
         <ResourceReadStatus observation={historyObservation} label="slot history" />
         <ResourceReadStatus observation={recipeObservation} label="slot recipe inventory" />
+        <ResourceReadStatus observation={progressObservation} label="task progress" />
         {detailError ? (
           <Pressable
             accessibilityRole="button"
