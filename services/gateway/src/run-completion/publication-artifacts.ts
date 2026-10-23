@@ -939,7 +939,7 @@ export async function assertPublicationManifestOwnership(
             )
               throw new RecordedEvidenceReadError(
                 'evidence-selection-invalid',
-                `Publication declaration ${file} belongs to another recipe attempt. Before evidence must be captured by this run on its unchanged baseline.`,
+                `Publication declaration ${file} is outside selected recipe attempt ${artifactRoot}. One publication package selects one recipe attempt for after and standalone evidence. Before evidence from another attempt must be captured by this run on its unchanged baseline.`,
               );
             const invalidProvenanceField =
               (provenance.git_ref !== baseline.baseSha && 'git_ref') ||
