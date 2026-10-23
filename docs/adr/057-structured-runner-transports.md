@@ -242,3 +242,19 @@ send/resume capability and command journal. Existing reviewer instruction fields
 record the reservation; no public field, RPC, CLI flag, SDK export or harness
 configuration is added. Harnesses retain the same task-local mark contract. This
 gateway-only fix requires no runtime publication or native-host restart.
+
+## Amendment 5: managed reviewer commands without approval prompts, 2026-10-23
+
+**Status:** Accepted policy, approved by Arthur and the lead on 2026-10-23. Implementation requires paired review.
+
+### Decision
+
+Worker-managed native reviewers use a no-prompt approval policy. Native Codex starts or resumes their threads with `approvalPolicy: never`. The reviewer's existing sandbox, writable roots and run safety tier stay unchanged. Worker and standalone session policy also stays unchanged.
+
+The gateway owns this reviewer policy separately from the run tier. It rederives the policy when resuming a retained reviewer, preserving the conversation, lease and filesystem grants. Approval requests that a runner still emits remain denied.
+
+### Rationale and consequences
+
+Sandboxed reviewers inherited `untrusted`, while the gateway denied every approval request. Commands requiring approval could never run, so a review could stall without inspecting the code. Reviewers must be able to execute commands inside their existing sandbox without requesting escalation.
+
+This changes command approval inside that sandbox, not filesystem access. The private runtime launch contract carries the reviewer policy; it adds no public session permission control. The owning spec is [Agent runtime](../reference/agent-runtime.md#managed-native-reviewer-approval-policy).

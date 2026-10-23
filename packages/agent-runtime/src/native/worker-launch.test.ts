@@ -103,3 +103,20 @@ test('launch digest ignores gateway routing but still guards launch settings', a
     nativeWorkerLaunchDigest(launch),
   );
 });
+
+test('reviewer no-prompt policy is private and can resume without changing sandbox grants', async () => {
+  const { decodeNativeWorkerLaunch, nativeWorkerLaunchDigest } = await import('./worker-launch.js');
+  const launch = {
+    leaseId: '10000000-0000-4000-8000-000000000001',
+    safetyTier: 'sandboxed',
+    environment: { set: {}, unset: [] },
+  };
+  const worker = decodeNativeWorkerLaunch(launch);
+  const reviewer = decodeNativeWorkerLaunch({ ...launch, approvalPolicy: 'never' });
+  assert.equal(worker.approvalPolicy, undefined);
+  assert.equal(reviewer.approvalPolicy, 'never');
+  assert.equal(reviewer.safetyTier, worker.safetyTier);
+  assert.equal(nativeWorkerLaunchDigest(reviewer), nativeWorkerLaunchDigest(worker));
+  for (const approvalPolicy of ['untrusted', 'on-request', true])
+    assert.throws(() => decodeNativeWorkerLaunch({ ...launch, approvalPolicy }), /approval policy/);
+});

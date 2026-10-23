@@ -28,6 +28,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   return;
  }
  if (message.id === undefined) return;
+ if (message.method === 'turn/start') {
+  require('node:child_process').execFileSync(process.execPath, ['-e', 'require(\"node:fs\").writeFileSync(\"command-ran\",\"ok\")']);
+  process.stdout.write(JSON.stringify({id:message.id,result:{turn:{id:'turn'}}})+'\\n');
+  process.stdout.write(JSON.stringify({method:'turn/completed',params:{threadId:'thread',turn:{id:'turn',status:'completed'}}})+'\\n');
+  return;
+ }
  const result = ['thread/start', 'thread/resume'].includes(message.method) ? {
   thread: {id:'thread'}, activePermissionProfile: {id:${JSON.stringify(confirm ? 'farmslot-read-only-source' : ':workspace')}}
  } : {};
@@ -220,6 +226,70 @@ test('a source policy supports exact saved-session recovery and does not adverti
     assert.equal(resumed.capabilities.resumeAcrossWorkspaces, false);
   } finally {
     await manager.close('owner', sessionId);
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+for (const resume of [false, true]) {
+  test(`sandboxed reviewer ${resume ? 'resume' : 'start'} executes a command without approval and keeps its write scope`, async () => {
+    const f = await fixture(true);
+    let session;
+    let finish = () => {};
+    const completed = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let approvals = 0;
+    try {
+      session = await codexNativeAdapter.start(
+        {
+          cwd: f.root,
+          executable: f.executable,
+          safetyTier: 'sandboxed',
+          approvalPolicy: 'never',
+          ...(resume ? { resumeSessionId: 'thread' } : {}),
+        },
+        (event) => {
+          if (event.type === 'approval.requested') approvals++;
+          if (event.type === 'turn.completed') finish();
+        },
+      );
+      const messages = (await readFile(f.requests, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      const request = messages.find(
+        (message) => message.method === (resume ? 'thread/resume' : 'thread/start'),
+      ).params;
+      assert.equal(request.approvalPolicy, 'never');
+      assert.equal(request.sandbox, 'workspace-write');
+      await session.send('execute fixture command', 'command');
+      await completed;
+      assert.equal(await readFile(join(f.root, 'command-ran'), 'utf8'), 'ok');
+      assert.equal(approvals, 0);
+    } finally {
+      await session?.close();
+      await rm(f.root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('sandboxed producing workers retain untrusted approval and workspace write scope', async () => {
+  const f = await fixture(true);
+  let session;
+  try {
+    session = await codexNativeAdapter.start(
+      { cwd: f.root, executable: f.executable, safetyTier: 'sandboxed' },
+      () => {},
+    );
+    const messages = (await readFile(f.requests, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    const request = messages.find((message) => message.method === 'thread/start').params;
+    assert.equal(request.approvalPolicy, 'untrusted');
+    assert.equal(request.sandbox, 'workspace-write');
+  } finally {
+    await session?.close();
     await rm(f.root, { recursive: true, force: true });
   }
 });
