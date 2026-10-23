@@ -294,6 +294,7 @@ MUST NOT mark the slot reclaimed.
   automatic terminal cleanup. Re-entry MUST preserve the retained failure until
   supported replay or an explicit operator close/discard settles it. Cancel and
   archive MUST keep their existing ownership and confirmed-cleanup guards.
+  Retained refusals MUST remain active owners of node-support fixture references.
 - A live stacked child, fix round, foreign owner, successor reservation or foreign
   capability lease MUST prevent teardown of its resources. Shutdown MUST recheck
   the expected owner, slot epoch and replay generation before each resource.

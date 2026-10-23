@@ -111,7 +111,8 @@ test(
     );
     const fixture = await createNativeProofFixture(t, root);
     const { createRun, getRun, updateRun } = await import('../runs/store.js');
-    const { readSlotRow, updateSlotStatus } = await import('../core/index.js');
+    const { loadSlotVars, readSlotRow, updateSlotStatus } = await import('../core/index.js');
+    const { nodeSupportRetentionReferences } = await import('../node-support/activation.js');
     const { startRun, initRunEngine, cleanupSlotAfterRunFailure } =
       await import('../run-engine/orchestrator.js');
     initRunEngine(() => {});
@@ -199,6 +200,9 @@ test(
         assert.ok(isCompletionPrerequisiteFailure(refused.run));
         assert.ok(pids.every(alive), 'recoverable completion retains its owned runtime');
         assert.equal((await readSlotRow(slotId))?.current_run_id, run.id);
+        const references = await nodeSupportRetentionReferences(await loadSlotVars(slotId));
+        assert.ok(references.activeRuns?.some((owner) => owner.runId === run.id));
+        assert.ok(!references.endedRunIds?.includes(run.id));
         // The fixture explicitly stops its unleased runtimes before discarding the checkout.
         for (const resourceId of resources) {
           const stopped: ResourceControlResult = await fixture.client.call<ResourceControlResult>(

@@ -5,7 +5,7 @@ import { hostname } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { isTerminalRunStatus, resolveRunSlotId, type Run } from '@farmslot/protocol';
+import { hasUnsettledRunExecution, resolveRunSlotId, type Run } from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
 import { parseRunRecordFile } from '@farmslot/run-bundle';
 import { expandFixturePath } from '@farmslot/slot-config';
@@ -151,7 +151,7 @@ export async function nodeSupportRetentionReferences(
     const selection = nodeSupportHashPath(selected.remoteRepo, project.runtimeDir);
     selectionPaths.push(selection);
     for (const run of runs) {
-      if (run.archivedAt || isTerminalRunStatus(run.status) || resolveRunSlotId(run) !== slot.id)
+      if (run.archivedAt || !hasUnsettledRunExecution(run) || resolveRunSlotId(run) !== slot.id)
         continue;
       const paths = [selection];
       const fixtures = project.projectJson.fixtures;
@@ -190,7 +190,7 @@ export async function nodeSupportRetentionReferences(
       runIds: runs.map((run) => run.id),
     },
     endedRunIds: runs
-      .filter((run) => run.archivedAt || isTerminalRunStatus(run.status))
+      .filter((run) => run.archivedAt || !hasUnsettledRunExecution(run))
       .map((run) => run.id),
     runHashes: referencedNodeSupportHashes(runs),
   };
