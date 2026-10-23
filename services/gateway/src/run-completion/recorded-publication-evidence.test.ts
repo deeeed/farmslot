@@ -379,7 +379,7 @@ test('task declarations cannot select a retained artifact owned by another recip
   await retainRunFixture(run);
   await assert.rejects(readEvidenceManifest(run), (error: unknown) => {
     assert.equal((error as { code: string }).code, 'evidence-selection-invalid');
-    assert.match((error as Error).message, /belongs to another recipe attempt/);
+    assert.match((error as Error).message, /outside selected recipe attempt recipe-runs\/current/);
     return true;
   });
 });
@@ -762,6 +762,22 @@ test('the gate scans the pair half publication adds to an after-only selection',
 
 test('baseline declarations refuse other roles, source changes and incomplete captured closures', async (t) => {
   const f = await baselineFixture(t);
+  // Both recipe attempts belong to this run. The refusal is the package's role rule.
+  for (const root of [f.baselineRoot, f.headRoot])
+    assert.ok(
+      f.run.output?.artifactManifest.some((entry) => entry.path.startsWith(`artifacts/${root}/`)),
+    );
+  const extraAttemptRefusal = (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.ok(error.message.includes(`${f.baselineRoot}/proof.png`));
+    assert.ok(error.message.includes(`selected recipe attempt ${f.headRoot}`));
+    assert.match(
+      error.message,
+      /One publication package selects one recipe attempt for after and standalone evidence/,
+    );
+    assert.doesNotMatch(error.message, /belongs to another recipe attempt/);
+    return true;
+  };
   await writeFile(
     f.declarationPath,
     JSON.stringify({
@@ -770,7 +786,7 @@ test('baseline declarations refuse other roles, source changes and incomplete ca
     }),
   );
   await retainRunFixture(f.run);
-  await assert.rejects(readEvidenceManifest(f.run), /belongs to another recipe attempt/);
+  await assert.rejects(readEvidenceManifest(f.run), extraAttemptRefusal);
   await writeFile(
     f.declarationPath,
     JSON.stringify({
@@ -783,7 +799,7 @@ test('baseline declarations refuse other roles, source changes and incomplete ca
     }),
   );
   await retainRunFixture(f.run);
-  await assert.rejects(readEvidenceManifest(f.run), /belongs to another recipe attempt/);
+  await assert.rejects(readEvidenceManifest(f.run), extraAttemptRefusal);
   await writeFile(f.declarationPath, JSON.stringify(f.declaration));
   for (const { provenance, field } of [
     { provenance: { ...f.provenance, branch: 'detached', dirty: true }, field: 'dirty' },
