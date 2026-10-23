@@ -6,7 +6,14 @@ import { hostname, userInfo } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { FLOW_STEPS, Methods, type RuntimeCapabilityCatalogEntry } from '@farmslot/protocol';
+import {
+  FLOW_STEPS,
+  isCompletionPrerequisiteFailure,
+  Methods,
+  type ResourceControlResult,
+  type Run,
+  type RuntimeCapabilityCatalogEntry,
+} from '@farmslot/protocol';
 
 import { createNativeProofFixture } from '../runtime/native-proof-fixture.live-support.js';
 
@@ -20,7 +27,7 @@ test(
     const root = await mkdtemp('/tmp/terminal-runtime-');
     const project = 'terminal-runtime-proof';
     const resources = ['dev-server', 'metro', 'browser', 'console-tail', 'simulator'];
-    const slots = ['done-slot', 'cancelled-slot', 'failed-slot', 'stacked-slot'];
+    const slots = ['done-slot', 'cancelled-slot', 'failed-slot', 'stacked-slot', 'refused-slot'];
     for (const dir of [
       'pool',
       'scripts',
@@ -154,7 +161,62 @@ test(
         phase: 'working',
         slot_epoch: 1,
       });
-      if (slotId === 'done-slot') {
+      if (slotId === 'refused-slot') {
+        const gitEnv = {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'Fixture',
+          GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+          GIT_COMMITTER_NAME: 'Fixture',
+          GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+        };
+        execFileSync('git', ['init', '-q', '-b', 'fixture'], { cwd: repo });
+        execFileSync(
+          'git',
+          ['-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'test: fixture'],
+          { cwd: repo, env: gitEnv },
+        );
+        execFileSync('git', ['branch', 'main'], { cwd: repo });
+        execFileSync('git', ['remote', 'add', 'origin', repo], { cwd: repo });
+        execFileSync('git', ['fetch', '-q', 'origin', 'main'], { cwd: repo });
+        const task = path.join(root, 'tasks', run.id, 'TASK.md');
+        await mkdir(path.dirname(task), { recursive: true });
+        await writeFile(task, '# Refused completion fixture\n');
+        updateRun(run.id, {
+          mode: 'autonomous',
+          status: 'completing',
+          branch: 'fixture',
+          taskFile: task,
+          recordedEvidenceContractVersion: 1,
+          steps: FLOW_STEPS.dev.map((name, at) => ({
+            name,
+            status: at < FLOW_STEPS.dev.indexOf('complete') ? 'done' : 'pending',
+          })),
+        });
+        await startRun(run.id);
+        const refused = await fixture.client.call<{ run: Run }>(Methods.RUN_GET, { runId: run.id });
+        assert.equal(refused.run.status, 'failed');
+        assert.match(refused.run.error ?? '', /Artifact mirror refresh failed/);
+        assert.ok(isCompletionPrerequisiteFailure(refused.run));
+        assert.ok(pids.every(alive), 'recoverable completion retains its owned runtime');
+        assert.equal((await readSlotRow(slotId))?.current_run_id, run.id);
+        // The fixture explicitly stops its unleased runtimes before discarding the checkout.
+        for (const resourceId of resources) {
+          const stopped: ResourceControlResult = await fixture.client.call<ResourceControlResult>(
+            Methods.RESOURCE_CONTROL,
+            {
+              slotId,
+              resourceId,
+              action: 'shutdown',
+            },
+          );
+          assert.equal(stopped.ok, true);
+        }
+        await fixture.client.call(Methods.SLOT_RELEASE, {
+          slotId,
+          expectedRunId: run.id,
+          forceReset: true,
+        });
+      } else if (slotId === 'done-slot') {
         updateRun(run.id, {
           status: 'ci-watching',
           steps: FLOW_STEPS.dev.map((name) => ({ name, status: 'done' })),
@@ -206,6 +268,7 @@ test(
         status: observed.run.status,
         processesStopped: pids.length,
         childPreservedUntilItsCancel: slotId === 'stacked-slot',
+        retainedUntilExplicitDiscard: slotId === 'refused-slot',
       });
     }
     await mkdir(output, { recursive: true });

@@ -288,6 +288,12 @@ MUST NOT mark the slot reclaimed.
   servers, Metro, browser helpers and the configured simulator. An absent or
   unknown resource-watch status MUST NOT skip shutdown. Successful CI completion
   without a successor MUST perform cleanup even when no step deferred a release.
+- COMPLETE or FINALIZE prerequisite and publish-package refusals MUST retain the
+  existing worker, slot, checkout and leases for in-place recovery under ADR-065.
+  A missing delivered result or failed result-decision write MUST NOT trigger
+  automatic terminal cleanup. Re-entry MUST preserve the retained failure until
+  supported replay or an explicit operator close/discard settles it. Cancel and
+  archive MUST keep their existing ownership and confirmed-cleanup guards.
 - A live stacked child, fix round, foreign owner, successor reservation or foreign
   capability lease MUST prevent teardown of its resources. Shutdown MUST recheck
   the expected owner, slot epoch and replay generation before each resource.

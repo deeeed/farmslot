@@ -467,14 +467,16 @@ async function retainCompletionPrerequisiteFailure(
   runId: string,
   generation: number,
   stepName: typeof S.COMPLETE | typeof S.FINALIZE,
-  error: GatewayMethodError,
+  error: GatewayMethodError | PublishPackageRefusedError,
 ): Promise<void> {
   const current = getRun(runId);
   if (runSupersededSince(current, generation)) return;
   updateRunStep(runId, stepName, {
     status: 'failed',
     detail: error.message,
-    outputs: { gatePrerequisiteRefusal: error.details ?? {} },
+    outputs: {
+      gatePrerequisiteRefusal: error instanceof GatewayMethodError ? (error.details ?? {}) : {},
+    },
   });
   const steps = FLOW_STEPS[current!.flowType];
   for (const next of steps.slice(steps.indexOf(stepName) + 1)) {
@@ -507,7 +509,10 @@ async function retainCompletionPrerequisiteFailure(
       status: 'failed',
       completedAt: new Date().toISOString(),
       error: error.message,
-      metrics: { ...current!.metrics, outcome: 'partial' },
+      metrics: {
+        ...current!.metrics,
+        outcome: error instanceof PublishPackageRefusedError ? 'failure' : 'partial',
+      },
     },
     collaborators: { ...collaborators, cleanupEvalHarness: null, cleanupWorkspace: null },
   });
@@ -1044,32 +1049,15 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       }
 
       // COMPLETE or FINALIZE could not build the publish package from the
-      // run's evidence. A delivered result waits for a person (ADR-065
-      // Amendment 7); without one the run fails below as before.
+      // run's evidence. Both delivered and failed captures retain the original
+      // worker for recovery under ADR-065 Amendments 6 and 7.
       if (
         err instanceof PublishPackageRefusedError &&
-        (stepName === S.COMPLETE || stepName === S.FINALIZE) &&
-        !runSupersededSince(getRun(runId), myGen) &&
-        runDeliveredResult(getRun(runId)!)
+        (stepName === S.COMPLETE || stepName === S.FINALIZE)
       ) {
         stepPartialIO.delete(runId);
-        updateRunStep(runId, stepName, { status: 'failed', detail: err.message });
-        for (let j = i + 1; j < steps.length; j++) {
-          updateRunStep(runId, steps[j], { status: 'skipped' });
-        }
-        try {
-          await holdRunForResultDecision(
-            runId,
-            stepName === S.COMPLETE ? 'complete' : 'finalize',
-            err.message,
-            { patch: { metrics: { ...getRun(runId)!.metrics, outcome: 'partial' } } },
-          );
-          return;
-        } catch (holdError) {
-          console.error(
-            `[run-engine] run ${runId.slice(0, 8)} could not be held for a decision; failing it: ${(holdError as Error).message}`,
-          );
-        }
+        await retainCompletionPrerequisiteFailure(runId, myGen, stepName, err);
+        return;
       }
 
       if (err instanceof GatewayMethodError && err.code === 'RUN_GATE_NOT_READY') {
