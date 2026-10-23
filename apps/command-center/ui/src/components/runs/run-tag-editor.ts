@@ -114,9 +114,24 @@ export class RunTagEditor extends LitElement {
       font-size: 10px;
       padding-left: calc(${unsafeCSS(spacing.sm)} + 26px);
     }
+    .ticket-line {
+      white-space: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      font: inherit;
+      color: ${unsafeCSS(colors.textSecondary)};
+    }
+    .ticket-line a {
+      color: ${unsafeCSS(colors.accent)};
+      text-decoration: none;
+    }
+    .ticket-line a:hover {
+      text-decoration: underline;
+    }
   `;
 
   @property({ reflect: true }) kind: 'tags' | 'tickets' = 'tags';
+  @property({ type: Boolean }) compact = false;
   @property({ attribute: false }) run?: Run;
   @property({ attribute: false }) tags: readonly string[] = [];
   @property({ type: Boolean }) disabled = false;
@@ -170,6 +185,21 @@ export class RunTagEditor extends LitElement {
   render() {
     const tags = this.normalizedTags();
     const tickets = this.kind === 'tickets' && this.run ? runLinkedTicketsView(this.run) : null;
+    if (this.compact && tickets)
+      return html`<div
+        class="ticket-line"
+        aria-label="Run source and covered tickets"
+        @click=${(e: Event) => e.stopPropagation()}
+      >
+        ${tickets.references.map(
+          (reference, index) =>
+            html`${index ? ', ' : ''}${reference.url
+              ? html`<a href=${reference.url} target="_blank" rel="noopener noreferrer"
+                  >${reference.ref}</a
+                >`
+              : reference.ref}`,
+        )}
+      </div>`;
     if (tickets && !tickets.tickets.length && !tickets.pr && !this.saveTags) return nothing;
     if (this.editing) {
       return html`

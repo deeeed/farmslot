@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Verify compact source and covered-ticket rows with one and six tickets; show shared total and current-step elapsed time on the existing metadata line.
+
 - Prove Ask reviewer routing and failed-refresh publication blocking through the browser.
 
 - Prove linked-ticket search and pasted additional-ticket keys through the browser.

@@ -133,3 +133,29 @@ test('unresolved URLs keep the covered key visible rather than inventing a track
     [null, null, null],
   );
 });
+
+test('compact run references show the source ticket once before additional covered tickets', () => {
+  for (const count of [1, 6]) {
+    const refs = Array.from({ length: count }, (_, index) => `TEAM-${100 + index}`);
+    const source = run({ ticketData: undefined, linkedTicketRefs: [...refs, refs[0]] });
+    const view = runLinkedTicketsView(source);
+    assert.deepEqual(view.references, [
+      ...refs.map((ref) => ({ ref, url: `https://tracker.example/browse/${ref}` })),
+      { ref: 'PR ↗', url: 'https://github.com/example/repo/pull/10' },
+    ]);
+    assert.deepEqual(selectRunList([source], { scope: 'all', search: refs[count - 1] }), [source]);
+  }
+});
+
+test('compact PR sources precede the tickets without repeating the recorded PR link', () => {
+  for (const ticketOrPr of ['example/repo#10', 'https://github.com/example/repo/pull/10']) {
+    const view = runLinkedTicketsView(run({ ticketOrPr }));
+    assert.deepEqual(view.references, [
+      { ref: 'example/repo#10', url: 'https://github.com/example/repo/pull/10' },
+      ...['TEAM-100', 'TEAM-200', 'TEAM-300'].map((ref) => ({
+        ref,
+        url: `https://tracker.example/browse/${ref}`,
+      })),
+    ]);
+  }
+});

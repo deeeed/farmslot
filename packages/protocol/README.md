@@ -282,6 +282,8 @@ MIT. See [LICENSE](LICENSE).
 
 Run ticket helpers `runLinkedTicketRefs`, `runLinkedTicketsView` and
 `normalizeRunLinkedTicketRefs` serve Command Center and Companion list/detail/search.
+`runElapsedTimeView` supplies total/current-step elapsed labels and whether each list clock should tick.
+`runLinkedTicketsView.references` supplies their source-first inline list without repeating the source ticket or PR.
 `parseRunLinkedTicketRefs` validates their additional-ticket editor text.
 `Run.linkedTicketRefs` stores operator additions; frozen ticket data stays intact.
 `RunMethods.setLinkedTickets` names the supported metadata RPC. See the

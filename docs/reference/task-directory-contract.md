@@ -36,11 +36,23 @@ projections carry the covered-key union so a trimmed summary retains ticket look
 Removing an operator addition MUST NOT remove a key derived from frozen inputs.
 A known Jira browse URL supplies links; a key without a resolved URL stays visible.
 The run's recorded PR link remains available beside its tickets.
+Run list rows MUST render one comma-separated line at the metadata text size,
+without ticket pills or a separate label. The source ticket comes first and
+appears once. A PR source is linked first, followed by covered tickets. The shared
+`runLinkedTicketsView.references` owns this order and destinations. Long lines
+scroll horizontally so additional tickets do not increase row height.
+The existing metadata line also shows total wall time from `startedAt` or `createdAt`,
+plus elapsed wall time from the running step's `startedAt`. Clients pass the
+steps from the existing `runActivityView` so review and fix attempts share the
+pipeline's current actor and attempt start. Both apps MUST use
+`runElapsedTimeView` and tick live labels at least once per minute. Terminal totals
+freeze at `completedAt`, falling back to `statusChangedAt` or `updatedAt` on older records.
 
 ### Public surface
 
 `@farmslot/protocol` exports the additive `Run.linkedTicketRefs` contract,
-`normalizeRunLinkedTicketRefs`, `runLinkedTicketRefs` and `runLinkedTicketsView`.
+`normalizeRunLinkedTicketRefs`, `runLinkedTicketRefs`, `runLinkedTicketsView` and
+`runElapsedTimeView`.
 Command Center and Companion use the same reader and validation. Each platform
 reuses one ticket renderer for run list and detail. The supported admin metadata
 RPC `run.linkedTickets.set { runId, linkedTicketRefs }` replaces only the operator

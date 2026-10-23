@@ -2516,6 +2516,29 @@ All checks passed.`;
   private renderRunTagEditor() {
     return html`
       <p class="section-label">Run tag editor states</p>
+      ${[colors.bgSurface, '#ffffff'].map(
+        (background) => html`
+          <div
+            style="background:${background};padding:12px;margin-bottom:12px;font-size:${fonts.sizeXs}"
+          >
+            ${[1, 6].map(
+              (count) => html`
+                <run-tag-editor
+                  kind="tickets"
+                  compact
+                  .run=${{
+                    ...mockRuns()[0],
+                    ticketOrPr: 'TEAM-100',
+                    ticketData: undefined,
+                    linkedTicketRefs: Array.from({ length: count }, (_, i) => `TEAM-${100 + i}`),
+                    links: [{ label: 'Jira', url: 'https://tracker.example/browse/TEAM-100' }],
+                  }}
+                ></run-tag-editor>
+              `,
+            )}
+          </div>
+        `,
+      )}
       <div class="card-grid">
         <div class="index-card">
           <h3>Additional tickets</h3>
@@ -2556,7 +2579,47 @@ All checks passed.`;
   }
 
   private renderRuns() {
-    const runs = mockRuns();
+    let runs = mockRuns();
+    if (
+      new URLSearchParams(location.hash.split('?')[1]).get('demo')?.startsWith('inline-tickets')
+    ) {
+      runs = [1, 6].map((count, index) => ({
+        ...runs[index],
+        id: `inline-tickets-${count}`,
+        familyId: `inline-tickets-${count}`,
+        ticketOrPr: 'TEAM-100',
+        ticketData: undefined,
+        linkedTicketRefs: Array.from({ length: count }, (_, i) => `TEAM-${100 + i}`),
+        links: [{ label: 'Jira', url: 'https://tracker.example/browse/TEAM-100' }],
+        summary: `${count} covered ticket${count === 1 ? '' : 's'}`,
+        status: count === 1 ? 'fixing' : 'done',
+        createdAt: new Date(Date.now() - 134 * 60000).toISOString(),
+        startedAt: new Date(Date.now() - 134 * 60000).toISOString(),
+        completedAt: count === 6 ? new Date().toISOString() : undefined,
+        steps: [
+          {
+            name: 'human-gate',
+            status: count === 1 ? 'running' : 'done',
+            startedAt: new Date(Date.now() - 74 * 60000).toISOString(),
+          },
+        ],
+        agentContexts:
+          count === 1
+            ? [
+                {
+                  id: 'review-fix',
+                  runId: 'inline-tickets-1',
+                  role: 'review-fix',
+                  label: 'Fix',
+                  status: 'working',
+                  slotId: null,
+                  startedAt: new Date(Date.now() - 74 * 60000).toISOString(),
+                  attemptStartedAt: new Date(Date.now() - 18 * 60000).toISOString(),
+                },
+              ]
+            : [],
+      }));
+    }
     // Inject mock runs into state so run-list picks them up
     this._updateMockRuns(runs);
     return html`

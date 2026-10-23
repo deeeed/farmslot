@@ -1,4 +1,5 @@
 import type { Run, RunTicketData } from '../contracts/runs.js';
+import { githubPullUrl, parseGitHubPullUrl, parseGitHubRef } from '../integrations/github-ref.js';
 
 const JIRA_KEY = /\b[A-Z][A-Z0-9]*-\d+\b/g;
 const EXACT_JIRA_KEY = /^[A-Z][A-Z0-9]*-\d+$/;
@@ -62,6 +63,7 @@ export interface RunLinkedTicketsView {
   tickets: LinkedRunTicketView[];
   operatorRefs: string[];
   pr: { label: string; url: string } | null;
+  references: Pick<LinkedRunTicketView, 'ref' | 'url'>[];
 }
 
 /** Thin web/native renderers share ticket identities, destinations and edit values. */
@@ -76,16 +78,26 @@ export function runLinkedTicketsView(run: RunTicketSource): RunLinkedTicketsView
     .map((url) => url.match(/^(https?:\/\/[^?#]+\/browse\/)[A-Z][A-Z0-9]*-\d+(?:[?#].*)?$/i)?.[1])
     .find(Boolean);
   const pr = run.links?.find((link) => link.label === 'PR' && /^https?:\/\//.test(link.url));
+  const tickets = runLinkedTicketRefs(run).map((ref) => ({
+    ref,
+    url:
+      recorded.find((ticket) => ticket.ref.toUpperCase() === ref && /^https?:\/\//.test(ticket.url))
+        ?.url ?? (browseRoot ? `${browseRoot}${ref}` : null),
+    operatorAdded: operatorRefs.includes(ref),
+  }));
+  const sourcePr = parseGitHubRef(run.ticketOrPr) ?? parseGitHubPullUrl(run.ticketOrPr);
+  const references: RunLinkedTicketsView['references'] = tickets.map(({ ref, url }) => ({
+    ref,
+    url,
+  }));
+  if (sourcePr) references.unshift({ ref: sourcePr.ref, url: githubPullUrl(sourcePr) });
+  else if (!tickets.some((ticket) => ticket.ref === run.ticketOrPr.toUpperCase()))
+    references.unshift({ ref: run.ticketOrPr, url: null });
+  if (pr && !sourcePr) references.push({ ref: 'PR ↗', url: pr.url });
   return {
-    tickets: runLinkedTicketRefs(run).map((ref) => ({
-      ref,
-      url:
-        recorded.find(
-          (ticket) => ticket.ref.toUpperCase() === ref && /^https?:\/\//.test(ticket.url),
-        )?.url ?? (browseRoot ? `${browseRoot}${ref}` : null),
-      operatorAdded: operatorRefs.includes(ref),
-    })),
+    tickets,
     operatorRefs,
     pr: pr ? { label: 'PR', url: pr.url } : null,
+    references,
   };
 }
