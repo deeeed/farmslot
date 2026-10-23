@@ -9,6 +9,7 @@ export type ResourceKey =
   | { family: 'gate' | 'package'; runId: string; decisionId?: string }
   | { family: 'slots'; scope: 'farm'; project?: string; nodeId?: string }
   | { family: 'slot'; slotId: string }
+  | { family: 'node'; scope: 'farm' }
   | { family: 'node' | 'pressure' | 'workers'; nodeId: string }
   | { family: 'review'; runId: string; reviewId?: string }
   | { family: 'artifacts'; runId: string; invocationId?: string }

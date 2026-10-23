@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Fleet persists through an offline reload and gateway restart",
-  "description": "ADR-071 fleet client proof. Run from this checkout against the isolated one-slot CLI fixture selected by FARMSLOT_OFFLINE_PROOF, FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, FARMSLOT_SLOT_RESOURCE_PROOF, GATEWAY_PORT, FARMSLOT_UI_URL, FARMSLOT_CDP_PORT and FARMSLOT_RUN_WEB_EVIDENCE_DIR. The selected gateway must run under its own tsx watcher. The fixture has no workers, runs or devices and starts in custom mode. Only its pool mode changes, then exact pool bytes restore. The existing owned-gateway outage helper verifies listener/watcher identity, stops that gateway and recovers it in finally. Existing farm services remain untouched. Real CDP navigation reloads the page offline; probes only read the actual canonical fleet component. No UI/cache injection. Video is off. Native platform acceptance remains separate.",
+  "description": "ADR-071 fleet client proof. Run from this checkout against the isolated one-slot CLI fixture selected by FARMSLOT_OFFLINE_PROOF, FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, FARMSLOT_SLOT_RESOURCE_PROOF, GATEWAY_PORT, FARMSLOT_UI_URL, FARMSLOT_CDP_PORT and FARMSLOT_RUN_WEB_EVIDENCE_DIR. The selected gateway must run under its own tsx watcher. The fixture has no workers, runs or devices and starts in custom mode. Only its pool mode changes, then exact pool bytes restore. The existing owned-gateway outage helper verifies listener/watcher identity, stops that gateway and recovers it in finally. Existing farm services remain untouched. Real CDP navigation reloads the page offline; probes only read the actual canonical fleet component. No UI/cache injection. Video is off. Native platform acceptance remains separate. A defined observation-only node peer registers, replaces its protocol metadata, disconnects and reconnects while the actual node badge follows the canonical nodes.list query. It rejects machine commands, detaches for the local slot mode check, then reconnects for the offline reload. Both the node row and its saved age must restore. The peer credential is revoked and principal retired in finally. Keep FARMSLOT_MONITOR_FLEET_POLL_MS=600000 so a periodic status refresh cannot mask missing registry notifications.",
   "proofTargets": [
     {
       "id": "globalFleetNotified",
@@ -18,6 +18,14 @@
     {
       "id": "fleetRestartRecovered",
       "claim": "Gateway restart changes the observed epoch and fleet actions wait for a current read."
+    },
+    {
+      "id": "nodeInventoryNotified",
+      "claim": "Node registration, metadata replacement and disconnect update the canonical open inventory and rendered node version without Refresh; a retired transport does not remove its replacement."
+    },
+    {
+      "id": "coldNodesRestored",
+      "claim": "A new offline document restores the canonical node inventory from browser SQLite with its saved age, then gateway restart removes the absent node after a current read."
     }
   ],
   "workflow": {
@@ -68,6 +76,24 @@
         "match": "\"fleetRestartRecovered\":true",
         "intent": "Gateway restart changes the observed epoch and fleet actions wait for a current read.",
         "proves": ["fleetRestartRecovered"],
+        "next": "nodeInventoryNotified"
+      },
+      "nodeInventoryNotified": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nodeInventoryNotified\":true",
+        "intent": "Node registration, metadata replacement and disconnect update the canonical open inventory and rendered node version without Refresh; a retired transport does not remove its replacement.",
+        "proves": ["nodeInventoryNotified"],
+        "next": "coldNodesRestored"
+      },
+      "coldNodesRestored": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"coldNodesRestored\":true",
+        "intent": "A new offline document restores the canonical node inventory from browser SQLite with its saved age, then gateway restart removes the absent node after a current read.",
+        "proves": ["coldNodesRestored"],
         "next": "done"
       }
     }

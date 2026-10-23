@@ -33,7 +33,9 @@ import {
   isTerminalRunStatus,
   Methods,
   personSessionCaption,
+  sourceObservationAge,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   accountSignOutConfirmation,
   confirmAccountSignOut,
@@ -105,6 +107,7 @@ import { hashParams } from '../utils/url-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
 import { runStatusColor } from './runs/run-utils.js';
+import { ResourceQueryController } from './shared/resource-query-controller.js';
 import { renderRunTitle } from './shared/run-title.js';
 import {
   activeSidebarRuns,
@@ -224,6 +227,9 @@ export class FarmApp extends LitElement {
   @state() private versionDetailsError = '';
   @state() private versionDetailsStatus: GatewayStatusResult | null = null;
   @state() private versionDetailsNodes: NodesListResult | null = null;
+  private readonly nodeQuery = new ResourceQueryController<NodesListResult>(this, (result) => {
+    this.versionDetailsNodes = result.data ?? null;
+  });
   @state() private versionDetailsCopied = false;
   @state() private whatsNewOpen = false;
   @state() private updateDismissedSha: string | null = localStorage.getItem(UPDATE_DISMISS_KEY);
@@ -534,7 +540,13 @@ export class FarmApp extends LitElement {
     await this.refreshVersionDetails();
   }
 
+  protected override updated(changed: Map<string, unknown>): void {
+    if (changed.has('versionDetailsOpen') && !this.versionDetailsOpen)
+      this.nodeQuery.setQuery(undefined);
+  }
+
   private async refreshVersionDetails(): Promise<void> {
+    this.nodeQuery.setQuery(resourceQuery<NodesListResult>(Methods.NODES_LIST));
     if (gateway.connectionState !== 'connected') {
       this.versionDetailsError = gatewayStatusMessage(gateway);
       return;
@@ -545,10 +557,10 @@ export class FarmApp extends LitElement {
     try {
       const [status, nodes] = await Promise.all([
         gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, { refresh: true }, 30_000),
-        gateway.request<NodesListResult>(Methods.NODES_LIST, {}, 10_000),
+        this.nodeQuery.retry(),
       ]);
       this.versionDetailsStatus = status;
-      this.versionDetailsNodes = nodes;
+      if (nodes.error) throw nodes.error;
     } catch (error) {
       this.versionDetailsError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -621,6 +633,12 @@ export class FarmApp extends LitElement {
                 </button>`
               : nothing}
           </div>
+          ${this.nodeQuery.state.status === 'stale' && this.nodeQuery.state.data
+            ? html`<p>Saved nodes, ${sourceObservationAge(this.nodeQuery.state.observedAt)}.</p>`
+            : nothing}
+          ${this.nodeQuery.state.error
+            ? html`<p role="alert">Could not read nodes: ${this.nodeQuery.state.error.message}</p>`
+            : nothing}
           ${this.versionDetailsError
             ? html`<div class="fa-version-error">${this.versionDetailsError}</div>`
             : nothing}

@@ -959,6 +959,15 @@ test('resource.changed uses the key read authorization and read replies carry re
         revision: resourceRevisions.revision({ family: 'runs', scope: 'farm' }),
       },
     ]);
+    const nodeList = await request(denied, Methods.NODES_LIST, {});
+    assert.equal(nodeList.ok, true);
+    assert.deepEqual(nodeList.resourceState?.dependencies, [
+      {
+        key: { family: 'node', scope: 'farm' },
+        revision: resourceRevisions.revision({ family: 'node', scope: 'farm' }),
+      },
+    ]);
+    assert.equal((await request(native, Methods.NODES_LIST, {})).error?.code, 'AUTH_FORBIDDEN');
     const deniedNotices: EventFrame[] = [];
     const nativeNotices: EventFrame[] = [];
     native.on('message', (raw) => {
@@ -996,6 +1005,7 @@ test('resource.changed uses the key read authorization and read replies carry re
         { key: { family: 'slots', scope: 'farm' }, revision: 1, kind: 'updated' },
         { key: { family: 'slot', slotId: 'changed-slot' }, revision: 1, kind: 'updated' },
         { key: { family: 'node', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
+        { key: { family: 'node', scope: 'farm' }, revision: 1, kind: 'updated' },
         { key: { family: 'pressure', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
       ],
     });
@@ -1014,6 +1024,7 @@ test('resource.changed uses the key read authorization and read replies carry re
       { key: { family: 'slots', scope: 'farm' }, revision: 1, kind: 'updated' },
       { key: { family: 'slot', slotId: 'changed-slot' }, revision: 1, kind: 'updated' },
       { key: { family: 'node', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
+      { key: { family: 'node', scope: 'farm' }, revision: 1, kind: 'updated' },
       { key: { family: 'pressure', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
     ]);
     // This response is a websocket ordering barrier, rather than a fixed absence wait.
@@ -1031,6 +1042,7 @@ test('resource.changed uses the key read authorization and read replies carry re
           changes: [
             { key: { family: 'runs', scope: 'farm' }, revision: 1, kind: 'updated' },
             { key: { family: 'node', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
+            { key: { family: 'node', scope: 'farm' }, revision: 1, kind: 'updated' },
           ],
         },
       ],

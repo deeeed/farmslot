@@ -720,6 +720,11 @@ async function detailBrowser(runId) {
 }
 
 if (phase === 'fleet-store-web') {
+  assert.equal(
+    process.env.FARMSLOT_MONITOR_FLEET_POLL_MS,
+    '600000',
+    'Isolate writer notifications from periodic fleet refresh',
+  );
   const fixture = JSON.parse(await readFile(process.env.FARMSLOT_SLOT_RESOURCE_PROOF));
   assert.equal(await realpath(fixture.home), home);
   const pool = await realpath(fixture.poolFile);
@@ -766,11 +771,24 @@ if (phase === 'fleet-store-web') {
         slot.rendered &&
         (!lifecycle || slot.lifecycle === lifecycle),
     );
+  const nodeRevision = (value) => {
+    const dependency = value.nodeResourceState?.dependencies.find(
+      ({ key }) => key.family === 'node' && key.scope === 'farm',
+    );
+    assert(dependency, 'The node inventory must carry its collection read stamp');
+    return dependency.revision;
+  };
+  let nodePeer, nodePrincipalId, nodeCredentialId, failure;
+  const cleanup = [];
   try {
     await cdp('goto', base.href);
     await cdp('focus', 'fleet');
     const initial = await until(
-      (value) => value.freshness === 'ready' && value.current && hasSlot(value, 'manual'),
+      (value) =>
+        value.freshness === 'ready' &&
+        value.nodeFreshness === 'ready' &&
+        value.current &&
+        hasSlot(value, 'manual'),
       'The fleet must render its canonical current observation',
     );
     assert.equal(initial.storage, 'opfs-sahpool', 'Use actual browser SQLite');
@@ -782,6 +800,119 @@ if (phase === 'fleet-store-web') {
       )
     )
       await cdp('click', 'fleet', 'whats-new-modal >>> button.primary');
+    const machine = (await rpc('fleet.status')).fleet.slots[0].machine;
+    assert(
+      !initial.nodes.some((node) => node.machine === machine),
+      'The owned fixture must start without a node',
+    );
+    nodePrincipalId = (
+      await rpc('principal.create', {
+        subject: { type: 'node', machine, displayName: `offline-node-inventory-${randomUUID()}` },
+        roles: [],
+      })
+    ).principal.id;
+    const issued = await rpc('credential.issue', {
+      principalId: nodePrincipalId,
+      displayName: 'private node inventory proof',
+    });
+    nodeCredentialId = issued.credential.id;
+    nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
+    await nodePeer.read('node.connect', {
+      machine,
+      pid: process.pid,
+      protocolVersion: 'inventory-proof-v1',
+      capabilities: [],
+    });
+    const connected = await until(
+      (value) =>
+        value.nodeFreshness === 'ready' &&
+        value.nodesCanonical &&
+        value.nodes.some(
+          (node) => node.machine === machine && node.protocolVersion === 'inventory-proof-v1',
+        ) &&
+        value.nodeBadges.some((text) => text?.includes('inventory-proof-v1')),
+      'Node registration must update the canonical open node inventory',
+    );
+    assert(
+      nodeRevision(connected) > nodeRevision(initial),
+      'Node inventory registration must advance its collection stamp',
+    );
+    await cdp('click', 'fleet', 'farm-app .fa-version-footer');
+    await until(
+      (value) =>
+        value.versionsOpen &&
+        value.versionsNodesCanonical &&
+        value.versionsRendered?.includes('inventory-proof-v1'),
+      'Version details and fleet must observe the same canonical node collection',
+    );
+    const oldPeer = nodePeer;
+    nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
+    await nodePeer.read('node.connect', {
+      machine,
+      pid: process.pid,
+      protocolVersion: 'inventory-proof-v2',
+      capabilities: [],
+    });
+    await until(
+      (value) =>
+        value.versionsNodesCanonical && value.versionsRendered?.includes('inventory-proof-v2'),
+      'Open version details must follow a node replacement without Refresh',
+    );
+    await cdp('screenshot', 'fleet', path.join(artifacts, 'node-version-replacement.png'));
+    await cdp('click', 'fleet', 'farm-app .fa-modal-close');
+    const replaced = await until(
+      (value) =>
+        value.nodeFreshness === 'ready' &&
+        value.nodesCanonical &&
+        value.nodes.some(
+          (node) => node.machine === machine && node.protocolVersion === 'inventory-proof-v2',
+        ) &&
+        value.nodeBadges.some((text) => text?.includes('inventory-proof-v2')),
+      'A replacement node must update the same inventory and rendered version without Refresh',
+    );
+    assert(replaced.nodeObservedAt >= connected.nodeObservedAt);
+    assert(
+      nodeRevision(replaced) > nodeRevision(connected),
+      'Node inventory replacement must advance its collection stamp',
+    );
+    await oldPeer.closeAndWait();
+    const oldClosed = await cdp('eval', 'fleet', '--file', probe);
+    assert(
+      oldClosed.nodes.some(
+        (node) => node.machine === machine && node.protocolVersion === 'inventory-proof-v2',
+      ),
+      'A retired transport cannot remove its current replacement',
+    );
+    await nodePeer.closeAndWait();
+    nodePeer = undefined;
+    const disconnected = await until(
+      (value) =>
+        value.nodeFreshness === 'ready' && !value.nodes.some((node) => node.machine === machine),
+      'Node disconnect must remove its canonical inventory row without Refresh',
+    );
+    assert(
+      nodeRevision(disconnected) > nodeRevision(replaced),
+      'Node inventory removal must advance its collection stamp',
+    );
+    nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
+    await nodePeer.read('node.connect', {
+      machine,
+      pid: process.pid,
+      protocolVersion: 'inventory-proof-v2',
+      capabilities: [],
+    });
+    await until(
+      (value) =>
+        value.nodeFreshness === 'ready' && value.nodes.some((node) => node.machine === machine),
+      'The current inventory must recover after a node reconnect',
+    );
+    await nodePeer.closeAndWait();
+    nodePeer = undefined;
+    await until(
+      (value) =>
+        value.nodeFreshness === 'ready' && !value.nodes.some((node) => node.machine === machine),
+      'The observation peer must detach before the owned local slot check',
+    );
     await rpc('config.slot.update', { slotId: fixture.slotId, update: { mode: 'dispatch' } });
     const ready = await until(
       (value) =>
@@ -791,6 +922,18 @@ if (phase === 'fleet-store-web') {
         !value.refreshDisabled,
       'An external writer must refresh the same global fleet without Refresh',
     );
+    nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
+    await nodePeer.read('node.connect', {
+      machine,
+      pid: process.pid,
+      protocolVersion: 'inventory-proof-v2',
+      capabilities: [],
+    });
+    await until(
+      (value) =>
+        value.nodeFreshness === 'ready' && value.nodes.some((node) => node.machine === machine),
+      'The node inventory must be current before saving its offline copy',
+    );
     let cold;
     const outage = await withOwnedGatewayOffline(async () => {
       const stale = await until(
@@ -798,6 +941,7 @@ if (phase === 'fleet-store-web') {
           value.freshness === 'stale' && !value.current && value.refreshDisabled && hasSlot(value),
         'Saved fleet controls must wait for a current read',
       );
+      assert.equal(stale.nodeFreshness, 'stale');
       const age = await until(
         (value) => value.stale && value.stale !== stale.stale,
         'Saved fleet age must repaint while offline',
@@ -819,6 +963,35 @@ if (phase === 'fleet-store-web') {
         stale.observedAt,
         'Cold startup must retain the saved observation age',
       );
+      assert.equal(
+        cold.nodeFreshness,
+        'stale',
+        'Cold offline startup must restore the saved node inventory with its age',
+      );
+      assert.equal(
+        cold.nodeObservedAt,
+        stale.nodeObservedAt,
+        'Cold offline startup must restore the saved node inventory with its age',
+      );
+      assert(
+        cold.nodesCanonical &&
+          cold.nodeStale &&
+          cold.nodes.some(
+            (node) => node.machine === machine && node.protocolVersion === 'inventory-proof-v2',
+          ),
+        'Cold offline startup must restore the saved node inventory with its age',
+      );
+      await cdp('click', 'fleet', 'farm-app .fa-version-footer');
+      await until(
+        (value) =>
+          value.versionsOpen &&
+          value.versionsNodesCanonical &&
+          value.versionsRendered?.includes('inventory-proof-v2') &&
+          value.versionsRendered?.includes('Saved nodes'),
+        'Offline version details must render the same saved node inventory and its age',
+      );
+      await cdp('screenshot', 'fleet', path.join(artifacts, 'node-versions-cold-offline.png'));
+      await cdp('click', 'fleet', 'farm-app .fa-modal-close');
       await cdp('screenshot', 'fleet', path.join(artifacts, 'fleet-cold-offline.png'));
       return { stale, age, cold };
     });
@@ -827,6 +1000,8 @@ if (phase === 'fleet-store-web') {
         value.freshness === 'ready' &&
         value.current &&
         !value.refreshDisabled &&
+        value.nodeFreshness === 'ready' &&
+        !value.nodes.some((node) => node.machine === machine) &&
         hasSlot(value, 'ready'),
       'Gateway restart must restore fleet action authority only after a current read',
     );
@@ -853,12 +1028,34 @@ if (phase === 'fleet-store-web') {
         coldFleetRestored: true,
         staleFleetActionsDisabled: true,
         fleetRestartRecovered: true,
+        nodeInventoryNotified: true,
+        coldNodesRestored: true,
       }),
     );
+  } catch (error) {
+    failure = error;
   } finally {
-    await rpc('config.slot.update', { slotId: fixture.slotId, update: { mode: originalMode } });
-    assert.deepEqual(await readFile(pool), originalPool);
+    for (const restore of [
+      () => nodePeer?.closeAndWait(),
+      () => nodeCredentialId && rpc('credential.revoke', { credentialId: nodeCredentialId }),
+      () => nodePrincipalId && rpc('principal.retire', { principalIds: [nodePrincipalId] }),
+      async () => {
+        await rpc('config.slot.update', { slotId: fixture.slotId, update: { mode: originalMode } });
+        assert.deepEqual(await readFile(pool), originalPool);
+      },
+    ]) {
+      try {
+        await restore();
+      } catch (error) {
+        cleanup.push(error);
+      }
+    }
   }
+  if (failure || cleanup.length)
+    throw new AggregateError(
+      [...(failure ? [failure] : []), ...cleanup],
+      'Fleet/node proof failed',
+    );
   process.exit(0);
 }
 

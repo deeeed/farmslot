@@ -25,7 +25,7 @@ export function canReadResourceKey(
       method = Methods.FLEET_STATUS;
       break;
     case 'node':
-      method = Methods.NODE_HEALTH;
+      method = 'scope' in key ? Methods.NODES_LIST : Methods.NODE_HEALTH;
       break;
     case 'pressure':
       method = Methods.RESOURCE_PRESSURE_SNAPSHOT;

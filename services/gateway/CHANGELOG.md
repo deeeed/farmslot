@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot facts, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire. Slot facts, overlays, node-health, resource status and snapshot age invalidate their fleet and scoped readers without refetching unchanged run bindings. Failed fleet reads report source errors instead of caching an empty fleet.
+- Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot facts, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire. Slot facts, overlays, node-health, resource status and snapshot age invalidate their fleet and scoped readers without refetching unchanged run bindings. Failed fleet reads report source errors instead of caching an empty fleet. Node registration, replacement and disconnect advance inventory and per-node revisions.
 - Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
 - Prepare publication gates from current admitted visual reviews, skipping retained results whose replayed command was released.
 - Preserve the original before-evidence baseline when dispatch replays on an existing checkout without preparation.

@@ -137,6 +137,14 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     },
     dependencies: () => [{ family: 'slots', scope: 'farm' }],
   },
+  [Methods.NODES_LIST]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: 1, maxBytes: 2 * mb },
+    timeoutMs: 10_000,
+    live: true,
+    dependencies: () => [{ family: 'node', scope: 'farm' }],
+  },
 } satisfies Record<string, ResourceQueryDefinition>;
 
 export type ResourceReadMethod = keyof typeof RESOURCE_QUERY_DEFINITIONS;

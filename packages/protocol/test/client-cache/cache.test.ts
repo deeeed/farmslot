@@ -164,3 +164,11 @@ test('fleet observations share one bounded persisted query and cannot execute re
   for (const params of [{ forceRefresh: true }, { forceRefresh: 'false' }, { unsupported: true }])
     assert.throws(() => resourceQuery('fleet.status', params), /forceRefresh/);
 });
+
+test('node inventory is one bounded persisted collection observation', () => {
+  const nodes = resourceQuery('nodes.list');
+  assert.equal(nodes.live, true);
+  assert.equal(nodes.persisted, true);
+  assert.deepEqual(nodes.dependencies, [{ family: 'node', scope: 'farm' }]);
+  assert.deepEqual(nodes.retention, { maxEntries: 1, maxBytes: 2 * 1024 * 1024 });
+});

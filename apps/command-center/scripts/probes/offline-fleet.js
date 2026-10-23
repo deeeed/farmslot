@@ -13,6 +13,7 @@ if (Reflect.get(view, 'fleetObservation') !== state.fleetObservation)
 const cards = [...view.shadowRoot.querySelectorAll('machine-group')].flatMap((group) => [
   ...(group.shadowRoot?.querySelectorAll('slot-card') ?? []),
 ]);
+const shell = document.querySelector('farm-app');
 return {
   mounted: true,
   visibility: document.visibilityState,
@@ -21,6 +22,24 @@ return {
   observedAt: state.fleetObservation.observedAt,
   resourceState: state.fleetObservation.resourceState,
   current: module.isFleetCurrent(),
+  nodeFreshness: view.nodeQuery.state.status,
+  nodeObservedAt: view.nodeQuery.state.observedAt,
+  nodeResourceState: view.nodeQuery.state.resourceState,
+  nodes: [...view.nodeInfo.values()],
+  nodesCanonical: [...view.nodeInfo.values()].every((node) =>
+    view.nodeQuery.state.data?.nodes.includes(node),
+  ),
+  nodeStale: view.shadowRoot.querySelector('[data-node-freshness="stale"]')?.textContent?.trim(),
+  nodeBadges: [...view.shadowRoot.querySelectorAll('machine-group')].map((group) =>
+    group.shadowRoot?.querySelector('.node-badge')?.textContent?.trim(),
+  ),
+  versionsOpen: shell?.versionDetailsOpen,
+  versionsNodesCanonical: Boolean(
+    shell?.versionDetailsNodes &&
+    shell.versionDetailsNodes === view.nodeQuery.state.data &&
+    shell.nodeQuery.state.data === view.nodeQuery.state.data,
+  ),
+  versionsRendered: shell?.querySelector('.fa-version-modal')?.textContent,
   slots: cards.map((card) => ({
     id: card.slotData?.slot,
     lifecycle: card.slotData?.lifecycle,

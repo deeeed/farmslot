@@ -14,9 +14,6 @@ import type {
   MachinePauseSelector,
   MachinePauseStatusResult,
   MachinePauseUpdatedPayload,
-  NodeConnectedPayload,
-  NodeDisconnectedPayload,
-  NodeHealthUpdatedPayload,
   NodeInfo,
   NodesListResult,
   PressureAdmissionControlState,
@@ -40,6 +37,7 @@ import type {
 } from '@farmslot/protocol';
 import { Events, Methods, primaryRoleForFlow, sourceObservationAge } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import './machine-group.js';
 import './machine-pause-dialog.js';
@@ -64,6 +62,7 @@ import {
 } from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { summarizeFleetRefreshEligibility } from '../slot-actions/fleet-refresh-modal-model.js';
 import {
   buildSlotPendingWork,
@@ -153,10 +152,7 @@ export class FleetCanvas extends LitElement {
   private _pressureHistoryRefreshTimer?: ReturnType<typeof setTimeout>;
   private _resourcePressureRecoveryTimer?: ReturnType<typeof setTimeout>;
   private unsub?: () => void;
-  private _unsubConnected?: () => void;
-  private _unsubDisconnected?: () => void;
   private _unsubConnState?: () => void;
-  private _unsubFleetRefresh?: () => void;
   private _unsubProgress?: () => void;
   private _unsubRunUpdated?: () => void;
   private _unsubRunCreated?: () => void;
@@ -166,6 +162,14 @@ export class FleetCanvas extends LitElement {
   private _unsubMachinePauseUpdated?: () => void;
   private _progressTimer?: ReturnType<typeof setInterval>;
   private _onHashChange = () => this._readUrlParams();
+  private readonly nodeQuery = new ResourceQueryController<NodesListResult>(this, (result) => {
+    const nodes = result.data?.nodes ?? [];
+    const changed = nodes.some((node) => this.nodeInfo.get(node.machine)?.pid !== node.pid);
+    this.onlineMachines = new Set(nodes.map((node) => node.machine));
+    this.nodeInfo = new Map(nodes.map((node) => [node.machine, node]));
+    this.gatewayProtocolVersion = result.data?.gatewayProtocolVersion ?? '';
+    if (changed && result.status === 'ready') this.scheduleResourcePressureRecoveryRefresh();
+  });
 
   static styles = css`
     :host {
@@ -317,11 +321,9 @@ export class FleetCanvas extends LitElement {
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
 
-    // Fetch initial agent list — retry whenever gateway reconnects or fleet updates
-    this._fetchAgents();
+    this.nodeQuery.setQuery(resourceQuery<NodesListResult>(Methods.NODES_LIST));
     this._unsubConnState = gateway.onConnectionChange((s) => {
       if (s === 'connected') {
-        this._fetchAgents();
         this.scheduleResourcePressureRecoveryRefresh();
         if (this.machinePauseMachine) {
           this.machinePauseConnectionStale = true;
@@ -331,41 +333,6 @@ export class FleetCanvas extends LitElement {
         this.machinePauseConnectionStale = true;
       }
     });
-    let agentRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-    this._unsubFleetRefresh = gateway.subscribe(Events.FLEET_UPDATED, () => {
-      if (agentRefreshTimer) clearTimeout(agentRefreshTimer);
-      agentRefreshTimer = setTimeout(() => this._fetchAgents(), 5000);
-    });
-
-    // Track node connect/disconnect
-    this._unsubConnected = gateway.subscribe<NodeConnectedPayload>(Events.NODE_CONNECTED, (p) => {
-      this.onlineMachines = new Set([...this.onlineMachines, p.machine]);
-      const nextInfo = new Map(this.nodeInfo);
-      nextInfo.set(p.machine, {
-        machine: p.machine,
-        pid: p.pid,
-        connectedAt: new Date().toISOString(),
-        protocolVersion: p.protocolVersion,
-        versionMatch: p.versionMatch ?? p.protocolVersion === this.gatewayProtocolVersion,
-      });
-      this.nodeInfo = nextInfo;
-      // A reconnect is rare and can recover an initial snapshot/control fetch
-      // that raced node startup. Coalesce a burst of node registrations into
-      // one explicit full refresh while the resource view is open.
-      this.scheduleResourcePressureRecoveryRefresh();
-    });
-    this._unsubDisconnected = gateway.subscribe<NodeDisconnectedPayload>(
-      Events.NODE_DISCONNECTED,
-      (p) => {
-        const next = new Set(this.onlineMachines);
-        next.delete(p.machine);
-        this.onlineMachines = next;
-        const nextInfo = new Map(this.nodeInfo);
-        nextInfo.delete(p.machine);
-        this.nodeInfo = nextInfo;
-      },
-    );
-
     // Subscribe to real-time task progress events
     this._unsubProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
       Events.TASK_PROGRESS_UPDATED,
@@ -387,18 +354,12 @@ export class FleetCanvas extends LitElement {
     this._unsubRunCreated = gateway.subscribe(Events.RUN_CREATED, () => this.buildSlotRuns());
 
     // Track node health updates
-    this._unsubNodeHealth = gateway.subscribe<NodeHealthUpdatedPayload>(
-      Events.NODE_HEALTH_UPDATED,
-      (p) => {
-        const next = new Map(this.machineHealthMap);
-        next.set(p.machine, p.health);
-        this.machineHealthMap = next;
-        // Keep pressure charts current on health beats with the LIGHTWEIGHT
-        // history read only (debounced). The full snapshot (resources +
-        // attribution) refreshes solely through explicit operator actions.
-        this.schedulePressureHistoryRefresh();
-      },
-    );
+    this._unsubNodeHealth = gateway.subscribe(Events.NODE_HEALTH_UPDATED, () => {
+      // Keep pressure charts current on health beats with the LIGHTWEIGHT
+      // history read only (debounced). The full snapshot (resources +
+      // attribution) refreshes solely through explicit operator actions.
+      this.schedulePressureHistoryRefresh();
+    });
 
     // Track resource status updates
     this._unsubResourceStatus = gateway.subscribe<ResourceStatusUpdatedPayload>(
@@ -504,10 +465,7 @@ export class FleetCanvas extends LitElement {
     this._providerAccountsUnsub = null;
     super.disconnectedCallback();
     this.unsub?.();
-    this._unsubConnected?.();
-    this._unsubDisconnected?.();
     this._unsubConnState?.();
-    this._unsubFleetRefresh?.();
     this._unsubProgress?.();
     this._unsubRunUpdated?.();
     this._unsubRunCreated?.();
@@ -518,22 +476,6 @@ export class FleetCanvas extends LitElement {
     if (this._machinePauseEventTimer) clearTimeout(this._machinePauseEventTimer);
     if (this._progressTimer) clearInterval(this._progressTimer);
     window.removeEventListener('hashchange', this._onHashChange);
-  }
-
-  private async _fetchAgents() {
-    try {
-      const res = await gateway.request<NodesListResult>(Methods.NODES_LIST);
-      this.onlineMachines = new Set(res.nodes.map((a) => a.machine));
-      this.gatewayProtocolVersion = res.gatewayProtocolVersion;
-      const infoMap = new Map<string, NodeInfo>();
-      for (const a of res.nodes) infoMap.set(a.machine, a);
-      this.nodeInfo = infoMap;
-    } catch (err) {
-      console.warn(
-        '[fleet-canvas] node list fetch failed; connection change will retry:',
-        err instanceof Error ? err.message : String(err),
-      );
-    }
   }
 
   private async _fetchProviderAccounts(only?: string[], forceRefresh = false) {
@@ -567,11 +509,9 @@ export class FleetCanvas extends LitElement {
       void this.fetchResourceData();
     }
     // Populate machineHealthMap from fleet.machines
-    if (s.fleet?.machines) {
-      const next = new Map(this.machineHealthMap);
-      for (const mh of s.fleet.machines) next.set(mh.machine, mh);
-      this.machineHealthMap = next;
-    }
+    this.machineHealthMap = new Map(
+      (s.fleet?.machines ?? []).map((health) => [health.machine, health]),
+    );
     // Refresh provider subscription chips when fleet machines change
     const prevMachines = new Set(prev.map((sl) => sl.machine));
     const nextMachines = new Set(this.slots.map((sl) => sl.machine));
@@ -1327,6 +1267,17 @@ export class FleetCanvas extends LitElement {
           ? html`<span class="rehydrating-banner" data-fleet-freshness="stale">
               Saved fleet, ${sourceObservationAge(this.fleetObservation.observedAt, this.now)}.
               Actions wait for a current read.
+            </span>`
+          : ''}
+        ${this.nodeQuery.state.status === 'stale' && this.nodeQuery.state.data
+          ? html`<span class="rehydrating-banner" data-node-freshness="stale">
+              Saved nodes, ${sourceObservationAge(this.nodeQuery.state.observedAt, this.now)}.
+            </span>`
+          : ''}
+        ${this.nodeQuery.state.error
+          ? html`<span role="alert"
+              >Could not read nodes: ${this.nodeQuery.state.error.message}
+              <button @click=${() => this.nodeQuery.retry()}>Retry reading nodes</button>
             </span>`
           : ''}
         ${this.fleetObservation.data?.fleet.stale

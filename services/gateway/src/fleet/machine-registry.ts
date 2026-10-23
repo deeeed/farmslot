@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 
 import type { NativeExecutionNodeDeclaration, NodeInfo } from '@farmslot/protocol';
 
+import { resourceRevisions } from '../resources/revisions.js';
 import { advanceSourceRevision } from '../sources/change-signal.js';
 
 export interface ConnectedNode {
@@ -59,6 +60,8 @@ export function registerNode(
   });
   // Source status reads node receipts live; a reconnect changes what it can report.
   advanceSourceRevision();
+  resourceRevisions.advance({ family: 'node', scope: 'farm' });
+  resourceRevisions.advance({ family: 'node', nodeId: machine });
 }
 
 export function unregisterByWs(ws: WebSocket): string | null {
@@ -66,6 +69,8 @@ export function unregisterByWs(ws: WebSocket): string | null {
     if (node.ws === ws) {
       nodes.delete(machine);
       advanceSourceRevision();
+      resourceRevisions.advance({ family: 'node', scope: 'farm' });
+      resourceRevisions.advance({ family: 'node', nodeId: machine });
       return machine;
     }
   }
