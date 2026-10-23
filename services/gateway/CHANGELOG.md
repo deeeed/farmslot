@@ -7,6 +7,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Stop workers and slot runtimes when runs finish, fail or are cancelled, while preserving live stacked children, fix rounds and replay checkouts.
 - Prune unused node-support bundles during activation, retaining slot selections and references from every non-archived run.
 - Fetch published branch refs before prepare checks commits in a single-branch clone.
+- Let PR completion prove fresh acceptance when the published parent's approved package omits its retained ledger, instead of blocking dispatch.
+
 - Append authoritative findings missing from a review's body or inline comments instead of blocking publication over paraphrased wording.
 
 - Accept clean detached before captures at the recorded dispatch head, and name the failing provenance field when baseline validation refuses a capture.

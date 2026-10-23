@@ -32,6 +32,7 @@ import { getRunWithArchived } from '../runs/store.js';
 import { readFrozenWorkerTerminalContractForRun } from '../tasks/worker-terminal-contract.js';
 
 import {
+  resolveSelectedEvidenceRef,
   sha256Text,
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
@@ -95,6 +96,9 @@ export async function readInheritedAcceptanceCandidate(
   )
     return null;
   const prPackage = payload.prPackage;
+  // Inheritance requires the ledger to be in the approved manifest.
+  if (!resolveSelectedEvidenceRef(ACCEPTANCE_STATUS_ARTIFACT, prPackage.evidenceManifest ?? []))
+    return null;
   if (!prPackage.headSha) throw new Error('Parent acceptance proof has no captured head');
   verifyReadyGatePackageHash(prPackage);
   const ledger = await readOptionalRetainedRunText(

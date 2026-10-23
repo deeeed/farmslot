@@ -49,7 +49,16 @@ export async function persistedNodeSupportHashes(directory: string): Promise<str
   }
   const hashes = new Set<string>();
   for (const name of names.filter((name) => name.endsWith('.json'))) {
-    const record: unknown = JSON.parse(await readFile(path.join(directory, name), 'utf8'));
+    let content: string;
+    try {
+      content = await readFile(path.join(directory, name), 'utf8');
+    } catch (error) {
+      // Archiving can remove a run after the directory inventory. It retains no bundle here.
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+      throw error;
+    }
+    // Corrupt records have unknown references, so pruning must still fail closed.
+    const record: unknown = JSON.parse(content);
     if (!isRecord(record)) throw new Error(`Unreadable node-support run references: ${name}`);
     if (!record.archivedAt) for (const hash of supportHashes([record])) hashes.add(hash);
   }
@@ -154,11 +163,11 @@ d=json.loads(sys.argv[1]);bundle=Path(d['supportDir'])
 with (bundle.parent/'.activation.lock').open('a') as lock:
  fcntl.flock(lock,fcntl.LOCK_SH)
  if not bundle.is_dir():raise RuntimeError('Read-only node support bundle is unavailable')
- result=subprocess.run(['/bin/sh','-c',d['command']])
+ result=subprocess.run([sys.argv[2],'-c',d['command']])
  if result.returncode<0:
   if -result.returncode!=signal.SIGKILL:signal.signal(-result.returncode,signal.SIG_DFL)
   os.kill(os.getpid(),-result.returncode)
  sys.exit(result.returncode)
 `;
-  return `python3 -c ${shellQuote(script)} ${shellQuote(JSON.stringify({ command, supportDir }))}`;
+  return `python3 -c ${shellQuote(script)} ${shellQuote(JSON.stringify({ command, supportDir }))} "$0"`;
 }

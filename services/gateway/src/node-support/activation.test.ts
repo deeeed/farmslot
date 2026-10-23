@@ -58,6 +58,9 @@ test('one-shot activation retains persisted non-archived run references without 
     JSON.stringify({ archivedAt: 'now', bundle: hash('c') }),
   );
   assert.deepEqual(await persistedNodeSupportHashes(directory), [hash('a')]);
+  // A listed entry whose target vanished produces the same read-time ENOENT as archiving.
+  await symlink(path.join(directory, 'removed-run'), path.join(directory, 'vanished.json'));
+  assert.deepEqual(await persistedNodeSupportHashes(directory), [hash('a')]);
   await writeFile(path.join(directory, 'broken.json'), '{');
   await assert.rejects(persistedNodeSupportHashes(directory));
 });
@@ -307,4 +310,15 @@ test('an in-flight read stays protected after its cache reference expires', asyn
     if (activation) await activation;
   }
   assert.equal(await present(path.join(f.root, hash('a'))), false);
+});
+
+test('a read-only command preserves the executing shell and pipefail support', async (t) => {
+  const f = await fixture(t);
+  await f.bundle(hash('a'));
+  const command = wrapNodeSupportReadCommand(
+    'set -o pipefail; printf "%s" "$0"',
+    path.join(f.root, hash('a')),
+  );
+  const result = await exec('/bin/bash', ['-c', command]);
+  assert.equal(result.stdout, '/bin/bash');
 });
