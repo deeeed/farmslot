@@ -365,7 +365,11 @@ retention in earlier release rules and ADR-038. Blocked decision holds are uncha
 
 At node-support activation, retain bundles selected by any slot or referenced by
 any non-archived run, including completed, failed and cancelled records. Delete
-other completed bundles. Publication, selection and pruning share a node-local
+other completed bundles. References include support paths still embedded in active
+slot fixtures. Keep their observed bundles until the owning run ends, even after
+a selection or fixture refresh. An absent in-memory record is not a terminal
+receipt; one-shot activations read persisted ownership too. Publication, selection
+and pruning share a node-local
 lock so concurrent activations cannot remove each other's selected bytes.
 Unreadable selections refuse pruning; staging directories and active publishers
 are protected. Read-only command caches hold a bounded node-side reader reference;

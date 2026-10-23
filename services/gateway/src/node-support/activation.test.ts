@@ -19,7 +19,7 @@ import { makeRun } from '../run-engine/test-fixtures.js';
 
 import {
   buildNodeSupportActivationCommand,
-  persistedNodeSupportHashes,
+  persistedNodeSupportRuns,
   referencedNodeSupportHashes,
   wrapNodeSupportReadCommand,
 } from './activation.js';
@@ -42,11 +42,13 @@ test('one-shot activation retains persisted non-archived run references without 
   t.after(() => rm(directory, { recursive: true, force: true }));
   await writeFile(
     path.join(directory, 'done.json'),
-    JSON.stringify({
-      id: 'done',
-      status: 'done',
-      steps: [{ outputs: { nodeSupportHash: hash('a') } }],
-    }),
+    JSON.stringify(
+      makeRun({
+        id: 'done',
+        status: 'done',
+        steps: [{ name: 'prepare', status: 'done', outputs: { nodeSupportHash: hash('a') } }],
+      }),
+    ),
   );
   await mkdir(path.join(directory, 'archive'));
   await writeFile(
@@ -55,14 +57,24 @@ test('one-shot activation retains persisted non-archived run references without 
   );
   await writeFile(
     path.join(directory, 'archived.json'),
-    JSON.stringify({ archivedAt: 'now', bundle: hash('c') }),
+    JSON.stringify({
+      ...makeRun({
+        id: 'archived',
+        steps: [{ name: 'prepare', status: 'done', outputs: { nodeSupportHash: hash('c') } }],
+      }),
+      archivedAt: 'now',
+    }),
   );
-  assert.deepEqual(await persistedNodeSupportHashes(directory), [hash('a')]);
+  assert.deepEqual(referencedNodeSupportHashes(await persistedNodeSupportRuns(directory)), [
+    hash('a'),
+  ]);
   // A listed entry whose target vanished produces the same read-time ENOENT as archiving.
   await symlink(path.join(directory, 'removed-run'), path.join(directory, 'vanished.json'));
-  assert.deepEqual(await persistedNodeSupportHashes(directory), [hash('a')]);
+  assert.deepEqual(referencedNodeSupportHashes(await persistedNodeSupportRuns(directory)), [
+    hash('a'),
+  ]);
   await writeFile(path.join(directory, 'broken.json'), '{');
-  await assert.rejects(persistedNodeSupportHashes(directory));
+  await assert.rejects(persistedNodeSupportRuns(directory));
 });
 
 async function fixture(t: test.TestContext) {
@@ -339,4 +351,132 @@ test('a read-only zsh command preserves the node no-startup-file policy', async 
   });
   assert.equal(result.stdout, 'expected');
   assert.equal(await present(sentinel), false);
+});
+
+test('an active run retains an old fixture bundle until it ends, across later selections and fixture refresh', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b', 'c']) await f.bundle(hash(id));
+  await writeFile(path.join(f.root, hash('a'), 'payload'), 'active runtime');
+  const parity = path.join(f.home, 'slot/temp/farmslot/ci-parity');
+  await mkdir(path.dirname(parity), { recursive: true });
+  await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('a')}/projects/fixture"\n`);
+  const selected = await f.pointer('slot', hash('b'));
+  const active = [{ runId: 'active-run', paths: [parity, selected] }];
+  const activate = (id: string, activeRuns = active, endedRunIds: string[] = []) =>
+    exec('/bin/sh', [
+      '-c',
+      buildNodeSupportActivationCommand({
+        supportDir: path.join(f.root, hash(id)),
+        supportHash: hash(id),
+        selectionPath: selected,
+        references: { selectionPaths: [selected], runHashes: [], activeRuns, endedRunIds },
+        verifyCommand: 'true',
+      }),
+    ]);
+  await activate('b');
+  assert.equal(await readFile(path.join(f.root, hash('a'), 'payload'), 'utf8'), 'active runtime');
+  await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('b')}/projects/fixture"\n`);
+  await f.bundle(hash('c'));
+  await activate('c');
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'references observed during the active run remain retained',
+  );
+  await activate('c', []);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'an unloaded or unrelated caller cannot release active references',
+  );
+  await activate('c', [], ['active-run']);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    false,
+    'run completion releases its fixture references',
+  );
+});
+
+test('one-shot inventory finds active fixture ownership on disk with an empty run store', async (t) => {
+  const f = await fixture(t);
+  const pool = path.join(f.home, 'pool');
+  const projects = path.join(f.home, 'projects');
+  const runs = path.join(f.home, 'runs');
+  await Promise.all([
+    mkdir(pool),
+    mkdir(runs),
+    mkdir(path.join(projects, 'fixture'), { recursive: true }),
+  ]);
+  await writeFile(
+    path.join(pool, 'fixture.json'),
+    JSON.stringify({
+      machine: 'fixture',
+      host: 'fixture.invalid',
+      ssh_user: 'fixture',
+      os: 'macos',
+      platform: 'cli',
+      project: 'fixture',
+      slots: [{ id: 'fixture-1', repo: path.join(f.home, 'slot'), session: 'fixture-1' }],
+    }),
+  );
+  await writeFile(
+    path.join(projects, 'fixture', 'project.json'),
+    JSON.stringify({
+      name: 'fixture',
+      paths: { runtime_dir: 'temp/farmslot' },
+      fixtures: {
+        templates: [{ src: 'ci-parity', dst: '{{runtime_dir}}/ci-parity' }],
+        directories: [{ src: 'policy', dst: 'temp/policy' }],
+      },
+    }),
+  );
+  await writeFile(
+    path.join(runs, 'active.json'),
+    JSON.stringify(
+      makeRun({
+        id: 'active',
+        status: 'blocked',
+        slotId: null,
+        steps: [{ name: 'find-slot', status: 'done', outputs: { selectedSlot: 'fixture-1' } }],
+      }),
+    ),
+  );
+  await writeFile(
+    path.join(runs, 'ended.json'),
+    JSON.stringify(makeRun({ id: 'ended', status: 'done', slotId: 'fixture-1' })),
+  );
+  const activation = new URL('./activation.ts', import.meta.url).href;
+  const store = new URL('../runs/store.ts', import.meta.url).href;
+  const script = `
+    import assert from 'node:assert/strict';
+    const { listRuns } = await import(${JSON.stringify(store)});
+    assert.equal(listRuns().runs.length, 0);
+    const { loadSlotVars } = await import('@farmslot/slot-config');
+    const { nodeSupportRetentionReferences } = await import(${JSON.stringify(activation)});
+    process.stdout.write(JSON.stringify(await nodeSupportRetentionReferences(await loadSlotVars('fixture-1'))));
+  `;
+  const result = await exec(
+    process.execPath,
+    ['--import', 'tsx', '--input-type=module', '-e', script],
+    {
+      env: {
+        ...process.env,
+        FARMSLOT_POOL_DIR: pool,
+        FARMSLOT_PROJECTS_DIR: projects,
+        FARMSLOT_RUNS_DIR: runs,
+      },
+    },
+  );
+  const references = JSON.parse(result.stdout);
+  assert.deepEqual(references.activeRuns, [
+    {
+      runId: 'active',
+      paths: [
+        path.join(f.home, '.farmslot-runtime/slot/temp/farmslot/.observability/node-support-hash'),
+        path.join(f.home, 'slot/temp/farmslot/ci-parity'),
+        path.join(f.home, 'slot/temp/policy'),
+      ],
+    },
+  ]);
+  assert.deepEqual(references.endedRunIds, ['ended']);
 });

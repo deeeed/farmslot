@@ -297,7 +297,12 @@ MUST NOT mark the slot reclaimed.
   CI-watch holds retain their existing resource policy.
 - Node-support activation MUST retain every bundle selected by any slot,
   including disabled slots, and every bundle referenced by a non-archived run,
-  regardless of run status. It MUST prune other completed bundle directories.
+  regardless of run status. Active slot fixture files and symlink targets count as
+  references even when they still use a previous selection. Once observed, their
+  bundles MUST remain until the owning run ends, including after fixture refresh.
+  One-shot activations MUST include persisted run ownership; an absent record
+  MUST NOT release another caller's active references. It MUST prune other
+  completed bundle directories.
   Publication, verification, selection and pruning MUST serialize on the execution
   node. Unknown selection state MUST refuse pruning; staging directories, active
   publishers and paths outside the bundle root MUST remain untouched.
