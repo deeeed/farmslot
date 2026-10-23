@@ -13,6 +13,7 @@ import { currentProjectSources } from '@farmslot/slot-config';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/index.js';
 
+import { NODE_SUPPORT_COMMAND_CACHE_MS, wrapNodeSupportReadCommand } from './activation.js';
 import {
   collectNodeSupportBundle,
   ensureNodeSupportBundle,
@@ -33,10 +34,11 @@ const REMOTE_FARM_REF =
 /**
  * How long a bundle this process verified on a slot is trusted without asking
  * the node again. Bundles are content-addressed and never rewritten in place,
- * so the risk is only a bundle deleted by hand; the local hash is still
- * recomputed on every lookup, so a config change is never masked.
+ * and read-only cache entries retain a bounded reader reference on the node.
+ * Each read also holds the activation lock through execution. The local hash
+ * is still recomputed on every lookup, so a config change is never masked.
  */
-const VERIFIED_TTL_MS = 10 * 60_000;
+const VERIFIED_TTL_MS = NODE_SUPPORT_COMMAND_CACHE_MS;
 /** Coalesces the local re-hash across a burst (fleet refresh checks every slot at once). */
 const LOCAL_HASH_TTL_MS = 2_000;
 
@@ -216,7 +218,8 @@ export async function resolveRemoteFarmCommand(
   const cacheKey = `${vars.slotId}\0${local.hash}\0${selectSlot}`;
   const verified = verifiedBundles.get(cacheKey);
   if (verified && Date.now() - verified.at < VERIFIED_TTL_MS) {
-    return remapRemoteFarmRefs(command, verified.supportDir, local.paths);
+    const mapped = remapRemoteFarmRefs(command, verified.supportDir, local.paths);
+    return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, verified.supportDir);
   }
   const state = await withinBudget(
     ensureOnce(vars, projectVars, local, options.io, selectSlot),
@@ -225,7 +228,8 @@ export async function resolveRemoteFarmCommand(
   );
   if (!state?.hash) return command;
   verifiedBundles.set(cacheKey, { at: Date.now(), supportDir: state.supportDir });
-  return remapRemoteFarmRefs(command, state.supportDir, state.paths);
+  const mapped = remapRemoteFarmRefs(command, state.supportDir, state.paths);
+  return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, state.supportDir);
 }
 
 /**

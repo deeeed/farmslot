@@ -453,27 +453,41 @@ export async function shutdownRunSlotResources(run: Run): Promise<string | null>
       !(await slotOwnershipBlocker(run))
     );
   };
-  const { executeResourceControl, resolveSlotResources } =
-    await import('../fleet/resource-manager.js');
+  const { resolveSlotResources } = await import('../fleet/resource-manager.js');
+  const { shutdownSlotResource } = await import('../fleet/slot-cleanup.js');
   const resources = await resolveSlotResources(slotId);
   const { getRuntimeCapabilityRegistry } = await import('../methods/runtime-capabilities.js');
-  const { leases } = await getRuntimeCapabilityRegistry().settledStatus(slotId);
-  if (
-    leases.some(
-      (lease) =>
-        lease.owner.runId !== run.id &&
-        (lease.state === 'acquired' || lease.keepWarmUntil || lease.providerCleanupDeferred),
-    )
-  )
-    return 'Another runtime capability owner still uses this slot';
+  const registry = getRuntimeCapabilityRegistry();
   const failures: string[] = [];
-  for (const resource of resources) {
+  for (const resource of [...resources].reverse()) {
     if (!resource.definition.controllable || !resource.definition.hooks?.shutdown) continue;
     if (!(await stillOwned())) return 'Slot ownership changed before runtime shutdown';
     // A detached service may be unobserved after reconnect. Its declared shutdown
     // hook, rather than a cached running status, owns stopping it and its helpers.
-    const result = await executeResourceControl(slotId, resource.id, 'shutdown', undefined, run.id);
-    if (!result.ok) failures.push(`${resource.id}: ${result.detail ?? 'shutdown not confirmed'}`);
+    const guarded = await registry.withSlotResourceShutdown(
+      slotId,
+      run.id,
+      resource.id,
+      resource.definition.type === 'device',
+      async () => {
+        if (!(await stillOwned()))
+          throw new Error('Slot ownership changed before runtime shutdown');
+        const pending: Promise<void>[] = [];
+        const result = await shutdownSlotResource(
+          slotId,
+          resource.id,
+          true,
+          !!resource.definition.hooks?.health,
+          pending,
+        );
+        // Retain the acquisition fence until a timed-out hook has actually settled.
+        await Promise.allSettled(pending);
+        return result;
+      },
+    );
+    if (!guarded.ok) failures.push(`${resource.id}: ${guarded.reason}`);
+    else if (!guarded.value.torn)
+      failures.push(`${resource.id}: ${guarded.value.reason ?? 'shutdown not confirmed'}`);
   }
   if (!(await stillOwned())) return 'Slot ownership changed during runtime shutdown';
   // Leases have now been released, so they no longer hide detached browser helpers.

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { mock } from 'node:test';
 
+import { readRetainedRunText } from '../run-completion/retained-artifacts.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import * as artifacts from './review-artifacts.js';
@@ -135,14 +136,15 @@ test('an artifact-only review cannot approve a legacy finding whose severity was
   assert.equal(getRun(run.id)?.reviewResult, undefined);
 });
 
-test('a body-only major remains a blocking recommendation without an inline comment', async (t) => {
+test('a paraphrased body-only major is appended and keeps its blocking recommendation', async (t) => {
   const { run, dir } = await fixture(t);
-  await writeFile(
-    path.join(dir, 'artifacts/review.md'),
-    'VERDICT: REQUEST_CHANGES\nCancel the trace\n',
-  );
+  const report = 'VERDICT: REQUEST_CHANGES\nStop the unfinished trace.\n';
+  await writeFile(path.join(dir, 'artifacts/review.md'), report);
   await writeFile(path.join(dir, 'artifacts/line-comments.json'), JSON.stringify({ comments: [] }));
   const result = await recordArtifactOnlyReviewResult(run.id);
   assert.equal(result.recommendation, 'REQUEST_CHANGES');
   assert.deepEqual(result.lineComments, []);
+  assert.match(result.reviewMd, /## Additional findings/);
+  assert.match(result.reviewMd, /Cancel the trace/);
+  assert.equal(await readRetainedRunText(getRun(run.id)!, 'artifacts/review.md'), report);
 });

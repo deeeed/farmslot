@@ -71,6 +71,8 @@ let activeResources = new Map<string, { pid: number }>();
 let configuredResources: SlotResource[] = [];
 let stoppedResources: string[] = [];
 let shutdownFailure: string | null = null;
+let shutdownSkipped = false;
+let resourceStillHealthy = false;
 let onResolveResources: (() => void) | null = null;
 
 function browserSessionCensus() {
@@ -264,6 +266,25 @@ mock.module('../methods/runtime-capabilities.js', {
   namedExports: {
     ...realRuntimeCapabilities,
     getRuntimeCapabilityRegistry: () => ({
+      withSlotResourceShutdown: async <T>(
+        _slotId: string,
+        owner: string,
+        _resourceId: string,
+        _device: boolean,
+        shutdown: () => Promise<T>,
+      ) =>
+        leases.some((lease) => {
+          const leaseOwner = lease.owner;
+          return (
+            leaseOwner &&
+            typeof leaseOwner === 'object' &&
+            'runId' in leaseOwner &&
+            leaseOwner.runId !== owner &&
+            lease.state === 'acquired'
+          );
+        })
+          ? { ok: false, reason: 'Another runtime capability owner still uses this slot' }
+          : { ok: true, value: await shutdown() },
       settledStatus: async () => ({
         catalog: [],
         leases,
@@ -289,11 +310,13 @@ mock.module('../fleet/resource-manager.js', {
     executeResourceControl: async (_slotId: string, resourceId: string, action: string) => {
       assert.equal(action, 'shutdown');
       stoppedResources.push(resourceId);
+      if (shutdownSkipped) return { ok: true, detail: 'skipped (port not configured)' };
       return {
         ok: resourceId !== shutdownFailure,
         detail: resourceId === shutdownFailure ? 'still running' : 'stopped',
       };
     },
+    executeResourceHealth: async () => ({ ok: resourceStillHealthy }),
   },
 });
 
@@ -354,6 +377,8 @@ beforeEach(() => {
   configuredResources = [];
   stoppedResources = [];
   shutdownFailure = null;
+  shutdownSkipped = false;
+  resourceStillHealthy = false;
   onResolveResources = null;
 });
 
@@ -386,7 +411,7 @@ for (const status of ['done', 'failed', 'cancelled'] as const) {
       assert.equal((await releaseCompletedRunSlot(run)).released, true);
     }
     assert.deepEqual(slotAgentKills, [SLOT_ID]);
-    assert.deepEqual(stoppedResources, ['dev-server', 'browser', 'ios-sim']);
+    assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
   });
 }
 
@@ -410,7 +435,20 @@ test('a failed runtime shutdown is recorded and does not publish the slot ready'
   assert.equal(result.released, false);
   assert.match(result.skipped ?? '', /dev-server.*still running/);
   assert.notEqual(slotRow?.lifecycle, 'ready');
-  assert.deepEqual(stoppedResources, ['dev-server', 'browser', 'ios-sim']);
+  assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
+});
+
+test('a skipped shutdown and a surviving healthy resource retain cleanup ownership', async () => {
+  run.status = 'done';
+  configuredResources = slotRuntimeResources().slice(0, 1);
+  shutdownSkipped = true;
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.notEqual(slotRow?.lifecycle, 'ready');
+  shutdownSkipped = false;
+  resourceStillHealthy = true;
+  configuredResources[0].definition.hooks!.health = 'fixture-health';
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.match(String(slotRow?.held_reason), /still running/);
 });
 
 test('a successor claiming the slot before runtime shutdown keeps all resources', async () => {
@@ -1037,7 +1075,7 @@ test('the engine cleans up a successful CI end that deferred no slot release', a
   await startRun(RUN_ID);
   assert.equal(run.status, 'done');
   assert.equal(published[0], 'done');
-  assert.deepEqual(stoppedResources, ['dev-server', 'browser', 'ios-sim']);
+  assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
   assert.equal(slotRow?.lifecycle, 'ready');
 });
 
@@ -1047,6 +1085,6 @@ test('the engine failure path stops the runtime before dropping its slot ownersh
   configuredResources = slotRuntimeResources();
   const { cleanupSlotAfterRunFailure } = await import('../run-engine/orchestrator.js');
   await cleanupSlotAfterRunFailure(SLOT_ID, RUN_ID, 'review failure');
-  assert.deepEqual(stoppedResources, ['dev-server', 'browser', 'ios-sim']);
+  assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
   assert.equal(slotRow?.lifecycle, 'ready');
 });

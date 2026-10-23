@@ -52,6 +52,64 @@ function holdsProviderForTest(lease: { state: string }): boolean {
   return ['acquiring', 'acquired', 'releasing'].includes(lease.state);
 }
 
+test('device acquisition waits until an in-flight terminal shutdown has settled', async (t) => {
+  const order: string[] = [];
+  const device = entry('device');
+  const { registry } = await fixture(t, [device], {
+    catalogForSlot: async (slotId) => {
+      order.push('acquire-catalog');
+      return { slotId, project: 'test-project', capabilities: [device] };
+    },
+    assertTargetAvailable: async () => null,
+    runAction: async (_slot, action) => {
+      order.push(action.kind === 'slot-action' ? action.actionId : action.action);
+      return { ok: true };
+    },
+  });
+  let enter!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cleanup = registry.withSlotResourceShutdown(
+    SLOT,
+    'finished-run',
+    'ios-sim',
+    true,
+    async () => {
+      order.push('shutdown');
+      enter();
+      await released;
+      order.push('shutdown-settled');
+    },
+  );
+  await entered;
+  const acquiring = registry.acquire({
+    slotId: 'other-slot',
+    capabilityId: 'device',
+    ownerRunId: 'next-run',
+    proofRequirement: { capabilityId: 'device', reason: 'validation', mode: 'state' },
+  });
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(order, ['shutdown']);
+  } finally {
+    release();
+  }
+  await cleanup;
+  assert.equal((await acquiring).ok, true);
+  assert.deepEqual(order, [
+    'shutdown',
+    'shutdown-settled',
+    'acquire-catalog',
+    'device.acquire',
+    'device.health',
+  ]);
+});
+
 test('retiring run ownership preserves foreign leases and defers provider shutdown explicitly', async (t) => {
   const { registry, actions } = await fixture(t, [entry('shared', 'shared')]);
   assert.equal((await acquire(registry, 'shared', 'ending-run')).ok, true);

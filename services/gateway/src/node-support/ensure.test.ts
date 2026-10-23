@@ -77,8 +77,8 @@ function fakeIo(opts: { remoteManifestHash: string | null }): {
       rec.execs.push(cmd);
       if (cmd.startsWith(': farmslot-node-support-activate')) {
         const selection = /"selectionPath":"([^"]+)"/.exec(cmd)?.[1];
-        assert.ok(selection);
-        rec.written.push({ base: path.dirname(selection), paths: [path.basename(selection)] });
+        if (selection)
+          rec.written.push({ base: path.dirname(selection), paths: [path.basename(selection)] });
       }
       const homeResult = fakeSupportHomeResult(cmd);
       if (homeResult) return homeResult;

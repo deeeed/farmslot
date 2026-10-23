@@ -37,7 +37,8 @@ function fakeNode(opts: { failUpload?: boolean } = {}) {
     retentionReferences: async () => ({ selectionPaths: [], runHashes: [] }),
     exec: async (_vars, cmd) => {
       calls.push(`exec:${cmd.slice(0, 20)}`);
-      if (cmd.startsWith(': farmslot-node-support-activate')) calls.push('select');
+      if (cmd.startsWith(': farmslot-node-support-activate') && cmd.includes('"selectionPath":'))
+        calls.push('select');
       const homeResult = fakeSupportHomeResult(cmd);
       if (homeResult) return homeResult;
       if (cmd.includes('mktemp -d')) {
@@ -416,7 +417,14 @@ test('read-only prerequisite cache cannot suppress later slot bundle selection',
     selectSlot: false,
   });
   assert.equal(node.calls.includes('select'), false);
+  assert.match(command, /fcntl\.LOCK_SH/);
+  const calls = node.calls.length;
+  assert.equal(
+    await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io, selectSlot: false }),
+    command,
+  );
+  assert.equal(node.calls.length, calls, 'the protected read-only command can use its cache');
   const selected = await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
-  assert.equal(selected, command);
+  assert.match(selected, /^bash .*\/support\/[a-f0-9]{64}\//);
   assert.equal(node.calls.filter((call) => call === 'select').length, 1);
 });

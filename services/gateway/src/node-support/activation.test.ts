@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -12,10 +21,21 @@ import {
   buildNodeSupportActivationCommand,
   persistedNodeSupportHashes,
   referencedNodeSupportHashes,
+  wrapNodeSupportReadCommand,
 } from './activation.js';
 
 const exec = promisify(execFile);
 const hash = (letter: string) => letter.repeat(64);
+
+async function present(file: string): Promise<boolean> {
+  try {
+    await access(file);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
 
 test('one-shot activation retains persisted non-archived run references without a loaded store', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'support-run-refs-'));
@@ -189,4 +209,102 @@ test('concurrent activations serialize publication, selection and pruning', asyn
   assert.equal((await readFile(two, 'utf8')).trim(), hash('d'));
   assert.ok((await readdir(f.root)).includes(hash('c')));
   assert.ok((await readdir(f.root)).includes(hash('d')));
+});
+
+test('a cached read-only bundle survives another activation and preserves command failure status', async (t) => {
+  const f = await fixture(t);
+  await f.bundle(hash('a'));
+  await f.bundle(hash('b'));
+  await writeFile(path.join(f.root, hash('a'), 'payload'), 'retained\n');
+  await exec('/bin/sh', [
+    '-c',
+    buildNodeSupportActivationCommand({
+      supportDir: path.join(f.root, hash('a')),
+      supportHash: hash('a'),
+      readerTtlMs: 60_000,
+      references: { selectionPaths: [], runHashes: [] },
+      verifyCommand: 'true',
+    }),
+  ]);
+  const pointer = await f.pointer('other-project', hash('b'));
+  const cached = wrapNodeSupportReadCommand(
+    `cat '${f.root}/${hash('a')}/payload'; exit 7`,
+    path.join(f.root, hash('a')),
+  );
+  await assert.rejects(
+    exec('/bin/sh', ['-c', cached]),
+    (error) => error instanceof Error && 'code' in error && error.code === 7,
+  );
+  await exec('/bin/sh', [
+    '-c',
+    buildNodeSupportActivationCommand({
+      supportDir: path.join(f.root, hash('b')),
+      supportHash: hash('b'),
+      selectionPath: pointer,
+      references: { selectionPaths: [pointer], runHashes: [] },
+      verifyCommand: 'true',
+    }),
+  ]);
+  await assert.rejects(
+    exec('/bin/sh', ['-c', cached]),
+    (error) => error instanceof Error && 'code' in error && error.code === 7,
+  );
+  assert.equal(await readFile(path.join(f.root, hash('a'), 'payload'), 'utf8'), 'retained\n');
+  await assert.rejects(
+    exec('/bin/sh', [
+      '-c',
+      wrapNodeSupportReadCommand('kill -KILL $$', path.join(f.root, hash('a'))),
+    ]),
+    (error) => error instanceof Error && 'signal' in error && error.signal === 'SIGKILL',
+  );
+});
+
+test('an in-flight read stays protected after its cache reference expires', async (t) => {
+  const f = await fixture(t);
+  await f.bundle(hash('a'));
+  await f.bundle(hash('b'));
+  await mkdir(path.join(f.root, '.readers'));
+  const lease = path.join(f.root, '.readers', `${hash('a')}.json`);
+  await writeFile(lease, JSON.stringify({ expiresAt: Date.now() / 1000 + 60 }));
+  const started = path.join(f.home, 'read-started');
+  const finish = path.join(f.home, 'read-finish');
+  const pointer = await f.pointer('other-project', hash('b'));
+  const reader = exec('/bin/sh', [
+    '-c',
+    wrapNodeSupportReadCommand(
+      `touch '${started}'; while ! test -f '${finish}'; do sleep 0.02; done`,
+      path.join(f.root, hash('a')),
+    ),
+  ]);
+  let activation: ReturnType<typeof exec> | undefined;
+  try {
+    const deadline = Date.now() + 2500;
+    while (!(await present(started))) {
+      assert.ok(Date.now() < deadline, 'the owned read did not start');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await writeFile(lease, JSON.stringify({ expiresAt: 0 }));
+    const exclusiveProbe =
+      "import fcntl,sys\nf=open(sys.argv[1],'a')\ntry:fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)\nexcept BlockingIOError:sys.exit(42)\n";
+    await assert.rejects(
+      exec('python3', ['-c', exclusiveProbe, path.join(f.root, '.activation.lock')]),
+      (error) => error instanceof Error && 'code' in error && error.code === 42,
+    );
+    activation = exec('/bin/sh', [
+      '-c',
+      buildNodeSupportActivationCommand({
+        supportDir: path.join(f.root, hash('b')),
+        supportHash: hash('b'),
+        selectionPath: pointer,
+        references: { selectionPaths: [pointer], runHashes: [] },
+        verifyCommand: 'true',
+      }),
+    ]);
+    assert.ok(await present(path.join(f.root, hash('a'))));
+  } finally {
+    await writeFile(finish, 'finish');
+    await reader;
+    if (activation) await activation;
+  }
+  assert.equal(await present(path.join(f.root, hash('a'))), false);
 });

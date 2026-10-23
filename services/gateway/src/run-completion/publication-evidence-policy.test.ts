@@ -111,6 +111,24 @@ test('qualified evidence paths retain scope with optional artifacts prefix while
   assert.equal(resolveSelectedEvidenceRef('before.png', [inventory[0]])?.path, inventory[0].path);
 });
 
+test('root-qualified evidence keys never fall back to nested recipe ledgers', () => {
+  const nested: ArtifactRef[] = [
+    { path: 'recipe-baseline-run/acceptance-status.json', purpose: 'acceptance-status' },
+    { path: 'recipe-runs/proof-9ab13f87/acceptance-status.json', purpose: 'acceptance-status' },
+  ];
+  const root: ArtifactRef = {
+    path: 'artifacts/acceptance-status.json',
+    purpose: 'acceptance-status',
+  };
+
+  for (const key of ['artifacts/acceptance-status.json', './artifacts/acceptance-status.json']) {
+    assert.equal(resolveSelectedEvidenceRef(key, nested), null);
+    assert.equal(resolveSelectedEvidenceRef(key, [nested[0]]), null);
+    assert.equal(resolveSelectedEvidenceRef(key, [...nested, root]), root);
+  }
+  assert.throws(() => resolveSelectedEvidenceRef('acceptance-status.json', nested), /ambiguous/);
+});
+
 test('orientation captures without declared publication evidence may remain unselected', () => {
   assert.deepEqual(
     assertPublicationEvidenceSelection({

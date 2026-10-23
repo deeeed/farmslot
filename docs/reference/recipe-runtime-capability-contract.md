@@ -301,6 +301,13 @@ MUST NOT mark the slot reclaimed.
   Publication, verification, selection and pruning MUST serialize on the execution
   node. Unknown selection state MUST refuse pruning; staging directories, active
   publishers and paths outside the bundle root MUST remain untouched.
+  Cached read-only consumers MUST retain their bundle without changing any slot
+  selection, and executing readers MUST prevent pruning until they exit.
+  Device shutdown MUST share the registry acquisition lock and check device
+  ownership across slots on the machine. A re-targeted foreign device lease MUST
+  remain protected. Runtime cleanup MUST use the shared confirmed shutdown path,
+  including skipped-hook and post-shutdown health checks, without deleting replay
+  storage.
 - A deferred terminal workspace cleanup MUST keep a durable cleanup identity and
   slot epoch. Reconciliation MUST recheck it through the same cleanup owner and
   use a conditional release. A live owner, changed epoch, unknown identity or

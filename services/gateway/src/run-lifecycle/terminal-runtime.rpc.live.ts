@@ -1,12 +1,12 @@
 // Opt-in isolated RPC proof. Only disposable runtime processes are started.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { hostname, userInfo } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { FLOW_STEPS, Methods } from '@farmslot/protocol';
+import { FLOW_STEPS, Methods, type RuntimeCapabilityCatalogEntry } from '@farmslot/protocol';
 
 import { createNativeProofFixture } from '../runtime/native-proof-fixture.live-support.js';
 
@@ -216,6 +216,88 @@ test(
         null,
         2,
       ),
+    );
+  },
+);
+
+test(
+  'terminal shutdown protects a device retargeted from another slot',
+  { timeout: 30_000 },
+  async (t) => {
+    assert.equal(process.env.FARMSLOT_TERMINAL_RUNTIME_LIVE, '1');
+    const { RuntimeCapabilityRegistry } = await import('../runtime-capabilities/registry.js');
+    const { RuntimeCapabilityStore } = await import('../runtime-capabilities/store.js');
+    const directory = await mkdtemp('/tmp/terminal-device-guard-');
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const SLOT = 'finished-slot';
+    const { assertDeviceTargetAvailable } = await import('../methods/runtime-capabilities.js');
+    const device = {
+      id: 'device',
+      project: 'fixture',
+      label: 'device',
+      version: '1',
+      dependencies: [],
+      sharePolicy: 'exclusive',
+      actions: {
+        acquire: { kind: 'slot-action', actionId: 'device.acquire' },
+        health: { kind: 'slot-action', actionId: 'device.health' },
+        release: { kind: 'slot-action', actionId: 'device.release' },
+      },
+      releaseEffects: [],
+      provenance: { project: 'fixture', providerId: 'device', version: '1', digest: 'fixture' },
+      availability: { state: 'available' },
+      parameters: { type: 'object', properties: { simulator: { type: 'string' } } },
+      cost: { class: 'low', resources: [{ id: 'simulator', kind: 'device', access: 'exclusive' }] },
+    } satisfies RuntimeCapabilityCatalogEntry;
+    const registry = new RuntimeCapabilityRegistry({
+      store: new RuntimeCapabilityStore(path.join(directory, 'leases.json')),
+      catalogForSlot: async (slotId) => ({ slotId, project: 'fixture', capabilities: [device] }),
+      runAction: async () => ({ ok: true }),
+      assertTargetAvailable: (input) =>
+        assertDeviceTargetAvailable(input, {
+          loadSlotVars: async (slotId) => ({
+            machine: 'fixture-host',
+            resourceVars: { simulator: slotId === SLOT ? 'SIM-A' : 'SIM-B' },
+          }),
+          catalogForSlot: async () => ({ capabilities: [device] }),
+        }),
+    });
+    assert.equal(
+      (
+        await registry.acquire({
+          slotId: 'other-slot',
+          capabilityId: 'device',
+          ownerRunId: 'live-child',
+          parameters: { simulator: 'SIM-A' },
+          proofRequirement: { capabilityId: 'device', reason: 'validation', mode: 'state' },
+        })
+      ).ok,
+      true,
+    );
+    let stopped = false;
+    const result = await registry.withSlotResourceShutdown(
+      SLOT,
+      'finished-run',
+      'ios-sim',
+      true,
+      async () => {
+        stopped = true;
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(stopped, false);
+    if (!result.ok) assert.match(result.reason, /SIM-A/);
+    assert.equal(
+      (
+        await registry.withSlotResourceShutdown(
+          SLOT,
+          'finished-run',
+          'metro',
+          false,
+          async () => 'stopped',
+        )
+      ).ok,
+      true,
     );
   },
 );

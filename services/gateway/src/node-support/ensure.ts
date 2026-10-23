@@ -45,6 +45,7 @@ import {
 
 import {
   buildNodeSupportActivationCommand,
+  NODE_SUPPORT_READER_RETAIN_MS,
   type NodeSupportRetentionReferences,
   nodeSupportRetentionReferences,
 } from './activation.js';
@@ -265,15 +266,19 @@ export async function ensureNodeSupportBundle(
 
   // Always rewritten: another gateway or a prepare may have repointed the slot
   // since this process last looked, and the write is one small file.
-  const persistSelection = async (how: 'published' | 'current', publishCommand?: string) => {
+  const activateBundle = async (how: 'published' | 'current', publishCommand?: string) => {
     const selection = nodeSupportHashPath(vars.remoteRepo, runtimeDir);
-    const references = await (io.retentionReferences ?? nodeSupportRetentionReferences)(vars);
+    const readOnly = options.selectSlot === false;
+    const references = readOnly
+      ? { selectionPaths: [], runHashes: [] }
+      : await (io.retentionReferences ?? nodeSupportRetentionReferences)(vars);
     const result = await io.exec(
       vars,
       buildNodeSupportActivationCommand({
         supportDir,
         supportHash: manifest.hash,
-        selectionPath: selection,
+        selectionPath: readOnly ? undefined : selection,
+        readerTtlMs: readOnly ? NODE_SUPPORT_READER_RETAIN_MS : undefined,
         references,
         publishCommand,
         verifyCommand:
@@ -288,7 +293,7 @@ export async function ensureNodeSupportBundle(
     if (result.exitCode === 75) return false;
     if (result.exitCode !== 0) throw new Error(`Node support activation failed: ${result.stderr}`);
     console.log(
-      `[node-support] ${vars.slotId} now on bundle ${manifest.hash.slice(0, 8)} (${how}, ${files.length} files)`,
+      `[node-support] ${vars.slotId} ${readOnly ? 'verified read-only' : 'now on'} bundle ${manifest.hash.slice(0, 8)} (${how}, ${files.length} files)`,
     );
     return true;
   };
@@ -321,7 +326,7 @@ export async function ensureNodeSupportBundle(
       if (!(await verifyCurrent(supportDir, manifestPath))) {
         throw new Error(`Node support bundle corrupt for ${manifest.hash}`);
       }
-      if (options.selectSlot === false || (await persistSelection('current'))) {
+      if (await activateBundle('current')) {
         step('support', `Node support bundle current (${files.length} files)`);
         return { supportDir, hash: manifest.hash, published: false, paths: supportPaths };
       }
@@ -374,10 +379,10 @@ export async function ensureNodeSupportBundle(
     supportDir,
     supportHash: manifest.hash,
   });
-  const publishResult =
-    options.selectSlot === false
-      ? await io.exec(vars, publishCommand)
-      : { exitCode: (await persistSelection('published', publishCommand)) ? 0 : 75, stderr: '' };
+  const publishResult = {
+    exitCode: (await activateBundle('published', publishCommand)) ? 0 : 75,
+    stderr: '',
+  };
   if (publishResult.exitCode !== 0) {
     const cleanupResult = await discardIncoming();
     const cleanupDetail =

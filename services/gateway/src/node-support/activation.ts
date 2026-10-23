@@ -7,12 +7,15 @@ import { isRecord } from '@farmslot/protocol/recipe';
 import { loadMachineSlots, loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
 import { shellQuote } from '../core/tmux.js';
 import { nodeSupportHashPath } from '../runners/runner-observability.js';
-import { listRuns, runsDirectory } from '../runs/store.js';
 
 export interface NodeSupportRetentionReferences {
   selectionPaths: string[];
   runHashes: string[];
 }
+
+export const NODE_SUPPORT_COMMAND_CACHE_MS = 10 * 60_000;
+// Covers the cache window plus bounded delivery; running commands also hold a read lock.
+export const NODE_SUPPORT_READER_RETAIN_MS = 2 * NODE_SUPPORT_COMMAND_CACHE_MS;
 
 /** Historical outputs can refer to an older bundle than the slot now selects. */
 function supportHashes(values: readonly unknown[]): string[] {
@@ -56,6 +59,9 @@ export async function persistedNodeSupportHashes(directory: string): Promise<str
 export async function nodeSupportRetentionReferences(
   vars: SlotVars,
 ): Promise<NodeSupportRetentionReferences> {
+  // Transport probes import this module while runner observability is initializing.
+  // Read the run store only for an activation, after that import graph has settled.
+  const { listRuns, runsDirectory } = await import('../runs/store.js');
   const selectionPaths = [];
   for (const slot of await loadMachineSlots(vars.machine)) {
     // Disabled slots retain their selection too. An unreadable config refuses
@@ -78,7 +84,8 @@ export async function nodeSupportRetentionReferences(
 export interface NodeSupportActivationParams {
   supportDir: string;
   supportHash: string;
-  selectionPath: string;
+  selectionPath?: string;
+  readerTtlMs?: number;
   references: NodeSupportRetentionReferences;
   publishCommand?: string;
   verifyCommand: string;
@@ -104,7 +111,18 @@ with (root/'.activation.lock').open('a') as lock:
  if not target.is_dir():sys.exit(75)
  assert json.loads((target/'manifest.json').read_text())['hash']==d['supportHash']
  subprocess.run(['/bin/sh','-c',d['verifyCommand']],check=True)
+ readers=root/'.readers';readers.mkdir(exist_ok=True)
+ if d.get('readerTtlMs'):
+  lease=readers/(d['supportHash']+'.json')
+  previous=json.loads(lease.read_text())['expiresAt'] if lease.exists() else 0
+  temporary=lease.with_name(lease.name+'.'+str(os.getpid())+'.tmp')
+  temporary.write_text(json.dumps({'expiresAt':max(previous,time.time()+d['readerTtlMs']/1000)}));os.replace(temporary,lease)
+  print(json.dumps({'reader':d['supportHash']}));sys.exit(0)
  keep=set(d['references']['runHashes']);keep.add(d['supportHash'])
+ for lease in readers.glob('*.json'):
+  if not re.fullmatch('[a-f0-9]{64}\\.json',lease.name):continue
+  if json.loads(lease.read_text())['expiresAt']>time.time():keep.add(lease.stem)
+  else:lease.unlink()
  paths=set(d['references']['selectionPaths']);paths.add(d['selectionPath'])
  # Read every pointer before changing anything. Unknown selection is not absence.
  for name in paths:
@@ -126,4 +144,21 @@ with (root/'.activation.lock').open('a') as lock:
  print(json.dumps({'selected':d['supportHash'],'removed':removed}))
 `;
   return `: farmslot-node-support-activate\npython3 -c ${shellQuote(script)} ${shellQuote(JSON.stringify(payload))}`;
+}
+
+/** A cached read keeps its files through execution, even if its cache lease expires meanwhile. */
+export function wrapNodeSupportReadCommand(command: string, supportDir: string): string {
+  const script = `import fcntl,json,os,signal,subprocess,sys
+from pathlib import Path
+d=json.loads(sys.argv[1]);bundle=Path(d['supportDir'])
+with (bundle.parent/'.activation.lock').open('a') as lock:
+ fcntl.flock(lock,fcntl.LOCK_SH)
+ if not bundle.is_dir():raise RuntimeError('Read-only node support bundle is unavailable')
+ result=subprocess.run(['/bin/sh','-c',d['command']])
+ if result.returncode<0:
+  if -result.returncode!=signal.SIGKILL:signal.signal(-result.returncode,signal.SIG_DFL)
+  os.kill(os.getpid(),-result.returncode)
+ sys.exit(result.returncode)
+`;
+  return `python3 -c ${shellQuote(script)} ${shellQuote(JSON.stringify({ command, supportDir }))}`;
 }

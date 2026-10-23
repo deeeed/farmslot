@@ -66,13 +66,13 @@ export async function assertReviewCommentLines(
   );
 }
 
-/** Body-only findings must survive publication when there is no inline location. */
-export function assertReviewFindingBodies(
+/** Carry authoritative findings into publication when the report only paraphrases them. */
+export function appendReviewFindingBodies(
   issues: ReviewIssue[],
   comments: ReviewLineComment[],
   report: string,
-): void {
-  for (const issue of issues) {
+): string {
+  const missing = issues.filter((issue) => {
     const inline = comments.some(
       (comment) =>
         comment.path === issue.file &&
@@ -80,9 +80,12 @@ export function assertReviewFindingBodies(
         comment.body === issue.description &&
         normalizeReviewSeverity(comment.severity) === normalizeReviewSeverity(issue.severity),
     );
-    if (!inline && !report.includes(issue.description))
-      throw new Error(
-        'Review line comments disagree with authoritative findings: body-only findings must appear in the review body',
-      );
-  }
+    return !inline && !report.includes(issue.description);
+  });
+  if (!missing.length) return report;
+  const findings = missing.map((issue) => {
+    const location = issue.line === undefined ? issue.file : `${issue.file}:${issue.line}`;
+    return `- **[${normalizeReviewSeverity(issue.severity)}] ${location}**: ${issue.description}`;
+  });
+  return `${report.trimEnd()}\n\n## Additional findings\n\n${findings.join('\n\n')}\n`;
 }

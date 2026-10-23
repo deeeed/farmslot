@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ReviewDiffSnapshot } from '@farmslot/protocol';
+import type { ReviewDiffSnapshot, ReviewIssue, ReviewLineComment } from '@farmslot/protocol';
 
 import { makeRun } from '../run-completion/test-fixtures.js';
 
 import {
+  appendReviewFindingBodies,
   assertReviewCommentLines,
-  assertReviewFindingBodies,
   readReviewCommentDiff,
 } from './validate-comments.js';
 
@@ -93,12 +93,40 @@ test('inline review comments resolve to added or context lines at the frozen hea
   );
 });
 
-test('a body-only finding keeps its ask without inventing an inline line', () => {
-  const issue = {
+test('publication appends a paraphrased body-only finding without inventing an inline line', () => {
+  const issue: ReviewIssue = {
     file: 'PR description',
     description: 'Remove the unsupported coverage claim',
-    severity: 'minor' as const,
+    severity: 'nit',
   };
-  assert.doesNotThrow(() => assertReviewFindingBodies([issue], [], issue.description));
-  assert.throws(() => assertReviewFindingBodies([issue], [], 'No findings'), /review body/);
+  const report = 'Tighten the PR summary.\n';
+  const body = appendReviewFindingBodies([issue], [], report);
+  assert(body.startsWith(report.trimEnd()));
+  assert(body.includes(`[nit] ${issue.file}`));
+  assert(body.includes(issue.description));
+  assert.equal(appendReviewFindingBodies([issue], [], body), body);
+  assert.equal(appendReviewFindingBodies([issue], [], issue.description), issue.description);
+  assert.equal(appendReviewFindingBodies([], [], report), report);
+});
+
+test('only a matching inline finding replaces the authoritative description in the body', () => {
+  const issue: ReviewIssue = {
+    file: comment.path,
+    line: comment.line,
+    description: comment.body,
+    severity: 'minor',
+  };
+  const report = 'Review summary.\n';
+  assert.equal(appendReviewFindingBodies([issue], [comment], report), report);
+  const mismatches: Partial<ReviewLineComment>[] = [
+    { path: 'src/other.ts' },
+    { line: comment.line + 1 },
+    { body: 'A paraphrased inline comment.' },
+    { severity: 'major' },
+  ];
+  for (const mismatch of mismatches) {
+    const body = appendReviewFindingBodies([issue], [{ ...comment, ...mismatch }], report);
+    assert(body.includes(`${issue.file}:${issue.line}`));
+    assert(body.includes(issue.description));
+  }
 });

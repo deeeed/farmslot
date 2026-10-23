@@ -368,7 +368,9 @@ any non-archived run, including completed, failed and cancelled records. Delete
 other completed bundles. Publication, selection and pruning share a node-local
 lock so concurrent activations cannot remove each other's selected bytes.
 Unreadable selections refuse pruning; staging directories and active publishers
-are protected. No periodic or manual deletion path is added.
+are protected. Read-only command caches hold a bounded node-side reader reference;
+execution holds a shared activation lock until the command exits. No periodic or
+manual deletion path is added.
 
 ### Rationale and consequences
 
