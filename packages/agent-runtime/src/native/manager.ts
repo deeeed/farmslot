@@ -669,7 +669,12 @@ export class NativeSessionManager {
           env: runnerEnvironment,
           processSandbox: hostProtection?.sandbox,
           ...(workerLaunch
-            ? { effort: workerLaunch.effort, safetyTier: workerLaunch.safetyTier, filesystemPolicy }
+            ? {
+                effort: workerLaunch.effort,
+                safetyTier: workerLaunch.safetyTier,
+                approvalPolicy: workerLaunch.approvalPolicy,
+                filesystemPolicy,
+              }
             : {}),
         },
         (event) => this.append(record, event),

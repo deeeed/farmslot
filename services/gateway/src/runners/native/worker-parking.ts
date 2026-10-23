@@ -176,6 +176,7 @@ export async function rehomeNativeParkHandle(
     throw new Error('Native relocation requires sibling worktrees of the same repository');
   const projectVars = await loadProjectVars(run.project);
   const prepared = await prepareNativeWorkerLaunch({
+    role: owner.context.role,
     vars,
     project: projectVars.projectJson,
     projectVars,
