@@ -990,5 +990,90 @@
         }
       ]
     }
-  }
+  },
+  "postMigrationMeasurements": [
+    {
+      "head": "83f006e15b01d6b9ffff2717dfdcae428c28a382",
+      "measuredAt": "2026-10-23T11:30:55.314393+00:00",
+      "client": "command-center-browser",
+      "method": "apps/command-center/scripts/cdp.mjs baseline runs reconnect",
+      "runCount": 62,
+      "initialBaselineRunCount": 67,
+      "reconnectRunListMs": 1151,
+      "reconnectRunListBytes": 5585675,
+      "samples": [
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1166,
+          "requestMs": 136,
+          "receivedBytes": 5585669,
+          "responseBytes": 5565308,
+          "runCount": 62,
+          "firstRunListMs": 1166,
+          "firstRunListResponseBytes": 5565308,
+          "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1089,
+          "requestMs": 70,
+          "receivedBytes": 5585675,
+          "responseBytes": 5565309,
+          "runCount": 62,
+          "firstRunListMs": 1089,
+          "firstRunListResponseBytes": 5565309,
+          "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1178,
+          "requestMs": 148,
+          "receivedBytes": 5585675,
+          "responseBytes": 5565309,
+          "runCount": 62,
+          "firstRunListMs": 1178,
+          "firstRunListResponseBytes": 5565309,
+          "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1067,
+          "requestMs": 42,
+          "receivedBytes": 5585675,
+          "responseBytes": 5565309,
+          "runCount": 62,
+          "firstRunListMs": 1067,
+          "firstRunListResponseBytes": 5565309,
+          "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1151,
+          "requestMs": 113,
+          "receivedBytes": 5585675,
+          "responseBytes": 5565309,
+          "runCount": 62,
+          "firstRunListMs": 1151,
+          "firstRunListResponseBytes": 5565309,
+          "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+        }
+      ],
+      "notes": [
+        "Same committed CDP measurement method as baseline; isolated read-only saved run copies.",
+        "The current saved inventory differs in row count from the original67rows; report raw figures without claiming a normalized speedup.",
+        "Initial7.56MB threshold keeps step8version lists mandatory.",
+        "Only web/gateway run-list code at83f006e15 is measured; pending native-only edits do not participate."
+      ]
+    }
+  ]
 }

@@ -1,19 +1,29 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { access, chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  cp,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { createAgentDeviceClient } from 'agent-device';
-
-import { automationGatewayTarget } from '../../../../scripts/lib/gateway-profile.mjs';
-import { createVisualReplyProxy } from '../../../../services/gateway/scripts/visual-reply-proxy.mjs';
-import { withOwnedGatewayOffline } from '../../../command-center/scripts/owned-gateway-outage.mjs';
-
-import { openAndroidDevClient, waitForSimulatorRecipeBridge } from './simulator-dev-client.mjs';
+import {
+  consumeD05Plan,
+  D05FixtureOwner,
+  d05InboxBody,
+  d05NativeControl,
+  resolveD05Inputs,
+} from './d05-fixture.mjs';
 
 const execute = promisify(execFile);
 // adb shell joins argv into a remote shell command, so a URL's query separators
@@ -21,6 +31,38 @@ const execute = promisify(execFile);
 const androidShellArgument = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 const phase = process.argv[2];
+if (phase === 'dry-preflight') {
+  try {
+    const plan = await resolveD05Inputs(process.env, root);
+    await new Promise((resolve, reject) =>
+      process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`, (error) =>
+        error ? reject(error) : resolve(),
+      ),
+    );
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  }
+  process.exit(process.exitCode ?? 0);
+}
+// Native imports and subprocess work are unreachable from the headless dry phase.
+const d05Phases = [
+  'recorded-visual-context',
+  'seed-inbox',
+  'resolve-inbox',
+  'open-detail',
+  'cold-detail',
+];
+const d05 = d05Phases.includes(phase) ? await consumeD05Plan(process.env, root) : undefined;
+const { createAgentDeviceClient } = await import('agent-device');
+const { automationGatewayTarget } = await import('../../../../scripts/lib/gateway-profile.mjs');
+const { createRunReplyProxy, createVisualReplyProxy } =
+  await import('../../../../services/gateway/scripts/visual-reply-proxy.mjs');
+const { withOwnedGatewayOffline } =
+  await import('../../../command-center/scripts/owned-gateway-outage.mjs');
+const { seedIOSGatewayProfile } = await import('./seed-ios-gateway-profile.mjs');
+const { openAndroidDevClient, waitForSimulatorRecipeBridge } =
+  await import('./simulator-dev-client.mjs');
 const contextPhases = [
   'prepare-context',
   'open-context',
@@ -45,6 +87,7 @@ assert(
     'unbound-slot-diff',
     'retry-artifacts',
     'retry-diff',
+    'recorded-visual-context',
     'visual-context',
     'visual-wire-context',
     'terminal-context',
@@ -168,6 +211,378 @@ async function restartNative() {
   await waitForSimulatorRecipeBridge({ platform });
 }
 
+if (phase === 'recorded-visual-context') {
+  const { assertNativeVisualReceipt, nativeVisualSupportFiles, prepareNativeVisualFixture } =
+    await import('./native-visual-fixture.mjs');
+  // Reuse the same byte-preserving transport on iOS loopback or Android reverse routing.
+  assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+  assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE && process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR);
+  assert(
+    process.env.FARMSLOT_NATIVE_VISUAL_SOURCE,
+    'Set the real retained media directory explicitly',
+  );
+  assert(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR);
+  const baseline = d05.baseline;
+  const template = JSON.parse(await readFile(baseline.runFile, 'utf8'));
+  const runId = d05.visual.id;
+  const project = d05.visual.project;
+  const { projectsDir, declaredProjectNames } = await import('@farmslot/slot-config');
+  assert.equal(projectsDir, d05.runtime.projectsDir);
+  assert.equal(declaredProjectNames(), undefined, 'Use the isolated legacy project registry');
+  const projectDir = d05.visual.projectDir;
+  const directory = d05.visual.directory;
+  const runFile = d05.visual.runFile;
+  const owner = new D05FixtureOwner([projectDir, path.join(home, 'projects', project), runFile]);
+  const deviceId = platform === 'ios' ? process.env.IOS_SIMULATOR : process.env.ADB_SERIAL;
+  assert(deviceId, 'Select the single owned native device');
+  if (platform === 'android') assert(deviceId.startsWith('emulator-'));
+  let originalIOSProfile;
+  if (platform === 'ios') {
+    assert(
+      process.env.FARMSLOT_NATIVE_VISUAL_IOS_PROFILE,
+      'Provide the original isolated iOS profile JSON for setup and restoration',
+    );
+    originalIOSProfile = JSON.parse(
+      await readFile(process.env.FARMSLOT_NATIVE_VISUAL_IOS_PROFILE, 'utf8'),
+    );
+    assert.equal(originalIOSProfile.authMode, 'token');
+    assert(originalIOSProfile.presetSecret, 'Use the existing isolated service profile');
+    assert(
+      originalIOSProfile.presetSecret === selected.credential.token,
+      'Native and independent reads must use the same isolated service credential',
+    );
+    assert.equal(new URL(originalIOSProfile.url).port, gateway.port);
+    assert(['localhost', '127.0.0.1', '[::1]'].includes(new URL(originalIOSProfile.url).hostname));
+  }
+  const device = createAgentDeviceClient({ stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR });
+  const sessions = (await device.sessions.list()).filter(
+    (session) => session.device.id === deviceId,
+  );
+  assert.equal(sessions.length, 1);
+  const selection = { session: sessions[0].name, platform, target: 'mobile' };
+  const screen = async () => {
+    const observed = await device.capture.snapshot({
+      ...selection,
+      interactiveOnly: false,
+      forceFull: true,
+    });
+    await writeFile(
+      path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'native-last-screen.json'),
+      JSON.stringify(observed, null, 2),
+    );
+    return observed;
+  };
+  const find = async (label, enabled) => {
+    const deadline = Date.now() + 10000;
+    do {
+      const node = d05NativeControl((await screen()).nodes, label);
+      if (node?.rect && node.rect.y >= 0 && (enabled === undefined || node.enabled === enabled))
+        return node;
+      await device.interactions.scroll({ ...selection, direction: 'down', pixels: 240 });
+      await delay(50);
+    } while (Date.now() < deadline);
+    await capture('native-missing-control.png');
+    assert.fail(`Missing actual native control: ${label}, enabled=${enabled}`);
+  };
+  const pressNode = (node) =>
+    device.interactions.press({
+      ...selection,
+      x: node.rect.x + node.rect.width / 2,
+      y: node.rect.y + node.rect.height / 2,
+    });
+  const press = async (label) => pressNode(await find(label, true));
+  const capture = (name) =>
+    device.capture.screenshot({
+      ...selection,
+      path: path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'screenshots', name),
+      stabilize: true,
+    });
+  let proxy;
+  let seeded = false;
+  let delegatorId;
+  let iosProfileSeeded = false;
+  try {
+    await owner.directory(projectDir);
+    await owner.directory(path.join(directory, 'artifacts'));
+    const fixture = await prepareNativeVisualFixture({
+      sourceRoot: root,
+      sourceDirectory: d05.visual.media.source,
+      taskDir: directory,
+      runId,
+      rpc,
+      owner,
+    });
+    delegatorId = fixture.delegatorId;
+    await owner.write(
+      path.join(projectDir, 'project.json'),
+      JSON.stringify({ name: project, visual_claim_review: fixture.projectPolicy }),
+    );
+    const taskFile = path.join(directory, 'TASK.md');
+    await owner.write(taskFile, nativeVisualSupportFiles['TASK.md']);
+    const now = new Date().toISOString();
+    const run = {
+      ...template,
+      id: runId,
+      familyId: runId,
+      parentRunId: null,
+      project,
+      slotId: template.slotId,
+      taskFile,
+      activeTaskFile: taskFile,
+      status: 'monitoring',
+      ticketOrPr: 'Owned retained visual judgment proof',
+      readOnly: false,
+      steps: [],
+      agentContexts: [],
+      tags: [],
+      artifactBundle: undefined,
+      engineState: undefined,
+      output: fixture.output,
+      decisions: [fixture.decision],
+      visualJudgmentReceipts: [],
+      createdAt: now,
+      updatedAt: now,
+      completedAt: undefined,
+    };
+    await withOwnedGatewayOffline(async () => {
+      await owner.write(runFile, JSON.stringify(run));
+      seeded = owner.journal.files.some((entry) => entry.path === runFile);
+    });
+    await cp(
+      path.join(directory, 'artifacts'),
+      path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'retained-native-visual-fixture'),
+      { recursive: true, errorOnExist: true, force: false },
+    );
+    const retained = await rpc('run.bundle.retain', { runId });
+    assert(
+      retained.ref && retained.missingData.length === 0,
+      'Admit every byte through actual retention',
+    );
+    await writeFile(
+      path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'native-visual-admission.json'),
+      JSON.stringify(
+        {
+          runId,
+          retained,
+          sourceDirectory: fixture.sourceDirectory,
+          closureIdentity: fixture.closureIdentity,
+          manifestDigest: fixture.output.manifestDigest,
+          inventory: fixture.inventory,
+        },
+        null,
+        2,
+      ),
+      { flag: 'wx', mode: 0o600 },
+    );
+    const admitted = await rpc('run.recipeRunsForRun', {
+      runId,
+      includeRecordedEvidence: true,
+      decisionId: fixture.decisionId,
+      evidenceSnapshotHash: fixture.output.manifestDigest,
+      recordedRecipeRunId: fixture.recipeRunId,
+    });
+    assert.deepEqual(admitted.recordedEvidence.errors, []);
+    assert.equal(admitted.recordedEvidence.visualReviewContext.decisionId, fixture.decisionId);
+    assert.deepEqual(
+      admitted.recordedEvidence.visualReviewAuthority.projectPolicy,
+      fixture.projectPolicy,
+    );
+    const progressParams = { slotId: template.slotId, runId };
+    const progress = await rpc('task.progress', progressParams);
+    assert.equal(progress.slotId, template.slotId, 'Require the actual owned progress endpoint');
+    // Lead prerequisite: the shared proxy must admit task.progress in its method allowlist.
+    // Its existing runId match scopes the default request; optional context selectors are absent.
+    proxy = await createRunReplyProxy({
+      upstreamPort: Number(gateway.port),
+      runId,
+      method: 'task.progress',
+      armed: false,
+    });
+    if (platform === 'ios') {
+      const proxyUrl = new URL(originalIOSProfile.url);
+      proxyUrl.port = String(proxy.port);
+      // Setup only, while stopped: keep the original service identity and credential.
+      // No evidence, result, receipt or cache state is written to the app.
+      iosProfileSeeded = true;
+      seedIOSGatewayProfile({
+        simulator: deviceId,
+        bundleId: 'net.siteed.farmslot.development',
+        profile: { ...originalIOSProfile, url: proxyUrl.href },
+      });
+      await execute('xcrun', [
+        'simctl',
+        'openurl',
+        deviceId,
+        `farmslot-development://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${metro}`)}`,
+      ]);
+      await waitForSimulatorRecipeBridge({ platform });
+    } else {
+      await execute('adb', ['-s', deviceId, 'reverse', `tcp:${gateway.port}`, `tcp:${proxy.port}`]);
+      await restartNative();
+    }
+    proofRef = `runs-cache:detail:${runId}`;
+    await inbox(`workspace/run/${runId}/evidence`);
+    await until(
+      (value) => value.detail?.status === 'ready' && value.detail.data.run.id === runId,
+      'The real run detail must become current',
+    );
+    await press('Read report');
+    await screen();
+    await capture('native-after-read-report.png');
+    const reason = `Review unchanged retained media ${runId}`;
+    const fillReason = async () => {
+      const input = await find(`Issue reason for ${fixture.claimId}`);
+      await device.interactions.fill({
+        ...selection,
+        x: input.rect.x + 8,
+        y: input.rect.y + 8,
+        text: reason,
+        verify: true,
+      });
+    };
+    await fillReason();
+    if (platform === 'android')
+      await execute('adb', ['-s', deviceId, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+    // A native tap on inert report text lets the ScrollView dismiss its keyboard.
+    else await pressNode(await find('Recipe evidence is machine-checkable'));
+    await find(`Looks right for ${fixture.claimId}`, true);
+    await find(`Issue for ${fixture.claimId}`, true);
+    await capture('native-recorded-visual-ready.png');
+    proxy.arm();
+    await rpc('run.tags.set', { runId, tags: ['held-current-read'] });
+    const deadline = Date.now() + 10000;
+    while (!proxy.state().held && Date.now() < deadline) await delay(20);
+    assert.equal(proxy.state().held, true, 'Hold the actual default task.progress read');
+    await find(`Issue for ${fixture.claimId}`, false);
+    const disabled = await find(`Looks right for ${fixture.claimId}`, false);
+    const before = proxy.state().counts['run.reviewVisualClaim'] ?? 0;
+    await pressNode(disabled); // A real tap, never direct invocation of a private handler.
+    await screen(); // Process a subsequent native observation before counting command attempts.
+    await capture('native-recorded-visual-stale-tap.png');
+    assert.equal(
+      proxy.state().expired,
+      false,
+      'The stale tap must finish before the held response deadline',
+    );
+    assert.equal(
+      proxy.state().counts['run.reviewVisualClaim'] ?? 0,
+      before,
+      'A stale tap sends zero judgment commands',
+    );
+    assert.deepEqual((await rpc('run.get', { runId })).run.visualJudgmentReceipts, []);
+    proxy.release();
+    // The confirmed receipt below must retain this exact typed reason after release.
+    await find(`Looks right for ${fixture.claimId}`, true);
+    await press(`Looks right for ${fixture.claimId}`);
+    const receipt = async (verdict, count) => {
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        if ((await rpc('run.get', { runId })).run.visualJudgmentReceipts.length === count + 1)
+          return assertNativeVisualReceipt({
+            rpc,
+            runId,
+            fixture,
+            verdict,
+            reason,
+            previousReceiptCount: count,
+          });
+        await delay(50);
+      }
+      assert.fail(`No receipt for actual UI ${verdict}`);
+    };
+    const confirmed = await receipt('confirmed', 0);
+    // Delegated reviews require prose for both verdicts; they remain editable.
+    const change = (await screen()).nodes.find(
+      (node) => node.label === `Change judgment for ${fixture.claimId}`,
+    );
+    if (change) await pressNode(change);
+    await press(`Issue for ${fixture.claimId}`);
+    await fillReason();
+    if (platform === 'android')
+      await execute('adb', ['-s', deviceId, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+    // A native tap on inert report text lets the ScrollView dismiss its keyboard.
+    else await pressNode(await find('Recipe evidence is machine-checkable'));
+    await press('Record issue');
+    const rejected = await receipt('rejected', 1);
+    await capture('native-recorded-visual-rejected.png');
+    const transport = proxy.state();
+    assert.equal(
+      transport.counts['run.reviewVisualClaim'],
+      2,
+      'Only two deliberate current submissions reach the gateway',
+    );
+    await writeFile(
+      path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'native-visual-receipts.json'),
+      JSON.stringify({ confirmed, rejected, transport }, null, 2),
+      { flag: 'wx', mode: 0o600 },
+    );
+    console.log(
+      JSON.stringify({
+        result: 'PASS',
+        nativeRecordedVisualJudgments: true,
+        nativeRecordedVisualStaleZeroCommands: true,
+        runId,
+        confirmed,
+        rejected,
+      }),
+    );
+  } finally {
+    try {
+      if (proxy) {
+        proxy.release();
+        if (platform === 'ios' && iosProfileSeeded) {
+          seedIOSGatewayProfile({
+            simulator: deviceId,
+            bundleId: 'net.siteed.farmslot.development',
+            profile: originalIOSProfile,
+          });
+          await execute('xcrun', [
+            'simctl',
+            'openurl',
+            deviceId,
+            `farmslot-development://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${metro}`)}`,
+          ]);
+          await waitForSimulatorRecipeBridge({ platform });
+        } else if (platform === 'android') {
+          await execute('adb', [
+            '-s',
+            deviceId,
+            'reverse',
+            `tcp:${gateway.port}`,
+            `tcp:${gateway.port}`,
+          ]);
+          await restartNative();
+        }
+      }
+    } finally {
+      try {
+        await proxy?.close();
+      } finally {
+        try {
+          if (seeded) {
+            const expectedRun = (await rpc('run.get', { runId })).run;
+            await withOwnedGatewayOffline(async () => {
+              await owner.followRunWrites(runFile, expectedRun);
+              await owner.cleanup();
+            });
+          } else await owner.cleanup();
+          // Gateway cleanup can restart the service after profile restoration.
+          // Await readiness without launching another app runtime.
+          await waitForSimulatorRecipeBridge({ platform });
+          await inbox();
+          await until(
+            (value) => value.online && value.runsStatus === 'ready',
+            'Restored native profile must be current before the following cold recipe',
+          );
+        } finally {
+          if (delegatorId) await rpc('principal.retire', { principalIds: [delegatorId] });
+        }
+      }
+    }
+  }
+  process.exit(0);
+}
+
 if (phase === 'visual-context' || phase === 'visual-wire-context') {
   const wire = phase === 'visual-wire-context';
   if (wire)
@@ -197,8 +612,18 @@ if (phase === 'visual-context' || phase === 'visual-wire-context') {
   );
   assert.equal(sessions.length, 1);
   const selection = { session: sessions[0].name, platform, target: 'mobile' };
-  const screen = () =>
-    device.capture.snapshot({ ...selection, interactiveOnly: false, forceFull: true });
+  const screen = async () => {
+    const observed = await device.capture.snapshot({
+      ...selection,
+      interactiveOnly: false,
+      forceFull: true,
+    });
+    await writeFile(
+      path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'native-last-screen.json'),
+      JSON.stringify(observed, null, 2),
+    );
+    return observed;
+  };
   const reveal = async (identifier, direction = 'down') => {
     for (let at = 0; at < 9; at++) {
       const node = (await screen()).nodes.find((node) => node.identifier === identifier);
@@ -539,8 +964,18 @@ if (['unbound-slot-diff', 'retry-artifacts', 'retry-diff'].includes(phase)) {
   );
   assert.equal(sessions.length, 1);
   const selection = { session: sessions[0].name, platform, target: 'mobile' };
-  const screen = () =>
-    device.capture.snapshot({ ...selection, interactiveOnly: false, forceFull: true });
+  const screen = async () => {
+    const observed = await device.capture.snapshot({
+      ...selection,
+      interactiveOnly: false,
+      forceFull: true,
+    });
+    await writeFile(
+      path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'native-last-screen.json'),
+      JSON.stringify(observed, null, 2),
+    );
+    return observed;
+  };
   const nativePhases = [];
   let startedAt = Date.now();
   const capture = async (name) => {
@@ -926,6 +1361,7 @@ if (phase === 'terminal-context') {
       );
       assert.equal(cold.detail.observedAt, stale.detail.observedAt);
       assert.equal(cold.diagnostics.integrity, 'ok');
+
       const screen = await nativeScreen();
       assert(
         screen.nodes.some((node) => node.label?.includes('Saved terminal run')),
@@ -1783,7 +2219,7 @@ if (contextPhases.includes(phase)) {
   process.exit(0);
 }
 if (phase === 'seed-inbox') {
-  await assert.rejects(access(receipt), { code: 'ENOENT' });
+  await waitForSimulatorRecipeBridge({ platform });
   await inbox();
   const initial = await until(
     (value) =>
@@ -1795,28 +2231,39 @@ if (phase === 'seed-inbox') {
   );
   assert.equal(initial.diagnostics.integrity, 'ok');
   assert(/\/caches?\//i.test(initial.diagnostics.directory));
-  const id = randomUUID();
-  const project = path.join(home, 'projects', `offline-native-inbox-${id}`);
-  const task = path.join(project, 'tasks', 'decision');
-  const file = path.join(task, '.pending_decision.json');
-  await mkdir(task, { recursive: true });
-  await writeFile(receipt, JSON.stringify({ id, home, project, file, platform, metro }), {
-    flag: 'wx',
-    mode: 0o600,
+  const id = d05.inbox.id;
+  const project = d05.inbox.project;
+  const task = path.dirname(d05.inbox.file);
+  const file = d05.inbox.file;
+  const existingReceipt = await readFile(receipt, 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') return undefined;
+    throw error;
   });
+  const previous = existingReceipt && JSON.parse(existingReceipt);
+  if (previous) assert.equal(previous.planId, d05.planId);
+  const owner = new D05FixtureOwner([project, receipt], previous?.ownership);
+  let createdReceipt = false;
   try {
-    await writeFile(
+    await owner.directory(task);
+    await owner.write(file, d05InboxBody(d05));
+    const nextReceipt = JSON.stringify({
+      id,
+      home,
+      project,
       file,
-      JSON.stringify({
-        id,
-        type: 'blocked_alert',
-        title: 'Offline native inbox proof',
-        description: 'A worker file must reach the real native inbox without Refresh.',
-        actions: [{ id: 'acknowledge', label: 'Acknowledge' }],
-        created_at: new Date().toISOString(),
-      }),
-      { flag: 'wx' },
-    );
+      platform,
+      metro,
+      planId: d05.planId,
+      receiptOwned: true,
+      ownership: owner.journal,
+    });
+    if (previous) {
+      // This is our previously checked receipt, not an arbitrary existing file.
+      await writeFile(receipt, nextReceipt, { mode: 0o600 });
+    } else {
+      await writeFile(receipt, nextReceipt, { flag: 'wx', mode: 0o600 });
+      createdReceipt = true;
+    }
     const arrived = await until(
       (value) =>
         value.decisionsStatus === 'ready' &&
@@ -1837,12 +2284,14 @@ if (phase === 'seed-inbox') {
       }),
     );
   } catch (error) {
-    await rm(project, { recursive: true });
-    await rm(receipt);
+    await owner.cleanup();
+    if (createdReceipt) await rm(receipt);
     throw error;
   }
 } else if (phase === 'resolve-inbox') {
   const fixture = JSON.parse(await readFile(receipt, 'utf8'));
+  assert.equal(fixture.planId, d05.planId);
+  assert.equal(fixture.id, d05.inbox.id);
   assert.equal(fixture.home, home);
   assert.equal(fixture.platform, platform);
   assert.equal(fixture.metro, metro);
@@ -1873,12 +2322,15 @@ if (phase === 'seed-inbox') {
       }),
     );
   } finally {
-    await rm(fixture.project, { recursive: true });
+    assert.equal(fixture.planId, d05.planId);
+    await new D05FixtureOwner([fixture.project, receipt], fixture.ownership).cleanup();
+    assert.equal(fixture.receiptOwned, true);
     await rm(receipt);
   }
 } else {
   assert(process.env.FARMSLOT_RUN_PROOF_FIXTURE);
-  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
+  const fixture =
+    d05?.baseline ?? JSON.parse(await readFile(process.env.FARMSLOT_RUN_PROOF_FIXTURE, 'utf8'));
   assert.equal(fixture.home, home);
   assert.match(fixture.runId, /^[a-f0-9-]{36}$/);
   assert.equal(fixture.runFile, path.join(home, 'runs', `${fixture.runId}.json`));
@@ -1905,13 +2357,116 @@ if (phase === 'seed-inbox') {
     const sessions = (await device.sessions.list()).filter((session) => session.device.id === id);
     assert.equal(sessions.length, 1, 'Use the active recipe session on the owned device');
     const selection = { session: sessions[0].name, platform, target: 'mobile' };
+    assert.equal(platform, 'ios', 'The bounded cold collection pass currently authorizes iOS only');
+    const decisionFixture = JSON.parse(await readFile(receipt, 'utf8'));
+    assert.equal(decisionFixture.home, home);
+    assert.equal(decisionFixture.planId, d05.planId);
+    assert.equal(decisionFixture.id, d05.inbox.id);
+    assert.equal(decisionFixture.platform, platform);
+    const decisionBytes = await readFile(decisionFixture.file, 'utf8');
+    const nativeScreen = () =>
+      device.capture.snapshot({ ...selection, interactiveOnly: false, forceFull: true });
+    const captureCollections = async (route, prefix, expectedText, name) => {
+      await inbox(route);
+      const deadline = Date.now() + 10000;
+      let rendered;
+      const hasFixture = (frame) =>
+        frame.nodes.some((node) =>
+          route === 'runs'
+            ? node.label === d05.savedRun.selector
+            : node.label?.includes(expectedText),
+        );
+      do {
+        rendered = await nativeScreen();
+        if (rendered.nodes.some((node) => node.label?.startsWith(prefix)) && hasFixture(rendered))
+          break;
+        if (route === 'runs' && !hasFixture(rendered))
+          await device.interactions.scroll({ ...selection, direction: 'down', pixels: 240 });
+        await delay(100);
+      } while (Date.now() < deadline);
+      await device.capture.screenshot({
+        ...selection,
+        path: path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'screenshots', name),
+        stabilize: true,
+      });
+      await writeFile(
+        path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, name + '.snapshot.json'),
+        JSON.stringify(rendered),
+      );
+      assert(
+        rendered.nodes.some((node) => node.label?.startsWith(prefix)),
+        `Render ${prefix} age banner`,
+      );
+      assert(hasFixture(rendered), `Render saved ${route} fixture row`);
+    };
+    // Real navigation warms the same product queries that the snapshot observes read-only.
+    await inbox('runs');
+    await inbox('inbox');
+    const warmCollections = await until(
+      (value) =>
+        value.runsStatus === 'ready' &&
+        value.decisionsStatus === 'ready' &&
+        value.decisionProjectionMatches &&
+        value.activeIds?.includes(d05.savedRun.id) &&
+        value.runs.some(
+          (row) => row.id === d05.savedRun.id && row.ticketOrPr === d05.savedRun.title,
+        ) &&
+        value.decisions.some((row) => row.id === decisionFixture.id),
+      'Warm nonempty Runs and the actual worker decision before going offline',
+    );
+    assert.equal(warmCollections.diagnostics.integrity, 'ok');
+    await captureCollections('runs', '', expected.run.ticketOrPr, 'native-runs-list-warm.png');
+    await captureCollections('inbox', '', 'Offline native inbox proof', 'native-inbox-warm.png');
+    assert(warmCollections.runsObservedAt && warmCollections.decisionsObservedAt);
+    const runIds = (value) => value.runs.map((row) => row.id).sort();
+    const decisionIds = (value) => value.decisions.map((row) => row.id).sort();
+    await inbox(`workspace/run/${fixture.runId}/evidence`);
     let cold;
+    let coldCollections;
+    let storedCollections;
     await withOwnedGatewayOffline(async () => {
       const stale = await until(
         (value) => value.detail?.status === 'stale' && value.detail.data?.run.id === fixture.runId,
         'Disconnect must retain the full run as stale',
       );
       assert(stale.detail.observedAt >= observed.detail.observedAt);
+      const savedCollections = await until(
+        (value) =>
+          value.runsStatus === 'stale' &&
+          value.decisionsStatus === 'stale' &&
+          value.decisionProjectionMatches,
+        'Disconnect marks both saved collections stale',
+      );
+      assert.deepEqual(runIds(savedCollections), runIds(warmCollections));
+      assert.deepEqual(decisionIds(savedCollections), decisionIds(warmCollections));
+      // Inspect the actual SQLite file, read-only, after its product writes have settled.
+      const directory = savedCollections.diagnostics.directory.startsWith('file:')
+        ? fileURLToPath(savedCollections.diagnostics.directory)
+        : savedCollections.diagnostics.directory;
+      const database = path.join(directory, savedCollections.diagnostics.filename);
+      const scope = JSON.parse(savedCollections.workspaceKey).scope;
+      const { stdout: sql } = await execute('python3', [
+        '-c',
+        'import sqlite3,json,sys; db=sqlite3.connect("file:"+sys.argv[1]+"?mode=ro",uri=True); rows=db.execute("SELECT q.id,q.observed_at,q.data FROM resource_queries q JOIN resource_stores s ON q.store_id=s.id WHERE s.scope_id=?",(sys.argv[2],)).fetchall(); print(json.dumps([dict(id=r[0],observedAt=r[1],data=json.loads(r[2])) for r in rows]))',
+        database,
+        scope,
+      ]);
+      storedCollections = JSON.parse(sql);
+      const storedRuns = storedCollections.find((row) => row.id === 'run.list:{"active":true}');
+      const storedDecisions = storedCollections.find((row) => row.id === 'decision.list:{}');
+      assert(storedRuns?.data.runs.length > 0, 'Actual SQLite must contain nonempty active runs');
+      assert.deepEqual(
+        storedRuns.data.runs.map((row) => row.id).sort(),
+        [...savedCollections.activeIds].sort(),
+        'SQLite active IDs must match the observed saved rows',
+      );
+      assert(storedRuns.observedAt > 0);
+      assert(
+        storedDecisions?.data.decisions.some((row) => row.id === decisionFixture.id),
+        'Actual SQLite must contain the worker decision',
+      );
+      assert.equal(storedDecisions.observedAt, savedCollections.decisionsObservedAt);
+
       const bundle = 'net.siteed.farmslot.development';
       const link = `farmslot-development://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${metro}`)}`;
       if (platform === 'ios') {
@@ -1942,6 +2497,68 @@ if (phase === 'seed-inbox') {
       assert.equal(cold.detail.observedAt, stale.detail.observedAt);
       assert.deepEqual(cold.detail.data.run, stale.detail.data.run);
       assert.equal(cold.diagnostics.integrity, 'ok');
+      coldCollections = await until(
+        (value) =>
+          value.runsStatus === 'stale' &&
+          value.decisionsStatus === 'stale' &&
+          value.decisionProjectionMatches &&
+          value.decisions.some((row) => row.id === decisionFixture.id),
+        'Cold offline runtime restores both collections from SQLite',
+      );
+      assert(coldCollections.startedAt > warmCollections.startedAt);
+      assert.deepEqual(runIds(coldCollections), runIds(savedCollections));
+      assert.deepEqual(
+        [...coldCollections.activeIds].sort(),
+        storedRuns.data.runs.map((row) => row.id).sort(),
+      );
+      assert.deepEqual(decisionIds(coldCollections), decisionIds(savedCollections));
+      assert.equal(coldCollections.runsObservedAt, savedCollections.runsObservedAt);
+      assert.equal(coldCollections.decisionsObservedAt, savedCollections.decisionsObservedAt);
+      await captureCollections(
+        'runs',
+        'Saved runs,',
+        expected.run.ticketOrPr,
+        'native-runs-list-cold.png',
+      );
+      await captureCollections(
+        'inbox',
+        'Saved decisions,',
+        'Offline native inbox proof',
+        'native-inbox-cold.png',
+      );
+      await inbox(`decision/${decisionFixture.id}`);
+      let action;
+      const actionDeadline = Date.now() + 10000;
+      do {
+        action = (await nativeScreen()).nodes.find(
+          (node) => node.label === 'Acknowledge' && node.rect,
+        );
+        if (action?.enabled === false) break;
+        await device.interactions.scroll({ ...selection, direction: 'down', pixels: 240 });
+        await delay(100);
+      } while (Date.now() < actionDeadline);
+      assert.equal(action?.enabled, false, 'The actual saved decision command must be disabled');
+      await device.interactions.press({
+        ...selection,
+        x: action.rect.x + action.rect.width / 2,
+        y: action.rect.y + action.rect.height / 2,
+      });
+      await nativeScreen();
+      assert.equal(
+        await readFile(decisionFixture.file, 'utf8'),
+        decisionBytes,
+        'Disabled offline tap cannot resolve the actual decision',
+      );
+      await device.capture.screenshot({
+        ...selection,
+        path: path.join(
+          process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR,
+          'screenshots',
+          'native-inbox-cold-disabled.png',
+        ),
+        stabilize: true,
+      });
+      await inbox(`workspace/run/${fixture.runId}/evidence`);
       const screen = await device.capture.snapshot({
         ...selection,
         interactiveOnly: false,
@@ -1969,12 +2586,50 @@ if (phase === 'seed-inbox') {
         value.detail?.status === 'ready' && value.detail.observedAt >= cold.detail.observedAt,
       'Reconnect must replace stale authority with a current full-run observation',
     );
+    const recoveredCollections = await until(
+      (value) =>
+        value.runsStatus === 'ready' &&
+        value.decisionsStatus === 'ready' &&
+        value.decisionProjectionMatches &&
+        value.decisions.some((row) => row.id === decisionFixture.id),
+      'Single recovery reauthorizes both collections without replay',
+    );
+    assert.equal(
+      await readFile(decisionFixture.file, 'utf8'),
+      decisionBytes,
+      'Reconnect must not replay the disabled decision command',
+    );
+    const canonicalDecisions = await rpc('decision.list');
+    assert(
+      canonicalDecisions.decisions.some((row) => row.id === decisionFixture.id),
+      'Independent endpoint must still expose the unresolved decision after recovery',
+    );
+    assert(recoveredCollections.decisionsObservedAt >= coldCollections.decisionsObservedAt);
+    assert(recoveredCollections.runsObservedAt >= coldCollections.runsObservedAt);
+    await writeFile(
+      path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR, 'native-cold-collections.json'),
+      JSON.stringify(
+        {
+          warm: warmCollections,
+          cold: coldCollections,
+          recovered: recoveredCollections,
+          stored: storedCollections,
+        },
+        null,
+        2,
+      ),
+      { flag: 'wx', mode: 0o600 },
+    );
     console.log(
       JSON.stringify({
         result: 'PASS',
         phase,
         platform,
         runId: fixture.runId,
+        nativeColdSavedRuns: true,
+        nativeColdSavedInbox: true,
+        nativeColdDisabledDecision: true,
+        nativeColdCollectionsNoReplay: true,
         nativeColdRunDetail: true,
         observedAt: cold.detail.observedAt,
       }),

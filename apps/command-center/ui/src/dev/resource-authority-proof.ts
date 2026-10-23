@@ -39,6 +39,7 @@ export async function inspectResourceAuthority(
   const inspectedScope = scope ?? identity?.metadata.scope;
   let persistent = false;
   let storedObservedAt: number | undefined;
+  let storedQueryIds: string[] = [];
   if (inspectedScope) {
     if (
       normalizeResourceStoreScope(inspectedScope).gatewayUrl !==
@@ -49,6 +50,7 @@ export async function inspectResourceAuthority(
     try {
       persistent = store.persistent;
       storedObservedAt = (await store.getQuery(query.id))?.observedAt;
+      storedQueryIds = (await store.listQueries()).map((entry) => entry.id);
     } finally {
       await store.close();
     }
@@ -62,6 +64,7 @@ export async function inspectResourceAuthority(
     inspectedScope,
     persistent,
     storedObservedAt,
+    storedQueryIds,
     cacheStatus: state?.status,
     cacheObservedAt: state?.observedAt,
     cacheHasData: state?.data !== undefined,

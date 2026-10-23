@@ -1,0 +1,66 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native retained visual claim judgments",
+  "description": "One selected owned iOS simulator or Android emulator; video off. Replay an unchanged genuine retained closure through run.bundle.retain. Real native Looks right/Issue taps prove receipts and projected verdicts independently. Hold a real task.progress reply and tap the disabled control; the byte-preserving proxy must count zero judgment commands. FARMSLOT_NATIVE_VISUAL_SOURCE explicitly names private retained media; never substitute unit-test media. D05 requires a clean read-only dry-preflight plan in FARMSLOT_D05_PLAN and its exact resolved title in FARMSLOT_D05_DETAIL_TITLE plus the detail_title recipe parameter. Root owns one simulator boot and serial execution; the intentional offline app cold restart is permitted. Stop on a non-product failure.",
+  "proofTargets": [
+    {
+      "id": "native-recorded-visual",
+      "claim": "Real Looks right and Issue submissions create exact-package delegated receipts and independent proven/failed claim projections without rewriting the retained ledger."
+    },
+    {
+      "id": "native-recorded-stale",
+      "claim": "An actual tap on the disabled stale judgment control sends zero commands on the live native transport."
+    }
+  ],
+  "workflow": {
+    "entry": "before",
+    "nodes": {
+      "before": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-recorded-before.png",
+        "intent": "Acquire the single selected native device session without recording.",
+        "next": "prove"
+      },
+      "prove": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/agentic/prove-offline-runs.mjs recorded-visual-context",
+        "timeout_ms": 240000,
+        "intent": "Admit unchanged genuine media and interact with production native claim judgment controls.",
+        "next": "receipts"
+      },
+      "receipts": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeRecordedVisualJudgments\":true",
+        "intent": "Require actual gateway receipts and independent projected verdict checks.",
+        "proves": ["native-recorded-visual"],
+        "next": "stale"
+      },
+      "stale": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeRecordedVisualStaleZeroCommands\":true",
+        "intent": "Require a real disabled tap with no judgment request on the live socket.",
+        "proves": ["native-recorded-stale"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  },
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "detail_title": {
+        "type": "string",
+        "pattern": ".+"
+      }
+    },
+    "required": ["detail_title"]
+  }
+}

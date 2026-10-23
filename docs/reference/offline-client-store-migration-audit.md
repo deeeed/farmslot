@@ -14,8 +14,8 @@ platform proof below is pending.
 | `decision.list`                        | `decisions/farm`                      | 10 MB across variants   | Browser inbox; native inbox, decision workspace and gate action guards                                                                                                  |
 | `run.recipeRunsForRun`                 | `run/{runId}`, `artifacts/{runId}`    | Memory                  | Browser run detail, SlotView and frozen publication workspace; native run detail, diff, frozen artifact viewer, decision workspace and gate acceptance evidence         |
 | `family.observability.get`             | `family/{familyId}`, `decisions/farm` | Memory                  | Browser comparison and family view; native family workspace                                                                                                             |
-| `run.slotHistory`                      | `runs/farm`, `slots/farm`             | Memory                  | Browser slot history                                                                                                                                                    |
-| `run.forSlot`, `run.recipeRunsForSlot` | `runs/farm`, `slot/{slotId}`          | Memory                  | Browser SlotView selection through `run.forSlot`; `run.recipeRunsForSlot` consumers remain to migrate                                                                   |
+| `run.slotHistory`                      | `runs/farm`, `slots/farm`             | Memory                  | Browser and native slot-history views; selected entries use shared full-run and recipe observations                                                                     |
+| `run.forSlot`, `run.recipeRunsForSlot` | `runs/farm`, `slot/{slotId}`          | Memory                  | Slot selection uses run.forSlot, then shared full-run/per-run recipe observations; no direct run.recipeRunsForSlot client read remains                                  |
 | `run.tags.list`                        | `runs/farm`                           | Memory                  | Browser tag filters                                                                                                                                                     |
 
 The protocol registry is `packages/protocol/src/client-cache/registry.ts`. Parameters form
@@ -24,19 +24,19 @@ history remains explicit and bounded to 80 rows until the version-list migration
 
 ## Freshness audit
 
-| Consumer                                   | Removed mechanism                                                                                                                             | Replacement                                                           | Proof                                                                                                                             |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Sources controllers                        | Client refresh scheduling and settle reads                                                                                                    | Shared `sources.status` observation                                   | Sources live recipes                                                                                                              |
-| Browser run collections and inbox          | Domain event payload adoption                                                                                                                 | Shared `run.list` and `decision.list` observations                    | `command-center-offline-runs.recipe.json`                                                                                         |
-| Browser full run detail                    | Direct payload adoption, trimmed-detail retries, post-write reads and mirror-delay guess                                                      | Shared `run.get` and recipe observations                              | Same recipe, full-detail and artifact-arrival assertions                                                                          |
-| Browser batch archive                      | Treating one catch-up response as current authority                                                                                           | Wait on shared observations until all selected query inputs are ready | Same recipe, explicit batch archive assertions                                                                                    |
-| Browser run comparison                     | Direct full-run, sibling and family reads tied to app snapshots                                                                               | Shared full-run, family-list and family-snapshot observations         | `command-center-offline-runs.recipe.json`, comparison assertions and notification negative control                                |
-| Native active/history/inbox collections    | Run/decision event payload adoption and queued decision refresh                                                                               | Shared active/history/decision observations                           | `runs-live.recipe.json`                                                                                                           |
-| Native full run detail                     | Separate full-run/recipe reads, run event adoption and replay-result adoption                                                                 | Shared full-run and recipe observations                               | `runs-live.recipe.json`, including cold app restart                                                                               |
-| Native saved review                        | Independent full-run refresh, list-row replacement and post-publication settle read                                                           | Shared full-run observation; explicit retry after read failure        | `runs-context-live.recipe.json`; iOS and Android component proofs pass                                                            |
-| Native decision workspace                  | Local decision/full-run copies, domain event adoption and reconnect recipe reads                                                              | Shared inbox, full-run and recipe observations                        | Same context recipe; iOS and Android component proofs pass                                                                        |
-| Native gate review and acceptance evidence | Local full-run copy, domain event adoption and independent recipe-evidence read                                                               | Shared full-run and parameterized recipe observations                 | Same context recipe; iOS and Android component proofs pass                                                                        |
-| Family views in both clients               | Native 30-second poll, 400-ms settle timer, per-event reads and local full-run adoption; browser connection/post-write reads and full-run map | Shared family, selected-run and per-run recipe observations           | Browser offline run recipe and native `family-live.recipe.json`; combined browser 35/35 and native family 13/13 on both platforms |
+| Consumer                                   | Removed mechanism                                                                                                                             | Replacement                                                                                        | Proof                                                                                                                             |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Sources controllers                        | Client refresh scheduling and settle reads                                                                                                    | Shared `sources.status` observation                                                                | Sources live recipes                                                                                                              |
+| Browser run collections and inbox          | Domain event payload adoption                                                                                                                 | Shared `run.list` and `decision.list` observations                                                 | `command-center-offline-runs.recipe.json`                                                                                         |
+| Browser full run detail                    | Direct payload adoption, trimmed-detail retries, post-write reads and mirror-delay guess                                                      | Shared `run.get` and recipe observations                                                           | Same recipe, full-detail and artifact-arrival assertions                                                                          |
+| Browser batch archive                      | Treating one catch-up response as current authority                                                                                           | Wait on shared observations until all selected query inputs are ready                              | Same recipe, explicit batch archive assertions                                                                                    |
+| Browser run comparison                     | Direct full-run, sibling and family reads tied to app snapshots                                                                               | Shared full-run, family-list and family-snapshot observations                                      | `command-center-offline-runs.recipe.json`, comparison assertions and notification negative control                                |
+| Native active/history/inbox collections    | Run/decision event payload adoption and queued decision refresh                                                                               | Shared active/history/decision observations                                                        | `runs-live.recipe.json`                                                                                                           |
+| Native full run detail                     | Separate full-run/recipe reads, run event adoption and replay-result adoption                                                                 | Shared full-run and recipe observations bound to pending decision, manifest and explicit execution | runs-live and recorded-visual-runs-live recipes; iOS cold18/18 and visual5/5                                                      |
+| Native saved review                        | Independent full-run refresh, list-row replacement and post-publication settle read                                                           | Shared full-run observation; explicit retry after read failure                                     | `runs-context-live.recipe.json`; iOS and Android component proofs pass                                                            |
+| Native decision workspace                  | Local decision/full-run copies, domain event adoption and reconnect recipe reads                                                              | Shared inbox, full-run and recipe observations                                                     | Same context recipe; iOS and Android component proofs pass                                                                        |
+| Native gate review and acceptance evidence | Local full-run copy, domain event adoption and independent recipe-evidence read                                                               | Shared full-run and parameterized recipe observations                                              | Same context recipe; iOS and Android component proofs pass                                                                        |
+| Family views in both clients               | Native 30-second poll, 400-ms settle timer, per-event reads and local full-run adoption; browser connection/post-write reads and full-run map | Shared family, selected-run and per-run recipe observations                                        | Browser offline run recipe and native `family-live.recipe.json`; combined browser 35/35 and native family 13/13 on both platforms |
 
 | Native diff context | Direct full-run and recipe reads, event payload adoption, 30-second poll and background-pause retry | Shared full-run and recipe observations; owner-bound live workspace side read remains for fleet slice | `runs-context-live.recipe.json`; iOS and Android pass 21/21, cold render and age negatives fail, exact restoration and 21/21 recovery each |
 
@@ -89,6 +89,15 @@ authority retire the copied facts. `command-center-slot-writer.recipe.json`
 checks real mode writes, the rendered lifecycle and canonical query revisions.
 Fleet persistence and the remaining fleet-family reads are still pending.
 
+## Native report evidence identity
+
+`features/run-detail/run-evidence.ts` derives the evidence query from the current full
+run, pending output-review decision, manifest digest and explicit recipe selection.
+Both judgment callers reread the current progress and evidence observations when the
+operator invokes an action. A retained callback cannot authorize a different cache,
+profile, connection authority or review context. The report hook binds visible content
+and late reads to that same profile, authority and package identity.
+
 ## Run writer coverage
 
 | Writer                       | Notification owner                                                  | Covered behavior                                                                                                                                                                                                                    |
@@ -101,6 +110,16 @@ Fleet persistence and the remaining fleet-family reads are still pending.
 | PR monitor observations      | `pr-monitoring/store.ts`                                            | Run-derived monitor decisions invalidate when their inputs change                                                                                                                                                                   |
 | Slot facts and membership    | `core/state.ts`, `fleet/state.ts`, `resources/slot-run-bindings.ts` | Direct/CAS/claim/mark/transition/reset/rewrite commits and external file changes invalidate slot facts and former project/node scopes. Membership or run-pointer changes also invalidate run projections; failed reads stay visible |
 | Inbox expiry                 | `runs/decision-inbox.ts`, resource deadline owner                   | Existing 48-hour expiry invalidates the inbox without rewriting the run                                                                                                                                                             |
+
+`runs/store-resource-changes.test.ts` exercises the actual store writers, filtered
+membership, writes during reads, durable outcomes, archive/deletion and derived views.
+`resources/run-changes.test.ts` covers former family/decision keys and inbox deadlines.
+`observability/fleet-monitor-resource-changes.test.ts` covers file decision changes and
+failure/recovery; `intelligence/feedback-ledger.test.ts` and
+`pr-monitoring/store.test.ts` cover their owning persisted writes. Actual artifact
+arrival/pruning and unchanged acquisitions are covered by
+`run-completion/artifact-mirror.test.ts`. Slot binding/membership invalidations are
+covered by `resources/slot-run-bindings.test.ts`.
 
 Gateway writer tests and the real-endpoint run recipe support these rows. They do not
 establish coverage for unmigrated cross-family inputs.
@@ -120,19 +139,21 @@ Focused browser `ready-workspace-live-r6` passes 3/3 with actual external tags,
 a real removed-action refusal, cold offline gate facts, saved age, exact SQLite
 observation time and current evidence recovery without replay. Notification and readiness controls each fail their intended assertion, restore the
 exact source bytes and recover 3/3. Current/refused and cold/age screenshots are
-inspected. The combined recording is pending. This slot-free gate proof does not
+inspected. Screenshots and endpoint assertions support this proof. This slot-free gate proof does not
 establish packaged publication, actual visual judgments or the full command matrix.
+
+## Run and decision acceptance
+
+Command Center's combined run-family recipe passes 43/43. The bundled desktop client restores saved run lists, opened full runs and Inbox offline with original observation times, disabled mutation controls and current recovery without replay. The closed-client role-revocation proof clears rendered run data and its stored queries before a history reply applies.
+
+Companion iOS cold Runs/Inbox passes 18/18: a new offline process renders the same saved IDs and SQLite observation times, visible ages and a disabled actual decision action, then recovers without replay. Its visual recipe passes 5/5: two current confirmed/rejected judgments match their independent delegated receipts and projections; a stale tap issues zero commands. The retained media and ledger remain byte-identical. The proof adds no native product change.
+
+The baseline records five current browser reconnect samples, median 1151 ms and 5,585,675 bytes for 62 rows versus the original 67. These are raw measurements without a normalized speedup claim. The original 7.56 MB baseline still requires version lists.
 
 ## Remaining acceptance
 
-- Complete the combined browser proof and whole-platform command matrix; focused publication, review and dispatch controls are accepted.
-  Complete the remaining native conversation platform matrix. iOS component proof and controls pass; terminal, visual-review and artifact reader component evidence is recorded.
-- Migrate the remaining consumers of `run.forSlot` and `run.recipeRunsForSlot`; binding writers and dependencies now have isolated tests, live browser history and SlotView evidence.
-- Finish native context recipes and negative controls, then the browser, desktop,
-  iOS and Android authority/profile and connected-stale command matrix.
-- Re-measure reconnect bytes and time against the baseline.
-- Complete the fleet/session, configuration/planning and upstream migrations, followed
-  by content reads, content caching, conditional edits and gated version lists.
+- Complete fleet/session, configuration/planning and upstream migrations, followed by content reads, content caching, conditional edits and version lists.
+- Complete final platform validation, CI and independent reviews on the finished head.
 
 Recipe files live under `docs/examples/recipes/farmslot/` for Command Center and
 `apps/companion/scripts/agentic/recipe/recipes/` for Companion. Unit tests support the

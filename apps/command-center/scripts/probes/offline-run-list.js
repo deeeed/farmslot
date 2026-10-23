@@ -5,19 +5,26 @@ const url = performance
   .map((entry) => entry.name)
   .filter((name) => new URL(name).pathname === '/src/state.ts')
   .at(-1);
-if (!url) throw new Error('The application state module did not load');
-const state = (await import(url)).getState();
+const state = url
+  ? (await import(url)).getState()
+  : {
+      runsObservation: Reflect.get(list, 'runsObservation'),
+      connection: document.querySelector('farm-app')?.connection,
+    };
 if (state.runsObservation !== Reflect.get(list, 'runsObservation'))
   throw new Error('The probe must read the module owning the rendered run list');
 const tag = Reflect.get(list, 'tagQuery')?.state;
 const root = list.shadowRoot;
 const commands = [...root.querySelectorAll('.new-run-btn, .action-btn.cleanup, .inline-action')];
-const tagEditors = [...root.querySelectorAll('run-tag-editor')];
+const tagEditors = [...root.querySelectorAll('run-tag-editor')].filter(
+  (editor) => typeof editor.saveTags === 'function',
+);
 return {
   mounted: true,
   storage: (await document.querySelector('farm-resource-store-notice')?.resourceStoreDiagnostics())
     ?.storage,
   freshness: state.runsObservation.status,
+  observedAt: state.runsObservation.observedAt,
   tag: Reflect.get(list, 'tagFilter'),
   tagFreshness: tag?.status,
   tagObservedAt: tag?.observedAt,

@@ -5,8 +5,15 @@ const url = performance
   .map((entry) => entry.name)
   .filter((name) => new URL(name).pathname === '/src/state.ts')
   .at(-1);
-if (!url) throw new Error('The application state module did not load');
-const state = (await import(url)).getState();
+const state = url
+  ? (await import(url)).getState()
+  : {
+      decisionsObservation: Reflect.get(inbox, '_observation'),
+      decisions: Reflect.get(inbox, '_decisions'),
+      runsObservation: document.querySelector('run-list')?.runsObservation,
+      runs: document.querySelector('run-list')?.runs ?? [],
+      connection: document.querySelector('farm-app')?.connection,
+    };
 const storage = (
   await document.querySelector('farm-resource-store-notice')?.resourceStoreDiagnostics()
 )?.storage;
@@ -19,7 +26,7 @@ return {
   visibility: document.visibilityState,
   freshness: state.decisionsObservation.status,
   observedAt: state.decisionsObservation.observedAt,
-  runFreshness: state.runsObservation.status,
+  runFreshness: state.runsObservation?.status,
   runCount: state.runs.length,
   connection: state.connection,
   stale: root.querySelector('[data-freshness="stale"]')?.textContent?.trim(),

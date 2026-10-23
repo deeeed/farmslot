@@ -14,15 +14,29 @@ export async function createRunReplyProxy({
   upstreamPort,
   runId,
   method,
+  params,
   armed = true,
   holdResponse = () => true,
 }) {
   assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1');
   assert(Number.isSafeInteger(upstreamPort) && upstreamPort > 0);
-  assert.match(runId, /^[a-f0-9-]{36}$/);
-  const methods = new Set(['terminal.send', 'run.get', 'native.session.read']);
+  if (method === 'run.list') assert(runId === undefined && params && typeof params === 'object');
+  else assert.match(runId, /^[a-f0-9-]{36}$/);
+  const methods = new Set([
+    'terminal.send',
+    'run.get',
+    'native.session.read',
+    'task.progress',
+    'run.list',
+  ]);
   assert(methods.has(method));
-  let selected = { method, armed, holdResponse };
+  let selected = { method, params, armed, holdResponse };
+  const matchesParams = (actual) =>
+    selected.params === undefined ||
+    (Object.keys(actual ?? {}).length === Object.keys(selected.params).length &&
+      Object.entries(selected.params).every(
+        ([key, value]) => JSON.stringify(actual?.[key]) === JSON.stringify(value),
+      ));
   let failure;
   let held;
   const pairs = new Set();
@@ -65,12 +79,18 @@ export async function createRunReplyProxy({
         const frame = JSON.parse(String(bytes));
         if (
           frame.type === 'req' &&
-          (frame.params?.runId ?? frame.params?.worker?.runId) === runId
+          (selected.method === 'run.list'
+            ? frame.method === 'run.list' && matchesParams(frame.params)
+            : (frame.params?.runId ?? frame.params?.worker?.runId) === runId)
         ) {
           counts.set(frame.method, (counts.get(frame.method) ?? 0) + 1);
-          if (frame.method === selected.method) {
+          if (frame.method === selected.method && matchesParams(frame.params)) {
             evidence.requests++;
-            targetIds.set(frame.id, { method: frame.method, after: frame.params?.after ?? 0 });
+            targetIds.set(frame.id, {
+              method: frame.method,
+              params: frame.params,
+              after: frame.params?.after ?? 0,
+            });
           }
         }
       }
@@ -93,6 +113,8 @@ export async function createRunReplyProxy({
       ) {
         evidence.held = true;
         evidence.heldMethod = pending.method;
+        evidence.heldRequestId = frame.id;
+        evidence.heldParams = pending.params;
         evidence.heldAfter = pending.after;
         evidence.responseOk = frame.ok;
         evidence.errorCode = frame.error?.code;
@@ -154,9 +176,11 @@ export async function createRunReplyProxy({
       assert(methods.has(method));
       selected = {
         method,
+        params: options.params ?? (method === selected.method ? selected.params : undefined),
         armed: true,
         holdResponse: options.holdResponse ?? selected.holdResponse,
       };
+      if (method === 'run.list') assert(runId === undefined && selected.params);
       evidence = fresh();
     },
     release,

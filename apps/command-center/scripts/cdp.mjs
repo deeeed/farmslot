@@ -96,6 +96,7 @@ async function findTab(hash) {
   const tabs = await listTabs();
   const pages = tabs.filter((t) => t.type === 'page');
   if (!hash || hash === '-') return pages[0];
+  if (hash.startsWith('@')) return pages.find((tab) => tab.id === hash.slice(1)) ?? null;
   const needle = hash.startsWith('#') ? hash : `#${hash}`;
   // Intentionally no fallback to pages[0] when a hash is specified: silently
   // retargeting to another tab lets validation scripts "pass" against an
