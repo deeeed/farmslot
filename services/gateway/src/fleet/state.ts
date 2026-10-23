@@ -28,9 +28,11 @@ import {
   validateQaConfig,
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import {
   declaredProjectNames,
+  invalidateProjectVarsCache,
   isIgnoredPoolFile,
   normalizeRawProjectAutoRecovery,
   normalizeRawProjectBacklog,
@@ -47,6 +49,7 @@ import {
 } from '../core/config.js';
 import { onStatusCommit } from '../core/state.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
+import { capabilityResourceChanges } from '../resources/capability-changes.js';
 import {
   slotResourceChanges as slotResources,
   statusCheckedAt,
@@ -730,6 +733,7 @@ export function startFileWatcher() {
   });
   poolWatcher.on('all', (event, file) => {
     if (file === poolDir || !['add', 'change', 'unlink'].includes(event)) return;
+    capabilityResourceChanges.catalogChanged();
     clearTimeout(poolDebounce);
     poolDebounce = setTimeout(async () => {
       try {
@@ -749,11 +753,46 @@ export function startFileWatcher() {
       }
     }, 2000);
   });
+  const selectedHome = farmslotHome();
+  const runtimeSettingsDir = path.join(selectedHome, 'sources', 'runtime-settings');
+  // Watch only each project's config and the bounded runtime settings directory.
+  // Source-bound immutable packs announce their new lock through the sources key.
+  const projectWatcher = watch([projectsDir, selectedHome], {
+    persistent: true,
+    ignoreInitial: true,
+    depth: 2,
+    ignored: (file, stats) => {
+      if (file === projectsDir || file === selectedHome || file === runtimeSettingsDir)
+        return false;
+      // Chokidar follows existing ancestors until a missing settings directory appears.
+      if (runtimeSettingsDir.startsWith(`${file}${path.sep}`)) return false;
+      const projectParts = path.relative(projectsDir, file).split(path.sep);
+      if (!projectParts[0].startsWith('..') && !path.isAbsolute(projectParts[0])) {
+        if (projectParts.length === 1) return stats?.isFile() ?? false;
+        return projectParts.length !== 2 || projectParts[1] !== 'project.json';
+      }
+      return path.dirname(file) !== runtimeSettingsDir || !file.endsWith('.json');
+    },
+  });
+  projectWatcher.on('all', (event, file) => {
+    if (!['add', 'change', 'unlink'].includes(event)) return;
+    const project =
+      path.dirname(file) === runtimeSettingsDir
+        ? path.basename(file, '.json')
+        : path.basename(path.dirname(file));
+    if (path.basename(file) !== 'project.json' && path.dirname(file) !== runtimeSettingsDir) return;
+    invalidateProjectVarsCache(project);
+    capabilityResourceChanges.catalogChanged();
+  });
   return {
-    ready: Promise.all([once(watcher, 'ready'), once(poolWatcher, 'ready')]),
+    ready: Promise.all([
+      once(watcher, 'ready'),
+      once(poolWatcher, 'ready'),
+      once(projectWatcher, 'ready'),
+    ]),
     async close(): Promise<void> {
       clearTimeout(poolDebounce);
-      await Promise.all([watcher.close(), poolWatcher.close()]);
+      await Promise.all([watcher.close(), poolWatcher.close(), projectWatcher.close()]);
     },
   };
 }

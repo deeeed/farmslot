@@ -222,6 +222,7 @@ export function renderSlotViewWorkspaceStyles(): string {
 
       /* --- Right column (editor + terminal) --- */
       slot-view .sv-right-col {
+        position: relative;
         flex: 1;
         display: flex;
         flex-direction: column;

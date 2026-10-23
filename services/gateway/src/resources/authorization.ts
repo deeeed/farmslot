@@ -30,6 +30,10 @@ export function canReadResourceKey(
     case 'pressure':
       method = Methods.RESOURCE_PRESSURE_SNAPSHOT;
       break;
+    case 'capabilities':
+    case 'capability':
+      method = Methods.RUNTIME_CAPABILITY_STATUS;
+      break;
     case 'decisions':
     case 'decision':
       method = Methods.DECISION_LIST;

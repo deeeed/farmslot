@@ -1007,6 +1007,12 @@ test('resource.changed uses the key read authorization and read replies carry re
         { key: { family: 'node', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
         { key: { family: 'node', scope: 'farm' }, revision: 1, kind: 'updated' },
         { key: { family: 'pressure', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
+        { key: { family: 'capabilities' }, revision: 1, kind: 'updated' },
+        {
+          key: { family: 'capability', capabilityId: 'changed-capability' },
+          revision: 1,
+          kind: 'updated',
+        },
       ],
     });
     const frame = await received;
@@ -1026,6 +1032,12 @@ test('resource.changed uses the key read authorization and read replies carry re
       { key: { family: 'node', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
       { key: { family: 'node', scope: 'farm' }, revision: 1, kind: 'updated' },
       { key: { family: 'pressure', nodeId: 'changed-node' }, revision: 1, kind: 'updated' },
+      { key: { family: 'capabilities' }, revision: 1, kind: 'updated' },
+      {
+        key: { family: 'capability', capabilityId: 'changed-capability' },
+        revision: 1,
+        kind: 'updated',
+      },
     ]);
     // This response is a websocket ordering barrier, rather than a fixed absence wait.
     const refusal = await request(denied, Methods.SOURCES_STATUS, {});

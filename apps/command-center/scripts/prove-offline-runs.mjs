@@ -50,6 +50,7 @@ assert(
     'recipe-owner-web',
     'slot-facts-web',
     'fleet-store-web',
+    'capabilities-web',
   ].includes(phase),
   'Select a run proof phase',
 );
@@ -717,6 +718,273 @@ async function detailBrowser(runId) {
     navigate,
     peek: () => cdp('eval', route, '--file', storeProbe),
   };
+}
+
+if (phase === 'capabilities-web') {
+  assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+  assert.equal(process.env.FARMSLOT_MONITOR_FLEET_POLL_MS, '600000');
+  const fixture = JSON.parse(await readFile(process.env.FARMSLOT_SLOT_RESOURCE_PROOF));
+  assert.equal(await realpath(fixture.home), home);
+  const repo = await realpath(fixture.repo);
+  assert(repo.startsWith(`${home}/`));
+  const slot = (await rpc('fleet.status')).fleet.slots.find(({ slot }) => slot === fixture.slotId);
+  assert(slot && !slot.currentRunId);
+  const file = path.join(projects, slot.project, 'project.json');
+  assert((await realpath(file)).startsWith(`${home}/`));
+  const original = await readFile(file);
+  const mode = (await stat(file)).mode & 0o777;
+  const marker = path.join(repo, '.capability-cache-proof');
+  await assert.rejects(access(marker), (error) => error.code === 'ENOENT');
+  const config = JSON.parse(original);
+  assert(!config.runtime_capabilities, 'Use the owned empty capability fixture');
+  const capabilityId = 'cache-proof';
+  const actions = {
+    acquire: 'cache-proof-start',
+    health: 'cache-proof-health',
+    release: 'cache-proof-stop',
+  };
+  const commands = {
+    acquire: 'printf live > .capability-cache-proof',
+    health: 'test -f .capability-cache-proof',
+    release: 'rm -f .capability-cache-proof',
+  };
+  const configured = {
+    ...config,
+    slot_actions: { ...config.slot_actions },
+    runtime_capabilities: {
+      providers: {
+        [capabilityId]: {
+          label: 'Owned cache provider',
+          version: '1',
+          share_policy: 'exclusive',
+          cost: { class: 'low', resources: [] },
+          affected_resources: [],
+          release_effects: ['Remove the owned proof marker'],
+          actions: Object.fromEntries(
+            Object.entries(actions).map(([kind, action_id]) => [
+              kind,
+              { kind: 'slot-action', action_id },
+            ]),
+          ),
+        },
+      },
+    },
+  };
+  for (const [kind, id] of Object.entries(actions))
+    configured.slot_actions[id] = {
+      label: `Owned cache ${kind}`,
+      command: commands[kind],
+      refresh: ['none'],
+      timeoutMs: 5000,
+    };
+  const replaceConfig = async (bytes) => {
+    const temporary = `${file}.cache-proof-${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, bytes, { flag: 'wx', mode });
+      await chmod(temporary, mode);
+      await rename(temporary, file);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  };
+  const artifacts = process.env.FARMSLOT_RUN_WEB_EVIDENCE_DIR;
+  assert(artifacts);
+  await mkdir(artifacts, { recursive: true });
+  const cdp = async (...args) =>
+    JSON.parse(
+      (
+        await execute(
+          process.execPath,
+          [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+          { timeout: 30000, maxBuffer: 2 * 1024 * 1024 },
+        )
+      ).stdout,
+    );
+  const route = `slot/${fixture.slotId}`;
+  const base = new URL(process.env.FARMSLOT_UI_URL);
+  base.searchParams.set('capability-proof', randomUUID());
+  base.hash = `${route}?activity=info`;
+  const probe = path.join(root, 'apps/command-center/scripts/probes/offline-capabilities.js');
+  const until = async (test, label) => {
+    const deadline = Date.now() + 45000;
+    let value;
+    do {
+      value = await cdp('eval', route, '--file', probe);
+      if (test(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const revision = (value) => {
+    const dependency = value.resourceState?.dependencies.find(
+      ({ key }) => key.family === 'capabilities' && !key.slotId && !key.nodeId,
+    );
+    assert(dependency, 'Capability observations must declare the registry dependency');
+    return dependency.revision;
+  };
+  const has = (value, state) =>
+    value.rows?.some(
+      (row) => row.id === capabilityId && row.rendered && (!state || row.state === state),
+    );
+  try {
+    await cdp('goto', base.href);
+    await cdp('focus', route);
+    const initial = await until(
+      (value) => value.mounted && value.canonical && value.freshness === 'ready',
+      'The actual capability panel must observe its current canonical query',
+    );
+    await replaceConfig(JSON.stringify(configured, null, 2) + '\n');
+    const catalog = await until(
+      (value) => value.freshness === 'ready' && has(value) && revision(value) > revision(initial),
+      'An external catalog write must advance the canonical capability read without Refresh',
+    );
+    await replaceConfig('{broken-capability-catalog');
+    await until(
+      (value) =>
+        value.freshness === 'stale' &&
+        value.error &&
+        value.errorRendered &&
+        !value.ready &&
+        has(value),
+      'Catalog failure must retain stale facts with a visible read error',
+    );
+    await replaceConfig(JSON.stringify(configured, null, 2) + '\n');
+    await until(
+      (value) => value.freshness === 'ready' && !value.error && has(value),
+      'Restored catalog must recover through its owning watcher',
+    );
+    const result = await withRunFixture(
+      () => ({ project: slot.project, status: 'blocked', completedAt: undefined }),
+      async ({ runId }) => {
+        const acquire = async () => {
+          const before = await cdp('eval', route, '--file', probe);
+          const response = await rpc('runtime.capability.acquire', {
+            slotId: fixture.slotId,
+            capabilityId,
+            ownerRunId: runId,
+            proofRequirement: {
+              capabilityId,
+              reason: 'Prove owned capability observations',
+              mode: 'state',
+            },
+          });
+          assert(response.ok, JSON.stringify(response));
+          assert.equal(await readFile(marker, 'utf8'), 'live');
+          return until(
+            (value) =>
+              value.freshness === 'ready' &&
+              has(value, 'acquired') &&
+              revision(value) > revision(before),
+            'A committed acquire must advance its read stamp and update the actual capability panel',
+          );
+        };
+        try {
+          await until(
+            (value) => value.freshness === 'ready' && has(value),
+            'The panel must recover after fixture setup restart',
+          );
+          const acquired = await acquire();
+          await cdp(
+            'eval',
+            route,
+            "document.querySelector('slot-view')?.querySelector('runtime-capabilities-panel')?.scrollIntoView({block:'center'}); return true;",
+          );
+          await cdp(
+            'click',
+            route,
+            `slot-view runtime-capabilities-panel >>> [data-testid="runtime-capability-release-${capabilityId}"]`,
+          );
+          const released = await until(
+            (value) => value.freshness === 'ready' && has(value, 'released') && !value.actionError,
+            'Explicit Stop must release the real lease and update the canonical panel',
+          );
+          await assert.rejects(access(marker), (error) => error.code === 'ENOENT');
+          assert(revision(released) > revision(acquired));
+          configured.runtime_capabilities.providers[capabilityId].label =
+            'Updated owned cache provider';
+          configured.runtime_capabilities.providers[capabilityId].version = '2';
+          await replaceConfig(JSON.stringify(configured, null, 2) + '\n');
+          await until(
+            (value) =>
+              value.freshness === 'ready' &&
+              value.rows.some((row) => row.text.includes('Updated owned cache provider')) &&
+              revision(value) > revision(released),
+            'Changed provider catalog must reach the existing canonical panel',
+          );
+          await acquire();
+          const outage = await withOwnedGatewayOffline(async () => {
+            const stale = await until(
+              (value) =>
+                value.freshness === 'stale' &&
+                !value.ready &&
+                has(value, 'acquired') &&
+                value.buttons.some(
+                  (button) =>
+                    button.id === `runtime-capability-release-${capabilityId}` && button.disabled,
+                ),
+              'Stale capability controls must disable real provider commands',
+            );
+            base.searchParams.set('capability-cold', randomUUID());
+            await cdp('goto', base.href);
+            await cdp('focus', route);
+            const cold = await until(
+              (value) =>
+                value.canonical &&
+                value.freshness === 'stale' &&
+                value.stale &&
+                value.unobscured &&
+                value.commandsInert &&
+                has(value, 'acquired') &&
+                value.buttons.some(
+                  (button) =>
+                    button.id === `runtime-capability-release-${capabilityId}` && button.disabled,
+                ),
+              'Cold offline startup must restore the canonical capability snapshot with disabled commands',
+            );
+            assert.equal(cold.observedAt, stale.observedAt);
+            await cdp(
+              'eval',
+              route,
+              "document.querySelector('slot-view')?.querySelector('runtime-capabilities-panel')?.scrollIntoView({block:'center'}); return true;",
+            );
+            await cdp('screenshot', route, path.join(artifacts, 'capabilities-cold-offline.png'));
+            return { stale, cold };
+          });
+          const recovered = await until(
+            (value) => value.freshness === 'ready' && value.ready && has(value, 'acquired'),
+            'Restarted gateway must restore capability authority only after a current read',
+          );
+          assert.notEqual(recovered.resourceState.epoch, acquired.resourceState.epoch);
+          await writeFile(
+            path.join(artifacts, 'capability-cycles.json'),
+            JSON.stringify({ initial, catalog, acquired, released, outage, recovered }, null, 2),
+          );
+          return {
+            capabilityCatalogNotified: true,
+            capabilityLeaseNotified: true,
+            capabilityReadFailureVisible: true,
+            coldCapabilitiesRestored: true,
+          };
+        } finally {
+          const release = await rpc('runtime.capability.release', {
+            slotId: fixture.slotId,
+            capabilityId,
+            ownerRunId: runId,
+            keepWarm: false,
+          });
+          assert(release.ok, JSON.stringify(release));
+          await assert.rejects(access(marker), (error) => error.code === 'ENOENT');
+        }
+      },
+    );
+    console.log(JSON.stringify({ result: 'PASS', action: phase, ...result }));
+  } finally {
+    await replaceConfig(original);
+    assert.deepEqual(await readFile(file), original);
+    assert.equal((await stat(file)).mode & 0o777, mode);
+    await assert.rejects(access(marker), (error) => error.code === 'ENOENT');
+  }
+  process.exit(0);
 }
 
 if (phase === 'fleet-store-web') {

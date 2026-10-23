@@ -188,6 +188,7 @@ export interface RuntimeCapabilityRegistryOptions {
   recoveryStartedAtForRun?: (ownerRunId: string) => number | undefined;
 
   onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
+  onCommit?: (snapshot: RuntimeCapabilityStoreSnapshot) => void;
   /**
    * A scoped claim has been reserved for this owner and the run engine should
    * complete it.
@@ -648,6 +649,7 @@ export class RuntimeCapabilityRegistry {
     const grants = this.pendingGrants;
     this.pendingGrants = [];
     await this.options.store.replace(snapshot);
+    this.options.onCommit?.(this.options.store.snapshot());
     for (const event of events) this.options.onEvent?.(event);
     // After the write, always. A grant is an instruction to go boot a provider;
     // issuing it for a reservation that never reached disk would have the run

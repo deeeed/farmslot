@@ -145,6 +145,20 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     live: true,
     dependencies: () => [{ family: 'node', scope: 'farm' }],
   },
+  [Methods.RUNTIME_CAPABILITY_LIST]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 2 * mb },
+    live: true,
+    dependencies: () => [{ family: 'capabilities' }, { family: 'sources', scope: 'farm' }],
+  },
+  [Methods.RUNTIME_CAPABILITY_STATUS]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 2 * mb },
+    live: true,
+    dependencies: () => [{ family: 'capabilities' }, { family: 'sources', scope: 'farm' }],
+  },
 } satisfies Record<string, ResourceQueryDefinition>;
 
 export type ResourceReadMethod = keyof typeof RESOURCE_QUERY_DEFINITIONS;

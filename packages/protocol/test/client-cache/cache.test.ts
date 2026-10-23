@@ -172,3 +172,17 @@ test('node inventory is one bounded persisted collection observation', () => {
   assert.deepEqual(nodes.dependencies, [{ family: 'node', scope: 'farm' }]);
   assert.deepEqual(nodes.retention, { maxEntries: 1, maxBytes: 2 * 1024 * 1024 });
 });
+
+test('capability catalog and status queries share registry/source dependencies and bounded retention', () => {
+  for (const method of ['runtime.capability.list', 'runtime.capability.status'] as const) {
+    const query = resourceQuery(method, { slotId: 'owned-slot' });
+    assert.equal(query.live, true);
+    assert.equal(query.persisted, true);
+    assert.equal(query.maxBytes, 2 * 1024 * 1024);
+    assert.equal(query.retention?.maxBytes, 2 * 1024 * 1024);
+    assert.deepEqual(query.dependencies, [
+      { family: 'capabilities' },
+      { family: 'sources', scope: 'farm' },
+    ]);
+  }
+});

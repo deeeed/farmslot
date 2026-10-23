@@ -14,8 +14,11 @@ process.env.FARMSLOT_TEST_STATUS_FILE = path.join(root, 'status.json');
 process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
 process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
 process.env.FARMSLOT_HOME = path.join(root, 'home');
+process.env.FARMSLOT_PROJECTS_DIR = path.join(root, 'projects');
 await fs.mkdir(process.env.FARMSLOT_POOL_DIR);
 await fs.mkdir(process.env.FARMSLOT_RUNS_DIR);
+await fs.mkdir(process.env.FARMSLOT_PROJECTS_DIR);
+await fs.mkdir(process.env.FARMSLOT_HOME);
 after(() => fs.rm(root, { recursive: true, force: true }));
 
 // Pause a real file read after it captured bytes, without altering the writer.
@@ -53,6 +56,47 @@ const { runForSlot, runRecipeRunsForSlot } = await import('../methods/run/contex
 const { fleetStatus } = await import('../methods/fleet.js');
 const key = { family: 'runs', scope: 'farm' } as const;
 const rows = (owner: string | null) => ({ slots: [{ slot: 'proof', current_run_id: owner }] });
+
+test('project catalog writes notify capabilities and retire the owning project vars cache', async (t) => {
+  const { loadProjectVars } = await import('../core/config.js');
+  const project = 'capability-catalog-proof';
+  const directory = path.join(process.env.FARMSLOT_PROJECTS_DIR!, project);
+  await fs.mkdir(directory);
+  const file = path.join(directory, 'project.json');
+  await fs.writeFile(file, JSON.stringify({ name: project, default_branch: 'before' }));
+  assert.equal((await loadProjectVars(project)).projectJson.default_branch, 'before');
+  const key = { family: 'capabilities' } as const;
+  const before = resourceRevisions.revision(key);
+  const watcher = startFileWatcher();
+  t.after(() => watcher.close());
+  await watcher.ready;
+  await fs.writeFile(file, JSON.stringify({ name: project, default_branch: 'after' }));
+  const deadline = Date.now() + 3000;
+  while (resourceRevisions.revision(key) === before) {
+    assert(Date.now() < deadline, 'A catalog file change must notify without a read or TTL expiry');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal((await loadProjectVars(project)).projectJson.default_branch, 'after');
+  await fs.unlink(file);
+  const changed = resourceRevisions.revision(key);
+  while (resourceRevisions.revision(key) === changed) {
+    assert(Date.now() < deadline, 'A removed catalog must notify its readers');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  await assert.rejects(loadProjectVars(project), /Project config not found/);
+  const runtimeDirectory = path.join(process.env.FARMSLOT_HOME!, 'sources', 'runtime-settings');
+  await fs.mkdir(runtimeDirectory, { recursive: true });
+  const beforeRuntime = resourceRevisions.revision(key);
+  await fs.writeFile(path.join(runtimeDirectory, `${project}.json`), '{}');
+  const runtimeDeadline = Date.now() + 3000;
+  while (resourceRevisions.revision(key) === beforeRuntime) {
+    assert(
+      Date.now() < runtimeDeadline,
+      'New runtime settings must notify after their directory is created',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+});
 
 test('overlay writers invalidate current slot facts and cached fleet without changing run bindings', async () => {
   await state.rewriteStatusFile(() => ({

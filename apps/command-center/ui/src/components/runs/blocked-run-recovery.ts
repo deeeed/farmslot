@@ -9,9 +9,11 @@ import type {
   SlotStatus,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
 import { requireCurrentFleet } from '../../state.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   blockedWorkerOwnsSlot,
@@ -34,6 +36,13 @@ export class BlockedRunRecovery extends LitElement {
   @state() private error = '';
   @state() private busy = false;
   private refreshSeq = 0;
+  private readonly capabilities = new ResourceQueryController<RuntimeCapabilityStatusResult>(
+    this,
+    (result) => {
+      this.status = result.data ?? null;
+      this.plan = this.run ? (result.data?.proofPlans[this.run.id] ?? null) : null;
+    },
+  );
 
   static styles = css`
     :host {
@@ -96,16 +105,25 @@ export class BlockedRunRecovery extends LitElement {
     this.ownedSlotStatus = null;
     this.ownershipKnown = false;
     this.error = '';
-    if (!isRecoverableBlockedWorkerRun(run)) return false;
+    if (!isRecoverableBlockedWorkerRun(run)) {
+      this.capabilities.setQuery(undefined);
+      return false;
+    }
     if (!run.slotId) {
+      this.capabilities.setQuery(undefined);
       this.ownershipKnown = true;
       return true;
     }
     try {
-      const status = await gateway.request<RuntimeCapabilityStatusResult>(
-        Methods.RUNTIME_CAPABILITY_STATUS,
-        { slotId: run.slotId },
+      this.capabilities.setQuery(
+        resourceQuery<RuntimeCapabilityStatusResult>(Methods.RUNTIME_CAPABILITY_STATUS, {
+          slotId: run.slotId,
+        }),
       );
+      const observed = await this.capabilities.retry();
+      if (observed.status !== 'ready' || !observed.data)
+        throw observed.error ?? new Error('Current capability status is unavailable.');
+      const status = observed.data;
       if (refreshSeq !== this.refreshSeq) return false;
       this.status = status;
       this.plan = status.proofPlans[run.id] ?? null;
@@ -150,7 +168,7 @@ export class BlockedRunRecovery extends LitElement {
   }
 
   private requirementsReady(): boolean {
-    return blockedWorkerProofReady(this.run, this.status);
+    return this.capabilities.ready && blockedWorkerProofReady(this.run, this.status);
   }
 
   private async assertSlotOwned(run: Run): Promise<void> {

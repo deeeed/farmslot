@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +13,9 @@ import {
   type RuntimeCapabilityLifecycleEvent,
   type RuntimeCapabilityProviderActionRef,
 } from '@farmslot/protocol';
+
+import { CapabilityResourceChanges } from '../resources/capability-changes.js';
+import { GatewayResourceRevisions } from '../resources/revisions.js';
 
 import { deviceTargetExtraVars } from './device-target.js';
 import {
@@ -227,6 +231,7 @@ async function fixture(
   t: TestContext,
   capabilities: RuntimeCapabilityCatalogEntry[],
   options: {
+    onCommit?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['onCommit'];
     catalogForSlot?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['catalogForSlot'];
     pressureFor?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['pressureFor'];
     familyForRun?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['familyForRun'];
@@ -266,6 +271,7 @@ async function fixture(
   const store = options.storeFactory?.(storePath) ?? new RuntimeCapabilityStore(storePath);
   const registry = new RuntimeCapabilityRegistry({
     store,
+    onCommit: options.onCommit,
     captureProviderProcesses: options.captureProviderProcesses,
     checkProviderCleanup: options.checkProviderCleanup,
     catalogForSlot:
@@ -320,6 +326,80 @@ function acquire(
     },
   });
 }
+
+test('capability observations advance only after durable state and keep no-op releases quiet', async (t) => {
+  const revisions = new GatewayResourceRevisions();
+  t.after(() => revisions.dispose());
+  const changes = new CapabilityResourceChanges(revisions);
+  let file = '';
+  let commits = 0;
+  const { registry } = await fixture(t, [entry('observed')], {
+    storeFactory: (location) => {
+      file = location;
+      return new RuntimeCapabilityStore(location);
+    },
+    onCommit(snapshot) {
+      const persisted = JSON.parse(readFileSync(file, 'utf8'));
+      assert.deepEqual(persisted.leases, JSON.parse(JSON.stringify(snapshot.leases)));
+      changes.committed(snapshot);
+      commits++;
+    },
+  });
+  const key = { family: 'capabilities' } as const;
+  assert.equal((await acquire(registry, 'observed', 'observer-owner')).ok, true);
+  assert(commits > 0);
+  assert(revisions.revision(key) > 0);
+  assert(revisions.revision({ family: 'capabilities', slotId: SLOT }) > 0);
+  assert(revisions.revision({ family: 'capability', capabilityId: 'observed' }) > 0);
+  assert.equal((await registry.status({ slotId: SLOT })).leases[0].state, 'acquired');
+  const beforeRelease = revisions.revision(key);
+  await registry.release({ slotId: SLOT, ownerRunId: 'observer-owner', keepWarm: false });
+  assert(revisions.revision(key) > beforeRelease);
+  const afterRelease = revisions.revision(key);
+  await registry.release({ slotId: SLOT, ownerRunId: 'observer-owner', keepWarm: false });
+  assert.equal(revisions.revision(key), afterRelease);
+  const slotBefore = revisions.revision({ family: 'capabilities', slotId: SLOT });
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: 'other-slot',
+        capabilityId: 'observed',
+        ownerRunId: 'other-owner',
+        proofRequirement: {
+          capabilityId: 'observed',
+          reason: 'Other slot observation',
+          mode: 'state',
+        },
+      })
+    ).ok,
+    true,
+  );
+  assert.equal(
+    revisions.revision({ family: 'capabilities', slotId: SLOT }),
+    slotBefore,
+    'A foreign slot commit changes the aggregate queue without advancing unchanged slot facts',
+  );
+});
+
+test('a failed capability store write cannot publish a committed observation', async (t) => {
+  let commits = 0;
+  class FailedStore extends RuntimeCapabilityStore {
+    override async replace(): Promise<void> {
+      throw new Error('capability write refused');
+    }
+  }
+  const { registry } = await fixture(t, [entry('uncommitted')], {
+    storeFactory: (location) => new FailedStore(location),
+    onCommit() {
+      commits++;
+    },
+  });
+  await assert.rejects(
+    acquire(registry, 'uncommitted', 'uncommitted-owner'),
+    /capability write refused/,
+  );
+  assert.equal(commits, 0);
+});
 
 function batchRequests(ids: string[], ownerRunId = 'run-a'): RuntimeCapabilityAcquireParams[] {
   return ids.map((capabilityId) => ({
