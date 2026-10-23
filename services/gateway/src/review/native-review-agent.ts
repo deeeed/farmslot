@@ -552,46 +552,60 @@ async function runNativeReviewAttempt(
       const source =
         context?.nativeSession?.handoffFrom ??
         (warm ? { runId: warmRunId!, contextId: warm.id } : undefined);
-      const dispatched = dispatchNativeWorker({
-        runId,
-        vars,
-        role: 'review',
-        contextId,
-        allowOperatorWait: true,
-        assertCurrent: admit,
-        retainedFrom: source,
-        taskFile: taskMdPath,
-        signalFile: taskDirRelPath(taskDir, target.signal),
-        taskId: run.ticketOrPr,
-        runner,
-        model,
-        resultSchema,
-        effort: input.effort?.trim() || undefined,
-        safetyTier: run.safetyTier ?? runnerDefaultSafetyTier(runner),
-        project: projectVars.projectJson,
-        projectVars,
-        domain: resolveEffectiveDomain(run.domain, vars.domain),
-        initialPrompt:
-          reviewChecklistMarkPrompt(taskDir, taskMdPath, target, feedbackRelPath, resultRelPath) +
-          '\nRead the reviewer-specific execution contract. Do NOT run /review.' +
-          REFUSED_APPROVALS,
-        beforeInput: async () => {
-          const current = admit();
-          const { enforceDispatchPressureGate } = await import('../methods/dispatch/execute.js');
-          await enforceDispatchPressureGate({
-            machine: vars.machine,
-            runId,
-            run: current,
-            attemptKey: `native-review:${runId}:${contextId}`,
-            deps: {
-              persistRun: async (id, patch) => {
-                await persistRunNow(updateRun(id, patch), 'native reviewer pressure admission');
+      const dispatched =
+        recovering &&
+        getRun(runId)?.agentContexts?.find((entry) => entry.id === contextId)?.nativeCommandId
+          ? Promise.resolve()
+          : dispatchNativeWorker({
+              runId,
+              vars,
+              role: 'review',
+              contextId,
+              allowOperatorWait: true,
+              assertCurrent: admit,
+              retainedFrom: source,
+              taskFile: taskMdPath,
+              signalFile: taskDirRelPath(taskDir, target.signal),
+              taskId: run.ticketOrPr,
+              runner,
+              model,
+              resultSchema,
+              effort: input.effort?.trim() || undefined,
+              safetyTier: run.safetyTier ?? runnerDefaultSafetyTier(runner),
+              project: projectVars.projectJson,
+              projectVars,
+              domain: resolveEffectiveDomain(run.domain, vars.domain),
+              initialPrompt:
+                reviewChecklistMarkPrompt(
+                  taskDir,
+                  taskMdPath,
+                  target,
+                  feedbackRelPath,
+                  resultRelPath,
+                ) +
+                '\nRead the reviewer-specific execution contract. Do NOT run /review.' +
+                REFUSED_APPROVALS,
+              beforeInput: async () => {
+                const current = admit();
+                const { enforceDispatchPressureGate } =
+                  await import('../methods/dispatch/execute.js');
+                await enforceDispatchPressureGate({
+                  machine: vars.machine,
+                  runId,
+                  run: current,
+                  attemptKey: `native-review:${runId}:${contextId}`,
+                  deps: {
+                    persistRun: async (id, patch) => {
+                      await persistRunNow(
+                        updateRun(id, patch),
+                        'native reviewer pressure admission',
+                      );
+                    },
+                  },
+                });
               },
-            },
-          });
-        },
-        emit: () => {},
-      });
+              emit: () => {},
+            });
       try {
         await dispatched;
       } catch (error) {
@@ -698,23 +712,31 @@ async function runNativeReviewAttempt(
       }
       if (!probe.ok && probe.code === 'artifact_contract')
         throw new TerminalReviewArtifactError(probe.message);
-      if (
-        await continueNativeReviewCompletion({
-          runId,
-          context,
-          vars,
-          snapshot,
-          probe,
-          assertCurrent: admit,
-        })
-      ) {
+      const completion = await continueNativeReviewCompletion({
+        runId,
+        context,
+        vars,
+        snapshot,
+        probe,
+        assertCurrent: admit,
+      });
+      if (completion === 'continued') {
         context = admit().agentContexts!.find((candidate) => candidate.id === contextId)!;
         reviewBinding = context.nativeSession!;
         eventCursor = undefined;
         continue;
       }
-      if (probe.ok && command?.state === 'completed' && command.outcome === 'completed') break;
-      if (['closed', 'failed'].includes(snapshot.session.state) || command?.outcome === 'failed') {
+      if (
+        completion !== 'deferred' &&
+        probe.ok &&
+        command?.state === 'completed' &&
+        command.outcome === 'completed'
+      )
+        break;
+      if (
+        completion !== 'deferred' &&
+        (['closed', 'failed'].includes(snapshot.session.state) || command?.outcome === 'failed')
+      ) {
         const reason =
           snapshot.session.error ?? 'Native reviewer stopped without a valid terminal signal';
         throw reviewerExitForNativeSnapshot(snapshot) ?? new Error(reason);

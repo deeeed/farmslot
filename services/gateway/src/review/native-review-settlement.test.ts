@@ -35,6 +35,10 @@ type Ending =
   | 'completion-unfinished'
   | 'completion-live'
   | 'completion-restart'
+  | 'completion-closed-restart'
+  | 'completion-deferred'
+  | 'completion-interrupted'
+  | 'completion-invalid-idle'
   | 'completion-invalid';
 let ending: Ending = 'verdict';
 let timeline: { now: number; polls: number; stepMs?: number } | undefined;
@@ -62,6 +66,7 @@ const completionCommands: string[] = [];
 let loseCompletionReply = false;
 let completionLaunches = 0;
 let completionActivityPages: NativeSessionEvent[][] | undefined;
+let deferredClock: { now: number; polls: number } | undefined;
 const completionCase = () => ending.startsWith('completion-');
 
 // The reviewer's host, slot files and runner are scripted; the run store and the
@@ -90,6 +95,8 @@ mock.module('../run-engine/run-monitor.js', {
         const context = getRun(runId)!.agentContexts?.find((entry) => entry.role === 'review');
         if (
           ending !== 'completion-unfinished' &&
+          ending !== 'completion-interrupted' &&
+          ending !== 'completion-closed-restart' &&
           context?.nativeSession?.commandId !== binding.commandId
         )
           return { ok: true };
@@ -147,6 +154,11 @@ mock.module('../runners/native/worker.js', {
       if (stopFails) throw new Error('native worker stop is unconfirmed');
     },
     dispatchNativeWorker: async (input: { runId: string; contextId: string }) => {
+      const current = getRun(input.runId)!.agentContexts?.find(
+        (entry) => entry.id === input.contextId,
+      );
+      if (current?.nativeSession?.closedAt)
+        throw new Error('Native worker task lease is closed; use explicit recovery');
       if (
         getRun(input.runId)!.agentContexts?.find((entry) => entry.id === input.contextId)
           ?.nativeCommandId
@@ -184,8 +196,15 @@ mock.module('../runners/native/worker-control.js', {
         const continued = current.nativeSession!.commandId !== binding.commandId;
         return {
           session: {
-            state: continued || ending === 'completion-live' ? 'idle' : 'closed',
-            processStopped: !continued && ending !== 'completion-live',
+            state:
+              ending === 'completion-closed-restart'
+                ? 'closed'
+                : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                  ? 'idle'
+                  : 'closed',
+            processStopped:
+              ending === 'completion-closed-restart' ||
+              (!continued && !['completion-live', 'completion-invalid-idle'].includes(ending)),
             nativeSessionId: 'saved-review-conversation',
           },
           commands: [
@@ -193,8 +212,16 @@ mock.module('../runners/native/worker-control.js', {
               commandId: current.nativeSession!.commandId,
               generation: current.nativeSession!.generation,
               accepted: true,
-              state: continued || ending === 'completion-live' ? 'completed' : 'failed',
-              outcome: continued || ending === 'completion-live' ? 'completed' : 'failed',
+              state:
+                continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                  ? 'completed'
+                  : 'failed',
+              outcome:
+                continued && ending === 'completion-interrupted'
+                  ? 'interrupted'
+                  : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                    ? 'completed'
+                    : 'failed',
             },
           ],
           events: completionActivityPages?.[history?.after ?? 0] ?? [],
@@ -269,6 +296,12 @@ mock.module('../runners/native/worker-recovery.js', {
       )!;
       assert.equal(context.nativeCommandId, options.commandId);
       assert.equal(context.nativeCommandText, options.text);
+      if (deferredClock) {
+        deferredClock.now += 600001;
+        if (++deferredClock.polls > 2)
+          throw new Error('Deferred completion bypassed the inactivity watchdog');
+        return;
+      }
       completionCommands.push(options.commandId);
       if (loseCompletionReply) {
         loseCompletionReply = false;
@@ -296,6 +329,7 @@ mock.module('../runners/native/worker-recovery.js', {
           commandId: options.commandId,
           generation: 'continued-generation',
           recovery: undefined,
+          ...(ending === 'completion-closed-restart' ? { closedAt: new Date().toISOString() } : {}),
         },
       });
     },
@@ -315,7 +349,7 @@ mock.module('../tasks/watcher.js', { namedExports: { unwatchContext: noop } });
 mock.module('./feedback.js', {
   namedExports: {
     readReviewFeedback: async () =>
-      ending === 'completion-invalid'
+      ['completion-invalid', 'completion-invalid-idle'].includes(ending)
         ? {
             verdict: 'issues',
             issues: [],
@@ -417,8 +451,13 @@ const review = (runId: string) =>
     model: 'opus',
     taskDir: 'tasks/review',
     runId,
-    reviewTimeoutMs:
-      ending === 'timeout' ? 0 : timeline ? (ending === 'inactive' ? 60 : 30) * 60_000 : 60_000,
+    reviewTimeoutMs: ['timeout', 'completion-invalid-idle', 'completion-interrupted'].includes(
+      ending,
+    )
+      ? 0
+      : timeline
+        ? (ending === 'inactive' ? 60 : 30) * 60_000
+        : 60_000,
     loopNumber: 1,
     validationDepth: 'static-code',
     mode: 'cold',
@@ -497,8 +536,54 @@ test('invalid scoped result never gets an automatic completion turn', async (t) 
   ending = 'completion-invalid';
   completionCommands.length = 0;
   const run = await nativeRun(t);
-  await assert.rejects(review(run.id), /invalid scoped review result/);
+  await assert.rejects(review(run.id), /stopped without a valid terminal signal/);
   assert.equal(completionCommands.length, 0);
+  assert.equal(
+    getRun(run.id)!.agentContexts?.find((entry) => entry.role === 'review')?.status,
+    'failed',
+  );
+});
+
+test('an idle native turn with invalid artifacts retains its normal inactivity failure', async (t) => {
+  ending = 'completion-invalid-idle';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /no checklist or tool progress/);
+  assert.equal(completionCommands.length, 0);
+});
+
+test('deferred completion delivery still reaches the inactivity watchdog', async (t) => {
+  ending = 'completion-deferred';
+  const clock = { now: Date.now(), polls: 0 };
+  deferredClock = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    deferredClock = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /no checklist or tool progress/);
+  assert.equal(clock.polls, 1);
+});
+
+test('an interrupted completion fails with its terminal-signal reason', async (t) => {
+  ending = 'completion-interrupted';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /completion turn.*terminal signal/);
+  assert.equal(completionCommands.length, 1);
+});
+
+test('restart settles a stopped unfinished completion without redispatching its closed lease', async (t) => {
+  ending = 'completion-closed-restart';
+  completionCommands.length = 0;
+  completionLaunches = 0;
+  loseCompletionReply = true;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /completion reply lost/);
+  await assert.rejects(review(run.id), /completion turn.*terminal signal/);
+  assert.equal(completionLaunches, 1);
+  assert.equal(completionCommands.length, 2);
+  assert.equal(completionCommands[0], completionCommands[1]);
 });
 
 test('restart recovery enforces the completion inactivity limit and drains fresh tool activity', async (t) => {

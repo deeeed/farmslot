@@ -17,7 +17,7 @@ import { checklistMarkerCommand, targetForChecklistBasename } from '../tasks/che
 
 import { readReviewFeedback } from './feedback.js';
 import { withNativeReviewMutation, withNativeReviewOperation } from './native-review-operation.js';
-import { TerminalReviewArtifactError } from './terminal-result.js';
+import { reviewerFeedbackRelPath } from './template-paths.js';
 
 interface CompletionInput {
   runId: string;
@@ -33,7 +33,9 @@ interface CompletionInput {
 export class NativeReviewCompletionError extends Error {}
 
 /** One durable completion instruction per admitted reviewer, shared by live and restart recovery. */
-export async function continueNativeReviewCompletion(input: CompletionInput): Promise<boolean> {
+export async function continueNativeReviewCompletion(
+  input: CompletionInput,
+): Promise<false | 'continued' | 'deferred'> {
   const { runId, vars, snapshot, probe } = input;
   const current = () => {
     input.assertCurrent();
@@ -67,54 +69,52 @@ export async function continueNativeReviewCompletion(input: CompletionInput): Pr
   const reserved = context.nativeCommandId;
   const adopted = reserved && context.nativeSession!.commandId === reserved;
   const ended = command?.state === 'completed' || command?.state === 'failed';
-  if (adopted) {
-    if (!probe.ok && ended && command.outcome !== 'interrupted')
+  if (adopted && !probe.ok && ended)
+    throw new NativeReviewCompletionError(
+      'Native reviewer completion turn ended without a valid terminal signal',
+    );
+  if (reserved && !probe.ok && input.enforceProgressTimeout) {
+    const project = await loadProjectVars(vars.projectName);
+    const timeout = (project.projectJson.review?.review_inactivity_timeout_min ?? 10) * 60_000;
+    const acceptedAt = Date.parse(context.nativeSession!.acceptedAt ?? '');
+    if (!Number.isFinite(acceptedAt))
       throw new NativeReviewCompletionError(
-        'Native reviewer completion turn ended without a valid terminal signal',
+        'Native reviewer completion has no valid progress clock',
       );
-    if (!probe.ok && input.enforceProgressTimeout) {
-      const project = await loadProjectVars(vars.projectName);
-      const timeout = (project.projectJson.review?.review_inactivity_timeout_min ?? 10) * 60_000;
-      const acceptedAt = Date.parse(context.nativeSession!.acceptedAt ?? '');
-      if (!Number.isFinite(acceptedAt))
-        throw new NativeReviewCompletionError(
-          'Native reviewer completion has no valid progress clock',
-        );
-      let latest = acceptedAt;
-      const recordProgress = (at: string) => {
-        const value = Date.parse(at);
-        if (Number.isFinite(value) && value >= acceptedAt)
-          latest = Math.max(latest, Math.min(Date.now(), value));
-      };
-      for (const event of probe.code === 'non_terminal'
-        ? (probe.signal?.checklistTiming?.events ?? [])
-        : [])
-        recordProgress(event.checkedAt);
-      let page = snapshot;
-      while (Number.isFinite(latest) && Date.now() - latest >= timeout) {
-        for (const event of page.events) {
-          if (
-            event.sessionId === context.nativeSession!.sessionId &&
-            event.commandId === reserved &&
-            event.generation === context.nativeSession!.generation &&
-            ['command.accepted', 'tool.started', 'tool.completed'].includes(event.type)
-          )
-            recordProgress(event.at);
-        }
-        if (Date.now() - latest < timeout) break;
-        if (!page.hasMore)
-          throw new NativeReviewCompletionError(
-            'Native reviewer completion turn exceeded its checklist/tool inactivity limit',
-          );
-        page = await readNativeWorkerSnapshot(runId, 'review', context.id, {
-          after: page.cursor,
-          limit: 500,
-        });
-        current();
+    let latest = acceptedAt;
+    const recordProgress = (at: string) => {
+      const value = Date.parse(at);
+      if (Number.isFinite(value) && value >= acceptedAt)
+        latest = Math.max(latest, Math.min(Date.now(), value));
+    };
+    for (const event of probe.code === 'non_terminal'
+      ? (probe.signal?.checklistTiming?.events ?? [])
+      : [])
+      recordProgress(event.checkedAt);
+    let page = snapshot;
+    while (Number.isFinite(latest) && Date.now() - latest >= timeout) {
+      for (const event of page.events) {
+        if (
+          event.sessionId === context.nativeSession!.sessionId &&
+          event.commandId === context.nativeSession!.commandId &&
+          event.generation === context.nativeSession!.generation &&
+          ['command.accepted', 'tool.started', 'tool.completed'].includes(event.type)
+        )
+          recordProgress(event.at);
       }
+      if (Date.now() - latest < timeout) break;
+      if (!page.hasMore)
+        throw new NativeReviewCompletionError(
+          'Native reviewer completion turn exceeded its checklist/tool inactivity limit',
+        );
+      page = await readNativeWorkerSnapshot(runId, 'review', context.id, {
+        after: page.cursor,
+        limit: 500,
+      });
+      current();
     }
-    return false;
   }
+  if (adopted) return false;
   if (
     !reserved &&
     (!['launching', 'working', 'waiting'].includes(context.status) ||
@@ -134,15 +134,13 @@ export async function continueNativeReviewCompletion(input: CompletionInput): Pr
   const feedback = await readReviewFeedback(
     vars,
     taskDir,
-    `artifacts/review-feedback.${context.id}.md`,
+    reviewerFeedbackRelPath(context.id),
     context.reviewResultFile,
   );
   current();
-  if (feedback.incomplete || feedback.terminalInvalidReason)
-    throw new TerminalReviewArtifactError(
-      feedback.terminalInvalidReason ??
-        'Native reviewer completion requires valid review artifacts',
-    );
+  // Only valid findings qualify. Invalid nonterminal artifacts retain the
+  // monitor's existing exit or inactivity settlement.
+  if (feedback.incomplete || feedback.terminalInvalidReason) return false;
   if (!reserved) {
     const target = targetForChecklistBasename(path.posix.basename(context.taskFile));
     const text =
@@ -180,5 +178,6 @@ export async function continueNativeReviewCompletion(input: CompletionInput): Pr
     text: context.nativeCommandText,
     assertCurrent: input.assertCurrent,
   });
-  return true;
+  const resumed = getRun(runId)?.agentContexts?.find((entry) => entry.id === context.id);
+  return resumed?.nativeSession?.commandId === context.nativeCommandId ? 'continued' : 'deferred';
 }

@@ -105,10 +105,11 @@ async function resumeNativeWorkerExclusive(
   if (options?.purpose === 'review' && context?.role !== 'review')
     throw new Error('Native reviewer recovery requires its exact reviewer context');
   const completion = options?.purpose === 'review' && options.commandId ? options : null;
+  if (completion && run.status === 'paused')
+    throw new Error('Native reviewer completion cannot continue a paused run');
   if (
     completion &&
-    (run.status === 'paused' ||
-      context?.nativeCommandId !== completion.commandId ||
+    (context?.nativeCommandId !== completion.commandId ||
       context?.nativeCommandText !== completion.text)
   )
     throw new Error('Native reviewer completion instruction changed');

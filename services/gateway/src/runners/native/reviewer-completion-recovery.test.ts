@@ -275,7 +275,7 @@ test('unsupported saved-session resume and a paused run send no completion input
   snapshot.session.capabilities.resume = true;
   calls.length = 0;
   updateRun(run.id, { status: 'paused' });
-  await assert.rejects(resume(), /completion instruction changed/);
+  await assert.rejects(resume(), /paused run/);
   assert.equal(calls.length, 0);
 });
 
