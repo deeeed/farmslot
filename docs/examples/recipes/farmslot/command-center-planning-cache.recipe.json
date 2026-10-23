@@ -1,0 +1,49 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Planning clients observe external gateway writers without Refresh",
+  "description": "Living partial Draft7 proof. Use a running isolated development gateway/UI and browser selected by GATEWAY_PORT, VITE_PORT, FARMSLOT_CDP_PORT and an authenticated FARMSLOT_GATEWAY_PROFILE. Set FARMSLOT_HOME and a separate scratch FARMSLOT_ROOT, disable orchestration, configure a unique offline-planning-* project, and select a fresh FARMSLOT_PLANNING_PROOF_ARTIFACTS directory. The driver uses production RPC, real browser navigation and visible row assertions. This recipe covers external backlog, roadmap, graph and queue RPC writers, filtered backlog membership, and an eleven-second idle read audit. Other driver modes are separate candidates; this recipe does not claim raw file notifications, offline cold restoration, draft/error handling or permission revocation.",
+  "proofTargets": [
+    {
+      "id": "externalRpcWriters",
+      "claim": "Independent gateway writers update canonical planning observations and their rendered backlog, roadmap, graph and queue content without Refresh."
+    },
+    {
+      "id": "filteredMembership",
+      "claim": "A backlog status filter excludes its candidate while retaining the canonical collection and selected identity."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-planning-cache.mjs writers",
+        "timeout_ms": 180000,
+        "intent": "Drive external planning writers and real client navigation, verify visible row and graph replacements, audit idle reads, capture screenshots and remove owned fixtures.",
+        "next": "externalRpcWriters"
+      },
+      "externalRpcWriters": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"externalRpcWriters\":true",
+        "intent": "External RPC writes update canonical observations and actual rendered content without periodic planning reads.",
+        "proves": ["externalRpcWriters"],
+        "next": "filteredMembership"
+      },
+      "filteredMembership": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"filteredMembership\":true",
+        "intent": "The real status filter excludes its candidate row without discarding stored membership or selected identity.",
+        "proves": ["filteredMembership"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
