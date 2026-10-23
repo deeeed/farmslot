@@ -163,7 +163,9 @@ d=json.loads(sys.argv[1]);bundle=Path(d['supportDir'])
 with (bundle.parent/'.activation.lock').open('a') as lock:
  fcntl.flock(lock,fcntl.LOCK_SH)
  if not bundle.is_dir():raise RuntimeError('Read-only node support bundle is unavailable')
- result=subprocess.run([sys.argv[2],'-c',d['command']])
+ shell=sys.argv[2]
+ flags={'zsh':['-f'],'bash':['--noprofile','--norc']}.get(Path(shell).name,[])
+ result=subprocess.run([shell,*flags,'-c',d['command']])
  if result.returncode<0:
   if -result.returncode!=signal.SIGKILL:signal.signal(-result.returncode,signal.SIG_DFL)
   os.kill(os.getpid(),-result.returncode)

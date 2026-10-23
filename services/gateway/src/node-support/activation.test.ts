@@ -323,3 +323,20 @@ test('a read-only command preserves the executing shell and pipefail support', a
   const result = await exec('/bin/bash', ['-c', command]);
   assert.equal(result.stdout, '/bin/bash');
 });
+
+test('a read-only zsh command preserves the node no-startup-file policy', async (t) => {
+  if (!(await present('/bin/zsh'))) return t.skip('zsh is unavailable on this platform');
+  const f = await fixture(t);
+  await f.bundle(hash('a'));
+  const sentinel = path.join(f.home, 'startup-read');
+  await writeFile(
+    path.join(f.home, '.zshenv'),
+    'touch "$ZDOTDIR/startup-read"; printf unexpected-startup',
+  );
+  const command = wrapNodeSupportReadCommand('printf expected', path.join(f.root, hash('a')));
+  const result = await exec('/bin/zsh', ['-f', '-c', command], {
+    env: { ...process.env, ZDOTDIR: f.home },
+  });
+  assert.equal(result.stdout, 'expected');
+  assert.equal(await present(sentinel), false);
+});
