@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Let PR completion prove fresh acceptance when the published parent's approved package omits its retained ledger, instead of blocking dispatch.
+
 - Accept clean detached before captures at the recorded dispatch head, and name the failing provenance field when baseline validation refuses a capture.
 
 - Keep root-qualified evidence selections scoped to the root artifact instead of matching nested recipe files with the same name.
