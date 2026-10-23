@@ -353,6 +353,7 @@ async function resumeNativeWorkerExclusive(
     throw new Error('Native recovery execution node changed');
   const projectVars = await loadProjectVars(run.project);
   const prepared = await prepareNativeWorkerLaunch({
+    role: context.role,
     vars,
     project: projectVars.projectJson,
     projectVars,

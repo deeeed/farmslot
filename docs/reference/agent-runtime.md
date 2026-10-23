@@ -244,6 +244,12 @@ The builder preserves additive metadata under `extra` while protecting the requi
 
 The previous script paths in `@farmslot/skills` and `scripts/quality/` remain compatibility shims for one migration window. New templates should point to `packages/agent-runtime/scripts/*` in the Farmslot monorepo or use `farmslot-agent` when installed as a package.
 
+## Managed native reviewer approval policy
+
+The gateway sets the private worker launch `approvalPolicy` to `never` only for the review role. Native Codex applies that policy to both `thread/start` and `thread/resume`. Reviewers keep the run's safety tier and the same sandbox, Git metadata write roots and optional filesystem policy they already had. Producing workers and standalone sessions keep their existing approval defaults.
+
+This optional private field accepts only `never`. It is not a public session parameter. The gateway rederives it on reviewer resume; it does not enter the launch digest, so applying the approved policy does not invalidate retained reviewer sessions. The tier, environment and filesystem grants remain digest-bound. The gateway continues to deny any unexpected approval request, and never grants sandbox escalation.
+
 ## Native session host
 
 Claude saved-session recovery requires sessions started with Claude Code 2.1.265
