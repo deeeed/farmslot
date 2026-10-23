@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,7 +16,6 @@ import {
   type RecipeRunArtifactGroup,
   reviewChainForRun,
   type RunGetResult,
-  type RunRecipeRunsForRunResult,
   type RunStep,
   type TaskProgressResult,
 } from '@farmslot/protocol';
@@ -104,6 +103,7 @@ import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
 import { RunResultsCard } from './components/RunResultsCard';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
+import { assertRunEvidenceReady, runEvidenceQuery } from './run-evidence';
 
 const emptyRecipeRuns: RecipeRunArtifactGroup[] = [];
 
@@ -149,22 +149,21 @@ export default function RunDetailScreen() {
       resolvedRunId ? resourceQuery<RunGetResult>('run.get', { runId: resolvedRunId }) : undefined,
     [resolvedRunId],
   );
-  const recipeQuery = useMemo(
-    () =>
-      resolvedRunId
-        ? resourceQuery<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-            runId: resolvedRunId,
-            includeRecordedEvidence: true,
-            ...(requestedRecipeRunId && requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
-              ? { recipeRunId: requestedRecipeRunId }
-              : {}),
-          })
-        : undefined,
-    [resolvedRunId, requestedRecipeRunId],
-  );
   const runObservation = useResourceQuery(runQuery);
-  const recipeObservation = useResourceQuery(recipeQuery);
   const run = runObservation.data?.run ?? null;
+  const outputReview = useMemo(() => pendingOutputReview(run), [run]);
+  const recipeQuery = useMemo(
+    () => runEvidenceQuery(resolvedRunId, run, requestedRecipeRunId),
+    [resolvedRunId, run, requestedRecipeRunId],
+  );
+  const recipeObservation = useResourceQuery(recipeQuery);
+  const evidenceCache = getResourceCache();
+  const reviewContext = useMemo(
+    () => ({ resolvedRunId, requestedRecipeRunId, profileId, authorityEpoch, client, recipeQuery }),
+    [resolvedRunId, requestedRecipeRunId, profileId, authorityEpoch, client, recipeQuery],
+  );
+  const currentReviewContext = useRef(reviewContext);
+  currentReviewContext.current = reviewContext;
   const recipeRuns = recipeObservation.data?.recipeRuns ?? emptyRecipeRuns;
   const recordedEvidence = recipeObservation.data?.recordedEvidence ?? null;
   const recipeRunsLoaded = recipeObservation.data !== undefined;
@@ -176,8 +175,6 @@ export default function RunDetailScreen() {
           requestedRecipeRunId,
           recipeObservation.data?.selectedRecipeRunId,
         );
-  // The open output review's snapshot is what the retained report is checked against.
-  const outputReview = useMemo(() => pendingOutputReview(run), [run]);
   const [actionError, setError] = useState<string | null>(null);
   const progressQuery = useMemo(() => {
     const target = taskProgressRequestForRun(run);
@@ -259,6 +256,7 @@ export default function RunDetailScreen() {
     runId: run?.id,
     gatewayUrl,
     authHeaders: artifactAuthHeaders,
+    contextKey: JSON.stringify([profileId, authorityEpoch, recipeQuery?.id]),
   });
   const retryRun = useCallback(async () => {
     if (runQuery) await getResourceCache()?.retry(runQuery);
@@ -435,10 +433,18 @@ export default function RunDetailScreen() {
     reason?: string,
   ) => {
     assertNativeRunReady(run.id, run);
-    if (!progressQuery || getResourceCache()?.read(progressQuery).status !== 'ready')
-      throw new Error('Wait for current acceptance data before acting.');
-    if (recipeObservation.status !== 'ready')
-      throw new Error('Wait for current evidence before acting.');
+    assertRunEvidenceReady({
+      cache: evidenceCache,
+      currentCache: getResourceCache(),
+      contextCurrent:
+        currentReviewContext.current === reviewContext &&
+        useConnectionStore.getState().client === client &&
+        useConnectionStore.getState().activeProfileId === profileId &&
+        useConnectionStore.getState().authorityEpoch === authorityEpoch,
+      recipeQuery,
+      progressQuery,
+      evidence: recipeObservation.data,
+    });
     await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
   };
   const openAcceptanceEvidence = (criterionId: string, path: string) =>

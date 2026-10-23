@@ -1,5 +1,5 @@
 /** Shared current-owner observations provide acceptance data and command readiness. */
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 
 import {
   createEvidenceReviewModel,
@@ -134,6 +134,10 @@ export function useRunAcceptance(
         output: run.output,
       })
     : false;
+  const evidenceCache = getResourceCache();
+  const reviewIdentity = JSON.stringify([runId, evidenceQuery?.id]);
+  const currentReviewIdentity = useRef(reviewIdentity);
+  currentReviewIdentity.current = reviewIdentity;
   return useMemo(() => {
     const acceptanceStatus = data?.acceptanceStatus ?? null;
     const acceptanceCriteria = data?.acceptanceCriteria ?? null;
@@ -192,11 +196,17 @@ export function useRunAcceptance(
       reviewer: client?.authenticatedPrincipal ?? null,
       async recordVisualReview(claimId, verdict, reason) {
         if (!runId) throw new Error('The current run is unavailable.');
+        if (
+          getResourceCache() !== evidenceCache ||
+          currentReviewIdentity.current !== reviewIdentity
+        )
+          throw new Error('The review context changed. Open the current evidence before acting.');
         if (!progressQuery || getResourceCache()?.read(progressQuery).status !== 'ready')
           throw new Error('Wait for current acceptance data before acting.');
-        assertNativeRunReady(runId, fullRunObservation.data?.run);
-        if (evidenceObservation.status !== 'ready')
+        const currentEvidence = evidenceQuery ? getResourceCache()?.read(evidenceQuery) : undefined;
+        if (currentEvidence?.status !== 'ready' || currentEvidence.data !== evidence)
           throw new Error('Wait for current evidence before acting.');
+        assertNativeRunReady(runId, fullRunObservation.data?.run);
         await recordVisualClaimReview(client, runId, evidenceModel, claimId, verdict, reason);
       },
       recipeRunId: evidence?.selectedRecipeRunId ?? null,
@@ -215,6 +225,8 @@ export function useRunAcceptance(
     };
   }, [
     client,
+    evidenceCache,
+    reviewIdentity,
     runId,
     data,
     evidence,

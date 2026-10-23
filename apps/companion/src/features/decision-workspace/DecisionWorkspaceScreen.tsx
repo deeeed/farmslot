@@ -804,6 +804,7 @@ export default function DecisionDetailScreen({
     runId: presentation?.runId,
     gatewayUrl,
     authHeaders: artifactAuthHeaders,
+    contextKey: scopeKey,
   });
 
   const openDiffArtifact = useCallback(
