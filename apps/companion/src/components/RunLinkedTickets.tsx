@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { parseRunLinkedTicketRefs, type Run, runLinkedTicketsView } from '@farmslot/protocol';
 
@@ -9,9 +9,11 @@ import { colors, fonts } from '../lib/theme';
 export function RunLinkedTickets({
   run,
   onSave,
+  compact = false,
 }: {
   run: Run;
   onSave?: (refs: string[]) => Promise<void>;
+  compact?: boolean;
 }) {
   const view = runLinkedTicketsView(run);
   const [editing, setEditing] = useState(false);
@@ -38,6 +40,39 @@ export function RunLinkedTickets({
       setBusy(false);
     }
   };
+  if (compact)
+    return (
+      <View testID="run-linked-tickets" style={styles.container}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <Text style={styles.inlineText} numberOfLines={1}>
+            {view.references.map((reference, index) => (
+              <Text key={reference.ref}>
+                {index ? ', ' : ''}
+                <Text
+                  accessibilityRole={reference.url ? 'link' : undefined}
+                  style={reference.url ? styles.link : styles.inlineText}
+                  onPress={
+                    reference.url
+                      ? (event) => {
+                          event.stopPropagation();
+                          void open(reference.url!);
+                        }
+                      : undefined
+                  }
+                >
+                  {reference.ref}
+                </Text>
+              </Text>
+            ))}
+          </Text>
+        </ScrollView>
+        {error ? (
+          <Text accessibilityRole="alert" style={styles.error}>
+            {error}
+          </Text>
+        ) : null}
+      </View>
+    );
   if (!view.tickets.length && !view.pr && !onSave) return null;
   return (
     <View testID="run-linked-tickets" style={styles.container}>
@@ -127,6 +162,7 @@ export function RunLinkedTickets({
 }
 const styles = StyleSheet.create({
   container: { minWidth: 0 },
+  inlineText: { color: colors.textSecondary, fontSize: fonts.sizeSm },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
   label: { color: colors.textSecondary, fontSize: fonts.sizeSm },
   chip: {

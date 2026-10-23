@@ -20,7 +20,7 @@ import { FLOW_COLORS, FLOW_LABELS, projectColor, RUNNER_COLORS } from '@farmslot
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
 import { FilterEmptyState } from '../../components/FilterEmptyState';
 import { RunLinkedTickets } from '../../components/RunLinkedTickets';
-import { RunPipelineMini } from '../../components/RunPipeline';
+import { RunElapsedTime, RunPipelineMini } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import {
   type ArtifactHttpHeaders,
@@ -77,13 +77,6 @@ function ProjectBadge({ project }: { project: string }) {
       {project}
     </Text>
   );
-}
-
-function formatDuration(ms: number | undefined): string {
-  if (!ms) return '';
-  const mins = Math.floor(ms / 60000);
-  if (mins < 60) return `${mins}m`;
-  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
 function relativeTime(dateStr: string | null | undefined): string {
@@ -217,8 +210,7 @@ function RunCard({
             <Text style={[styles.badgeText, { color: statusColor }]}>{runDisplayStatus(run)}</Text>
           </View>
         </View>
-        <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
-        <RunLinkedTickets key={run.id} run={run} />
+        <RunLinkedTickets key={run.id} run={run} compact />
         {run.summary ? <RunTitle style={styles.runSummary} title={run.summary} /> : null}
         {normalizeRunTags(run.tags).length > 0 ? (
           <View style={styles.tagRow}>
@@ -231,9 +223,7 @@ function RunCard({
         ) : null}
         <View style={styles.metaRow}>
           {run.slotId && <Text style={baseStyles.textMuted}>{run.slotId}</Text>}
-          {run.metrics?.durationMs != null && (
-            <Text style={baseStyles.textMuted}>{formatDuration(run.metrics.durationMs)}</Text>
-          )}
+          <RunElapsedTime run={run} />
         </View>
         {(run.steps ?? []).length > 0 && <RunPipelineMini run={run} />}
         {primaryVisualPair ? (
@@ -1272,12 +1262,6 @@ const styles = StyleSheet.create({
   flowBadge: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: 4 },
   statusBadge: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: 4 },
   badgeText: { fontSize: fonts.sizeXs, fontWeight: '600' },
-  ticketText: {
-    color: colors.textPrimary,
-    fontSize: fonts.sizeMd,
-    fontWeight: '600',
-    marginTop: spacing.md,
-  },
   runSummary: {
     color: colors.textSecondary,
     fontSize: fonts.sizeSm,

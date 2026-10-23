@@ -21,6 +21,7 @@ import {
   normalizeRunTags,
   resolveRunSlotId,
   runDisplayStatus,
+  runElapsedTimeView,
   type RunFamilyGroup,
   slotMachineMap,
   summarizeRunEvidence,
@@ -28,6 +29,7 @@ import {
 import {
   acceptsRunChecklistProgress,
   ChecklistProgressReads,
+  runActivityView,
   runChecklistProgressTarget,
 } from '@farmslot/review-dispatch';
 import { projectColor } from '@farmslot/theme';
@@ -812,6 +814,7 @@ export class RunList extends RunListState {
   }
 
   private renderCard(run: Run, showCheckbox: boolean) {
+    const timing = runElapsedTimeView({ ...run, steps: runActivityView(run)?.steps ?? run.steps });
     const fc = runDisplayColor(run);
     const sc = runStatusColor(run.status);
     const isSelected = this.manageMode
@@ -871,9 +874,12 @@ export class RunList extends RunListState {
         title=${`Project: ${run.project}`}
         >${run.project}</span
       >`,
-      html`<span class="item-ref" data-testid="runs-ref" title=${run.ticketOrPr}
-        >${run.ticketOrPr}</span
-      >`,
+      html`<run-tag-editor
+        kind="tickets"
+        compact
+        data-testid="runs-ref"
+        .run=${run}
+      ></run-tag-editor>`,
       html`<span class="slot-id" data-testid="runs-slot" title=${slotId ?? 'unassigned'}
         >${slotId ?? '—'}</span
       >`,
@@ -892,8 +898,9 @@ export class RunList extends RunListState {
           )}
           .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
         ></run-pipeline-mini>
-        <run-tag-editor kind="tickets" .run=${run}></run-tag-editor>
-        <span class="pipeline-label">${pipelineLabel}</span>
+        <span class="pipeline-label" data-testid="runs-timing" title=${pipelineLabel}
+          >${timing.label}</span
+        >
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
           ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
           <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>

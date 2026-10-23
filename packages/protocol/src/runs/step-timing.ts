@@ -1,4 +1,39 @@
-import type { Run, RunStep } from '../contracts/runs.js';
+import { isTerminalRunStatus, type Run, type RunStep } from '../contracts/runs.js';
+
+export interface RunElapsedTimeView {
+  label: string;
+  live: boolean;
+}
+
+/** Compact wall time for the existing metadata line in both run lists. */
+export function runElapsedTimeView(
+  run: Pick<
+    Run,
+    'status' | 'startedAt' | 'createdAt' | 'completedAt' | 'statusChangedAt' | 'updatedAt' | 'steps'
+  >,
+  nowMs = Date.now(),
+): RunElapsedTimeView {
+  const live = !isTerminalRunStatus(run.status);
+  const end = live ? nowMs : Date.parse(run.completedAt ?? run.statusChangedAt ?? run.updatedAt);
+  const start = Date.parse(run.startedAt ?? run.createdAt);
+  const minutes = (ms: number) => {
+    const value = Math.floor(Math.max(0, ms) / 60000);
+    return value < 60 ? `${value}m` : `${Math.floor(value / 60)}h ${value % 60}m`;
+  };
+  const total = `${minutes(end - start)} total`;
+  const current = live
+    ? run.steps.find((step) => step.status === 'running' && step.startedAt)
+    : null;
+  const stepName = current?.name
+    .replace(/^(?:pre|post)-gate-publication-review-active$/, 'review')
+    .replace(/^(?:pre|post)-gate-publication-review-fix$/, 'fix');
+  return {
+    live,
+    label: current?.startedAt
+      ? `${total} · ${stepName} ${minutes(nowMs - Date.parse(current.startedAt))}`
+      : total,
+  };
+}
 
 /** Dispatch-queue wait before the run existed: queue item creation to run creation. */
 export function runDispatchQueueWaitMs(

@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import { type Run, runElapsedTimeView } from '@farmslot/protocol';
+import { runActivityView } from '@farmslot/review-dispatch';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -53,6 +54,37 @@ function filter(overrides: Partial<Parameters<typeof filterRunList>[0]> = {}): r
     ...overrides,
   });
 }
+
+test('elapsed metadata follows the post-gate review/fix attempt instead of the gate start', () => {
+  for (const role of ['review', 'review-fix'] as const) {
+    const source = run('post-gate', {
+      status: role === 'review' ? 'reviewing' : 'fixing',
+      createdAt: '2026-10-23T00:00:00Z',
+      updatedAt: '2026-10-23T02:24:00Z',
+      startedAt: '2026-10-23T00:10:00Z',
+      steps: [{ name: 'human-gate', status: 'running', startedAt: '2026-10-23T00:30:00Z' }],
+      agentContexts: [
+        {
+          id: role,
+          runId: 'post-gate',
+          role,
+          label: role,
+          status: 'working',
+          slotId: null,
+          startedAt: '2026-10-23T00:30:00Z',
+          attemptStartedAt: '2026-10-23T02:06:00Z',
+        },
+      ],
+    });
+    const activity = runActivityView(source);
+    assert(activity);
+    const view = runElapsedTimeView(
+      { ...source, steps: activity.steps },
+      Date.parse('2026-10-23T02:24:00Z'),
+    );
+    assert.equal(view.label, `2h 14m total · ${role === 'review' ? 'review' : 'fix'} 18m`);
+  }
+});
 
 test('runGradeColor maps semantic grades to status colors', () => {
   assert.equal(runGradeColor('good'), colors.statusOk);

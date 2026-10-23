@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Keep run source and covered tickets on one compact line without duplicate ticket pills; show shared total and current-step elapsed time on the existing metadata line.
+
 - Keep review posting blocked after a failed refresh until the revised review is loaded.
 
 - Show one combined findings and evidence approval and send both explicit reason fields from either gate surface.
