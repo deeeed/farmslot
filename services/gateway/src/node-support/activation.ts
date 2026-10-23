@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import path from 'node:path';
 
 import { isTerminalRunStatus, resolveRunSlotId, type Run } from '@farmslot/protocol';
@@ -15,6 +17,12 @@ export interface NodeSupportRetentionReferences {
   runHashes: string[];
   activeRuns?: ActiveRunSupportReferences[];
   endedRunIds?: string[];
+  runInventory?: RunSupportInventory;
+}
+
+export interface RunSupportInventory {
+  scope: string;
+  runIds: string[];
 }
 
 export interface ActiveRunSupportReferences {
@@ -67,9 +75,13 @@ export async function persistedNodeSupportRuns(directory: string): Promise<Run[]
       throw error;
     }
     // Corrupt records have unknown references, so pruning must still fail closed.
+    const record: unknown = JSON.parse(content);
+    if (!isRecord(record)) throw new Error(`Unreadable node-support run references: ${name}`);
     const run = parseRunRecordFile(name, content);
-    if (!run) throw new Error(`Unreadable node-support run references: ${name}`);
-    runs.push(run);
+    // Other stores (for example runtime-capabilities) share the run directory.
+    if (run) runs.push(run);
+    else if (typeof record.id === 'string' && name === `${record.id}.json`)
+      throw new Error(`Unreadable node-support run references: ${name}`);
   }
   return runs;
 }
@@ -79,14 +91,15 @@ export async function nodeSupportRetentionReferences(
 ): Promise<NodeSupportRetentionReferences> {
   // Transport probes import this module while runner observability is initializing.
   // Read the run store only for an activation, after that import graph has settled.
-  const { listRuns, runsDirectory } = await import('../runs/store.js');
+  const { listRuns, runsDirectory, getArchivedRuns } = await import('../runs/store.js');
   // Loaded records win over disk while their latest status is being persisted.
   const runs = [
     ...new Map(
-      [...(await persistedNodeSupportRuns(runsDirectory())), ...listRuns().runs].map((run) => [
-        run.id,
-        run,
-      ]),
+      [
+        ...(await getArchivedRuns()),
+        ...(await persistedNodeSupportRuns(runsDirectory())),
+        ...listRuns().runs,
+      ].map((run) => [run.id, run]),
     ).values(),
   ];
   const selectionPaths = [];
@@ -127,6 +140,14 @@ export async function nodeSupportRetentionReferences(
   return {
     selectionPaths,
     activeRuns,
+    runInventory: {
+      scope: createHash('sha256')
+        .update(hostname())
+        .update('\0')
+        .update(runsDirectory())
+        .digest('hex'),
+      runIds: runs.map((run) => run.id),
+    },
     endedRunIds: runs
       .filter((run) => run.archivedAt || isTerminalRunStatus(run.status))
       .map((run) => run.id),
@@ -200,12 +221,14 @@ with (root/'.activation.lock').open('a') as lock:
   for reference in run['paths']:inspect(Path(reference).expanduser(),hashes)
   if any(not re.fullmatch('[a-f0-9]{64}',value) for value in hashes):raise ValueError('Invalid active support reference')
   temporary=record.with_name(record.name+'.'+str(os.getpid())+'.tmp')
-  temporary.write_text(json.dumps({'runId':run['runId'],'hashes':sorted(hashes)}));os.replace(temporary,record)
+  temporary.write_text(json.dumps({'runId':run['runId'],'hashes':sorted(hashes),'scope':d['references'].get('runInventory',{}).get('scope')}));os.replace(temporary,record)
   keep.update(hashes)
  # Absence from another caller's inventory is not evidence that a run ended.
  for record in active.glob('*.json'):
   saved=json.loads(record.read_text())
-  if saved['runId'] in d['references'].get('endedRunIds',[]):record.unlink()
+  inventory=d['references'].get('runInventory',{})
+  deleted=inventory.get('scope') and saved.get('scope')==inventory['scope'] and saved['runId'] not in inventory['runIds']
+  if saved['runId'] in d['references'].get('endedRunIds',[]) or deleted:record.unlink()
   else:keep.update(saved['hashes'])
  for lease in readers.glob('*.json'):
   if not re.fullmatch('[a-f0-9]{64}\\.json',lease.name):continue

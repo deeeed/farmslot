@@ -75,6 +75,11 @@ test('one-shot activation retains persisted non-archived run references without 
   ]);
   await writeFile(path.join(directory, 'broken.json'), '{');
   await assert.rejects(persistedNodeSupportRuns(directory));
+  await writeFile(path.join(directory, 'broken.json'), JSON.stringify({ id: 'broken' }));
+  await assert.rejects(
+    persistedNodeSupportRuns(directory),
+    /Unreadable node-support run references/,
+  );
 });
 
 async function fixture(t: test.TestContext) {
@@ -394,5 +399,42 @@ test('an active run retains an old fixture bundle until it ends, across later se
     await present(path.join(f.root, hash('a'))),
     false,
     'run completion releases its fixture references',
+  );
+});
+
+test('only the owning run inventory releases a deleted run journal', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b']) await f.bundle(hash(id));
+  const selected = await f.pointer('slot', hash('b'));
+  const parity = path.join(f.home, 'ci-parity');
+  await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('a')}/projects/fixture"\n`);
+  const activate = (active: boolean, scope: string, runIds: string[]) =>
+    exec('/bin/sh', [
+      '-c',
+      buildNodeSupportActivationCommand({
+        supportDir: path.join(f.root, hash('b')),
+        supportHash: hash('b'),
+        selectionPath: selected,
+        references: {
+          selectionPaths: [selected],
+          runHashes: [],
+          activeRuns: active ? [{ runId: 'deleted-owner', paths: [parity] }] : [],
+          runInventory: { scope, runIds },
+        },
+        verifyCommand: 'true',
+      }),
+    ]);
+  await activate(true, 'owning-gateway', ['deleted-owner']);
+  await activate(false, 'other-gateway', []);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'another gateway cannot infer deletion',
+  );
+  await activate(false, 'owning-gateway', []);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    false,
+    'a removed run does not leak its journal indefinitely',
   );
 });

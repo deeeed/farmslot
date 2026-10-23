@@ -301,7 +301,9 @@ MUST NOT mark the slot reclaimed.
   references even when they still use a previous selection. Once observed, their
   bundles MUST remain until the owning run ends, including after fixture refresh.
   One-shot activations MUST include persisted run ownership; an absent record
-  MUST NOT release another caller's active references. It MUST prune other
+  MUST NOT release another caller's active references. Durable archive receipts
+  release archived owners. A complete inventory from the journal's owning run
+  store MAY release deleted owners; another store's absence MUST NOT do so. It MUST prune other
   completed bundle directories.
   Publication, verification, selection and pruning MUST serialize on the execution
   node. Unknown selection state MUST refuse pruning; staging directories, active

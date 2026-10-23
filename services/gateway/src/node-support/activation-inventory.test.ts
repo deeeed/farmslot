@@ -62,6 +62,18 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
     path.join(runs, 'ended.json'),
     JSON.stringify(makeRun({ id: 'ended', status: 'done', slotId: 'fixture-1' })),
   );
+  await writeFile(
+    path.join(runs, 'runtime-capabilities-7777.json'),
+    JSON.stringify({ schemaVersion: 1, capabilities: [] }),
+  );
+  await mkdir(path.join(runs, 'archive'));
+  await writeFile(
+    path.join(runs, 'archive/archived-owner.json'),
+    JSON.stringify({
+      ...makeRun({ id: 'archived-owner', status: 'done' }),
+      archivedAt: '2026-10-23T00:00:00Z',
+    }),
+  );
   assert.equal(listRuns().runs.length, 0);
   const references = await nodeSupportRetentionReferences(await loadSlotVars('fixture-1'));
   assert.deepEqual(references.activeRuns, [
@@ -74,5 +86,6 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
       ],
     },
   ]);
-  assert.deepEqual(references.endedRunIds, ['ended']);
+  assert.deepEqual(references.endedRunIds, ['archived-owner', 'ended']);
+  assert.deepEqual(references.runInventory?.runIds, ['archived-owner', 'active', 'ended']);
 });
