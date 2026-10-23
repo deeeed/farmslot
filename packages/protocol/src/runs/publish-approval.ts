@@ -3,6 +3,7 @@ import type {
   RunGateReadiness,
 } from '../contracts/run-gate-readiness.js';
 import type { DecisionAction } from '../contracts/runs.js';
+import type { RunResolveDecisionParams } from '../rpc/run.js';
 
 import { APPROVE_PUBLISH_UNRESOLVED_ACTION } from './review-retries.js';
 
@@ -19,6 +20,15 @@ export const EVIDENCE_ATTESTATION_ACTION: DecisionAction = {
     'Your reason and approver identity will appear in the PR. Integrity, source, CI and review checks remain required.',
 };
 
+/** Presentation of the existing findings approval when it also attests evidence. */
+export const COMBINED_FINDINGS_EVIDENCE_APPROVAL_ACTION: DecisionAction = {
+  id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  label: 'Accept findings, attest evidence and publish',
+  style: 'danger',
+  description:
+    'Accept the listed findings and evidence-policy gaps. Both decisions, your reason and identity appear in the PR.',
+};
+
 export function isEvidencePolicyReason(reason: RunGatePrerequisiteReason): boolean {
   return (
     reason.prerequisite === 'evidence' &&
@@ -29,8 +39,33 @@ export function isEvidencePolicyReason(reason: RunGatePrerequisiteReason): boole
   );
 }
 
-export function evidenceAttestationAvailable(readiness?: RunGateReadiness): boolean {
+function combinedFindingsEvidenceAvailable(readiness?: RunGateReadiness): boolean {
+  if (
+    !readiness ||
+    readiness.state !== 'not-ready' ||
+    !readiness.findings?.length ||
+    !readiness.findingsDigest
+  )
+    return false;
+  const reviewReason = (reason: RunGatePrerequisiteReason) =>
+    reason.prerequisite === 'review' &&
+    reason.code === 'review-fix-required' &&
+    reason.allowedReviewOverrides?.includes(APPROVE_PUBLISH_UNRESOLVED_ACTION);
   return (
+    readiness.reasons.some(reviewReason) &&
+    readiness.reasons.some(isEvidencePolicyReason) &&
+    readiness.reasons.every((reason) => reviewReason(reason) || isEvidencePolicyReason(reason))
+  );
+}
+
+export function evidenceAttestationAvailable(
+  readiness?: RunGateReadiness,
+  actionId: string = APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+): boolean {
+  if (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION)
+    return combinedFindingsEvidenceAvailable(readiness);
+  return (
+    actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
     !!readiness &&
     readiness.state === 'not-ready' &&
     readiness.reasons.length > 0 &&
@@ -38,7 +73,7 @@ export function evidenceAttestationAvailable(readiness?: RunGateReadiness): bool
   );
 }
 
-/** Accepting review findings needs the head's checked findings and no other blocking reason. */
+/** Checked findings may combine only with the explicitly attestable evidence-policy reasons. */
 export function acceptReviewFindingsAvailable(readiness?: RunGateReadiness): boolean {
   return (
     !!readiness &&
@@ -87,19 +122,25 @@ export function gateReasonsForAction(
     APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
     APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   ].some((id) => id === actionId);
+  const evidenceOverride =
+    actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION ||
+    (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION &&
+      combinedFindingsEvidenceAvailable(readiness));
   return readiness.reasons.filter(
     (reason) =>
       !(
         reviewOverride &&
         reason.prerequisite === 'review' &&
         reason.allowedReviewOverrides?.includes(actionId!)
-      ) &&
-      !(actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION && isEvidencePolicyReason(reason)),
+      ) && !(evidenceOverride && isEvidencePolicyReason(reason)),
   );
 }
 
 export function evidenceAttestationReason(actionId: string, reason?: string): string | undefined {
-  if (actionId !== APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION) {
+  if (
+    actionId !== APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+    !(actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION && reason !== undefined)
+  ) {
     if (reason !== undefined)
       throw new Error('An evidence reason requires attested evidence approval.');
     return undefined;
@@ -107,6 +148,21 @@ export function evidenceAttestationReason(actionId: string, reason?: string): st
   if (!isValidEvidenceAttestationReason(reason))
     throw new Error('Attested evidence approval requires a written reason.');
   return reason.trim();
+}
+
+/** One written reason, with explicit consent to include its evidence-attestation field. */
+export function publicationApprovalReasonFields(
+  actionId: string,
+  text: string,
+  attestEvidence = false,
+): Pick<RunResolveDecisionParams, 'reason' | 'evidenceAttestationReason'> {
+  if (actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION)
+    return { evidenceAttestationReason: text };
+  if (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION)
+    return { reason: text, ...(attestEvidence ? { evidenceAttestationReason: text } : {}) };
+  if (attestEvidence)
+    throw new Error('Evidence attestation requires a publication approval action.');
+  return {};
 }
 
 export function isValidEvidenceAttestationReason(reason: unknown): reason is string {

@@ -17,6 +17,7 @@ import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionListResult,
   Events,
+  evidenceAttestationAvailable,
   improvementApplyOutcome,
   type ImprovementApplyResult,
   isValidEvidenceAttestationReason,
@@ -695,7 +696,14 @@ export default function DecisionDetailScreen({
   const resolveAction = useCallback(
     (actionId: string, selectionData?: Record<string, unknown>, reason?: string) => {
       if (!client || !decision) return;
-      const gateReasons = gateActionReasons(actionId, attestationReason);
+      const gateReasons = gateActionReasons(
+        actionId,
+        attestationReason,
+        evidenceAttestationAvailable(
+          decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
+          actionId,
+        ),
+      );
       if (
         (gateReasons.evidenceAttestationReason !== undefined || gateReasons.reason !== undefined) &&
         !isValidEvidenceAttestationReason(attestationReason)
@@ -758,7 +766,9 @@ export default function DecisionDetailScreen({
         resourcePosture ?? null,
       );
 
-      Alert.alert('Confirm action', `Send "${actionId}" for ${decision.title}?`, [
+      const actionLabel =
+        decision.actions.find((action) => action.id === actionId)?.label ?? actionId;
+      Alert.alert('Confirm action', `${actionLabel} for ${decision.title}?`, [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Send',

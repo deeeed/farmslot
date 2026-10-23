@@ -582,6 +582,7 @@ It is available whether or not a review round remains, alongside Continue
 Fixing. It does not combine with evidence attestation, so a run with an open
 finding and any evidence-policy gap has no publication route. One such case:
 accepted findings do not certify ADR-062 Amendment 18 `review`-mode criteria.
+Amendment 10 extends this rule only for its specified combined approval.
 
 The decision's publication approval records the reason, the package head, the
 approver as evidence attestation records it, and the accepted findings. For each
@@ -722,3 +723,66 @@ in the detector.
 
 A new reason code under the existing `evidence` prerequisite. There is no new
 DTO field, action or RPC.
+
+## Amendment 10: accepting findings and attesting evidence together, 2026-10-23
+
+**Status:** Accepted (lead, 2026-10-23).
+**Related:** Amendment 8 and ADR-062 Amendment 3.
+**Specification:** [Combined findings acceptance and evidence attestation](../reference/fail-closed-run-lifecycle.md#combined-findings-acceptance-and-evidence-attestation).
+
+### Decision
+
+A person may accept open review findings and attest an evidence-policy gap in
+one publication approval. Extend the existing `approve-publish-unresolved`
+action; do not add a decision, action id or receipt store. Offer the combined
+approval only when the checked reasons consist of at least one
+`review-fix-required` that explicitly permits that action and at least one
+evidence-policy reason that evidence attestation already permits. Checked
+findings and their digest must be present. No other reason may remain.
+
+The action must explicitly say that it accepts the displayed findings, attests
+the displayed evidence-policy gaps and publishes. The person supplies a written
+reason and explicit evidence-attestation consent. One reason may serve both
+receipts. Existing acceptance-only requests must not silently attest evidence.
+The existing human-attestation authority applies to both parts. Services,
+nodes and unauthenticated callers remain refused.
+
+Recheck the current package, generation, head, selected evidence, findings
+digest, reason set and person authority at consumption. Record the existing
+accepted-findings publication approval and evidence-policy attestation together
+before advancing. A refusal records neither and leaves the decision unresolved.
+Finalization must validate both receipts against the same approved package and
+current findings. Publication discloses both decisions through their existing
+sections. Neither receipt changes a review verdict, a claim verdict or recorded
+proof.
+
+### Rationale and consequences
+
+When the review finding describes the same missing evidence the evidence policy
+reports, the separate approvals each withhold the other. A combined person
+decision removes that deadlock without waiving another prerequisite. Invalid or
+missing review artifacts, absent required reviews, stale inputs, missing media,
+failed deterministic checks, secret-scan findings and progressing work still
+prevent publication. An unrelated reason is not made attestable by appearing
+beside an evidence-policy gap.
+
+### Public surface
+
+- `run.resolveDecision` retains `approve-publish-unresolved` and its existing
+  `reason`, `findingsDigest`, `evidenceAttestationReason` and frozen selection
+  fields. Combined approval requires both reason fields; older acceptance-only
+  requests refuse when evidence attestation is also needed.
+- `@farmslot/protocol` extends its existing gate-action availability, per-action
+  reason and decision-request helpers. The gateway, CLI, Command Center and
+  Companion consume the same rule. No new RPC or wire field is introduced.
+  `COMBINED_FINDINGS_EVIDENCE_APPROVAL_ACTION` supplies the existing action's
+  combined label, and `publicationApprovalReasonFields` supplies explicit reason
+  fields for the CLI and both clients. These are additive SDK exports.
+- The existing shared publication-gate view and both renderers show one combined
+  approval with the current findings and evidence-policy reasons. The CLI's
+  existing `run gate --action approve-publish-unresolved --reason` adds explicit
+  `--attest-evidence` consent for this case and sends the same two reason fields.
+- Use the existing publication-approval and evidence-attestation receipt readers
+  and published disclosures. Harnesses inherit the gateway checks and gain no
+  authority to create either person receipt. Publish changed SDK and shared-view
+  packages in a coordinated release; no native-runtime change is required.

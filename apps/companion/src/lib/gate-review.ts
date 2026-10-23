@@ -278,6 +278,11 @@ export function gateReviewActions(
         ...action,
         disabledReason: reviewBlock ?? 'Accepting review findings is unavailable for this gate.',
       };
+    if (
+      action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION &&
+      evidenceAttestationAvailable(readiness, action.id)
+    )
+      return { ...action, disabledReason: null };
     if (reviewBlock && action.id !== APPROVE_PUBLISH_UNRESOLVED_ACTION)
       return { ...action, disabledReason: reviewBlock };
     const reasons = REVIEW_OVERRIDE_ACTIONS.has(action.id)

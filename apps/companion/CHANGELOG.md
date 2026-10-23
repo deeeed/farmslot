@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show one combined findings and evidence approval and send both explicit reason fields from either gate surface.
+
 - Show the same covered Jira tickets in run cards and detail, and find runs by any linked key.
 
 - Show the same current-checklist progress beneath run pipelines in lists and detail.

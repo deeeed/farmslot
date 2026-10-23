@@ -13,16 +13,7 @@ import {
  * The written reason a gate action sends: evidence attestation's, or accepting review
  * findings' (ADR-065 Amendment 8). Every other action sends none.
  */
-export function gateActionReasons(
-  actionId: string,
-  text: string,
-): { evidenceAttestationReason?: string; reason?: string } {
-  return actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
-    ? { evidenceAttestationReason: text }
-    : actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION
-      ? { reason: text }
-      : {};
-}
+export { publicationApprovalReasonFields as gateActionReasons } from '@farmslot/protocol';
 
 export type DecisionResolveRequest =
   | RunDecisionActionRequest

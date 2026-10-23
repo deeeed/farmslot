@@ -1246,3 +1246,71 @@ test('gate CLI shows a held result decision and sends its written reason', () =>
   assert.equal(params.reason, 'Coverage only.');
   assert.equal(params.evidenceAttestationReason, undefined);
 });
+
+test('combined gate CLI needs explicit evidence consent and carries both receipt reason fields', () => {
+  const run = repeatReviewRun();
+  const decision: RunDecision = {
+    id: 'gate-combined',
+    type: 'engine_human_gate',
+    title: 'Publish',
+    description: 'Combined consent',
+    createdAt: new Date().toISOString(),
+    actions: [],
+    payload: {
+      kind: 'ready',
+      branch: 'branch',
+      repo: null,
+      prNumber: null,
+      workerReport: '',
+      diffStat: { files: 0, additions: 0, deletions: 0 },
+      gateReadiness: {
+        state: 'not-ready',
+        identity: { runId: run.id, generation: 1 },
+        reasons: [
+          {
+            code: 'review-fix-required',
+            prerequisite: 'review',
+            message: 'Open finding',
+            allowedReviewOverrides: [APPROVE_PUBLISH_UNRESOLVED_ACTION],
+          },
+          {
+            code: 'evidence-policy-unsatisfied',
+            prerequisite: 'evidence',
+            evidencePolicy: 'claim-verdict',
+            message: 'Missing production-state proof',
+          },
+        ],
+        findings: [
+          {
+            reviewId: 'review',
+            file: 'evidence-manifest.json',
+            description: 'Missing production-state proof',
+          },
+        ],
+        findingsDigest: 'sha256:combined',
+      },
+    },
+  };
+  assert.throws(
+    () =>
+      buildRunGateParams(run, decision, APPROVE_PUBLISH_UNRESOLVED_ACTION, {
+        reason: 'Accept only.',
+      }),
+    /explicit --attest-evidence/,
+  );
+  const params = buildRunGateParams(run, decision, APPROVE_PUBLISH_UNRESOLVED_ACTION, {
+    reason: ' I accept and attest. ',
+    attestEvidence: true,
+  });
+  assert.equal(params.reason, 'I accept and attest.');
+  assert.equal(params.evidenceAttestationReason, 'I accept and attest.');
+  assert.equal(params.findingsDigest, 'sha256:combined');
+  const program = new Command();
+  registerRunCommand(program);
+  assert.ok(
+    program.commands
+      .find((c) => c.name() === 'run')!
+      .commands.find((c) => c.name() === 'gate')!
+      .options.some((o) => o.long === '--attest-evidence'),
+  );
+});
