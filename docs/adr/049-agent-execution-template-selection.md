@@ -299,3 +299,17 @@ Templates that legitimately have no checklist (conversation-driven ones) used to
 be exempted from the checkbox lint rule whenever the run mode inferred from the
 filename was `interactive`. They now opt out explicitly with `checklist: none`
 in frontmatter, which is a statement about the template's own content.
+
+## Amendment 2: MetaMask Cook adoption scope, 2026-10-23
+
+**Status:** Accepted, 2026-10-23. Lead-approved amendment.
+
+Decision: MetaMask pack adoption of `package:consensys-recipe-cook` covers the canonical dev and fix-bug workflow checklists. Review is a separate adoption candidate requiring explicit approval. Existing static reviews continue to reuse the team review skill through their hosting adapter. Lightweight interactive dev retains the operator shell described in the [task-directory contract](../reference/task-directory-contract.md#two-documents-one-checklist).
+
+ci-fix, review-fix, pr-complete, update-branch and QA hosting remain farm-owned. This adoption scope does not restrict the generic catalog's supported flows or standalone Cook capabilities.
+
+Rationale: ADR-049's general ownership wording can be read as requiring every farm flow to move into skills.
+
+Consequences: Keep the current selection, precedence and snapshot contracts. Pack-specific selection gaps are migration work, not a new loader. This amendment authorizes no migration.
+
+Public surface: no new CLI commands, flags, SDK exports or harness interfaces; no version or stability change.
