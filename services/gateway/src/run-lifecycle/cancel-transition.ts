@@ -22,6 +22,7 @@ import {
   releaseRunSlotOwnership,
   type RunSlotCleanupFence,
   settleFailedRunSlotCleanup,
+  shutdownRunSlotResources,
   slotOwnershipBlocker,
   stopRunOwnedTmuxAndWatches,
 } from './slot-teardown.js';
@@ -269,9 +270,11 @@ export function defaultCancelCollaborators({
       // from it (ADR-054 amendment, 2026-10-19). What could not be stopped is named.
       const survivors = await stopRunOwnedTmuxAndWatches(run, { stopUnverifiedWorkers: true });
       await releaseRunOwnedCapabilities(run);
+      const runtimeBlocker = await shutdownRunSlotResources(run);
       const blocker = await slotOwnershipBlocker(run);
-      await recordSlotTeardownSkipped(run, blocker ?? survivors);
-      state.blocker = blocker ?? (keepForReplay ? null : survivors);
+      const cleanupBlocker = [survivors, runtimeBlocker].filter(Boolean).join('; ') || null;
+      await recordSlotTeardownSkipped(run, blocker ?? cleanupBlocker);
+      state.blocker = blocker ?? (keepForReplay ? null : cleanupBlocker);
       state.succeeded = true;
       state.fence = await fenceRunSlotCleanup(run, state.blocker);
     },

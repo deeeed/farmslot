@@ -82,6 +82,20 @@ test('a HEAD that publication pushed to origin is not unpushed work', async (t) 
   assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), null);
 });
 
+test('prepare fetches the published HEAD branch outside a single-branch clone refspec', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  commit(repo, 'second-published.txt');
+  git(repo, 'push', '-q', 'origin', BRANCH);
+  git(repo, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+  git(repo, 'update-ref', '-d', `refs/remotes/origin/${BRANCH}`);
+  const original = git(repo, 'rev-parse', 'HEAD');
+  await assertPrepareCommitsPublished(vars, 'next-run', bash);
+  assert.equal(git(repo, 'rev-parse', `refs/remotes/origin/${BRANCH}`), original);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), original);
+  commit(repo, 'unpublished-follow-up.txt');
+  await assert.rejects(assertPrepareCommitsPublished(vars, BRANCH, bash), /unpushed commits/);
+});
+
 test('a slot without origin is judged by the fork remote its branch was pushed to', async (t) => {
   const { repo, vars } = slotRepo(t, ['fork', 'org']);
   git(repo, 'push', '-q', '-u', 'fork', BRANCH);
