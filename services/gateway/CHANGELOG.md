@@ -4,9 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Let managed native reviewers run commands without approval prompts, preserving run tiers, worker policy and sandbox write scope. Upgrade every native host to `@farmslot/agent-runtime` 0.38.2 before activating this gateway policy; older hosts reject reviewer launches.
 - Refuse a re-review before spending a round when its reviewed HEAD is unchanged and the slot still has uncommitted fixes.
 - Keep bundles referenced by active slot fixtures until their run ends, including after support selections advance or fixtures refresh.
-- Let managed native reviewers run commands without approval prompts, preserving run tiers, worker policy and sandbox write scope.
 
 - Project current-attempt checklist timing and preserve step durations in monthly analytics.
 
