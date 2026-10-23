@@ -10,6 +10,7 @@ import { type FSWatcher, watch } from 'chokidar';
 import {
   type AgentContext,
   type AgentRole,
+  type NodeFsChangedPayload,
   type SlotStatus,
   SUBTASK_INDEX_FILE,
   type SubtaskIndex,
@@ -526,7 +527,7 @@ export async function watchSlot(
           (await sendNodeRequest(
             node,
             'fs.watch',
-            { path: contextTaskPath },
+            { observations: 1, path: contextTaskPath },
             {
               onRequestId: (id) =>
                 requestIds.push({ requestId: id, kind: 'task', path: contextTaskPath }),
@@ -536,7 +537,7 @@ export async function watchSlot(
             (await sendNodeRequest(
               node,
               'fs.watch',
-              { path: contextSignalPath },
+              { observations: 1, path: contextSignalPath },
               {
                 onRequestId: (id) =>
                   requestIds.push({ requestId: id, kind: 'signal', path: contextSignalPath }),
@@ -556,7 +557,7 @@ export async function watchSlot(
               await sendNodeRequest(
                 node,
                 'fs.watch',
-                { path: filePath },
+                { observations: 1, path: filePath },
                 {
                   onRequestId: (id) =>
                     requestIds.push({ requestId: id, kind: 'acceptance-status', path: filePath }),
@@ -573,6 +574,7 @@ export async function watchSlot(
             node,
             'fs.watch',
             {
+              observations: 1,
               path: path.join(path.dirname(sw.acceptanceStatusFilePath), 'operations-updated.json'),
             },
             {
@@ -595,7 +597,7 @@ export async function watchSlot(
             (await sendNodeRequest(
               node,
               'fs.watch',
-              { path: sw.subtaskIndexFilePath },
+              { observations: 1, path: sw.subtaskIndexFilePath },
               {
                 onRequestId: (id) =>
                   requestIds.push({
@@ -632,6 +634,10 @@ export async function watchSlot(
           );
         }
       }
+      // A read may have raced registration or node reconnection. Once the watch
+      // is armed, retire that earlier snapshot even if no new file event arrives.
+      if (activeWatches.get(key) === sw)
+        publishProgressResources(sw.slotId, sw.runId, sw.contextId);
     })();
 
     // Set pending BEFORE awaiting to prevent concurrent watchSlot calls from
@@ -847,12 +853,13 @@ async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<vo
 
 // ─── Handle remote agent fs.changed events ───
 
-export function handleAgentFsChanged(payload: {
-  requestId: string;
-  machine: string;
-  path: string;
-  content: string;
-}): void {
+export function invalidateTaskProgressForMachine(machine: string): void {
+  for (const sw of activeWatches.values())
+    if (!sw.isLocal && sw.machine === machine)
+      publishProgressResources(sw.slotId, sw.runId, sw.contextId);
+}
+
+export function handleAgentFsChanged(payload: NodeFsChangedPayload): void {
   for (const [key, sw] of activeWatches) {
     if (sw.isLocal || sw.machine !== payload.machine) continue;
     const request = sw.agentRequestIds?.find((entry) => entry.requestId === payload.requestId);
@@ -865,12 +872,15 @@ export function handleAgentFsChanged(payload: {
       );
       return;
     }
+    const unavailable = payload.kind === 'deleted' || payload.kind === 'error';
+    const content = unavailable ? undefined : payload.content;
+    if (unavailable) publishProgressResources(sw.slotId, sw.runId, sw.contextId);
     if (request.kind === 'task') {
-      debouncedUpdate(key, payload.content);
+      debouncedUpdate(key, content);
       return;
     }
     if (request.kind === 'signal') {
-      void handleSignalChange(key, payload.content);
+      if (!unavailable) void handleSignalChange(key, content);
       return;
     }
     if (request.kind === 'operations') {
@@ -882,7 +892,7 @@ export function handleAgentFsChanged(payload: {
       return;
     }
     if (request.kind === 'subtask-index') {
-      void handleSubtaskIndexChange(key, payload.content);
+      void handleSubtaskIndexChange(key, content);
       return;
     }
     // A child checklist or child signal changed. Both are progress-only: a child
@@ -1304,7 +1314,7 @@ async function rebindSubtaskUnitWatches(key: string, content?: string): Promise<
         (await sendNodeRequest(
           node,
           'fs.watch',
-          { path: filePath },
+          { observations: 1, path: filePath },
           {
             onRequestId: (id) => {
               // Re-read the live entry: a rebind that lost the chain must not

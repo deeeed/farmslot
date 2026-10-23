@@ -2,13 +2,14 @@ import { readFile } from 'node:fs/promises';
 
 import { watch } from 'chokidar';
 
-import { type AgentRole, Events } from '@farmslot/protocol';
+import { type AgentRole, Events, type NodeFsChangedPayload } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { taskProgress } from '../methods/task.js';
+import { publishProgressResources } from '../resources/run-changes.js';
 import { getRun, updateRunStep } from '../runs/store.js';
 
 import { debugReviewLog } from './snapshots.js';
@@ -36,18 +37,27 @@ export function initReviewProgress(broadcast: BroadcastFn): void {
 interface RemoteProgressEntry {
   machine: string;
   path: string;
+  watchRequestId?: string;
   onContent: (content: string) => void;
+  onUnavailable: () => void;
 }
 const remoteProgressEntries = new Map<string, RemoteProgressEntry>();
 
-export function handleReviewFsChanged(payload: {
-  machine: string;
-  path: string;
-  content: string;
-}): boolean {
+export function invalidateReviewProgressForMachine(machine: string): void {
+  for (const entry of remoteProgressEntries.values())
+    if (entry.machine === machine) entry.onUnavailable();
+}
+
+export function handleReviewFsChanged(payload: NodeFsChangedPayload): boolean {
   for (const entry of remoteProgressEntries.values()) {
-    if (entry.machine === payload.machine && entry.path === payload.path) {
-      entry.onContent(payload.content);
+    if (
+      entry.watchRequestId &&
+      entry.watchRequestId === payload.requestId &&
+      entry.machine === payload.machine &&
+      entry.path === payload.path
+    ) {
+      if (payload.kind === 'deleted' || payload.kind === 'error') entry.onUnavailable();
+      else entry.onContent(payload.content);
       return true;
     }
   }
@@ -69,6 +79,7 @@ export function startProgressWatcher(
 
   const compute = async (content: string): Promise<void> => {
     if (stopped || options.isCurrent?.() === false) return;
+    publishProgressResources(vars.slotId, runId, contextId);
     const total = (content.match(/- \[[ x]\]/g) || []).length;
     const done = (content.match(/- \[x\]/gi) || []).length;
     const progress = `${done}/${total}`;
@@ -104,12 +115,16 @@ export function startProgressWatcher(
       try {
         await compute(await readFile(filePath, 'utf-8'));
       } catch (err) {
+        if (stopped || options.isCurrent?.() === false) return;
+        publishProgressResources(vars.slotId, runId, contextId);
         console.warn(
           `[review] progress file read skipped for ${filePath}: ${(err as Error).message}`,
         );
       }
     };
     watcher.on('change', onUpdate);
+    watcher.on('add', onUpdate);
+    watcher.on('unlink', onUpdate);
     const ready = onUpdate();
     return {
       ready,
@@ -132,18 +147,21 @@ export function startProgressWatcher(
         );
       });
     },
+    onUnavailable: () => {
+      if (!stopped && options.isCurrent?.() !== false)
+        publishProgressResources(vars.slotId, runId, contextId);
+    },
   };
   remoteProgressEntries.set(key, entry);
   const node = getNode(vars.machine);
-  let watchRequestId: string | undefined;
   if (node) {
     sendNodeRequest(
       node,
       'fs.watch',
-      { path: filePath },
+      { observations: 1, path: filePath },
       {
         onRequestId: (id) => {
-          watchRequestId = id;
+          entry.watchRequestId = id;
         },
       },
     ).catch((err) => {
@@ -157,10 +175,10 @@ export function startProgressWatcher(
     stop: async () => {
       stopped = true;
       if (remoteProgressEntries.get(key) === entry) remoteProgressEntries.delete(key);
-      if (!watchRequestId) return;
+      if (!entry.watchRequestId) return;
       const liveNode = getNode(vars.machine);
       if (liveNode) {
-        await sendNodeRequest(liveNode, 'fs.watch.stop', { requestId: watchRequestId });
+        await sendNodeRequest(liveNode, 'fs.watch.stop', { requestId: entry.watchRequestId });
       }
       // Node disconnect closes its connection-owned filesystem watches.
     },

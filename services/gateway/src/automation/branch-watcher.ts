@@ -9,6 +9,7 @@
 import path from 'node:path';
 
 import { type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
+import type { NodeFsChangedPayload } from '@farmslot/protocol';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal as checkIsLocal } from '../core/exec.js';
@@ -118,7 +119,7 @@ export async function watchBranch(slotId: string): Promise<void> {
       await sendNodeRequest(
         node,
         'fs.watch',
-        { path: gitHeadPath },
+        { observations: 1, path: gitHeadPath },
         {
           onRequestId: (id) => {
             bw.nodeWatchRequestId = id;
@@ -177,14 +178,18 @@ export async function unwatchBranch(slotId: string): Promise<void> {
 
 // ─── Handle remote agent fs.changed events for .git/HEAD ───
 
-export function handleBranchFsChanged(payload: {
-  machine: string;
-  path: string;
-  content: string;
-}): boolean {
+export function handleBranchFsChanged(payload: NodeFsChangedPayload): boolean {
   for (const [slotId, bw] of activeWatches) {
-    if (bw.machine === payload.machine && bw.gitHeadPath === payload.path) {
-      debouncedUpdate(slotId, payload.content);
+    if (
+      bw.nodeWatchRequestId &&
+      bw.nodeWatchRequestId === payload.requestId &&
+      bw.machine === payload.machine &&
+      bw.gitHeadPath === payload.path
+    ) {
+      debouncedUpdate(
+        slotId,
+        payload.kind === 'deleted' || payload.kind === 'error' ? undefined : payload.content,
+      );
       return true;
     }
   }

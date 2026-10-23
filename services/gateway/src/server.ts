@@ -50,6 +50,7 @@ import { initThumbnailCache, unsubscribeThumbnails } from './observability/thumb
 import { canReadResourceKey } from './resources/authorization.js';
 import { readWithResourceState, resourceRevisions } from './resources/revisions.js';
 import { handleReviewFsChanged } from './review/orchestrator.js';
+import { invalidateReviewProgressForMachine } from './review/progress.js';
 import { onPtyExit, unsubscribeAllPty } from './runtime/pty-stream.js';
 import {
   cleanupAgentScreenSessions,
@@ -81,7 +82,7 @@ import { principalOwnerGeneration } from './security/work-originator.js';
 import type { ClientState } from './server/client-state.js';
 import { routeMethod } from './server/route-method.js';
 import { currentSourceResourceChanges, noteRunEvent } from './sources/change-signal.js';
-import { handleAgentFsChanged } from './tasks/watcher.js';
+import { handleAgentFsChanged, invalidateTaskProgressForMachine } from './tasks/watcher.js';
 
 let eventSeq = 0;
 let backlogAutoDispatchTimer: NodeJS.Timeout | null = null;
@@ -347,6 +348,8 @@ export function createWebSocketServer(
       // Cleanup node registration
       const disconnectedMachine = unregisterByWs(ws);
       if (disconnectedMachine) {
+        invalidateTaskProgressForMachine(disconnectedMachine);
+        invalidateReviewProgressForMachine(disconnectedMachine);
         markMachineOffline(disconnectedMachine);
         cleanupAgentScreenSessions(disconnectedMachine);
         clearMachineResourceStatus(disconnectedMachine).catch((err) => {

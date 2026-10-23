@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 
 import {
   type Frame,
+  type NodeFsChangedPayload,
   PROTOCOL_VERSION,
   type RecipeRuntimeCapabilityDeclaration,
   type RequestFrame,
@@ -660,17 +661,30 @@ async function handleRequest(
 
       case 'fs.watch': {
         const watchPath = requireString(params, 'path');
-        fsWatchStart(frame.id, { path: watchPath }, (content) => {
-          if (!ws || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(
+        const observations = params.observations === 1;
+        const sendChange = (payload: NodeFsChangedPayload) => {
+          if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+          socket.send(
             JSON.stringify({
               type: 'event',
               event: 'node.fs.changed',
-              payload: { requestId: frame.id, machine: MACHINE_NAME, path: watchPath, content },
+              payload,
             }),
           );
-        });
-        sendResponse(frame.id, true, { watching: true });
+        };
+        const identity = { requestId: frame.id, machine: MACHINE_NAME, path: watchPath };
+        fsWatchStart(
+          frame.id,
+          { path: watchPath },
+          (content) => sendChange({ ...identity, content }),
+          observations
+            ? {
+                onUnavailable: (observation) =>
+                  sendChange({ ...identity, content: '' as const, ...observation }),
+              }
+            : {},
+        );
+        sendResponse(frame.id, true, { watching: true, observations: 1 });
         break;
       }
 

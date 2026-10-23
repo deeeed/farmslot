@@ -52,6 +52,7 @@ assert(
     'fleet-store-web',
     'capabilities-web',
     'progress-web',
+    'remote-progress-web',
   ].includes(phase),
   'Select a run proof phase',
 );
@@ -665,7 +666,12 @@ async function withRunFixture(build, prove, slotBinding = null) {
       seeded = true;
     });
     observed = await observeResources();
-    return await prove({ runId, runFile, run, observed });
+    try {
+      return await prove({ runId, runFile, run, observed });
+    } catch (error) {
+      await slotBinding?.onFailure?.(error);
+      throw error;
+    }
   } finally {
     observed?.close();
     if (seeded)
@@ -679,6 +685,7 @@ async function withRunFixture(build, prove, slotBinding = null) {
           assert.equal(JSON.parse(await readFile(archived, 'utf8')).id, runId);
           await rm(archived);
         }
+        await slotBinding?.cleanup?.();
       });
   }
 }
@@ -733,7 +740,10 @@ async function detailBrowser(runId) {
   };
 }
 
-if (phase === 'progress-web') {
+if (phase === 'progress-web' || phase === 'remote-progress-web') {
+  const remote = phase === 'remote-progress-web';
+  const controlTarget = remote ? process.env.FARMSLOT_REMOTE_FILE_CONTROL : undefined;
+  assert([undefined, 'deletion', 'read-error'].includes(controlTarget));
   assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
   const fixture = JSON.parse(await readFile(process.env.FARMSLOT_SLOT_RESOURCE_PROOF));
   assert.equal(await realpath(fixture.home), home);
@@ -746,6 +756,72 @@ if (phase === 'progress-web') {
   const raw = JSON.parse(original);
   const slot = raw.slots.find(({ slot }) => slot === fixture.slotId);
   assert(slot && !slot.current_run_id && !slot.task_file);
+  const nodeStateFile = process.env.FARMSLOT_REMOTE_FILE_NODE_PROOF;
+  const nodeState = async () => {
+    assert(remote && nodeStateFile);
+    assert((await realpath(nodeStateFile)).startsWith(`${home}/`));
+    const state = JSON.parse(await readFile(nodeStateFile));
+    assert.equal(state.home, home);
+    assert.equal(state.machine, slot.machine);
+    assert.equal(state.sourceRoot, root);
+    assert(Number.isSafeInteger(state.pid) && state.pid > 0);
+    assert((await realpath(state.controlDirectory)).startsWith(`${home}/`));
+    return state;
+  };
+  const waitNode = async () => {
+    const deadline = Date.now() + 45000;
+    do {
+      const state = await nodeState();
+      const nodes = (await rpc('nodes.list')).nodes;
+      if (nodes.some((node) => node.machine === state.machine && node.pid === state.pid)) {
+        process.kill(state.pid, 0);
+        return state;
+      }
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail('The owned production node must be registered with its actual process identity');
+  };
+  const nodeControl = async (action, requestId, expectedPid) => {
+    const state = await nodeState();
+    process.kill(state.supervisorPid, 0);
+    const requestFile = path.join(state.controlDirectory, `${action}.request.json`);
+    const temporary = `${requestFile}.${requestId}.tmp`;
+    try {
+      await writeFile(temporary, JSON.stringify({ requestId, expectedPid }), {
+        mode: 0o600,
+        flag: 'wx',
+      });
+      await rename(temporary, requestFile);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+    const deadline = Date.now() + 45000;
+    do {
+      let receipt;
+      try {
+        receipt = JSON.parse(
+          await readFile(path.join(state.controlDirectory, `${action}.receipt.json`)),
+        );
+      } catch (error) {
+        // The live owned supervisor writes the receipt after the transition.
+        if (error.code !== 'ENOENT') throw error;
+      }
+      if (receipt?.requestId === requestId) {
+        assert.equal(receipt.ok, true, JSON.stringify(receipt));
+        return receipt;
+      }
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`The owned production node did not complete ${action}`);
+  };
+  if (remote) {
+    const pool = JSON.parse(await readFile(fixture.poolFile));
+    assert(
+      !['localhost', '127.0.0.1'].includes(pool.host),
+      'Use the actual node RPC path, not local file I/O',
+    );
+    await waitNode();
+  }
   const taskRel = `dev/cache-progress-${randomUUID()}`;
   const taskDir = path.join(repo, '.task', taskRel);
   await mkdir(taskDir, { recursive: true });
@@ -785,6 +861,15 @@ if (phase === 'progress-web') {
   await mkdir(artifacts, { recursive: true });
   const revision = (value) =>
     value.resourceState?.dependencies.find(({ key }) => key.family === 'progress')?.revision ?? -1;
+  let fixtureRestored = false;
+  const restoreFixture = async () => {
+    await writeFile(statusFile, original);
+    await chmod(statusFile, originalMode);
+    await rm(taskDir, { recursive: true });
+    assert.deepEqual(await readFile(statusFile), original);
+    assert.equal((await stat(statusFile)).mode & 0o777, originalMode);
+    fixtureRestored = true;
+  };
   try {
     const result = await withRunFixture(
       async ({ runId, createdAt }) => {
@@ -807,6 +892,83 @@ if (phase === 'progress-web') {
         };
       },
       async ({ runId, observed }) => {
+        const proveRegistry = async () => {
+          const index = path.join(taskDir, 'subtasks', 'index.json');
+          await mkdir(path.dirname(index), { recursive: true });
+          await assert.rejects(access(index), (error) => error.code === 'ENOENT');
+          await writeFile(index, '{invalid-owned-subtask-registry');
+          await until(
+            (value) => value.freshness === 'stale' && value.completed === 1 && value.errorRendered,
+            'A failed progress projection must retain counts with a visible read error',
+          );
+          // Drain duplicate events before deletion is the only new filesystem write.
+          await delay(2500);
+          const failed = await cdp('eval', route, '--file', probe);
+          assert(failed.errorRendered && failed.freshness === 'stale');
+          await observed.barrier();
+          const failedRevision = Math.max(
+            revision(failed),
+            ...observed.changes
+              .filter(
+                ({ key }) => key.family === 'progress' && key.runId === runId && !key.contextId,
+              )
+              .map(({ revision }) => revision),
+          );
+          await rm(index);
+          return await until(
+            (value) =>
+              value.freshness === 'ready' &&
+              value.completed === 1 &&
+              !value.error &&
+              revision(value) > failedRevision,
+            'A repaired task source must restore its canonical observation',
+          );
+        };
+        const proveNodeError = async () => {
+          assert(
+            process.getuid?.() !== 0,
+            'Read-permission proof requires an unprivileged production node',
+          );
+          const mode = (await stat(checklist)).mode & 0o777;
+          await delay(2500);
+          const beforeError = await cdp('eval', route, '--file', probe);
+          let errorRevision;
+          try {
+            await chmod(checklist, 0);
+            await until(
+              (value) =>
+                value.freshness === 'stale' &&
+                value.completed === 1 &&
+                value.errorRendered &&
+                observed.changes.some(
+                  ({ key, revision: current }) =>
+                    key.family === 'progress' &&
+                    key.runId === runId &&
+                    !key.contextId &&
+                    current > revision(beforeError),
+                ),
+              'An actual node read failure must notify the canonical query and retain visible stale counts',
+            );
+            errorRevision = Math.max(
+              ...observed.changes
+                .filter(
+                  ({ key }) => key.family === 'progress' && key.runId === runId && !key.contextId,
+                )
+                .map(({ revision }) => revision),
+            );
+          } finally {
+            await chmod(checklist, mode);
+          }
+          await until(
+            (value) =>
+              value.freshness === 'ready' &&
+              value.completed === 1 &&
+              !value.error &&
+              revision(value) > errorRevision,
+            'Read-permission recovery with identical bytes must arrive through the production node',
+          );
+        };
+        if (remote) await waitNode();
         base.hash = `runs?tab=all&progressRun=${runId}`;
         await cdp('goto', base.href);
         await cdp('focus', route);
@@ -827,34 +989,58 @@ if (phase === 'progress-web') {
             revision(value) > revision(initial),
           'An owned checklist write must advance the progress stamp and update the existing run row',
         );
-        const index = path.join(taskDir, 'subtasks', 'index.json');
-        await mkdir(path.dirname(index), { recursive: true });
-        await assert.rejects(access(index), (error) => error.code === 'ENOENT');
-        await writeFile(index, '{invalid-owned-subtask-registry');
-        await until(
-          (value) => value.freshness === 'stale' && value.completed === 1 && value.errorRendered,
-          'A failed progress projection must retain counts with a visible read error',
-        );
-        // Drain duplicate events before deletion is the only new filesystem write.
-        await delay(2500);
-        const failed = await cdp('eval', route, '--file', probe);
-        assert(failed.errorRendered && failed.freshness === 'stale');
-        await observed.barrier();
-        const failedRevision = Math.max(
-          revision(failed),
-          ...observed.changes
-            .filter(({ key }) => key.family === 'progress' && key.runId === runId && !key.contextId)
-            .map(({ revision }) => revision),
-        );
-        await rm(index);
-        const registryRestored = await until(
-          (value) =>
-            value.freshness === 'ready' &&
-            value.completed === 1 &&
-            !value.error &&
-            revision(value) > failedRevision,
-          'A repaired task source must restore its canonical observation',
-        );
+        if (controlTarget === 'deletion') {
+          await proveRegistry();
+          assert.fail('The focused deletion control unexpectedly succeeded');
+        }
+        if (controlTarget === 'read-error') {
+          await proveNodeError();
+          assert.fail('The focused read-error control unexpectedly succeeded');
+        }
+        if (remote) {
+          const before = await cdp('eval', route, '--file', probe);
+          assert(before.connectionId !== undefined && before.connectionState === 'connected');
+          const currentNode = await waitNode();
+          const requestId = randomUUID();
+          await nodeControl('stop', requestId, currentNode.pid);
+          assert(
+            !(await rpc('nodes.list')).nodes.some((node) => node.machine === currentNode.machine),
+          );
+          await until(
+            (value) =>
+              value.freshness === 'stale' &&
+              value.completed === 1 &&
+              value.connectionId === before.connectionId &&
+              value.connectionState === 'connected' &&
+              observed.changes.some(
+                ({ key, revision: current }) =>
+                  key.family === 'progress' &&
+                  key.runId === runId &&
+                  !key.contextId &&
+                  current > revision(before),
+              ),
+            'A producer disconnect must mark the same-gateway saved checklist stale',
+          );
+          await writeFile(checklist, initialMarkdown.replaceAll('- [ ]', '- [x]'));
+          await nodeControl('start', requestId, currentNode.pid);
+          const replacementNode = await waitNode();
+          assert.notEqual(replacementNode.pid, currentNode.pid);
+          const producerRecovered = await until(
+            (value) =>
+              value.freshness === 'ready' &&
+              value.completed === 2 &&
+              revision(value) > revision(before),
+            'A restarted production node must publish changes made while it was offline without reconnecting the client',
+          );
+          assert.equal(producerRecovered.resourceState.epoch, before.resourceState.epoch);
+          assert.equal(producerRecovered.connectionId, before.connectionId);
+          await writeFile(checklist, initialMarkdown.replace('- [ ] **1.', '- [x] **1.'));
+          await until(
+            (value) => value.freshness === 'ready' && value.completed === 1,
+            'The rearmed production node must keep observing subsequent worker edits',
+          );
+        }
+        const registryRestored = await proveRegistry();
         await delay(2500);
         await rm(checklist);
         await until(
@@ -894,6 +1080,7 @@ if (phase === 'progress-web') {
             revision(value) > revision(ledgerFault),
           'Removing an observed acceptance sidecar must clear its read error without another write',
         );
+        if (remote) await proveNodeError();
         const outage = await withOwnedGatewayOffline(async () => {
           const stale = await until(
             (value) => value.freshness === 'stale' && value.completed === 1,
@@ -914,6 +1101,7 @@ if (phase === 'progress-web') {
           await cdp('screenshot', route, path.join(artifacts, 'progress-cold-offline.png'));
           return cold;
         });
+        if (remote) await waitNode();
         const recovered = await until(
           (value) => value.freshness === 'ready' && value.completed === 1 && !value.error,
           'Restarted gateway must refresh progress before declaring it current',
@@ -928,19 +1116,29 @@ if (phase === 'progress-web') {
           progressFailureVisible: true,
           progressSourceRemovals: true,
           coldProgressRestored: true,
+          ...(remote
+            ? {
+                productionNodeObserved: true,
+                producerRestartObserved: true,
+                nodeReadErrorRecovered: true,
+              }
+            : {}),
         };
       },
-      { slotId: fixture.slotId, taskFile: path.join(taskDir, 'TASK.md') },
+      {
+        slotId: fixture.slotId,
+        taskFile: path.join(taskDir, 'TASK.md'),
+        cleanup: restoreFixture,
+        onFailure: async (error) =>
+          writeFile(
+            path.join(artifacts, 'primary-failure.json'),
+            JSON.stringify({ message: error.message, stack: error.stack }, null, 2),
+          ),
+      },
     );
     console.log(JSON.stringify({ result: 'PASS', action: phase, ...result }));
   } finally {
-    await withOwnedGatewayOffline(async () => {
-      await writeFile(statusFile, original);
-      await chmod(statusFile, originalMode);
-      await rm(taskDir, { recursive: true });
-      assert.deepEqual(await readFile(statusFile), original);
-      assert.equal((await stat(statusFile)).mode & 0o777, originalMode);
-    });
+    if (!fixtureRestored) await withOwnedGatewayOffline(restoreFixture);
   }
   process.exit(0);
 }

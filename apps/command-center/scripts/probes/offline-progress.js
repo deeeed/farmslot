@@ -8,6 +8,13 @@ const url = performance
   .at(-1);
 if (!url) throw new Error('Inspect the active shared cache');
 const cache = (await import(url)).getResourceCache();
+const gatewayUrl = performance
+  .getEntriesByType('resource')
+  .map(({ name }) => name)
+  .filter((name) => new URL(name).pathname === '/src/gateway-client.ts')
+  .at(-1);
+if (!gatewayUrl) throw new Error('Inspect the active gateway connection');
+const { gateway } = await import(gatewayUrl);
 const controller = [...list.progressQueries.values()].find(
   (value) => value.query?.params.runId === runId,
 );
@@ -23,6 +30,8 @@ const strip = pipeline?.shadowRoot?.querySelector('run-checklist-progress');
 const text = strip?.shadowRoot?.textContent ?? '';
 return {
   mounted: true,
+  connectionId: gateway.resourceConnectionId,
+  connectionState: gateway.connectionState,
   runId,
   canonical: pipeline?.taskProgress === controller.state.data?.structured,
   freshness: controller.state.status,

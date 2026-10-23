@@ -6,7 +6,39 @@ import { mock, test } from 'node:test';
 
 import type { TaskProgressParams } from '@farmslot/protocol';
 
+import * as realNodes from '../fleet/machine-registry.js';
+import * as realRpc from '../fleet/node-rpc.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import { makeVars } from '../runners/test-fixtures.js';
+
+const watchIds = new Map<string, string>();
+let watchSequence = 0;
+mock.module('../fleet/machine-registry.js', {
+  namedExports: { ...realNodes, getNode: (machine: string) => ({ machine }) },
+});
+mock.module('../fleet/node-rpc.js', {
+  namedExports: {
+    ...realRpc,
+    sendNodeRequest: async (
+      node: { machine: string },
+      method: string,
+      params: { path?: string },
+      options?: { onRequestId?: (id: string) => void },
+    ) => {
+      if (method === 'fs.watch') {
+        const id = `owned-watch-${++watchSequence}`;
+        watchIds.set(`${node.machine}|${params.path}`, id);
+        options?.onRequestId?.(id);
+      }
+      return { watching: true, observations: 1 };
+    },
+  },
+});
+function watchIdFor(machine: string, file: string): string {
+  const id = watchIds.get(`${machine}|${file}`);
+  assert(id, 'Use the request registered by the real progress watcher');
+  return id;
+}
 
 let lastTaskProgressParams: TaskProgressParams | null = null;
 let updateRunStepError: Error | null = null;
@@ -104,6 +136,7 @@ test('remote progress callback contains asynchronous update failures', async () 
   try {
     assert.equal(
       handleReviewFsChanged({
+        requestId: watchIdFor('runner-remote', '/remote/REVIEW.md'),
         machine: 'runner-remote',
         path: '/remote/REVIEW.md',
         content: '- [x] read\n',
@@ -136,6 +169,7 @@ test('superseded remote progress emits no run or task updates', async () => {
   try {
     assert.equal(
       handleReviewFsChanged({
+        requestId: watchIdFor('stale-node', '/remote/stale.md'),
         machine: 'stale-node',
         path: '/remote/stale.md',
         content: '- [x] stale\n',
@@ -159,6 +193,7 @@ test('stopping an older remote watcher preserves the replacement registered at t
     await old.stop();
     assert.equal(
       handleReviewFsChanged({
+        requestId: watchIdFor('replacement-node', '/remote/shared.md'),
         machine: 'replacement-node',
         path: '/remote/shared.md',
         content: '- [x] current\n',
@@ -187,6 +222,7 @@ test('a stopped watcher cannot publish a task read that completes later', async 
   );
   try {
     handleReviewFsChanged({
+      requestId: watchIdFor('delayed-node', '/remote/delayed.md'),
       machine: 'delayed-node',
       path: '/remote/delayed.md',
       content: '- [x] done\n',
@@ -236,5 +272,43 @@ test('stop waits for local watcher closure and exposes asynchronous failure', as
     closeFailure = null;
     await watcher.stop();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a remote deletion invalidates only its registered owner and never invents empty progress', async () => {
+  const machine = 'owned-delete-node';
+  const file = '/remote/owned.md';
+  const runId = 'owned-delete-run';
+  const events: unknown[] = [];
+  initReviewProgress((event) => events.push(event));
+  const watcher = startProgressWatcher(makeVars({ host: 'runner.example', machine }), file, runId);
+  const key = { family: 'progress', runId } as const;
+  const before = resourceRevisions.revision(key);
+  try {
+    assert.equal(
+      handleReviewFsChanged({
+        requestId: 'foreign-watch',
+        machine,
+        path: file,
+        kind: 'deleted',
+        content: '',
+      }),
+      false,
+    );
+    assert.equal(resourceRevisions.revision(key), before);
+    assert.equal(
+      handleReviewFsChanged({
+        requestId: watchIdFor(machine, file),
+        machine,
+        path: file,
+        kind: 'deleted',
+        content: '',
+      }),
+      true,
+    );
+    assert.equal(resourceRevisions.revision(key), before + 1);
+    assert.deepEqual(events, [], 'Deletion cannot become a successful 0/0 checklist');
+  } finally {
+    await watcher.stop();
   }
 });

@@ -53,6 +53,34 @@ export interface NodeFsPathParams {
   relPath: string;
 }
 
+export interface FileWatchFailure {
+  code?: string;
+  message: string;
+}
+
+export type FileWatchUnavailable = { kind: 'deleted' } | { kind: 'error'; error: FileWatchFailure };
+
+export interface NodeFsWatchParams {
+  path: string;
+  /** Opt in to explicit deletion/error observations; absent retains content-only delivery. */
+  observations?: 1;
+}
+
+export interface NodeFsWatchResult {
+  watching: true;
+  observations?: 1;
+}
+
+interface NodeFsWatchIdentity {
+  requestId: string;
+  machine: string;
+  path: string;
+}
+
+/** Existing nodes omit kind. Content remains a string for the established wire contract. */
+export type NodeFsChangedPayload = NodeFsWatchIdentity &
+  ({ kind?: 'updated'; content: string } | ({ content: '' } & FileWatchUnavailable));
+
 export interface NodeFsWriteParams extends NodeFsPathParams {
   content: string;
 }

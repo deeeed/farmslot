@@ -8,6 +8,8 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname } from 'node:path';
 
+import type { FileWatchFailure, FileWatchUnavailable } from '@farmslot/protocol';
+
 // Pool configs can declare repos as `~/...`. `~` is a shell token, not a
 // filesystem prefix — node:fs treats it literally. Expand to $HOME first.
 export function expandTilde(p: string): string {
@@ -20,17 +22,58 @@ export interface FileWatchHandle {
   stop(): void;
 }
 
+export interface FileWatchOptions {
+  onUnavailable?: (observation: FileWatchUnavailable) => void;
+}
+
 /**
  * Watch a single file for content changes. `onChange` receives the file's UTF-8
  * content on every write. The parent directory remains watched so atomic file
  * replacement does not detach the watcher from subsequent updates. Returns a
  * handle the caller stops when done.
  */
-export function watchFile(filePath: string, onChange: (content: string) => void): FileWatchHandle {
+export function watchFile(
+  filePath: string,
+  onChange: (content: string) => void,
+  options: FileWatchOptions = {},
+): FileWatchHandle {
   const targetPath = expandTilde(filePath);
   let watcher: FSWatcher | null = null;
   let stopped = false;
-  let lastContent: string | null = null;
+  let lastObservation: string | undefined;
+  let generation = 0;
+
+  const unavailable = (error: unknown): FileWatchUnavailable => {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return { kind: 'deleted' };
+    const failure: FileWatchFailure = {
+      message: error instanceof Error ? error.message : String(error),
+      ...(typeof code === 'string' ? { code } : {}),
+    };
+    return { kind: 'error', error: failure };
+  };
+
+  const observe = async (): Promise<void> => {
+    if (stopped) return;
+    const current = ++generation;
+    let observation: FileWatchUnavailable | { kind: 'updated'; content: string };
+    try {
+      observation = { kind: 'updated', content: await readFile(targetPath, 'utf-8') };
+    } catch (error) {
+      observation = unavailable(error);
+    }
+    if (stopped || current !== generation) return;
+    const fingerprint = JSON.stringify(observation);
+    if (fingerprint === lastObservation) return;
+    lastObservation = fingerprint;
+    if (observation.kind === 'updated') onChange(observation.content);
+    else if (options.onUnavailable) options.onUnavailable(observation);
+    else if (observation.kind === 'error') {
+      // Content-only callers retain their last value; the parent watch stays armed
+      // so a subsequent permission change or replacement can restore delivery.
+      console.warn(`[fs.watch] read failed for ${targetPath}: ${observation.error.message}`);
+    }
+  };
 
   const start = (): void => {
     if (stopped) return;
@@ -43,22 +86,9 @@ export function watchFile(filePath: string, onChange: (content: string) => void)
       return;
     }
     const target = basename(targetPath);
-    watcher = watch(dir, { persistent: false }, async (_, filename) => {
+    watcher = watch(dir, { persistent: false }, (_, filename) => {
       if (filename != null && filename.toString() !== target) return;
-      if (!existsSync(targetPath)) return;
-      try {
-        const content = await readFile(targetPath, 'utf-8');
-        if (content === lastContent) return;
-        lastContent = content;
-        onChange(content);
-      } catch (err) {
-        // Atomic replacement can briefly remove the target between the directory
-        // event and the read. The following event will read the replacement.
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code !== 'ENOENT') {
-          console.warn(`[fs.watch] read failed for ${targetPath}: ${(err as Error).message}`);
-        }
-      }
+      void observe();
     });
   };
 
@@ -67,6 +97,7 @@ export function watchFile(filePath: string, onChange: (content: string) => void)
   return {
     stop(): void {
       stopped = true;
+      generation++;
       if (watcher) {
         watcher.close();
         watcher = null;

@@ -26,11 +26,24 @@ export async function withOwnedGatewayOffline(prove, { beforeStop } = {}) {
     Number(process.env.GATEWAY_PORT),
     'Select the owned gateway port',
   );
-  const { stdout: listeners } = await execute('lsof', [
-    '-t',
-    `-iTCP:${gateway.port}`,
-    '-sTCP:LISTEN',
-  ]);
+  let listeners;
+  const listenerDeadline = Date.now() + 30000;
+  do {
+    try {
+      ({ stdout: listeners } = await execute('lsof', [
+        '-t',
+        `-iTCP:${gateway.port}`,
+        '-sTCP:LISTEN',
+      ]));
+      break;
+    } catch (error) {
+      // Consecutive owned outages can overlap the surviving watcher's restart.
+      // Observe its next listener before validating identity; never start a server.
+      if (error.code !== 1 || error.stdout !== '') throw error;
+      await delay(50);
+    }
+  } while (Date.now() < listenerDeadline);
+  assert(listeners, 'The selected gateway listener did not recover before the next owned outage');
   const pid = Number(listeners.trim());
   assert(Number.isSafeInteger(pid) && pid > 0, 'Expected exactly one owned gateway listener');
   const { stdout: cwd } = await execute('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']);
