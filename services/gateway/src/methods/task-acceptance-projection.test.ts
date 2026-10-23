@@ -5,17 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
+import type { Run } from '@farmslot/protocol';
+
 import '../runtime/mock-pty.test-support.js';
 
 // Same fixture shape as task-subtask-projection.test.ts: mock.module replaces a
 // module wholesale, so the real namespaces are spread in and only the slot/run
 // lookups these tests need are overridden.
 import * as realConfig from '../core/config.js';
+import { GatewayMethodError } from '../core/method-error.js';
+import * as realIo from '../core/slot-io.js';
 import * as realFleetState from '../fleet/state.js';
 import * as realRunStore from '../runs/store.js';
-import * as realIo from '../core/slot-io.js';
-import type { Run } from '@farmslot/protocol';
-import { GatewayMethodError } from '../core/method-error.js';
+
 import { makeRun } from './run/test-fixtures.js';
 
 let repoRoot = '';
