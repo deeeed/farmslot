@@ -476,7 +476,11 @@ async function appendVisualJudgmentProvenance(
   body: string,
   prepared: Pick<
     ReadyGatePrPackage,
-    'evidenceManifest' | 'selectedEvidenceKeys' | 'visualJudgmentReceiptIds'
+    | 'evidenceManifest'
+    | 'selectedEvidenceKeys'
+    | 'visualJudgmentReceiptIds'
+    | 'artifactBundle'
+    | 'headSha'
   >,
 ): Promise<string> {
   if (!prepared.visualJudgmentReceiptIds?.length) return body;
@@ -484,6 +488,8 @@ async function appendVisualJudgmentProvenance(
     run,
     prepared.evidenceManifest ?? [],
     prepared.selectedEvidenceKeys,
+    prepared.artifactBundle,
+    prepared.headSha,
   );
   const policy = await readVisualReviewPolicy(run);
   const sections = sources
@@ -769,7 +775,7 @@ export async function prepareCompletionPackageTransitionLocked(
     artifacts,
     runEvidenceManifest,
     run.recordedEvidenceContractVersion ?? 0,
-    publicationBaselineContext(run),
+    { ...publicationBaselineContext(run), headSha: headBefore ?? options?.headSha },
     'retained',
   );
   const validation = await readValidationSummary(run);
@@ -910,12 +916,13 @@ export async function prepareCompletionPackageTransitionLocked(
     run.agentContexts?.some((c) => c.pipelineVisualReviewResult)
   ) {
     // The gate's own reader: the selected attempt's proof, with selected captures from another
-    // attempt as before evidence. Reading only the selected keys' roots can miss the proof.
+    // attempt as publication media. Reading only the selected keys' roots can miss the proof.
     const sources = await readFrozenPublicationRecipeSources(
       run,
       evidenceManifest,
       basePackage.selectedEvidenceKeys,
       retained.ref,
+      headSha,
     );
     const { stampPipelineVisualReviews } = await import('../review/pipeline-visual-review.js');
     await stampPipelineVisualReviews(run, sources, headSha);
@@ -1259,11 +1266,17 @@ export async function runCompletionPipeline(
   let completionEvidenceSelection: string[] | undefined;
   if (!isReviewPR && prNumber && run.taskFile) {
     const { manifest, inventory } = await readCurrentPackageEvidence(updatedRun);
-    const published = await publishSelectedEvidence(updatedRun, prNumber, {
-      selectedEvidenceKeys: allSelectedEvidenceKeysForPublication(inventory),
-      evidenceManifest: inventory,
-      trustedEvidenceManifest: manifest,
-    });
+    const published = await publishSelectedEvidence(
+      updatedRun,
+      prNumber,
+      {
+        selectedEvidenceKeys: allSelectedEvidenceKeysForPublication(inventory),
+        evidenceManifest: inventory,
+        trustedEvidenceManifest: manifest,
+      },
+      undefined,
+      await snapshotHeadSha(updatedRun),
+    );
     artifactUrls = published.artifactUrls;
     completionEvidenceSelection = published.selectedEvidenceKeys;
   }
@@ -1524,6 +1537,7 @@ export async function publishCompletionPackage(
       approvedPackage.evidenceManifest ?? [],
       selectedEvidenceKeys,
       approvedPackage.artifactBundle,
+      approvedPackage.headSha,
     );
 
     emit('substep', { name: 'resolve-pr-number', detail: `Resolving PR number against ${ciRepo}` });
@@ -1580,6 +1594,7 @@ export async function publishCompletionPackage(
         trustedEvidenceManifest: evidenceManifest,
       },
       approvedPackage.artifactBundle,
+      approvedPackage.headSha,
     );
     const artifactUrls = publishedEvidence.artifactUrls;
     selectedEvidenceKeys = publishedEvidence.selectedEvidenceKeys;
@@ -1607,6 +1622,7 @@ export async function publishCompletionPackage(
             approvedPackage.evidenceManifest ?? [],
             selectedEvidenceKeys,
             approvedPackage.artifactBundle,
+            approvedPackage.headSha,
           );
           if (prTemplate) reportTemplateDrift(body, 'published body');
         },

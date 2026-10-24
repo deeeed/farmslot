@@ -179,6 +179,7 @@ export async function readGateRecordedEvidenceSources(
     preparedPackage.evidenceManifest ?? [],
     preparedPackage.selectedEvidenceKeys ?? [],
     preparedPackage.artifactBundle,
+    preparedPackage.headSha ?? null,
   );
   if (!sources.length) throw new Error('The gate package has no retained recipe evidence closure.');
   for (const source of sources) {
@@ -200,6 +201,7 @@ export async function readFrozenPublicationRecipeSources(
   inventory: readonly ArtifactRef[],
   selectedKeys: readonly string[] = [],
   bundleRef?: RunArtifactBundleRef,
+  headSha?: string | null,
 ): Promise<RecordedEvidenceSource[]> {
   const contractVersion = run.recordedEvidenceContractVersion ?? 0;
   if (contractVersion !== 0 && contractVersion !== 1)
@@ -247,28 +249,35 @@ export async function readFrozenPublicationRecipeSources(
       if (!manifest)
         throw new RecordedEvidenceReadError(
           'evidence-selection-invalid',
-          'The publication has no frozen before-evidence declaration.',
+          'The publication has no frozen additional-evidence declaration.',
         );
-      const beforeRoots = await assertPublicationManifestOwnership(
+      const additionalRoots = await assertPublicationManifestOwnership(
         filterEvidenceManifestBySelection(manifest, external),
         pointer.relativeArtifactRoot,
         path.join(await retainedRunTaskDirectory(run, bundleRef), 'artifacts'),
         undefined,
-        publicationBaselineContext(run, [...inventory]),
+        { ...publicationBaselineContext(run, [...inventory]), headSha },
       );
       if (
-        external.some((file) => !beforeRoots.some((root) => file.startsWith(`artifacts/${root}/`)))
+        external.some(
+          (file) => !additionalRoots.some((root) => file.startsWith(`artifacts/${root}/`)),
+        )
       )
         throw new RecordedEvidenceReadError(
           'evidence-selection-invalid',
           'The publication selects an undeclared recipe attempt.',
         );
-      const before = await readFrozenRecordedEvidenceSources(run, inventory, external, bundleRef);
-      for (const source of before) {
+      const additional = await readFrozenRecordedEvidenceSources(
+        run,
+        inventory,
+        external,
+        bundleRef,
+      );
+      for (const source of additional) {
         if (validateRecordedEvidencePackage(source.input).status !== 'valid')
           throw new RecordedEvidenceReadError(
             'evidence-package-unverifiable',
-            'The frozen before-evidence package is invalid.',
+            'The frozen additional-evidence package is invalid.',
           );
       }
     }
