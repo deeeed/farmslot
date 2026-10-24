@@ -59,12 +59,42 @@ const store = await load('services/gateway/src/runs/store.ts');
 const core = await load('services/gateway/src/core/index.ts');
 const children = new Map<string, ChildProcess>();
 const runs: string[] = [];
+const archiveQueued = new Map<string, () => void>();
+const { withRunTransition } = await load(
+  'services/gateway/src/run-lifecycle/transition-coordinator.ts',
+);
+function fixture(status: 'done' | 'failed' | 'monitoring') {
+  const run = store.createRun(
+    {
+      project: 'archive-proof',
+      flowType: 'dev',
+      mode: 'autonomous',
+      transport: 'tmux',
+      runner: 'scripted',
+      ticketOrPr: 'PROOF-ARCHIVE',
+      slotId: 'fixture-slot',
+    },
+    { createdByPrincipalId: person.id, nativeOwnerPrincipalId: person.id },
+  );
+  runs.push(run.id);
+  store.updateRun(run.id, {
+    status,
+    steps: [{ name: 'monitor', status: status === 'monitoring' ? 'running' : 'done' }],
+  });
+  return run;
+}
+async function worker(runId: string) {
+  const child = fork(workerFile, [], { silent: true });
+  children.set(runId, child);
+  assert.deepEqual((await once(child, 'message'))[0], { kind: 'ready' });
+  return child;
+}
 const methods = await load('services/gateway/src/methods/run/admin.ts');
 mock.module(pathToFileURL(path.join(code, 'services/gateway/src/methods/run/admin.ts')).href, {
   namedExports: {
     ...methods,
-    runArchive: (params: unknown, emit: unknown) =>
-      methods.runArchive(params, emit, {
+    runArchive: (params: { runId: string }, emit: unknown) => {
+      const pending = methods.runArchive(params, emit, {
         preflight: async () =>
           assert.fail('terminal keep-work eviction delegates directly to the guarded release'),
         release: async (params: {
@@ -76,8 +106,8 @@ mock.module(pathToFileURL(path.join(code, 'services/gateway/src/methods/run/admi
           assert.equal(params.keepWork, true);
           assert.equal(params.forceReset, undefined);
           assert.equal(
-            await core.readSlotField(params.slotId, 'current_run_id'),
-            params.expectedRunId,
+            core.ownsRunSlotCleanup(await core.readSlotRow(params.slotId), params.expectedRunId),
+            true,
           );
           assert.ok(
             store.getRun(params.expectedRunId),
@@ -91,13 +121,17 @@ mock.module(pathToFileURL(path.join(code, 'services/gateway/src/methods/run/admi
           assert.equal(child.exitCode, 0);
           const transition = await core.updateSlotStatusIf(
             params.slotId,
-            (row: { current_run_id?: string }) => row.current_run_id === params.expectedRunId,
-            { current_run_id: null, lifecycle: 'ready' },
+            (row: Readonly<Record<string, unknown>>) =>
+              core.ownsRunSlotCleanup(row, params.expectedRunId),
+            { current_run_id: null, cleanup_run_id: null, lifecycle: 'ready' },
           );
           assert.equal(transition, true);
           return { released: true };
         },
-      }),
+      });
+      archiveQueued.get(params.runId)?.();
+      return pending;
+    },
   },
 });
 const { createWebSocketServer } = await load('services/gateway/src/server.ts');
@@ -105,6 +139,8 @@ const { GatewayClient } = await load('packages/cli/src/gateway-client.ts');
 const server = createServer(),
   wss = createWebSocketServer(server, auth);
 let client;
+let releaseTransition: (() => void) | undefined;
+let pendingTransition: Promise<void> | undefined;
 try {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -115,33 +151,14 @@ try {
     timeout: 30000,
   }).connect();
   for (const status of ['done', 'failed'] as const) {
-    const run = store.createRun(
-      {
-        project: 'archive-proof',
-        flowType: 'dev',
-        mode: 'autonomous',
-        transport: 'tmux',
-        runner: 'scripted',
-        ticketOrPr: 'PROOF-ARCHIVE',
-        slotId: 'fixture-slot',
-      },
-      { createdByPrincipalId: person.id, nativeOwnerPrincipalId: person.id },
-    );
-    runs.push(run.id);
-    store.updateRun(run.id, {
-      status,
-      completedAt: new Date().toISOString(),
-      steps: [{ name: 'monitor', status: 'done' }],
-    });
+    const run = fixture(status);
     await writeFile(
       path.join(home, 'status.json'),
       JSON.stringify({
         slots: [{ slot: 'fixture-slot', current_run_id: run.id, lifecycle: 'held', slot_epoch: 1 }],
       }),
     );
-    const child = fork(workerFile, [], { silent: true });
-    children.set(run.id, child);
-    assert.deepEqual((await once(child, 'message'))[0], { kind: 'ready' });
+    const child = await worker(run.id);
     assert.equal(child.exitCode, null);
     assert.deepEqual(await client.call('run.archive', { runId: run.id }), { ok: true });
     assert.equal(child.exitCode, 0, 'archive must confirm worker stopped before returning');
@@ -154,11 +171,80 @@ try {
     assert.ok(archived.archivedAt);
     assert.equal(await core.readSlotField('fixture-slot', 'current_run_id'), null);
   }
+  const parent = fixture('done');
+  const childRun = fixture('monitoring');
+  store.updateRun(childRun.id, { familyId: parent.familyId });
+  const sharedWorker = await worker(parent.id);
+  await writeFile(
+    path.join(home, 'status.json'),
+    JSON.stringify({
+      slots: [
+        {
+          slot: 'fixture-slot',
+          current_run_id: null,
+          cleanup_run_id: parent.id,
+          lifecycle: 'held',
+          phase: 'occupied',
+          slot_epoch: 2,
+        },
+      ],
+    }),
+  );
+  await assert.rejects(
+    client.call('run.archive', { runId: parent.id }),
+    /Another active run .* uses this slot/,
+  );
+  assert.equal(sharedWorker.exitCode, null, 'archive must leave the shared child worker alive');
+  assert.ok(store.getRun(parent.id));
+  store.updateRun(childRun.id, { status: 'done' });
+
+  const drift = fixture('failed');
+  const driftingWorker = await worker(drift.id);
+  await writeFile(
+    path.join(home, 'status.json'),
+    JSON.stringify({
+      slots: [{ slot: 'fixture-slot', current_run_id: drift.id, lifecycle: 'held', slot_epoch: 3 }],
+    }),
+  );
+  let entered!: () => void;
+  const transitionEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const mayFinish = new Promise<void>((resolve) => {
+    releaseTransition = resolve;
+  });
+  pendingTransition = withRunTransition(drift.id, async () => {
+    entered();
+    await mayFinish;
+    store.updateRun(drift.id, { status: 'done' });
+  });
+  await transitionEntered;
+  let queued!: () => void;
+  const queuedRequest = new Promise<void>((resolve) => {
+    queued = resolve;
+  });
+  archiveQueued.set(drift.id, queued);
+  const request = client.call('run.archive', { runId: drift.id });
+  await Promise.race([
+    queuedRequest,
+    request.then(() => assert.fail('archive settled before admission')),
+  ]);
+  releaseTransition!();
+  await assert.rejects(request, /status changed from failed to done/);
+  await pendingTransition;
+  assert.equal(
+    driftingWorker.exitCode,
+    null,
+    'terminal drift must retain worker and run ownership',
+  );
+  assert.ok(store.getRun(drift.id));
   const result = {
     pass: true,
     methods: ['run.archive', 'run.get'],
     statuses: ['done', 'failed'],
     confirmedWorkerExitBeforeEviction: true,
+    sharedChildProtected: true,
+    terminalStatusDriftRefused: true,
     archivedStatusAndStepHistoryPreserved: true,
     checkoutPolicy: 'keepWork:true, forceReset absent',
     scope:
@@ -169,6 +255,8 @@ try {
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify(result));
 } finally {
+  releaseTransition?.();
+  if (pendingTransition) await pendingTransition;
   client?.close();
   for (const connection of wss.clients) connection.terminate();
   await new Promise<void>((resolve) => wss.close(() => resolve()));

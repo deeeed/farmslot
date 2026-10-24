@@ -45,6 +45,7 @@ import {
   endRunArchive,
   isRunArchiving,
 } from '../../run-lifecycle/archive-fence.js';
+import { slotOwnershipBlocker } from '../../run-lifecycle/slot-teardown.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
@@ -240,7 +241,14 @@ async function withTerminalRunSlotReleased(
   const expectedStatus = run.status;
   const fenced = await withRunTransition(run.id, async () => {
     const current = getRun(run.id);
-    if (!current || current.status !== expectedStatus) return false;
+    if (!current) return false;
+    if (current.status !== expectedStatus) {
+      if (isTerminalRunStatus(current.status))
+        throw new Error(
+          `Cannot evict run ${run.id}: status changed from ${expectedStatus} to ${current.status} while waiting for cleanup authority. Retry after that transition settles.`,
+        );
+      return false;
+    }
     assertRunArchivable(current);
     assertRunNotArchiving(run.id);
     beginRunArchive(run.id);
@@ -261,6 +269,8 @@ async function releaseKeptSlot(run: Run, emit: Emit, slot: ArchiveSlotRelease): 
   const slotId = run.slotId;
   // Another active run owns the slot now; it keeps it.
   if (!ownsRunSlotCleanup(await readSlotRow(slotId), run.id)) return;
+  const blocker = await slotOwnershipBlocker(run);
+  if (blocker) throw new Error(`Cannot release slot ${slotId} of run ${run.id}: ${blocker}`);
   const { released } = await slot.release(
     {
       slotId,

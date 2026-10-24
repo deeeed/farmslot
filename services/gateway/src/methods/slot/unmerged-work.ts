@@ -336,12 +336,20 @@ export async function findUnmergedSlotWork(
   // runs `git push -u`, which records that remote as the branch's upstream;
   // push-remote config may name a different one and proves nothing. A remote
   // that cannot be asked proves nothing either, so the work stays protected.
-  const upstream = await exec(
+  const remoteConfig = await exec(
     vars,
-    `${git} for-each-ref --format='%(upstream:remotename)%09%(upstream:remoteref)' ${shellQuote(`refs/heads/${branch}`)}`,
+    `${git} config --get ${shellQuote(`branch.${branch}.remote`)}`,
   );
-  if (upstream.exitCode !== 0) return 'unpushed commits';
-  const [configuredRemote, configuredRef] = upstream.stdout.trim().split('\t');
+  const mergeConfig = await exec(
+    vars,
+    `${git} config --get ${shellQuote(`branch.${branch}.merge`)}`,
+  );
+  if (![0, 1].includes(remoteConfig.exitCode) || ![0, 1].includes(mergeConfig.exitCode))
+    return 'unpushed commits';
+  // Upstream atoms disappear when a narrow fetch refspec excludes the branch.
+  // The stored remote/merge pair still identifies where publication went.
+  const configuredRemote = remoteConfig.stdout.trim();
+  const configuredRef = mergeConfig.stdout.trim();
   const remote = configuredRemote || 'origin';
   const ref = configuredRef || `refs/heads/${branch}`;
   if (remote === '.') return 'unpushed commits';

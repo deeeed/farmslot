@@ -182,6 +182,54 @@ test('archive preserves a failed completion recovery hold until explicit workspa
   assert.equal(isRunArchiving(run.id), false);
 });
 
+test('terminal archive protects a live child sharing its parent cleanup claim', async (t) => {
+  const parent = blockedRun(t, 'archive-shared-parent', [{ name: 'monitor', status: 'done' }]);
+  updateRun(parent.id, { status: 'done' });
+  await holdSlotFor(t, parent.id, 'occupied');
+  await updateSlotStatus(slotId, { current_run_id: null, cleanup_run_id: parent.id });
+  const child = blockedRun(t, 'archive-shared-child', [{ name: 'monitor', status: 'running' }]);
+  updateRun(child.id, { status: 'monitoring', familyId: parent.familyId });
+  const { calls, slot } = recordingSlot();
+  await assert.rejects(
+    runArchive({ runId: parent.id }, noopEmit, slot),
+    /Another active run .* uses this slot/,
+  );
+  assert.deepEqual(calls.releases, []);
+  assert.ok(getRun(parent.id));
+  assert.equal(getRun(child.id)?.status, 'monitoring');
+  assert.equal(await readSlotField(slotId, 'cleanup_run_id'), parent.id);
+});
+
+test('a concurrent terminal transition cannot evict before its cleanup confirms', async (t) => {
+  const run = blockedRun(t, 'archive-force-complete', [{ name: 'monitor', status: 'done' }]);
+  updateRun(run.id, { status: 'failed' });
+  await holdSlotFor(t, run.id);
+  let finish!: () => void;
+  const mayFinish = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let admitted!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    admitted = resolve;
+  });
+  const transition = withRunTransition(run.id, async () => {
+    admitted();
+    await mayFinish;
+    // Force-complete publishes done before its advisory release finishes.
+    updateRun(run.id, { status: 'done' });
+  });
+  await entered;
+  const { calls, slot } = recordingSlot();
+  const archive = runArchive({ runId: run.id }, noopEmit, slot);
+  finish();
+  await assert.rejects(archive, /status changed from failed to done/);
+  await transition;
+  assert.deepEqual(calls.releases, []);
+  assert.ok(getRun(run.id));
+  assert.equal(await readSlotField(slotId, 'current_run_id'), run.id);
+  assert.equal(isRunArchiving(run.id), false);
+});
+
 test('archiving a settled blocked run that holds its slot releases the slot first', async (t) => {
   const run = blockedRun(t, 'archive-release', [{ name: 'monitor', status: 'done' }]);
   await holdSlotFor(t, run.id);

@@ -95,6 +95,20 @@ test('release verifies a published HEAD without upstream or a current tracking r
   assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'unpushed commits');
 });
 
+test('release retains configured fork publication when its fetch refspec excludes the branch', async (t) => {
+  const { repo, vars } = slotRepo(t, ['fork']);
+  git(repo, 'push', '-q', '-u', 'fork', BRANCH);
+  git(repo, 'config', 'remote.fork.fetch', '+refs/heads/main:refs/remotes/fork/main');
+  git(repo, 'update-ref', '-d', `refs/remotes/fork/${BRANCH}`);
+  assert.equal(
+    git(repo, 'for-each-ref', '--format=%(upstream:remotename)', `refs/heads/${BRANCH}`),
+    '',
+  );
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), null);
+  git(repo, 'push', '-q', 'fork', '--delete', BRANCH);
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), null);
+});
+
 test('release accepts HEAD contained in the actual remote tip without moving the checkout', async (t) => {
   const { repo, vars } = slotRepo(t, ['origin']);
   git(repo, 'push', '-q', 'origin', BRANCH);
