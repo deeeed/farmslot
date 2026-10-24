@@ -151,6 +151,11 @@ test(
     const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-fs-read-order-'));
     const file = path.join(dir, 'state.md');
     await writeFile(file, 'initial');
+    const replace = async (content: string) => {
+      // Keep this ordering test independent of writeFile's observable truncate window.
+      await writeFile(`${file}.next`, content);
+      await rename(`${file}.next`, file);
+    };
     const values: string[] = [];
     let wake: (() => void) | undefined;
     const handle = watchFile(file, (value) => {
@@ -171,7 +176,7 @@ test(
     };
     try {
       const oldCaptured = hold('old');
-      await writeFile(file, 'old');
+      await replace('old');
       await oldCaptured;
       const latest = new Promise<void>((resolve, reject) => {
         const timer = setTimeout(
@@ -185,13 +190,13 @@ test(
           }
         };
       });
-      await writeFile(file, 'new');
+      await replace('new');
       await latest;
       release();
       await new Promise((resolve) => setImmediate(resolve));
       assert.deepEqual(values, ['new']);
       const capturedBeforeStop = hold('stopped');
-      await writeFile(file, 'stopped');
+      await replace('stopped');
       await capturedBeforeStop;
       handle.stop();
       release();
