@@ -387,6 +387,7 @@ async function scanPackageForPublicationSecrets(
     inventory,
     expandEvidenceSelectionForManifest(manifest, selected) ?? selected,
     preparedPackage.artifactBundle,
+    preparedPackage.headSha,
   );
 }
 
