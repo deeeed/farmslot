@@ -1,0 +1,72 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Planning stores follow actual account and authority changes",
+  "description": "On an isolated gateway, use a disposable service principal and the actual sign-in/sign-out UI. Warm five lists, inspect SQLite deletion after switching accounts and reconnecting with revoked authority, change owned sources while access is absent, recover through fresh reads, then retire only the test identity.",
+  "proofTargets": [
+    {
+      "id": "principalSwitchClearsFive",
+      "claim": "Switching accounts through the real UI deletes all five old saved planning collections."
+    },
+    {
+      "id": "revokedRoleClearsFive",
+      "claim": "Revoking the disposable account's admin role clears all five saved and cached planning collections."
+    },
+    {
+      "id": "authorityRecoveryRefetchesFive",
+      "claim": "Restored authority refetches all five lists through their actual mounted views."
+    },
+    {
+      "id": "originalAccountRestored",
+      "claim": "The original browser account is restored; test credentials and principal are retired without changing its roles."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-planning-authority.mjs",
+        "timeout_ms": 180000,
+        "intent": "Prove real account switching, role revocation and recovery across five saved planning collections.",
+        "next": "switch"
+      },
+      "switch": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"principalSwitchClearsFive\":true",
+        "intent": "Normal account switching deletes the previous principal's saved planning rows.",
+        "proves": ["principalSwitchClearsFive"],
+        "next": "revoke"
+      },
+      "revoke": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"revokedRoleClearsFive\":true",
+        "intent": "A real admin-role revocation clears every saved planning collection.",
+        "proves": ["revokedRoleClearsFive"],
+        "next": "recover"
+      },
+      "recover": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"authorityRecoveryRefetchesFive\":true",
+        "intent": "Restored authority requires new current reads on all five actual views.",
+        "proves": ["authorityRecoveryRefetchesFive"],
+        "next": "cleanup"
+      },
+      "cleanup": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"originalAccountRestored\":true",
+        "intent": "Restore the original account and remove only the disposable principal and credential.",
+        "proves": ["originalAccountRestored"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
