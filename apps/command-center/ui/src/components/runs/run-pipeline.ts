@@ -22,6 +22,7 @@ import { runActivityStepStatus, runActivityView } from '@farmslot/review-dispatc
 
 import '../progress-tracker/progress-tracker.js';
 import './run-checklist-progress.js';
+import './run-ci-watch-status.js';
 
 import { gateway } from '../../gateway-client.js';
 import {
@@ -206,6 +207,7 @@ export class RunPipeline extends LitElement {
           .run=${this.run}
           .progress=${this.taskProgress}
         ></run-checklist-progress>
+        <run-ci-watch-status .run=${this.run}></run-ci-watch-status>
         ${this.renderRunSummary()}
         ${this.transferProgress?.state === 'running'
           ? html`

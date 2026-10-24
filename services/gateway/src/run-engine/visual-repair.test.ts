@@ -516,3 +516,35 @@ test('Send back falls back to current open findings and deduplicates recorded at
   );
   assert.ok(!issues.some(({ file }) => file === 'old.ts' || file === 'passed.ts'));
 });
+
+test('an undelivered Send back retry retains original and new operator notes once', () => {
+  const run = repairRun([]);
+  const decision: RunDecision = {
+    id: scope.decisionId,
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: '',
+    actions: [],
+    createdAt: '2026-10-24T00:00:00Z',
+    resolvedAction: 'send-feedback',
+    selectionData: { feedback: 'Keep the original instruction.' },
+  };
+  run.decisions = [
+    { ...decision, id: 'earlier-repair', selectionData: { feedback: 'Older repair note.' } },
+    decision,
+    { ...decision, id: 'retry-gate', selectionData: { feedback: 'Also fix the amount boundary.' } },
+    { ...decision, id: 'duplicate-gate' },
+    {
+      ...decision,
+      id: 'another-action',
+      resolvedAction: 'hold',
+      selectionData: { feedback: 'Unrelated note.' },
+    },
+  ];
+  assert.deepEqual(
+    visualRepairIssues(scope, 'tasks/dev/PROOF-1', run)
+      .filter(({ file }) => file === 'Operator feedback')
+      .map(({ description }) => description),
+    ['Keep the original instruction.', 'Also fix the amount boundary.'],
+  );
+});

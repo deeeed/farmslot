@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show check counts, failures, next poll and time left on CI-watch run cards and pipelines.
+
 - Show muted step durations and live elapsed time in Worker progress.
 
 - Show each run source and covered ticket once as compact inline Jira/PR links; show shared total and current-step elapsed time on the existing metadata line.

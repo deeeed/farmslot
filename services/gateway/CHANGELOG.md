@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.
+- Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
+- Keep reviewer recipe replay output outside worker task evidence so a passing review does not request another round.
 - Include evidence-manifest field errors when publication refuses invalid declarations or selected recipe evidence.
 - Require a usable Git identity and signing session during prepare, and refuse unsigned outgoing worker commits at completion or before publication.
 - Publish after and standalone captures from additional same-run recipe attempts at the clean publication head, retaining each checked closure and the selected attempt's claim verdicts.
@@ -15,6 +17,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Keep bundles referenced by active slot fixtures until their run ends, including after support selections advance or fixtures refresh.
 
 - Project current-attempt checklist timing and preserve step durations in monthly analytics.
+- Project CI-watch deadlines from existing monitor clocks without changing polling or timeout behavior.
 
 - Stop workers and slot runtimes when runs finish, fail or are cancelled, while preserving live stacked children, fix rounds and replay checkouts.
 - Prune unused node-support bundles during activation, retaining slot selections and references from every non-archived run.

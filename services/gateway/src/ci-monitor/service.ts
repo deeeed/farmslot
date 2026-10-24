@@ -159,6 +159,11 @@ export async function monitorCI(
   let lastCheckFingerprint = initialState.lastCheckFingerprint ?? null;
   let lastHeadSha = initialState.lastHeadSha ?? null;
 
+  const timeoutDeadlines = () => ({
+    progressTimeoutAt: new Date(timeoutWindowStartedAt + config.maxPollTimeMs).toISOString(),
+    totalTimeoutAt: new Date(totalTimeoutWindowStartedAt + config.maxTotalPollTimeMs).toISOString(),
+  });
+
   // Accumulated metrics
   let pollCount = 0;
   const checkTimeline: CICheckTimelineEntry[] = [];
@@ -199,6 +204,7 @@ export async function monitorCI(
     if (patch?.lastProgressAt) broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     return {
       timeoutWindowStartedAt: windowStartIso,
+      ...timeoutDeadlines(),
       lastProgressAt: patch?.lastProgressAt ?? readDedup(runId).lastProgressAt,
       lastProgressReason: patch?.lastProgressReason ?? readDedup(runId).lastProgressReason,
     };
@@ -289,6 +295,7 @@ export async function monitorCI(
       detail: recommendation,
       outputs: {
         ...phaseSnapshot,
+        ...timeoutDeadlines(),
         checkSummary,
         recommendation,
         passedNames,
@@ -327,6 +334,7 @@ export async function monitorCI(
       lastProgressAt: readDedup(runId).lastProgressAt,
       lastProgressReason: readDedup(runId).lastProgressReason,
       ...extra,
+      ...timeoutDeadlines(),
     });
     return pokeablePoll(runId, config.pollIntervalMs, signal);
   };

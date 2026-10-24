@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document shared CI-watch card status and exact monitor deadlines.
+
 - Document checklist row timing and monthly analytics step durations.
 
 - Document the operator-added linked-ticket metadata method in the gateway API reference.

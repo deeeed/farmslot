@@ -255,6 +255,10 @@ export function isPublicationReviewRecoveryHeld(run: Run): boolean {
   )
     return false;
   if (run.engineState?.publishGate?.reviewRecovery?.status === 'operator-required') return true;
+  // A review request consumes its decision while HUMAN_GATE still owns the await.
+  // Restart must keep observing that reviewer even before another decision exists.
+  if (run.steps.some((step) => step.name === S.HUMAN_GATE && step.status === 'running'))
+    return true;
   return run.decisions.some(
     (decision) => decision.type === 'engine_human_gate' && !decision.resolvedAt,
   );

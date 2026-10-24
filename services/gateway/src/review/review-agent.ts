@@ -147,7 +147,23 @@ export function reviewerScratchRule(contextId: string): string {
     `Apart from the review files named above and the evidence your checklist asks for, write ` +
     `nothing in the checkout. Put probe tests and ` +
     `other scratch files under \`\${TMPDIR:-/tmp}/farmslot-review/${contextId}\` (create it with ` +
-    `\`mkdir -p\`). If a probe must sit in the checkout to run, delete it before you write your result.`
+    `\`mkdir -p\`). If a probe must sit in the checkout to run, delete it before you write your result.\n\n` +
+    `Recipe replays are reviewer diagnostics: keep their output in scratch even when the checklist ` +
+    `asks for recipe evidence. Never write them into the worker task's artifacts, change its ` +
+    `latest-valid-recipe-run.json or acceptance ledger, or promote replay output as author evidence. ` +
+    `This overrides copied worker instructions that bind proof commands to the parent task. ` +
+    `Define this function in the same shell invocation and call reviewer_recipe_replay with the ` +
+    `project's existing recipe run/call command and arguments. Omit task-binding assignments and ` +
+    `any --artifacts-dir from that command; the wrapper supplies fresh output and preserves its exit status.\n\n` +
+    '```sh\n' +
+    'reviewer_recipe_replay() {\n' +
+    `  local root="\${TMPDIR:-/tmp}"/${shellQuote(`farmslot-review/${contextId}`)}\n` +
+    '  local artifacts\n' +
+    '  mkdir -p "$root" || return\n' +
+    '  artifacts="$(mktemp -d "$root/recipe-run.XXXXXX")" || return\n' +
+    '  env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR "$@" --artifacts-dir "$artifacts"\n' +
+    '}\n' +
+    '```'
   );
 }
 

@@ -28,6 +28,26 @@ only the remaining rows. A WARM row 1 continues its own review lineage at the
 gate. Runs without a sequence take the pipeline reviewer from the project
 `review` configuration.
 
+## Reviewer recipe replays
+
+**Status:** Accepted under ADR-032 Amendment 2 (approved by the lead 2026-10-24).
+
+The reviewer-specific execution contract MUST direct recipe replays into a fresh
+directory under that reviewer's temporary scratch root, using the project's
+existing recipe run or call command. It MUST clear both `RECIPE_TASK_DIR` and
+`FARMSLOT_TASK_DIR` and pass an explicit `--artifacts-dir`. A replay MUST preserve
+the command's failure status and MUST NOT replace the author's selected recipe
+attempt, acceptance ledger or evidence. This rule overrides copied worker
+instructions that bind proof commands to the parent task.
+
+COLD and WARM reviewers MUST receive this contract. Their checklist markers,
+signals, feedback and verdict files retain their existing paths. The reviewed-input
+fingerprint MUST continue to cover author recipe attempts, their evidence and
+`latest-valid-recipe-run.json`; an author evidence change still invalidates a pass.
+
+The private gateway contract adds no public API or harness configuration. It uses
+the existing recipe CLI flag and environment variables named above.
+
 ## Round budget
 
 The gateway MUST default to at most five reviewer rounds for a repository/PR. Before
