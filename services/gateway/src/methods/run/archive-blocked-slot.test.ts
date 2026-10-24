@@ -1,6 +1,7 @@
 // @farmslot:serial — snapshots, overwrites, and restores the shared root `.farm-status.json`.
 import assert from 'node:assert/strict';
 import { readFile, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -19,7 +20,14 @@ import {
   isRunArchiving,
 } from '../../run-lifecycle/archive-fence.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
-import { createRun, deleteRun, getRun, getRunWithArchived, updateRun } from '../../runs/store.js';
+import {
+  createRun,
+  deleteRun,
+  getRun,
+  getRunWithArchived,
+  runsDirectory,
+  updateRun,
+} from '../../runs/store.js';
 import { type SlotReleasePreflight, slotReleasePreflight } from '../slot/release.js';
 import { detachRunsForReleasedSlot } from '../slot/release-run-ownership.js';
 
@@ -99,6 +107,128 @@ function recordingSlot(preflight: SlotReleasePreflight | null = clean) {
   };
   return { calls, slot };
 }
+
+for (const status of ['done', 'failed'] as const) {
+  test(`archive stops an owned ${status} worker through keep-work release before eviction`, async (t) => {
+    const run = blockedRun(t, `archive-${status}`, [{ name: 'review', status: 'done' }]);
+    updateRun(run.id, { status, completedAt: new Date().toISOString() });
+    await holdSlotFor(t, run.id);
+    const { calls, slot } = recordingSlot();
+    const release = slot.release;
+    slot.release = async (params, emit) => {
+      assert.ok(getRun(run.id), 'ownership record remains available during worker teardown');
+      assert.equal(isRunArchiving(run.id), true);
+      await assert.rejects(
+        runReplayStep({ runId: run.id, stepName: 'review', triggeredBy: 'operator' }, noopEmit, {
+          startEngine: async () => assert.fail('archive must fence replay'),
+        }),
+        /is being archived/,
+      );
+      return release(params, emit);
+    };
+    await runArchive({ runId: run.id }, noopEmit, slot);
+    assert.deepEqual(calls.releases, [{ slotId, expectedRunId: run.id, keepWork: true }]);
+    assert.equal(getRun(run.id), undefined);
+    assert.ok((await getRunWithArchived(run.id))?.archivedAt);
+    assert.equal(isRunArchiving(run.id), false);
+    t.after(() => rm(path.join(runsDirectory(), 'archive', `${run.id}.json`), { force: true }));
+  });
+}
+
+test('terminal archive retains a live ownership record when cleanup fails and protects a successor', async (t) => {
+  const run = blockedRun(t, 'archive-terminal-cleanup', [{ name: 'monitor', status: 'done' }]);
+  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+  await holdSlotFor(t, run.id);
+  const { slot } = recordingSlot();
+  slot.release = async () => ({ released: false, skipped: 'worker did not stop' });
+  await assert.rejects(runArchive({ runId: run.id }, noopEmit, slot), /it is still held/);
+  assert.ok(getRun(run.id));
+  assert.equal(isRunArchiving(run.id), false);
+  const successor = blockedRun(t, 'archive-successor', [{ name: 'monitor', status: 'running' }]);
+  await updateSlotStatus(slotId, { current_run_id: successor.id });
+  slot.release = async () => assert.fail('the successor must keep its worker and checkout');
+  await runArchive({ runId: run.id }, noopEmit, slot);
+  assert.equal(await readSlotField(slotId, 'current_run_id'), successor.id);
+  t.after(() => rm(path.join(runsDirectory(), 'archive', `${run.id}.json`), { force: true }));
+});
+
+test('terminal archive refuses unfinished closeout before worker teardown', async (t) => {
+  const run = blockedRun(t, 'archive-terminal-closeout', [{ name: 'monitor', status: 'done' }]);
+  updateRun(run.id, { status: 'done', backlogReconcilePending: true });
+  await holdSlotFor(t, run.id);
+  const { calls, slot } = recordingSlot();
+  await assert.rejects(
+    runArchive({ runId: run.id }, noopEmit, slot),
+    /backlog reconciliation is pending/,
+  );
+  assert.deepEqual(calls.releases, []);
+  updateRun(run.id, { backlogReconcilePending: false });
+});
+
+test('archive preserves a failed completion recovery hold until explicit workspace release', async (t) => {
+  const run = blockedRun(t, 'archive-completion-hold', [
+    {
+      name: 'complete',
+      status: 'failed',
+      outputs: { gatePrerequisiteRefusal: { reason: 'proof missing' } },
+    },
+  ]);
+  updateRun(run.id, { status: 'failed' });
+  await holdSlotFor(t, run.id);
+  const { calls, slot } = recordingSlot();
+  await assert.rejects(runArchive({ runId: run.id }, noopEmit, slot), /release slot .* first/);
+  assert.deepEqual(calls.releases, []);
+  assert.ok(getRun(run.id));
+  assert.equal(isRunArchiving(run.id), false);
+});
+
+test('terminal archive protects a live child sharing its parent cleanup claim', async (t) => {
+  const parent = blockedRun(t, 'archive-shared-parent', [{ name: 'monitor', status: 'done' }]);
+  updateRun(parent.id, { status: 'done' });
+  await holdSlotFor(t, parent.id, 'occupied');
+  await updateSlotStatus(slotId, { current_run_id: null, cleanup_run_id: parent.id });
+  const child = blockedRun(t, 'archive-shared-child', [{ name: 'monitor', status: 'running' }]);
+  updateRun(child.id, { status: 'monitoring', familyId: parent.familyId });
+  const { calls, slot } = recordingSlot();
+  await assert.rejects(
+    runArchive({ runId: parent.id }, noopEmit, slot),
+    /Another active run .* uses this slot/,
+  );
+  assert.deepEqual(calls.releases, []);
+  assert.ok(getRun(parent.id));
+  assert.equal(getRun(child.id)?.status, 'monitoring');
+  assert.equal(await readSlotField(slotId, 'cleanup_run_id'), parent.id);
+});
+
+test('a concurrent terminal transition cannot evict before its cleanup confirms', async (t) => {
+  const run = blockedRun(t, 'archive-force-complete', [{ name: 'monitor', status: 'done' }]);
+  updateRun(run.id, { status: 'failed' });
+  await holdSlotFor(t, run.id);
+  let finish!: () => void;
+  const mayFinish = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let admitted!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    admitted = resolve;
+  });
+  const transition = withRunTransition(run.id, async () => {
+    admitted();
+    await mayFinish;
+    // Force-complete publishes done before its advisory release finishes.
+    updateRun(run.id, { status: 'done' });
+  });
+  await entered;
+  const { calls, slot } = recordingSlot();
+  const archive = runArchive({ runId: run.id }, noopEmit, slot);
+  finish();
+  await assert.rejects(archive, /status changed from failed to done/);
+  await transition;
+  assert.deepEqual(calls.releases, []);
+  assert.ok(getRun(run.id));
+  assert.equal(await readSlotField(slotId, 'current_run_id'), run.id);
+  assert.equal(isRunArchiving(run.id), false);
+});
 
 test('archiving a settled blocked run that holds its slot releases the slot first', async (t) => {
   const run = blockedRun(t, 'archive-release', [{ name: 'monitor', status: 'done' }]);
