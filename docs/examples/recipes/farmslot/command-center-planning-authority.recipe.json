@@ -1,11 +1,15 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Planning stores follow actual account and authority changes",
-  "description": "On an isolated gateway, use a disposable service principal and the actual sign-in/sign-out UI. Warm five lists, inspect SQLite deletion after switching accounts and reconnecting with revoked authority, change owned sources while access is absent, recover through fresh reads, then retire only the test identity.",
+  "description": "On an isolated gateway, use a disposable account and actual sign-in/sign-out. Warm five lists, downgrade admin to operator with farm access retained, then revoke all access. Verify saved forbidden rows disappear and allowed lists require new reads, recover through real source changes, then retire only the test identity.",
   "proofTargets": [
     {
       "id": "principalSwitchClearsFive",
       "claim": "Switching accounts through the real UI deletes all five old saved planning collections."
+    },
+    {
+      "id": "partialRoleRefetchesAllowed",
+      "claim": "An operator downgrade retains farm access, freshly reads three allowed lists and clears saved roadmap/project facts."
     },
     {
       "id": "revokedRoleClearsFive",
@@ -37,6 +41,15 @@
         "match": "\"principalSwitchClearsFive\":true",
         "intent": "Normal account switching deletes the previous principal's saved planning rows.",
         "proves": ["principalSwitchClearsFive"],
+        "next": "partial-role"
+      },
+      "partial-role": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"partialRoleRefetchesAllowed\":true",
+        "intent": "Retain farm access while clearing forbidden planning facts and refetching permitted collections.",
+        "proves": ["partialRoleRefetchesAllowed"],
         "next": "revoke"
       },
       "revoke": {

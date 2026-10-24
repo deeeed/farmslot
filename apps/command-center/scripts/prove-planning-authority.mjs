@@ -88,7 +88,7 @@ const authState = () =>
   cdp([
     'eval',
     tab,
-    `const url=performance.getEntriesByType('resource').map(({name})=>name).filter(name=>new URL(name).pathname.endsWith('/src/gateway-client.ts')).at(-1); if(!url)return {};const {gateway}=await import(url);return {principalId:gateway.authenticatedPrincipalId,connection:gateway.connectionState,authForm:Boolean(document.querySelector('.auth-card'))};`,
+    `const url=performance.getEntriesByType('resource').map(({name})=>name).filter(name=>new URL(name).pathname.endsWith('/src/gateway-client.ts')).at(-1); if(!url)return {};const {gateway}=await import(url);return {principalId:gateway.authenticatedPrincipalId,connection:gateway.connectionState,workspaceAccess:gateway.workspaceAccess,roles:gateway.authenticatedConnection?.principal?.roles,authForm:Boolean(document.querySelector('.auth-card'))};`,
   ]);
 async function signOut() {
   const state = await authState();
@@ -216,7 +216,10 @@ try {
   const originalScope = evidence.originalSaved['roadmap.list'].inspectedScope;
   const created = await rpc('principal.create', {
     subject: { type: 'service', displayName: `Offline authority ${randomUUID()}` },
-    roles: [{ role: 'admin', scope: { kind: 'global' } }],
+    roles: [
+      { role: 'admin', scope: { kind: 'global' } },
+      { role: 'operator', scope: { kind: 'global' } },
+    ],
   });
   actor = { principalId: created.principal.id, profile: `authority-${randomUUID()}` };
   const issued = await rpc('credential.issue', {
@@ -254,6 +257,72 @@ try {
   await rpc('principal.revokeRole', {
     principalId: actor.principalId,
     role: 'admin',
+    scope: { kind: 'global' },
+  });
+  await reconnect();
+  evidence.operatorAuthentication = await until(
+    authState,
+    (s) =>
+      s.principalId === actor.principalId &&
+      s.connection === 'connected' &&
+      s.workspaceAccess === 'farm' &&
+      s.roles?.length === 1 &&
+      s.roles[0].role === 'operator',
+    'A real role downgrade keeps farm access while removing admin authority',
+  );
+  const operatorMethods = ['backlog.list', 'workGraph.list', 'dispatch.queue.list'];
+  evidence.operatorViews = [];
+  for (const [method, hash, id] of views()) {
+    if (!operatorMethods.includes(method)) continue;
+    await navigate(hash);
+    const view = await until(
+      inspectView,
+      (v) =>
+        v.principalId === actor.principalId &&
+        v.observations?.[method]?.ready &&
+        v.observations[method].observedAt > evidence.actorSaved[method].cacheObservedAt &&
+        v.observations[method].rows.some((r) => r.id === id),
+      `Read permitted ${method} afresh through its actual view after the role downgrade`,
+    );
+    evidence.operatorViews.push({ method, view });
+  }
+  evidence.operatorSaved = await until(
+    () => inspectAll(actorScope),
+    (result) =>
+      Object.entries(result).every(([method, state]) =>
+        operatorMethods.includes(method)
+          ? state.cacheStatus === 'ready' &&
+            state.cacheObservedAt > evidence.actorSaved[method].cacheObservedAt &&
+            state.storedDataSha256 === state.cacheDataSha256
+          : !state.cacheHasData &&
+            state.storedObservedAt === undefined &&
+            !state.storedQueryIds.some((id) => id.startsWith(`${method}:`)),
+      ),
+    'Partial authority must save only freshly authorized lists and clear every forbidden collection',
+  );
+  for (const [method, hash, id] of views()) {
+    if (operatorMethods.includes(method)) continue;
+    await navigate(hash);
+    const view = await until(
+      inspectView,
+      (v) =>
+        v.mounted &&
+        v.principalId === actor.principalId &&
+        !!v.observations?.[method]?.error &&
+        !v.observations[method].dataPresent &&
+        !v.renderedRows.some((row) => row.id === id) &&
+        (method === 'config.projects'
+          ? !v.configuration?.labels.includes(fixture.project) && v.configuration?.info.length === 0
+          : v.editorTitle !== owned.roadmap.title),
+      `The actual ${method} view cannot retain forbidden facts after a role downgrade`,
+    );
+    evidence.operatorViews.push({ method, view });
+  }
+  claims.partialRoleRefetchesAllowed = true;
+  await screenshot('operator-forbidden-configuration-cleared');
+  await rpc('principal.revokeRole', {
+    principalId: actor.principalId,
+    role: 'operator',
     scope: { kind: 'global' },
   });
   await reconnect();
@@ -315,6 +384,19 @@ try {
   if (actor) {
     try {
       if (restoreBrowser) {
+        const currentActor = (await rpc('principal.list')).principals.find(
+          (principal) => principal.id === actor.principalId,
+        );
+        if (
+          currentActor?.roles.some(
+            (binding) => binding.role === 'operator' && binding.scope.kind === 'global',
+          )
+        )
+          await rpc('principal.revokeRole', {
+            principalId: actor.principalId,
+            role: 'operator',
+            scope: { kind: 'global' },
+          });
         await rpc('principal.grant', {
           principalId: actor.principalId,
           role: 'admin',
@@ -370,6 +452,15 @@ try {
         evidence.originalPrincipal,
         'Never alter the original account roles or identity',
       );
+      if (evidence.actorSaved) {
+        evidence.retiredScope = await inspectAll(
+          evidence.actorSaved['roadmap.list'].inspectedScope,
+        );
+        assert(
+          Object.values(evidence.retiredScope).every((state) => state.storedQueryIds.length === 0),
+          'Normal sign-out must remove every saved row of the retired test account',
+        );
+      }
       evidence.actorCleanup = {
         principalRetired: true,
         credentialRevoked: true,
