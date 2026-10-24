@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Structured worker question handoff",
+  "description": "Manual disposable authenticated gateway proof. Native registration and tmux are fixtures; no model or product slot starts.",
+  "workflow": {
+    "entry": "question",
+    "nodes": {
+      "question": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --import ./services/gateway/src/runtime/mock-pty.test-support.ts scripts/runner-validation/gateway/worker-question.mts",
+        "timeout_ms": 120000,
+        "intent": "Read one monitor decision through authenticated run.get, retain it through unknown and foreign answers, then automatically return to monitoring after the exact tool result, without nudges or pane-derived question state.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

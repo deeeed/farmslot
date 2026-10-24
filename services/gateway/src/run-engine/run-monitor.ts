@@ -50,6 +50,7 @@ import {
 import { paneOpenQuestion } from '../runners/pane-state-script.js';
 import {
   detectRunnerLaunchBlocker,
+  getRunnerObservability,
   getRunnerSessionUsageProvider,
   readRunnerActivityFromObservability,
   readRunnerBackgroundWorkState,
@@ -1934,8 +1935,15 @@ async function detectViolations(
       return violations;
     }
     const vars = await loadSlotVars(slotId);
-    const paneContent = await capturePaneContent(vars, runId, role, contextId);
     const runner = getRun(runId)?.metrics.runner;
+    const target = await resolveAgentTarget(slotId, { runId, role, contextId });
+    const questionReader = getRunnerObservability(target.runner ?? runner)?.getPendingQuestion;
+    const reading = questionReader ? await questionReader(vars, target.target) : undefined;
+    if (reading?.value) {
+      trackOpenQuestion(state, reading.value, true);
+      return violations;
+    }
+    const paneContent = await capturePaneContent(vars, runId, role, contextId);
     const runnerBlocker = monitorRunnerBlockerViolation({
       paneContent,
       runner,
@@ -1948,14 +1956,14 @@ async function detectViolations(
       state.openQuestion = undefined;
       return [runnerBlocker];
     }
-    // A question menu waits for a person: never nudge into it or call it stuck.
-    const question = paneOpenQuestion(paneContent);
-    trackOpenQuestion(state, question);
+    // Unavailable providers retain the existing pane-only behavior. An already
+    // open structured handoff separately requires a confirmed close below.
+    const question = reading ? reading.value : paneOpenQuestion(paneContent);
+    trackOpenQuestion(state, question, !!reading);
     if (question !== null) return violations;
-    const target = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
     const stuckState = await evaluateMonitorStuckForRunner({
       vars,
-      target,
+      target: target.target,
       runner,
       now,
       lastProgressAt: inactivityStartMs(state),
@@ -2137,7 +2145,17 @@ async function readOpenWorkerQuestion(
     return nativePendingRequestText(
       (await readNativeWorkerSnapshot(runId, role, contextId)).pendingRequests,
     );
-  const pane = await capturePaneContent(await loadSlotVars(slotId), runId, role, contextId);
+  const vars = await loadSlotVars(slotId);
+  const target = await resolveAgentTarget(slotId, { runId, role, contextId });
+  const reader = getRunnerObservability(
+    target.runner ?? getRun(runId)?.metrics.runner,
+  )?.getPendingQuestion;
+  if (reader) {
+    const reading = await reader(vars, target.target);
+    if (!reading) throw new Error('worker question state is unavailable');
+    return reading.value;
+  }
+  const pane = await capturePaneContent(vars, runId, role, contextId);
   // A live runner pane always renders something; an empty capture is unreadable, not answered.
   if (!pane.trim()) throw new Error('worker pane capture is empty');
   return paneOpenQuestion(pane);

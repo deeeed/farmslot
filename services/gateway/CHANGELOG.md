@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Show unanswered structured worker questions as operator decisions, and resume monitoring when the worker records the answer.
+
 - Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.
 - Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
