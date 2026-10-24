@@ -1,18 +1,37 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
+
 const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
+const execute = promisify(execFile);
 assert.equal(process.cwd(), root);
 assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1');
 assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
 assert.equal(process.env.GATEWAY_PORT, '7913');
 assert.equal(process.env.VITE_PORT, '5195');
+const farmRoot = await realpath(process.env.FARMSLOT_ROOT);
+assert.notEqual(farmRoot, root, 'Never write proof rows into the implementation farm');
+assert.notEqual(farmRoot, path.parse(farmRoot).root);
+const profile = await automationGatewayTarget();
+const gatewayUrl = new URL(profile.url);
+assert.equal(gatewayUrl.protocol, 'ws:');
+assert(['127.0.0.1', 'localhost'].includes(gatewayUrl.hostname));
+assert.equal(gatewayUrl.port, '7913', 'Source writers must use the isolated gateway');
+assert(!gatewayUrl.username && !gatewayUrl.password && !gatewayUrl.search);
+const listener = await execute('lsof', ['-nP', '-t', '-iTCP:7913', '-sTCP:LISTEN']);
+const listeners = [...new Set(listener.stdout.trim().split(/\s+/))];
+assert.equal(listeners.length, 1, 'Require one owned gateway listener');
+const backendPid = Number(listeners[0]);
+assert(Number.isSafeInteger(backendPid) && backendPid > 0);
+const cwd = await execute('lsof', ['-a', '-p', String(backendPid), '-d', 'cwd', '-Fn']);
+assert(cwd.stdout.split('\n').includes(`n${root}/services/gateway`), 'Refuse another checkout');
 const directory = path.resolve(process.env.FARMSLOT_PLANNING_RACE_ARTIFACTS);
 assert(!directory.startsWith(root + '/'));
 await mkdir(directory, { recursive: true });
@@ -24,7 +43,6 @@ const ready = JSON.parse(
 );
 assert.equal(ready.port, 7915);
 assert.equal(new URL(ready.upstream).port, '7913');
-const execute = promisify(execFile);
 const cdp = async (...args) =>
   JSON.parse(
     (
@@ -40,7 +58,7 @@ const cdp = async (...args) =>
   );
 const rpc = (method, params = {}) => cdp('gateway', method, JSON.stringify(params));
 const hash = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const evidence = {};
+const evidence = { backendAdmission: { pid: backendPid, farmRoot, sourceRoot: root } };
 const claims = {};
 const failures = [];
 const proxyStatus = async () => {
