@@ -402,4 +402,5 @@ await test('a refused completion keeps its slot out of the orphaned-slot release
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed > 0 ? 1 : 0);
+// Let queued run writes settle before the isolated-path exit cleanup runs.
+process.exitCode = failed > 0 ? 1 : 0;
