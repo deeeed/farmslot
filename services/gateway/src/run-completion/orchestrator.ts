@@ -64,6 +64,7 @@ import {
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import { validateDeterministicChecksForRun } from '../tasks/worker-terminal-contract.js';
 
+import { assertCommitSignatures } from './commit-signatures.js';
 import {
   buildDraftPrBody,
   buildDraftPrTitle,
@@ -1338,6 +1339,7 @@ async function createPrFromApprovedPackage(
     }
   }
   if (!prPackage.branch?.trim()) throw new Error('approved package is missing a branch');
+  await assertCommitSignatures(vars, `refs/remotes/origin/${base}`, prPackage.headSha || 'HEAD');
   const push = await execOnSlot(
     vars,
     `git -C ${shellQuote(vars.remoteRepo)} push -u origin ${shellQuote(prPackage.branch)}`,

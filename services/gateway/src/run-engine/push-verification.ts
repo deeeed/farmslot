@@ -17,6 +17,7 @@ import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { assertRunCommitSignatures } from '../run-completion/commit-signatures.js';
 import { normalizeRunner, sendRunnerInstructionSafely } from '../runners/registry.js';
 import {
   resolveRunRetainedSessionBinding,
@@ -247,6 +248,7 @@ export async function verifyWorkerPushedBranch(
 ): Promise<PushVerificationResult> {
   const run = getRun(runId);
   const branch = run?.branch;
+  if (run) await assertRunCommitSignatures(run);
   const mode = run ? completionVerificationMode(run) : 'none';
   if (!run || !branch || mode === 'none') {
     return { verified: true };
@@ -326,6 +328,7 @@ export async function verifyWorkerPushedBranch(
       throw err;
     }
     if (stateSatisfiesMode(state, mode)) {
+      await assertRunCommitSignatures(getRun(runId) ?? run);
       console.log(
         `[push-verification] run ${runId.slice(0, 8)} — branch ${branch} ` +
           `${mode === 'push' ? 'published' : 'committed'} after nudge`,
