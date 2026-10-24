@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
 
-import { assertCommitSignatures } from './commit-signatures.js';
+import { assertCommitSignatures, buildCommitSignatureProbeCommand } from './commit-signatures.js';
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'commit-signatures-'));
@@ -92,5 +92,57 @@ test('refuses a missing contribution base instead of silently checking an empty 
   await assert.rejects(
     assertCommitSignatures(vars, 'refs/remotes/origin/missing'),
     /Cannot check outgoing commit signatures/,
+  );
+});
+
+test(
+  'remote zsh handles multiple signed commits and an unsigned rewrite',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const { git, vars } = fixture(t);
+    git('commit', '-q', '--allow-empty', '-m', 'test: first signed change');
+    git('commit', '-q', '--allow-empty', '-m', 'test: second signed change');
+    const command = buildCommitSignatureProbeCommand(vars.remoteRepo, 'refs/remotes/origin/main');
+    assert.equal(execFileSync('zsh', ['-c', command], { encoding: 'utf8' }).trim(), '');
+    const unsigned = git(
+      'commit-tree',
+      git('rev-parse', 'HEAD^{tree}'),
+      '-p',
+      git('rev-parse', 'HEAD'),
+      '-m',
+      'test: unsigned rewrite',
+    );
+    git('update-ref', 'HEAD', unsigned);
+    git('commit', '-q', '--allow-empty', '-m', 'test: signed followup');
+    assert.equal(execFileSync('zsh', ['-c', command], { encoding: 'utf8' }).trim(), unsigned);
+  },
+);
+
+test('PR completion excludes inherited author history but rejects a new unsigned worker commit', async (t) => {
+  const { git, vars } = fixture(t);
+  git(
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'test: inherited published PR',
+  );
+  const inherited = git('rev-parse', 'HEAD');
+  git('commit', '-q', '--allow-empty', '-m', 'test: signed worker fix');
+  await assertCommitSignatures(vars, 'refs/remotes/origin/main', 'HEAD', inherited);
+  git(
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'test: unsigned worker fix',
+  );
+  await assert.rejects(
+    assertCommitSignatures(vars, 'refs/remotes/origin/main', 'HEAD', inherited),
+    /Unsigned outgoing/,
   );
 });

@@ -1,4 +1,4 @@
-import type { Run } from '@farmslot/protocol';
+import { type FlowType, isInteractiveDevRun, type Run } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -6,24 +6,39 @@ import { shellQuote } from '../core/tmux.js';
 import { isGitTrue, loadGitIdentity, readGitIdentity } from '../methods/slot/git-identity.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 
+/** A line iterator works in both node zsh shells and gateway Bash shells. */
+export function buildCommitSignatureProbeCommand(
+  repo: string,
+  baseRef: string,
+  headRef = 'HEAD',
+  inheritedHeadSha?: string,
+): string {
+  const git = `git -C ${shellQuote(repo)}`;
+  const inherited = inheritedHeadSha ? ` ${shellQuote(`^${inheritedHeadSha}`)}` : '';
+  return (
+    `commits=$(${git} rev-list ${shellQuote(`${baseRef}..${headRef}`)}${inherited} --) || exit $?; ` +
+    `printf '%s\\n' "$commits" | while IFS= read -r commit; do [ -n "$commit" ] || continue; ` +
+    `object=$(${git} cat-file commit "$commit") || exit $?; ` +
+    `if ! printf '%s\\n' "$object" | sed '/^$/q' | grep -Eq '^gpgsig(-sha256)? '; then printf '%s\\n' "$commit"; fi; done`
+  );
+}
+
 /** Inspect the actual objects: commit-tree ignores commit.gpgsign unless given -S. */
 export async function assertCommitSignatures(
   vars: SlotVars,
   baseRef: string,
   headRef = 'HEAD',
+  inheritedHeadSha?: string,
 ): Promise<void> {
   const identity = await readGitIdentity(vars);
   if (!isGitTrue(loadGitIdentity()?.['commit.gpgsign']) && !isGitTrue(identity['commit.gpgsign']))
     return;
-  const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   // Check only the contribution, including merges, never trusted base history.
   // Read headers directly so missing local public keys cannot masquerade as
   // missing signatures. GitHub still owns account/signature verification.
   const result = await execOnSlot(
     vars,
-    `commits=$(${git} rev-list ${shellQuote(`${baseRef}..${headRef}`)} --) || exit $?; ` +
-      `for commit in $commits; do object=$(${git} cat-file commit "$commit") || exit $?; ` +
-      `if ! printf '%s\\n' "$object" | sed '/^$/q' | grep -Eq '^gpgsig(-sha256)? '; then printf '%s\\n' "$commit"; fi; done`,
+    buildCommitSignatureProbeCommand(vars.remoteRepo, baseRef, headRef, inheritedHeadSha),
     { timeout: 30_000 },
   );
   if (result.exitCode !== 0)
@@ -39,12 +54,18 @@ export async function assertCommitSignatures(
     );
 }
 
-const COMMITTING_FLOWS = new Set(['dev', 'fix-bug', 'pr-complete', 'ci-fix', 'update-branch']);
+const COMMITTING_FLOWS = new Set<FlowType>(['dev', 'fix-bug', 'pr-complete', 'update-branch']);
 
 export async function assertRunCommitSignatures(run: Run): Promise<void> {
-  if (!run.slotId || !run.branch || !COMMITTING_FLOWS.has(run.flowType)) return;
+  if (!run.slotId || !run.branch || !COMMITTING_FLOWS.has(run.flowType) || isInteractiveDevRun(run))
+    return;
   const vars = await loadSlotVars(run.slotId);
   const pv = await loadProjectVars(run.project);
   const base = await publicationBaseForRun(run, getProjectField(pv.projectJson, 'default_branch'));
-  await assertCommitSignatures(vars, `refs/remotes/origin/${base}`);
+  await assertCommitSignatures(
+    vars,
+    `refs/remotes/origin/${base}`,
+    'HEAD',
+    run.prNumber ? (run.worktreeHeadAtDispatch ?? undefined) : undefined,
+  );
 }

@@ -550,6 +550,7 @@ async function slotPrepareInner(
         signal,
         windowLabel,
         phase: 'signing',
+        preserveOtherPrepareWindows: true,
         onOutput: (_stream, data) => {
           output += data;
         },

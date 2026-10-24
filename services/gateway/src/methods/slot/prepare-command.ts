@@ -664,6 +664,8 @@ export async function runPrepareCommand(
     windowLabel?: string;
     phase?: string;
     forceLocal?: boolean;
+    /** Probes preserve retained preflight panes and reap only their own phase window. */
+    preserveOtherPrepareWindows?: boolean;
     prepareScope?: { token: string; identityPath: string };
   },
 ): Promise<import('../../core/exec.js').ExecResult> {
@@ -781,10 +783,12 @@ export async function runPrepareCommand(
   // every reaped window — if a sweep ever tears down another gateway's live prepare
   // window, that shows up in the log as the culprit (pairs with the 129/143 signal
   // hint recovered on the victim side).
-  const sweepR = await exec(buildPreparePreLaunchSweepCommand(sessionName, labelPart), {
-    cwd: opts?.cwd,
-    timeout: 15_000,
-  }).catch(() => undefined);
+  const sweepR = opts?.preserveOtherPrepareWindows
+    ? undefined
+    : await exec(buildPreparePreLaunchSweepCommand(sessionName, labelPart), {
+        cwd: opts?.cwd,
+        timeout: 15_000,
+      }).catch(() => undefined);
   const reaped = sweepR?.stdout?.trim();
   if (reaped) {
     console.warn(

@@ -1313,7 +1313,7 @@ export async function runCompletionPipeline(
   return flags;
 }
 
-async function createPrFromApprovedPackage(
+export async function createPrFromApprovedPackage(
   run: Run,
   ciRepo: string,
   prPackage: ReadyGatePrPackage,

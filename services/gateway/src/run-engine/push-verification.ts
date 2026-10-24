@@ -239,7 +239,7 @@ function stateSatisfiesMode(state: WorktreePublishState, mode: 'push' | 'commit'
  * flows. When it is not, deliver ONE publish nudge to the worker session and
  * wait bounded time for the push to land. Returns verified=false (never
  * throws for unpushed state) so the caller decides how to surface it; git
- * inspection failures DO throw — a broken probe must not pass as verified.
+ * inspection failures and unsigned commits DO throw, naming the commits to repair.
  */
 export async function verifyWorkerPushedBranch(
   runId: string,

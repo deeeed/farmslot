@@ -118,9 +118,10 @@ test(
           vars: { remoteRepo: string },
           _log: string,
           command: string,
-          options: { phase: string },
+          options: { phase: string; preserveOtherPrepareWindows: boolean },
         ) => {
           assert.equal(options.phase, 'signing');
+          assert.equal(options.preserveOtherPrepareWindows, true);
           calls.push(options.phase);
           return execution.execLocal(
             `export WORKER_SIGNING_CONTEXT=${workerReady ? 'ready' : 'unavailable'}; ${command}`,
