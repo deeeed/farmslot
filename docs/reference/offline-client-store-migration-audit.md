@@ -381,6 +381,8 @@ upstream collectors remain outside this slice.
 
 Implementation and local regression coverage do not accept the draft. Mounted-client writer, authority, late-read and recovery evidence remains required for these domains. Companion planning/configuration runtime proof and desktop cold proof are still pending.
 
+`command-center-domain-cache.recipe.json` now covers six browser claims through real mounted views: monitor lifecycle, external rule-file replacement, malformed-rule refusal/recovery, assessment feedback and summary updates, another project's analytics backfill while filtered, and stopped copilot configuration. Launch fixtures are explicit; no provider result or runner execution is claimed. Source bytes, canonical observations, rendered controls and owning revision changes are retained. Each producer has a causal control that fails its intended assertion when disabled. The cache's specified conservative invalidation fallback can refresh an unrelated query, so a visible update alone is insufficient: these assertions also require the matching owning revision to advance. Other writers, authority/lifecycle scenarios, native and desktop coverage remain separate acceptance gates.
+
 All 17 added queries are memory-only, require observed reads and use the current owner cache. No new persistence class is introduced. Existing projects/planning persistence is unchanged.
 
 | Canonical read                  | Selectors and dependencies                                                                 | Actual client consumers                                                                                         |
