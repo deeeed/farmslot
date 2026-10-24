@@ -82,6 +82,59 @@ test('a HEAD that publication pushed to origin is not unpushed work', async (t) 
   assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), null);
 });
 
+test('release verifies a published HEAD without upstream or a current tracking ref', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', 'origin', BRANCH);
+  git(repo, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+  git(repo, 'update-ref', '-d', `refs/remotes/origin/${BRANCH}`);
+  const head = git(repo, 'rev-parse', 'HEAD');
+  assert.equal(git(repo, 'for-each-ref', '--format=%(upstream)', `refs/heads/${BRANCH}`), '');
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), null);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  commit(repo, 'unpublished.txt');
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'unpushed commits');
+});
+
+test('release retains configured fork publication when its fetch refspec excludes the branch', async (t) => {
+  const { repo, vars } = slotRepo(t, ['fork']);
+  git(repo, 'push', '-q', '-u', 'fork', BRANCH);
+  git(repo, 'config', 'remote.fork.fetch', '+refs/heads/main:refs/remotes/fork/main');
+  git(repo, 'update-ref', '-d', `refs/remotes/fork/${BRANCH}`);
+  assert.equal(
+    git(repo, 'for-each-ref', '--format=%(upstream:remotename)', `refs/heads/${BRANCH}`),
+    '',
+  );
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), null);
+  git(repo, 'push', '-q', 'fork', '--delete', BRANCH);
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), null);
+});
+
+test('release accepts HEAD contained in the actual remote tip without moving the checkout', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', 'origin', BRANCH);
+  const head = git(repo, 'rev-parse', 'HEAD');
+  const bare = git(repo, 'remote', 'get-url', 'origin');
+  const peer = path.join(repo, '..', 'peer');
+  git(path.dirname(repo), 'clone', '-q', '--branch', BRANCH, bare, peer);
+  git(peer, 'config', 'user.email', 'test@example.com');
+  git(peer, 'config', 'user.name', 'Test');
+  git(peer, 'config', 'commit.gpgsign', 'false');
+  commit(peer, 'remote-follow-up.txt');
+  git(peer, 'push', '-q', 'origin', BRANCH);
+  git(repo, 'update-ref', '-d', `refs/remotes/origin/${BRANCH}`);
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), null);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(repo, 'status', '--porcelain'), '');
+});
+
+test('an absent never-published branch and a local-only upstream retain genuine unpushed work', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'unpushed commits');
+  git(repo, 'branch', 'local-copy', 'HEAD');
+  git(repo, 'branch', '--set-upstream-to=local-copy', BRANCH);
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'unpushed commits');
+});
+
 test('prepare fetches the published HEAD branch outside a single-branch clone refspec', async (t) => {
   const { repo, vars } = slotRepo(t, ['origin']);
   commit(repo, 'second-published.txt');
