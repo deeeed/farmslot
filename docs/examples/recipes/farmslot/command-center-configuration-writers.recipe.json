@@ -1,0 +1,72 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Configuration views follow actual source writers",
+  "description": "On the isolated farm, actual slot/pool commands and owned template/registration file writes update mounted configuration views. Clean raw editor follows source changes; a real typed draft survives invalidation. Provider registration uses only the private FARMSLOT_HOME and no provider request.",
+  "proofTargets": [
+    {
+      "id": "poolStructuredWriter",
+      "claim": "A real slot configuration write updates the actual structured pool controls."
+    },
+    {
+      "id": "poolEditorWriter",
+      "claim": "Pool changes update the clean raw editor while preserving a real unsaved draft."
+    },
+    {
+      "id": "templateWriter",
+      "claim": "An atomic template replacement updates the mounted raw preview without Refresh."
+    },
+    {
+      "id": "registrationWriter",
+      "claim": "An owned registration file changes its provider card without exposing its key."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-configuration-writers.mjs",
+        "timeout_ms": 180000,
+        "intent": "Prove actual pool, template and private provider-registration writers on mounted views.",
+        "next": "pool"
+      },
+      "pool": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"poolStructuredWriter\":true",
+        "intent": "The actual slot control follows an independent configuration command.",
+        "proves": ["poolStructuredWriter"],
+        "next": "editor"
+      },
+      "editor": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"poolEditorWriter\":true",
+        "intent": "The clean raw editor updates while a dirty typed draft survives source changes.",
+        "proves": ["poolEditorWriter"],
+        "next": "template"
+      },
+      "template": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"templateWriter\":true",
+        "intent": "Atomic template replacement updates the open actual raw preview.",
+        "proves": ["templateWriter"],
+        "next": "registration"
+      },
+      "registration": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"registrationWriter\":true",
+        "intent": "Private registration metadata updates without exposing its secret or contacting a provider.",
+        "proves": ["registrationWriter"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -368,6 +368,14 @@ capture profile, principal and connection authority before dispatch. An explicit
 backlog spec preview remains nonpersisted and fences late replies by its owner
 and selected item; content persistence belongs to the later content slice.
 
+`command-center-configuration-writers.recipe.json` proves actual slot/pool writes,
+atomic template replacement and private registration-file writes on mounted
+controls. The raw pool editor observes `config.pool.raw`: clean text follows new
+revisions while real typed drafts survive invalidation. Selection and authority
+changes fence editor reads and save replies. The old one-shot editor fails the
+external-write assertion; restoring the observer passes all six recipe steps.
+These checks do not accept unrun source-error or lifecycle variants.
+
 The browser planning recipe covers external writers, real read failure with draft
 retention, five cold collections with original SQLite times and age, disabled
 writes, and actual project collections on both sides of the aggregate bound.
