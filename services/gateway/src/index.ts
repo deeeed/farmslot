@@ -17,6 +17,7 @@ import { dirname, resolve } from 'node:path';
 import { type EvalTrialStartParams, Events, primaryRoleForFlow } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import { setTriagePilotObservationGuard } from './assessment/failure-triage/pilot-evidence.js';
 import {
   initAutoRecovery,
   routeEventToAutoRecovery,
@@ -754,7 +755,8 @@ async function main(): Promise<void> {
   initServerGlobals();
 
   // Start watching .farm-status.json for changes
-  startFileWatcher();
+  const stateObservation = startFileWatcher();
+  setTriagePilotObservationGuard(stateObservation.assertTriagePilotObserved);
 
   // Local host polling shells out for disk/thermal/memory details. Keep it opt-in
   // because node agents already push metrics and gateway startup should be cheap.

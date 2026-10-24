@@ -1,0 +1,75 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Policy-selected triage receipts update actual readers",
+  "description": "ADR-071 D07 source observation. Use copied approved receipts outside the selected home and a launch-time failed run. Edit, restore, remove and recreate admitted files and switch the actual policy directory. Assert canonical query revisions and visible prerequisite state without provider execution or UI/cache/SQLite injection.",
+  "proofTargets": [
+    {
+      "id": "receiptChangeAndRecovery",
+      "claim": "Actual admitted receipt replacement changes the mounted triage prerequisite and exact byte restoration recovers without Refresh."
+    },
+    {
+      "id": "receiptRemovalAndRecreation",
+      "claim": "Removing and recreating an admitted artifact invalidates and recovers the actual mounted query."
+    },
+    {
+      "id": "policySwitchRetiresOldSource",
+      "claim": "A real policy switch selects its new receipt directory; unselected and retired sources do not invalidate it."
+    },
+    {
+      "id": "readOnlyNoProviderCommands",
+      "claim": "The same app and connection perform observed read-only triage requests with no analysis, feedback, decision or provider command."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-triage-receipts.mjs",
+        "timeout_ms": 150000,
+        "intent": "Observe actual selected receipt writes on the mounted triage panel.",
+        "next": "receiptChangeAndRecovery"
+      },
+      "receiptChangeAndRecovery": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"receiptChangeAndRecovery\":true",
+        "intent": "Check actual byte changes and recovery without a manual Refresh.",
+        "proves": ["receiptChangeAndRecovery"],
+        "next": "receiptRemovalAndRecreation"
+      },
+      "receiptRemovalAndRecreation": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"receiptRemovalAndRecreation\":true",
+        "intent": "Check actual artifact removal and recreation.",
+        "proves": ["receiptRemovalAndRecreation"],
+        "next": "policySwitchRetiresOldSource"
+      },
+      "policySwitchRetiresOldSource": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"policySwitchRetiresOldSource\":true",
+        "intent": "Check selection ownership after the real policy switch.",
+        "proves": ["policySwitchRetiresOldSource"],
+        "next": "readOnlyNoProviderCommands"
+      },
+      "readOnlyNoProviderCommands": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"readOnlyNoProviderCommands\":true",
+        "intent": "Check observed reads and zero mutating commands.",
+        "proves": ["readOnlyNoProviderCommands"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

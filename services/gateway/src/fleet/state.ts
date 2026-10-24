@@ -50,6 +50,7 @@ import {
 } from '../core/config.js';
 import { watchedEventPath } from '../core/file-observation.js';
 import { onStatusCommit } from '../core/state.js';
+import { TriagePilotObservation } from '../intelligence/triage/pilot-observation.js';
 import { getFarmslotStorePath, getOpenClawStorePath } from '../llm/auth-store.js';
 import { invalidateLLMConfig } from '../llm/config.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
@@ -802,6 +803,8 @@ export function startFileWatcher() {
     'decision-advice-policy.json',
     'triage-policy.json',
   ].map((name) => path.join(selectedHome, name));
+  const triagePilotObservation = new TriagePilotObservation(selectedHome);
+  const triagePilotReady = triagePilotObservation.refresh();
   const registrationFiles = [llmConfigFile, getFarmslotStorePath(), getOpenClawStorePath()];
   const registrationParent = path.dirname(getOpenClawStorePath());
   // A missing optional root can finish Chokidar's multi-root readiness before
@@ -853,6 +856,8 @@ export function startFileWatcher() {
   });
   const projectChanged = (file: string) => {
     if (assessmentFiles.includes(file)) {
+      if (file === path.join(selectedHome, 'triage-policy.json'))
+        void triagePilotObservation.refresh();
       resourceRevisions.advance({ family: 'assessment', scope: 'farm' });
       return;
     }
@@ -901,7 +906,9 @@ export function startFileWatcher() {
       once(poolWatcher, 'ready'),
       once(projectWatcher, 'ready'),
       once(registrationWatcher, 'ready'),
+      triagePilotReady,
     ]),
+    assertTriagePilotObserved: (directory: string) => triagePilotObservation.assertReady(directory),
     async close(): Promise<void> {
       clearTimeout(poolDebounce);
       await Promise.all([
@@ -909,6 +916,7 @@ export function startFileWatcher() {
         poolWatcher.close(),
         projectWatcher.close(),
         registrationWatcher.close(),
+        triagePilotObservation.close(),
       ]);
     },
   };

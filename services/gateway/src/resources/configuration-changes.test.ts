@@ -382,6 +382,82 @@ test('the selected-home observer invalidates each assessment policy on add, repl
   }
 });
 
+test('the owning home watcher rebinds the selected triage receipt directory', async () => {
+  const home = path.join(root, 'home');
+  const file = path.join(home, 'triage-policy.json');
+  const first = path.join(root, 'pilot-first');
+  const second = path.join(root, 'pilot-second');
+  await Promise.all([mkdir(first), mkdir(second)]);
+  const writePolicy = (directory: string) =>
+    writeFile(
+      file,
+      JSON.stringify({
+        enabled: true,
+        projects: ['example'],
+        receiptDirectory: directory,
+        maxCalls: 1,
+        maxUsd: 0.01,
+        price: {
+          version: 1,
+          provider: 'typesafe',
+          model: 'jev-fixture',
+          verifiedAt: new Date().toISOString(),
+          source: 'fixture:selected-pilot',
+          inputUsdPerMillion: 0.01,
+          outputUsdPerMillion: 0,
+          maxRequestTokens: 1000,
+        },
+        approvals: [],
+      }),
+    );
+  await writePolicy(first);
+  const watcher = startFileWatcher();
+  const key = { family: 'assessment', scope: 'farm' } as const;
+  try {
+    await watcher.ready;
+    await until(() => {
+      try {
+        watcher.assertTriagePilotObserved(first);
+        return true;
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          !('code' in error) ||
+          error.code !== 'RESOURCE_OBSERVATION_UNAVAILABLE'
+        )
+          throw error;
+        return false;
+      }
+    }, 'current initial triage selection readiness');
+    let before = resourceRevisions.revision(key);
+    await writeFile(path.join(first, 'evaluation.json'), 'current selected source');
+    await until(() => resourceRevisions.revision(key) > before, 'selected receipt bytes');
+    await writePolicy(second);
+    await until(() => {
+      try {
+        watcher.assertTriagePilotObserved(second);
+        return true;
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          !('code' in error) ||
+          error.code !== 'RESOURCE_OBSERVATION_UNAVAILABLE'
+        )
+          throw error;
+        return false;
+      }
+    }, 'policy-selected observation replacement');
+    before = resourceRevisions.revision(key);
+    await writeFile(path.join(second, 'evaluation.json'), 'new selected source');
+    await until(() => resourceRevisions.revision(key) > before, 'new selected receipt bytes');
+    assert.throws(() => watcher.assertTriagePilotObserved(first));
+  } finally {
+    await watcher.close();
+    await rm(file, { force: true });
+    await Promise.all([rm(first, { recursive: true }), rm(second, { recursive: true })]);
+  }
+});
+
 test('the actual PR rule file observer reloads replacements and refuses malformed/deleted sources until recovery', async (t) => {
   const { initPRMonitoring } = await import('../methods/pr-watch.js');
   const { initPRRules } = await import('../methods/pr-rules.js');

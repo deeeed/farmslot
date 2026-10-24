@@ -306,7 +306,15 @@ export class FailureTriagePanel extends LitElement {
               reserved maximum: $${record.reservation?.maxUsd.toFixed(6) ?? 'unknown'}
             </p>`
         : nothing}
-      <button ?disabled=${this.busy} @click=${() => this.load()}>Refresh</button>
+      ${this.observation.state.error
+        ? html`<button
+            ?disabled=${this.busy}
+            data-triage-action="retry"
+            @click=${() => this.observation.retry()}
+          >
+            Retry
+          </button>`
+        : nothing}
       <button
         ?disabled=${this.busy || !this.observation.ready || v?.availability !== 'ready'}
         data-triage-action="analyze"

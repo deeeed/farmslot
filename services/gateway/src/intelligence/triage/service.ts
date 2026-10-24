@@ -19,7 +19,10 @@ import {
   RUBRIC_VERSION,
   triagePrediction,
 } from '../../assessment/failure-triage/packet.js';
-import { verifyTriagePilotEvidence } from '../../assessment/failure-triage/pilot-evidence.js';
+import {
+  TriagePilotObservationUnavailable,
+  verifyTriagePilotEvidence,
+} from '../../assessment/failure-triage/pilot-evidence.js';
 import { boundedAssessmentFetch } from '../../assessment/failure-triage/transport.js';
 import { CHECK_FOR_LABEL, type TriagePrice } from '../../assessment/failure-triage/types.js';
 import { assess } from '../../assessment/index.js';
@@ -285,6 +288,7 @@ async function inspect(ownerId: string, params: FailureTriageGetParams) {
       },
     };
   } catch (error) {
+    if (error instanceof TriagePilotObservationUnavailable) throw error;
     // Optional prerequisite failures are visible and suppress the request. Never return
     // filesystem/config exception text, which may contain source content or credentials.
     view.availability = error instanceof TriageSnapshotUnavailable ? error.reason : 'unavailable';

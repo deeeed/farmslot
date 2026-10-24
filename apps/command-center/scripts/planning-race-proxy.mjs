@@ -22,7 +22,7 @@ export async function startPlanningRaceProxy({
   assert.equal(target.hostname, '127.0.0.1');
   assert.equal(target.port, '7913', 'Use the isolated proof gateway');
   assert.equal(port, 7915, 'Use the isolated browser race proxy');
-  assert(['backlog.list', 'roadmap.list'].includes(method));
+  assert(['backlog.list', 'roadmap.list', 'intelligence.triage.get'].includes(method));
   const artifacts = await realpath(directory);
   const owner = randomUUID();
   const startId = randomUUID();
@@ -39,6 +39,11 @@ export async function startPlanningRaceProxy({
   const duplicates = [];
   const authentications = [];
   const barrierReplies = [];
+  const commands = {
+    'intelligence.triage.analyze': 0,
+    'intelligence.triage.feedback': 0,
+    'run.resolveDecision': 0,
+  };
   let persistence = Promise.resolve();
   const status = () => ({
     startId,
@@ -52,6 +57,7 @@ export async function startPlanningRaceProxy({
     method,
     authentications,
     barrierReplies,
+    commands,
     held: held?.receipt,
   });
   const persist = () => {
@@ -186,6 +192,10 @@ export async function startPlanningRaceProxy({
           return;
         }
         if (frame.type === 'req' && frame.method === 'auth.connect') pair.authRequestId = frame.id;
+        if (frame.type === 'req' && Object.hasOwn(commands, frame.method)) {
+          commands[frame.method]++;
+          void persist();
+        }
         if (frame.type === 'req' && frame.method === 'backlog.list') {
           assert(pair.reads.size < 100);
           pair.reads.set(frame.id, {
@@ -289,10 +299,11 @@ export async function startPlanningRaceProxy({
           void persist();
         }
         if (frame.type === 'event' && frame.event === 'resource.changed') {
-          const changes = frame.payload?.changes?.filter(
-            (row) =>
-              row.key.family === 'planning' &&
-              row.key.collection === (method === 'roadmap.list' ? 'roadmap' : 'backlog'),
+          const changes = frame.payload?.changes?.filter((row) =>
+            method === 'intelligence.triage.get'
+              ? row.key.family === 'assessment' && row.key.scope === 'farm'
+              : row.key.family === 'planning' &&
+                row.key.collection === (method === 'roadmap.list' ? 'roadmap' : 'backlog'),
           );
           if (changes?.length) {
             assert(events.length < 100);

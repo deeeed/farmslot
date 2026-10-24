@@ -24,7 +24,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Keep backlog, roadmap, work graphs, queue and project observations readable offline with saved age and current-read action guards. Pool JSON editors, configuration forms and choices follow external edits while preserving unsaved drafts; malformed project and provider-registration sources retain saved facts with a visible error and disabled writes.
 
-- Observe PR automation, assessments, analytics and the shared copilot through the client cache. Retain stale PR data on transport loss and require current observations before actions.
+- Observe PR automation, assessments, analytics and the shared copilot through the client cache. Retain stale PR data on transport loss and require current observations before actions. Triage prerequisite views follow selected evaluation receipt changes without Refresh, with Retry shown only for read errors.
 
 - Resume the blocked worker through the gateway’s validated recovery action, including held review fixes.
 
