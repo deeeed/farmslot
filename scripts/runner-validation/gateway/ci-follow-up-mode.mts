@@ -1,6 +1,7 @@
 // Manual authenticated CI-decision proof. Engine launch is suppressed after
 // the production decision handler creates the follow-up run.
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -8,6 +9,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
+
+import { createServer as createViteServer, type ViteDevServer } from 'vite';
+
+import { testGatewayProfile } from '../../lib/test-gateway-identity-source.mts';
+
+const withUi = process.argv.includes('--ui');
+if (withUi && !process.env.FARMSLOT_CDP_PORT)
+  throw new Error('UI proof requires FARMSLOT_CDP_PORT for an owned browser');
+const execFileAsync = promisify(execFile);
 const code = fileURLToPath(new URL('../../../', import.meta.url));
 const root = await mkdtemp(path.join(os.tmpdir(), 'ci-mode-proof-'));
 const output = path.resolve(process.env.FARMSLOT_PROOF_OUTPUT_DIR ?? 'temp/ci-follow-up-mode');
@@ -69,17 +80,47 @@ const { GatewayClient } = await load('packages/cli/src/gateway-client.ts');
 const server = createServer(),
   wss = createWebSocketServer(server, auth);
 let client;
+let ui: ViteDevServer | undefined;
+let uiRoute: string | undefined;
+let browserEnv: NodeJS.ProcessEnv | undefined;
+const uiCases = [];
+const browser = async (...args: string[]) => {
+  const result = await execFileAsync(
+    process.execPath,
+    [path.join(code, 'apps/command-center/scripts/cdp.mjs'), ...args],
+    { cwd: code, env: browserEnv, timeout: 60_000, maxBuffer: 1024 * 1024 },
+  );
+  return result.stdout.trim() ? JSON.parse(result.stdout) : null;
+};
 const cases = [];
 try {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   assert(address && typeof address !== 'string');
+  if (withUi) {
+    process.env.GATEWAY_PORT = String(address.port);
+    ui = await createViteServer({
+      configFile: path.join(code, 'apps/command-center/ui/vite.config.ts'),
+      root: path.join(code, 'apps/command-center/ui'),
+      server: { host: '127.0.0.1', port: 0 },
+    });
+    await ui.listen();
+    const uiAddress = ui.httpServer?.address();
+    assert(uiAddress && typeof uiAddress !== 'string');
+    testGatewayProfile(root, `ws://127.0.0.1:${address.port}/ws`, credential.secret);
+    browserEnv = {
+      ...process.env,
+      FARMSLOT_GATEWAY_PROFILE: 'proof',
+      FARMSLOT_GATEWAY: `ws://127.0.0.1:${address.port}/ws`,
+      FARMSLOT_UI_URL: `http://127.0.0.1:${uiAddress.port}`,
+    };
+  }
   client = await new GatewayClient({
     url: `ws://127.0.0.1:${address.port}/ws`,
     credential: { token: grant.accessToken },
     timeout: 30000,
   }).connect();
-  for (const mode of ['autonomous', 'interactive'] as const)
+  for (const mode of ['autonomous', 'interactive', 'validation'] as const)
     for (const action of ['dispatch-update-branch', 'dispatch-pr-complete'] as const) {
       const parent = store.createRun(
         {
@@ -146,12 +187,51 @@ try {
       assert.equal(settled.status, 'done');
       assert.equal(settled.steps[0].outputs.chainedRunId, childId);
       cases.push({ mode, action, childFlow: child.flowType, childMode: child.mode });
+      if (
+        withUi &&
+        ((mode === 'autonomous' && action === 'dispatch-update-branch') ||
+          (mode === 'interactive' && action === 'dispatch-pr-complete'))
+      ) {
+        const nextRoute = `run/${childId}`;
+        const first = uiRoute === undefined;
+        await browser('goto', nextRoute, ...(first ? ['--new'] : []));
+        uiRoute = nextRoute;
+        if (first) {
+          const login = await browser('login', uiRoute);
+          assert.equal(login.authenticated, true);
+        }
+        const deadline = Date.now() + 60_000;
+        let observation;
+        while (Date.now() < deadline) {
+          observation = await browser(
+            'eval',
+            uiRoute,
+            `const walk = root => [...root.querySelectorAll('*')].flatMap(e => [e, ...(e.shadowRoot ? walk(e.shadowRoot) : [])]);
+             const nodes = walk(document);
+             const labels = nodes.filter(e => e.classList.contains('meta-label'));
+             const mode = labels.find(e => e.textContent.trim() === 'Mode');
+             const note = labels.find(e => e.textContent.trim() === 'Mode note');
+             return { mode: mode?.nextElementSibling?.textContent.trim() ?? null,
+               note: note?.nextElementSibling?.textContent.trim() ?? null,
+               overlay: nodes.some(e => e.localName === 'vite-error-overlay') };`,
+          );
+          if (observation.mode === mode) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        assert.equal(observation?.mode, mode, 'real run metadata must load');
+        assert.equal(observation.note, null, 'inherited mode must not show a baseline warning');
+        assert.equal(observation.overlay, false);
+        const screenshot = `ui-${mode}-${child.flowType}.png`;
+        await browser('screenshot', uiRoute, path.join(output, screenshot));
+        uiCases.push({ mode, flow: child.flowType, ...observation, screenshot });
+      }
     }
-  assert.equal(started.length, 4);
+  assert.equal(started.length, 6);
   const result = {
     pass: true,
     methods: ['run.resolveDecision', 'run.get'],
     cases,
+    uiCases,
     scope:
       'Production authenticated decision/CI chain builder/store/family metadata. Only subsequent engine launch suppressed; no worker/model/slot preparation.',
     modelTurns: 0,
@@ -160,6 +240,10 @@ try {
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify(result));
 } finally {
+  const uiCleanup = await Promise.allSettled([
+    uiRoute ? browser('close', uiRoute) : Promise.resolve(),
+    ui ? ui.close() : Promise.resolve(),
+  ]);
   client?.close();
   for (const connection of wss.clients) connection.terminate();
   await new Promise<void>((resolve) => wss.close(() => resolve()));
@@ -170,5 +254,11 @@ try {
     await store.deleteRun(run.id);
   }
   await rm(root, { recursive: true, force: true });
+  const cleanupErrors = uiCleanup.filter((result) => result.status === 'rejected');
+  if (cleanupErrors.length)
+    throw new AggregateError(
+      cleanupErrors.map((result) => result.reason),
+      'UI proof cleanup failed',
+    );
 }
 process.exit(0);

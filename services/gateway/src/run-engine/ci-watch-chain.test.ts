@@ -165,7 +165,7 @@ test('buildCIWatchChainedRunParams forwards allowedSlots so the filter follows t
   assert.equal(emptyAllowed.createParams.allowedSlots, undefined);
 });
 
-for (const mode of ['autonomous', 'interactive'] as const) {
+for (const mode of ['autonomous', 'interactive', 'validation'] as const) {
   for (const action of ['dispatch-pr-complete', 'dispatch-update-branch'] as const) {
     test(`CI-watch ${action} inherits ${mode} parent mode`, () => {
       const current = makeRun({

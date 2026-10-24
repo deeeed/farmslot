@@ -84,6 +84,9 @@ parent must not create a child that waits for interactive acceptance approval.
 An interactive parent retains interactive handling. Standalone dispatch keeps its
 existing per-flow defaults and explicit operator choices.
 
+Validation parents retain validation mode. This replaces the previous flow-baseline
+rule for chained runs; interactive families keep their operator handoff.
+
 No new RPC, CLI flag, SDK field or template kind is added. The existing mode
 selects the child's execution contract; runner, model, tier and family context
 continue through their existing inheritance rules.
