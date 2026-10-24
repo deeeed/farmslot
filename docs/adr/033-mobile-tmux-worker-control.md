@@ -206,3 +206,29 @@ Required operations:
 - Worker terminals were stabilized onto the existing `pty-stream` + `XtermTerminalView` path after the initial polling implementation caused visible pane flashing. Manual snapshot remains an explicit refresh path only.
 - Android real-device validation covered LAN Metro, worker list, worker terminal, xterm/PTY streaming, shortcut controls, and keyboard-aware terminal behavior. iOS simulator launch smoke passed; deeper iOS worker interaction remains follow-up QA.
 - Deferred scope remains background wake-word, automatic send without tap, and remote node provisioning/enrollment.
+
+## Amendment 1: Share the current Companion view, 2026-10-24
+
+**Status:** Accepted (approved by the lead 2026-10-24). The base ADR remains Accepted.
+
+### Decision
+
+Expose one floating quick-action button on every Companion product screen. A tap opens **Copy link**, **Share**, **Voice**, in that order; a long press invokes Voice directly. Expose the menu to screen readers. Reuse the existing foreground voice handlers and D-033-06's review/edit/explicit Send flow. Replace competing floating microphone and Co-Pilot entries; retain safe-area, keyboard and drag behavior.
+
+On a slot or worker terminal, Voice uses that screen's current target and recorder. Elsewhere it preserves the existing context-aware Co-Pilot draft handoff, opens the already-running Co-Pilot worker terminal and invokes its foreground voice handler after normal target/permission checks. If that target is unavailable, open the existing Co-Pilot status/setup screen with the pending context and reason; do not launch a worker or record against another target. This gives the removed global Co-Pilot entry's route-context draft a named home without adding a recorder.
+
+Copy and Share use the same HTTPS Command Center web URL for the displayed view. Extend one shared current-view model in `@farmslot/protocol/surfaces/view-links` for CC and Companion. It owns route mapping, selection identity and URL validation; clients supply navigation state and platform clipboard/share behavior. A stale run still links to that exact run, without refreshing it or requiring command readiness.
+
+Configure the Command Center web URL explicitly in the saved gateway profile and deployment configuration. Phase 1 binds each web base to one gateway; CC must refuse a selected gateway outside that deployment binding before resolving a shared view. Never derive the web URL from the WebSocket URL or share loopback. When unset, show "Web link unavailable: set the Command Center URL" with a settings action. If no exact CC route exists, disable Copy and Share with the precise reason; never substitute Fleet or a parent view. Prioritize run, session, gate and evidence routes.
+
+Phase 1 opens the URL in CC web. Android App Links and iOS Universal Links are phase 2, pending a real HTTPS domain, signing owner and verified association. Existing desktop custom-scheme links remain compatible. Following [ADR-048](048-interactive-operator-packets.md), links only navigate: they carry no credentials, change no gateway authority and execute no action.
+
+### Rationale and consequences
+
+Operators need to share a run even when its displayed data is stale. One shared model keeps both clients on the same resource and selection. Explicit profile binding avoids guessing another deployment; unavailable states make missing route support visible. OS app association requires separate native and hosted deployment work, so phase 1 does not claim Companion inbound-link support.
+
+### Public surface and acceptance
+
+The [view-links specification](../reference/view-links.md) defines the proposed protocol model, named consumers, configuration and proof. No new CLI command, gateway RPC, command queue or harness extension point is introduced. Harnesses exercise the ordinary UI and protocol endpoints.
+
+Phase 1 requires an actual Android run-page Copy link opened in CC web with the same run identity, the native share sheet receiving that identical URL, and both voice gestures. It also requires route coverage, stale-view sharing, unavailable states, authority preservation and zero command execution. This docs-only amendment records no implementation or runtime acceptance.
