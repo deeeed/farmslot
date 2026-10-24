@@ -103,6 +103,21 @@ test('question-looking prose/child tools do not open a question; new root prompt
   assert.match(f.probe().question ?? '', /Which network/);
   await f.write([question, prompt]);
   assert.equal(f.probe().question, null);
+  await f.write([
+    {
+      ...question,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'bash-1', name: 'Bash', input: { command: 'pwd' } }],
+      },
+    },
+  ]);
+  assert.equal(f.probe().known, true);
+  assert.equal(
+    f.probe().question,
+    null,
+    'no AskUserQuestion does not establish permission approval',
+  );
 });
 
 test('partial, missing and foreign transcript observations stay unknown', async (t) => {

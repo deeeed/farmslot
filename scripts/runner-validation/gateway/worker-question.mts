@@ -11,7 +11,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const code = fileURLToPath(new URL('../../../', import.meta.url));
 const root = await mkdtemp(path.join(os.tmpdir(), 'worker-question-proof-'));
-const output = path.resolve(process.env.FARMSLOT_PROOF_OUTPUT_DIR ?? 'temp/worker-question');
+const permission = process.env.FARMSLOT_PROOF_PERMISSION === '1';
+let permissionOpen = permission;
+const output = path.resolve(
+  process.env.FARMSLOT_PROOF_OUTPUT_DIR ?? 'temp/worker-question',
+  permission ? 'permission' : '.',
+);
 const sessionId = 'fixture-worker';
 const transcript = path.join(root, `${sessionId}.jsonl`);
 Object.assign(process.env, {
@@ -84,7 +89,21 @@ const answer = {
 };
 const writeTranscript = (rows: unknown[]) =>
   writeFile(transcript, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
-await writeTranscript([question]);
+const bash = {
+  ...question,
+  message: {
+    role: 'assistant',
+    content: [
+      {
+        type: 'tool_use',
+        id: 'bash-1',
+        name: 'Bash',
+        input: { command: 'pwd' },
+      },
+    ],
+  },
+};
+await writeTranscript([permission ? bash : question]);
 const load = (file: string) => import(pathToFileURL(path.join(code, file)).href);
 const execution = await load('services/gateway/src/core/exec.ts');
 let probes = 0;
@@ -95,7 +114,14 @@ mock.module(pathToFileURL(path.join(code, 'services/gateway/src/core/exec.ts')).
     execOnSlot: async (vars: unknown, command: string, options: unknown) => {
       if (command.includes('capture-pane')) {
         paneCaptures++;
-        return { stdout: 'No question menu in this fixture capture', stderr: '', exitCode: 0 };
+        return {
+          // Reuse the existing worker-question.test.ts permission fixture; no new renderer matching.
+          stdout: permissionOpen
+            ? 'Apply the patch?\nDo you want to continue? [y/n]'
+            : 'No question menu in this fixture capture',
+          stderr: '',
+          exitCode: 0,
+        };
       }
       if (command.includes('tmux')) return { stdout: '', stderr: '', exitCode: 0 };
       if (command.includes('pending = {}')) probes++;
@@ -231,29 +257,49 @@ try {
   assert.equal(blocked.decisions.length, 1);
   const decision = blocked.decisions[0];
   assert.equal(decision.context.workerQuestion, true);
-  assert.match(decision.description, /Which network should the proof use\?/);
-  assert.match(decision.description, /Testnet: Use the fixture/);
-  assert.equal(paneCaptures, 0, 'the structured question must not depend on pane text');
-  await writeFile(transcript, JSON.stringify(question));
-  let previous = probes;
-  await until(
-    () => probes,
-    (count) => count > previous + 1,
-    'two unreadable probes',
-  );
-  assert.equal((await read()).decisions[0].resolvedAt, undefined, 'unreadable is not answered');
-  await writeTranscript([question, { ...answer, sessionId: 'foreign' }]);
-  previous = probes;
-  await until(
-    () => probes,
-    (count) => count > previous + 1,
-    'two unmatched-answer probes',
-  );
-  const held = await read();
-  assert.equal(held.decisions.length, 1, 'repeated observations do not duplicate the decision');
-  assert.equal(held.decisions[0].id, decision.id);
-  assert.equal(held.decisions[0].resolvedAt, undefined);
-  await writeTranscript([question, answer]);
+  if (permission) {
+    assert.match(decision.description, /Do you want to continue/);
+    assert.ok(paneCaptures >= 2, 'legacy permissions retain the existing two-poll detection');
+    const previous = probes;
+    await until(
+      () => probes,
+      (count) => count > previous + 2,
+      'permission watcher probes',
+    );
+    const held = await read();
+    assert.equal(held.decisions.length, 1);
+    assert.equal(held.decisions[0].id, decision.id);
+    assert.equal(
+      held.decisions[0].resolvedAt,
+      undefined,
+      'no AskUserQuestion must not close an open permission handoff',
+    );
+    permissionOpen = false;
+  } else {
+    assert.match(decision.description, /Which network should the proof use\?/);
+    assert.match(decision.description, /Testnet: Use the fixture/);
+    assert.equal(paneCaptures, 0, 'the structured question must not depend on pane text');
+    await writeFile(transcript, JSON.stringify(question));
+    let previous = probes;
+    await until(
+      () => probes,
+      (count) => count > previous + 1,
+      'two unreadable probes',
+    );
+    assert.equal((await read()).decisions[0].resolvedAt, undefined, 'unreadable is not answered');
+    await writeTranscript([question, { ...answer, sessionId: 'foreign' }]);
+    previous = probes;
+    await until(
+      () => probes,
+      (count) => count > previous + 1,
+      'two unmatched-answer probes',
+    );
+    const held = await read();
+    assert.equal(held.decisions.length, 1, 'repeated observations do not duplicate the decision');
+    assert.equal(held.decisions[0].id, decision.id);
+    assert.equal(held.decisions[0].resolvedAt, undefined);
+    await writeTranscript([question, answer]);
+  }
   const resumed = await until(
     read,
     (value) =>
@@ -272,14 +318,21 @@ try {
     pass: true,
     method: 'run.get',
     question: decision.description,
-    cases: [
-      'structured question visible without pane',
-      'unknown retains decision',
-      'foreign answer ignored',
-      'deduplicated',
-      'exact answer resumes monitoring',
-      'zero nudges',
-    ],
+    cases: permission
+      ? [
+          'valid Bash transcript preserves permission detection',
+          'open permission is not closed by no AskUserQuestion',
+          'existing permission close resumes monitoring',
+          'zero nudges',
+        ]
+      : [
+          'structured question visible without pane',
+          'unknown retains decision',
+          'foreign answer ignored',
+          'deduplicated',
+          'exact answer resumes monitoring',
+          'zero nudges',
+        ],
     monitorResult,
     modelTurns: 0,
     productOperations: 0,

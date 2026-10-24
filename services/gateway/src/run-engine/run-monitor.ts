@@ -1956,10 +1956,9 @@ async function detectViolations(
       state.openQuestion = undefined;
       return [runnerBlocker];
     }
-    // Unavailable providers retain the existing pane-only behavior. An already
-    // open structured handoff separately requires a confirmed close below.
-    const question = reading ? reading.value : paneOpenQuestion(paneContent);
-    trackOpenQuestion(state, question, !!reading);
+    // No structured question does not rule out an existing permission gate.
+    const question = paneOpenQuestion(paneContent);
+    trackOpenQuestion(state, question);
     if (question !== null) return violations;
     const stuckState = await evaluateMonitorStuckForRunner({
       vars,
@@ -2153,7 +2152,7 @@ async function readOpenWorkerQuestion(
   if (reader) {
     const reading = await reader(vars, target.target);
     if (!reading) throw new Error('worker question state is unavailable');
-    return reading.value;
+    if (reading.value !== null) return reading.value;
   }
   const pane = await capturePaneContent(vars, runId, role, contextId);
   // A live runner pane always renders something; an empty capture is unreadable, not answered.

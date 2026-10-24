@@ -82,7 +82,7 @@ export interface StatuslineRecord {
 }
 
 export interface RunnerObservability {
-  /** Null reading means unknown; a null value confirms no unanswered question. */
+  /** Runner-owned questions only; a null value does not rule out other permission gates. Null reading means unknown. */
   getPendingQuestion?(
     vars: SlotVars,
     target: string,
