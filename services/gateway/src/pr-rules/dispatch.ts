@@ -33,6 +33,7 @@ import {
 } from '../backlog/pr-admission.js';
 import { type PRExecutionContext, resolvePRExecution } from '../backlog/pr-execution.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import { findLatestPriorReviewRun } from '../run-engine/engine-decisions.js';
 import {
   getAllRuns,
@@ -116,6 +117,12 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
   >();
   error?: string;
 
+  private setError(error: string | undefined): void {
+    if (this.error === error) return;
+    this.error = error;
+    publishPRAutomationResources();
+  }
+
   constructor(
     private readonly store: PRRuleStore,
     private readonly rules: Pick<PRRuleService, 'refreshTarget' | 'refreshSubmission'>,
@@ -139,11 +146,11 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
   wake(): void {
     void this.reconcile().then(
       () => {
-        this.error = undefined;
+        this.setError(undefined);
       },
       (error: unknown) => {
         // Retain the fault for client status; the next tick retries durable reconciliation.
-        this.error = error instanceof Error ? error.message : String(error);
+        this.setError(error instanceof Error ? error.message : String(error));
         this.changed();
       },
     );

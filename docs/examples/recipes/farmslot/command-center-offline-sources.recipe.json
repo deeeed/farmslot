@@ -1,0 +1,100 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Persisted Sources notifications and cold offline rendering",
+  "description": "Run from the repository root against an isolated authenticated dev stack. Set FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, GATEWAY_PORT, FARMSLOT_UI_URL, FARMSLOT_CDP_PORT and FARMSLOT_OFFLINE_PROOF=1. The selected Sources settings panel must be open. The helper verifies checkout ownership before stopping only this dev gateway and always restarts its watcher. Repeat for the desktop CDP and UI URL. The proof source offline-proof must declare main and test-branch. Source proof-pack must declare a materializable pack for the owned node offline-client-store.",
+  "proofTargets": [
+    {
+      "id": "source-notification",
+      "claim": "A second client pin and unpin update the open production Sources panel through notifications without Refresh."
+    },
+    {
+      "id": "cold-offline",
+      "claim": "A new document with the gateway stopped renders saved Sources with the same observation time and stale age, with all source actions disabled."
+    },
+    {
+      "id": "restart",
+      "claim": "A gateway restart retains the saved observation until a current read becomes ready, without replaying a source mutation."
+    },
+    {
+      "id": "source-sync",
+      "claim": "A real pack sync and subsequent owned-node receipt update the open Sources panel, with verification after sync started."
+    },
+    {
+      "id": "stale-age",
+      "claim": "The rendered stale age advances offline without changing saved facts or their observation time."
+    }
+  ],
+  "workflow": {
+    "entry": "pin",
+    "nodes": {
+      "pin": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-sources.mjs pin offline-proof test-branch",
+        "timeout_ms": 300000,
+        "intent": "Pin through a real second endpoint and await the production panel notification.",
+        "next": "pin-proof"
+      },
+      "pin-proof": {
+        "action": "assert_output",
+        "source": "pin",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require the panel to cover the committed revision and display test-branch.",
+        "proves": ["source-notification"],
+        "next": "unpin"
+      },
+      "unpin": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-sources.mjs unpin offline-proof",
+        "timeout_ms": 300000,
+        "intent": "Unpin through the gateway and require the open panel to return to main.",
+        "next": "unpin-proof"
+      },
+      "unpin-proof": {
+        "action": "assert_output",
+        "source": "unpin",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require the reverse notification path to update the visible panel.",
+        "proves": ["source-notification"],
+        "next": "sync"
+      },
+      "offline": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-sources.mjs browser-offline",
+        "timeout_ms": 300000,
+        "intent": "Cold-start offline, verify retained Sources, then restore the owned gateway.",
+        "next": "offline-proof"
+      },
+      "offline-proof": {
+        "action": "assert_output",
+        "source": "offline",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require saved data, stale age, disabled actions and recovery without replay.",
+        "proves": ["cold-offline", "restart", "stale-age"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "sync": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-sources.mjs sync proof-pack offline-client-store",
+        "timeout_ms": 300000,
+        "intent": "Run real pack materialization and observe the later node receipt without Refresh.",
+        "next": "sync-proof"
+      },
+      "sync-proof": {
+        "action": "assert_output",
+        "source": "sync",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require a new observation and matching node receipt verified after sync started.",
+        "proves": ["source-sync"],
+        "next": "offline"
+      }
+    }
+  }
+}

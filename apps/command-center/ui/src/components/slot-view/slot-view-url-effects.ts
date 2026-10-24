@@ -1,7 +1,6 @@
 import type { GitDiffResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
-import { gateway } from '../../gateway-client.js';
 import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
@@ -45,7 +44,6 @@ export function handleSlotViewHashChange(view: SlotView): void {
     ) {
       // File restoration can synchronously sync the URL. Retire the old run
       // first so it cannot replace the newly requested task with its own ID.
-      view._linkedRunRefreshToken = Symbol('run-navigation');
       view._linkedRun = null;
     }
     // Hydrate URL-pinned history state BEFORE _refreshLinkedRun fires
@@ -109,14 +107,10 @@ export function syncSlotViewUrlState(view: SlotView, contextId?: string): void {
 export async function restoreSlotViewFileFromUrl(view: SlotView): Promise<void> {
   const file = requestedFileFromHash();
   if (!file) {
-    cancelSlotViewFileRestoreRetry(view);
     view._openFiles = [];
     view._activeFile = '';
   } else {
     await openSlotViewFileFromUrl(view, file);
-    if (!view._activeFile) {
-      scheduleSlotViewUrlRestoreRetry(view, file, 3);
-    }
   }
   restoreSlotViewResourceFromUrl(view);
   view._fileUrlReady = true;
@@ -174,29 +168,6 @@ export function cancelSlotViewResourceRestoreRetry(view: SlotView): void {
   view._resourceRestoreRetryTimer = null;
 }
 
-export function cancelSlotViewFileRestoreRetry(view: SlotView): void {
-  if (!view._fileRestoreRetryTimer) return;
-  clearTimeout(view._fileRestoreRetryTimer);
-  view._fileRestoreRetryTimer = null;
-}
-
-export function scheduleSlotViewUrlRestoreRetry(
-  view: SlotView,
-  file: string,
-  attemptsLeft = 2,
-): void {
-  if (attemptsLeft <= 0 || view._activeFile) return;
-  cancelSlotViewFileRestoreRetry(view);
-  view._fileRestoreRetryTimer = setTimeout(async () => {
-    view._fileRestoreRetryTimer = null;
-    if (view._activeFile || requestedFileFromHash() !== file) return;
-    await openSlotViewFileFromUrl(view, file);
-    if (!view._activeFile) {
-      scheduleSlotViewUrlRestoreRetry(view, file, attemptsLeft - 1);
-    }
-  }, 750);
-}
-
 export async function openSlotViewFileFromUrl(view: SlotView, file: string): Promise<void> {
   if (file.startsWith('branch:')) {
     const parsed = parseBranchDiffKey(file);
@@ -209,11 +180,14 @@ export async function openSlotViewFileFromUrl(view: SlotView, file: string): Pro
     const cacheKey = branchDiffKey(base, head, path);
     if (view._isLive && !view._liveDiffContents.has(cacheKey)) {
       try {
-        const result = await gateway.request<GitDiffResult>(
+        const result = await view._workspaceReads.read<GitDiffResult>(
           Methods.GIT_DIFF,
           parsed.head
             ? { slotId: view.slotId, path, base, head, target: 'head' }
             : committedReviewFileDiffRequest(view.slotId, path, base, reviewSnapshot),
+          (result) => {
+            view._liveDiffContents = new Map(view._liveDiffContents).set(cacheKey, result.diff);
+          },
         );
         if (!result.diff.trim()) {
           const loaded = await loadSlotViewGitFileContent(view, cacheKey, path, head);

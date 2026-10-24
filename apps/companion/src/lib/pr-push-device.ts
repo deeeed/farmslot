@@ -9,6 +9,7 @@ import { Methods, type PRPushListResult, type PRPushRegisterParams } from '@farm
 import { useAttentionPrefsStore } from '../store/attention-prefs';
 
 import type { GatewayClient } from './gateway-client';
+import { readPRPushDevices } from './pr-automation-resources';
 
 const INSTALLATION_KEY = '@farmslot:prPushInstallation';
 let installation: Promise<string> | undefined;
@@ -36,7 +37,8 @@ export async function registerPRPushDevice(
 ): Promise<void> {
   const installationId = await prPushInstallation();
   if (!isCurrent()) return;
-  const saved = await client.request<PRPushListResult>(Methods.PR_PUSH_LIST, {});
+  const saved = await readPRPushDevices<PRPushListResult>();
+  if (!isCurrent()) return;
   const device = saved.devices.find((device) => device.installationId === installationId);
   if (!requestPermission) {
     if (!device?.enabled && device?.error !== 'DeviceNotRegistered') return;

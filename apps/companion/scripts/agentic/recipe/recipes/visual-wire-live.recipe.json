@@ -1,0 +1,65 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native visual feedback reply through invalidation",
+  "description": "Use only the owned Android emulator and private proof gateway. A localhost proxy selected through that emulator's adb reverse tunnel holds one real terminal.send refusal for a uniquely owned run whose slot does not exist. It forwards every other response unchanged. The actual UI types and sends feedback, a second client updates the run, and the held response is delivered byte-for-byte. The reverse mapping, native connection, temporary run and task are restored. No live worker receives input and no UI/cache state is injected.",
+  "proofTargets": [
+    {
+      "id": "visual-pending-reply",
+      "claim": "A pending actual terminal.send reply survives same-connection run invalidation without resetting the native draft or delivery state."
+    },
+    {
+      "id": "visual-pending-disabled",
+      "claim": "The actual Send button stays disabled while its real response is withheld through invalidation."
+    },
+    {
+      "id": "visual-reply-settles",
+      "claim": "The unchanged real gateway refusal settles the original delivery on the same native runtime and connection, with exactly one wire request."
+    }
+  ],
+  "workflow": {
+    "entry": "before",
+    "nodes": {
+      "before": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-visual-wire-before.png",
+        "intent": "Open the owned Android device session before the transport-boundary proof.",
+        "next": "prove"
+      },
+      "prove": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs visual-wire-context",
+        "timeout_ms": 240000,
+        "intent": "Hold a real reply, invalidate the observed run and deliver the same response without replay.",
+        "next": "pending"
+      },
+      "pending": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeVisualPendingReply\":true",
+        "intent": "Require delivery to remain pending through the actual notification and catch-up reads.",
+        "proves": ["visual-pending-reply"],
+        "next": "disabled"
+      },
+      "disabled": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeVisualPendingDisabled\":true",
+        "intent": "Require the actual pending Send control to remain disabled.",
+        "proves": ["visual-pending-disabled"],
+        "next": "settled"
+      },
+      "settled": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeVisualReplySettled\":true",
+        "intent": "Require the real refusal, equal response digests and one actual request.",
+        "proves": ["visual-reply-settles"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

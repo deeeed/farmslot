@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Observe native host journal commits and shared account status without replaying commands; preserve structured missing-session errors.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.38.3 - 2026-10-24

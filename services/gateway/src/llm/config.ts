@@ -9,6 +9,8 @@ import type { ThinkingLevel } from '@earendil-works/pi-ai';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import { publishConfigurationResources } from '../resources/configuration-changes.js';
+
 import { CODEX_ASTRA_MODEL } from './codex-astra.js';
 
 export interface LLMConfig {
@@ -46,6 +48,11 @@ export function llmDefaultsForProvider(provider: string): LLMConfig {
 }
 
 let _cache: LLMConfig | null = null;
+
+/** Existing selected-home watcher calls this when an external config writer commits. */
+export function invalidateLLMConfig(): void {
+  _cache = null;
+}
 
 export function getLLMConfig(): LLMConfig {
   if (_cache) return _cache;
@@ -106,6 +113,7 @@ export function setLLMConfig(partial: Partial<LLMConfig>): LLMConfig {
   }
   writeFileSync(cfgPath, JSON.stringify(updated, null, 2) + '\n');
   _cache = updated;
+  publishConfigurationResources();
   console.log(`[llm] config updated: ${JSON.stringify(updated)}`);
   return updated;
 }

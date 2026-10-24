@@ -1,8 +1,13 @@
-/**
- * Resource identities for gateway change notifications (proposed ADR-071).
- * Sources is the pilot slice (ADR-069 Amendment 1): only its key family is defined.
- */
-export type ResourceKey = { family: 'sources'; scope: 'farm' };
-
-/** Nonnegative safe integer that only increases per key within one gateway epoch. */
-export type ResourceRevision = number;
+/** Experimental ADR-071 client cache; Command Center and Companion are its consumers. */
+export { createGatewayResourceCache } from './cache.js';
+export { runResourceStoreConformance } from './conformance.js';
+export * from './keys.js';
+export * from './native-history.js';
+export * from './registry.js';
+export * from './store.js';
+export {
+  createResourceCacheTransport,
+  type ResourceClientConnection,
+  type ResourceConnectionInputs,
+} from './transport.js';
+export * from './types.js';

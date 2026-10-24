@@ -233,8 +233,8 @@ export function renderReviewTopBar(input: {
             Ask reviewer
           </button>`}
       <button
+        data-testid="review-refresh"
         class="rw-action-btn rw-btn-reviewer-action"
-        data-testid="refresh-review"
         ?disabled=${input.posting || input.recovering || input.refreshing}
         title="Show the reviewer's latest comments and recommendation"
         @click=${input.refresh}
@@ -260,6 +260,7 @@ export function renderReviewTopBar(input: {
         : nothing}
       ${input.postAvailable
         ? html`<button
+            data-testid="review-post"
             class="rw-action-btn ${input.pendingConfirm === 'post'
               ? 'rw-confirming'
               : 'rw-btn-post'}"
@@ -274,7 +275,9 @@ export function renderReviewTopBar(input: {
                 : `Post to PR (${input.includedComments})`}
           </button>`
         : nothing}
+
       <button
+        data-testid="review-dismiss"
         class="rw-action-btn ${input.pendingConfirm === 'dismiss'
           ? 'rw-confirming'
           : 'rw-btn-dismiss'}"

@@ -106,6 +106,11 @@ mock.module('./support.js', {
 });
 mock.module('./task.js', {
   namedExports: {
+    reviewWorkspaceProgressLocation: async () => ({
+      io: { host: 'localhost', machine: 'local', sshTarget: '' },
+      taskDir: '/owned/task',
+      checklistPath: '/owned/task/CHECKLIST.md',
+    }),
     materializeReviewWorkspaceTask: async () => {
       throw new Error('Monitor must not recreate a task');
     },

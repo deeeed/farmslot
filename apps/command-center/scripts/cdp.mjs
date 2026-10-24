@@ -12,11 +12,16 @@
 //   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
 //   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
 //   node scripts/cdp.mjs click <hash> <selector>       Click a control, searching shadow roots.
+//   node scripts/cdp.mjs click <hash> <selector> --allow-disabled  Send real pointer input to a disabled control for stale-action proofs.
+//   node scripts/cdp.mjs click <hash> <selector> --observe-file <path>  Read a probe immediately after the real click.
+//   node scripts/cdp.mjs key <hash> <1-9|Enter|Escape|Tab> Send a real key to the focused control.
 //   node scripts/cdp.mjs select <hash> <selector> <value> Choose a styled choice or native select option.
 //   Selectors may cross shadow roots with >>>, e.g. native-session-view >>> textarea.
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
 //   node scripts/cdp.mjs close <hash>                 Close a matching tab.
 //   node scripts/cdp.mjs gateway <method> [paramsJson] Send a JSON-RPC request to ws://localhost:7777.
+//   node scripts/cdp.mjs baseline <hash> <cold|reconnect|diff> [gate-route] Measure actual websocket reads.
+//   node scripts/cdp.mjs idle-reads <hash> <ms> <methodsJson> Count outgoing reads in a settled page.
 //
 // Env:
 //   FARMSLOT_CDP_PORT   CDP port (default 9323).
@@ -34,6 +39,11 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
+
+import {
+  measureOfflineClientStore,
+  observeIdleGatewayReads,
+} from './offline-client-store-baseline.mjs';
 
 const CDP_PORT = process.env.FARMSLOT_CDP_PORT ?? '9323';
 // Must match debug-chrome.sh: it verifies which process owns CDP at this exact
@@ -87,6 +97,7 @@ async function findTab(hash) {
   const tabs = await listTabs();
   const pages = tabs.filter((t) => t.type === 'page');
   if (!hash || hash === '-') return pages[0];
+  if (hash.startsWith('@')) return pages.find((tab) => tab.id === hash.slice(1)) ?? null;
   const needle = hash.startsWith('#') ? hash : `#${hash}`;
   // Intentionally no fallback to pages[0] when a hash is specified: silently
   // retargeting to another tab lets validation scripts "pass" against an
@@ -219,7 +230,18 @@ async function focusTab(hash) {
   const { call, close } = await connect(tab.webSocketDebuggerUrl);
   await call('Page.enable');
   await call('Page.bringToFront');
+  const deadline = Date.now() + 5000;
+  let visibility;
+  do {
+    visibility = await call('Runtime.evaluate', {
+      expression: 'document.visibilityState',
+      returnByValue: true,
+    });
+    if (visibility.result?.value === 'visible') break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  } while (Date.now() < deadline);
   close();
+  if (visibility.result?.value !== 'visible') die('The selected tab did not become visible', 2);
   const origin = new URL(tab.url).origin;
   // `about:blank` and similar yield the literal string "null", which would make
   // the permission grant a silent no-op.
@@ -233,7 +255,13 @@ async function focusTab(hash) {
     permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
   });
   browser.close();
-  return { id: tab.id, url: tab.url, origin, clipboardGranted: true };
+  return {
+    id: tab.id,
+    url: tab.url,
+    origin,
+    clipboardGranted: true,
+    visibility: visibility.result?.value,
+  };
 }
 
 async function evalInTab(hash, expr) {
@@ -275,6 +303,24 @@ async function evalInTab(hash, expr) {
       2,
     );
   return r.result?.value;
+}
+
+async function keyInTab(hash, key) {
+  const keyCode =
+    { Enter: 13, Escape: 27, Tab: 9 }[key] ?? (/^[1-9]$/.test(key) ? key.charCodeAt(0) : undefined);
+  if (keyCode === undefined) die('key supports 1-9, Enter, Escape or Tab');
+  const tab = await findTab(hash);
+  if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+  const { call, close } = await connect(tab.webSocketDebuggerUrl);
+  try {
+    const code = /^[1-9]$/.test(key) ? `Digit${key}` : key;
+    const event = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
+    await call('Input.dispatchKeyEvent', { type: 'keyDown', ...event });
+    await call('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
+    return { key };
+  } finally {
+    close();
+  }
 }
 
 async function viewportTab(hash, width, height) {
@@ -339,7 +385,14 @@ async function screenshotTab(hash, outputPath, options) {
   }
 }
 
-async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
+async function clickInTab(
+  hash,
+  selector,
+  dialogChoice,
+  expectedDialog,
+  observationSource,
+  allowDisabled = false,
+) {
   const tab = await findTab(hash);
   if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
   let dialog, dialogResult, dialogError;
@@ -357,8 +410,11 @@ async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
   try {
     if (dialogChoice) await call('Page.enable');
     await call('Page.bringToFront');
-    const result = await call('Runtime.evaluate', {
-      expression: `(() => {
+    const clickDeadline = Date.now() + 5000;
+    let result;
+    do {
+      result = await call('Runtime.evaluate', {
+        expression: `(() => {
         const parts = ${JSON.stringify(selector)}.split('>>>').map(part=>part.trim());
         function find(root, part) {
           const element = root.querySelector(part);
@@ -372,17 +428,34 @@ async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
           element=parts.length===1 ? find(root,part) : root?.querySelector(part);
           if (index < parts.length-1) root=element?.shadowRoot;
         }
-        if(!element || element.disabled || !element.getClientRects().length) throw Error('Click target unavailable');
+        if(!element) throw Error('Click target unavailable: missing');
+        if(element.disabled && !${JSON.stringify(allowDisabled)}) throw Error('Click target unavailable: disabled');
         element.scrollIntoView({block:'center'});
+        if(!element.getClientRects().length) throw Error('Click target unavailable: hidden');
         const rect=element.getBoundingClientRect();
-        return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};
+        const x=rect.x+rect.width/2,y=rect.y+rect.height/2;
+        if(${JSON.stringify(allowDisabled)}) {
+          let hit=document.elementFromPoint(x,y);
+          while(hit?.shadowRoot) {
+            const nested=hit.shadowRoot.elementFromPoint(x,y);
+            if(!nested || nested===hit) break;
+            hit=nested;
+          }
+          if(hit!==element && !element.contains(hit)) throw Error('Click target unavailable: covered or clipped');
+        }
+        return {x,y};
       })()`,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails)
-      throw new Error(
-        result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
-      );
+        returnByValue: true,
+      });
+      if (!result.exceptionDetails) break;
+      const message =
+        result.exceptionDetails.exception?.description ?? result.exceptionDetails.text;
+      if (!message.includes('Click target unavailable') || Date.now() >= clickDeadline)
+        throw new Error(message);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    } while (Date.now() < clickDeadline);
+    if (result.exceptionDetails) throw new Error('Click target unavailable before deadline');
+    const clickedAt = Date.now();
     for (const type of ['mousePressed', 'mouseReleased'])
       await call('Input.dispatchMouseEvent', {
         type,
@@ -395,7 +468,19 @@ async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
       if (dialogError) throw dialogError;
       if (dialog === undefined) throw new Error('Expected confirmation dialog did not open');
     }
-    return { clicked: selector };
+    if (observationSource !== undefined) {
+      const observed = await call('Runtime.evaluate', {
+        expression: `(async () => { ${observationSource}\n })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (observed.exceptionDetails)
+        throw new Error(
+          observed.exceptionDetails.exception?.description ?? observed.exceptionDetails.text,
+        );
+      return { clicked: selector, clickedAt, observation: observed.result.value };
+    }
+    return { clicked: selector, ...(allowDisabled ? { disabledTargetAllowed: true } : {}) };
   } finally {
     close();
   }
@@ -500,37 +585,28 @@ async function loginInTab(hash) {
   const secret = GATEWAY_CREDENTIAL?.token ?? GATEWAY_CREDENTIAL?.password;
   const mode = GATEWAY_CREDENTIAL?.token ? 'token' : 'password';
   if (!secret) die('login requires an explicit FARMSLOT_GATEWAY_PROFILE', 2);
+  const form = await evalInTab(
+    hash,
+    `const deadline=Date.now()+5000;
+     while(!document.querySelector('.auth-card,#connection-form') && Date.now()<deadline)
+       await new Promise(resolve=>setTimeout(resolve,50));
+     return document.querySelector('#connection-form') ? 'desktop' : 'browser';`,
+  );
+  if (form === 'desktop') {
+    await inputInTab(hash, '#auth-mode', mode, true);
+    await inputInTab(hash, '#secret', secret);
+    await clickInTab(hash, '#connection-form button[type=submit]');
+  } else {
+    await clickInTab(hash, `.auth-mode:nth-child(${mode === 'token' ? 1 : 2})`);
+    await inputInTab(hash, '.auth-input', secret);
+    await clickInTab(hash, '.auth-card button[type=submit]');
+  }
   return evalInTab(
     hash,
-    `
-      const secret = ${JSON.stringify(secret)};
-      const mode = ${JSON.stringify(mode)};
-      const deadline = Date.now() + 5000;
-      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      while (!document.querySelector('.auth-card') && Date.now() < deadline) await sleep(50);
-      const activeMode = document.querySelector('.auth-mode.active')?.textContent?.trim()?.toLowerCase();
-      if (activeMode !== mode) {
-        const modeButton = Array.from(document.querySelectorAll('.auth-mode')).find(
-          (button) => button.textContent?.trim()?.toLowerCase() === mode,
-        );
-        if (!modeButton) throw new Error('auth mode button not found');
-        modeButton.click();
-        await sleep(50);
-      }
-      const input = document.querySelector('.auth-input');
-      if (!input) throw new Error('auth input not found');
-      input.focus();
-      input.value = secret;
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: secret }));
-      const form = document.querySelector('.auth-card');
-      if (!(form instanceof HTMLFormElement)) throw new Error('auth form not found');
-      form.requestSubmit();
-      while (document.querySelector('.auth-card') && Date.now() < deadline) await sleep(100);
-      return {
-        authenticated: !document.querySelector('.auth-card'),
-        bodyText: document.body.innerText.slice(0, 300),
-      };
-    `,
+    `const deadline=Date.now()+5000;
+     while(document.querySelector('farm-app')?.connection!=='connected' && Date.now()<deadline)
+       await new Promise(resolve=>setTimeout(resolve,50));
+     return {authenticated:document.querySelector('farm-app')?.connection==='connected'};`,
   );
 }
 
@@ -634,6 +710,10 @@ try {
     const [hash] = rest;
     if (!hash) die('usage: cdp.mjs focus <hash|-|route>');
     console.log(JSON.stringify(await focusTab(hash), null, 2));
+  } else if (cmd === 'key') {
+    const [hash, key] = rest;
+    if (!hash || !key) die('usage: cdp.mjs key <hash> <1-9|Enter|Escape|Tab>');
+    console.log(JSON.stringify(await keyInTab(hash, key)));
   } else if (cmd === 'login') {
     const [hash] = rest;
     if (!hash) die('usage: cdp.mjs login <hash>');
@@ -648,10 +728,28 @@ try {
         : dialogFlag === '--dismiss-dialog'
           ? 'dismiss'
           : undefined;
-    if (dialogFlag && (!dialogChoice || expectedDialog === undefined))
+    const observe = dialogFlag === '--observe-file';
+    const allowDisabled = dialogFlag === '--allow-disabled';
+    if (
+      dialogFlag &&
+      !allowDisabled &&
+      ((!dialogChoice && !observe) || expectedDialog === undefined)
+    )
       die('click dialog option requires an exact expected message');
+    const observationSource = observe ? readFileSync(resolve(expectedDialog), 'utf8') : undefined;
     console.log(
-      JSON.stringify(await clickInTab(hash, selector, dialogChoice, expectedDialog), null, 2),
+      JSON.stringify(
+        await clickInTab(
+          hash,
+          selector,
+          dialogChoice,
+          expectedDialog,
+          observationSource,
+          allowDisabled,
+        ),
+        null,
+        2,
+      ),
     );
   } else if (cmd === 'fill' || cmd === 'select') {
     const [hash, selector, value] = rest;
@@ -679,6 +777,43 @@ try {
     }
     const result = await screenshotTab(hash, outputPath, options);
     console.log(JSON.stringify(result, null, 2));
+  } else if (cmd === 'idle-reads') {
+    const [hash, duration, methodsJson] = rest;
+    if (!hash || !duration || !methodsJson)
+      die('usage: cdp.mjs idle-reads <hash> <ms> <methodsJson>');
+    const tab = await findTab(hash);
+    if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+    console.log(
+      JSON.stringify(
+        await observeIdleGatewayReads({
+          connect,
+          tab,
+          durationMs: Number(duration),
+          methods: JSON.parse(methodsJson),
+        }),
+        null,
+        2,
+      ),
+    );
+  } else if (cmd === 'baseline') {
+    const [hash, phase, route, matchJson] = rest;
+    if (!hash || !phase) die('usage: cdp.mjs baseline <hash> <cold|reconnect|diff> [gate-route]');
+    const tab = await findTab(hash);
+    if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+    console.log(
+      JSON.stringify(
+        await measureOfflineClientStore({
+          connect,
+          tab,
+          phase,
+          route,
+          gatewayUrl: process.env.FARMSLOT_GATEWAY,
+          match: matchJson ? JSON.parse(matchJson) : undefined,
+        }),
+        null,
+        2,
+      ),
+    );
   } else if (cmd === 'gateway') {
     const [method, paramsJson] = rest;
     if (!method) die('usage: cdp.mjs gateway <method> [paramsJson]');

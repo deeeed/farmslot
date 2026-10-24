@@ -1,0 +1,34 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native Sources age advances while offline",
+  "description": "Run against the owned isolated stack with an existing Agent Device session selected by FARMSLOT_NATIVE_SESSION. Open Settings through its actual tab before running. Select the platform, device and Metro as in sources-live.recipe.json, and set FARMSLOT_OFFLINE_PROOF=1. The helper reads actual accessibility text, retains saved observation time and facts, then restores the gateway.",
+  "proofTargets": [
+    {
+      "id": "stale-age",
+      "claim": "The rendered stale age advances offline while saved source facts and their observation time stay unchanged and actions stay disabled.",
+      "proofMode": "state"
+    }
+  ],
+  "workflow": {
+    "entry": "age",
+    "nodes": {
+      "age": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-sources.mjs stale-age",
+        "timeout_ms": 300000,
+        "intent": "Read advancing native accessibility text while the owned gateway is stopped.",
+        "next": "age-proof"
+      },
+      "age-proof": {
+        "action": "assert_output",
+        "source": "age",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require real age changes without changed data or observation time.",
+        "proves": ["stale-age"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

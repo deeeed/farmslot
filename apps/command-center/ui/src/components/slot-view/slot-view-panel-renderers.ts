@@ -73,9 +73,10 @@ export function renderSlotViewAgentContexts(view: SlotView) {
 }
 
 export function renderSlotViewSidebarFiles(view: SlotView) {
-  if (view._wsLoading || view._wsError)
+  if ((view._wsLoading || view._wsError) && !view._entries.length)
     return renderSlotFilesSkeleton(view._wsError, () => void view._reloadTree());
   return html`<file-tree
+    .actionsDisabled=${view._isLive && !view._workspaceReads.ready}
     .entries=${view._entries}
     .gitStatus=${view._gitStatusMap}
     .selectedPath=${realPath(view._activeFile)}
@@ -99,6 +100,7 @@ export function renderSlotViewSidebarSource(view: SlotView) {
     </div>`;
   }
   return html`<git-changes
+    .actionsDisabled=${view._isLive && !view._workspaceReads.ready}
     .changes=${git.changes}
     .committedFiles=${view._branchDiffFiles}
     .testPatterns=${view._branchDiffTestPatterns}
@@ -235,42 +237,6 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
   return html`
     <!-- Body: activity bar + sidebar + editor -->
     <div class="sv-body">
-      ${view._isRecoveryBlocked
-        ? html`
-            <div class="sv-recovery-overlay" role="status" aria-live="polite">
-              <div class="sv-recovery-card">
-                <div class="sv-recovery-eyebrow">
-                  ${view._recoveryPhase === 'error'
-                    ? 'Recovery blocked'
-                    : view._recoveryPhase === 'stale'
-                      ? 'Connection lost'
-                      : 'Recovering from gateway'}
-                </div>
-                <div class="sv-recovery-title">
-                  ${view._recoveryPhase === 'error'
-                    ? 'Workspace recovery needs a retry'
-                    : 'Workspace is reconnecting'}
-                </div>
-                <div class="sv-recovery-copy">
-                  ${view._recoveryMessage || 'Refreshing slot data from gateway…'}
-                </div>
-                <div class="sv-recovery-meta">
-                  Gateway remains the source of truth. Local view state is preserved and the
-                  workspace will unblock when rehydration completes.
-                </div>
-                ${view._canRetryRecovery
-                  ? html`
-                      <div class="sv-recovery-actions">
-                        <button class="sv-recovery-btn" @click=${() => view._retryRecovery()}>
-                          Retry now
-                        </button>
-                      </div>
-                    `
-                  : nothing}
-              </div>
-            </div>
-          `
-        : nothing}
       <!-- Activity bar -->
       <div class="sv-activity-bar">
         <button
@@ -342,6 +308,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
             <div class="sv-sidebar" style="width:${view._sidebarWidth}px">
               <div
                 class="sv-sidebar-content ${view._activity === 'source' ? 'sv-source-layout' : ''}"
+                ?inert=${view._isRecoveryBlocked}
               >
                 ${view._renderActivityPanel()}
               </div>
@@ -357,6 +324,51 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
 
       <!-- Right column: editor + terminal stacked vertically -->
       <div class="sv-right-col">
+        ${view._isLive && view._workspaceReads.status
+          ? html`<div role="status">
+              ${view._workspaceReads.status}${view._workspaceReads.error
+                ? html`<button @click=${() => view._workspaceReads.retry()}>
+                    Retry workspace
+                  </button>`
+                : nothing}
+            </div>`
+          : nothing}
+        ${view._isRecoveryBlocked
+          ? html`
+              <div class="sv-recovery-overlay" role="status" aria-live="polite">
+                <div class="sv-recovery-card">
+                  <div class="sv-recovery-eyebrow">
+                    ${view._recoveryPhase === 'error'
+                      ? 'Recovery blocked'
+                      : view._recoveryPhase === 'stale'
+                        ? 'Connection lost'
+                        : 'Recovering from gateway'}
+                  </div>
+                  <div class="sv-recovery-title">
+                    ${view._recoveryPhase === 'error'
+                      ? 'Workspace recovery needs a retry'
+                      : 'Workspace is reconnecting'}
+                  </div>
+                  <div class="sv-recovery-copy">
+                    ${view._recoveryMessage || 'Refreshing slot data from gateway…'}
+                  </div>
+                  <div class="sv-recovery-meta">
+                    Gateway remains the source of truth. Local view state is preserved and the
+                    workspace will unblock when rehydration completes.
+                  </div>
+                  ${view._canRetryRecovery
+                    ? html`
+                        <div class="sv-recovery-actions">
+                          <button class="sv-recovery-btn" @click=${() => view._retryRecovery()}>
+                            Retry now
+                          </button>
+                        </div>
+                      `
+                    : nothing}
+                </div>
+              </div>
+            `
+          : nothing}
         <!-- New file prompt (Cmd+N) -->
         ${view._newFilePrompt
           ? html`
@@ -580,7 +592,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                             ? html`
                                 <button
                                   class="sv-run-action muted"
-                                  ?disabled=${view._tmuxRestoreRunning || view._isRecoveryBlocked}
+                                  ?disabled=${view._tmuxRestoreRunning || view._runActionsBlocked}
                                   @click=${() => view._restoreTmuxWorker()}
                                 >
                                   ${view._tmuxRestoreRunning
@@ -589,7 +601,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                 </button>
                                 <button
                                   class="sv-run-action muted"
-                                  ?disabled=${view._tmuxRestoreRunning || view._isRecoveryBlocked}
+                                  ?disabled=${view._tmuxRestoreRunning || view._runActionsBlocked}
                                   @click=${() => view._reloadWorkerSession()}
                                 >
                                   ${view._tmuxRestoreRunning

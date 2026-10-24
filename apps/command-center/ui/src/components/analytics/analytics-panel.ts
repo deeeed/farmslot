@@ -7,11 +7,14 @@ import {
   type DurationStats,
   Methods,
 } from '@farmslot/protocol';
+import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { formatTokenCount } from '../../utils/review-gate-display.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 function fmtMs(ms: number | null): string {
   if (ms == null) return '—';
@@ -63,7 +66,19 @@ export class AnalyticsPanel extends LitElement {
   @state() private backfilling = false;
   @state() private error = '';
   @state() private notice = '';
+  @state() private commandError = '';
+  private queryId?: string;
+  private commandOwner?: string;
   private unsubscribeConnection?: () => void;
+  private readonly query = new ResourceQueryController<AnalyticsQueryResult>(this, (state) => {
+    this.result = this.query.belongsToWorkspace ? (state.data ?? null) : null;
+    this.loading = state.status === 'loading';
+    this.error = state.error?.message ?? '';
+    if (this.commandOwner !== getResourceWorkspaceKey()) {
+      this.notice = '';
+      this.commandError = '';
+    }
+  });
   private onHashChange = () => this.syncFromHash(true);
 
   static styles = css`
@@ -281,10 +296,11 @@ export class AnalyticsPanel extends LitElement {
     }
     this.syncFromHash(false);
     window.addEventListener('hashchange', this.onHashChange);
-    this.unsubscribeConnection = gateway.onConnectionChange((s) => {
-      if (s === 'connected') void this.load();
+    // Relative windows keep their existing reconnect-time lower bound semantics.
+    this.unsubscribeConnection = gateway.onConnectionChange((state) => {
+      if (state === 'connected' && this.window) void this.load();
     });
-    if (gateway.connectionState === 'connected') void this.load();
+    void this.load();
   }
 
   disconnectedCallback() {
@@ -306,7 +322,7 @@ export class AnalyticsPanel extends LitElement {
     }
     this.filters = next;
     this.window = (params.get('window') as WindowToken) ?? '';
-    if (reload && gateway.connectionState === 'connected') void this.load();
+    if (reload) void this.load();
   }
 
   private writeHash() {
@@ -325,31 +341,53 @@ export class AnalyticsPanel extends LitElement {
   }
 
   async load() {
-    this.loading = true;
-    try {
-      const query: AnalyticsQueryParams = { ...(this.filters as AnalyticsQueryParams) };
-      const since = windowToSince(this.window);
-      if (since) query.since = since;
-      this.result = await gateway.request<AnalyticsQueryResult>(Methods.ANALYTICS_QUERY, query);
-      this.error = '';
-    } catch (err) {
-      this.error = err instanceof Error ? err.message : String(err);
-    } finally {
-      this.loading = false;
+    if (this.injectedResult) {
+      this.result = this.injectedResult;
+      return;
     }
+    const since = windowToSince(this.window);
+    const params = { ...this.filters, ...(since ? { since } : {}) };
+    let query: ResourceQuery<AnalyticsQueryResult>;
+    try {
+      query = resourceQuery<AnalyticsQueryResult>(Methods.ANALYTICS_QUERY, params);
+    } catch (err) {
+      // Hash selectors are user input; an invalid query cannot retain the previous filter's data.
+      this.queryId = undefined;
+      this.query.setQuery(undefined);
+      this.result = null;
+      this.loading = false;
+      this.error = err instanceof Error ? err.message : String(err);
+      return;
+    }
+    const sameQuery = this.queryId === query.id;
+    this.queryId = query.id;
+    this.query.setQuery(query);
+    // Retain Refresh, including recomputing the selected relative time window.
+    if (sameQuery) await this.query.retry();
   }
 
   private async runBackfill() {
-    this.backfilling = true;
+    if (this.backfilling) return;
     this.notice = '';
+    this.commandError = '';
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    this.commandOwner = owner;
     try {
+      this.query.requireReady();
+      this.backfilling = true;
       const res = await gateway.request<{ scanned: number; written: number; skipped: number }>(
         Methods.ANALYTICS_BACKFILL,
       );
+      if (owner !== getResourceWorkspaceKey() || connection !== gateway.resourceConnectionId)
+        return;
       this.notice = `Backfill complete — wrote ${res.written}, skipped ${res.skipped} of ${res.scanned} terminal runs.`;
-      await this.load();
+      // The owning append publishes; the shared query observes that committed state.
     } catch (err) {
-      this.error = err instanceof Error ? err.message : String(err);
+      // The retired workspace cannot contribute either success or error UI to its successor.
+      if (owner !== getResourceWorkspaceKey() || connection !== gateway.resourceConnectionId)
+        return;
+      this.commandError = err instanceof Error ? err.message : String(err);
     } finally {
       this.backfilling = false;
     }
@@ -376,6 +414,13 @@ export class AnalyticsPanel extends LitElement {
     this.window = '';
     this.writeHash();
     void this.load();
+  }
+
+  private get staleNotice(): string {
+    const { status, observedAt } = this.query.state;
+    if (status !== 'stale' || observedAt === undefined) return '';
+    const age = Math.max(0, Math.floor((Date.now() - observedAt) / 1000));
+    return `Previous analytics, ${age}s old. Backfill waits for a current read.`;
   }
 
   private get hasActiveFilters(): boolean {
@@ -522,13 +567,18 @@ export class AnalyticsPanel extends LitElement {
           <button @click=${() => this.load()} ?disabled=${this.loading}>
             ${this.loading ? 'Loading…' : 'Refresh'}
           </button>
-          <button @click=${() => this.runBackfill()} ?disabled=${this.backfilling}>
+          <button
+            @click=${() => this.runBackfill()}
+            ?disabled=${this.backfilling || !this.query.ready}
+          >
             ${this.backfilling ? 'Backfilling…' : 'Backfill from runs'}
           </button>
         </div>
       </div>
 
+      ${this.staleNotice ? html`<p data-analytics-stale>${this.staleNotice}</p>` : nothing}
       ${this.error ? html`<div class="error">${this.error}</div>` : nothing}
+      ${this.commandError ? html`<div class="error">${this.commandError}</div>` : nothing}
       ${this.notice ? html`<div class="notice">${this.notice}</div>` : nothing}
       ${!r
         ? html`<div class="empty">

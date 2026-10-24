@@ -148,7 +148,11 @@ for (const mode of ['startup', 'periodic', 'persistent'] as const) {
           error?: string;
           observedProcesses?: Array<{ pid: number }>;
         }>(join(fixture.root, 'cleanup.json'));
-        assert.equal(cleanup.state, mode === 'persistent' ? 'unknown' : 'complete');
+        assert.equal(
+          cleanup.state,
+          mode === 'persistent' ? 'unknown' : 'complete',
+          JSON.stringify(cleanup),
+        );
         assert.match(cleanup.error ?? '', /census timeout/);
         assert.equal(existsSync(join(fixture.cwd, 'effects')), false);
         if (mode === 'persistent') {

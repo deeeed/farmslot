@@ -4,7 +4,12 @@ import { constants } from 'node:fs';
 import { access, lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix, resolve, sep } from 'node:path';
 
-import { expandTilde, type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
+import {
+  expandTilde,
+  type FileWatchHandle,
+  type FileWatchOptions,
+  watchFile,
+} from '@farmslot/capabilities/fs-watch';
 import {
   FILE_TRANSFER_CHUNK_MAX_BYTES,
   type NodeFsPathParams,
@@ -285,9 +290,7 @@ export async function fsWriteChunk(params: {
         params.offset + written,
       );
       if (result.bytesWritten <= 0) {
-        throw new Error(
-          `fs.writeChunk short write at offset ${params.offset + written} (0 bytes)`,
-        );
+        throw new Error(`fs.writeChunk short write at offset ${params.offset + written} (0 bytes)`);
       }
       written += result.bytesWritten;
     }
@@ -391,10 +394,11 @@ export function fsWatchStart(
   requestId: string,
   params: { path: string },
   onChange: (content: string) => void,
+  options: FileWatchOptions = {},
 ): void {
   // Clean up existing watcher for this ID if any
   fsWatchStop(requestId);
-  activeWatchers.set(requestId, watchFile(params.path, onChange));
+  activeWatchers.set(requestId, watchFile(params.path, onChange, options));
 }
 
 export function fsWatchStop(requestId: string): boolean {

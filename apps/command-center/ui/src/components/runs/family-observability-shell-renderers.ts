@@ -22,6 +22,7 @@ interface FamilyTopbarRenderOptions {
   selectedRun: FamilyObservabilityRunSummary | null;
   prs: PRStatus[];
   reportLoading: boolean;
+  commandsReady?: boolean;
   renderConvergedPill: () => TemplateResult | typeof nothing;
   onBackToRuns: () => void;
   onGenerateReport: () => void;
@@ -90,7 +91,7 @@ export function renderFamilyTopbar(options: FamilyTopbarRenderOptions): Template
           : html`<a class="action-link" href=${`#run/${snapshot.latestRunId}`}>Open latest run</a>`}
         <button
           class="action-btn"
-          ?disabled=${options.reportLoading}
+          ?disabled=${options.reportLoading || options.commandsReady === false}
           @click=${options.onGenerateReport}
         >
           ${options.reportLoading ? 'Generating…' : 'Generate family report'}

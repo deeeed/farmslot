@@ -6,6 +6,8 @@ import type { SlotHealth } from '@farmslot/protocol';
 import '../shared/prepare-progress-panel.js';
 import './slot-prepare-options.js';
 
+import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 import type { PrepareProgressState } from './prepare-progress-model.js';
@@ -21,12 +23,13 @@ export class SlotPreparePopover extends LitElement {
   @property() project = '';
   @property({ attribute: 'run-id' }) runId = '';
   @property({ attribute: 'run-branch' }) runBranch = '';
-  @property() buttonLabel = 'Prepare slot →';
+  @property({ attribute: 'button-label' }) buttonLabel = 'Prepare slot →';
   @property({ type: Boolean }) rebind = false;
   @property({ type: Boolean }) disabled = false;
+  @property({ attribute: false }) beforePrepare?: () => void;
   @property({ attribute: false }) slotHealth: SlotHealth | null = null;
-  @property() buttonClass = 'gate-action-btn';
-  @property() buttonStyle = '';
+  @property({ attribute: 'button-class' }) buttonClass = 'gate-action-btn';
+  @property({ attribute: 'button-style' }) buttonStyle = '';
 
   @state() private _open = false;
   @state() private _busy = false;
@@ -36,6 +39,25 @@ export class SlotPreparePopover extends LitElement {
   @state() private _forcePrepare = false;
   @state() private _prepareState: PrepareProgressState | null = null;
   private _unsubPrepare?: () => void;
+  private _unsubConnection?: () => void;
+  private _request?: symbol;
+  private _confirmScope?: string;
+  private _viewScope?: string;
+
+  private get _scope(): string {
+    return JSON.stringify([
+      getResourceWorkspaceKey(),
+      this.slotId,
+      this.slotBranch,
+      this.runId,
+      this.runBranch,
+      this.project,
+      this.rebind,
+    ]);
+  }
+  private get _disabled(): boolean {
+    return this.disabled || gateway.connectionState !== 'connected';
+  }
 
   static override styles = css`
     :host {
@@ -104,6 +126,10 @@ export class SlotPreparePopover extends LitElement {
     this._unsubPrepare = subscribeSlotPrepareTracker(() => {
       this._prepareState = this.slotId ? activeSlotPrepare(this.slotId) : null;
     });
+    this._unsubConnection = gateway.onConnectionChange(() => {
+      if (gateway.connectionState !== 'connected') this._open = false;
+      this.requestUpdate();
+    });
     this._outsideClick = this._outsideClick.bind(this);
     document.addEventListener('click', this._outsideClick);
   }
@@ -111,7 +137,24 @@ export class SlotPreparePopover extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubPrepare?.();
+    this._unsubConnection?.();
+    this._request = undefined;
+    this._busy = false;
+    this._open = false;
     document.removeEventListener('click', this._outsideClick);
+  }
+
+  override updated(changed: Map<string, unknown>) {
+    const scope = this._scope;
+    if (scope !== this._viewScope) {
+      this._viewScope = scope;
+      this._request = undefined;
+      this._busy = false;
+      this._error = '';
+      this._prepareState = null;
+      this._open = false;
+    }
+    if (changed.has('disabled') && this.disabled) this._open = false;
   }
 
   private _outsideClick(event: MouseEvent) {
@@ -127,15 +170,26 @@ export class SlotPreparePopover extends LitElement {
   }
 
   private async _run(prepareProfile: string, strictProfile: boolean) {
-    if (!this.slotId || !this.runId || !this.runBranch || this._busy) return;
+    if (!this.slotId || !this.runId || !this.runBranch || this._busy || this._request) return;
+    const request = Symbol('slot-prepare');
+    const scope = this._scope;
+    const connection = gateway.resourceConnectionId;
+    const slotId = this.slotId;
+    const runId = this.runId;
+    const owns = () => this.isConnected && this._scope === scope && this._request === request;
+    const current = () => owns() && !this._disabled && connection === gateway.resourceConnectionId;
+    this._request = request;
     this._prepareProfile = prepareProfile;
     this._strictProfile = strictProfile;
     this._error = '';
     this._busy = true;
     try {
+      if (!this._open || this._disabled || scope !== this._confirmScope)
+        throw new Error('Open the prepare options again after the current read.');
+      this.beforePrepare?.();
       await runSlotPrepareForRun({
-        slotId: this.slotId,
-        runId: this.runId,
+        slotId,
+        runId,
         branch: this.runBranch,
         slotBranch: this.slotBranch,
         prepareProfile,
@@ -143,13 +197,17 @@ export class SlotPreparePopover extends LitElement {
         forcePrepare: this._forcePrepare,
         rebind: this.rebind,
       });
+      if (!current()) return;
       this._open = false;
-      navigateToPreparedSlot(this.slotId, this.runId);
+      navigateToPreparedSlot(slotId, runId);
       this.dispatchEvent(new CustomEvent('completed', { bubbles: true, composed: true }));
     } catch (err) {
-      this._error = err instanceof Error ? err.message : String(err);
+      if (current()) this._error = err instanceof Error ? err.message : String(err);
     } finally {
-      this._busy = false;
+      if (owns()) {
+        this._request = undefined;
+        this._busy = false;
+      }
     }
   }
 
@@ -162,9 +220,12 @@ export class SlotPreparePopover extends LitElement {
       <button
         class=${`${this.buttonClass} spp-trigger`}
         style=${this.buttonStyle || undefined}
-        ?disabled=${this.disabled || this._busy}
+        ?disabled=${this._disabled || this._busy}
         @click=${(event: Event) => {
           event.stopPropagation();
+          if (this._disabled || this._busy) return;
+          this._confirmScope = this._scope;
+          this._error = '';
           this._open = !this._open;
         }}
       >
@@ -182,7 +243,7 @@ export class SlotPreparePopover extends LitElement {
                 .slotBranch=${this.slotBranch}
                 .slotHealth=${this.slotHealth}
                 .lastError=${this._error}
-                .disabled=${this._busy}
+                .disabled=${this._disabled || this._busy}
                 compact
                 @prepare-options-change=${this._onOptionsChange}
                 @recovery-retry=${this._onRecovery}
@@ -203,7 +264,7 @@ export class SlotPreparePopover extends LitElement {
                 </button>
                 <button
                   class="spp-btn primary"
-                  ?disabled=${this._busy}
+                  ?disabled=${this._disabled || this._busy}
                   @click=${() => this._run(this._prepareProfile, this._strictProfile)}
                 >
                   ${this._busy ? 'Running…' : 'Confirm'}

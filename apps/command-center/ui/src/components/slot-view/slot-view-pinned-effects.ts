@@ -1,7 +1,6 @@
 import type { FsListResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
-import { gateway } from '../../gateway-client.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
@@ -44,11 +43,15 @@ export async function autoPinSlotViewTaskFolder(view: SlotView) {
       return;
     }
     try {
-      const result = await gateway.request<{ entries: unknown[] }>(Methods.FS_LIST, {
-        slotId: view.slotId,
-        path: candidate,
-        includeIgnored: true,
-      });
+      const result = await view._workspaceReads.read<FsListResult>(
+        Methods.FS_LIST,
+        {
+          slotId: view.slotId,
+          path: candidate,
+          includeIgnored: true,
+        },
+        () => {},
+      );
       if (result.entries.length > 0) {
         view._pinnedFolder = candidate;
         view._autoPinProbedFor = taskRelPath;
@@ -56,8 +59,17 @@ export async function autoPinSlotViewTaskFolder(view: SlotView) {
         view._loadPinnedEntries();
         return;
       }
-    } catch {
-      // ENOENT for unused candidate — silent; cached below to avoid re-probing.
+    } catch (error) {
+      view._workspaceReads.drop(Methods.FS_LIST, {
+        slotId: view.slotId,
+        path: candidate,
+        includeIgnored: true,
+      });
+      if (!(error instanceof Error && /ENOENT|not found|no such file/i.test(error.message))) {
+        view._wsError = error instanceof Error ? error.message : String(error);
+        return;
+      }
+      // An unused candidate is absent; no failed opened-directory query is retained.
     }
   }
 
@@ -90,11 +102,17 @@ export async function loadSlotViewPinnedEntries(view: SlotView) {
   if (!view._pinnedFolder || !view._isLive) return;
   const epoch = view._recoveryEpoch;
   try {
-    const result = await gateway.request<FsListResult>(Methods.FS_LIST, {
-      slotId: view.slotId,
-      path: view._pinnedFolder,
-      includeIgnored: true,
-    });
+    const result = await view._workspaceReads.read<FsListResult>(
+      Methods.FS_LIST,
+      {
+        slotId: view.slotId,
+        path: view._pinnedFolder,
+        includeIgnored: true,
+      },
+      (result) => {
+        if (isCurrentPinnedResult(view, epoch)) view._pinnedEntries = result.entries;
+      },
+    );
     if (!isCurrentPinnedResult(view, epoch)) return;
     view._pinnedEntries = result.entries;
   } catch (err) {
@@ -116,11 +134,22 @@ export async function loadSlotViewPinnedSubdir(view: SlotView, dirPath: string) 
   const epoch = view._recoveryEpoch;
   try {
     // Pinned folders may be inside .task/ (gitignored) — always include ignored
-    const result = await gateway.request<FsListResult>(Methods.FS_LIST, {
-      slotId: view.slotId,
-      path: dirPath,
-      includeIgnored: true,
-    });
+    const result = await view._workspaceReads.read<FsListResult>(
+      Methods.FS_LIST,
+      {
+        slotId: view.slotId,
+        path: dirPath,
+        includeIgnored: true,
+      },
+      (result) => {
+        if (isCurrentPinnedResult(view, epoch))
+          view._pinnedEntries = updateSlotViewTreeChildren(
+            view._pinnedEntries,
+            dirPath,
+            result.entries,
+          );
+      },
+    );
     if (!isCurrentPinnedResult(view, epoch)) return;
     view._pinnedEntries = updateSlotViewTreeChildren(view._pinnedEntries, dirPath, result.entries);
   } catch (err) {

@@ -1,0 +1,127 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Run detail shares progress and selected-step history offline",
+  "description": "Living ADR-071 acceptance for the approved offline client store. Reuse the isolated one-slot fixture and environment required by command-center-progress-cache.recipe.json. Drive real worker files, the run detail route and selected-step URL through the production gateway/browser. Verify canonical progress, source errors/removals, zero periodic reads during an eleven-second idle window, cold offline saved age, retained old worker/reviewer/selected-step history after slot reuse, and selected-step cold recovery. No UI/cache state injection. Keep this recipe with the feature; native and other families have separate acceptance.",
+  "proofTargets": [
+    {
+      "id": "progressErrorRetained",
+      "claim": "Disconnect preserves the saved checklist and its visible read failure until a successful current read replaces it."
+    },
+    {
+      "id": "progressOwnershipIsolated",
+      "claim": "Missing runs fail closed and reused slots preserve old worker, reviewer and selected-step progress without exposing successor bytes."
+    },
+    {
+      "id": "progressNotified",
+      "claim": "An actual owned worker checklist edit updates the canonical run row with a newer progress stamp."
+    },
+    {
+      "id": "progressFailureVisible",
+      "claim": "A malformed child registry leaves saved counts with a visible read error, then recovers through its owning watcher."
+    },
+    {
+      "id": "coldProgressRestored",
+      "claim": "Cold offline startup renders saved checklist counts and age; gateway restart refreshes them before readiness returns."
+    },
+    {
+      "id": "progressSourceRemovals",
+      "claim": "Observed checklist and acceptance-sidecar removals and recreation reach the canonical progress row without another write or Refresh."
+    },
+    {
+      "id": "detailProgressIdle",
+      "claim": "An idle run detail sends no periodic task.progress request during eleven seconds."
+    },
+    {
+      "id": "selectedProgressRestored",
+      "claim": "Retained selected-step progress renders from its canonical query after slot reuse, cold offline startup and reconnect."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs progress-detail-web",
+        "timeout_ms": 300000,
+        "intent": "Use one owned scratch worker and real filesystem watchers, then restore exact status bytes and remove every owned fixture.",
+        "next": "progressNotified"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "progressNotified": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"progressNotified\":true",
+        "intent": "An actual owned worker checklist edit updates the canonical run row with a newer progress stamp.",
+        "proves": ["progressNotified"],
+        "next": "progressFailureVisible"
+      },
+      "progressFailureVisible": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"progressFailureVisible\":true",
+        "intent": "A malformed child registry leaves saved counts with a visible read error, then recovers through its owning watcher.",
+        "proves": ["progressFailureVisible"],
+        "next": "progressSourceRemovals"
+      },
+      "coldProgressRestored": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"coldProgressRestored\":true",
+        "intent": "Cold offline startup renders saved checklist counts and age; gateway restart refreshes them before readiness returns.",
+        "proves": ["coldProgressRestored"],
+        "next": "progressErrorRetained"
+      },
+      "progressErrorRetained": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"progressErrorRetained\":true",
+        "intent": "Disconnect after a real failed progress projection and verify that saved counts and the read error remain visible.",
+        "proves": ["progressErrorRetained"],
+        "next": "progressOwnershipIsolated"
+      },
+      "progressOwnershipIsolated": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"progressOwnershipIsolated\":true",
+        "intent": "Read missing, retired and successor runs through the real gateway, including retained role and selected-step artifacts.",
+        "proves": ["progressOwnershipIsolated"],
+        "next": "detailProgressIdle"
+      },
+      "progressSourceRemovals": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"progressSourceRemovals\":true",
+        "intent": "Observed checklist and acceptance-sidecar removals and recreation reach the canonical progress row without another write or Refresh.",
+        "proves": ["progressSourceRemovals"],
+        "next": "coldProgressRestored"
+      },
+      "detailProgressIdle": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"detailProgressIdle\":true",
+        "intent": "An idle run detail sends no periodic task.progress request during eleven seconds.",
+        "proves": ["detailProgressIdle"],
+        "next": "selectedProgressRestored"
+      },
+      "selectedProgressRestored": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"selectedProgressRestored\":true",
+        "intent": "Retained selected-step progress renders from its canonical query after slot reuse, cold offline startup and reconnect.",
+        "proves": ["selectedProgressRestored"],
+        "next": "done"
+      }
+    }
+  }
+}

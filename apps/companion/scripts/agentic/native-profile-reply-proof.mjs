@@ -8,11 +8,15 @@ import { createAgentDeviceClient } from 'agent-device';
 import { Methods } from '@farmslot/protocol';
 
 import { ROOT } from '../../../../scripts/runner-validation/lib/common.mjs';
-import { wait } from '../../../../scripts/runner-validation/scenarios/native-worker-lifecycle.mjs';
+import {
+  rpc,
+  wait,
+} from '../../../../scripts/runner-validation/scenarios/native-worker-lifecycle.mjs';
 
 const PHASES = Object.freeze({
   ARM_STATUS: 'arm-status',
   ARM_LIST: 'arm-list',
+  INVALIDATE_LIST: 'invalidate-list',
   HELD: 'held',
   CHOICES_PENDING: 'choices-pending',
   OTHER_SELECTED: 'other-selected',
@@ -91,6 +95,22 @@ if (phase === PHASES.ARM_STATUS || phase === PHASES.ARM_LIST) {
     }),
     { mode: 0o600 },
   );
+} else if (phase === PHASES.INVALIDATE_LIST) {
+  assert.equal(state.reply?.method, Methods.NATIVE_PROFILE_LIST);
+  const profileId = 'reply-inventory-notification';
+  const directory = path.join(path.dirname(statePath), profileId);
+  assert.equal(fs.existsSync(directory), false, 'Use a new owned profile directory');
+  const added = rpc(Methods.NATIVE_PROFILE_ADD, {
+    profileId,
+    runner: state.profile.runner,
+    directory,
+  });
+  rpc(Methods.NATIVE_PROFILE_REMOVE, {
+    profileId: added.profile.id,
+    accountContextId: added.profile.accountContextId,
+  });
+  if (fs.existsSync(directory) && fs.readdirSync(directory).length === 0) fs.rmdirSync(directory);
+  // Preserve any unexpected files for inspection instead of deleting unknown contents.
 } else if (phase === PHASES.CHOICES_PENDING) {
   const mobile = await controls();
   assert.ok(

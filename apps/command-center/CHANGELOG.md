@@ -17,6 +17,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 - Let browser proofs set an exact narrow viewport and system appearance.
 
 - Verify blocked review-fix recovery through the existing Resume control and its rendered active state.
+
 - Prove frozen review finding navigation, review/fix timelines and native session tabs through the connected operator views.
 
 - Restore shared review finding links at their exact file and line, with explicit unavailable-source states.
@@ -30,6 +31,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 - Add a live canvas probe for the current actor, elapsed time, completed rounds and bounded labels.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM, plus review command, cold-view and slot/branch/node/resource-writer and fleet-freshness proofs.
 
 ## 0.15.0 - 2026-10-19
 

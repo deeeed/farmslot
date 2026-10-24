@@ -1,14 +1,11 @@
-import { css, html, LitElement, unsafeCSS } from 'lit';
+import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type {
-  FleetStatus,
-  FleetStatusResult,
   Run,
   RunListResult,
   SlotStatus,
-  TmuxWorkerInventoryUpdatedPayload,
   TmuxWorkerListResult,
   TmuxWorkerRef,
   TmuxWorkerSummary,
@@ -16,16 +13,17 @@ import type {
   TmuxWorkerWatchItem,
 } from '@farmslot/protocol';
 import {
-  Events,
   flattenTmuxWorkers,
   isTmuxWorkerWatched,
   mergeRunsById,
   Methods,
   reconcileTmuxWorkerWatchlist,
   removeTmuxWorkerWatchItem,
+  sourceObservationAge,
   tmuxWorkerRefsMatch,
   upsertTmuxWorkerWatchItem,
 } from '@farmslot/protocol';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { nativeWorkerTabs } from '@farmslot/review-dispatch';
 
 import './terminal-view.js';
@@ -33,10 +31,12 @@ import '../shared/workspace-pin.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { listPinnedSlots, listPinnedWorkspaces } from '../../utils/pinned-slots.js';
 import { hashParams } from '../../utils/url-state.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   filterSlotsByGlobalFilters,
@@ -86,10 +86,41 @@ export class TerminalSplitView extends LitElement {
   @state() private _endSessionError = '';
   @state() private _workerPaneFilter: WorkerPaneFilter = 'adhoc';
 
-  private _unsubFleet?: () => void;
-  private _unsubTmuxWorkerUpdated?: () => void;
   private _unsubState?: () => void;
-  private _tmuxWorkerFetchSeq = 0;
+  @state() private _workerObservation: ResourceQueryState<TmuxWorkerListResult> = {
+    status: 'loading',
+  };
+  private _workerOwner?: string;
+  private _workerConnection?: string | number;
+  private _workerAgeTimer?: ReturnType<typeof setInterval>;
+  private readonly workerQuery = new ResourceQueryController<TmuxWorkerListResult>(
+    this,
+    (state) => {
+      const owner = getResourceWorkspaceKey();
+      if (owner !== this._workerOwner || gateway.resourceConnectionId !== this._workerConnection) {
+        this._workerOwner = owner;
+        this._workerConnection = gateway.resourceConnectionId;
+        this._endingSession = null;
+        this._endSessionError = '';
+        this._workerListError = '';
+      }
+      this._workerObservation = state;
+      this._tmuxWorkers = state.data ? flattenTmuxWorkers(state.data.nodes) : [];
+      if (state.status === 'ready' && state.data) {
+        this._workerWatchItems = reconcileTmuxWorkerWatchlist(
+          this._workerWatchItems,
+          this._tmuxWorkers,
+        ).map((entry) => entry.item);
+        localStorage.setItem(WORKER_WATCHLIST_KEY, JSON.stringify(this._workerWatchItems));
+      }
+      if (state.data && state.status !== 'ready' && !this._workerAgeTimer)
+        this._workerAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
+      else if (!state.data || state.status === 'ready') {
+        clearInterval(this._workerAgeTimer);
+        this._workerAgeTimer = undefined;
+      }
+    },
+  );
   private _globalFilters: AppState['globalFilters'] = { projects: [], machines: [] };
 
   static styles = css`
@@ -419,39 +450,28 @@ export class TerminalSplitView extends LitElement {
     this._applyRouteWorker();
     this._fetchSlots();
     void this._fetchRuns();
-    this._fetchTmuxWorkers();
+    this.workerQuery.setQuery(
+      resourceQuery<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, { includeDisconnected: true }),
+    );
+    this._tmuxWorkers = this.workerQuery.belongsToWorkspace
+      ? (this.workerQuery.state.data?.workers ?? [])
+      : [];
     const initial = getState();
     this._globalFilters = initial.globalFilters;
     this._runs = initial.runs;
     this._hydrating = isHydrating(initial, 'fleet');
-    this._unsubFleet = gateway.subscribe(Events.FLEET_UPDATED, (payload: unknown) => {
-      const fleet = payload as FleetStatus;
-      this._availableSlots = this._applyFilters(fleet.slots).map((s) => s.slot);
-    });
-    this._unsubTmuxWorkerUpdated = gateway.subscribe<TmuxWorkerInventoryUpdatedPayload>(
-      Events.TMUX_WORKER_INVENTORY_UPDATED,
-      (payload) => {
-        this._tmuxWorkers = flattenTmuxWorkers(payload.result.nodes);
-        this._workerWatchItems = reconcileTmuxWorkerWatchlist(
-          this._workerWatchItems,
-          this._tmuxWorkers,
-        ).map((entry) => entry.item);
-      },
-    );
     this._unsubState = subscribe((s: AppState) => {
       this._globalFilters = s.globalFilters;
       this._runs = s.runs;
       this._hydrating = isHydrating(s, 'fleet');
-      if (s.fleet) {
-        this._availableSlots = this._applyFilters(s.fleet.slots).map((slot) => slot.slot);
-      }
+      this._availableSlots = this._applyFilters(s.fleet?.slots ?? []).map((slot) => slot.slot);
     });
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    this._unsubFleet?.();
-    this._unsubTmuxWorkerUpdated?.();
+    clearInterval(this._workerAgeTimer);
+    this._workerAgeTimer = undefined;
     this._unsubState?.();
   }
 
@@ -547,33 +567,40 @@ export class TerminalSplitView extends LitElement {
     this._save();
   }
 
-  private async _fetchSlots() {
-    try {
-      const result = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
-      this._availableSlots = this._applyFilters(result.fleet.slots).map((s) => s.slot);
-    } catch (err) {
-      console.warn('[terminal-split-view] failed to refresh fleet slots', err);
-    }
+  private _fetchSlots() {
+    this._availableSlots = this._applyFilters(getState().fleet?.slots ?? []).map((s) => s.slot);
   }
 
-  private async _fetchTmuxWorkers() {
-    const fetchSeq = (this._tmuxWorkerFetchSeq += 1);
-    try {
-      const result = await gateway.request<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, {
-        includeDisconnected: true,
-      });
-      if (fetchSeq !== this._tmuxWorkerFetchSeq) return;
-      this._tmuxWorkers = flattenTmuxWorkers(result.nodes);
-      this._workerWatchItems = reconcileTmuxWorkerWatchlist(
-        this._workerWatchItems,
-        this._tmuxWorkers,
-      ).map((entry) => entry.item);
-      localStorage.setItem(WORKER_WATCHLIST_KEY, JSON.stringify(this._workerWatchItems));
-      this._workerListError = '';
-    } catch (err) {
-      if (fetchSeq !== this._tmuxWorkerFetchSeq) return;
-      this._workerListError = err instanceof Error ? err.message : String(err);
-    }
+  private _renderWorkerReadStatus() {
+    const state = this._workerObservation;
+    const sourceError = state.data?.nodes
+      .filter((node) => !node.ok)
+      .map((node) => `${node.nodeId}: ${node.error ?? 'worker inventory unavailable'}`)
+      .join('; ');
+    const error = state.error?.message ?? sourceError;
+    return html`
+      ${state.status !== 'ready' && state.data
+        ? html`<div data-worker-inventory-freshness="stale">
+            Saved workers, ${sourceObservationAge(state.observedAt)}. Session actions wait for a
+            current read.
+          </div>`
+        : nothing}
+      ${state.status === 'unsupported'
+        ? html`<div>Worker updates are unavailable on this gateway.</div>`
+        : nothing}
+      ${error
+        ? html`<div class="worker-error" role="alert" data-worker-inventory-error>
+            ${error}
+            <button
+              class="layout-btn"
+              ?disabled=${gateway.connectionState !== 'connected'}
+              @click=${() => this.workerQuery.retry()}
+            >
+              Retry reading workers
+            </button>
+          </div>`
+        : nothing}
+    `;
   }
 
   private _applyFilters(slots: SlotStatus[]): SlotStatus[] {
@@ -631,12 +658,9 @@ export class TerminalSplitView extends LitElement {
 
   private async _showActiveRuns() {
     try {
-      const [fleetResult, active] = await Promise.all([
-        gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
-        this._refreshActiveRuns(),
-      ]);
+      const active = await this._refreshActiveRuns();
       const activeRuns = selectActiveRunSlotIds(
-        fleetResult.fleet.slots,
+        getState().fleet?.slots ?? [],
         active,
         this._globalFilters,
       );
@@ -655,10 +679,7 @@ export class TerminalSplitView extends LitElement {
 
   private async _showPinnedSlots() {
     try {
-      const [fleetResult] = await Promise.all([
-        gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
-        this._refreshActiveRuns(),
-      ]);
+      await this._refreshActiveRuns();
       const availableRuns = new Set(
         selectWorkspaceRuns(this._runs, this._globalFilters).map((run) => run.id),
       );
@@ -666,7 +687,7 @@ export class TerminalSplitView extends LitElement {
         .flatMap((pin) => ('runId' in pin && availableRuns.has(pin.runId) ? [pin.runId] : []))
         .slice(0, 8);
       const pinned = selectPinnedSlotIds(
-        fleetResult.fleet.slots,
+        getState().fleet?.slots ?? [],
         listPinnedSlots().map((pin) => pin.slotId),
         this._globalFilters,
       );
@@ -871,16 +892,8 @@ export class TerminalSplitView extends LitElement {
               Watch sessions for quick access. Collapse this list to give terminals more room.
             </div>
           </div>
-          <button
-            class="layout-btn"
-            @click=${(event: Event) => {
-              event.preventDefault();
-              void this._fetchTmuxWorkers();
-            }}
-          >
-            Refresh sessions
-          </button>
         </summary>
+        ${this._renderWorkerReadStatus()}
         <div class="worker-filter-row">
           <input
             class="worker-search"
@@ -947,8 +960,20 @@ export class TerminalSplitView extends LitElement {
   }
 
   private async _endSession(worker: TmuxWorkerSummary) {
-    if (!gateway.isGlobalAdmin || !worker.canEndSession || !worker.pid || this._endingSession)
+    if (
+      !gateway.isGlobalAdmin ||
+      !worker.canEndSession ||
+      !worker.pid ||
+      this._endingSession ||
+      !this.workerQuery.ready
+    )
       return;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    const current = () =>
+      this.isConnected &&
+      getResourceWorkspaceKey() === owner &&
+      gateway.resourceConnectionId === connection;
     if (
       !window.confirm(
         `End tmux session "${worker.ref.session}" on ${worker.ref.nodeId}?\n\nEvery pane and any programs running in this session will stop.`,
@@ -958,22 +983,26 @@ export class TerminalSplitView extends LitElement {
     this._endingSession = `${worker.ref.nodeId}:${worker.ref.session}`;
     this._endSessionError = '';
     try {
+      const inventory = this.workerQuery.requireReady();
+      const selected = inventory.workers.find((candidate) =>
+        tmuxWorkerRefsMatch(candidate.ref, worker.ref),
+      );
+      if (!selected?.canEndSession || selected.pid !== worker.pid || !gateway.isGlobalAdmin)
+        throw new Error('The session changed. Review current worker inventory before acting.');
       await gateway.request(Methods.TMUX_WORKER_END_SESSION, {
-        worker: worker.ref,
-        expectedPid: worker.pid,
+        worker: selected.ref,
+        expectedPid: selected.pid,
       });
+      if (!current()) return;
       const belongs = (ref: TmuxWorkerRef) =>
         ref.nodeId === worker.ref.nodeId && ref.session === worker.ref.session;
       this._selectedWorkers = this._selectedWorkers.filter((ref) => !belongs(ref));
       this._saveWatchItems(this._workerWatchItems.filter((item) => !belongs(item.ref)));
       this._save();
-      await this._fetchTmuxWorkers();
-      // Node inventory can remain cached briefly after confirmed termination.
-      this._tmuxWorkers = this._tmuxWorkers.filter((current) => !belongs(current.ref));
     } catch (error) {
-      this._endSessionError = error instanceof Error ? error.message : String(error);
+      if (current()) this._endSessionError = error instanceof Error ? error.message : String(error);
     } finally {
-      this._endingSession = null;
+      if (current()) this._endingSession = null;
     }
   }
 
@@ -1024,7 +1053,8 @@ export class TerminalSplitView extends LitElement {
             : html`<button
                 class="worker-chip-btn danger"
                 data-end-session=${ref.session}
-                ?disabled=${!gateway.isGlobalAdmin ||
+                ?disabled=${!this.workerQuery.ready ||
+                !gateway.isGlobalAdmin ||
                 !worker?.canEndSession ||
                 Boolean(this._endingSession)}
                 title=${!gateway.isGlobalAdmin
@@ -1201,10 +1231,16 @@ export class TerminalSplitView extends LitElement {
                       </button>
                     </div>`
                 : pane.type === 'worker'
-                  ? html`<terminal-view
-                      .workerRefJson=${JSON.stringify(pane.ref)}
-                      @terminal-close=${this._handleTerminalClose}
-                    ></terminal-view>`
+                  ? this.workerQuery.ready &&
+                    this._tmuxWorkers.some((worker) => tmuxWorkerRefsMatch(worker.ref, pane.ref))
+                    ? html`<terminal-view
+                        .workerRefJson=${JSON.stringify(pane.ref)}
+                        @terminal-close=${this._handleTerminalClose}
+                      ></terminal-view>`
+                    : html`<div class="empty-slot">
+                        Saved terminal selection. Wait for current worker inventory before
+                        connecting.
+                      </div>`
                   : pane.slotId
                     ? this._renderContextTerminal(
                         this._currentRunIdForSlot(pane.slotId),

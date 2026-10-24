@@ -8,12 +8,12 @@ import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { FilterBar } from '../../components/FilterBar';
 import { isStoreScreenshotMode } from '../../lib/store-screenshot-mode';
 import { colors } from '../../lib/theme';
+import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { workspaceHome } from '../../lib/workspace-access';
-import { useConnectionStore } from '../../store/connection';
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  const access = useConnectionStore((state) => state.workspaceAccess);
+  const access = useWorkspaceRenderAccess();
   if (!isStoreScreenshotMode && access === 'native') {
     return <Redirect href={workspaceHome(access)} />;
   }

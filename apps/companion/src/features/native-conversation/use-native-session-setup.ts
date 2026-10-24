@@ -6,8 +6,11 @@ import {
   type NativeSessionCatalogResult,
   type NativeSessionInfo,
 } from '@farmslot/protocol';
+import { nativeObservationQuery } from '@farmslot/protocol/client-cache';
 import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
+import { useResourceQuery } from '../../hooks/useResourceQuery';
+import { getResourceCache, getResourceNativeOwnerId } from '../../lib/resource-cache';
 import { useConnectionStore } from '../../store/connection';
 
 import { useNativeProfileSelection } from './use-native-profile-selection';
@@ -17,13 +20,10 @@ export function useNativeSessionSetup(enabled: boolean) {
   const status = useConnectionStore((state) => state.status);
   const principalId = useConnectionStore((state) => state.principalId);
   const access = useConnectionStore((state) => state.workspaceAccess);
-  const [catalog, setCatalog] = useState<NativeSessionCatalogResult>();
   const [contextKey, setContextKey] = useState('');
-  const [catalogReadyFor, setCatalogReadyFor] = useState('');
   const [runnerId, setRunnerId] = useState('');
   const [modelId, setModelId] = useState('');
   const [mode, setMode] = useState<'default' | 'plan'>('default');
-  const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
@@ -38,40 +38,28 @@ export function useNativeSessionSetup(enabled: boolean) {
       alive.current = false;
     };
   }, []);
+  const nativeOwner = getResourceNativeOwnerId();
+  const catalogQuery = useMemo(
+    () =>
+      enabled && nativeOwner
+        ? nativeObservationQuery<NativeSessionCatalogResult>(
+            Methods.NATIVE_SESSION_CATALOG,
+            {},
+            nativeOwner,
+          )
+        : undefined,
+    [enabled, nativeOwner],
+  );
+  const catalogObservation = useResourceQuery(catalogQuery);
+  const catalog = catalogObservation.data;
+  const loading = catalogObservation.status === 'loading';
   useEffect(() => {
-    if (!enabled || !client || status !== 'connected' || access === 'none') return;
-    let current = true;
-    const generation = client.connectionGeneration;
-    const isCurrent = () =>
-      current &&
-      currentCatalogKey.current === catalogKey &&
-      client.connectionGeneration === generation &&
-      (client.authenticatedPrincipal?.id ?? null) === principalId;
-    setLoading(true);
-    setError('');
-    void client.request<NativeSessionCatalogResult>(Methods.NATIVE_SESSION_CATALOG, {}).then(
-      (result) => {
-        if (isCurrent()) {
-          setCatalog(result);
-          setRunnerId((current) => current || result.runners[0]?.runner || '');
-          setContextKey(
-            (current) => current || (result.contexts[0] ? workspaceKey(result.contexts[0]) : ''),
-          );
-          setCatalogReadyFor(catalogKey);
-          setLoading(false);
-        }
-      },
-      (cause) => {
-        if (isCurrent()) {
-          setError(String(cause));
-          setLoading(false);
-        }
-      },
+    if (catalogObservation.status !== 'ready' || !catalog) return;
+    setRunnerId((current) => current || catalog.runners[0]?.runner || '');
+    setContextKey(
+      (current) => current || (catalog.contexts[0] ? workspaceKey(catalog.contexts[0]) : ''),
     );
-    return () => {
-      current = false;
-    };
-  }, [enabled, client, status, principalId, access, refresh, catalogKey]);
+  }, [catalogObservation.status, catalog]);
   const runner = runnerId
     ? catalog?.runners.find((item) => item.runner === runnerId)
     : catalog?.runners[0];
@@ -109,7 +97,7 @@ export function useNativeSessionSetup(enabled: boolean) {
   const selectedNode = useRef('local');
   if (context) selectedNode.current = context.executionNodeId ?? 'local';
   const selectedMode = runner?.modes.includes(mode) ? mode : (runner?.modes[0] ?? 'default');
-  const catalogReady = catalogReadyFor === catalogKey && status === 'connected';
+  const catalogReady = catalogObservation.status === 'ready' && status === 'connected';
   const profiles = useNativeProfileSelection({
     enabled: enabled && catalogReady && !!context && !!runner,
     node: selectedNode.current,
@@ -140,7 +128,8 @@ export function useNativeSessionSetup(enabled: boolean) {
       profiles: profiles.viewModel,
       creating,
       controlsDisabled: creating || !catalogReady,
-      error,
+      catalogError: catalogObservation.error?.message,
+      error: error || catalogObservation.error?.message,
       canCreate:
         enabled &&
         status === 'connected' &&
@@ -192,6 +181,10 @@ export function useNativeSessionSetup(enabled: boolean) {
         currentCatalogKey.current = '';
         launchKeyRef.current = '';
         setRefresh((value) => value + 1);
+        if (catalogQuery)
+          void getResourceCache()
+            ?.retry(catalogQuery)
+            .catch((cause) => setError(String(cause)));
       },
       create: async (): Promise<NativeSessionInfo | undefined> => {
         if (

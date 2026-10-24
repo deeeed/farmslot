@@ -1,0 +1,114 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Production node file observations keep progress current across deletion, read errors and producer restart",
+  "description": "Use the isolated one-slot fixture selected by the progress-cache recipe plus FARMSLOT_REMOTE_FILE_NODE_PROOF pointing to a private live producer descriptor. The pool host must select node RPC rather than local file I/O. Start services/node/src/index.ts from the reviewed checkout with its own issued node credential, FARMSLOT_ROOT/.env, FARMSLOT_HOME, FARMSLOT_NATIVE_STATE_DIR, SCREEN_CONTROL_SOCKET and GATEWAY_URL. The descriptor supplies its actual registered pid, machine, home, sourceRoot and controlDirectory; an owned live supervisor acknowledges guarded stop/start requests using request IDs and pid fences. No model, device or tmux server starts. The production node must execute filesystem operations and publish changes. The recipe proves real source writes, deletion/recreation, read errors, same-gateway producer restart and cold client recovery. Restore exact pool/environment/status bytes and remove owned processes, run/task, credentials and control files after the recipe.",
+  "proofTargets": [
+    {
+      "id": "progressNotified",
+      "claim": "An actual owned worker checklist edit updates the canonical run row with a newer progress stamp."
+    },
+    {
+      "id": "progressFailureVisible",
+      "claim": "A malformed child registry leaves saved counts with a visible read error, then recovers through its owning watcher."
+    },
+    {
+      "id": "coldProgressRestored",
+      "claim": "Cold offline startup renders saved checklist counts and age; gateway restart refreshes them before readiness returns."
+    },
+    {
+      "id": "progressSourceRemovals",
+      "claim": "Observed checklist and acceptance-sidecar removals and recreation reach the canonical progress row without another write or Refresh."
+    },
+    {
+      "id": "productionNodeObserved",
+      "claim": "The actual owned production node and remote slot transport deliver the worker-source observations."
+    },
+    {
+      "id": "producerRestartObserved",
+      "claim": "A producer restart observes edits made offline without a gateway epoch change or command replay."
+    },
+    {
+      "id": "nodeReadErrorRecovered",
+      "claim": "A node read failure publishes a progress revision and retains visible stale counts; permission recovery restores identical bytes."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs remote-progress-web",
+        "timeout_ms": 240000,
+        "intent": "Use one owned scratch worker and real filesystem watchers, then restore exact status bytes and remove every owned fixture.",
+        "next": "progressNotified"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "progressNotified": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"progressNotified\":true",
+        "intent": "An actual owned worker checklist edit updates the canonical run row with a newer progress stamp.",
+        "proves": ["progressNotified"],
+        "next": "progressFailureVisible"
+      },
+      "progressFailureVisible": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"progressFailureVisible\":true",
+        "intent": "A malformed child registry leaves saved counts with a visible read error, then recovers through its owning watcher.",
+        "proves": ["progressFailureVisible"],
+        "next": "progressSourceRemovals"
+      },
+      "coldProgressRestored": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"coldProgressRestored\":true",
+        "intent": "Cold offline startup renders saved checklist counts and age; gateway restart refreshes them before readiness returns.",
+        "proves": ["coldProgressRestored"],
+        "next": "productionNodeObserved"
+      },
+      "progressSourceRemovals": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"progressSourceRemovals\":true",
+        "intent": "Observed checklist and acceptance-sidecar removals and recreation reach the canonical progress row without another write or Refresh.",
+        "proves": ["progressSourceRemovals"],
+        "next": "coldProgressRestored"
+      },
+      "productionNodeObserved": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"productionNodeObserved\":true",
+        "intent": "The actual owned production node and remote slot transport deliver the worker-source observations.",
+        "proves": ["productionNodeObserved"],
+        "next": "producerRestartObserved"
+      },
+      "producerRestartObserved": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"producerRestartObserved\":true",
+        "intent": "A producer restart observes edits made offline without a gateway epoch change or command replay.",
+        "proves": ["producerRestartObserved"],
+        "next": "nodeReadErrorRecovered"
+      },
+      "nodeReadErrorRecovered": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nodeReadErrorRecovered\":true",
+        "intent": "A node read failure publishes a progress revision and retains visible stale counts; permission recovery restores identical bytes.",
+        "proves": ["nodeReadErrorRecovered"],
+        "next": "done"
+      }
+    }
+  }
+}

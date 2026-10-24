@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { NativeSessionInfo } from '@farmslot/protocol';
 
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { nativeDeliveryLabel } from '../../lib/native-conversation';
 
 import { NativeProfilePicker } from './components/NativeProfilePicker';
@@ -52,15 +53,33 @@ export function NativeConversationScreen({
                 ? `${vm.session.runner} · ${vm.session.model ?? 'Default model'} · ${vm.session.state}`
                 : 'Start a conversation or continue an existing one.'}
           </Text>
+          {vm.historyObservation.error || vm.inventoryObservation.error ? (
+            <Pressable
+              testID="companion-native-refresh"
+              accessibilityRole="button"
+              style={styles.button}
+              onPress={() => void actions.refresh()}
+            >
+              <Text style={styles.buttonText}>Retry reading conversation</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {selected ? (
+          <ResourceReadStatus observation={vm.historyObservation} label="conversation history" />
+        ) : null}
+        {vm.runObservation ? (
+          <ResourceReadStatus observation={vm.runObservation} label="conversation run" />
+        ) : null}
+        {vm.runObservation?.error ? (
           <Pressable
-            testID="companion-native-refresh"
+            testID="companion-native-run-retry"
             accessibilityRole="button"
             style={styles.button}
-            onPress={() => void actions.refresh()}
+            onPress={() => void actions.retryRun()}
           >
-            <Text style={styles.buttonText}>Refresh</Text>
+            <Text style={styles.buttonText}>Retry run</Text>
           </Pressable>
-        </View>
+        ) : null}
         {vm.session ? (
           <Text selectable testID="companion-native-identity" style={styles.muted}>
             {vm.session.executionNodeId} · {vm.session.id}

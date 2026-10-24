@@ -95,6 +95,7 @@ export function testController(input: {
     emit: input.emit,
     now: input.now,
     inspectCheckout: async () => ({ ...checkoutIdentity }),
+    observeCheckout: async () => async () => {},
     buildBootstrap: async () => '# deterministic test bootstrap',
     buildLaunch: ({ checkout, runner }) => ({
       command: `${runner} --test-launch`,

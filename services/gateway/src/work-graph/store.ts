@@ -49,6 +49,7 @@ import {
 } from '../backlog/store.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { publishPlanningResources } from '../resources/planning-changes.js';
 import { pendingBranchMaintenance } from '../run-engine/branch-maintenance.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import {
@@ -148,6 +149,7 @@ async function persistNow(snapshot: WorkGraphRecord): Promise<void> {
 }
 
 function emit(snapshot: WorkGraphRecord): void {
+  publishPlanningResources('work-graphs', snapshot.graph.id);
   broadcast?.(Events.WORK_GRAPH_UPDATED, { graph: project(snapshot) });
 }
 

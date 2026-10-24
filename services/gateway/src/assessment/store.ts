@@ -16,6 +16,7 @@ import {
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import { principalOwnerStamp, samePrincipalOwner } from '../security/work-originator.js';
 
 import { TRIAGE_SPEND_BOUND_EXCEEDED, TRIAGE_SPEND_BOUND_UNVERIFIABLE } from './provider.js';
@@ -37,6 +38,12 @@ export function assessmentAuditHealth(): import('@farmslot/protocol').Assessment
 }
 export function recordAuditFailure(): void {
   failedWritesSinceStart++;
+  assessmentChanged();
+}
+
+function assessmentChanged(): void {
+  // Records are principal/generation scoped by their owning reads. Publish no owner or record IDs.
+  resourceRevisions.advance({ family: 'assessment', scope: 'farm' });
 }
 let tail: Promise<unknown> = Promise.resolve();
 
@@ -97,7 +104,10 @@ async function retained(prune = false): Promise<AssessmentRecord[]> {
   for (const name of names) {
     const record = await load(name.slice(0, -5));
     if (Date.parse(record.startedAt) < cutoff && !active.has(location(record.id))) {
-      if (prune) await rm(location(record.id));
+      if (prune) {
+        await rm(location(record.id));
+        assessmentChanged();
+      }
       continue;
     }
     if (record.status === 'started' && !active.has(location(record.id)))
@@ -144,6 +154,7 @@ async function createAssessment(
   serializeAssessment(record);
   await writeAtomicJSON(location(record.id), record);
   active.add(location(record.id));
+  assessmentChanged();
   return record;
 }
 export async function beginAssessment(context: AssessmentAuditContext): Promise<AssessmentRecord> {
@@ -207,6 +218,7 @@ export async function finishAssessment(
   recommendation?: ReviewIntakeAdvisory,
 ): Promise<void> {
   return serialized(async () => {
+    let committed = false;
     try {
       const completed: AssessmentRecord = {
         ...record,
@@ -217,8 +229,10 @@ export async function finishAssessment(
       };
       serializeAssessment(completed);
       await writeAtomicJSON(location(record.id), completed);
+      committed = true;
     } finally {
-      active.delete(location(record.id));
+      // A failed completion also makes the formerly active on-disk row read as interrupted.
+      if (active.delete(location(record.id)) || committed) assessmentChanged();
     }
   });
 }
@@ -302,6 +316,7 @@ export async function recordAssessmentFeedback(
     });
     serializeAssessment(record);
     await writeAtomicJSON(location(record.id), record);
+    assessmentChanged();
     return record;
   });
 }

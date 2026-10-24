@@ -10,11 +10,13 @@ import type {
   RunCleanupResult,
   RunFamilyReadinessSummary,
   RunLane,
+  RunListResult,
   RunListSummaryMeta,
   RunProjectAnalyticsSummary,
   RunStatus,
   TaskProgressStructured,
 } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../../state.js';
 import { parseRunsHashState, writeRunsHashState } from '../../state.js';
@@ -96,6 +98,7 @@ export abstract class RunListState extends LitElement {
   abstract refreshTagFilter(): Promise<void>;
 
   @state() runs: Run[] = [];
+  @state() runsObservation: ResourceQueryState<RunListResult> = { status: 'loading' };
   @state() prs: PRStatus[] = [];
   @state() runSummaryMeta: RunListSummaryMeta | null = null;
   @state() runFamilySummaries: RunFamilyReadinessSummary[] = [];
@@ -121,6 +124,7 @@ export abstract class RunListState extends LitElement {
   @state() narrowViewport = false;
   @state() cleanupPreview: RunCleanupResult | null = null;
   @state() actionInProgress = false;
+  @state() archiveErrors = new Map<string, string>();
   @state() hydrating = false;
   @state() bootstrapFailed = false;
   @state() taskProgressByRun = new Map<string, TaskProgressStructured>();

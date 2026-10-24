@@ -53,6 +53,38 @@ export interface NodeFsPathParams {
   relPath: string;
 }
 
+export interface FileWatchFailure {
+  code?: string;
+  message: string;
+}
+
+export type FileWatchUnavailable = { kind: 'deleted' } | { kind: 'error'; error: FileWatchFailure };
+
+export interface NodeFsWatchParams {
+  path: string;
+  /** Recursive names/bytes/git-metadata observation, negotiated separately from file content. */
+  workspace?: 1;
+  /** Opt in to explicit deletion/error observations; absent retains content-only delivery. */
+  observations?: 1;
+}
+
+/** Experimental arm acknowledgement. Missing initial means no verified observation. */
+export interface NodeFsWatchResult {
+  watching: true;
+  observations?: 1;
+  initial?: { kind: 'updated'; content: string } | ({ content: '' } & FileWatchUnavailable);
+}
+
+interface NodeFsWatchIdentity {
+  requestId: string;
+  machine: string;
+  path: string;
+}
+
+/** Existing nodes omit kind. Content remains a string for the established wire contract. */
+export type NodeFsChangedPayload = NodeFsWatchIdentity &
+  ({ kind?: 'updated'; content: string } | ({ content: '' } & FileWatchUnavailable));
+
 export interface NodeFsWriteParams extends NodeFsPathParams {
   content: string;
 }
@@ -105,4 +137,18 @@ export interface NodeFsWriteChunkResult {
   ok: true;
   bytesWritten: number;
   offset: number;
+}
+
+/** Existing fs.watch/fs.watch.stop and node.fs.changed; workspace mode never carries file bytes. */
+export interface NodeFsWorkspaceWatchResult {
+  workspace: 1;
+  ready: true;
+}
+export interface NodeFsWorkspaceChangedPayload {
+  requestId: string;
+  path: string;
+  machine: string;
+  workspace: 1;
+  kind: 'updated' | 'error';
+  error?: { message: string };
 }

@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
 
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { colors } from '../../lib/theme';
 import { visualReviewSurfaceLinks } from '../../lib/visual-review';
 
@@ -18,11 +19,33 @@ import {
 } from './visual-review-controller';
 
 export function VisualReviewScreen({ route }: { route: VisualReviewRouteParams }) {
-  const { state, exportMessage, actions } = useVisualReviewController(route);
+  const screen = useVisualReviewController(route);
+  const { state, exportMessage, actions } = screen;
+  const observations = (
+    <>
+      <ResourceReadStatus observation={screen.runObservation} label="visual review run" />
+      <ResourceReadStatus observation={screen.recipeObservation} label="visual review inventory" />
+      {state.status === 'ready' && state.targetRunId !== screen.runObservation.data?.run.id ? (
+        <ResourceReadStatus observation={screen.targetObservation} label="feedback target" />
+      ) : null}
+      {screen.runObservation.error ||
+      screen.recipeObservation.error ||
+      screen.targetObservation.error ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Retry visual review"
+          onPress={actions.retry}
+        >
+          <Text style={styles.body}>Retry</Text>
+        </Pressable>
+      ) : null}
+    </>
+  );
 
   if (state.status === 'loading') {
     return (
       <View style={[styles.screen, styles.centered]} testID="companion-screen-visual-review">
+        {observations}
         <ActivityIndicator color={colors.accent} />
         <Text style={styles.muted}>Loading visual review source…</Text>
       </View>
@@ -31,6 +54,7 @@ export function VisualReviewScreen({ route }: { route: VisualReviewRouteParams }
   if (state.status === 'error') {
     return (
       <View style={[styles.screen, styles.centered]} testID="companion-screen-visual-review">
+        {observations}
         <Text style={styles.error} testID="visual-review-error">
           {state.message}
         </Text>
@@ -40,17 +64,29 @@ export function VisualReviewScreen({ route }: { route: VisualReviewRouteParams }
       </View>
     );
   }
-  return <ReadyVisualReview state={state} exportMessage={exportMessage} actions={actions} />;
+  return (
+    <ReadyVisualReview
+      state={state}
+      exportMessage={exportMessage}
+      actions={actions}
+      commandsReady={screen.commandsReady}
+      observations={observations}
+    />
+  );
 }
 
 function ReadyVisualReview({
   state,
   exportMessage,
   actions,
+  commandsReady,
+  observations,
 }: {
   state: VisualReviewReadyState;
   exportMessage: string | null;
   actions: ReturnType<typeof useVisualReviewController>['actions'];
+  commandsReady: boolean;
+  observations: React.ReactNode;
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const [fullWidth, setFullWidth] = useState(false);
@@ -81,6 +117,7 @@ function ReadyVisualReview({
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
+      {observations}
       <View style={{ gap: 4 }}>
         <Text style={styles.eyebrow}>Visual review · run {state.targetRunId}</Text>
         <Text style={styles.body}>{source.title}</Text>
@@ -175,6 +212,7 @@ function ReadyVisualReview({
         exportMessage={exportMessage}
         onExport={actions.exportFeedback}
         onSend={actions.submit}
+        commandsReady={commandsReady}
       />
     </ScrollView>
   );

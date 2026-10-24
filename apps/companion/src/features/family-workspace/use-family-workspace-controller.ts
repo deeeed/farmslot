@@ -1,23 +1,20 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  Events,
   type FamilyObservabilityArtifact,
   type FamilyObservabilityGetResult,
   type FamilyObservabilityRunSummary,
-  type FamilyObservabilitySnapshot,
   Methods,
-  type RecipeRunArtifactGroup,
-  type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
   type TaskProgressResult,
-  type TaskProgressStructured,
-  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { observeNativeFamilyFrame } from '../../farmslot/run-collections-proof';
+import { useResourceQueries, useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   artifactsForRecipeRun,
   artifactUrlForEntry,
@@ -25,6 +22,7 @@ import {
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
+import { currentFarmConnection } from '../../lib/connection-authority';
 import { diffArtifactCandidate } from '../../lib/diff';
 import {
   buildFamilyEvidenceGroups,
@@ -34,17 +32,15 @@ import {
   isFamilyVideoArtifact,
   normalizeFamilyEvidenceFilterParam,
 } from '../../lib/family-evidence';
-import { shouldRefreshFamilySnapshotForRunEvent } from '../../lib/family-refresh';
 import { collectFamilyRetrospectives } from '../../lib/family-retrospectives';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
-import { runRefreshEventRunId } from '../../lib/run-refresh';
+import { getResourceCache } from '../../lib/resource-cache';
 import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
 import {
   effectiveTaskProgressForRun,
   fallbackTaskProgressSummary,
   isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import {
@@ -104,32 +100,30 @@ export function useFamilyWorkspaceController() {
   }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const focused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
-  const [snapshot, setSnapshot] = useState<FamilyObservabilitySnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const familyQuery = useMemo(
+    () =>
+      familyId
+        ? resourceQuery<FamilyObservabilityGetResult>(Methods.FAMILY_OBSERVABILITY_GET, {
+            familyId,
+            ...(project ? { project } : {}),
+          })
+        : undefined,
+    [familyId, project],
+  );
+  const familyObservation = useResourceQuery(familyQuery);
+  const snapshot = familyObservation.data?.snapshot ?? null;
+  const [actionError, setError] = useState<string | null>(null);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [documentViewer, setDocumentViewer] = useState<{
     title: string;
     body: string;
   } | null>(null);
   const [evidenceFilter, setEvidenceFilter] = useState<FamilyEvidenceFilter>('all');
-  const [selectedRecipeArtifactCount, setSelectedRecipeArtifactCount] = useState<number | null>(
-    null,
-  );
-  const [selectedRecipeRuns, setSelectedRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
-  const [familyRecipeEvidence, setFamilyRecipeEvidence] = useState<
-    Record<string, FamilyRecipeEvidenceSummary>
-  >({});
-  const [selectedFullRun, setSelectedFullRun] = useState<Run | null>(null);
-  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
-  const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const documentAbortRef = useRef<AbortController | null>(null);
-  const familyRefreshRequestRef = useRef(0);
-  const familyRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const selectedRecipeRunsRequestRef = useRef(0);
-  const selectedFullRunRequestRef = useRef(0);
   const requestedRecipeRunId = routeParamString(recipeRun).trim();
   const requestedArtifactPath = routeParamString(artifact).trim();
   const requestedSection = normalizeFamilySectionParam(section);
@@ -158,313 +152,133 @@ export function useFamilyWorkspaceController() {
     }
   }, [requestedEvidenceFilter, requestedSection]);
 
-  const refreshFamilySnapshot = useCallback(
-    async (reason: string) => {
-      if (!client || !familyId) return;
-      const requestId = familyRefreshRequestRef.current + 1;
-      familyRefreshRequestRef.current = requestId;
-      try {
-        const result = await client.request<FamilyObservabilityGetResult>(
-          'family.observability.get',
-          {
-            familyId,
-            ...(project ? { project } : {}),
-          },
-        );
-        if (familyRefreshRequestRef.current !== requestId) return;
-        setSnapshot(result.snapshot);
-        setError(null);
-      } catch (err) {
-        if (familyRefreshRequestRef.current !== requestId) return;
-        setError(`Failed to refresh family workspace after ${reason}: ${(err as Error).message}`);
-      }
-    },
-    [client, familyId, project],
-  );
-
-  const scheduleFamilySnapshotRefresh = useCallback(
-    (reason: string) => {
-      if (familyRefreshTimerRef.current) clearTimeout(familyRefreshTimerRef.current);
-      familyRefreshTimerRef.current = setTimeout(() => {
-        familyRefreshTimerRef.current = null;
-        void refreshFamilySnapshot(reason);
-      }, 400);
-    },
-    [refreshFamilySnapshot],
-  );
-
-  useEffect(() => {
-    setSnapshot(null);
-    setFamilyRecipeEvidence({});
-    setSelectedRecipeRuns([]);
-    setSelectedRecipeArtifactCount(null);
-    setSelectedFullRun(null);
-    setTaskProgress(null);
-    setTaskProgressError(null);
-    void refreshFamilySnapshot('initial load');
-  }, [refreshFamilySnapshot]);
-
-  const familyRunIds = useMemo(
-    () => (snapshot?.runs ?? []).map((run) => run.runId),
-    [snapshot?.runs],
-  );
-
   const selectedRun =
     snapshot?.runs.find((run) => run.runId === runId) ??
     snapshot?.runs.find((run) => run.runId === snapshot.latestRunId) ??
     snapshot?.runs[0] ??
     null;
-
-  const refreshSelectedRecipeRuns = useCallback(
-    async (
-      reason: string,
-      targetRunId: string | null = selectedRun?.runId ?? null,
-      reset = false,
-    ) => {
-      const requestId = selectedRecipeRunsRequestRef.current + 1;
-      selectedRecipeRunsRequestRef.current = requestId;
-      if (!client || !targetRunId) {
-        setSelectedRecipeArtifactCount(null);
-        setSelectedRecipeRuns([]);
-        return;
-      }
-      if (reset) {
-        setSelectedRecipeArtifactCount(null);
-        setSelectedRecipeRuns([]);
-        setError(null);
-      }
-      try {
-        const result = await client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-          runId: targetRunId,
-        });
-        if (selectedRecipeRunsRequestRef.current !== requestId) return;
-        setSelectedRecipeRuns(result.recipeRuns);
-        setSelectedRecipeArtifactCount(
-          result.recipeRuns.reduce(
-            (count, group) => count + artifactsForRecipeRun(group).length,
-            0,
-          ),
-        );
-      } catch (err) {
-        if (selectedRecipeRunsRequestRef.current !== requestId) return;
-        setSelectedRecipeArtifactCount(null);
-        setSelectedRecipeRuns([]);
-        setError(
-          `Failed to refresh selected run recipe evidence after ${reason}: ${(err as Error).message}`,
-        );
-      }
-    },
-    [client, selectedRun?.runId],
-  );
-
-  const refreshSelectedFullRun = useCallback(
-    async (
-      reason: string,
-      targetRunId: string | null = selectedRun?.runId ?? null,
-      reset = false,
-    ) => {
-      const requestId = selectedFullRunRequestRef.current + 1;
-      selectedFullRunRequestRef.current = requestId;
-      if (!client || !targetRunId) {
-        setSelectedFullRun(null);
-        return;
-      }
-      if (reset) setSelectedFullRun(null);
-      try {
-        const result = await client.request<RunGetResult>('run.get', {
-          runId: targetRunId,
-        });
-        if (selectedFullRunRequestRef.current !== requestId) return;
-        setSelectedFullRun(result.run);
-      } catch (err) {
-        if (selectedFullRunRequestRef.current !== requestId) return;
-        setSelectedFullRun(null);
-        setTaskProgress(null);
-        setTaskProgressError(null);
-        setError(
-          `Failed to refresh selected run progress context after ${reason}: ${(err as Error).message}`,
-        );
-      }
-    },
-    [client, selectedRun?.runId],
-  );
-
+  const selectedId = selectedRun?.runId ?? runId;
   useEffect(() => {
-    if (!client || !familyId) return;
-    const shouldRefresh = (payload: unknown) =>
-      shouldRefreshFamilySnapshotForRunEvent(
-        { familyId, project, runIds: familyRunIds },
-        payload as { run?: Run; runId?: string },
-      );
-    const handleRunEvent = (payload: unknown, reason: string) => {
-      if (!shouldRefresh(payload)) return;
-      scheduleFamilySnapshotRefresh(reason);
-      const event = payload as { run?: Run; runId?: string };
-      const eventRunId = runRefreshEventRunId(event);
-      if (!selectedRun?.runId || eventRunId !== selectedRun.runId) return;
-      if (event.run?.id === selectedRun.runId) {
-        selectedFullRunRequestRef.current += 1;
-        setSelectedFullRun(event.run);
-      } else {
-        void refreshSelectedFullRun(reason, selectedRun.runId, false);
-      }
-      void refreshSelectedRecipeRuns(reason, selectedRun.runId, false);
-    };
-    const unsubscribers = [
-      client.subscribe(Events.RUN_CREATED, (payload) => handleRunEvent(payload, 'run.created')),
-      client.subscribe(Events.RUN_UPDATED, (payload) => handleRunEvent(payload, 'run.updated')),
-      client.subscribe(Events.RUN_COMPLETED, (payload) => handleRunEvent(payload, 'run.completed')),
-      client.subscribe(Events.RUN_STEP_COMPLETED, (payload) =>
-        handleRunEvent(payload, 'run.step.completed'),
+    if (focused && selectedRun && selectedRun.runId !== runId)
+      router.setParams({ runId: selectedRun.runId });
+  }, [focused, router, selectedRun?.runId, runId]);
+  const selectedQuery = useMemo(
+    () =>
+      selectedId ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: selectedId }) : undefined,
+    [selectedId],
+  );
+  const selectedRunObservation = useResourceQuery(selectedQuery);
+  const selectedFullRun = selectedRunObservation.data?.run ?? null;
+  const progressQuery = useMemo(() => {
+    const target = taskProgressRequestForRun(selectedFullRun);
+    return target ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, target) : undefined;
+  }, [selectedFullRun?.id, selectedFullRun?.slotId, selectedFullRun?.reviewWorkspace?.workspaceId]);
+  const progressObservation = useResourceQuery(progressQuery);
+  const taskProgress = progressObservation.data?.structured ?? null;
+  const taskProgressError = progressObservation.error
+    ? `Task progress unavailable: ${progressObservation.error.message}`
+    : null;
+  const familyRunIdsKey = (
+    snapshot?.runs.map(({ runId }) => runId) ?? (selectedId ? [selectedId] : [])
+  ).join(',');
+  const familyRunIds = useMemo(
+    () => (familyRunIdsKey ? familyRunIdsKey.split(',') : []),
+    [familyRunIdsKey],
+  );
+  const recipeQueries = useMemo(
+    () =>
+      familyRunIds.map((id) =>
+        resourceQuery<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, { runId: id }),
       ),
-      client.subscribe(Events.RUN_DECISION_NEW, (payload) =>
-        handleRunEvent(payload, 'run.decision.new'),
-      ),
-      client.subscribe(Events.RUN_DECISION_UPDATED, (payload) =>
-        handleRunEvent(payload, 'run.decision.updated'),
-      ),
-      client.subscribe(Events.RUN_DECISION_RESOLVED, (payload) =>
-        handleRunEvent(payload, 'run.decision.resolved'),
-      ),
+    [familyRunIds],
+  );
+  const recipeObservations = useResourceQueries(recipeQueries);
+  const proofFrame = useRef({
+    focused,
+    routeRunId: runId ?? '',
+    snapshot,
+    selectedFullRun,
+    runIds: familyRunIds,
+    recipes: recipeObservations,
+  });
+  proofFrame.current = {
+    focused,
+    routeRunId: runId ?? '',
+    snapshot,
+    selectedFullRun,
+    runIds: familyRunIds,
+    recipes: recipeObservations,
+  };
+  useEffect(() => {
+    if (__DEV__) return observeNativeFamilyFrame(familyId, () => proofFrame.current);
+  }, [familyId]);
+  const selectedRecipeObservation = recipeObservations[familyRunIds.indexOf(selectedId ?? '')];
+  const selectedRecipeRuns = selectedRecipeObservation?.data?.recipeRuns ?? [];
+  const selectedRecipeArtifactCount = selectedRecipeObservation?.data
+    ? selectedRecipeRuns.reduce((count, group) => count + artifactsForRecipeRun(group).length, 0)
+    : null;
+  const familyRecipeEvidence = useMemo(() => {
+    const summaries: Record<string, FamilyRecipeEvidenceSummary> = {};
+    recipeObservations.forEach((observed, index) => {
+      if (observed.data)
+        summaries[familyRunIds[index]] = summarizeFamilyRecipeEvidence(
+          observed.data.recipeRuns,
+          gatewayUrl,
+          familyRunIds[index],
+        );
+    });
+    return summaries;
+  }, [recipeObservations, familyRunIds, gatewayUrl]);
+  const error =
+    actionError ??
+    familyObservation.error?.message ??
+    selectedRunObservation.error?.message ??
+    progressObservation.error?.message ??
+    recipeObservations.find((observed) => observed.error)?.error?.message ??
+    null;
+  const retryFamily = useCallback(async () => {
+    const cache = getResourceCache();
+    if (!cache) return;
+    setError(null);
+    const queries: ResourceQuery[] = [
+      ...(familyQuery ? [familyQuery] : []),
+      ...(selectedQuery ? [selectedQuery] : []),
+      ...(progressQuery ? [progressQuery] : []),
+      ...recipeQueries,
     ];
-    return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
-      if (familyRefreshTimerRef.current) {
-        clearTimeout(familyRefreshTimerRef.current);
-        familyRefreshTimerRef.current = null;
-      }
-    };
-  }, [
-    client,
-    familyId,
-    familyRunIds,
-    project,
-    refreshSelectedFullRun,
-    refreshSelectedRecipeRuns,
-    scheduleFamilySnapshotRefresh,
-    selectedRun?.runId,
-  ]);
-
+    const failed = queries.filter((query) => cache.read(query).error);
+    await Promise.all(
+      (failed.length ? failed : familyQuery ? [familyQuery] : []).map((query) =>
+        cache.retry(query),
+      ),
+    );
+  }, [familyQuery, selectedQuery, progressQuery, recipeQueries]);
+  const profileId = useConnectionStore((state) => state.activeProfileId);
+  const authorityEpoch = useConnectionStore((state) => state.authorityEpoch);
+  const viewKey = JSON.stringify([familyId, selectedId, profileId, authorityEpoch]);
+  const scope = useRef({ key: viewKey, client });
+  if (scope.current.key !== viewKey || scope.current.client !== client)
+    scope.current = { key: viewKey, client };
+  const mounted = useRef(true);
   useEffect(() => {
-    if (!client || !familyId) return;
-    const timer = setInterval(() => {
-      void refreshFamilySnapshot('poll');
-    }, 30_000);
-    return () => clearInterval(timer);
-  }, [client, familyId, refreshFamilySnapshot]);
-
-  useEffect(() => {
+    mounted.current = true;
     return () => {
-      if (familyRefreshTimerRef.current) clearTimeout(familyRefreshTimerRef.current);
+      mounted.current = false;
     };
   }, []);
-
+  const captureCurrent = useCallback(() => {
+    const owner = scope.current;
+    const connected = client
+      ? currentFarmConnection(client, useConnectionStore.getState)
+      : () => false;
+    return () => mounted.current && scope.current === owner && connected();
+  }, [client]);
   useEffect(() => {
-    const runs = snapshot?.runs ?? [];
-    if (!client || runs.length === 0) {
-      setFamilyRecipeEvidence({});
-      return;
-    }
-
-    let disposed = false;
-    const runIds = runs.map((run) => run.runId);
-    Promise.allSettled(
-      runIds.map((familyRunId) =>
-        client
-          .request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-            runId: familyRunId,
-          })
-          .then((result) => [familyRunId, result.recipeRuns] as const),
-      ),
-    )
-      .then((results) => {
-        if (disposed) return;
-        const nextEvidence: Record<string, FamilyRecipeEvidenceSummary> = {};
-        const failed = results.find((result) => result.status === 'rejected');
-        for (const result of results) {
-          if (result.status !== 'fulfilled') continue;
-          const [familyRunId, recipeRuns] = result.value;
-          nextEvidence[familyRunId] = summarizeFamilyRecipeEvidence(
-            recipeRuns,
-            gatewayUrl,
-            familyRunId,
-          );
-        }
-        setFamilyRecipeEvidence(nextEvidence);
-        if (failed) {
-          setError(`Failed to load family recipe evidence: ${(failed.reason as Error).message}`);
-        }
-      })
-      .catch((err: Error) => {
-        if (!disposed) setError(`Failed to load family recipe evidence: ${err.message}`);
-      });
-
-    return () => {
-      disposed = true;
-    };
-  }, [client, gatewayUrl, snapshot?.runs]);
-
-  useEffect(() => {
-    if (!selectedRun?.runId) {
-      selectedRecipeRunsRequestRef.current += 1;
-      setSelectedRecipeArtifactCount(null);
-      setSelectedRecipeRuns([]);
-      return;
-    }
-    void refreshSelectedRecipeRuns('initial load', selectedRun.runId, true);
-  }, [refreshSelectedRecipeRuns, selectedRun?.runId]);
-
-  useEffect(() => {
-    if (!selectedRun?.runId) {
-      selectedFullRunRequestRef.current += 1;
-      setSelectedFullRun(null);
-      return;
-    }
-    void refreshSelectedFullRun('initial load', selectedRun.runId, true);
-  }, [refreshSelectedFullRun, selectedRun?.runId]);
-
-  const fetchTaskProgress = useCallback(() => {
-    const params = taskProgressRequestForRun(selectedFullRun);
-    if (!client || !params) return Promise.resolve();
-    return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
-      .then((result) => {
-        setTaskProgress(result.structured ?? null);
-        setTaskProgressError(null);
-      })
-      .catch((err: Error) => {
-        setTaskProgressError(`Task progress unavailable: ${err.message}`);
-      });
-  }, [
-    client,
-    selectedFullRun?.id,
-    selectedFullRun?.slotId,
-    selectedFullRun?.reviewWorkspace?.workspaceId,
-  ]);
-
-  useEffect(() => {
-    if (!client || !selectedFullRun) return;
-    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      const update = payload as TaskProgressUpdatedPayload;
-      if (!shouldAcceptTaskProgressUpdate(selectedFullRun, update)) return;
-      setTaskProgress(update.progress.structured ?? null);
-      setTaskProgressError(null);
-    });
-    return unsub;
-  }, [client, selectedFullRun]);
-
-  useEffect(() => {
-    if (!isWorkerProgressActive(selectedFullRun)) {
-      setTaskProgress(null);
-      setTaskProgressError(null);
-      return;
-    }
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchTaskProgress, selectedFullRun]);
+    documentAbortRef.current?.abort();
+    setError(null);
+    setViewerUri(null);
+    setDocumentViewer(null);
+  }, [viewKey]);
 
   const runForArtifact = useCallback(
     (artifact: FamilyObservabilityArtifact) => {
@@ -565,24 +379,26 @@ export function useFamilyWorkspaceController() {
       const controller = new AbortController();
       documentAbortRef.current = controller;
       const url = familyArtifactUrl(gatewayUrl, artifact);
+      const current = captureCurrent();
       gatewayFetch(url, artifactAuthHeaders, { signal: controller.signal })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();
         })
-        .then((body) =>
-          setDocumentViewer({
-            title: artifact.path.split('/').pop() ?? artifact.path,
-            body,
-          }),
-        )
+        .then((body) => {
+          if (current() && !controller.signal.aborted)
+            setDocumentViewer({
+              title: artifact.path.split('/').pop() ?? artifact.path,
+              body,
+            });
+        })
         .catch((err: Error) => {
           // Abort is the expected cleanup path when navigating or opening another document.
-          if (err.name === 'AbortError') return;
+          if (err.name === 'AbortError' || !current()) return;
           setError(`Failed to load ${artifact.path}: ${err.message}`);
         });
     },
-    [artifactAuthHeaders, gatewayUrl],
+    [artifactAuthHeaders, gatewayUrl, captureCurrent],
   );
 
   const diffRouteContext = useCallback(
@@ -708,6 +524,16 @@ export function useFamilyWorkspaceController() {
       client,
       insets,
       goBackOrRuns,
+      familyObservation,
+      selectedRunObservation,
+      selectedFullRun,
+      retryFamily,
+      openSavedRun: () =>
+        selectedFullRun &&
+        router.push({
+          pathname: '/workspace/run/[runId]/evidence',
+          params: { runId: selectedFullRun.id },
+        }),
     };
   }
 
@@ -842,6 +668,11 @@ export function useFamilyWorkspaceController() {
     : DECISION_EVIDENCE_RECIPE_RUN_PARAM;
   return {
     status: 'ready' as const,
+    familyObservation,
+    selectedRunObservation,
+    progressObservation,
+    selectedRecipeObservation,
+    retryFamily,
     snapshot,
     error: error ?? null,
     client,

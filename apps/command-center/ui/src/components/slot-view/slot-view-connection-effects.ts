@@ -1,9 +1,4 @@
-import type {
-  ResourceStatusUpdatedPayload,
-  SlotResource,
-  SlotStatus,
-  TaskProgressUpdatedPayload,
-} from '@farmslot/protocol';
+import type { ResourceStatusUpdatedPayload, SlotResource } from '@farmslot/protocol';
 import { Events } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
@@ -38,31 +33,23 @@ export function connectSlotView(view: SlotView): void {
   if (view.slotId) view._loadSlot();
   void refreshSlotViewRecipeRunnerOptions(view);
 
-  // Re-load slot when fleet data arrives (e.g., after page refresh)
-  view._unsubState = subscribe((state) => {
-    if (state.fleet && view.slotId && !view._slot) {
-      view._loadSlot();
-    }
-    if (state.fleet) view._requestSlotSwitcherUpdate(state.fleet.slots);
-  });
-
-  // Track linked run for this slot
-  let prevRunStatus: string | null = null;
   const updateLinkedRun = () => {
-    void view._refreshLinkedRun(prevRunStatus).then((nextStatus) => {
-      prevRunStatus = nextStatus;
-    });
+    view._runQueries.sync();
   };
 
-  view._unsubSlot = gateway.subscribe(Events.SLOT_CHANGED, (payload: unknown) => {
-    const slot = payload as SlotStatus;
-    if (slot.slot === view.slotId) {
-      const prevBoundRunId = view._slot?.currentRunId ?? null;
-      view._slot = slot;
-      if ((slot.currentRunId ?? null) !== prevBoundRunId) {
-        updateLinkedRun();
+  // Follow the same fleet projection as the rest of the application.
+  view._unsubState = subscribe((state) => {
+    if (view.slotId) {
+      const slot = state.fleet?.slots.find((candidate) => candidate.slot === view.slotId) ?? null;
+      if (!view._slot && slot) {
+        view._loadSlot();
+      } else if (view._slot !== slot) {
+        const previousRunId = view._slot?.currentRunId ?? null;
+        view._slot = slot;
+        if ((slot?.currentRunId ?? null) !== previousRunId) updateLinkedRun();
       }
     }
+    view._requestSlotSwitcherUpdate(state.fleet?.slots ?? []);
   });
 
   // Init workspace when gateway connects (handles page refresh)
@@ -85,16 +72,6 @@ export function connectSlotView(view: SlotView): void {
   });
 
   updateLinkedRun();
-  view._unsubRunUpdated = gateway.subscribe(Events.RUN_UPDATED, updateLinkedRun);
-  view._unsubRunCreated = gateway.subscribe(Events.RUN_CREATED, updateLinkedRun);
-  // Also re-check when initial state loads (runs arrive after slot-view mounts)
-  view._unsubStateChange = subscribe(updateLinkedRun);
-
-  // Task progress (structured)
-  view._unsubTaskProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
-    Events.TASK_PROGRESS_UPDATED,
-    (payload) => handleSlotViewTaskProgressUpdate(view, payload, updateLinkedRun),
-  );
 
   // Resource status updates (from polling)
   view._unsubResourceStatus = gateway.subscribe<ResourceStatusUpdatedPayload>(
@@ -112,17 +89,11 @@ export function connectSlotView(view: SlotView): void {
 export function disconnectSlotView(view: SlotView): void {
   document.removeEventListener('keydown', view._boundKeyHandler);
   window.removeEventListener('hashchange', view._onHashChange);
-  view._unsubSlot?.();
   view._unsubState?.();
   view._unsubConn?.();
-  view._unsubRunUpdated?.();
-  view._unsubRunCreated?.();
-  view._unsubStateChange?.();
-  view._unsubTaskProgress?.();
   view._unsubResourceStatus?.();
   view._unsubPrepareTracker?.();
   disconnectSlotViewLayoutObserver(view);
-  view._cancelFileRestoreRetry();
   view._cancelResourceRestoreRetry();
   view._teardownLive();
   view._confirmTimer.clear();
@@ -154,27 +125,6 @@ function restoreSlotViewLayout(view: SlotView): void {
     view._saveLayout();
   }
   view._selectedAgentContextId = view._selectedAgentContextIds[view.slotId] ?? 'primary';
-}
-
-function handleSlotViewTaskProgressUpdate(
-  view: SlotView,
-  payload: TaskProgressUpdatedPayload,
-  updateLinkedRun: () => void,
-): void {
-  const selected = view._taskAgentContext();
-  const matchesContext = !selected || !payload.contextId || payload.contextId === selected.id;
-  const matchesRun = !view._linkedRun || payload.runId === view._linkedRun.id;
-  if (
-    payload.slotId === view.slotId &&
-    matchesRun &&
-    matchesContext &&
-    payload.progress?.structured
-  ) {
-    view._structuredProgress = payload.progress.structured;
-    // Reload pinned folder entries — worker may have created new dirs (artifacts/)
-    if (view._pinnedFolder) view._loadPinnedEntries();
-    updateLinkedRun();
-  }
 }
 
 function handleSlotViewResourceStatusUpdate(

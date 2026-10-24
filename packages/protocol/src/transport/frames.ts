@@ -1,11 +1,17 @@
 // WebSocket frame types — shared between gateway and UI clients
 // Follows the OpenClaw pattern: req/res/event frames
 
+import type { ResourceReadStamp } from '../client-cache/keys.js';
+
+import type { ResourceReadContext } from './observations.js';
+
 export interface RequestFrame {
   type: 'req';
   id: string;
   method: string;
   params?: unknown;
+  /** Optional experimental observed-read contract; never authorizes a mutation. */
+  resourceRead?: ResourceReadContext;
 }
 
 export interface ResponseFrame {
@@ -13,6 +19,8 @@ export interface ResponseFrame {
   id: string;
   ok: boolean;
   payload?: unknown;
+  /** Sampled before the cacheable read, independently of its domain payload. */
+  resourceState?: ResourceReadStamp;
   error?: {
     code: string;
     message: string;

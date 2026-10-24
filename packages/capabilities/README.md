@@ -34,6 +34,23 @@ import { createH264FrameSplitter } from '@farmslot/capabilities/screen-h264';
 | `screen-frame` — `encodeNodeFrame()` / `decodeNodeFrame()` | The node→gateway capture-frame binary envelope codec (`0xAF` magic). Node encodes, gateway decodes.                                                                        |
 | `screen-h264` — `createH264FrameSplitter()`                | Splits a raw `adb screenrecord --output-format=h264` byte stream into individual video frames.                                                                             |
 
+## File observations
+
+`watchFile(path, onContent, { onUnavailable })` keeps `onContent` for actual UTF-8
+contents, including empty files. The optional callback receives `{ kind: 'deleted' }`
+or `{ kind: 'error', error: { code?, message } }`. Recreating a file with identical
+bytes restores content delivery. Reads superseded by another event or a stopped
+handle cannot publish.
+
+The node accepts `fs.watch { path, observations: 1 }` and replies with
+`{ watching: true, observations: 1 }`. Opted-in `node.fs.changed` events retain
+`requestId`, `machine`, `path` and `content`, and add `kind` for deletion or error.
+The empty `content` on those events is a wire compatibility field; `kind` determines
+the state. Requests without the option keep content-only events. Older nodes still
+report writes and omit the observation version, so full state reporting requires
+a coordinated node upgrade. Omitting the option rolls back delivery without
+changing watched files.
+
 ## Source layout
 
 | Path                  | Owns                                                                               |

@@ -3,6 +3,7 @@ import { Pressable, Text, TextInput, View } from 'react-native';
 
 import {
   SOURCE_VIEW_ACTION_LABELS,
+  sourceObservationAge,
   type SourceSelection,
   type SourceStatusController,
   type SourceStatusRowView,
@@ -42,7 +43,7 @@ function SourceRow({
           placeholderTextColor={styles.placeholder.color}
           autoCapitalize="none"
           autoCorrect={false}
-          style={styles.input}
+          style={[styles.input, !snapshot.canEdit && styles.disabled]}
           value={row.selection?.ref ?? ''}
           editable={snapshot.canEdit}
           onChangeText={(ref) =>
@@ -61,14 +62,18 @@ function SourceRow({
             <Pressable
               testID={`source-${row.declaration.id}-main`}
               disabled={!snapshot.canEdit}
-              style={styles.button}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !snapshot.canEdit }}
+              style={[styles.button, !snapshot.canEdit && styles.disabled]}
               onPress={() => controller.select({ sourceId: row.declaration.id, selection: 'main' })}
             >
               <Text style={baseStyles.textPrimary}>Use main</Text>
             </Pressable>
             <Pressable
               disabled={!snapshot.canEdit}
-              style={styles.button}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !snapshot.canEdit }}
+              style={[styles.button, !snapshot.canEdit && styles.disabled]}
               onPress={() => controller.clearSelection(row.declaration.id)}
             >
               <Text style={baseStyles.textPrimary}>Inherit scope</Text>
@@ -80,7 +85,14 @@ function SourceRow({
             key={action}
             testID={`source-${row.declaration.id}-${action}`}
             disabled={!snapshot.interactive || (action === 'pin' && !row.canPin)}
-            style={styles.button}
+            accessibilityRole="button"
+            accessibilityState={{
+              disabled: !snapshot.interactive || (action === 'pin' && !row.canPin),
+            }}
+            style={[
+              styles.button,
+              (!snapshot.interactive || (action === 'pin' && !row.canPin)) && styles.disabled,
+            ]}
             onPress={() => void controller.apply(action, row.declaration.id)}
           >
             <Text style={baseStyles.textPrimary}>{SOURCE_VIEW_ACTION_LABELS[action]}</Text>
@@ -115,6 +127,11 @@ export function SourceStatusSection(props: SourceStatusSectionProps) {
           </Text>
         )}
       </View>
+      {view && snapshot.freshness !== 'ready' && (
+        <Text style={baseStyles.textSecondary} testID="sources-stale">
+          Stale · {sourceObservationAge(snapshot.observedAt)}
+        </Text>
+      )}
       {snapshot.unsupported && (
         <Text style={baseStyles.textSecondary} testID="sources-unsupported">
           Live updates unavailable on this gateway.

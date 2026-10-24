@@ -241,7 +241,7 @@ import { restoreTmuxWorker } from '../agents/runtime-recovery.js';
 import { restartBranchWatchesForMachine } from '../automation/branch-watcher.js';
 // Method handlers
 import { GatewayInternalError, GatewayMethodError } from '../core/method-error.js';
-import { getAllNodes, registerNode } from '../fleet/machine-registry.js';
+import { getAllNodes, getNode, registerNode } from '../fleet/machine-registry.js';
 import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
 import { pairingCandidates, pairingCreate } from '../fleet/pairing.js';
 import {
@@ -563,6 +563,7 @@ import {
 import { metroSubscribe, metroUnsubscribe } from '../methods/workspace.js';
 import { getAllThumbnails, subscribeThumbnails } from '../observability/thumbnail-cache.js';
 import { farmslotRoot } from '../projects/repo-root.js';
+import { nativeObservations } from '../resources/native-observations.js';
 import { rememberNativeExecutionNode } from '../runners/native/execution-nodes.js';
 import { unsubscribePty } from '../runtime/pty-stream.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
@@ -1182,13 +1183,22 @@ async function routeAuthorizedMethod(
     // Nodes
     case 'node.connect': {
       requireNodeSession(authRuntime, state);
-      const { machine, pid, protocolVersion, capabilities, gatewayUrl, execCancellation } = p as {
+      const {
+        machine,
+        pid,
+        protocolVersion,
+        capabilities,
+        gatewayUrl,
+        execCancellation,
+        observationCapabilities,
+      } = p as {
         machine: string;
         pid: number;
         protocolVersion?: string;
         capabilities?: import('@farmslot/protocol').RecipeRuntimeCapabilityDeclaration[];
         gatewayUrl?: unknown;
         execCancellation?: unknown;
+        observationCapabilities?: import('@farmslot/protocol').NodeObservationCapabilities;
       };
       const resolved = authRuntime.resolver.resolveSessionPrincipal(state);
       assertNativeMachineAssignment(
@@ -1240,6 +1250,7 @@ async function routeAuthorizedMethod(
               },
             }
           : undefined;
+      const previousNativeNode = getNode(machine);
       registerNode(
         machine,
         pid,
@@ -1250,6 +1261,35 @@ async function routeAuthorizedMethod(
         nativeAuthority,
         typeof gatewayUrl === 'string' ? gatewayUrl : undefined,
         execCancellation === true,
+        {
+          ...(observationCapabilities?.workers === 1 ? { workers: 1 as const } : {}),
+          ...(observationCapabilities?.files === 1 ? { files: 1 as const } : {}),
+          ...(observationCapabilities?.workspace === 1 ? { workspace: 1 as const } : {}),
+        },
+        () => {
+          if (
+            !state.authenticated ||
+            state.ws.readyState !== WebSocket.OPEN ||
+            state.authentication?.kind !== authentication?.kind ||
+            (state.authentication?.kind === 'credential' &&
+              authentication?.kind === 'credential' &&
+              state.authentication.credentialId !== authentication.credentialId)
+          )
+            return false;
+          const current = authRuntime.resolver.resolveSessionPrincipal(state);
+          return (
+            authRuntime.resolver.isSoloMode() ||
+            (current.ok &&
+              current.principal.id === principalId &&
+              current.principal.subject.type === 'node' &&
+              current.principal.subject.machine === machine)
+          );
+        },
+      );
+      nativeObservations.registrationChanged(
+        machine,
+        nativeSessions?.ownerPrincipalId,
+        previousNativeNode?.ws,
       );
       markMachineOnline(machine, capabilities);
       const versionMatch = protocolVersion === PROTOCOL_VERSION;

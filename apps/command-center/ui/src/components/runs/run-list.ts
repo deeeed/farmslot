@@ -12,10 +12,8 @@ import type {
   RunListResult,
   RunRehydratePrNumberResult,
   TaskProgressResult,
-  TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
-  Events,
   groupRunsByFamily,
   Methods,
   normalizeRunTags,
@@ -24,14 +22,11 @@ import {
   runElapsedTimeView,
   type RunFamilyGroup,
   slotMachineMap,
+  sourceObservationAge,
   summarizeRunEvidence,
 } from '@farmslot/protocol';
-import {
-  acceptsRunChecklistProgress,
-  ChecklistProgressReads,
-  runActivityView,
-  runChecklistProgressTarget,
-} from '@farmslot/review-dispatch';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { runActivityView, runChecklistProgressTarget } from '@farmslot/review-dispatch';
 import { projectColor } from '@farmslot/theme';
 
 import './run-pipeline-mini.js';
@@ -41,10 +36,19 @@ import '../shared/hydrating-placeholder.js';
 import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
-import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../state.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
+import {
+  activeRunsQuery,
+  getState,
+  isHydrating,
+  isPrLinkageMissing,
+  runHistoryQuery,
+  subscribe,
+} from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import {
   focusWorkInventoryRow,
@@ -60,6 +64,7 @@ import {
 
 import { familyRunHash } from './family-observability-url-state.js';
 import { standaloneRunDetailHash } from './run-detail-url-state.js';
+import { archiveRunSelection } from './run-list-archive.js';
 import {
   renderRunListManageBar,
   renderRunListSearchRow,
@@ -176,12 +181,20 @@ export class RunList extends RunListState {
   static styles = [runListStyles, flowBadgeStyles, workInventoryTableStyles];
 
   private narrowMedia?: MediaQueryList;
-  private unsubProgress?: () => void;
-  private readonly taskProgressFetches = new Set<string>();
+  private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
   @state() private taskProgressErrorsByRun = new Map<string, string>();
   private progressClock?: number;
-  private progressConnection = getState().connection;
-  private readonly checklistReads = new Map<string, ChecklistProgressReads>();
+  private savedAgeClock?: number;
+  private readonly tagQuery = new ResourceQueryController<RunListResult>(this, (state) => {
+    this.tagRuns = this.tagFilter ? (state.data?.runs ?? []) : null;
+    this.tagRunsError = state.error?.message ?? null;
+    this.syncSavedAgeClock();
+  });
+  private readonly familyQuery = new ResourceQueryController<RunListResult>(this, (state) => {
+    this.familyRuns = this.familyFilter ? (state.data?.runs ?? []) : null;
+    this.familyRunsError = state.error?.message ?? null;
+    this.syncSavedAgeClock();
+  });
   private readonly onNarrowChange = () => {
     this.narrowViewport = this.narrowMedia?.matches ?? false;
   };
@@ -190,6 +203,7 @@ export class RunList extends RunListState {
     super.connectedCallback();
     const s = getState();
     this.runs = s.runs;
+    this.runsObservation = s.runsObservation;
     this.prs = s.prs;
     this.runSummaryMeta = s.runSummaryMeta;
     this.runFamilySummaries = s.runFamilySummaries;
@@ -201,6 +215,13 @@ export class RunList extends RunListState {
     this.bootstrapFailed = s.bootstrapFailed.runs;
     this.unsub = subscribe((s) => {
       this.runs = s.runs;
+      this.runsObservation = s.runsObservation;
+      if (!s.runsObservation.data) {
+        this.selectedIds = new Set();
+        this.cleanupPreview = null;
+        this.archiveErrors = new Map();
+      }
+      this.syncSavedAgeClock();
       this.prs = s.prs;
       this.runSummaryMeta = s.runSummaryMeta;
       this.runFamilySummaries = s.runFamilySummaries;
@@ -210,27 +231,9 @@ export class RunList extends RunListState {
       this.fleet = s.fleet;
       this.hydrating = isHydrating(s, 'runs');
       this.bootstrapFailed = s.bootstrapFailed.runs;
-      if (s.connection === 'connected' && this.progressConnection !== 'connected') {
-        this.taskProgressFetches.clear();
-      }
-      this.progressConnection = s.connection;
-      void this.fetchInitialTaskProgress(s.runs);
+      this.syncTaskProgress(s.runs);
     });
-    this.unsubProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
-      Events.TASK_PROGRESS_UPDATED,
-      (update) => {
-        const run = this.runs.find((candidate) => candidate.id === update.runId);
-        if (run && update.progress.structured && acceptsRunChecklistProgress(run, update)) {
-          const key = runChecklistProgressTarget(run)!.key;
-          this.checklistReads.get(key)?.invalidate();
-          this.taskProgressByRun = new Map(this.taskProgressByRun).set(
-            key,
-            update.progress.structured,
-          );
-        }
-      },
-    );
-    void this.fetchInitialTaskProgress(this.runs);
+    this.syncTaskProgress(this.runs);
     window.addEventListener('hashchange', this._onHashChange);
     if (typeof window.matchMedia === 'function') {
       this.narrowMedia = window.matchMedia('(max-width: 860px)');
@@ -245,102 +248,143 @@ export class RunList extends RunListState {
   disconnectedCallback() {
     super.disconnectedCallback();
     window.clearInterval(this.progressClock);
+    window.clearInterval(this.savedAgeClock);
+    this.savedAgeClock = undefined;
     this.unsub?.();
-    this.unsubProgress?.();
+    for (const query of this.progressQueries.values()) {
+      query.hostDisconnected();
+      this.removeController(query);
+    }
+    this.progressQueries.clear();
     this.narrowMedia?.removeEventListener('change', this.onNarrowChange);
     window.removeEventListener('hashchange', this._onHashChange);
   }
 
-  private async fetchInitialTaskProgress(runs: readonly Run[]): Promise<void> {
-    const targets = runs.flatMap((run) => {
-      const target = runChecklistProgressTarget(run);
-      return target && !this.taskProgressFetches.has(target.key) ? [target] : [];
-    });
-    await Promise.all(
-      targets.map(async ({ key, params }) => {
-        this.taskProgressFetches.add(key);
-        let reads = this.checklistReads.get(key);
-        if (!reads) {
-          reads = new ChecklistProgressReads();
-          reads.select(key);
-          this.checklistReads.set(key, reads);
-        }
-        const read = reads.begin(key);
-        try {
-          const progress = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, params);
-          if (reads.isCurrent(read)) {
-            const next = new Map(this.taskProgressByRun);
-            if (progress.structured) next.set(key, progress.structured);
-            else next.delete(key);
-            this.taskProgressByRun = next;
-            const errors = new Map(this.taskProgressErrorsByRun);
-            errors.delete(key);
-            this.taskProgressErrorsByRun = errors;
-          }
-        } catch (error) {
-          if (!reads.isCurrent(read)) return;
-          // No checklist is shown on failure; a later refresh may read it again.
-          this.taskProgressFetches.delete(key);
-          this.taskProgressErrorsByRun = new Map(this.taskProgressErrorsByRun).set(
-            key,
-            error instanceof Error ? error.message : String(error),
-          );
-        }
+  private syncTaskProgress(runs: readonly Run[]): void {
+    const targets = new Map(
+      runs.flatMap((run) => {
+        const target = runChecklistProgressTarget(run);
+        return target ? [[target.key, target] as const] : [];
       }),
     );
+    for (const [key, query] of this.progressQueries) {
+      if (targets.has(key)) continue;
+      query.hostDisconnected();
+      this.removeController(query);
+      this.progressQueries.delete(key);
+      this.taskProgressByRun.delete(key);
+      this.taskProgressErrorsByRun.delete(key);
+    }
+    for (const [key, target] of targets) {
+      if (this.progressQueries.has(key)) continue;
+      let query: ResourceQueryController<TaskProgressResult>;
+      query = new ResourceQueryController<TaskProgressResult>(this, (state) => {
+        if (!query || this.progressQueries.get(key) !== query) return;
+        const progress = new Map(this.taskProgressByRun);
+        if (state.data?.structured) progress.set(key, state.data.structured);
+        else progress.delete(key);
+        this.taskProgressByRun = progress;
+        const errors = new Map(this.taskProgressErrorsByRun);
+        if (state.error) errors.set(key, state.error.message);
+        else errors.delete(key);
+        this.taskProgressErrorsByRun = errors;
+      });
+      this.progressQueries.set(key, query);
+      query.setQuery(resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, target.params));
+    }
   }
 
   async refreshTagFilter() {
-    if (!this.tagFilter) {
-      this.tagRuns = null;
-      this.tagRunsError = null;
-      return;
-    }
-    try {
-      const [tag] = normalizeRunTags([this.tagFilter]);
-      if (!tag) {
-        this.tagFilter = '';
-        this.tagRuns = null;
-        this.tagRunsError = null;
-        return;
-      }
-      const res = await gateway.request<RunListResult>(Methods.RUN_LIST, { tags: [tag] });
-      this.tagFilter = tag;
-      this.tagRuns = res.runs ?? [];
-      this.tagRunsError = null;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[run-list] failed to refresh tag ${this.tagFilter}:`, err);
-      this.tagRuns = [];
-      this.tagRunsError = message;
-    }
+    const [tag] = normalizeRunTags([this.tagFilter]);
+    this.tagFilter = tag ?? '';
+    this.tagQuery.setQuery(tag ? resourceQuery(Methods.RUN_LIST, { tags: [tag] }) : undefined);
+    this.tagRuns = tag ? (this.tagQuery.state.data?.runs ?? []) : null;
+    this.tagRunsError = this.tagQuery.state.error?.message ?? null;
   }
 
   async refreshFamilyFilter() {
-    if (!this.familyFilter) {
-      this.familyRuns = null;
-      this.familyRunsError = null;
-      return;
+    this.familyQuery.setQuery(
+      this.familyFilter
+        ? resourceQuery(Methods.RUN_LIST, { familyId: this.familyFilter })
+        : undefined,
+    );
+    this.familyRuns = this.familyFilter ? (this.familyQuery.state.data?.runs ?? []) : null;
+    this.familyRunsError = this.familyQuery.state.error?.message ?? null;
+  }
+
+  private get readStates() {
+    return [
+      this.runsObservation,
+      ...(this.tagFilter ? [this.tagQuery.state] : []),
+      ...(this.familyFilter ? [this.familyQuery.state] : []),
+    ];
+  }
+
+  private get canAct(): boolean {
+    return (
+      gateway.connectionState === 'connected' &&
+      gateway.workspaceAccess === 'farm' &&
+      this.readStates.every((state) => state.status === 'ready')
+    );
+  }
+
+  private assertCurrentRuns(ids: readonly string[] = []): void {
+    if (!this.canAct || getState().runsObservation.status !== 'ready')
+      throw new Error('Wait for current runs before acting.');
+    if (this.tagFilter) this.tagQuery.requireReady();
+    if (this.familyFilter) this.familyQuery.requireReady();
+    if (ids.some((id) => !this.runById(id)))
+      throw new Error('The selected runs changed. Review the current list before retrying.');
+  }
+
+  private runById(id: string): Run | undefined {
+    return this.filteredRuns.find((run) => run.id === id) ?? this.runs.find((run) => run.id === id);
+  }
+
+  private syncSavedAgeClock(): void {
+    const stale = this.readStates.some((state) => state.status === 'stale' && state.data);
+    if (stale && !this.savedAgeClock)
+      this.savedAgeClock = window.setInterval(() => this.requestUpdate(), 1000);
+    else if (!stale && this.savedAgeClock) {
+      window.clearInterval(this.savedAgeClock);
+      this.savedAgeClock = undefined;
     }
-    try {
-      const res = await gateway.request<RunListResult>(Methods.RUN_LIST, {
-        familyId: this.familyFilter,
-      });
-      this.familyRuns = res.runs ?? [];
-      this.familyRunsError = null;
-    } catch (err) {
-      // Surface the failure rather than masking it as an empty list (HARD RULE
-      // "no log-and-continue"). Render path checks `familyRunsError` to show
-      // an explicit error banner so an empty filtered view is never confused
-      // with a fetch failure. Keep `familyRuns = []` (not null) so downstream
-      // selection paths (e.g. `selectFamilyRuns`) that fall back via `??` to
-      // `this.runs` still see an empty filtered scope rather than the
-      // unfiltered run list.
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[run-list] failed to refresh family ${this.familyFilter}:`, err);
-      this.familyRuns = [];
-      this.familyRunsError = message;
-    }
+  }
+
+  private async retryRunReads(): Promise<void> {
+    const cache = getResourceCache();
+    if (!cache) return;
+    await Promise.all([
+      cache.retry(runHistoryQuery),
+      cache.retry(activeRunsQuery),
+      this.tagQuery.retry(),
+      this.familyQuery.retry(),
+    ]);
+  }
+
+  private renderReadStatus() {
+    const states = this.readStates;
+    const times = states.flatMap((state) =>
+      state.data && state.observedAt !== undefined ? [state.observedAt] : [],
+    );
+    const error = states.find((state) => state.error)?.error;
+    return html`
+      ${states.some((state) => state.status === 'stale') && times.length
+        ? html`<div class="rehydrating-banner" data-run-freshness="stale">
+            Saved runs, ${sourceObservationAge(Math.min(...times))}. Actions wait for a current
+            read.
+          </div>`
+        : nothing}
+      ${states.some((state) => state.status === 'unsupported')
+        ? html`<div class="rehydrating-banner">Run updates are unavailable on this gateway.</div>`
+        : nothing}
+      ${error
+        ? html`<div class="rehydrating-banner" role="alert">
+            Run read failed: ${error.message}
+            <button @click=${() => this.retryRunReads()}>Retry reading runs</button>
+          </div>`
+        : nothing}
+    `;
   }
 
   private get filteredRuns(): readonly Run[] {
@@ -420,6 +464,7 @@ export class RunList extends RunListState {
     if (this.actionInProgress) return;
     this.actionInProgress = true;
     try {
+      this.assertCurrentRuns([runId]);
       // findPRNumber retries up to 65s (0+5+15+45) plus 4 gh calls; default
       // 15s RPC timeout would abort before the gateway finishes. Allow 120s.
       const res = await gateway.request<RunRehydratePrNumberResult>(
@@ -428,7 +473,7 @@ export class RunList extends RunListState {
         120_000,
       );
       if (res.ok) {
-        // run.updated event will refresh the list; no local mutation needed.
+        // The shared query observes the writer's resource notification.
         console.log(`[run-list] rehydrated run ${shortId(runId)} -> PR #${res.prNumber}`);
         // Partial success: PR was linked but ci-watch replay was skipped
         // (reassigned slot, disabled, etc.). Surface the reason so operators
@@ -449,15 +494,14 @@ export class RunList extends RunListState {
     if (this.selectedIds.size === 0 || this.actionInProgress) return;
     this.actionInProgress = true;
     try {
+      this.assertCurrentRuns([...this.selectedIds]);
       const ids = [...this.selectedIds].filter((id) => {
-        const run = this.runs.find((candidate) => candidate.id === id);
+        const run = this.runById(id);
         return run ? TERMINAL_STATUSES.has(run.status) : false;
       });
       if (ids.length === 0) return;
       // Each cancelled run's delete releases the slot its cancel kept, one after another.
-      const releases = ids.filter(
-        (id) => this.runs.find((run) => run.id === id)?.status === 'cancelled',
-      ).length;
+      const releases = ids.filter((id) => this.runById(id)?.status === 'cancelled').length;
       await gateway.request<RunBulkDeleteResult>(
         Methods.RUN_BULK_DELETE,
         { runIds: ids },
@@ -475,32 +519,49 @@ export class RunList extends RunListState {
   private async archiveSelected() {
     if (this.selectedIds.size === 0 || this.actionInProgress) return;
     this.actionInProgress = true;
+    this.archiveErrors = new Map();
     // One refused or slow archive must not strand the rest of the selection;
     // the failures stay selected and are reported together.
     const failed = new Map<string, string>();
     try {
-      for (const id of this.selectedIds) {
-        const run = this.runs.find((candidate) => candidate.id === id);
-        if (!run || !isArchivableRun(run)) continue;
-        try {
-          await gateway.request<RunArchiveResult>(
-            Methods.RUN_ARCHIVE,
-            { runId: id },
-            SLOT_OPERATION_TIMEOUT_MS,
-          );
-        } catch (err) {
-          console.error(`[run-list] archive ${id} failed:`, err);
-          failed.set(id, (err as Error).message);
-        }
+      const cache = getResourceCache();
+      const workspaceKey = getResourceWorkspaceKey();
+      const connectionId = gateway.resourceConnectionId;
+      if (cache) {
+        const failures = await archiveRunSelection([...this.selectedIds], {
+          cache,
+          queries: [
+            runHistoryQuery,
+            activeRunsQuery,
+            ...(this.tagFilter
+              ? [resourceQuery<RunListResult>(Methods.RUN_LIST, { tags: [this.tagFilter] })]
+              : []),
+            ...(this.familyFilter
+              ? [resourceQuery<RunListResult>(Methods.RUN_LIST, { familyId: this.familyFilter })]
+              : []),
+          ],
+          isCurrent: () =>
+            gateway.connectionState === 'connected' &&
+            gateway.workspaceAccess === 'farm' &&
+            gateway.resourceConnectionId === connectionId &&
+            getResourceCache() === cache &&
+            getResourceWorkspaceKey() === workspaceKey,
+          archive: (id) =>
+            gateway.request<RunArchiveResult>(
+              Methods.RUN_ARCHIVE,
+              { runId: id },
+              SLOT_OPERATION_TIMEOUT_MS,
+            ),
+        });
+        // An account switch clears selection through the owner binding. Do not
+        // restore the previous account's selection or errors after that cleanup.
+        if (getResourceCache() !== cache || getResourceWorkspaceKey() !== workspaceKey) return;
+        for (const [id, message] of failures) failed.set(id, message);
+      } else {
+        for (const id of this.selectedIds) failed.set(id, 'Wait for current runs before acting.');
       }
       this.selectedIds = new Set(failed.keys());
-      if (failed.size > 0) {
-        alert(
-          `Bulk archive failed for ${failed.size} run(s):\n${[...failed]
-            .map(([id, message]) => `${id.slice(0, 8)}: ${message}`)
-            .join('\n')}`,
-        );
-      }
+      this.archiveErrors = failed;
     } finally {
       this.actionInProgress = false;
     }
@@ -510,6 +571,7 @@ export class RunList extends RunListState {
     if (this.actionInProgress) return;
     this.actionInProgress = true;
     try {
+      this.assertCurrentRuns();
       const result = await gateway.request<RunCleanupResult>(Methods.RUN_CLEANUP, { dryRun: true });
       this.cleanupPreview = result;
     } catch (err) {
@@ -524,6 +586,7 @@ export class RunList extends RunListState {
     if (this.actionInProgress) return;
     this.actionInProgress = true;
     try {
+      this.assertCurrentRuns();
       // Each cancelled run it archives releases the slot its cancel kept, one after another.
       const archives = this.cleanupPreview?.runsArchived.length ?? 0;
       await gateway.request<RunCleanupResult>(
@@ -543,7 +606,7 @@ export class RunList extends RunListState {
   private compareSelected() {
     const ids = [...this.selectedIds];
     if (ids.length !== 2) return;
-    const [a, b] = ids.map((id) => this.runs.find((r) => r.id === id)).filter(Boolean) as Run[];
+    const [a, b] = ids.map((id) => this.runById(id)).filter(Boolean) as Run[];
     if (a && b && !canCompareRuns(a, b)) {
       location.hash = `runs?family=${encodeURIComponent(a.familyId)}`;
       return;
@@ -567,7 +630,7 @@ export class RunList extends RunListState {
     const showCheckboxes = this.manageMode;
     const selCount = this.selectedIds.size;
     const selectedRuns = [...this.selectedIds]
-      .map((id) => this.runs.find((r) => r.id === id))
+      .map((id) => this.runById(id))
       .filter(Boolean) as Run[];
     const selectedTerminalCount = selectedRuns.filter((run) =>
       TERMINAL_STATUSES.has(run.status),
@@ -583,6 +646,7 @@ export class RunList extends RunListState {
         tab: this.tab,
         activeCount,
         manageMode: this.manageMode,
+        actionsReady: this.canAct,
         setTab: (tab) => {
           this.tab = tab;
           this.selectedIds = new Set();
@@ -634,7 +698,7 @@ export class RunList extends RunListState {
             statusPills: STATUS_PILLS,
             familyFilter: this.familyFilter,
             tagFilter: this.tagFilter,
-            actionInProgress: this.actionInProgress,
+            actionInProgress: this.actionInProgress || !this.canAct,
             setStatusFilter: (value) => {
               this.statusFilter = value;
               this._persistHashState();
@@ -643,12 +707,14 @@ export class RunList extends RunListState {
               this.familyFilter = '';
               this.familyRuns = null;
               this.familyRunsError = null;
+              void this.refreshFamilyFilter();
               this._persistHashState();
             },
             clearTagFilter: () => {
               this.tagFilter = '';
               this.tagRuns = null;
               this.tagRunsError = null;
+              void this.refreshTagFilter();
               this._persistHashState();
             },
             startCleanup: () => this.startCleanup(),
@@ -661,7 +727,7 @@ export class RunList extends RunListState {
             selectedTerminalCount,
             selectedArchivableCount,
             compareAllowed,
-            actionInProgress: this.actionInProgress,
+            actionInProgress: this.actionInProgress || !this.canAct,
             selectVisible: () => this.selectVisibleRuns(false),
             selectVisibleTerminal: () => this.selectVisibleRuns(true),
             clearSelection: () => this.clearSelection(),
@@ -671,6 +737,14 @@ export class RunList extends RunListState {
           })
         : nothing}
       ${this.renderAnalyticsStrip()} ${this.cleanupPreview ? this.renderCleanupPreview() : nothing}
+      ${this.renderReadStatus()}
+      ${this.archiveErrors.size
+        ? html`<div class="rehydrating-banner" role="alert" data-archive-errors>
+            ${[...this.archiveErrors].map(
+              ([id, message]) => html`<div>${id.slice(0, 8)}: ${message}</div>`,
+            )}
+          </div>`
+        : nothing}
       ${this.familyRunsError
         ? html`<div class="rehydrating-banner">
             Family ${this.familyFilter} fetch failed: ${this.familyRunsError}
@@ -681,11 +755,6 @@ export class RunList extends RunListState {
             Tag ${this.tagFilter} fetch failed: ${this.tagRunsError}
           </div>`
         : nothing}
-      ${this.bootstrapFailed && this.runs.length > 0
-        ? html`<div class="rehydrating-banner">Refresh failed… showing cached runs</div>`
-        : this.hydrating && this.runs.length > 0
-          ? html`<div class="rehydrating-banner">Reconnecting… showing last snapshot</div>`
-          : nothing}
       ${this.bootstrapFailed && this.runs.length === 0
         ? renderRunListSkeleton('Runs unavailable', () => gateway.reconnect())
         : this.hydrating && this.runs.length === 0
@@ -772,7 +841,7 @@ export class RunList extends RunListState {
 
   private renderCleanupPreview() {
     if (!this.cleanupPreview) return nothing;
-    return renderRunCleanupPreview(this.cleanupPreview, this.actionInProgress, {
+    return renderRunCleanupPreview(this.cleanupPreview, this.actionInProgress || !this.canAct, {
       confirm: () => this.confirmCleanup(),
       dismiss: () => {
         this.cleanupPreview = null;
@@ -781,7 +850,12 @@ export class RunList extends RunListState {
   }
 
   private async _stopAutoRecovery(runId: string) {
-    await gateway.request(Methods.RUN_AUTO_RECOVERY_STOP, { runId });
+    try {
+      this.assertCurrentRuns([runId]);
+      await gateway.request(Methods.RUN_AUTO_RECOVERY_STOP, { runId });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    }
   }
 
   private setInventorySort(key: RunInventorySortKey) {
@@ -897,6 +971,11 @@ export class RunList extends RunListState {
             runChecklistProgressTarget(run)?.key ?? '',
           )}
           .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
+          .taskProgressStale=${this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')
+            ?.state.status !== 'ready'}
+          .taskProgressAge=${sourceObservationAge(
+            this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state.observedAt,
+          )}
         ></run-pipeline-mini>
         <span class="pipeline-label" data-testid="runs-timing" title=${pipelineLabel}
           >${timing.label}</span
@@ -928,6 +1007,7 @@ export class RunList extends RunListState {
                 class="inline-action"
                 type="button"
                 title="Re-run PR lookup and kick CI watch"
+                ?disabled=${!this.canAct || this.actionInProgress}
                 @click=${() => this._rescueLinkage(run.id)}
               >
                 PR missing
@@ -937,6 +1017,7 @@ export class RunList extends RunListState {
             ? html`<button
                 class="inline-action"
                 type="button"
+                ?disabled=${!this.canAct || this.actionInProgress}
                 @click=${() => this._stopAutoRecovery(run.id)}
               >
                 Stop auto-recovering
@@ -970,8 +1051,8 @@ export class RunList extends RunListState {
   }
 
   private async setRunTags(run: Run, tags: string[]) {
+    this.assertCurrentRuns([run.id]);
     await gateway.request(Methods.RUN_TAGS_SET, { runId: run.id, tags });
-    await this.refreshTagFilter();
   }
 
   private filterByTag(tag: string) {
@@ -985,6 +1066,7 @@ export class RunList extends RunListState {
     return html`
       <run-tag-editor
         .tags=${normalizeRunTags(run.tags)}
+        .disabled=${!this.canAct}
         .saveTags=${(tags: string[]) => this.setRunTags(run, tags)}
         .filterTag=${(tag: string) => this.filterByTag(tag)}
       ></run-tag-editor>

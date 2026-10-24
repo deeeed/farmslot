@@ -1,18 +1,30 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
 import type { Run, TaskProgressResult } from '@farmslot/protocol';
-
 // See replay-step-nested-checklist.test.ts: mock.module replaces a module
 // wholesale, so the real namespaces are spread in and only the fixtures these
 // tests need are overridden. Both the watcher and methods/task.ts reach the same
 // resolved modules, so one mock covers the whole read path.
+import { type ResourceKey, resourceKeyId } from '@farmslot/protocol/client-cache';
+
+import '../runtime/mock-pty.test-support.js';
+
 import * as realConfig from '../core/config.js';
 import * as realState from '../core/state.js';
 import * as realFleetState from '../fleet/state.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import * as realRunStore from '../runs/store.js';
 
 // Per-test slot and run ids: the watcher keys `activeWatches` and its debounce
@@ -28,6 +40,7 @@ function useIds(suffix: string): void {
 }
 
 let repoRoot = '';
+let resourceContext = false;
 
 function slotVars() {
   return {
@@ -52,6 +65,22 @@ const activeRun = () =>
     project: 'farmslot',
     status: 'monitoring',
     taskFile: path.join(taskDirAbs(), 'TASK.md'),
+    ...(resourceContext
+      ? {
+          agentContexts: [
+            {
+              id: 'worker',
+              role: 'primary',
+              label: 'Worker',
+              status: 'working',
+              slotId: SLOT_ID,
+              runId: RUN_ID,
+              taskFile: path.join(taskDirAbs(), 'TASK.md'),
+              signalFile: path.join(taskDirAbs(), 'SIGNAL.json'),
+            },
+          ],
+        }
+      : {}),
     steps: [],
     decisions: [],
     metrics: { nudgeCount: 0 },
@@ -127,7 +156,7 @@ onTaskProgress((_slotId, progress, _role, _contextId, _runId, parentChecklist) =
 });
 
 function writeTaskDir(options: { withSubtasksDir?: boolean } = {}): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'gw-watch-subtask-'));
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'gw-watch-subtask-')));
   repoRoot = root;
   const dir = taskDirAbs();
   mkdirSync(dir, { recursive: true });
@@ -503,4 +532,102 @@ test('a registry with two units still yields exactly one progress update', async
     await unwatchSlot(SLOT_ID);
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// Observe the actual batched resource.changed payload, not a publication helper.
+async function publicationTurn(): Promise<void> {
+  const until = Date.now() + 240; // progress publication cadence is 200ms.
+  while (Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10));
+}
+function changedKeyIds(keys: ResourceKey[]): string[] {
+  return [...new Set(keys.map((key) => resourceKeyId(key)))].sort();
+}
+async function withResourceWatch(suffix: string, work: (keys: ResourceKey[]) => Promise<void>) {
+  useIds(suffix);
+  resourceContext = true;
+  const root = writeTaskDir();
+  const keys: ResourceKey[] = [];
+  resourceRevisions.setPublisher((payload) => {
+    for (const change of payload.changes) keys.push(change.key);
+  });
+  try {
+    emitted.length = 0;
+    await watchSlot(SLOT_ID, {
+      runId: RUN_ID,
+      contexts: [
+        {
+          id: 'worker',
+          role: 'primary',
+          label: 'Worker',
+          status: 'working',
+          slotId: SLOT_ID,
+          runId: RUN_ID,
+          taskFile: path.join(taskDirAbs(), 'TASK.md'),
+          signalFile: path.join(taskDirAbs(), 'SIGNAL.json'),
+        },
+      ],
+    });
+    await publicationTurn();
+    keys.length = 0;
+    emitted.length = 0;
+    await work(keys);
+  } finally {
+    await unwatchSlot(SLOT_ID);
+    resourceContext = false;
+    resourceRevisions.dispose(); // cancel publication/deadline timers before removing source
+    resourceRevisions.setPublisher(() => {});
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+function expectedWatchKeys(): ResourceKey[] {
+  return [
+    { family: 'progress', runId: RUN_ID },
+    { family: 'progress', runId: RUN_ID, contextId: 'worker' },
+    { family: 'slot', slotId: SLOT_ID },
+  ];
+}
+
+test('actual slot checklist write publishes exact run/context progress and slot keys', async () => {
+  await withResourceWatch('resource-checklist', async (keys) => {
+    writeFileSync(
+      path.join(taskDirAbs(), 'CHECKLIST.md'),
+      PARENT_MARKDOWN.replace('- [ ]', '- [x]'),
+    );
+    const update = await waitFor(
+      'actual checked parent',
+      (entry) => entry.progress.structured?.completedSteps === 2,
+      3000,
+    );
+    assert.match(update.progress.markdown, /- \[x\] \*\*2\./);
+    await publicationTurn();
+    assert.deepEqual(changedKeyIds(keys), changedKeyIds(expectedWatchKeys()));
+  });
+});
+
+test('actual slot signal-only timing mark publishes exact progress and slot keys', async () => {
+  await withResourceWatch('resource-signal', async (keys) => {
+    const checkedAt = '2026-10-24T00:01:00.000Z';
+    writeFileSync(
+      path.join(taskDirAbs(), 'SIGNAL.json'),
+      JSON.stringify({
+        status: 'running',
+        role: 'primary',
+        contextId: 'worker',
+        timestamp: checkedAt,
+        checklistTiming: {
+          schemaVersion: 1,
+          source: 'CHECKLIST.md',
+          events: [{ stepNumber: 1, label: '1. read the ticket', checkedAt }],
+        },
+      }),
+    );
+    const update = await waitFor(
+      'signal-only timing read',
+      (entry) => (JSON.stringify(entry.progress.structured?.timing) ?? '').includes(checkedAt),
+      3000,
+    );
+    assert.equal(update.progress.markdown, PARENT_MARKDOWN, 'no checkbox changed');
+    await publicationTurn();
+    assert.deepEqual(changedKeyIds(keys), changedKeyIds(expectedWatchKeys()));
+  });
 });

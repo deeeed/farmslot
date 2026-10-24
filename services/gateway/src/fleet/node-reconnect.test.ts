@@ -206,11 +206,12 @@ test('cached fleet reports a reconnecting node immediately without waiting for a
   assert.equal(online.machines?.find((m) => m.machine === machine)?.online, true);
   assert.equal(getCachedFleet()?.machines?.find((m) => m.machine === machine)?.online, true);
   assert.equal(online.checkedAt, '2026-01-01T00:00:00Z');
-  assert.equal(online.slots, slots);
+  // Enrichment returns a snapshot while retaining the file-backed facts and timestamp.
+  assert.deepEqual(online.slots, slots);
   markMachineOffline(machine);
   const offline = await loadFleetStatus();
   assert.equal(offline.machines?.find((m) => m.machine === machine)?.online, false);
-  assert.equal(offline.slots, slots);
+  assert.deepEqual(offline.slots, slots);
 });
 
 test('a retained gate receives a fresh bounded wait for each distinct node outage', async (t) => {

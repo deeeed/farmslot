@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit';
 
 import type { SlotStatus } from '@farmslot/protocol';
+import { sourceObservationAge } from '@farmslot/protocol';
 
 import '../shared/workspace-pin.js';
 
@@ -121,7 +122,7 @@ export function renderSlotViewHeader(
             <button
               class="sv-run-ctrl"
               style="background:${colors.statusWarn}22; color:${colors.statusWarn}; border:1px solid ${colors.statusWarn}44; padding:2px 8px; border-radius:4px; font-size:11px; font-family:${fonts.mono}; cursor:pointer; margin-left:4px"
-              ?disabled=${view._isRecoveryBlocked}
+              ?disabled=${view._runActionsBlocked}
               @click=${() => view._pauseRun()}
               title="Pause worker (Ctrl+C)"
             >
@@ -133,7 +134,7 @@ export function renderSlotViewHeader(
               <button
                 class="sv-run-ctrl"
                 style="background:${colors.statusOk}22; color:${colors.statusOk}; border:1px solid ${colors.statusOk}44; padding:2px 8px; border-radius:4px; font-size:11px; font-family:${fonts.mono}; cursor:pointer; margin-left:4px"
-                ?disabled=${view._isRecoveryBlocked}
+                ?disabled=${view._runActionsBlocked}
                 @click=${() => view._resumeRun()}
                 title="Resume worker"
               >
@@ -271,5 +272,30 @@ export function renderSlotViewHeader(
           : ''}
       </div>
     </div>
+    ${(!view._linkedRunCurrent && view._linkedRun) ||
+    view._linkedRunReadError ||
+    view._runCommandError
+      ? html`<div
+          style="padding:${spacing.sm} ${spacing.md}; border-bottom:1px solid #2a2a44; color:${colors.textSecondary}; font-size:${fonts.sizeXs}; min-width:0; white-space:normal; overflow-wrap:anywhere"
+        >
+          ${view._linkedRun && !view._linkedRunCurrent && view._linkedRunObservedAt !== undefined
+            ? html`<div role="status" data-slot-run-freshness="stale">
+                Saved run ${view._linkedRun.ticketOrPr},
+                ${sourceObservationAge(view._linkedRunObservedAt)}. Actions wait for a current read.
+              </div>`
+            : nothing}
+          ${view._linkedRunReadError
+            ? html`<div role="alert" data-slot-run-read-error>
+                ${view._linkedRunReadError}
+                <button class="sv-run-ctrl" @click=${() => void view._retryRunReads()}>
+                  Retry
+                </button>
+              </div>`
+            : nothing}
+          ${view._runCommandError
+            ? html`<div role="alert">${view._runCommandError}</div>`
+            : nothing}
+        </div>`
+      : nothing}
   `;
 }

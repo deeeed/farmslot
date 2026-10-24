@@ -11,11 +11,18 @@
 // `task.progress` reports them.
 
 import { Events, type TaskProgressResult, type TaskStepProgress } from '@farmslot/protocol';
+import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
+import { GatewayMethodError } from '../core/method-error.js';
 import { taskProgress } from '../methods/task.js';
+import {
+  captureProgressProducer,
+  registerProgressObservation,
+} from '../resources/progress-observations.js';
+import { publishProgressResources } from '../resources/run-changes.js';
 import { hashChecklistCheckboxes } from '../tasks/checklist-hash.js';
 
-import { refreshReviewWorkspaceView } from './task.js';
+import { refreshReviewWorkspaceView, reviewWorkspaceProgressLocation } from './task.js';
 
 type EmitFn = (event: string, payload: unknown) => void;
 
@@ -80,11 +87,14 @@ function ledgerSignature(progress: TaskProgressResult): string {
 export interface ReviewWorkspaceProgressDeps {
   readProgress: (runId: string) => Promise<TaskProgressResult>;
   refreshView: (runId: string) => Promise<number>;
+  captureSource?: (runId: string) => Promise<() => void>;
 }
 
 const progressDefaults: ReviewWorkspaceProgressDeps = {
   readProgress: (runId) => taskProgress({ slotId: '', runId }),
   refreshView: (runId) => refreshReviewWorkspaceView(runId),
+  captureSource: async (runId) =>
+    captureProgressProducer((await reviewWorkspaceProgressLocation(runId)).io),
 };
 
 export interface ReviewWorkspaceProgressPublisher {
@@ -116,6 +126,23 @@ export function createReviewWorkspaceProgressPublisher(
   let lastParent: string | null = null;
   let lastChildren: string | null = null;
   let lastLedger: string | null = null;
+  let lastObservation: string | undefined;
+  let failure: unknown = new GatewayMethodError(
+    'RESOURCE_OBSERVATION_UNAVAILABLE',
+    'The workspace producer has not published progress.',
+  );
+  let checkProducer: (() => void) | undefined;
+  // Same monitor owns production, admission, errors and teardown. No client timer.
+  registerProgressObservation({
+    runId,
+    contextId: 'review',
+    current: () => options.isCurrent?.() !== false,
+    check: () => {
+      if (failure) throw failure;
+      checkProducer?.();
+    },
+  });
+
   let lastTiming: string | null = null;
 
   return {
@@ -126,8 +153,19 @@ export function createReviewWorkspaceProgressPublisher(
 
       let progress: TaskProgressResult;
       try {
+        const captured = await deps.captureSource?.(runId);
         progress = await deps.readProgress(runId);
+        captured?.();
+        checkProducer = captured;
+        failure = undefined;
       } catch (err) {
+        if (options.isCurrent?.() === false) return null;
+        failure = err;
+        const observation = `error:${err instanceof Error ? err.message : String(err)}`;
+        if (observation !== lastObservation) {
+          lastObservation = observation;
+          publishProgressResources('', runId, 'review');
+        }
         // The monitor step owns the run's outcome; a progress read is
         // observability beside it and must not decide the run failed. Reported at
         // error level, not warn, because the alternative reading — a corrupt child
@@ -141,6 +179,12 @@ export function createReviewWorkspaceProgressPublisher(
         return null;
       }
       if (options.isCurrent?.() === false) return null;
+
+      const observation = canonicalResourceJson(progress);
+      if (observation !== lastObservation) {
+        lastObservation = observation;
+        publishProgressResources('', runId, 'review');
+      }
 
       const parent = hashChecklistCheckboxes(progress.markdown);
       const children = childSignature(progress);

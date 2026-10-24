@@ -5,6 +5,7 @@ import type {
   PRPushRegisterParams,
 } from '@farmslot/protocol';
 
+import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import {
   matchesPrincipalOwner,
   type PrincipalOwner,
@@ -22,6 +23,13 @@ export class PRPushService {
   private timer?: ReturnType<typeof setInterval>;
   private work?: Promise<void>;
   schedulerError?: string;
+
+  private setSchedulerError(error: string | undefined): void {
+    if (this.schedulerError === error) return;
+    this.schedulerError = error;
+    publishPRAutomationResources();
+  }
+
   private readonly published = new Map<string, string>();
   constructor(
     readonly store: PRPushStore,
@@ -45,11 +53,11 @@ export class PRPushService {
   wake(): void {
     void this.tick().then(
       () => {
-        this.schedulerError = undefined;
+        this.setSchedulerError(undefined);
       },
       (error: unknown) => {
         // Keep the durable inbox and surface the scheduler failure; the next sweep retries.
-        this.schedulerError = error instanceof Error ? error.message : String(error);
+        this.setSchedulerError(error instanceof Error ? error.message : String(error));
       },
     );
   }
@@ -93,14 +101,14 @@ export class PRPushService {
   }
   private notify(ownerId: string): void {
     const key = principalOwnerKey({ ownerId, ownerGeneration: principalOwnerGeneration(ownerId) });
-    if (!this.changed) return;
     const result = this.authorized(ownerId)
       ? this.list(ownerId)
       : { attention: [], devices: [], deliveries: [] };
     const encoded = JSON.stringify(result);
     if (this.published.get(key) === encoded) return;
     this.published.set(key, encoded);
-    this.changed(ownerId, result);
+    publishPRAutomationResources();
+    this.changed?.(ownerId, result);
   }
   tick(now = Date.now()): Promise<void> {
     if (this.work) return this.work;

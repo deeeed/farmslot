@@ -10,17 +10,15 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
+import { retainOpenedChildren } from '../workspace/workspace-reads.js';
 
 import type { SlotView } from './slot-view.js';
-import { branchDiffPollAction } from './slot-view-branch-model.js';
 import {
   isDirectoryReadErrorMessage,
   isImageFile,
   isMediaFile,
   parseBranchDiffKey,
   realPath,
-  slotViewPendingReviewSnapshot,
 } from './slot-view-model.js';
 import { updateSlotViewTreeChildren } from './slot-view-tree-model.js';
 
@@ -38,12 +36,17 @@ type LoadContentOptions = {
   warnLabel?: string;
 };
 
-function isCurrentLiveResult(view: SlotView, epoch: number) {
-  return epoch === view._recoveryEpoch && isRecoveryEpochCurrent(epoch);
+function isCurrentLiveResult(view: SlotView, epoch: number, version: number) {
+  return (
+    epoch === view._recoveryEpoch &&
+    gateway.connectionEpoch === epoch &&
+    view._workspaceReads.version === version
+  );
 }
 
 export async function initSlotViewLive(view: SlotView, epoch: number) {
   view._teardownLive();
+  const version = view._workspaceReads.version;
   view._wsLoading = true;
   view._wsError = '';
   view._recoveryPhase = 'rehydrating';
@@ -54,15 +57,31 @@ export async function initSlotViewLive(view: SlotView, epoch: number) {
 
   try {
     const [fsResult, gitResult] = await Promise.all([
-      gateway.request<FsListResult>(Methods.FS_LIST, {
-        slotId: view.slotId,
-        path: '.',
-        includeIgnored: view._showIgnored,
-      }),
-      gateway.request<GitStatusResult>(Methods.GIT_STATUS, { slotId: view.slotId }),
+      view._workspaceReads.read<FsListResult>(
+        Methods.FS_LIST,
+        { slotId: view.slotId, path: '.', includeIgnored: view._showIgnored },
+        (result) => {
+          if (isCurrentLiveResult(view, epoch, version))
+            view._liveEntries = retainOpenedChildren(view._liveEntries, result.entries);
+        },
+      ),
+      view._workspaceReads.read<GitStatusResult>(
+        Methods.GIT_STATUS,
+        { slotId: view.slotId },
+        (result) => {
+          if (isCurrentLiveResult(view, epoch, version)) view._liveGitData = result;
+        },
+      ),
+      // File hydration must not wait for another opened snapshot that was evicted.
+      view._restoreFileFromUrl(),
     ]);
-    if (!isCurrentLiveResult(view, epoch)) return;
-    view._liveEntries = fsResult.entries;
+    if (
+      !isCurrentLiveResult(view, epoch, version) ||
+      !view._workspaceReads.owns(fsResult) ||
+      !view._workspaceReads.owns(gitResult)
+    )
+      return;
+    view._liveEntries = retainOpenedChildren(view._liveEntries, fsResult.entries);
     view._liveGitData = {
       branch: gitResult.branch,
       headSha: gitResult.headSha,
@@ -71,20 +90,19 @@ export async function initSlotViewLive(view: SlotView, epoch: number) {
       changes: gitResult.changes,
     };
   } catch (err) {
-    if (!isCurrentLiveResult(view, epoch)) return;
+    if (!isCurrentLiveResult(view, epoch, version)) return;
     view._wsError = err instanceof Error ? err.message : 'Failed to load workspace';
     view._recoveryPhase = 'error';
     view._recoveryMessage = 'Workspace recovery failed — retry to continue';
   } finally {
-    if (isCurrentLiveResult(view, epoch) && view._recoveryPhase !== 'error') {
-      view._recoveryPhase = 'live';
+    if (isCurrentLiveResult(view, epoch, version) && view._recoveryPhase !== 'error') {
+      view._recoveryPhase = view._workspaceReads.ready ? 'live' : 'stale';
       view._recoveryMessage = '';
     }
     if (view._recoveryEpoch === epoch) view._wsLoading = false;
   }
 
-  view._gitPollTimer = setInterval(() => view._refreshGitStatus(), 30_000);
-
+  if (gateway.connectionState !== 'connected') return;
   // Load file index for quick file search
   view._loadFileIndex();
 
@@ -106,69 +124,51 @@ export async function initSlotViewLive(view: SlotView, epoch: number) {
 }
 
 export function teardownSlotViewLive(view: SlotView) {
-  if (view._gitPollTimer) {
-    clearInterval(view._gitPollTimer);
-    view._gitPollTimer = null;
-  }
+  view._workspaceReads.clear();
 }
 
 export async function refreshSlotViewGitStatus(view: SlotView) {
   if (!view._isLive) return;
   const epoch = view._recoveryEpoch;
+  const version = view._workspaceReads.version;
   try {
-    const result = await gateway.request<GitStatusResult>(Methods.GIT_STATUS, {
-      slotId: view.slotId,
-    });
-    if (!isCurrentLiveResult(view, epoch)) return;
-    const prevBranch = view._liveGitData?.branch;
-    const prevAhead = view._liveGitData?.ahead;
-    const prevHeadSha = view._liveGitData?.headSha;
-    view._liveGitData = {
-      branch: result.branch,
-      headSha: result.headSha,
-      ahead: result.ahead,
-      behind: result.behind,
-      changes: result.changes,
-    };
-    const pollAction = branchDiffPollAction({
-      prevBranch,
-      nextBranch: result.branch,
-      prevAhead,
-      nextAhead: result.ahead,
-      prevHeadSha,
-      nextHeadSha: result.headSha,
-      lastLoadFailed: view._branchDiffError !== null,
-      loading: view._branchDiffLoading,
-    });
-    if (pollAction !== 'none') {
-      const frozenReview = slotViewPendingReviewSnapshot(view._linkedRun);
-      if (!frozenReview) {
-        if (pollAction === 'reload-and-clear-cache') view._liveDiffContents.clear();
-        view._loadBranchDiff();
-      } else if (view._branchDiffError !== null) {
-        view._loadBranchDiff();
-      }
-    }
-  } catch (err) {
-    console.warn(
-      '[slot-view] git status poll failed:',
-      err instanceof Error ? err.message : String(err),
+    await view._workspaceReads.read<GitStatusResult>(
+      Methods.GIT_STATUS,
+      { slotId: view.slotId },
+      (result) => {
+        if (isCurrentLiveResult(view, epoch, version)) view._liveGitData = result;
+      },
     );
+  } catch (error) {
+    if (isCurrentLiveResult(view, epoch, version))
+      view._wsError = error instanceof Error ? error.message : String(error);
   }
 }
 
 export async function loadSlotViewDirectory(view: SlotView, dirPath: string) {
   const epoch = view._recoveryEpoch;
+  const version = view._workspaceReads.version;
   try {
-    const result = await gateway.request<FsListResult>(Methods.FS_LIST, {
-      slotId: view.slotId,
-      path: dirPath,
-      includeIgnored: view._showIgnored,
-    });
-    if (!isCurrentLiveResult(view, epoch)) return;
+    const result = await view._workspaceReads.read<FsListResult>(
+      Methods.FS_LIST,
+      {
+        slotId: view.slotId,
+        path: dirPath,
+        includeIgnored: view._showIgnored,
+      },
+      (result) => {
+        if (!isCurrentLiveResult(view, epoch, version)) return;
+        view._liveEntries = updateSlotViewTreeChildren(
+          view._liveEntries,
+          typeof dirPath === 'undefined' ? '.' : dirPath,
+          result.entries,
+        );
+      },
+    );
+    if (!isCurrentLiveResult(view, epoch, version) || !view._workspaceReads.owns(result)) return;
     view._liveEntries = updateSlotViewTreeChildren(view._liveEntries, dirPath, result.entries);
   } catch (err) {
-    if (!isCurrentLiveResult(view, epoch)) return;
+    if (!isCurrentLiveResult(view, epoch, version)) return;
     view._wsError = err instanceof Error ? err.message : 'Failed to load directory';
     view._recoveryPhase = 'error';
     view._recoveryMessage = 'Directory recovery failed — retry to continue';
@@ -177,13 +177,22 @@ export async function loadSlotViewDirectory(view: SlotView, dirPath: string) {
 
 export async function reloadSlotViewTree(view: SlotView) {
   if (!view._isLive) return;
+  const epoch = view._recoveryEpoch;
+  const version = view._workspaceReads.version;
   try {
-    const result = await gateway.request<FsListResult>(Methods.FS_LIST, {
-      slotId: view.slotId,
-      path: '.',
-      includeIgnored: view._showIgnored,
-    });
-    view._liveEntries = result.entries;
+    const result = await view._workspaceReads.read<FsListResult>(
+      Methods.FS_LIST,
+      {
+        slotId: view.slotId,
+        path: '.',
+        includeIgnored: view._showIgnored,
+      },
+      (result) => {
+        if (!isCurrentLiveResult(view, epoch, version)) return;
+        view._liveEntries = updateSlotViewTreeChildren(view._liveEntries, '.', result.entries);
+      },
+    );
+    view._liveEntries = retainOpenedChildren(view._liveEntries, result.entries);
   } catch (err) {
     console.warn(
       '[slot-view] reload tree failed:',
@@ -201,18 +210,27 @@ export async function loadSlotViewFileContent(
   if (!view._isLive || view._liveFileContents.has(path)) return true;
 
   const epoch = view._recoveryEpoch;
+  const version = view._workspaceReads.version;
   try {
-    const result = await gateway.request<FsReadResult>(Methods.FS_READ, {
-      slotId: view.slotId,
-      path,
-    });
-    if (!isCurrentLiveResult(view, epoch)) return false;
+    const result = await view._workspaceReads.read<FsReadResult>(
+      Methods.FS_READ,
+      {
+        slotId: view.slotId,
+        path,
+      },
+      (result) => {
+        if (!isCurrentLiveResult(view, epoch, version)) return;
+        view._liveFileContents = new Map(view._liveFileContents).set(path, result.content);
+      },
+    );
+    if (!isCurrentLiveResult(view, epoch, version) || !view._workspaceReads.owns(result))
+      return false;
     const next = new Map(view._liveFileContents);
     next.set(path, result.content);
     view._liveFileContents = next;
     return true;
   } catch (err) {
-    if (!isCurrentLiveResult(view, epoch)) return false;
+    if (!isCurrentLiveResult(view, epoch, version)) return false;
     const message = err instanceof Error ? err.message : String(err);
     if (isDirectoryReadErrorMessage(message)) {
       // A direct file URL/search hit can point at a symlinked directory such as
@@ -240,22 +258,31 @@ export async function loadSlotViewDiffContent(
   if (!view._isLive || view._liveDiffContents.has(path)) return true;
 
   const epoch = view._recoveryEpoch;
+  const version = view._workspaceReads.version;
   try {
-    const result = await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
-      slotId: view.slotId,
-      path: options.requestPath ?? path,
-      ...(options.diffBase ? { base: options.diffBase } : {}),
-      ...(options.diffHead ? { head: options.diffHead } : {}),
-      ...(options.diffBase && options.diffTarget ? { target: options.diffTarget } : {}),
-      ...(options.requestOldPath ? { oldPath: options.requestOldPath } : {}),
-    });
-    if (!isCurrentLiveResult(view, epoch)) return false;
+    const result = await view._workspaceReads.read<GitDiffResult>(
+      Methods.GIT_DIFF,
+      {
+        slotId: view.slotId,
+        path: options.requestPath ?? path,
+        ...(options.diffBase ? { base: options.diffBase } : {}),
+        ...(options.diffHead ? { head: options.diffHead } : {}),
+        ...(options.diffBase && options.diffTarget ? { target: options.diffTarget } : {}),
+        ...(options.requestOldPath ? { oldPath: options.requestOldPath } : {}),
+      },
+      (result) => {
+        if (!isCurrentLiveResult(view, epoch, version)) return;
+        view._liveDiffContents = new Map(view._liveDiffContents).set(path, result.diff);
+      },
+    );
+    if (!isCurrentLiveResult(view, epoch, version) || !view._workspaceReads.owns(result))
+      return false;
     const next = new Map(view._liveDiffContents);
     next.set(path, result.diff);
     view._liveDiffContents = next;
     return true;
   } catch (err) {
-    if (!isCurrentLiveResult(view, epoch)) return false;
+    if (!isCurrentLiveResult(view, epoch, version)) return false;
     if (options.warnLabel) {
       console.warn(
         `[slot-view] ${options.warnLabel}:`,
@@ -282,19 +309,28 @@ export async function loadSlotViewGitFileContent(
 ) {
   if (!view._isLive || view._liveFileContents.has(cacheKey)) return true;
   const epoch = view._recoveryEpoch;
+  const version = view._workspaceReads.version;
   try {
-    const result = await gateway.request<{ content: string }>(Methods.GIT_SHOW, {
-      slotId: view.slotId,
-      ref,
-      path,
-    });
-    if (!isCurrentLiveResult(view, epoch)) return false;
+    const result = await view._workspaceReads.read<{ content: string }>(
+      Methods.GIT_SHOW,
+      {
+        slotId: view.slotId,
+        ref,
+        path,
+      },
+      (result) => {
+        if (isCurrentLiveResult(view, epoch, version))
+          view._liveFileContents = new Map(view._liveFileContents).set(cacheKey, result.content);
+      },
+    );
+    if (!isCurrentLiveResult(view, epoch, version) || !view._workspaceReads.owns(result))
+      return false;
     const next = new Map(view._liveFileContents);
     next.set(cacheKey, result.content);
     view._liveFileContents = next;
     return true;
   } catch (err) {
-    if (!isCurrentLiveResult(view, epoch)) return false;
+    if (!isCurrentLiveResult(view, epoch, version)) return false;
     const next = new Map(view._liveFileContents);
     next.set(cacheKey, `Error: ${err instanceof Error ? err.message : 'Failed to read file'}`);
     view._liveFileContents = next;
@@ -355,7 +391,6 @@ export async function toggleSlotViewEditorMode(view: SlotView) {
 }
 
 export async function handleSlotViewFileSelect(view: SlotView, path: string) {
-  view._cancelFileRestoreRetry();
   const loaded = await loadSlotViewFileContent(view, path, {
     errorFallback: 'Failed to read file',
     skipMedia: true,
@@ -423,7 +458,7 @@ export async function handleSlotViewTreeAction(
   view: SlotView,
   detail: { action: string; path: string; type: string },
 ) {
-  if (!view._isLive || view._isRecoveryBlocked) return;
+  if (!view._isLive || view._isRecoveryBlocked || !view._workspaceReads.ready) return;
   const { action, path: filePath } = detail;
 
   switch (action) {
@@ -503,7 +538,7 @@ export async function handleSlotViewTreeAction(
 
 export async function createSlotViewFile(view: SlotView) {
   const filePath = view._newFilePath.trim();
-  if (!filePath || !view._isLive || view._isRecoveryBlocked) return;
+  if (!filePath || !view._isLive || view._isRecoveryBlocked || !view._workspaceReads.ready) return;
   try {
     await gateway.request(Methods.FS_WRITE, {
       slotId: view.slotId,

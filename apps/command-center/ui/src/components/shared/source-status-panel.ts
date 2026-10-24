@@ -4,12 +4,17 @@ import { customElement, property } from 'lit/decorators.js';
 import {
   createSourceCommandClient,
   SOURCE_VIEW_ACTION_LABELS,
+  sourceObservationAge,
   SourceStatusController,
   type SourceStatusViewContext,
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-import { sourceChangeFeed } from '../../source-change-feed.js';
+import {
+  getResourceCache,
+  getResourceWorkspaceKey,
+  subscribeResourceCache,
+} from '../../resource-cache.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
 
 @customElement('source-status-panel')
@@ -31,12 +36,11 @@ export class SourceStatusPanel extends LitElement {
       )
         throw new Error('Source connection changed before acknowledgement.');
       return result;
-    }),
+    }, getResourceCache),
     this.context,
   );
   private unsubscribe?: () => void;
-  private connectionUnsubscribe?: () => void;
-  private feedUnsubscribe?: () => void;
+  private cacheUnsubscribe?: () => void;
   private selectionsKey = '';
 
   static styles = css`
@@ -86,6 +90,9 @@ export class SourceStatusPanel extends LitElement {
     .error {
       color: ${unsafeCSS(colors.statusFail)};
     }
+    :disabled {
+      opacity: 0.45;
+    }
   `;
 
   connectedCallback(): void {
@@ -112,33 +119,39 @@ export class SourceStatusPanel extends LitElement {
         );
       }
     });
-    this.connectionUnsubscribe = gateway.onConnectionChange(() => this.load(true));
-    this.feedUnsubscribe = this.controller.attachFeed(sourceChangeFeed);
-    this.load(true);
+    this.cacheUnsubscribe = subscribeResourceCache(() => this.load());
+    this.load();
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.unsubscribe?.();
-    this.connectionUnsubscribe?.();
-    this.feedUnsubscribe?.();
+    this.cacheUnsubscribe?.();
+    this.controller.dispose();
   }
 
   protected updated(changed: Map<string, unknown>): void {
     if (changed.has('context')) this.load();
   }
 
-  private load(force = false): void {
-    const changed = this.controller.setContext({
-      ...this.context,
-      connectionKey: `${gateway.gatewayUrl}|${gateway.authenticatedPrincipalId ?? ''}`,
-    });
-    if ((changed || force) && gateway.connectionState === 'connected' && gateway.isGlobalAdmin)
-      void this.controller.refresh();
+  private load(): void {
+    this.controller.bind(
+      {
+        ...this.context,
+        connectionKey:
+          getResourceWorkspaceKey() ??
+          JSON.stringify([
+            gateway.gatewayUrl,
+            gateway.authenticatedPrincipalId,
+            gateway.authenticatedConnection?.principal?.generation,
+          ]),
+      },
+      getResourceCache(),
+    );
   }
 
   render() {
-    if (!gateway.isGlobalAdmin) return nothing;
+    if (gateway.connectionState === 'connected' && !gateway.isGlobalAdmin) return nothing;
     const state = this.controller.getSnapshot();
     const view = state.view;
     if (state.hidden) return nothing;
@@ -147,6 +160,11 @@ export class SourceStatusPanel extends LitElement {
         <h3>Sources</h3>
         ${view ? html`<p class="facts" data-testid="sources-line">${view.line}</p>` : nothing}
       </header>
+      ${view && state.freshness !== 'ready'
+        ? html`<p class="facts" data-testid="sources-stale">
+            Stale · ${sourceObservationAge(state.observedAt)}
+          </p>`
+        : nothing}
       ${state.unsupported
         ? html`<p data-testid="sources-unsupported">Live updates unavailable on this gateway.</p>`
         : nothing}

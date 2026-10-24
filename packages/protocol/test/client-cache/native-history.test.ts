@@ -1,0 +1,561 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  nativeHistoryParams,
+  nativeHistoryQuery,
+  nativeObservationDependencies,
+  nativeTimeline,
+  readNativeHistory,
+  retainNativeMessages,
+  sameNativeHistoryIdentity,
+} from '../../src/client-cache/native-history.js';
+import type { NativeSessionEvent, NativeSessionReadResult } from '../../src/rpc/native-session.js';
+import { Methods } from '../../src/rpc/registry.js';
+
+const session: NativeSessionReadResult['session'] = {
+  id: 'session',
+  executionNodeId: 'local',
+  ownerPrincipalId: 'owner-a',
+  profileId: 'profile',
+  accountContextId: 'account',
+  generation: 'generation',
+  nativeSessionId: 'native',
+  hostPid: 1,
+  runner: 'sample',
+  cwd: '/workspace',
+  executable: '',
+  version: 'sample',
+  mode: 'default',
+  accountMode: 'native',
+  state: 'idle',
+  capabilities: {
+    modes: ['default'],
+    streaming: true,
+    tools: true,
+    approvals: true,
+    questions: true,
+    interrupt: true,
+    resume: true,
+  },
+};
+const event = (sequence: number, text: string, commandId = 'command'): NativeSessionEvent => ({
+  sequence,
+  text,
+  commandId,
+  generation: session.generation,
+  sessionId: session.id,
+  at: '2026-10-23T00:00:00Z',
+  type: 'text.delta',
+});
+const page = (
+  events: NativeSessionEvent[],
+  cursor = events.at(-1)?.sequence ?? 0,
+): NativeSessionReadResult => ({
+  session,
+  events,
+  cursor,
+  hasMore: false,
+  commands: [],
+  pendingRequests: [],
+});
+const target = { sessionId: session.id, executionNodeId: 'local' };
+const signal = () => new AbortController().signal;
+const basicController = () => {
+  const controller = new AbortController();
+  Object.defineProperties(controller.signal, {
+    throwIfAborted: { value: undefined },
+    reason: { value: undefined },
+  });
+  return controller;
+};
+
+test('200 logical messages retain every fragment of the newest message', () => {
+  const events = Array.from({ length: 205 }, (_, i) =>
+    event(i + 1, `message-${i}`, `command-${i}`),
+  );
+  events.push(...Array.from({ length: 500 }, (_, i) => event(206 + i, `${i},`, 'command-204')));
+  const saved = retainNativeMessages(events);
+  assert.equal(nativeTimeline(saved).length, 200);
+  assert.equal(saved[0].commandId, 'command-5');
+  assert.equal(
+    nativeTimeline(saved).at(-1)?.text,
+    'message-204' + Array.from({ length: 500 }, (_, i) => `${i},`).join(''),
+  );
+  assert.deepEqual(retainNativeMessages(saved), saved);
+});
+
+test('cursor pages merge into one complete observation and keep the conservative stamp', async () => {
+  const calls: number[] = [];
+  const result = await readNativeHistory(
+    target,
+    undefined,
+    async (params) => {
+      const after = params.after ?? 0;
+      calls.push(after);
+      return {
+        data: { ...page([event(after + 1, after ? 'second' : 'first')]), hasMore: !after },
+        resourceState: {
+          epoch: 'epoch',
+          dependencies: [
+            {
+              key: {
+                family: 'native-session',
+                nodeId: 'local',
+                ownerId: 'owner-a',
+                sessionId: 'session',
+              },
+              revision: after ? 9 : 3,
+            },
+          ],
+        },
+      };
+    },
+    signal(),
+  );
+  assert.deepEqual(calls, [0, 1]);
+  assert.equal(result.data.cursor, 2);
+  assert.equal(result.data.hasMore, false);
+  assert.equal(nativeTimeline(result.data.events)[0].text, 'firstsecond');
+  assert.equal(result.resourceState?.dependencies[0].revision, 3);
+});
+
+test('saved absolute cursor resumes without replaying old fragments or commands', async () => {
+  const previous = page([event(1, 'old')], 100);
+  let calls = 0;
+  const result = await readNativeHistory(
+    target,
+    previous,
+    async (params) => {
+      calls++;
+      assert.equal(params.after, 100);
+      return { data: page([event(101, 'new')]) };
+    },
+    signal(),
+  );
+  assert.equal(calls, 1);
+  assert.equal(result.data.cursor, 101);
+  assert.equal(nativeTimeline(result.data.events)[0].text, 'oldnew');
+});
+
+test('session, owner, account/profile, generation and lease replacement never inherit saved history', async () => {
+  const previous = page([event(1, 'private')]);
+  for (const field of [
+    'id',
+    'executionNodeId',
+    'ownerPrincipalId',
+    'profileId',
+    'accountContextId',
+    'nativeSessionId',
+    'generation',
+    'workerLeaseId',
+  ] as const) {
+    const next = { ...page([]), session: { ...session, [field]: 'replacement' } };
+    assert.equal(sameNativeHistoryIdentity(previous, next), false);
+    await assert.rejects(
+      readNativeHistory(target, previous, async () => ({ data: next }), signal()),
+      (error: unknown) => (error as { code: string }).code === 'NOT_FOUND',
+    );
+  }
+});
+
+test('missing/deleted sessions preserve the refusal for the shared cache eviction path', async () => {
+  await assert.rejects(
+    readNativeHistory(
+      target,
+      page([event(1, 'private')]),
+      async () => {
+        throw Object.assign(new Error('Removed by authorized lookup'), { code: 'NOT_FOUND' });
+      },
+      signal(),
+    ),
+    (error: unknown) => (error as { code: string }).code === 'NOT_FOUND',
+  );
+});
+
+test('held late page is ignored after cancellation and cannot start another page', async () => {
+  const controller = new AbortController();
+  let release!: (value: { data: NativeSessionReadResult }) => void;
+  let calls = 0;
+  const result = readNativeHistory(
+    target,
+    undefined,
+    () => {
+      calls++;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    },
+    controller.signal,
+  );
+  controller.abort();
+  release({ data: { ...page([event(1, 'late private text')]), hasMore: true } });
+  await assert.rejects(result, { name: 'AbortError' });
+  assert.equal(calls, 1);
+});
+
+test('basic AbortSignal drains pages without throwIfAborted or reason', async () => {
+  const controller = basicController();
+  const calls: number[] = [];
+  const result = await readNativeHistory(
+    target,
+    undefined,
+    async (params) => {
+      const after = params.after ?? 0;
+      calls.push(after);
+      return { data: { ...page([event(after + 1, 'text')]), hasMore: !after } };
+    },
+    controller.signal,
+  );
+  assert.deepEqual(calls, [0, 1]);
+  assert.equal(result.data.cursor, 2);
+});
+
+test('a basic signal aborted before reading refuses without a request', async () => {
+  const controller = basicController();
+  controller.abort();
+  let calls = 0;
+  await assert.rejects(
+    readNativeHistory(
+      target,
+      undefined,
+      async () => {
+        calls++;
+        return { data: page([]) };
+      },
+      controller.signal,
+    ),
+    { name: 'AbortError' },
+  );
+  assert.equal(calls, 0);
+});
+
+test('a basic signal aborted during I/O drops the reply and cannot drain another page', async () => {
+  const controller = basicController();
+  let calls = 0;
+  await assert.rejects(
+    readNativeHistory(
+      target,
+      undefined,
+      async () => {
+        calls++;
+        controller.abort();
+        return { data: { ...page([event(1, 'late private text')]), hasMore: true } };
+      },
+      controller.signal,
+    ),
+    { name: 'AbortError' },
+  );
+  assert.equal(calls, 1);
+});
+
+test('a modern signal preserves its explicit cancellation reason', async () => {
+  const controller = new AbortController();
+  const reason = new Error('The owner changed');
+  controller.abort(reason);
+  await assert.rejects(
+    readNativeHistory(target, undefined, async () => ({ data: page([]) }), controller.signal),
+    (error: unknown) => error === reason,
+  );
+});
+
+test('cursor variants cannot consume the ten-session retention policy', () => {
+  for (const variant of [{ after: 1 }, { limit: 200 }, { cursor: 2 }])
+    assert.throws(() => nativeHistoryParams({ ...target, ...variant }), /cursors/);
+  assert.deepEqual(nativeHistoryParams({ sessionId: 'session' }), target);
+  const query = nativeHistoryQuery(target, 'owner-a');
+  assert.equal(query.persisted, true);
+  assert.equal(query.retention?.maxEntries, 10);
+  assert.equal(query.id.includes('after'), false);
+});
+
+test('two readers and admin use distinct authorized native/profile key scopes', () => {
+  for (const method of [
+    Methods.NATIVE_SESSION_READ,
+    Methods.NATIVE_SESSION_LIST,
+    Methods.NATIVE_PROFILE_LIST,
+  ]) {
+    const owners = ['owner-a', 'owner-b', 'admin'].map((owner) =>
+      nativeObservationDependencies(method, target, owner),
+    );
+    assert.notDeepEqual(owners[0], owners[1]);
+    assert.notDeepEqual(owners[0], owners[2]);
+    assert.throws(() => nativeObservationDependencies(method, target, ''), /authenticated owner/);
+  }
+});
+
+test('released worker boundaries cannot grow or silently transfer to a successor', async () => {
+  const worker = {
+    runId: 'run',
+    contextId: 'context',
+    leaseId: 'lease',
+    generation: session.generation,
+  };
+  const previous = {
+    ...page([event(1, 'task history')]),
+    session: { ...session, workerLeaseId: 'lease' },
+    scope: { leaseId: 'lease', startAfter: 0, endAt: 1, released: true },
+  };
+  await assert.rejects(
+    readNativeHistory(
+      { ...target, worker },
+      previous,
+      async () => ({
+        data: { ...previous, scope: { ...previous.scope, endAt: 2, released: false } },
+      }),
+      signal(),
+    ),
+    /boundaries/,
+  );
+});
+
+// These integration cases require the parent-owned cache/registry delta. They exercise the
+// existing store and lifecycle boundary rather than a second transcript storage implementation.
+import { createGatewayResourceCache } from '../../src/client-cache/cache.js';
+import { ResourceCacheConformanceTransport } from '../../src/client-cache/conformance.js';
+import type { ResourceReadMethod } from '../../src/client-cache/registry.js';
+import {
+  createMemoryResourceStore,
+  type ResourceStoreScope,
+} from '../../src/client-cache/store.js';
+import type { ResourceReadResult } from '../../src/client-cache/types.js';
+
+interface HeldNativeRead {
+  params: unknown;
+  signal: AbortSignal;
+  resolve(value: NativeSessionReadResult): void;
+  reject(code: string): void;
+}
+class NativeTransport extends ResourceCacheConformanceTransport {
+  constructor(scope: ResourceStoreScope) {
+    super(scope);
+    const capabilities = this.connection.capabilities!;
+    this.connection.capabilities = {
+      ...capabilities,
+      resourceChanges: {
+        ...capabilities.resourceChanges!,
+        observedReads: 1,
+      },
+    };
+  }
+  private queue: HeldNativeRead[] = [];
+  private waiting?: (read: HeldNativeRead) => void;
+  override request<T>(
+    _method: ResourceReadMethod,
+    params: unknown,
+    signal: AbortSignal,
+  ): Promise<ResourceReadResult<T>> {
+    this.requestCount++;
+    return new Promise((resolve, reject) => {
+      const read: HeldNativeRead = {
+        params,
+        signal,
+        resolve: (data) =>
+          resolve({
+            data: data as T,
+            resourceState: {
+              epoch: 'conformance-epoch',
+              dependencies: nativeObservationDependencies(
+                Methods.NATIVE_SESSION_READ,
+                params,
+                this.connection.scope.principalId!,
+              ).map((key) => ({ key, revision: 0 })),
+            },
+          }),
+        reject: (code) => reject(Object.assign(new Error(code), { code })),
+      };
+      if (this.waiting) {
+        const receive = this.waiting;
+        this.waiting = undefined;
+        receive(read);
+      } else this.queue.push(read);
+    });
+  }
+  nextNative(): Promise<HeldNativeRead> {
+    const read = this.queue.shift();
+    if (read) return Promise.resolve(read);
+    return new Promise((resolve) => {
+      this.waiting = resolve;
+    });
+  }
+}
+const storeScope = {
+  gatewayUrl: 'ws://native-history.invalid/',
+  profileId: 'profile',
+  principalId: 'owner-a',
+  principalGeneration: 0,
+};
+
+test('several observers share the history read and reconnect performs no command replay', async () => {
+  const transport = new NativeTransport(storeScope);
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  const query = nativeHistoryQuery(target, 'owner-a');
+  const stops = [cache.observe(query, () => {}), cache.observe(query, () => {})];
+  try {
+    const read = await transport.nextNative();
+    const ready = cache.retry(query);
+    read.resolve(page([event(1, 'private')]));
+    assert.equal((await ready).status, 'ready');
+    assert.equal(transport.requestCount, 1);
+    transport.setConnection({ connected: false }, 'network');
+    assert.equal(cache.read(query).status, 'stale');
+    assert.equal(cache.read(query).data?.events[0].text, 'private');
+    transport.setConnection({ connected: true, id: 2 });
+    const next = await transport.nextNative();
+    assert.equal((next.params as { after: number }).after, 1);
+    const settled = cache.retry(query);
+    next.resolve(page([], 1));
+    assert.equal((await settled).status, 'ready');
+    assert.equal(transport.requestCount, 2);
+  } finally {
+    stops.forEach((stop) => stop());
+    await cache.dispose();
+  }
+});
+
+test('eleven opened sessions persist ten canonical histories; cold data keeps original age', async () => {
+  const transport = new NativeTransport(storeScope);
+  transport.setConnection({ connected: true, id: 1 });
+  const store = createMemoryResourceStore();
+  const cache = createGatewayResourceCache({ transport, store });
+  const savedStore = createMemoryResourceStore();
+  let lastQuery = nativeHistoryQuery(target, 'owner-a');
+  try {
+    for (let i = 0; i < 11; i++) {
+      lastQuery = nativeHistoryQuery({ ...target, sessionId: `session-${i}` }, 'owner-a');
+      const ready = cache.retry(lastQuery);
+      const read = await transport.nextNative();
+      read.resolve({ ...page([]), session: { ...session, id: `session-${i}` } });
+      assert.equal((await ready).status, 'ready');
+    }
+    const entries = await store.listQueries();
+    assert.equal(entries.length, 10);
+    assert(
+      !entries.some(
+        (entry) =>
+          entry.id === nativeHistoryQuery({ ...target, sessionId: 'session-0' }, 'owner-a').id,
+      ),
+    );
+    await savedStore.setMetadata((await store.getMetadata())!);
+    for (const entry of entries) await savedStore.putQuery((await store.getQuery(entry.id))!);
+    const original = (await store.getQuery(lastQuery.id))!;
+    await cache.dispose();
+    const offline = new NativeTransport(storeScope);
+    const cold = createGatewayResourceCache({ transport: offline, store: savedStore });
+    try {
+      const restored = await cold.retry(lastQuery);
+      assert.equal(restored.status, 'stale');
+      assert.equal(restored.observedAt, original.observedAt);
+      assert.deepEqual(restored.data, original.data);
+      assert.equal(offline.requestCount, 0);
+    } finally {
+      await cold.dispose();
+    }
+  } finally {
+    await cache.dispose();
+  }
+});
+
+test('authority retirement fences a held reply and authorized not-found evicts saved history', async () => {
+  const transport = new NativeTransport(storeScope);
+  transport.setConnection({ connected: true, id: 1 });
+  const store = createMemoryResourceStore();
+  const cache = createGatewayResourceCache({ transport, store });
+  const query = nativeHistoryQuery(target, 'owner-a');
+  try {
+    const first = cache.retry(query);
+    (await transport.nextNative()).resolve(page([event(1, 'private')]));
+    await first;
+    const removed = cache.retry(query);
+    (await transport.nextNative()).reject('NOT_FOUND');
+    assert.equal((await removed).data, undefined);
+    assert.equal(await store.getQuery(query.id), undefined);
+    const pending = cache.retry(query);
+    const held = await transport.nextNative();
+    transport.setConnection({ connected: false }, 'sign-out');
+    held.resolve(page([event(1, 'late private')]));
+    await pending;
+    assert.equal(cache.read(query).data, undefined);
+    assert.equal(held.signal.aborted, true);
+  } finally {
+    await cache.dispose();
+  }
+});
+
+import {
+  nativeHistoryStorageId,
+  storedNativeHistoryMatches,
+} from '../../src/client-cache/native-history.js';
+test('lease variants share one durable session entry but cannot hydrate each other', () => {
+  const worker = {
+    runId: 'run',
+    contextId: 'context',
+    generation: session.generation,
+    leaseId: 'first',
+  };
+  const first = nativeHistoryQuery({ ...target, worker }, 'owner-a');
+  const second = nativeHistoryQuery(
+    { ...target, worker: { ...worker, leaseId: 'second' } },
+    'owner-a',
+  );
+  assert.notEqual(first.id, second.id);
+  assert.equal(nativeHistoryStorageId(first), nativeHistoryStorageId(second));
+  const saved = {
+    ...page([]),
+    session: { ...session, workerLeaseId: 'first' },
+    scope: { leaseId: 'first', startAfter: 0, endAt: 0, released: true },
+  };
+  assert(storedNativeHistoryMatches({ ...target, worker }, saved));
+  assert(
+    !storedNativeHistoryMatches({ ...target, worker: { ...worker, leaseId: 'second' } }, saved),
+  );
+});
+
+import { nativeHistoryCanAct } from '../../src/client-cache/native-history.js';
+test('cold, stale, unsupported and replaced rendered snapshots disable real command eligibility', () => {
+  const saved = page([event(1, 'saved')]);
+  for (const status of ['loading', 'stale', 'error', 'unsupported'])
+    assert(!nativeHistoryCanAct({ status, data: saved }, saved, true));
+  assert(!nativeHistoryCanAct({ status: 'ready', data: saved }, saved, false));
+  assert(!nativeHistoryCanAct({ status: 'ready', data: { ...saved } }, saved, true));
+  assert(nativeHistoryCanAct({ status: 'ready', data: saved }, saved, true));
+});
+
+test('turn status records do not consume the 200 logical message allowance', () => {
+  const events: NativeSessionEvent[] = [];
+  for (let i = 0; i < 205; i++) {
+    events.push(event(i * 2 + 1, `answer-${i}`, `command-${i}`));
+    events.push({
+      ...event(i * 2 + 2, '', `command-${i}`),
+      type: 'turn.completed',
+      status: 'completed',
+    });
+  }
+  const saved = nativeTimeline(retainNativeMessages(events));
+  assert.equal(saved.filter((entry) => entry.kind === 'assistant').length, 200);
+  assert.equal(saved.find((entry) => entry.kind === 'assistant')?.text, 'answer-5');
+});
+
+test('tool events do not consume the 200 conversation message allowance', () => {
+  const events: NativeSessionEvent[] = [];
+  for (let i = 0; i < 205; i++) {
+    const command = `command-${i}`;
+    events.push(event(events.length + 1, `message-${i}`, command));
+    events.push({
+      ...event(events.length + 1, '', command),
+      type: 'tool.started',
+      nativeId: `tool-${i}`,
+      tool: { name: 'read_file' },
+    });
+    events.push({
+      ...event(events.length + 1, '', command),
+      type: 'tool.completed',
+      nativeId: `tool-${i}`,
+      tool: { name: 'read_file' },
+    });
+  }
+  const retained = nativeTimeline(retainNativeMessages(events));
+  assert.equal(retained.filter((entry) => entry.kind === 'assistant').length, 200);
+  assert.equal(retained[0].event.commandId, 'command-5');
+});

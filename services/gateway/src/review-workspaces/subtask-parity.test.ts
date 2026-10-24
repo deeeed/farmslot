@@ -5,32 +5,72 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { mock, test } from 'node:test';
 import { promisify } from 'node:util';
 
 import type { PoolConfig, ReviewWorkspaceSubject, Run } from '@farmslot/protocol';
+import { type ResourceKey, resourceKeyId } from '@farmslot/protocol/client-cache';
+
+import '../runtime/mock-pty.test-support.js';
 
 import type { ProjectVars } from '../core/config.js';
+import * as realConfig from '../core/config.js';
+import * as realFleet from '../fleet/state.js';
 import { makeRun } from '../methods/run/test-fixtures.js';
+import { captureProgressProducer } from '../resources/progress-observations.js';
+import { resourceRevisions } from '../resources/revisions.js';
+import * as realStore from '../runs/store.js';
 import { resolveConfiguredExecutionTemplate } from '../tasks/execution-template-catalog.js';
 
-import {
+// Routing/config seams only. Production materializer, file reads, projection,
+// source check and view refresh all execute against the fixture's real files.
+let activeResourceFixture: Fixture | undefined;
+mock.module('../core/config.js', {
+  namedExports: {
+    ...realConfig,
+    loadProjectVars: (...args: Parameters<typeof realConfig.loadProjectVars>) =>
+      activeResourceFixture
+        ? activeResourceFixture.deps.loadProjectVars()
+        : realConfig.loadProjectVars(...args),
+  },
+});
+mock.module('../fleet/state.js', {
+  namedExports: {
+    ...realFleet,
+    loadPoolConfigs: (...args: Parameters<typeof realFleet.loadPoolConfigs>) =>
+      activeResourceFixture
+        ? activeResourceFixture.deps.loadPoolConfigs()
+        : realFleet.loadPoolConfigs(...args),
+  },
+});
+mock.module('../runs/store.js', {
+  namedExports: {
+    ...realStore,
+    getRun: (id: string) =>
+      activeResourceFixture?.run.id === id ? activeResourceFixture.run : realStore.getRun(id),
+  },
+});
+const { taskProgress: readActualProgress } = await import('../methods/task.js');
+const { createReviewWorkspaceProgressPublisher, WORKSPACE_PROGRESS_INTERVAL_MS } =
+  await import('./progress.js');
+
+const {
   collectReviewWorkspaceSubtaskMetrics,
   materializeReviewWorkspaceTask,
   readReviewWorkspaceCompletion,
   readReviewWorkspaceProgress,
   refreshReviewWorkspaceView,
-} from './task.js';
+} = await import('./task.js');
 
 const exec = promisify(execFile);
 const checklist = '# Review\n\n- [ ] Read the exact diff.\n- [ ] Write review artifacts.\n';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'workspace-subtask-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'workspace-subtask-')));
   const projectRoot = path.join(root, 'pack');
   await mkdir(path.join(projectRoot, 'templates/worker'), { recursive: true });
   await mkdir(path.join(projectRoot, 'fixtures'));
@@ -329,5 +369,81 @@ test('workspace completion refuses a terminal signal written around an open chil
       'evidence-pack.md',
       'index.json',
     ]);
+  });
+});
+
+// Observe the actual batched resource.changed payload, not a publication helper.
+async function publicationTurn(): Promise<void> {
+  const until = Date.now() + 240; // progress publication cadence is 200ms.
+  while (Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10));
+}
+function changedKeyIds(keys: ResourceKey[]): string[] {
+  return [...new Set(keys.map((key) => resourceKeyId(key)))].sort();
+}
+async function resourceQuiet(keys: ResourceKey[], durationMs: number): Promise<void> {
+  const until = Date.now() + durationMs;
+  while (Date.now() < until) {
+    assert.deepEqual(keys, [], 'unchanged source must not publish resource.changed');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.deepEqual(keys, []);
+}
+
+test('actual slot-free workspace mark publishes only exact run/context progress keys and unchanged read is quiet', async () => {
+  await withFixture(async (f) => {
+    activeResourceFixture = f;
+    const keys: ResourceKey[] = [];
+    let current = true;
+    let clock = 0;
+    resourceRevisions.setPublisher((payload) => {
+      for (const change of payload.changes) keys.push(change.key);
+    });
+    try {
+      await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+      await marker(f)('start');
+      const publisher = createReviewWorkspaceProgressPublisher(
+        f.run.id,
+        () => {},
+        { now: () => clock, isCurrent: () => current },
+        {
+          readProgress: (runId) => readActualProgress({ slotId: '', runId }),
+          refreshView: (runId) => refreshReviewWorkspaceView(runId, f.deps),
+          captureSource: async (runId) =>
+            captureProgressProducer((await readReviewWorkspaceProgress(runId, f.deps)).io),
+        },
+      );
+      await publisher.publish();
+      await publicationTurn();
+      keys.length = 0;
+
+      await marker(f)('1');
+      clock += WORKSPACE_PROGRESS_INTERVAL_MS;
+      const update = await publisher.publish();
+      assert.ok(update);
+      assert.equal(update.structured?.completedSteps, 1);
+      assert.equal(
+        await readFile(viewPath(f, 'CHECKLIST.md'), 'utf8'),
+        await readFile(path.join(f.task, 'CHECKLIST.md'), 'utf8'),
+        'actual view refreshed',
+      );
+      await publicationTurn();
+      assert.deepEqual(
+        changedKeyIds(keys),
+        changedKeyIds([
+          { family: 'progress', runId: f.run.id },
+          { family: 'progress', runId: f.run.id, contextId: 'review' },
+        ]),
+      ); // exact set also excludes slot and empty-slot keys
+
+      keys.length = 0;
+      clock += WORKSPACE_PROGRESS_INTERVAL_MS;
+      assert.equal(await publisher.publish(), null);
+      await resourceQuiet(keys, 240);
+    } finally {
+      current = false; // retire monitor ownership before withFixture removes source
+      activeResourceFixture = undefined;
+      resourceRevisions.dispose();
+      resourceRevisions.setPublisher(() => {});
+    }
   });
 });

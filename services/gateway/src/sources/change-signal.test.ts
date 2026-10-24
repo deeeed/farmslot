@@ -4,6 +4,7 @@ import { setImmediate } from 'node:timers/promises';
 
 import { Events } from '@farmslot/protocol';
 
+import { resourceRevisions } from '../resources/revisions.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 
 import {
@@ -16,14 +17,13 @@ import {
   noteRunSourceWrite,
   noteSourceMaterialized,
   resetSourceChangeSignalForTests,
-  setSourceChangePublisher,
 } from './change-signal.js';
 import { sourceTestLock, sourceTestPlan } from './source.test-support.js';
 
 function configuredSignal(): { published: () => number } {
   resetSourceChangeSignalForTests();
   let published = 0;
-  setSourceChangePublisher(() => published++);
+  resourceRevisions.setPublisher(() => published++);
   announceSourceChanges();
   return { published: () => published };
 }

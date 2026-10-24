@@ -4,6 +4,7 @@ import { listItems } from '../backlog/dispatch-queue.js';
 import { getAllMachineHealth } from '../fleet/node-health.js';
 import { getCachedFleet } from '../fleet/state.js';
 import { decisionList } from '../methods/decisions.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import { listRuns } from '../runs/store.js';
 
 import { getRecentEvents } from './copilot-observer.js';
@@ -13,9 +14,9 @@ const FLEET_CONTEXT_TTL_MS = 5_000;
 
 let fleetContextCache: { value: string; expiresAt: number } | null = null;
 
-export async function buildFleetContext(): Promise<string> {
+export async function buildFleetContext(options: { fresh?: boolean } = {}): Promise<string> {
   const now = Date.now();
-  if (fleetContextCache && now < fleetContextCache.expiresAt) {
+  if (!options.fresh && fleetContextCache && now < fleetContextCache.expiresAt) {
     return fleetContextCache.value;
   }
 
@@ -94,6 +95,19 @@ export async function buildFleetContext(): Promise<string> {
 
   // ── Pending decisions ──
   const { decisions } = await decisionList();
+  const nextDecisionAge = decisions
+    .map((decision) => {
+      const createdAt = Date.parse(decision.createdAt);
+      const age = Math.round((now - createdAt) / 60_000);
+      return createdAt + (age + 0.5) * 60_000;
+    })
+    .filter((at) => Number.isFinite(at) && at > now)
+    .sort((left, right) => left - right)[0];
+  resourceRevisions.scheduleInvalidation(
+    'copilot-context-decision-age',
+    { family: 'copilot', ownerId: 'gateway-copilot' },
+    nextDecisionAge,
+  );
   lines.push(
     `\n### Pending Decisions (source: decision.list, count=${decisions.length}, checkedAt=${new Date(now).toISOString()})\n`,
   );

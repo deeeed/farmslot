@@ -1,9 +1,4 @@
-import {
-  isPublishApprovalAction,
-  type Run,
-  type RunDecision,
-  type RunRefreshPublishPackageResult,
-} from '@farmslot/protocol';
+import { isPublishApprovalAction, type RunDecision } from '@farmslot/protocol';
 
 export { readyResolveSelectionData } from '@farmslot/protocol';
 
@@ -43,32 +38,6 @@ export function refreshedReadyEvidenceSelection(
   if (!Array.isArray(result.preservedEvidenceKeys)) return null;
   const added = Array.isArray(result.addedEvidenceKeys) ? result.addedEvidenceKeys : [];
   return [...result.preservedEvidenceKeys, ...added];
-}
-
-export function refreshedReadyDecision(
-  run: Pick<Run, 'decisions'>,
-  decisionId: string,
-): RunDecision | null {
-  return run.decisions.find((decision) => decision.id === decisionId) ?? null;
-}
-
-export function applyReadyPackageRefreshResult(
-  result: RunRefreshPublishPackageResult,
-  decisionId: string,
-  target: {
-    setRun: (run: Run) => void;
-    setDecision: (decision: RunDecision) => void;
-    clearConfirmation: () => void;
-    setSelectedEvidenceKeys: (keys: string[]) => void;
-  },
-): void {
-  const decision = refreshedReadyDecision(result.run, decisionId);
-  if (!decision) throw new Error('Refreshed package response omitted the active decision');
-  target.setRun(result.run);
-  target.setDecision(decision);
-  target.clearConfirmation();
-  const nextSelection = refreshedReadyEvidenceSelection(result);
-  if (nextSelection) target.setSelectedEvidenceKeys(nextSelection);
 }
 
 export function readyRefreshPublishPackageFeedback(result: ReadyRefreshPublishPackageResult): {

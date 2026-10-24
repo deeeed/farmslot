@@ -2,15 +2,24 @@ import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { SlotHealth } from '@farmslot/protocol';
-import { canActivateRunOnSlot, Methods, type Run, type RunListResult } from '@farmslot/protocol';
+import {
+  canActivateRunOnSlot,
+  Methods,
+  type Run,
+  type RunListResult,
+  sourceObservationAge,
+} from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../shared/prepare-progress-panel.js';
 import '../shared/slot-prepare-options.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { formatCreatedAt, routeForRun, runStatusColor } from '../runs/run-utils.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import {
   navigateToPreparedSlot,
@@ -34,13 +43,13 @@ export class SlotLoadRunModal extends LitElement {
   @property({ attribute: 'slot-branch' }) slotBranch = '';
   @property({ attribute: false }) slotHealth: SlotHealth | null = null;
   @property({ type: Boolean }) open = false;
+  @property({ type: Boolean }) disabled = false;
   /** Dev harness escape hatch: when provided, no gateway call is made. */
   @property({ attribute: false }) runsOverride?: Run[];
 
-  @state() private _loading = false;
-  @state() private _error = '';
-  @state() private _runs: Run[] = [];
-  @state() private _totalCount = 0;
+  private readonly runsQuery = new ResourceQueryController<RunListResult>(this, () =>
+    this._onReadChange(),
+  );
   @state() private _search = '';
   @state() private _statusFilter = '';
   @state() private _pendingConfirm = '';
@@ -53,9 +62,76 @@ export class SlotLoadRunModal extends LitElement {
   @state() private _forcePrepare = DEFAULT_SLOT_PREPARE_OPTIONS.forcePrepare;
   @state() private _confirmRunBranch = '';
   @state() private _prepareState: PrepareProgressState | null = null;
-  private _loadToken = Symbol('slot-load-run-load');
+  private _ownerKey?: string;
+  private _actionRequest?: symbol;
+  private _confirmScope?: string;
+  private _savedAgeClock?: number;
   private _confirmTimer: ReturnType<typeof setTimeout> | undefined;
   private _unsubPrepare?: () => void;
+
+  private get _runs(): Run[] {
+    return this.runsOverride ?? this.runsQuery.state.data?.runs ?? [];
+  }
+  private get _totalCount(): number {
+    return this.runsOverride?.length ?? this.runsQuery.state.data?.totalCount ?? 0;
+  }
+  private get _loading(): boolean {
+    return (
+      !this.runsOverride && !this.runsQuery.state.data && this.runsQuery.state.status === 'loading'
+    );
+  }
+  private get _error(): string {
+    return this.runsOverride ? '' : (this.runsQuery.state.error?.message ?? '');
+  }
+  private get _scope(): string {
+    return JSON.stringify([getResourceWorkspaceKey(), this.slotId, this.project, this.open]);
+  }
+  private get _commandsReady(): boolean {
+    // Fixtures describe the controls. Mutation handlers still require a canonical read.
+    return !this.disabled && Boolean(this.runsOverride || this.runsQuery.ready);
+  }
+
+  private _clearConfirmation(): void {
+    this._pendingConfirm = '';
+    this._confirmRunBranch = '';
+    this._confirmScope = undefined;
+    if (this._confirmTimer) clearTimeout(this._confirmTimer);
+    this._confirmTimer = undefined;
+  }
+
+  private _onReadChange(): void {
+    const key = getResourceWorkspaceKey();
+    if (key !== this._ownerKey) {
+      this._ownerKey = key;
+      this._actionRequest = undefined;
+      this._actionBusy = false;
+      this._actionError = '';
+      this._prepareState = null;
+    }
+    if (!this.runsQuery.ready) this._clearConfirmation();
+    const saved = this.open && this.runsQuery.state.status !== 'ready' && this.runsQuery.state.data;
+    if (saved && !this._savedAgeClock)
+      this._savedAgeClock = window.setInterval(() => this.requestUpdate(), 1000);
+    else if (!saved && this._savedAgeClock) {
+      window.clearInterval(this._savedAgeClock);
+      this._savedAgeClock = undefined;
+    }
+  }
+
+  private _currentRun(expected: Run): Run {
+    if (!this.isConnected || !this.open || this.disabled)
+      throw new Error('The load dialog changed. Open it again before acting.');
+    const run = this.runsQuery.requireReady().runs.find(({ id }) => id === expected.id);
+    if (
+      !run ||
+      (this.project && run.project !== this.project) ||
+      run.branch !== expected.branch ||
+      run.project !== expected.project ||
+      this._loadReason(run)
+    )
+      throw new Error('The selected run changed. Review the current list before loading it.');
+    return run;
+  }
 
   static override styles = css`
     .slrm-backdrop {
@@ -291,11 +367,17 @@ export class SlotLoadRunModal extends LitElement {
     if (this._confirmTimer) clearTimeout(this._confirmTimer);
     this._unsubPrepare?.();
     this._unsubPrepare = undefined;
+    this._actionRequest = undefined;
+    window.clearInterval(this._savedAgeClock);
+    this._savedAgeClock = undefined;
   }
 
   override updated(changed: Map<string, unknown>) {
-    if ((changed.has('open') || changed.has('runsOverride')) && this.open) {
-      void this._load();
+    if (changed.has('disabled') && this.disabled) this._clearConfirmation();
+    if (['open', 'slotId', 'project', 'runsOverride'].some((key) => changed.has(key))) {
+      this._actionRequest = undefined;
+      this._actionBusy = false;
+      this._load();
     }
   }
 
@@ -304,8 +386,9 @@ export class SlotLoadRunModal extends LitElement {
   };
 
   private _close() {
-    this._pendingConfirm = '';
-    if (this._confirmTimer) clearTimeout(this._confirmTimer);
+    this._clearConfirmation();
+    this._actionRequest = undefined;
+    this._actionBusy = false;
     this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }));
   }
 
@@ -321,15 +404,28 @@ export class SlotLoadRunModal extends LitElement {
   }
 
   private async _executeLoad(
-    run: Run,
+    expected: Run,
     prepareProfile = this._prepareProfile,
     strictProfile = this._strictProfile,
   ) {
+    if (this._actionRequest) return;
+    const request = Symbol('load-run');
+    const scope = this._scope;
+    const connection = gateway.resourceConnectionId;
+    const slotId = this.slotId;
+    const owns = () => this.isConnected && this._scope === scope && this._actionRequest === request;
+    const current = () =>
+      owns() &&
+      !this.disabled &&
+      connection === gateway.resourceConnectionId &&
+      gateway.connectionState === 'connected';
+    this._actionRequest = request;
     this._actionError = '';
     this._actionBusy = true;
     try {
+      const run = this._currentRun(expected);
       await runSlotPrepareForRun({
-        slotId: this.slotId,
+        slotId,
         runId: run.id,
         branch: run.branch!,
         slotBranch: this.slotBranch,
@@ -338,52 +434,35 @@ export class SlotLoadRunModal extends LitElement {
         forcePrepare: this._forcePrepare,
         rebind: true,
       });
-      navigateToPreparedSlot(this.slotId, run.id);
+      if (!current()) return;
+      navigateToPreparedSlot(slotId, run.id);
       this._close();
     } catch (err) {
-      this._actionError = err instanceof Error ? err.message : String(err);
+      if (current()) this._actionError = err instanceof Error ? err.message : String(err);
     } finally {
-      this._actionBusy = false;
-      this._pendingConfirm = '';
-      this._confirmRunBranch = '';
+      if (owns()) {
+        this._actionRequest = undefined;
+        this._actionBusy = false;
+        this._clearConfirmation();
+      }
     }
   }
 
-  private async _load() {
-    const token = Symbol('slot-load-run-load');
-    this._loadToken = token;
-    this._error = '';
-    // Reset filters + any half-armed confirm/error so each open starts clean.
+  private _load() {
+    // A new slot/project or reopening starts a fresh user selection. The cache
+    // retains each query and owns all reads, including reconnect and invalidation.
     this._search = '';
     this._statusFilter = '';
-    this._pendingConfirm = '';
-    this._confirmRunBranch = '';
+    this._clearConfirmation();
     this._actionError = '';
-
-    if (this.runsOverride) {
-      this._runs = this.runsOverride;
-      this._totalCount = this.runsOverride.length;
-      this._loading = false;
-      return;
-    }
-
-    this._loading = true;
-    try {
-      // Scope to the slot's project — a slot can only check out branches for its
-      // own repo, so loading another project's run could never work.
-      const result = await gateway.request<RunListResult>(Methods.RUN_LIST, {
-        limit: DEFAULT_LIMIT,
-        ...(this.project ? { project: this.project } : {}),
-      });
-      if (token !== this._loadToken) return;
-      this._runs = result.runs;
-      this._totalCount = result.totalCount;
-    } catch (error) {
-      if (token !== this._loadToken) return;
-      this._error = error instanceof Error ? error.message : String(error);
-    } finally {
-      if (token === this._loadToken) this._loading = false;
-    }
+    this.runsQuery.setQuery(
+      this.open && !this.runsOverride
+        ? resourceQuery<RunListResult>(Methods.RUN_LIST, {
+            limit: DEFAULT_LIMIT,
+            ...(this.project ? { project: this.project } : {}),
+          })
+        : undefined,
+    );
   }
 
   private _statuses(): string[] {
@@ -418,19 +497,22 @@ export class SlotLoadRunModal extends LitElement {
   }
 
   private async _onLoadClick(run: Run) {
-    const reason = this._loadReason(run);
-    if (reason || this._actionBusy) return;
-    if (this._pendingConfirm === run.id) {
-      if (this._confirmTimer) clearTimeout(this._confirmTimer);
-      await this._executeLoad(run);
-      return;
+    if (this._loadReason(run) || this._actionBusy || this._actionRequest) return;
+    try {
+      this._currentRun(run);
+      if (this._pendingConfirm === run.id && this._confirmScope === this._scope) {
+        if (this._confirmTimer) clearTimeout(this._confirmTimer);
+        await this._executeLoad(run);
+        return;
+      }
+      this._clearConfirmation();
+      this._pendingConfirm = run.id;
+      this._confirmRunBranch = run.branch ?? '';
+      this._confirmScope = this._scope;
+      this._confirmTimer = setTimeout(() => this._clearConfirmation(), 3000);
+    } catch (error) {
+      this._actionError = error instanceof Error ? error.message : String(error);
     }
-    if (this._confirmTimer) clearTimeout(this._confirmTimer);
-    this._pendingConfirm = run.id;
-    this._confirmRunBranch = run.branch ?? '';
-    this._confirmTimer = setTimeout(() => {
-      this._pendingConfirm = '';
-    }, 3000);
   }
 
   private _renderRow(run: Run) {
@@ -468,7 +550,7 @@ export class SlotLoadRunModal extends LitElement {
           ${loadable
             ? html`<button
                 class="slrm-load ${confirming ? 'confirm' : ''}"
-                ?disabled=${this._actionBusy}
+                ?disabled=${this._actionBusy || !this._commandsReady}
                 title=${this._bindOnlyHint(run) ||
                 `Warm-switch ${this.slotId} onto this run's branch and bind the run. No new run is created.`}
                 @click=${() => this._onLoadClick(run)}
@@ -524,7 +606,7 @@ export class SlotLoadRunModal extends LitElement {
                 .slotBranch=${this.slotBranch}
                 .slotHealth=${this.slotHealth}
                 .lastError=${this._actionError}
-                .disabled=${this._actionBusy}
+                .disabled=${this._actionBusy || !this._commandsReady}
                 @prepare-options-change=${this._onPrepareOptionsChange}
                 @recovery-retry=${(
                   event: CustomEvent<{ prepareProfile: string; strictProfile: boolean }>,
@@ -554,14 +636,34 @@ export class SlotLoadRunModal extends LitElement {
             ${this._actionError
               ? html`<div class="slrm-state error">${this._actionError}</div>`
               : nothing}
+            ${!this.runsOverride &&
+            this.runsQuery.state.status !== 'ready' &&
+            this.runsQuery.state.data &&
+            this.runsQuery.state.observedAt !== undefined
+              ? html`<div class="slrm-state" data-load-run-freshness="stale">
+                  Saved runs, ${sourceObservationAge(this.runsQuery.state.observedAt)}. Actions wait
+                  for a current read.
+                </div>`
+              : nothing}
+            ${!this.runsOverride && this.runsQuery.state.status === 'unsupported'
+              ? html`<div class="slrm-state">Run updates are unavailable on this gateway.</div>`
+              : nothing}
+            ${this._error && this._runs.length
+              ? html`<div class="slrm-state error" role="alert">
+                  Failed to read current runs: ${this._error}
+                  <button class="slrm-retry" @click=${() => this.runsQuery.retry()}>Retry</button>
+                </div>`
+              : nothing}
             ${this._loading
               ? html`<div class="slrm-state">Loading runs…</div>`
-              : this._error
+              : this._error && !this._runs.length
                 ? html`
                     <div class="slrm-state error">
                       Failed to load runs: ${this._error}
                       <div style="margin-top:${spacing.sm};">
-                        <button class="slrm-retry" @click=${() => this._load()}>Retry</button>
+                        <button class="slrm-retry" @click=${() => this.runsQuery.retry()}>
+                          Retry
+                        </button>
                       </div>
                     </div>
                   `

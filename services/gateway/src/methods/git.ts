@@ -1,5 +1,4 @@
 // methods/git.ts — git.status, git.diff, git.log, git.show, git.files, git.stage, git.unstage, git.discard
-
 import { gitDiffArgs } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type BranchDiffStatus,
@@ -34,6 +33,7 @@ import {
   type RawProjectJson,
 } from '../core/index.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { isWorkspaceObservedRead } from '../resources/workspace-read.js';
 import { workspaceReviewGit } from '../review-workspaces/git.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 import { getRunWithArchived } from '../runs/store.js';
@@ -73,7 +73,13 @@ export async function gitExec(
   const slotVars = await (deps.loadVars ?? loadSlotVars)(slotId);
   const result = await (deps.runOnSlot ?? execArgvOnSlot)(
     slotVars,
-    ['git', ...(args[0] === 'diff' ? gitDiffArgs(args.slice(1)) : args)],
+    [
+      'git',
+      // Status normally refreshes index stat metadata. An observed read must not
+      // invalidate its own filesystem source by taking that optional write lock.
+      ...(isWorkspaceObservedRead() ? ['--no-optional-locks'] : []),
+      ...(args[0] === 'diff' ? gitDiffArgs(args.slice(1)) : args),
+    ],
     {
       cwd: repoPath,
       maxBuffer: opts?.maxBuffer ?? 1024 * 1024,
@@ -350,7 +356,7 @@ export async function gitDiff(
     // `git.diff` is also a public RPC/chat tool and cannot assume a preceding
     // branch-inventory request refreshed the PR base.
     const baseRef = await resolveRemoteBaseRef(params.slotId, params.base, deps, {
-      refresh: true,
+      refresh: !isWorkspaceObservedRead(),
     });
 
     if (params.head) {
@@ -469,7 +475,7 @@ export async function gitBranchDiff(
   }
   const base = params.base || 'main';
   const baseRef = await resolveRemoteBaseRef(params.slotId, base, deps, {
-    refresh: !params.head,
+    refresh: !params.head && !isWorkspaceObservedRead(),
   });
 
   if (params.head && params.target === 'worktree') {

@@ -34,6 +34,7 @@ import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { executeResourceControl, probeResourceStatus } from '../fleet/resource-manager.js';
 import { probeResourceProcess } from '../fleet/resource-process.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { capabilityResourceChanges } from '../resources/capability-changes.js';
 import {
   prepareRunPostureForValidation,
   type PrepareRunPostureOutcome,
@@ -511,8 +512,10 @@ export function hasHadTerminalCleanup(run: Run): boolean {
   return !(recoveredAt !== undefined && recoveredAt > Date.parse(run.resourcePosture.updatedAt));
 }
 
+const capabilityStore = new RuntimeCapabilityStore(runtimeCapabilityStorePath());
 const registry = new RuntimeCapabilityRegistry({
-  store: new RuntimeCapabilityStore(runtimeCapabilityStorePath()),
+  store: capabilityStore,
+  onCommit: (snapshot) => capabilityResourceChanges.committed(snapshot),
   catalogForSlot,
   captureProviderProcesses,
   checkProviderCleanup,
@@ -682,6 +685,7 @@ export async function initRuntimeCapabilities(broadcast: BroadcastFn): Promise<v
   // Prime historical authority before recovery or admission consults its sync fence.
   await getArchivedRuns();
   await registry.initialize();
+  capabilityResourceChanges.committed(capabilityStore.snapshot());
   if (!keepWarmCleanupTimer) {
     keepWarmCleanupTimer = setInterval(() => {
       void registry.cleanupExpiredWarmProviders().catch((error: unknown) => {

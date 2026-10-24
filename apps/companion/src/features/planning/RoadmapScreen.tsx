@@ -18,6 +18,7 @@ import {
   type RoadmapItem,
 } from '@farmslot/protocol';
 
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { colors, floatingCopilotGutter, fonts, radii, spacing } from '../../lib/theme';
 
 import type { StageFilter, useRoadmapController } from './use-roadmap-controller';
@@ -123,7 +124,7 @@ export default function RoadmapScreen({ screen }: { screen: RoadmapScreenModel }
           ))}
         </View>
       </View>
-      {state.error ? <Text style={styles.error}>{state.error}</Text> : null}
+      <ResourceReadStatus observation={state.observation} label="roadmap" />
       <FlatList
         data={state.deliveryView.undelivered}
         keyExtractor={(item) => item.id}

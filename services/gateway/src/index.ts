@@ -98,6 +98,8 @@ import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
 import { initReview } from './review/orchestrator.js';
+import { roadmapRoot, setRoadmapObservationGuard } from './roadmap/store.js';
+import { watchRoadmapItems } from './roadmap/watcher.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
 import { collectRunArtifactGarbage } from './run-completion/retained-artifacts.js';
 import {
@@ -137,6 +139,7 @@ import {
   broadcastEvent,
   broadcastPrincipalEvent,
   createWebSocketServer,
+  disposeServerResourceObservations,
   hasConnectedViewers,
   initServerGlobals,
 } from './server.js';
@@ -228,6 +231,7 @@ async function main(): Promise<void> {
     stopCredentialFreshnessPolling();
     releaseGatewayPresence();
     stopSourceReconciliation();
+    disposeServerResourceObservations();
     releaseGatewaySingletonLock();
   };
   process.once('exit', releaseIdentityResources);
@@ -460,6 +464,10 @@ async function main(): Promise<void> {
     24 * 60 * 60 * 1000,
   );
   initReview(observedBroadcast);
+
+  // Roadmap reads become current only while the source directory is observed.
+  const roadmapObservation = await watchRoadmapItems(roadmapRoot);
+  setRoadmapObservationGuard(() => roadmapObservation.assertReady());
 
   // Load dispatch queue + init auto-dispatch
   await loadEvalSuiteCaps();

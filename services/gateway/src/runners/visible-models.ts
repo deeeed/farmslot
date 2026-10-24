@@ -1,11 +1,24 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import { RUNNER_PICKER_MODELS, type RunnerVisibleModelState } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import {
+  nativeCatalogChanges,
+  NativeCatalogPreferenceSource,
+  type NativeCatalogSourceReceipt,
+} from '../resources/native-catalog-changes.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
 
 import {
@@ -92,10 +105,39 @@ export function readVisibleModelFile(home = visibleModelsHome()): VisibleModelFi
 
 export function writeVisibleModelFile(file: VisibleModelFile, home = visibleModelsHome()): void {
   const path = join(home, 'runner-visible-models.json');
+  const identity = preferenceIdentity(home);
+  let before: string | undefined;
+  if (identity) {
+    try {
+      before = nativeCatalogPreferenceFingerprint(home);
+    } catch (error) {
+      // A durable write can repair malformed preferences. Other filesystem errors still propagate.
+      if (!(error instanceof GatewayMethodError && error.code === 'INVALID_STATE')) throw error;
+    }
+  }
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+  const fd = openSync(tmp, 'w', 0o600);
+  try {
+    writeFileSync(fd, `${JSON.stringify(file, null, 2)}\n`);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
   renameSync(tmp, path);
+  const directory = openSync(dirname(path), 'r');
+  try {
+    fsyncSync(directory);
+  } finally {
+    closeSync(directory);
+  }
+  // Notification follows the durable rename. Explicit unrelated homes keep their existing behavior.
+  if (identity) {
+    const source = preferenceSources.get(identity.key)?.source;
+    if (source) source.sample();
+    else if (before !== nativeCatalogPreferenceFingerprint(home))
+      nativeCatalogChanges.preferencesChanged(identity.ownerId, identity.ownerGeneration);
+  }
 }
 
 export function visibleRunners(): string[] {
@@ -169,4 +211,103 @@ export function assertVisibleModelList(models: unknown): string[] {
     if (!cleaned.includes(id)) cleaned.push(id);
   }
   return cleaned;
+}
+
+interface PreferenceIdentity {
+  key: string;
+  ownerId: string;
+  ownerGeneration: number;
+}
+interface SharedPreferenceSource {
+  source: NativeCatalogPreferenceSource;
+  references: number;
+}
+const preferenceSources = new Map<string, SharedPreferenceSource>();
+
+function preferenceIdentity(home: string): PreferenceIdentity | undefined {
+  const originator = currentSessionOriginator();
+  if (originator.kind !== 'principal' || resolve(home) !== resolve(visibleModelsHome())) return;
+  const ownerGeneration = originator.principalGeneration ?? 0;
+  return {
+    key: JSON.stringify([resolve(home), originator.principalId, ownerGeneration]),
+    ownerId: originator.principalId,
+    ownerGeneration,
+  };
+}
+
+/** Exact native catalog projection only. Other runner settings and JSON formatting stay quiet. */
+function nativeCatalogPreferenceFingerprint(home: string): string {
+  return JSON.stringify(
+    Object.values(KNOWN_RUNNERS)
+      .filter((definition) => definition.nativeTransport && definition.nativeChoices)
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((definition) => {
+        const visible = describeVisibleModels(definition.id, undefined, home);
+        const defaultModel =
+          visible.defaultModel ||
+          definition.nativeChoices!.defaultModel ||
+          definition.defaultModel ||
+          '';
+        const models = visible.configured ? visible.models : definition.nativeChoices!.models;
+        return {
+          runner: definition.id,
+          defaultModel,
+          models:
+            defaultModel && !models.includes(defaultModel) ? [defaultModel, ...models] : models,
+        };
+      }),
+  );
+}
+
+export interface NativeCatalogPreferenceLease {
+  sample(): NativeCatalogSourceReceipt;
+  dispose(): void;
+}
+
+/** Acquire once per existing authenticated connection's catalog interest, not once per panel/read.
+ * No file or directory is created while arming. Last release closes the shared watcher. */
+export function observeNativeCatalogPreferences(
+  home = visibleModelsHome(),
+): NativeCatalogPreferenceLease {
+  const identity = preferenceIdentity(home);
+  if (!identity)
+    throw new GatewayMethodError(
+      'AUTH_FORBIDDEN',
+      'Native catalog source requires its authenticated preference home',
+    );
+  let shared = preferenceSources.get(identity.key);
+  if (!shared) {
+    shared = {
+      source: new NativeCatalogPreferenceSource(
+        join(resolve(home), 'runner-visible-models.json'),
+        () => nativeCatalogPreferenceFingerprint(home),
+        (reason) =>
+          nativeCatalogChanges.preferencesChanged(
+            identity.ownerId,
+            identity.ownerGeneration,
+            reason,
+          ),
+      ),
+      references: 0,
+    };
+    preferenceSources.set(identity.key, shared);
+  }
+  shared.references++;
+  const owned = shared;
+  let disposed = false;
+  return {
+    sample: () => {
+      if (disposed)
+        throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native catalog connection ended');
+      return owned.source.sample();
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      if (--owned.references === 0) {
+        owned.source.close();
+        preferenceSources.delete(identity.key);
+      }
+    },
+  };
 }

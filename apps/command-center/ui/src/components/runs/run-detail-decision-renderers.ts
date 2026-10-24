@@ -456,7 +456,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
             ])}
           ></decision-advice-panel>`
         : nothing}
-      ${hasPayload && context.actionsBlocked && !isReady
+      ${hasPayload && context.actionsBlocked && !isReady && !isReview
         ? html`
             <div class="gate-body">
               <div class="gate-description">

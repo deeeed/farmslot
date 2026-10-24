@@ -1,0 +1,99 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Command Center persistent resource storage across browser, HTTP and desktop",
+  "description": "Run from the repository root against an isolated authenticated checkout. Set FARMSLOT_UI_URL and FARMSLOT_CDP_PORT for the development browser, FARMSLOT_HTTP_CDP_PORT for the same bundled UI served over plain HTTP from another machine, and FARMSLOT_DESKTOP_CDP_PORT for the desktop app. Only dedicated proof-scope query entries are written or deleted; application data and authentication are unchanged.",
+  "proofTargets": [
+    {
+      "id": "browser-store",
+      "claim": "A worker starts after first paint, passes all eighteen conformance cases on OPFS, and leaves the database intact while another tab uses memory."
+    },
+    {
+      "id": "reload",
+      "claim": "Query bytes and their observation time survive a real page reload."
+    },
+    {
+      "id": "revocation",
+      "claim": "Deletion from the memory tab seals the owner, drops a late write and leaves the rows absent after reopening."
+    },
+    {
+      "id": "http-fallback",
+      "claim": "Plain HTTP from another machine uses memory and visibly warns that data will not survive restart."
+    },
+    {
+      "id": "desktop-store",
+      "claim": "The desktop app loads the SQLite WASM worker under its production content security policy."
+    }
+  ],
+  "workflow": {
+    "entry": "browser",
+    "nodes": {
+      "browser": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-local-store.mjs browser",
+        "timeout_ms": 180000,
+        "intent": "Exercise OPFS, reload and deletion through the production worker adapter.",
+        "next": "browser-proof"
+      },
+      "browser-proof": {
+        "action": "assert_output",
+        "source": "browser",
+        "stream": "stdout",
+        "match": "\"checks\":18",
+        "intent": "Require OPFS conformance and the helper's ownership assertions.",
+        "proves": ["browser-store"],
+        "next": "reload-proof"
+      },
+      "reload-proof": {
+        "action": "assert_output",
+        "source": "browser",
+        "stream": "stdout",
+        "match": "\"reload\":\"preserved\"",
+        "intent": "Require stored bytes and age to match after a new document opens the database.",
+        "proves": ["reload"],
+        "next": "revocation-proof"
+      },
+      "revocation-proof": {
+        "action": "assert_output",
+        "source": "browser",
+        "stream": "stdout",
+        "match": "cross-tab revoked; late write dropped; absent after reload",
+        "intent": "Require all deletion and late-write assertions through both live tabs.",
+        "proves": ["revocation"],
+        "next": "http"
+      },
+      "http": {
+        "action": "command",
+        "cmd": "FARMSLOT_CDP_PORT=${FARMSLOT_HTTP_CDP_PORT:?Select the isolated remote HTTP browser} node apps/command-center/scripts/prove-local-store.mjs http",
+        "timeout_ms": 90000,
+        "intent": "Read the real insecure page's memory fallback and visible notice.",
+        "next": "http-proof"
+      },
+      "http-proof": {
+        "action": "assert_output",
+        "source": "http",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require an insecure context, memory storage and the rendered restart notice.",
+        "proves": ["http-fallback"],
+        "next": "desktop"
+      },
+      "desktop": {
+        "action": "command",
+        "cmd": "FARMSLOT_CDP_PORT=${FARMSLOT_DESKTOP_CDP_PORT:?Select the isolated desktop app} node apps/command-center/scripts/prove-local-store.mjs desktop",
+        "timeout_ms": 90000,
+        "intent": "Read the desktop app's actual WASM-backed database and integrity.",
+        "next": "desktop-proof"
+      },
+      "desktop-proof": {
+        "action": "assert_output",
+        "source": "desktop",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require OPFS storage after first paint with SQLite integrity intact.",
+        "proves": ["desktop-store"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -9,10 +9,12 @@ import { colors, fonts } from '../lib/theme';
 export function RunLinkedTickets({
   run,
   onSave,
+  disabled = false,
   compact = false,
 }: {
   run: Run;
   onSave?: (refs: string[]) => Promise<void>;
+  disabled?: boolean;
   compact?: boolean;
 }) {
   const view = runLinkedTicketsView(run);
@@ -28,7 +30,7 @@ export function RunLinkedTickets({
     }
   };
   const save = async () => {
-    if (!onSave || busy) return;
+    if (!onSave || disabled || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -108,6 +110,7 @@ export function RunLinkedTickets({
           <Pressable
             style={styles.chip}
             accessibilityRole="button"
+            disabled={disabled || busy}
             onPress={() => {
               setDraft(view.operatorRefs.join(', '));
               setError('');
@@ -129,14 +132,14 @@ export function RunLinkedTickets({
             autoCorrect={false}
             value={draft}
             onChangeText={setDraft}
-            editable={!busy}
+            editable={!busy && !disabled}
             style={styles.input}
           />
           <View style={styles.row}>
             <Pressable
               style={styles.chip}
               accessibilityRole="button"
-              disabled={busy}
+              disabled={disabled || busy}
               onPress={() => void save()}
             >
               <Text style={styles.link}>{busy ? 'Saving…' : 'Save'}</Text>

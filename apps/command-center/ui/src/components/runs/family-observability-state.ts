@@ -72,11 +72,7 @@ export abstract class FamilyObservabilityState extends LitElement {
   @state() _proposalError: Map<string, string> = new Map();
   @state() _copiedAction = '';
   @state() _selectedExperimentKey = '';
-  /** Full {@link Run} payloads keyed by runId, lazy-loaded via `run.get` so the
-   * retrospective view can render the same `<run-pipeline>` graph as `#run/...`. */
-  @state() _fullRuns: Map<string, Run> = new Map();
-  @state() _fullRunLoading: Set<string> = new Set();
-  @state() _fullRunError: Map<string, string> = new Map();
+  /** The inspector selection belongs to the currently observed full run. */
   @state() _selectedStep: RunStep | null = null;
   @state() _diffModal: FamilyDiffModalState | null = null;
   _diffModalOpener: HTMLElement | null = null;
@@ -102,7 +98,6 @@ export abstract class FamilyObservabilityState extends LitElement {
     matrix: EvidenceMatrix;
   } | null = null;
   _unsubState?: () => void;
-  _unsubGateway?: () => void;
   _unsubDecisionEvent?: () => void;
   _unsubDecisionUpdated?: () => void;
   _unsubImprovementFail?: () => void;

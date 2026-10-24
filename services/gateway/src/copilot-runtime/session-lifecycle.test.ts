@@ -54,6 +54,7 @@ test('ambiguous restart reconciliation fails closed', async () => {
   tmux.sessions.add(`${COPILOT_TMUX_SESSION}-orphan`);
   const controller = new CopilotRuntimeController({
     store: new CopilotRuntimeStore(home),
+    observeCheckout: async () => async () => {},
     tmux,
     checkout: process.cwd(),
     inspectCheckout: async () => ({

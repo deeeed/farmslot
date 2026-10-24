@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FlashList } from '@shopify/flash-list';
-import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { useFocusEffect, useIsFocused, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type GestureResponderEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -11,14 +11,18 @@ import {
   Methods,
   reconcileTmuxWorkerWatchlist,
   removeTmuxWorkerWatchItem,
-  type TmuxWorkerNodeResult,
+  sourceObservationAge,
+  type TmuxWorkerListResult,
   type TmuxWorkerRef,
   type TmuxWorkerSummary,
   type TmuxWorkerWatchEntry,
   type TmuxWorkerWatchItem,
   upsertTmuxWorkerWatchItem,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { useResourceQuery } from '../../hooks/useResourceQuery';
+import { getResourceCache } from '../../lib/resource-cache';
 import { colors, fonts, radii, spacing } from '../../lib/theme';
 import {
   buildTmuxWorkerRows,
@@ -88,14 +92,20 @@ function watchEntryMatchesFilter(entry: TmuxWorkerWatchEntry, filter: WorkerPane
 export default function WorkersScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const client = useConnectionStore((s) => s.client);
+  const focused = useIsFocused();
   const status = useConnectionStore((s) => s.status);
   const filters = useFilterStore((s) => s.filters);
-  const [nodes, setNodes] = useState<TmuxWorkerNodeResult[]>([]);
+  const query = useMemo(
+    () => resourceQuery<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, {}),
+    [],
+  );
+  const observation = useResourceQuery(focused ? query : undefined);
+  const nodes = observation.data?.nodes ?? [];
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const refreshing = observation.status === 'loading';
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(() => new Set());
   const [watchItems, setWatchItems] = useState<TmuxWorkerWatchItem[]>([]);
+  const [watchItemsLoaded, setWatchItemsLoaded] = useState(false);
   const watchItemsRef = useRef<TmuxWorkerWatchItem[]>([]);
   const [workerFilter, setWorkerFilter] = useState<WorkerPaneFilter>('adhoc');
 
@@ -119,16 +129,12 @@ export default function WorkersScreen() {
   const loadWatchItems = useCallback(async (): Promise<TmuxWorkerWatchItem[]> => {
     try {
       const loaded = parseWatchItems(await AsyncStorage.getItem(TERMINAL_WATCHLIST_STORAGE_KEY));
-      watchItemsRef.current = loaded;
-      setWatchItems(loaded);
       return loaded;
     } catch (err) {
       // A corrupt local watchlist is recoverable: reset only this local cache so
       // the terminal page can still load and the operator can rebuild the list.
       console.warn('[terminals] resetting corrupt local watchlist', err);
       await AsyncStorage.removeItem(TERMINAL_WATCHLIST_STORAGE_KEY);
-      watchItemsRef.current = [];
-      setWatchItems([]);
       return [];
     }
   }, []);
@@ -142,44 +148,29 @@ export default function WorkersScreen() {
     });
   }, []);
 
-  const refresh = useCallback(
-    async (baseWatchItems?: readonly TmuxWorkerWatchItem[]) => {
-      if (!client || status !== 'connected') {
-        setNodes([]);
-        setError(status === 'connected' ? null : 'Connect to the gateway to list tmux workers.');
-        return;
-      }
-      setRefreshing(true);
-      try {
-        const result = await client.request<{ nodes: TmuxWorkerNodeResult[] }>(
-          Methods.TMUX_WORKER_LIST,
-          { includeDisconnected: true },
-          10_000,
-        );
-        setNodes(result.nodes);
-        const workers = flattenTmuxWorkers(result.nodes);
-        const sourceWatchItems = baseWatchItems ?? watchItemsRef.current;
-        const refreshed = reconcileTmuxWorkerWatchlist(sourceWatchItems, workers).map(
-          (entry) => entry.item,
-        );
-        persistWatchItems(refreshed);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setRefreshing(false);
-      }
-    },
-    [client, persistWatchItems, status],
-  );
-
+  const refresh = useCallback(() => getResourceCache()?.retry(query), [query]);
+  useEffect(() => {
+    if (!watchItemsLoaded || observation.status !== 'ready' || !observation.data) return;
+    const next = reconcileTmuxWorkerWatchlist(
+      watchItemsRef.current,
+      flattenTmuxWorkers(observation.data.nodes),
+    ).map((entry) => entry.item);
+    persistWatchItems(next);
+  }, [observation, persistWatchItems, watchItemsLoaded]);
   useFocusEffect(
     useCallback(() => {
-      void (async () => {
-        const loaded = await loadWatchItems();
-        await refresh(loaded);
-      })();
-    }, [loadWatchItems, refresh]),
+      let active = true;
+      setWatchItemsLoaded(false);
+      void loadWatchItems().then((loaded) => {
+        if (!active) return;
+        watchItemsRef.current = loaded;
+        setWatchItems(loaded);
+        setWatchItemsLoaded(true);
+      });
+      return () => {
+        active = false;
+      };
+    }, [loadWatchItems]),
   );
 
   const machineFilteredNodes = useMemo(
@@ -469,13 +460,15 @@ export default function WorkersScreen() {
     >
       <View style={styles.summaryRow}>
         <Text style={styles.summaryTitle}>Terminals</Text>
-        <Pressable
-          style={styles.refreshButton}
-          onPress={() => void refresh()}
-          disabled={refreshing}
-        >
-          <Text style={styles.refreshText}>{refreshing ? 'Refreshing…' : 'Refresh'}</Text>
-        </Pressable>
+        {observation.status !== 'ready' ? (
+          <Pressable
+            style={styles.refreshButton}
+            onPress={() => void refresh()}
+            disabled={refreshing || status !== 'connected'}
+          >
+            <Text style={styles.refreshText}>{refreshing ? 'Reading…' : 'Retry'}</Text>
+          </Pressable>
+        ) : null}
       </View>
       <View style={styles.filterRow}>
         {(['adhoc', 'farmslot', 'all'] as WorkerPaneFilter[]).map((filter) => (
@@ -499,6 +492,16 @@ export default function WorkersScreen() {
           </Pressable>
         ))}
       </View>
+      {observation.status !== 'ready' ? (
+        <Text style={styles.errorText}>
+          {observation.error?.message ??
+            (observation.status === 'unsupported'
+              ? 'Worker observations are unsupported.'
+              : observation.data
+                ? `Saved workers, ${sourceObservationAge(observation.observedAt)}.`
+                : 'Waiting for current worker inventory.')}
+        </Text>
+      ) : null}
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       <FlashList
         data={items}

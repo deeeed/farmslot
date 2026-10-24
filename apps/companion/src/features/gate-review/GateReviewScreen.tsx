@@ -15,6 +15,7 @@ import { publicationGateColors } from '@farmslot/theme';
 
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import {
   acceptancePanelViewportHeight,
   TaskAcceptancePanel,
@@ -84,6 +85,7 @@ export function GateReviewScreen({
         { paddingBottom: insets.bottom, backgroundColor: palette.background },
       ]}
     >
+      <ResourceReadStatus observation={viewModel.observation} label="run" />
       {viewModel.error ? <Text style={styles.error}>{viewModel.error}</Text> : null}
       <ScrollView
         ref={scroll}
@@ -97,7 +99,7 @@ export function GateReviewScreen({
           actions={viewModel.actions}
           evidenceModel={acceptance.evidenceModel}
           reviewer={acceptance.reviewer}
-          busy={judging || viewModel.sendingActionId !== null}
+          busy={judging || !viewModel.commandsReady || viewModel.sendingActionId !== null}
           onSkip={actions.markUntestable}
           acceptingFindings={acceptingDecisionId === viewModel.decision.id}
           onAcceptFindingsChange={(accepting) =>
@@ -153,8 +155,16 @@ export function GateReviewScreen({
                   expectedRows={expectedRows}
                   evidenceModel={acceptance.evidenceModel}
                   judgmentRows={acceptance.evidenceModel?.judgmentRows(acceptance.reviewer)}
-                  onRecordVisualReview={recordVisualReview}
-                  onMarkUntestable={actions.markUntestable}
+                  onRecordVisualReview={
+                    viewModel.commandsReady && acceptance.commandsReady
+                      ? recordVisualReview
+                      : undefined
+                  }
+                  onMarkUntestable={
+                    viewModel.commandsReady && acceptance.commandsReady
+                      ? actions.markUntestable
+                      : undefined
+                  }
                   acceptanceStatus={acceptance.acceptanceStatus}
                   acceptanceCriteria={acceptance.acceptanceCriteria}
                   acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
@@ -188,7 +198,9 @@ export function GateReviewScreen({
                 scroll.current?.scrollTo({ y: evidenceOffset.current + y, animated: true })
               }
               reviewer={acceptance.reviewer}
-              onRecordVisualReview={recordVisualReview}
+              onRecordVisualReview={
+                viewModel.commandsReady && acceptance.commandsReady ? recordVisualReview : undefined
+              }
               focusClaim={focusClaim}
               onOpenRecordedEvidence={actions.openRecordedEvidence}
               onOpenVisual={actions.openVisual}
@@ -226,7 +238,7 @@ export function GateReviewScreen({
           run={viewModel.run}
           showClaims={false}
           loading={acceptance.loading}
-          disabled={judging}
+          disabled={judging || !viewModel.commandsReady}
           reviewPicker={viewModel.reviewPicker}
           decision={viewModel.decision}
           actions={viewModel.actions}
@@ -238,7 +250,9 @@ export function GateReviewScreen({
           onResolve={actions.resolve}
           claims={acceptance.evidenceModel?.claims}
           judgmentRows={acceptance.evidenceModel?.judgmentRows(acceptance.reviewer)}
-          onRecordVisualReview={recordVisualReview}
+          onRecordVisualReview={
+            viewModel.commandsReady && acceptance.commandsReady ? recordVisualReview : undefined
+          }
           onRefreshPackage={() => void actions.refreshPackage()}
           pendingVisualClaimIds={acceptance.evidenceModel?.pendingVisualClaimIds}
           readiness={

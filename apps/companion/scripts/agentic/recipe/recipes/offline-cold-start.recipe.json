@@ -1,0 +1,95 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion planning and configuration after a cold start",
+  "description": "D07 static candidate for the canonical cold-start proof. Root must first authorize and prepare a fresh isolated fixture, native compatibility receipt, exact input plan, full-run recording and proved-owned controller. One already reserved device, one deliberate app cold restart, no provider or runner launch, no UI/cache/SQL injection. Existing mounted backlog/roadmap/project views and read-only PR/copilot consumers only. No native work-graph viewer or cold queue rendering is claimed. Engine pass does not substitute for independent actual target-at-press video audit. No params or unverified readiness receipts. D06 history-specific claims remain in immutable prior sources and accepted packets.",
+  "proofTargets": [
+    {
+      "id": "d07-mounted-sources",
+      "claim": "External backlog, roadmap and project files change their mounted current Companion views without Refresh."
+    },
+    {
+      "id": "d07-cold-data",
+      "claim": "A new offline process retains exact saved backlog, roadmap, project and observed queue rows and original SQLite observation times."
+    },
+    {
+      "id": "d07-saved-age",
+      "claim": "Existing backlog, roadmap and project controls visibly report saved data age after cold restoration."
+    },
+    {
+      "id": "d07-disabled-no-replay",
+      "claim": "The actual fully visible disabled Mark ready control receives one paired AX/OCR-guarded press and sends no command on outage or recovery; independent press-video audit remains required."
+    },
+    {
+      "id": "d07-observed-memory",
+      "claim": "Actual mounted PR and stopped Co-Pilot consumers issue their four read-only queries; only these observed memory-only methods are checked absent from SQLite."
+    }
+  ],
+  "workflow": {
+    "entry": "native-ready",
+    "nodes": {
+      "native-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-native",
+        "timeout_ms": 30000,
+        "intent": "Attach one owned device session to the already launched native screen.",
+        "next": "prove"
+      },
+      "prove": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-native-planning.mjs prove",
+        "timeout_ms": 480000,
+        "intent": "Prove current planning, cold saved rows and disabled action on the owned app.",
+        "next": "d07-mounted-sources"
+      },
+      "d07-mounted-sources": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07ExternalMountedChanges\":true",
+        "intent": "Inspect real external source changes on mounted native planning views.",
+        "proves": ["d07-mounted-sources"],
+        "next": "d07-cold-data"
+      },
+      "d07-cold-data": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07ColdExactRows\":true",
+        "intent": "Compare complete saved SQL rows and original ages after one app restart.",
+        "proves": ["d07-cold-data"],
+        "next": "d07-saved-age"
+      },
+      "d07-saved-age": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07VisibleSavedAge\":true",
+        "intent": "Show saved backlog, roadmap and project ages in existing views.",
+        "proves": ["d07-saved-age"],
+        "next": "d07-disabled-no-replay"
+      },
+      "d07-disabled-no-replay": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07DisabledTapNoReplay\":true",
+        "intent": "Verify the actual disabled press sends no command or recovery replay.",
+        "proves": ["d07-disabled-no-replay"],
+        "next": "d07-observed-memory"
+      },
+      "d07-observed-memory": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07MemoryOnlyObservedQueries\":true",
+        "intent": "Check persistence only for four queries observed through mounted consumers.",
+        "proves": ["d07-observed-memory"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -2,14 +2,18 @@
 
 // Register components (side-effect imports)
 import './components/app-shell.js';
+import './components/resource-store-notice.js';
 
 import { requestPermission } from './utils/notifications.js';
 import { initializeDesktopAttention } from './desktop-attention.js';
 import { gateway } from './gateway-client.js';
+import { initializeResourceCache } from './resource-cache.js';
 import { initState, onWorkspaceOwnerChange } from './state.js';
 
 // Wire up state management to gateway events
+initializeResourceCache();
 initState();
+document.body.append(document.createElement('farm-resource-store-notice'));
 initializeDesktopAttention();
 
 // Tear down principal-owned views when the account changes. Pending reads may settle

@@ -15,6 +15,8 @@ export type TerminalSize = { cols: number; rows: number };
 
 export type XtermTerminalViewHandle = {
   reset: (text: string) => void;
+  /** Read the actual rendered terminal buffer for development acceptance observers. */
+  inspect?: () => Promise<string>;
   write: (text: string) => void;
   setStatus: (text: string) => void;
 };
@@ -28,6 +30,7 @@ type XtermTerminalViewProps = {
 };
 
 type WebTerminalMessage =
+  | { type: 'inspection'; id: number; text: string }
   | { type: 'ready' }
   | { type: 'input'; data: string }
   | { type: 'resize'; cols: number; rows: number }
@@ -41,6 +44,21 @@ export const XtermTerminalView = forwardRef<XtermTerminalViewHandle, XtermTermin
     const webViewRef = useRef<WebView>(null);
     const readyRef = useRef(false);
     const pendingMessagesRef = useRef<Array<{ type: string; payload: unknown }>>([]);
+    const inspectionId = useRef(0);
+    const inspections = useRef(
+      new Map<number, { resolve: (text: string) => void; timer: ReturnType<typeof setTimeout> }>(),
+    );
+    useEffect(
+      () => () => {
+        // A retired WebView has no buffer for its former owner to inspect.
+        for (const pending of inspections.current.values()) {
+          clearTimeout(pending.timer);
+          pending.resolve('');
+        }
+        inspections.current.clear();
+      },
+      [],
+    );
     const initialTextRef = useRef(initialText);
     initialTextRef.current = initialText;
 
@@ -66,6 +84,20 @@ export const XtermTerminalView = forwardRef<XtermTerminalViewHandle, XtermTermin
       ref,
       () => ({
         reset: (text: string) => sendMessage('reset', text),
+        ...(__DEV__
+          ? {
+              inspect: () =>
+                new Promise<string>((resolve, reject) => {
+                  const id = ++inspectionId.current;
+                  const timer = setTimeout(() => {
+                    inspections.current.delete(id);
+                    reject(new Error('The terminal buffer inspection timed out.'));
+                  }, 3000);
+                  inspections.current.set(id, { resolve, timer });
+                  sendMessage('inspect', id);
+                }),
+            }
+          : {}),
         write: (text: string) => sendMessage('write', text),
         setStatus: (text: string) => sendMessage('status', text),
       }),
@@ -94,6 +126,15 @@ export const XtermTerminalView = forwardRef<XtermTerminalViewHandle, XtermTermin
               error instanceof Error ? error.message : String(error)
             }`,
           );
+          return;
+        }
+        if (message.type === 'inspection') {
+          const pending = inspections.current.get(message.id);
+          if (pending) {
+            clearTimeout(pending.timer);
+            inspections.current.delete(message.id);
+            pending.resolve(message.text);
+          }
           return;
         }
         if (message.type === 'ready') {
@@ -484,6 +525,18 @@ function terminalHtml(): string {
           return;
         }
         var payload = message.payload == null ? '' : String(message.payload);
+        if (message.type === 'inspect') {
+          var text = fallback.textContent || '';
+          if (term) {
+            var buffer = term.buffer.active;
+            var rows = [];
+            for (var at = Math.max(0, buffer.length - term.rows); at < buffer.length; at++)
+              rows.push(buffer.getLine(at).translateToString(true));
+            text = rows.join('\\n');
+          }
+          post({ type: 'inspection', id: Number(message.payload), text: text.slice(-8192) });
+          return;
+        }
         if (message.type === 'reset') {
           if (term) {
             term.clear();

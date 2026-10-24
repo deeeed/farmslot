@@ -3,25 +3,17 @@ import { AppState } from 'react-native';
 import { create } from 'zustand';
 
 import {
-  type DecisionListResult,
   Events,
-  type FleetStatusResult,
   type GatewayAuthConnectResult,
-  Methods,
   type MonitorViolationPayload,
-  type PendingDecision,
   type PersonDeviceSession,
   type PersonSessionAuth,
   type PRListUpdatedPayload,
   type PRUpdatedPayload,
   type Run,
-  type RunDeletedPayload,
   signOutAccount,
-  type SlotStatus,
 } from '@farmslot/protocol';
 
-import { sourceChangeFeedFor } from '../features/sources/source-change-feed';
-import { currentFarmConnection } from '../lib/connection-authority';
 import {
   type ConnectionHealthState,
   type ConnectionLiveness,
@@ -66,34 +58,23 @@ import {
   profileSecretStorageKey,
   readGatewayProfilePersonSession,
 } from '../lib/gateway-profiles';
-import { fetchActiveRuns, fetchRecentRunHistory } from '../lib/gateway-run-sync';
-import { notifyDecision, notifyRunCompleted, notifyViolation } from '../lib/notifications';
+import { notifyRunCompleted, notifyViolation } from '../lib/notifications';
 import type { WorkspaceAccess } from '../lib/workspace-access';
 
-import { useDecisionStore } from './decisions';
-import { useFleetStore } from './fleet';
 import { usePRStore } from './prs';
 import { resetFarmState } from './reset-farm-state';
-import { useRunStore } from './runs';
 
 const SIGNED_OUT_KEY = '@farmslot:signedOut';
 const GATEWAY_URL_KEY = '@farmslot:gatewayUrl';
 const GATEWAY_PROFILES_KEY = '@farmslot:gatewayProfiles';
 const ACTIVE_GATEWAY_PROFILE_KEY = '@farmslot:activeGatewayProfileId';
 const LIVENESS_PROBE_TIMEOUT_MS = 8_000;
-const DECISION_LIST_TIMEOUT_MS = 30_000;
-const DECISION_SYNC_RETRY_DELAY_MS = 2_000;
 
 let livenessController: ConnectionLivenessController | null = null;
 let appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
-let requestDecisionRefresh: (() => Promise<void>) | null = null;
 const probeAttemptTracker = new ConnectionProbeAttemptTracker();
 
 export type { ConnectionProbeResult } from '../lib/connection-probe';
-
-type DecisionNewEventPayload = {
-  decision?: PendingDecision;
-};
 
 interface ConnectionStore {
   status: ConnectionState;
@@ -140,8 +121,6 @@ interface ConnectionStore {
   disconnect: () => void;
   probeConnection: () => Promise<ConnectionProbeResult>;
   testConnection: () => Promise<ConnectionProbeResult>;
-  retryDecisionSync: () => Promise<void>;
-  syncRunHistory: () => Promise<void>;
 }
 
 export const useConnectionStore = create<ConnectionStore>((set, get) => ({
@@ -187,48 +166,19 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       const auth =
         !signedOut && activeProfile ? await authCredentialsForProfile(activeProfile) : {};
       const client = new GatewayClient(url, auth);
-      sourceChangeFeedFor(client);
       const session =
         !signedOut && activeProfile ? await readGatewayProfilePersonSession(activeProfile) : null;
 
-      // Subscribe to fleet events
-      client.subscribe(Events.FLEET_UPDATED, (payload) => {
-        const data = payload as { fleet: FleetStatusResult['fleet'] };
-        if (data.fleet) {
-          useFleetStore.getState().setFleet(data.fleet);
-        }
-      });
-
-      client.subscribe(Events.SLOT_CHANGED, (payload) => {
-        const slot = payload as SlotStatus;
-        if (slot?.slot) {
-          useFleetStore.getState().updateSlot(slot);
-        }
-      });
-
-      // Run events
-      client.subscribe(Events.RUN_UPDATED, (payload) => {
-        const data = payload as { run: Run };
-        if (data.run) useRunStore.getState().upsertRun(data.run);
-      });
-
+      // Completion alerts do not own the run collection.
       client.subscribe(Events.RUN_COMPLETED, (payload) => {
-        const data = payload as { run: Run };
-        if (data.run) {
-          useRunStore.getState().upsertRun(data.run);
-          notifyRunCompleted(data.run);
-        }
-      });
-
-      client.subscribe(Events.RUN_CREATED, (payload) => {
-        const data = payload as { run: Run };
-        if (data.run) useRunStore.getState().upsertRun(data.run);
-      });
-
-      // Archive also arrives as RUN_DELETED.
-      client.subscribe(Events.RUN_DELETED, (payload) => {
-        const data = payload as RunDeletedPayload;
-        if (data.runId) useRunStore.getState().removeRun(data.runId);
+        if (get().client !== client || client.workspaceAccess !== 'farm') return;
+        const data = payload as { run?: Run };
+        if (data.run)
+          void notifyRunCompleted(data.run).catch((error: unknown) => {
+            set({
+              lastSyncError: `Run notification failed: ${error instanceof Error ? error.message : String(error)}`,
+            });
+          });
       });
 
       client.subscribe(Events.PR_UPDATED, (payload) => {
@@ -251,130 +201,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         if (data.prs) prs.setPRs(data.prs);
       });
 
-      let decisionRefreshInFlight: Promise<void> | null = null;
-      let decisionRefreshQueued = false;
-      let decisionRefreshQueuedReason = 'queued event';
-      let decisionRefreshQueuedRetryBeforeWarning = false;
-      const clearDecisionSyncError = () => {
-        set((state) => ({
-          lastSyncError: state.lastSyncError?.startsWith('Failed to refresh decisions')
-            ? null
-            : state.lastSyncError,
-        }));
-      };
-      const refreshDecisions = (reason: string, retryBeforeWarning = false): Promise<void> => {
-        if (client.workspaceAccess !== 'farm' || client.connectionState !== 'connected')
-          return Promise.resolve();
-        if (decisionRefreshInFlight) {
-          decisionRefreshQueued = true;
-          decisionRefreshQueuedReason = reason;
-          decisionRefreshQueuedRetryBeforeWarning ||= retryBeforeWarning;
-          return decisionRefreshInFlight;
-        }
-        // A reconnect starts a fresh sync; never surface stale results from the prior socket.
-        const connectionIsCurrent = currentFarmConnection(client);
-        const requestDecisions = () =>
-          client.request<DecisionListResult>(
-            Methods.DECISION_LIST,
-            undefined,
-            DECISION_LIST_TIMEOUT_MS,
-          );
-        const refresh = (async () => {
-          try {
-            let result: DecisionListResult;
-            try {
-              result = await requestDecisions();
-            } catch (error) {
-              if (!retryBeforeWarning || !connectionIsCurrent()) throw error;
-              await delay(DECISION_SYNC_RETRY_DELAY_MS);
-              if (!connectionIsCurrent()) return;
-              result = await requestDecisions();
-            }
-            if (!connectionIsCurrent()) return;
-            useDecisionStore.getState().setDecisions(result.decisions);
-            clearDecisionSyncError();
-          } catch (error) {
-            if (!connectionIsCurrent()) return;
-            const message = error instanceof Error ? error.message : String(error);
-            set({ lastSyncError: `Failed to refresh decisions after ${reason}: ${message}` });
-          }
-        })().finally(() => {
-          if (decisionRefreshInFlight !== refresh) return;
-          decisionRefreshInFlight = null;
-          if (decisionRefreshQueued) {
-            decisionRefreshQueued = false;
-            const queuedReason = decisionRefreshQueuedReason;
-            const queuedRetryBeforeWarning = decisionRefreshQueuedRetryBeforeWarning;
-            decisionRefreshQueuedReason = 'queued event';
-            decisionRefreshQueuedRetryBeforeWarning = false;
-            void refreshDecisions(queuedReason, queuedRetryBeforeWarning);
-          }
-        });
-        decisionRefreshInFlight = refresh;
-        return refresh;
-      };
-      requestDecisionRefresh = () => refreshDecisions('manual retry');
-
-      // Decision events + notifications
-      client.subscribe(Events.DECISION_NEW, (payload) => {
-        const d = normalizeDecisionEvent(payload);
-        if (d?.id) {
-          useDecisionStore.getState().addDecision(d);
-          notifyDecision(d);
-        } else {
-          refreshDecisions('decision.new');
-        }
-      });
-
-      client.subscribe(Events.RUN_DECISION_NEW, (payload) => {
-        const d = normalizeDecisionEvent(payload);
-        if (d?.id && d.runMeta) {
-          useDecisionStore.getState().addDecision(d);
-          notifyDecision(d);
-          if (d.type === 'retrospective' && !d.payload) {
-            refreshDecisions('run.decision.new incomplete retrospective');
-          } else {
-            clearDecisionSyncError();
-          }
-        } else {
-          refreshDecisions('run.decision.new fallback');
-        }
-      });
-
-      const upsertDecisionFromEvent = (payload: unknown, reason: string) => {
-        const d = normalizeDecisionEvent(payload);
-        if (d?.id && d.runMeta) {
-          useDecisionStore.getState().upsertDecision(d);
-          if (d.type === 'retrospective' && !d.payload) {
-            refreshDecisions(`${reason} incomplete retrospective`);
-          } else {
-            clearDecisionSyncError();
-          }
-          return;
-        }
-        refreshDecisions(`${reason} fallback`);
-      };
-
-      client.subscribe(Events.DECISION_UPDATED, (payload) => {
-        upsertDecisionFromEvent(payload, 'decision.updated');
-      });
-
-      client.subscribe(Events.RUN_DECISION_UPDATED, (payload) => {
-        upsertDecisionFromEvent(payload, 'run.decision.updated');
-      });
-
       client.subscribe(Events.MONITOR_VIOLATION, (payload) => {
         notifyViolation(payload as MonitorViolationPayload);
-      });
-
-      client.subscribe(Events.DECISION_RESOLVED, (payload) => {
-        const data = payload as { decisionId: string };
-        if (data.decisionId) useDecisionStore.getState().removeDecision(data.decisionId);
-      });
-
-      client.subscribe(Events.RUN_DECISION_RESOLVED, (payload) => {
-        const data = payload as { decisionId: string };
-        if (data.decisionId) useDecisionStore.getState().removeDecision(data.decisionId);
       });
 
       client.onConnectionChange((status) => {
@@ -385,8 +213,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           get().principalId !== principalId || get().workspaceAccess !== workspaceAccess;
         if (authorityChanged) {
           if (get().workspaceAccess !== 'none' || workspaceAccess !== 'farm') resetFarmState();
-          decisionRefreshQueued = false;
-          decisionRefreshInFlight = null;
           probeAttemptTracker.invalidate();
           livenessController?.reset();
         }
@@ -408,53 +234,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           lastConnectedAt: status === 'connected' ? Date.now() : get().lastConnectedAt,
         });
         if (status !== 'connected') {
-          decisionRefreshInFlight = null;
-          decisionRefreshQueued = false;
           usePRStore.getState().setLoading(false);
-          useRunStore.getState().setActiveLoading(false);
-          useRunStore.getState().resetHistorySync();
         }
 
         // Fetch all state on connect/reconnect
         if (status === 'connected') {
           void livenessController?.probeFresh();
           if (workspaceAccess !== 'farm') return;
-          const isCurrent = currentFarmConnection(client);
-          useFleetStore.getState().setLoading(true);
-          useRunStore.getState().resetHistorySync();
-          useRunStore.getState().setActiveLoading(true);
-          client
-            .request<FleetStatusResult>(Methods.FLEET_STATUS)
-            .then((result) => {
-              if (!isCurrent()) return;
-              useFleetStore.getState().setFleet(result.fleet);
-              set({ lastSyncError: null });
-            })
-            .catch((err: Error) => {
-              if (!isCurrent()) return;
-              set({ lastSyncError: `Failed to refresh fleet: ${err.message}` });
-              useFleetStore.getState().setLoading(false);
-            });
-
-          fetchActiveRuns(client)
-            .then((runs) => {
-              if (!isCurrent()) return;
-              useRunStore.getState().setRuns(runs);
-              set((state) => ({
-                lastSyncError:
-                  state.lastSyncError?.startsWith('Failed to refresh runs:') ||
-                  state.lastSyncError?.startsWith('Failed to download run history:')
-                    ? null
-                    : state.lastSyncError,
-              }));
-            })
-            .catch((err: Error) => {
-              if (!isCurrent()) return;
-              useRunStore.getState().setActiveLoading(false);
-              set({ lastSyncError: `Failed to refresh runs: ${err.message}` });
-            });
-
-          refreshDecisions('connection sync', true);
 
           // PR_LIST fans out through GitHub and can legitimately outlive a cold
           // connect. Keep it lazy on the PR screen so a slow PR refresh does not
@@ -531,7 +317,12 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       livenessController?.reset();
     }
 
-    await state.client?.setConnection(url, auth, transition.changed);
+    await state.client?.setConnection(
+      url,
+      auth,
+      transition.changed,
+      state.activeProfileId !== (matchingProfileId ?? '') ? 'profile-change' : 'principal-change',
+    );
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -565,7 +356,12 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       livenessController?.reset();
     }
 
-    await state.client?.setConnection(profile.url, auth, transition.changed);
+    await state.client?.setConnection(
+      profile.url,
+      auth,
+      transition.changed,
+      state.activeProfileId !== profile.id ? 'profile-change' : 'principal-change',
+    );
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -694,7 +490,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       resetFarmState();
 
       set({ personSession: null });
-      await state.client?.setConnection('', {});
+      await state.client?.setConnection('', {}, false, 'profile-change');
       return;
     }
     await AsyncStorage.setItem(ACTIVE_GATEWAY_PROFILE_KEY, nextProfile.id);
@@ -722,7 +518,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       livenessController?.reset();
     }
 
-    await state.client?.setConnection(nextProfile.url, auth, transition.changed);
+    await state.client?.setConnection(nextProfile.url, auth, transition.changed, 'profile-change');
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -767,7 +563,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       resetFarmState();
 
       set({ personSession: null });
-      await state.client?.setConnection('', {});
+      await state.client?.setConnection('', {}, false, 'profile-change');
       return;
     }
 
@@ -796,7 +592,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       livenessController?.reset();
     }
 
-    await state.client?.setConnection(nextProfile.url, auth, transition.changed);
+    await state.client?.setConnection(nextProfile.url, auth, transition.changed, 'profile-change');
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -966,37 +762,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     }
     return get().probeConnection();
   },
-
-  retryDecisionSync: async () => {
-    if (get().status !== 'connected' || get().workspaceAccess !== 'farm') return;
-    await requestDecisionRefresh?.();
-  },
-
-  syncRunHistory: async () => {
-    const { client, status } = get();
-    if (!client || status !== 'connected' || get().workspaceAccess !== 'farm') return;
-    const isCurrent = currentFarmConnection(client);
-    const runStore = useRunStore.getState();
-    if (runStore.activeLoading || runStore.historyLoaded || runStore.historyLoading) return;
-
-    runStore.setHistoryLoading(true);
-    try {
-      const runs = await fetchRecentRunHistory(client);
-      if (!isCurrent()) return;
-      useRunStore.getState().mergeRuns(runs);
-      set((state) => ({
-        lastSyncError: state.lastSyncError?.startsWith('Failed to download run history:')
-          ? null
-          : state.lastSyncError,
-      }));
-    } catch (err) {
-      if (!isCurrent()) return;
-      useRunStore.getState().setHistoryLoading(false);
-      set({
-        lastSyncError: `Failed to download run history: ${(err as Error).message}`,
-      });
-    }
-  },
 }));
 
 async function authCredentialsForProfile(profile: GatewayProfile): Promise<GatewayAuthCredentials> {
@@ -1006,17 +771,6 @@ async function authCredentialsForProfile(profile: GatewayProfile): Promise<Gatew
 async function readSavedProfiles(): Promise<GatewayProfile[]> {
   const raw = await AsyncStorage.getItem(GATEWAY_PROFILES_KEY);
   return parseGatewayProfilesFromStorage(raw);
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function normalizeDecisionEvent(payload: unknown): PendingDecision | null {
-  const event = payload as DecisionNewEventPayload;
-  const raw = event.decision ?? (payload as PendingDecision | undefined);
-  if (!raw?.id || !raw.title || !raw.description || !raw.actions || !raw.createdAt) return null;
-  return raw;
 }
 
 function livenessFromStore(

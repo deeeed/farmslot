@@ -1,21 +1,23 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
-  Events,
   extractRunArtifactManifest,
   type GitDiffResult,
   Methods,
   type RecipeRunArtifactGroup,
-  type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { MobileDiffViewer } from '../../components/MobileDiffViewer';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
+import { observeNativeDiffFrame } from '../../farmslot/run-collections-proof';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -27,8 +29,7 @@ import {
 } from '../../lib/artifact-url';
 import { diffArtifactCandidate, diffFocusedFilePathFromRequest } from '../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
-import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
-import { runRefreshEventMatches } from '../../lib/run-refresh';
+import { getResourceCache } from '../../lib/resource-cache';
 import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
 import { baseStyles } from '../../lib/theme';
 import {
@@ -44,7 +45,6 @@ import {
   workspaceRouteContextParams,
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
-import { useRunStore } from '../../store/runs';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
 
 import {
@@ -54,6 +54,7 @@ import {
 } from './components/run-diff-panels';
 import { runDiffStyles as styles } from './styles/run-diff.styles';
 
+const emptyRecipeRuns: RecipeRunArtifactGroup[] = [];
 export default function DiffViewerScreen() {
   const { runId, path, recipeRun, workspace, decisionKind } = useLocalSearchParams<{
     runId: string;
@@ -63,22 +64,33 @@ export default function DiffViewerScreen() {
     decisionKind?: string | string[];
   }>();
   const router = useRouter();
+  const focused = useIsFocused();
   const insideReviewPackageTabs = useReviewPackageTab() === 'diff';
-  const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
-  const storeRun = useRunStore((s) => s.runs.find((r) => r.id === runId));
-  const [run, setRun] = useState<Run | null>(storeRun ?? null);
-  const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
-  const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
-  const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [workspaceDiffText, setWorkspaceDiffText] = useState('');
-  const [workspaceDiffError, setWorkspaceDiffError] = useState<string | null>(null);
-  const [workspaceDiffLoading, setWorkspaceDiffLoading] = useState(false);
-  const runRefreshRequestRef = useRef(0);
-  const runRefreshRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const recipeRunRefreshRequestRef = useRef(0);
+  const runQuery = useMemo(
+    () => (runId ? resourceQuery<RunGetResult>('run.get', { runId }) : undefined),
+    [runId],
+  );
+  const recipeQuery = useMemo(
+    () =>
+      runId
+        ? resourceQuery<RunRecipeRunsForRunResult>('run.recipeRunsForRun', { runId })
+        : undefined,
+    [runId],
+  );
+  const runObservation = useResourceQuery(runQuery);
+  const recipeObservation = useResourceQuery(recipeQuery);
+  const run = runObservation.data?.run ?? null;
+  const recipeRuns = recipeObservation.data?.recipeRuns ?? emptyRecipeRuns;
+  const recipeRunsLoaded = Boolean(recipeObservation.data);
+
+  const proofFrame = useRef({ focused, run, recipes: recipeObservation });
+  proofFrame.current = { focused, run, recipes: recipeObservation };
+  useEffect(() => {
+    if (__DEV__) return observeNativeDiffFrame(runId, () => proofFrame.current);
+  }, [runId]);
+
   const requestedRecipeRunId = typeof recipeRun === 'string' ? recipeRun : null;
   const workspaceRouteContext = useMemo(
     () =>
@@ -89,147 +101,17 @@ export default function DiffViewerScreen() {
       ),
     [decisionKind, workspace],
   );
-  const refreshRun = useCallback(
-    async (reason: string) => {
-      if (!client || !runId) return;
-      const requestId = runRefreshRequestRef.current + 1;
-      runRefreshRequestRef.current = requestId;
-      try {
-        const result = await client.request<RunGetResult>('run.get', { runId });
-        if (runRefreshRequestRef.current !== requestId) return;
-        setRun(result.run);
-        setError(null);
-      } catch (err) {
-        if (runRefreshRequestRef.current !== requestId) return;
-        if (isGatewayBackgroundPauseError(err)) {
-          // App route transitions can briefly pause the gateway; retry once
-          // instead of replacing already-loaded diff context with transient noise.
-          console.warn(`Run diff refresh paused after ${reason}: ${(err as Error).message}`);
-          if (!runRefreshRetryRef.current) {
-            runRefreshRetryRef.current = setTimeout(() => {
-              runRefreshRetryRef.current = null;
-              void refreshRun(`${reason} resume`);
-            }, 1200);
-          }
-          return;
-        }
-        setError(`Failed to refresh run diff after ${reason}: ${(err as Error).message}`);
-      }
-    },
-    [client, runId],
+  const selectedRecipeRunId = useMemo(
+    () =>
+      requestedRecipeRunId && requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+        ? resolveRecipeRunSelection(
+            recipeRuns,
+            requestedRecipeRunId,
+            recipeObservation.data?.selectedRecipeRunId,
+          )
+        : null,
+    [recipeRuns, requestedRecipeRunId, recipeObservation.data?.selectedRecipeRunId],
   );
-
-  useEffect(() => {
-    void refreshRun('initial load');
-  }, [refreshRun]);
-
-  useEffect(() => {
-    return () => {
-      if (runRefreshRetryRef.current) clearTimeout(runRefreshRetryRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (storeRun?.id === runId) setRun(storeRun);
-  }, [runId, storeRun]);
-
-  const refreshRecipeRuns = useCallback(
-    async (reason: string, reset: boolean) => {
-      const requestId = recipeRunRefreshRequestRef.current + 1;
-      recipeRunRefreshRequestRef.current = requestId;
-      if (!client || !runId) {
-        setRecipeRuns([]);
-        setRecipeRunsLoaded(false);
-        setSelectedRecipeRunId(null);
-        return;
-      }
-      if (reset) setRecipeRunsLoaded(false);
-      try {
-        const result = await client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-          runId,
-        });
-        if (recipeRunRefreshRequestRef.current !== requestId) return;
-        setRecipeRuns(result.recipeRuns);
-        if (requestedRecipeRunId && requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM) {
-          setSelectedRecipeRunId(
-            resolveRecipeRunSelection(
-              result.recipeRuns,
-              requestedRecipeRunId,
-              result.selectedRecipeRunId,
-            ),
-          );
-        } else {
-          setSelectedRecipeRunId(null);
-        }
-        setRecipeRunsLoaded(true);
-      } catch (err) {
-        if (recipeRunRefreshRequestRef.current !== requestId) return;
-        setRecipeRunsLoaded(true);
-        if (isGatewayBackgroundPauseError(err)) {
-          // Route screenshot transitions can background the gateway briefly; the
-          // loaded diff remains the primary review surface.
-          console.warn(
-            `Recipe diff context unavailable after ${reason}: ${(err as Error).message}`,
-          );
-          return;
-        }
-        setError(
-          `Failed to refresh recipe diff context after ${reason}: ${(err as Error).message}`,
-        );
-      }
-    },
-    [client, requestedRecipeRunId, runId],
-  );
-
-  useEffect(() => {
-    if (!client || !runId) return;
-    const maybeRefreshRun = (payload: unknown, reason: string) => {
-      if (!runRefreshEventMatches(runId, payload as { run?: Run; runId?: string })) return;
-      const eventRun = (payload as { run?: Run }).run;
-      if (eventRun?.id === runId) {
-        runRefreshRequestRef.current += 1;
-        setRun(eventRun);
-        setError(null);
-      } else {
-        void refreshRun(reason);
-      }
-      void refreshRecipeRuns(reason, false);
-    };
-    const unsubscribers = [
-      client.subscribe(Events.RUN_UPDATED, (payload) => maybeRefreshRun(payload, 'run.updated')),
-      client.subscribe(Events.RUN_COMPLETED, (payload) =>
-        maybeRefreshRun(payload, 'run.completed'),
-      ),
-      client.subscribe(Events.RUN_STEP_COMPLETED, (payload) =>
-        maybeRefreshRun(payload, 'run.step.completed'),
-      ),
-      client.subscribe(Events.RUN_DECISION_NEW, (payload) =>
-        maybeRefreshRun(payload, 'run.decision.new'),
-      ),
-      client.subscribe(Events.RUN_DECISION_UPDATED, (payload) =>
-        maybeRefreshRun(payload, 'run.decision.updated'),
-      ),
-      client.subscribe(Events.RUN_DECISION_RESOLVED, (payload) =>
-        maybeRefreshRun(payload, 'run.decision.resolved'),
-      ),
-    ];
-    return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
-    };
-  }, [client, refreshRecipeRuns, refreshRun, runId]);
-
-  useEffect(() => {
-    if (!client || !runId) return;
-    const timer = setInterval(() => {
-      void refreshRun('poll');
-    }, 30_000);
-    return () => clearInterval(timer);
-  }, [client, refreshRun, runId]);
-
-  useEffect(() => {
-    void refreshRecipeRuns('initial load', true);
-  }, [refreshRecipeRuns]);
-
   const selectedRecipeRun = useMemo(
     () => recipeRuns.find((group) => group.id === selectedRecipeRunId) ?? null,
     [recipeRuns, selectedRecipeRunId],
@@ -304,7 +186,21 @@ export default function DiffViewerScreen() {
         )
       : null;
   const canLoadWorkspaceDiff = Boolean(!selectedRecipeRun && run?.slotId && !diffUrl);
-  const workspaceDiffSource = canLoadWorkspaceDiff && workspaceDiffText ? workspaceDiffText : '';
+  const workspaceDiffQuery = useMemo(
+    () =>
+      canLoadWorkspaceDiff && run?.slotId
+        ? resourceQuery<GitDiffResult>(Methods.GIT_DIFF, { slotId: run.slotId, runId })
+        : undefined,
+    [canLoadWorkspaceDiff, run?.slotId, runId],
+  );
+  const workspaceDiffObservation = useResourceQuery(workspaceDiffQuery);
+  const workspaceDiffSource = canLoadWorkspaceDiff
+    ? (workspaceDiffObservation.data?.diff ?? '')
+    : '';
+  const currentWorkspaceDiff = {
+    loading: workspaceDiffObservation.status === 'loading',
+    error: workspaceDiffObservation.error?.message,
+  };
   const recipeArtifactCount = recipeRunsLoaded
     ? recipeRuns.reduce((count, group) => count + artifactsForRecipeRun(group).length, 0)
     : null;
@@ -316,39 +212,6 @@ export default function DiffViewerScreen() {
   const reviewGateDecision = selectReviewGateWorkspaceDecision(run);
   const retroDecision = selectRetrospectiveWorkspaceDecision(run);
   const workspaceNavMeta = summarizeRunWorkspaceNavMeta(run);
-  useEffect(() => {
-    if (!client || !run?.slotId || !canLoadWorkspaceDiff) {
-      setWorkspaceDiffText('');
-      setWorkspaceDiffError(null);
-      setWorkspaceDiffLoading(false);
-      return;
-    }
-
-    let disposed = false;
-    setWorkspaceDiffLoading(true);
-    setWorkspaceDiffError(null);
-    client
-      .request<GitDiffResult>(Methods.GIT_DIFF, {
-        slotId: run.slotId,
-      })
-      .then((result) => {
-        if (disposed) return;
-        setWorkspaceDiffText(result.diff);
-      })
-      .catch((err: Error) => {
-        if (disposed) return;
-        setWorkspaceDiffText('');
-        setWorkspaceDiffError(`Failed to load live workspace diff: ${err.message}`);
-      })
-      .finally(() => {
-        if (!disposed) setWorkspaceDiffLoading(false);
-      });
-
-    return () => {
-      disposed = true;
-    };
-  }, [canLoadWorkspaceDiff, client, requestedDiffPath, run?.slotId]);
-
   const goBackOrRuns = useCallback(() => {
     if (router.canGoBack()) {
       router.back();
@@ -451,9 +314,25 @@ export default function DiffViewerScreen() {
           diffSource={diffUrl ? 'artifact' : canLoadWorkspaceDiff ? 'live workspace' : 'missing'}
           workspaceRouteContext={workspaceRouteContext}
         />
-        {pathParamError || error ? (
-          <Text style={styles.errorText}>{pathParamError ?? error}</Text>
+        <ResourceReadStatus observation={workspaceDiffObservation} label="workspace diff" />
+        <ResourceReadStatus observation={runObservation} label="run diff" />
+        <ResourceReadStatus observation={recipeObservation} label="recipe runs" />
+        {runObservation.error || recipeObservation.error || workspaceDiffObservation.error ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry diff"
+            onPress={() => {
+              const cache = getResourceCache();
+              if (workspaceDiffQuery && cache?.read(workspaceDiffQuery).error)
+                void cache.retry(workspaceDiffQuery);
+              if (runQuery && cache?.read(runQuery).error) void cache.retry(runQuery);
+              if (recipeQuery && cache?.read(recipeQuery).error) void cache.retry(recipeQuery);
+            }}
+          >
+            <Text style={styles.backButtonText}>Retry</Text>
+          </Pressable>
         ) : null}
+        {pathParamError ? <Text style={styles.errorText}>{pathParamError}</Text> : null}
         {diffUrl ? (
           <MobileDiffViewer
             title={diffArtifactPath.split('/').pop() ?? 'Diff'}
@@ -469,10 +348,10 @@ export default function DiffViewerScreen() {
             initialPath={focusedFilePath}
             onOpenEvidence={openEvidenceFromDiff}
           />
-        ) : workspaceDiffLoading ? (
+        ) : currentWorkspaceDiff?.loading ? (
           <Text style={styles.emptyText}>Loading live workspace diff…</Text>
-        ) : workspaceDiffError ? (
-          <Text style={styles.errorText}>{workspaceDiffError}</Text>
+        ) : currentWorkspaceDiff?.error ? (
+          <Text style={styles.errorText}>{currentWorkspaceDiff.error}</Text>
         ) : (
           <Text style={styles.emptyText}>
             No diff artifact or live workspace diff found for{' '}

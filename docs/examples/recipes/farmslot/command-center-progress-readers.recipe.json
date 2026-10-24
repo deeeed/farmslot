@@ -1,0 +1,101 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Fleet, slot and terminal progress follows worker files without polling",
+  "description": "Select the existing isolated one-slot fixture with FARMSLOT_OFFLINE_PROOF=1, FARMSLOT_DISABLE_ORCHESTRATION=1, FARMSLOT_HOME, FARMSLOT_ROOT, FARMSLOT_RUNS_DIR, FARMSLOT_SLOT_RESOURCE_PROOF, FARMSLOT_GATEWAY_PROFILE, GATEWAY_PORT, VITE_PORT, FARMSLOT_CDP_PORT, FARMSLOT_UI_URL and an absolute FARMSLOT_RUN_WEB_EVIDENCE_DIR. Run against an owned gateway tsx watcher and browser, with the scratch slot initially unoccupied. The driver creates one guarded idle terminal target, seeds its own monitoring run while the gateway is stopped, writes the actual checklist and observes the mounted fleet card, slot task panel and terminal progress tracker through the production gateway. It injects no UI/cache state. Each reader must receive a newer progress revision and send no task.progress reads during eleven idle seconds. Cleanup restores exact slot-status bytes/permissions and removes only the owned run, task directory and scratch session. Error, offline, context and delayed-response acceptance are separate proofs.",
+  "proofTargets": [
+    {
+      "id": "fleetFileUpdate",
+      "claim": "A real checklist edit updates the rendered fleet card through its canonical progress query."
+    },
+    {
+      "id": "slotFileUpdate",
+      "claim": "A real checklist edit updates the rendered slot task panel through its canonical progress query."
+    },
+    {
+      "id": "terminalFileUpdate",
+      "claim": "A real checklist edit updates the rendered terminal tracker through its canonical progress query."
+    },
+    {
+      "id": "fleetProgressIdle",
+      "claim": "The mounted fleet reader sends no periodic task.progress read during eleven idle seconds."
+    },
+    {
+      "id": "slotProgressIdle",
+      "claim": "The mounted slot reader sends no periodic task.progress read during eleven idle seconds."
+    },
+    {
+      "id": "terminalProgressIdle",
+      "claim": "The mounted terminal reader sends no periodic task.progress read during eleven idle seconds."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-progress-readers.mjs",
+        "timeout_ms": 240000,
+        "intent": "Observe three actual progress readers after owned file writes, count their idle reads and restore the fixture.",
+        "next": "fleetFileUpdate"
+      },
+      "fleetFileUpdate": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"fleetFileUpdate\":true",
+        "intent": "Require the actual fleet card to render a newer canonical progress observation.",
+        "proves": ["fleetFileUpdate"],
+        "next": "slotFileUpdate"
+      },
+      "slotFileUpdate": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"slotFileUpdate\":true",
+        "intent": "Require the actual slot task panel to render a newer canonical progress observation.",
+        "proves": ["slotFileUpdate"],
+        "next": "terminalFileUpdate"
+      },
+      "terminalFileUpdate": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"terminalFileUpdate\":true",
+        "intent": "Require the actual terminal tracker to render a newer canonical progress observation.",
+        "proves": ["terminalFileUpdate"],
+        "next": "fleetProgressIdle"
+      },
+      "fleetProgressIdle": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"fleetProgressIdle\":true",
+        "intent": "Require zero task.progress requests while the fleet card remains mounted and ready.",
+        "proves": ["fleetProgressIdle"],
+        "next": "slotProgressIdle"
+      },
+      "slotProgressIdle": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"slotProgressIdle\":true",
+        "intent": "Require zero task.progress requests while the slot task panel remains mounted and ready.",
+        "proves": ["slotProgressIdle"],
+        "next": "terminalProgressIdle"
+      },
+      "terminalProgressIdle": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"terminalProgressIdle\":true",
+        "intent": "Require zero task.progress requests while the terminal tracker remains mounted and ready.",
+        "proves": ["terminalProgressIdle"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

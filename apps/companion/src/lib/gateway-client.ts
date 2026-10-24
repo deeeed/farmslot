@@ -2,6 +2,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import {
   type EventFrame,
+  Events,
   type Frame,
   type GatewayAuthConnectResult,
   hasAuthErrorCode,
@@ -13,6 +14,13 @@ import {
   type ResponseFrame,
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
+import {
+  type ResourceConnectionReason,
+  type ResourceReadMethod,
+  type ResourceReadOptions,
+  type ResourceReadResult,
+  resourceReadTimeout,
+} from '@farmslot/protocol/client-cache';
 
 import { gatewaySupportsPing } from './gateway-connection-test';
 import { connectionWaitTerminalError } from './gateway-connection-wait';
@@ -21,6 +29,8 @@ import {
   type GatewayHttpAuthHeaders,
   gatewayHttpAuthHeaders,
 } from './gateway-http-auth';
+import { nativeCollectionReadTimeout } from './gateway-run-sync';
+import { createOfflineClientStoreBaseline } from './offline-client-store-baseline';
 import {
   type WorkspaceAccess,
   workspaceAccessFromAuth,
@@ -42,11 +52,29 @@ interface PendingRequest {
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
   timer?: ReturnType<typeof setTimeout>;
+  includeResourceState?: boolean;
+  cleanup?: () => void;
 }
 
 const DEFAULT_TIMEOUT = 15_000;
 const MAX_BACKOFF = 30_000;
 export class GatewayClient {
+  private resourceReason?: ResourceConnectionReason;
+  get resourceConnectionReason() {
+    return this.resourceReason;
+  }
+  private lastAuthentication?: GatewayAuthConnectResult;
+  get authenticatedConnection(): GatewayAuthConnectResult | undefined {
+    return this.lastAuthentication;
+  }
+  get resourceChanges() {
+    return this.lastAuthentication?.capabilities.resourceChanges;
+  }
+  /** Measurement only; production builds do not allocate or run the byte counter. */
+  readonly offlineBaseline =
+    typeof __DEV__ !== 'undefined' && __DEV__
+      ? createOfflineClientStoreBaseline(() => this.ws?.close(1000, 'Reconnect measurement'))
+      : undefined;
   private ws: WebSocket | null = null;
   private state: ConnectionState = 'disconnected';
   private reqId = 0;
@@ -68,6 +96,8 @@ export class GatewayClient {
     await this.personSession?.signOut();
     await this.personSession?.dispose();
     this.personSession = null;
+    // Offline sign-out changes authority even when the transport state stays disconnected.
+    this.setState(this.state, true, 'sign-out');
   }
 
   get httpAuthHeaders(): GatewayHttpAuthHeaders {
@@ -99,6 +129,7 @@ export class GatewayClient {
       clientKind: 'companion',
       token,
     });
+    this.lastAuthentication = result;
     this.auth.token = token;
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
@@ -134,6 +165,10 @@ export class GatewayClient {
     return this.state;
   }
 
+  get gatewayUrl(): string {
+    return this.url;
+  }
+
   get gatewayPingSupported(): boolean | null {
     return this.pingSupported;
   }
@@ -146,7 +181,9 @@ export class GatewayClient {
     url: string,
     auth: GatewayAuthCredentials = {},
     force = false,
+    reason?: ResourceConnectionReason,
   ): Promise<void> {
+    const resourceReason = reason ?? (this.url !== url ? 'profile-change' : 'principal-change');
     const changed =
       force ||
       this.url !== url ||
@@ -167,7 +204,7 @@ export class GatewayClient {
     this.cancelReconnect();
     this.rejectAllPending('Gateway profile changed');
     this.closeCurrentSocket();
-    this.setState('disconnected');
+    this.setState('disconnected', true, resourceReason);
     this.backoff = 1000;
     if (previousSession) await previousSession.dispose();
     if (generation !== this.generation) return;
@@ -208,10 +245,16 @@ export class GatewayClient {
       if (this.ws !== socket) return;
       this.authenticate(socket, this.generation).catch((error: Error) => {
         if (this.ws !== socket) return;
-        this.clearAuthority();
         this.authRequired =
           hasAuthErrorCode(error, 'AUTH_SESSION_ENDED') ||
-          hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED');
+          hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED') ||
+          (hasAuthErrorCode(error, 'AUTH_FAILED') && Boolean(this.auth.token));
+        if (this.authRequired) this.clearAuthority();
+        this.resourceReason = hasAuthErrorCode(error, 'AUTH_SESSION_ENDED')
+          ? 'session-ended'
+          : this.authRequired
+            ? 'credential-refused'
+            : 'network';
         this.lastConnectionError = `Authentication failed: ${error.message}`;
         this.rejectAllPending(this.lastConnectionError);
         socket.close();
@@ -220,6 +263,7 @@ export class GatewayClient {
 
     socket.onclose = (event) => {
       if (this.ws !== socket) return;
+      this.offlineBaseline?.begin('reconnect');
       if (event.code === 1008) this.clearAuthority();
       this.ws = null;
       this.personSession?.stopRefresh();
@@ -227,7 +271,7 @@ export class GatewayClient {
       if (this.state === 'connecting' && !this.lastConnectionError) {
         this.lastConnectionError = 'Gateway connection closed before authentication completed';
       }
-      this.setState('disconnected');
+      this.setState('disconnected', false, this.authRequired ? this.resourceReason : 'network');
       this.rejectAllPending('Connection closed');
       this.scheduleReconnect();
     };
@@ -240,6 +284,8 @@ export class GatewayClient {
       if (this.ws !== socket) return;
       try {
         const frame: Frame = JSON.parse(ev.data as string);
+        if (frame.type === 'res' || frame.type === 'event')
+          this.offlineBaseline?.received(ev.data as string, frame);
         if (frame.type === 'res') {
           this.handleResponse(frame as ResponseFrame);
         } else if (frame.type === 'event') {
@@ -303,6 +349,7 @@ export class GatewayClient {
       }
     }
     if (this.ws !== socket || this.generation !== generation) return;
+    this.lastAuthentication = result;
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
@@ -312,10 +359,18 @@ export class GatewayClient {
     if (session?.session)
       session.startRefresh((error) => {
         if (this.personSession !== session) return;
-        this.lastConnectionError = getErrorMessage(error);
-        this.authRequired = hasAuthErrorCode(error, 'AUTH_SESSION_ENDED');
-        this.reconnect();
+        this.failPersonRefresh(error);
       });
+  }
+
+  private failPersonRefresh(error: unknown): void {
+    this.lastConnectionError = getErrorMessage(error);
+    this.authRequired = hasAuthErrorCode(error, 'AUTH_SESSION_ENDED');
+    if (this.authRequired) this.clearAuthority();
+    this.rejectAllPending(this.lastConnectionError);
+    this.closeCurrentSocket();
+    this.setState('disconnected', true, this.authRequired ? 'session-ended' : 'network');
+    if (!this.authRequired) this.scheduleReconnect();
   }
 
   disconnect(): void {
@@ -327,7 +382,11 @@ export class GatewayClient {
     this.generation += 1;
     this.rejectAllPending('Client disconnected');
     this.closeCurrentSocket();
-    this.setState('disconnected');
+    this.setState(
+      'disconnected',
+      false,
+      this.resourceReason === 'sign-out' ? 'sign-out' : 'network',
+    );
     this.appStateSubscription?.remove();
     this.appStateSubscription = null;
   }
@@ -336,26 +395,55 @@ export class GatewayClient {
     method: string,
     params?: unknown,
     timeout: number | null = DEFAULT_TIMEOUT,
+    options?: ResourceReadOptions,
   ): Promise<T> {
-    if (this.personSession?.session && !isAuthenticationEntry(method))
-      return this.personSession.withAccess(async (token) => {
-        if (this.auth.token !== token) await this.acceptAccess(token);
-        return this.requestRaw<T>(method, params, timeout);
-      });
-    return this.requestRaw<T>(method, params, timeout);
+    if (options?.signal?.aborted) throw new Error('Resource read aborted');
+    if (this.personSession?.session && !isAuthenticationEntry(method)) {
+      const person = this.personSession;
+      try {
+        return await person.withAccess(async (token) => {
+          if (this.auth.token !== token) await this.acceptAccess(token);
+          return this.requestRaw<T>(method, params, timeout, options);
+        });
+      } catch (error) {
+        if (person === this.personSession && hasAuthErrorCode(error, 'AUTH_SESSION_ENDED'))
+          this.failPersonRefresh(error);
+        throw error;
+      }
+    }
+    return this.requestRaw<T>(method, params, timeout, options);
+  }
+
+  requestResource<T>(
+    method: ResourceReadMethod,
+    params: unknown,
+    signal?: AbortSignal,
+  ): Promise<ResourceReadResult<T>> {
+    return this.request<ResourceReadResult<T>>(
+      method,
+      params,
+      nativeCollectionReadTimeout(method, params) ?? resourceReadTimeout(method) ?? DEFAULT_TIMEOUT,
+      {
+        includeResourceState: true,
+        signal,
+      },
+    );
   }
 
   private async requestRaw<T = unknown>(
     method: string,
     params?: unknown,
     timeout: number | null = DEFAULT_TIMEOUT,
+    options?: ResourceReadOptions,
   ): Promise<T> {
+    if (options?.signal?.aborted) throw new Error('Resource read aborted');
     const generation = this.generation;
     if (!isAuthenticationEntry(method) && this.state !== 'connected') {
-      await this.waitForConnected(timeout ?? DEFAULT_TIMEOUT);
+      await this.waitForConnected(timeout ?? DEFAULT_TIMEOUT, options?.signal);
     }
 
     if (generation !== this.generation) throw new Error('Gateway identity changed before request');
+    if (options?.signal?.aborted) throw new Error('Resource read aborted');
     if (!workspaceAllowsMethod(this.access, method, params))
       throw new Error('This account cannot access farm controls');
 
@@ -364,14 +452,28 @@ export class GatewayClient {
     }
 
     const id = String(++this.reqId);
-    const frame: RequestFrame = { type: 'req', id, method, params };
+    const frame: RequestFrame = {
+      type: 'req',
+      id,
+      method,
+      params,
+      ...(options?.includeResourceState ? { resourceRead: { version: 1 as const } } : {}),
+    };
 
     const result = await new Promise<T>((resolve, reject) => {
+      const cleanup = () => options?.signal?.removeEventListener('abort', abort);
+      const abort = () => {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        cleanup();
+        reject(new Error('Resource read aborted'));
+      };
       const timer =
         timeout === null
           ? undefined
           : setTimeout(() => {
               this.pending.delete(id);
+              cleanup();
               reject(new Error(`Request ${method} timed out after ${timeout}ms`));
             }, timeout);
 
@@ -379,8 +481,12 @@ export class GatewayClient {
         resolve: resolve as (v: unknown) => void,
         reject,
         timer,
+        includeResourceState: options?.includeResourceState,
+        cleanup,
       });
+      options?.signal?.addEventListener('abort', abort, { once: true });
 
+      this.offlineBaseline?.sent(frame);
       this.ws!.send(JSON.stringify(frame));
     });
     if (generation !== this.generation) throw new Error('Gateway identity changed during request');
@@ -408,7 +514,8 @@ export class GatewayClient {
     };
   }
 
-  private waitForConnected(timeout: number): Promise<void> {
+  private waitForConnected(timeout: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(new Error('Resource read aborted'));
     if (this.disposed) return Promise.reject(new Error('Client disconnected'));
     if (this.pausedForBackground) {
       return Promise.reject(new Error('Gateway paused while app is in the background'));
@@ -427,6 +534,7 @@ export class GatewayClient {
         settled = true;
         clearTimeout(timer);
         unsubscribe?.();
+        signal?.removeEventListener('abort', abort);
         if (error) {
           reject(error);
           return;
@@ -437,6 +545,8 @@ export class GatewayClient {
         const detail = this.lastConnectionError ? ` Last error: ${this.lastConnectionError}` : '';
         finish(new Error(`Gateway did not connect within ${timeout}ms.${detail}`));
       }, timeout);
+      const abort = () => finish(new Error('Resource read aborted'));
+      signal?.addEventListener('abort', abort, { once: true });
 
       unsubscribe = this.onConnectionChange((state) => {
         if (state === 'connected') finish();
@@ -458,16 +568,25 @@ export class GatewayClient {
     if (!req) return;
     this.pending.delete(frame.id);
     clearTimeout(req.timer);
+    req.cleanup?.();
 
     if (frame.ok) {
-      req.resolve(frame.payload);
+      req.resolve(
+        req.includeResourceState
+          ? { data: frame.payload, resourceState: frame.resourceState }
+          : frame.payload,
+      );
     } else {
       req.reject(Object.assign(new Error(frame.error?.message ?? 'Unknown error'), frame.error));
     }
   }
 
   private handleEvent(frame: EventFrame): void {
-    if (this.access !== 'farm' || this.state !== 'connected') return;
+    if (
+      this.state !== 'connected' ||
+      (this.access !== 'farm' && frame.event !== Events.RESOURCE_CHANGED)
+    )
+      return;
     const subs = this.eventSubs.get(frame.event);
     if (!subs) return;
     for (const cb of subs) {
@@ -479,8 +598,13 @@ export class GatewayClient {
     }
   }
 
-  private setState(s: ConnectionState, authorityChanged = false): void {
-    if (this.state === s && !authorityChanged) return;
+  private setState(
+    s: ConnectionState,
+    authorityChanged = false,
+    reason?: ResourceConnectionReason,
+  ): void {
+    if (this.state === s && !authorityChanged && this.resourceReason === reason) return;
+    this.resourceReason = reason;
     this.state = s;
     for (const cb of this.connSubs) {
       try {
@@ -504,6 +628,7 @@ export class GatewayClient {
   private rejectAllPending(reason: string): void {
     for (const req of this.pending.values()) {
       clearTimeout(req.timer);
+      req.cleanup?.();
       req.reject(new Error(reason));
     }
     this.pending.clear();
@@ -534,6 +659,7 @@ export class GatewayClient {
   }
 
   private clearAuthority(): void {
+    this.lastAuthentication = undefined;
     this.principal = null;
     this.access = 'none';
   }

@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import type { PRMonitorConfig, PRMonitorObservation } from '@farmslot/protocol';
 
+import { resourceRevisions } from '../resources/revisions.js';
+
 import { PRMonitorStore } from './store.js';
 
 const config: PRMonitorConfig = {
@@ -94,12 +96,16 @@ test('stale mutations reject and reads do not expose mutable store state', async
 
 test('persistence failure rejects without publishing state and permits a later retry', async (t) => {
   const { file, store } = await fixture(t);
+  const key = { family: 'decisions', scope: 'farm' } as const;
+  const before = resourceRevisions.revision(key);
   await mkdir(file);
   await assert.rejects(store.subscribe('owner', config));
   assert.equal(store.list('owner').length, 0);
+  assert.equal(resourceRevisions.revision(key), before);
   await rm(file, { recursive: true });
   await store.subscribe('owner', config);
   assert.equal((await PRMonitorStore.load(file)).list('owner').length, 1);
+  assert.equal(resourceRevisions.revision(key), before + 1);
 });
 
 test('malformed, unsupported and duplicate persisted records fail loading rather than reset', async (t) => {

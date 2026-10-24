@@ -1,0 +1,140 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Bundled desktop restores native histories after an offline process restart",
+  "description": "Living D06 desktop proof for ri_b1bb5ad00e17. Use an isolated copied desktop app with production assets, private userData and an owned watched gateway. The supervisor selects FARMSLOT_NATIVE_STORE_DESKTOP_CONTROL, FARMSLOT_NATIVE_STORE_PROOF, FARMSLOT_UI_URL and the desktop CDP port. The helper uses actual desktop settings/login, host-backed closed-history setup, the native view and OPFS SQLite. During the owned gateway outage its supervisor waits for the operator to confirm the private app normal Quit dialog, verifies a successful exit, and restarts that exact private app, retaining its profile and origin. A new process must restore 200-message histories, ten saved sessions and their original age, disable visible Resume, and recover without replay. This is setup-time history, not provider-execution evidence. Evidence remains outside source.",
+  "proofTargets": [
+    {
+      "id": "actualHostRead",
+      "claim": "The actual native host supplies complete history to the real conversation view."
+    },
+    {
+      "id": "messages",
+      "claim": "Opened histories retain the last 200 complete messages."
+    },
+    {
+      "id": "sqliteHistories",
+      "claim": "The browser SQLite store retains ten opened histories."
+    },
+    {
+      "id": "coldHistory",
+      "claim": "A new offline document restores the opened conversation."
+    },
+    {
+      "id": "savedAge",
+      "claim": "Cold restoration preserves the exact saved time and visible age."
+    },
+    {
+      "id": "staleResumeDisabled",
+      "claim": "The actual Resume action is disabled while saved data is stale."
+    },
+    {
+      "id": "recovery",
+      "claim": "Current reads restore history and Resume authority after gateway restart."
+    },
+    {
+      "id": "commands",
+      "claim": "Clicking the stale action neither sends nor replays a command."
+    },
+    {
+      "id": "desktopColdProcess",
+      "claim": "A different desktop process restores the same saved history while the gateway is stopped."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-native-store.mjs",
+        "timeout_ms": 240000,
+        "intent": "Prove native history retention and cold restoration in the actual browser.",
+        "next": "actualHostRead"
+      },
+      "actualHostRead": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"actualHostRead\":true",
+        "intent": "The actual native host supplies complete history to the real conversation view.",
+        "proves": ["actualHostRead"],
+        "next": "messages"
+      },
+      "messages": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"messages\":200",
+        "intent": "Opened histories retain the last 200 complete messages.",
+        "proves": ["messages"],
+        "next": "sqliteHistories"
+      },
+      "sqliteHistories": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"sqliteHistories\":10",
+        "intent": "The browser SQLite store retains ten opened histories.",
+        "proves": ["sqliteHistories"],
+        "next": "coldHistory"
+      },
+      "coldHistory": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"coldHistory\":true",
+        "intent": "A new offline document restores the opened conversation.",
+        "proves": ["coldHistory"],
+        "next": "desktopColdProcess"
+      },
+      "savedAge": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"savedAge\":true",
+        "intent": "Cold restoration preserves the exact saved time and visible age.",
+        "proves": ["savedAge"],
+        "next": "staleResumeDisabled"
+      },
+      "staleResumeDisabled": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"staleResumeDisabled\":true",
+        "intent": "The actual Resume action is disabled while saved data is stale.",
+        "proves": ["staleResumeDisabled"],
+        "next": "recovery"
+      },
+      "recovery": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"recovery\":true",
+        "intent": "Current reads restore history and Resume authority after gateway restart.",
+        "proves": ["recovery"],
+        "next": "commands"
+      },
+      "commands": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"commands\":0",
+        "intent": "Clicking the stale action neither sends nor replays a command.",
+        "proves": ["commands"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "desktopColdProcess": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"desktopColdProcess\":true",
+        "intent": "A new desktop process restores saved history without the gateway.",
+        "proves": ["desktopColdProcess"],
+        "next": "savedAge"
+      }
+    }
+  }
+}

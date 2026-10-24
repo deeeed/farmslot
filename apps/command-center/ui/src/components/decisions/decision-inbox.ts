@@ -4,6 +4,7 @@ import { customElement, state } from 'lit/decorators.js';
 
 import type {
   DecisionAction,
+  DecisionListResult,
   DecisionType,
   ImprovementApplyResult,
   ImprovementDiffPayload,
@@ -17,14 +18,23 @@ import {
   buildRunDecisionActionRequest,
   improvementApplyOutcome,
   Methods,
+  sourceObservationAge,
 } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { evidenceOnlyDecisionIds, isResultDecision } from '@farmslot/review-dispatch';
 
 import '../diff-viewer/diff-review.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
-import { type AppState, getState, isHydrating, subscribe as subscribeState } from '../../state.js';
+import { getResourceCache } from '../../resource-cache.js';
+import {
+  type AppState,
+  decisionsQuery,
+  getState,
+  isHydrating,
+  subscribe as subscribeState,
+} from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
 import {
@@ -35,6 +45,7 @@ import { flowColor, flowLabel } from '../runs/run-utils.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
+import { assertInboxDecisionReady, resolveInboxDecision } from './decision-inbox-actions.js';
 import { decisionInboxStyles } from './decision-inbox-styles.js';
 
 function toUnifiedDiff(change: ImprovementFileChange): string {
@@ -157,6 +168,10 @@ export class DecisionInbox extends LitElement {
   @state() private _applyToast: Map<string, string> = new Map();
   @state() private _livePayloads: Map<string, ImprovementDiffPayload> = new Map();
   @state() private _hydrating = false;
+  @state() private _observation: ResourceQueryState<DecisionListResult> = { status: 'loading' };
+  @state() private _resolveErrors = new Map<string, string>();
+  @state() private _now = Date.now();
+  private _ageTimer?: ReturnType<typeof setInterval>;
   private readonly _testFilter = new DiffTestFilterController(this);
   private _slotProjectMap = new Map<string, string>();
 
@@ -172,36 +187,24 @@ export class DecisionInbox extends LitElement {
     this._unsubState = subscribeState((s) => {
       this._syncFromState(s);
     });
-    // Refresh from gateway once on mount — recovers from staleness when the
-    // bootstrap snapshot was hydrated long ago (cross-tab resolves, gateway
-    // restart). Cheap call. The snapshot may briefly clobber a
-    // RUN_DECISION_NEW that lands during the request — accepted trade-off:
-    // any subsequent live event will re-add it via the deferred buffer, and
-    // the snapshot is only authoritative for what's already persisted.
-    void this._refreshFromGateway();
-  }
-
-  private async _refreshFromGateway(): Promise<void> {
-    // Snapshot pre-request ids so any RUN_DECISION_NEW landing during the
-    // request window (e.g. an analyzing placeholder) survives the merge.
-    const preRequestIds = new Set(getState().decisions.map((d) => d.id));
-    try {
-      const res = (await gateway.request(Methods.DECISION_LIST)) as {
-        decisions: PendingDecision[];
-      };
-      if (Array.isArray(res?.decisions)) {
-        const { mergeDecisions } = await import('../../state.js');
-        mergeDecisions(res.decisions, preRequestIds);
-      }
-    } catch (err) {
-      console.warn('[decision-inbox] mount-time refresh failed:', (err as Error).message);
-    }
   }
 
   private _syncFromState(s: AppState) {
     this._filterProjects = s.globalFilters.projects;
     this._filterMachines = s.globalFilters.machines;
     this._hydrating = isHydrating(s, 'decisions');
+    this._observation = s.decisionsObservation;
+    if (this._observation.status === 'stale' && this._observation.data) {
+      if (!this._ageTimer) {
+        this._now = Date.now();
+        this._ageTimer = setInterval(() => {
+          this._now = Date.now();
+        }, 1000);
+      }
+    } else if (this._ageTimer) {
+      clearInterval(this._ageTimer);
+      this._ageTimer = undefined;
+    }
     // Build slot→project map from fleet for accurate filtering
     if (s.fleet?.slots) {
       this._slotProjectMap = new Map(s.fleet.slots.map((sl) => [sl.slot, sl.project]));
@@ -228,6 +231,16 @@ export class DecisionInbox extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubState?.();
+    if (this._ageTimer) clearInterval(this._ageTimer);
+    this._ageTimer = undefined;
+  }
+
+  private get _canAct(): boolean {
+    return this._observation.status === 'ready' && gateway.connectionState === 'connected';
+  }
+
+  private _assertReady(decision: PendingDecision): void {
+    assertInboxDecisionReady(decision.id);
   }
 
   private get _filtered(): PendingDecision[] {
@@ -251,16 +264,22 @@ export class DecisionInbox extends LitElement {
 
   private async _resolve(decision: PendingDecision, actionId: string) {
     const decisionId = decision.id;
-    if (this._handleRoadmapPromotionAction(decision, actionId)) return;
-    if (decision.type === 'improvement' && actionId === 'apply') {
-      await this._applyImprovement(decision);
-      return;
-    }
-    this._resolving = new Set([...this._resolving, decisionId]);
+    this._resolveErrors = new Map([...this._resolveErrors].filter(([id]) => id !== decisionId));
     try {
-      await gateway.request(Methods.DECISION_RESOLVE, { decisionId, actionId });
-      // Server will emit DECISION_RESOLVED event
-    } catch {
+      this._assertReady(decision);
+      if (this._handleRoadmapPromotionAction(decision, actionId)) return;
+      if (decision.type === 'improvement' && actionId === 'apply') {
+        await this._applyImprovement(decision);
+        return;
+      }
+      this._resolving = new Set([...this._resolving, decisionId]);
+      await resolveInboxDecision(decisionId, actionId);
+    } catch (error) {
+      this._resolveErrors = new Map([
+        ...this._resolveErrors,
+        [decisionId, error instanceof Error ? error.message : String(error)],
+      ]);
+    } finally {
       this._resolving = new Set([...this._resolving].filter((id) => id !== decisionId));
     }
   }
@@ -303,6 +322,7 @@ export class DecisionInbox extends LitElement {
     const runId = decision.runMeta?.runId;
     this._resolving = new Set([...this._resolving, decisionId]);
     try {
+      this._assertReady(decision);
       if (!runId) throw new Error('Improvement decision is missing its run');
       const request = buildRunDecisionActionRequest({ runId, decision, actionId: 'apply' });
       const res = (await gateway.request(request.method, request.params)) as ImprovementApplyResult;
@@ -334,6 +354,7 @@ export class DecisionInbox extends LitElement {
     if (!message.trim()) return;
     this._chatSending = new Set([...this._chatSending, decisionId]);
     try {
+      this._assertReady(decision);
       const res = (await gateway.request(Methods.IMPROVEMENT_CHAT, {
         runId,
         decisionId,
@@ -473,7 +494,7 @@ export class DecisionInbox extends LitElement {
           />
           <button
             class="chat-send-btn"
-            ?disabled=${isSending || !chatInput.trim()}
+            ?disabled=${!this._canAct || isSending || !chatInput.trim()}
             @click=${() => this._sendChat(d)}
           >
             ${isSending ? '...' : 'Send'}
@@ -752,6 +773,25 @@ export class DecisionInbox extends LitElement {
         <span class="inbox-title">Decisions</span>
         <span class="inbox-count">${this._filtered.length} pending</span>
       </div>
+      ${this._observation.status === 'stale' && this._observation.data
+        ? html`<div class="inbox-observation" data-freshness="stale">
+            Saved decisions, ${sourceObservationAge(this._observation.observedAt, this._now)}.
+            Actions wait for a current read.
+          </div>`
+        : nothing}
+      ${this._observation.status === 'unsupported'
+        ? html`<div class="inbox-observation">
+            Update the gateway to enable live decision actions.
+          </div>`
+        : nothing}
+      ${this._observation.error
+        ? html`<div class="inbox-error" role="alert">
+            ${this._observation.error.message}
+            <button @click=${() => getResourceCache()?.retry(decisionsQuery)}>
+              Retry reading decisions
+            </button>
+          </div>`
+        : nothing}
       <div class="inbox-body">
         ${this._filtered.length === 0
           ? this._hydrating
@@ -819,7 +859,7 @@ export class DecisionInbox extends LitElement {
                             data-decision-id=${d.id}
                             style=${actionStyle(action.style)}
                             title=${action.description ?? ''}
-                            ?disabled=${isResolving}
+                            ?disabled=${!this._canAct || isResolving}
                             @click=${() => this._resolve(d, action.id)}
                           >
                             <span class="decision-shortcut">${index + 1}</span>
@@ -832,6 +872,11 @@ export class DecisionInbox extends LitElement {
                       `,
                     )}
                   </div>
+                  ${this._resolveErrors.has(d.id)
+                    ? html`<div class="inbox-error" data-decision-error=${d.id} role="alert">
+                        ${this._resolveErrors.get(d.id)}
+                      </div>`
+                    : nothing}
                 </div>
               `;
             })}

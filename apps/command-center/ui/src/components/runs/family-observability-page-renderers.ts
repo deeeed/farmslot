@@ -34,6 +34,7 @@ export interface FamilyObservabilityPageInput {
   prs: PRStatus[];
   report: FamilyReport | null;
   reportLoading: boolean;
+  commandsReady?: boolean;
   selectedExperimentKey: string;
   copiedPrompt: boolean;
   compareTab: CompareTab;
@@ -97,6 +98,7 @@ export function renderFamilyObservabilityPage(input: FamilyObservabilityPageInpu
       selectedRun,
       prs: input.prs,
       reportLoading: input.reportLoading,
+      commandsReady: input.commandsReady,
       renderConvergedPill: input.renderConvergedPill,
       onBackToRuns: input.onBackToRuns,
       onGenerateReport: input.onGenerateReport,

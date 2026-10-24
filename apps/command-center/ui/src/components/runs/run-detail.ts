@@ -1,4 +1,4 @@
-import { html } from 'lit';
+import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import {
@@ -18,6 +18,7 @@ import type {
   RunDecision,
   RunGetResult,
   RunListResult,
+  RunRecipeRunsForRunParams,
   RunRecipeRunsForRunResult,
   RunRereviewLatestHeadResult,
   RunResolveDecisionResult,
@@ -26,7 +27,6 @@ import type {
   RuntimePostureStatusResult,
   SlotStatus,
   TaskProgressResult,
-  TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import { validVisualJudgmentReason } from '@farmslot/protocol';
 import {
@@ -36,13 +36,10 @@ import {
   liveGateParkView,
   Methods,
   sortRunsForFamilyView,
+  sourceObservationAge,
 } from '@farmslot/protocol';
-import {
-  acceptsRunChecklistProgress,
-  pendingOutputReview,
-  runChecklistProgressTarget,
-  type VisualJudgmentFeedback,
-} from '@farmslot/review-dispatch';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
+import { pendingOutputReview, type VisualJudgmentFeedback } from '@farmslot/review-dispatch';
 
 import './native-worker-history.js';
 import './failure-triage-panel.js';
@@ -63,7 +60,8 @@ import '../shared/slot-prepare-popover.js';
 import '../interactive/interactive-operator-packets.js';
 
 import { gateway } from '../../gateway-client.js';
-import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
+import { type AppState, getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import {
@@ -81,6 +79,7 @@ import {
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
 import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
@@ -106,25 +105,16 @@ import {
   buildRunDiagnosisPrompt,
   currentRunCiStatus,
   type EvidenceLightboxSelection,
-  hasActiveInlineCiFix,
   isLiveTimeoutPrStatusAllGreen,
   isRunWorking,
-  isTaskProgressRunActive,
-  mergeTrimmedRunDetail,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
   resolveEvidenceLightboxLink,
   runArtifactsWithOperationLogs,
-  runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
-  runEvidenceSettled,
   runFamilyPrStatus,
-  runHasTrimmedDetail,
   runOutputEvidenceSelection,
-  shouldAcceptTaskProgressUpdate,
-  shouldFetchTrimmedRun,
   shouldShowRunCiStatus,
-  taskProgressUpdateTargetsRun,
 } from './run-detail-model.js';
 import {
   canResolveWithPostureChoice,
@@ -178,6 +168,46 @@ import { collectRunInteractivePacketArtifacts } from './run-utils.js';
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {
+  @state() private _runObservation: ResourceQueryState<RunGetResult> = { status: 'loading' };
+  @state() private _recipeObservation: ResourceQueryState<RunRecipeRunsForRunResult> = {
+    status: 'loading',
+  };
+  @state() private _progressObservation: ResourceQueryState<TaskProgressResult> = {
+    status: 'loading',
+  };
+  @state() private _selectedProgressObservation: ResourceQueryState<TaskProgressResult> = {
+    status: 'loading',
+  };
+  private _viewWorkspaceKey?: string;
+  private _viewVersion = 0;
+  private _viewConnectionId?: string | number;
+  private _recipeRequestedId = '';
+  private readonly detailQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
+    this._runObservation = state;
+  });
+  private readonly recipeQuery = new ResourceQueryController<RunRecipeRunsForRunResult>(
+    this,
+    (state) => {
+      this._recipeObservation = state;
+    },
+  );
+  private readonly siblingQuery = new ResourceQueryController<RunListResult>(this, (state) => {
+    this.siblings = sortRunsForFamilyView(
+      (state.data?.runs ?? []).filter((run) => run.id !== this.runId),
+    );
+  });
+  private readonly progressQuery = new ResourceQueryController<TaskProgressResult>(
+    this,
+    (state) => {
+      this._progressObservation = state;
+    },
+  );
+  private readonly selectedProgressQuery = new ResourceQueryController<TaskProgressResult>(
+    this,
+    (state) => {
+      this._selectedProgressObservation = state;
+    },
+  );
   @state() evidenceModel: EvidenceReviewModel | null = null;
   @state() private _recordedEvidence: RunRecipeRunsForRunResult['recordedEvidence'] = undefined;
   @state() private _visualReviewReasons: Record<string, string> = {};
@@ -189,9 +219,17 @@ export class RunDetail extends RunDetailState {
   private _evidenceTaskRelative = true;
 
   protected override willUpdate(changed: Map<string, unknown>): void {
+    if (['runId', 'mockData', 'mockRun', '_runObservation'].some((key) => changed.has(key))) {
+      this.syncRun(getState());
+    }
+    if (changed.has('_recipeObservation')) this._acceptRecipeObservation(this._recipeObservation);
+    if (changed.has('_progressObservation')) this._acceptProgressObservation();
+    if (changed.has('_selectedProgressObservation')) this._acceptSelectedProgressObservation();
     if (
       [
         'run',
+        '_runObservation',
+        '_recipeObservation',
         '_recordedEvidence',
         'acceptanceStatus',
         'acceptanceCriteria',
@@ -245,29 +283,6 @@ export class RunDetail extends RunDetailState {
     this._syncState(getState());
     window.addEventListener('hashchange', this._onHashChange);
     this.unsub = subscribe((s) => this._syncState(s));
-    this.unsubProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
-      Events.TASK_PROGRESS_UPDATED,
-      (p) => {
-        if (
-          p.progress?.structured &&
-          taskProgressUpdateTargetsRun(this.run ?? null, p) &&
-          shouldAcceptTaskProgressUpdate(this.run, p)
-        ) {
-          if (this.run && acceptsRunChecklistProgress(this.run, p)) {
-            this._taskProgressRequestSeq++;
-            this._taskProgressLoading = false;
-            this.taskProgress = p.progress.structured;
-          }
-          // The ledger rides the same broadcast; absent means the run has none,
-          // so it clears rather than keeping a stale panel.
-          this.acceptanceStatus = p.progress.acceptanceStatus ?? null;
-          this.acceptanceCriteria = p.progress.acceptanceCriteria ?? null;
-          this.acceptanceStatusError = p.progress.acceptanceStatusError ?? null;
-          this.acceptanceEvidenceLinks = p.progress.acceptanceEvidenceLinks ?? null;
-          this.acceptanceEvidenceLinksError = p.progress.acceptanceEvidenceLinksError ?? null;
-        }
-      },
-    );
     this.unsubCI = gateway.subscribe<CiCheckUpdatedPayload>(Events.CI_CHECK_UPDATED, (p) => {
       if (p.runId === this.runId) {
         this.ciStatus = p;
@@ -277,7 +292,6 @@ export class RunDetail extends RunDetailState {
     this._clock = setInterval(() => {
       this._now = Date.now();
       this._maybeRefreshLiveTimeoutPrStatus();
-      this._maybeRefreshTaskProgress();
     }, 1000);
   }
 
@@ -287,10 +301,9 @@ export class RunDetail extends RunDetailState {
       this.run &&
       this._selectedRecipeRunId &&
       this._selectedRecipeRunId !== this._evidenceGroupId
-    )
-      void this._refreshRecipeRunsForRun(this.run, { force: true });
-    if (changed.has('runId') || changed.has('mockData') || changed.has('mockRun')) {
-      this.syncRun(getState());
+    ) {
+      this._recipeRequestedId = this._selectedRecipeRunId;
+      this._bindRecipeRuns(this.run);
     }
     // The direct run.get snapshot may arrive after hashchange and after the
     // trimmed inventory snapshot. Apply the URL again when artifacts hydrate.
@@ -306,22 +319,14 @@ export class RunDetail extends RunDetailState {
       this._applyEvidenceArtifactFromHash(true);
   }
 
-  private _maybeRefreshTaskProgress(): void {
-    if (!this.run?.slotId && !this.run?.reviewWorkspace) return;
-    if (!isTaskProgressRunActive(this.run, { includeCompleting: true })) return;
-    if (Date.now() - this._lastTaskProgressFetchAt < 10_000) return;
-    void this.fetchTaskProgress(this.run.slotId ?? '');
-  }
-
   disconnectedCallback() {
+    this._viewVersion++;
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this._onHashChange);
     this.unsub?.();
-    this.unsubProgress?.();
     this.unsubCI?.();
     if (this._clock) clearInterval(this._clock);
     if (this._jumpTimer) clearTimeout(this._jumpTimer);
-    if (this._recipeRunsDelayedRefreshTimer) clearTimeout(this._recipeRunsDelayedRefreshTimer);
     this._ciPoke.dispose();
   }
 
@@ -329,32 +334,58 @@ export class RunDetail extends RunDetailState {
   @state() private _fleetSlots: readonly SlotStatus[] = [];
 
   private _syncState(s: AppState) {
-    this._fleetSlots = s.fleet?.slots ?? this._fleetSlots;
+    this._fleetSlots = s.fleet?.slots ?? [];
     this.syncRun(s);
   }
 
   private syncRun(s: AppState) {
     if (this.mockData && this.mockRun) {
       const prev = this.run;
+      this.progressQuery.setQuery(undefined);
+      this.selectedProgressQuery.setQuery(undefined);
       this._hydrating = false;
       this._bootstrapFailed = false;
       this._connectionStale = false;
       this._directRunUnavailable = false;
       this._directRunRefreshFailed = false;
       this._directRunRefreshing = false;
-      this._missingRunFetchAttempted = false;
       this.run = this.mockRun;
       this.prStatus = runFamilyPrStatus(this.run, [this.run, ...s.runs], s.prs ?? []);
       if (prev?.id !== this.run.id) this._applySelectedStepFromHash();
       return;
     }
     const prev = this.run;
-    const wasHydrating = this._hydrating;
-    if (this.runId !== this._lastRequestedRunId) {
-      this._visualReviewBusy = false;
+    const workspaceKey = getResourceWorkspaceKey();
+    const viewChanged =
+      this.runId !== this._lastRequestedRunId ||
+      this._viewWorkspaceKey !== workspaceKey ||
+      this._viewConnectionId !== gateway.resourceConnectionId;
+    if (viewChanged) {
+      this._viewConnectionId = gateway.resourceConnectionId;
+      this._viewVersion++;
+      this._viewWorkspaceKey = workspaceKey;
       this._visualReviewFeedback = undefined;
-      this._verifiedRunSnapshot = null;
       this._lastRequestedRunId = this.runId;
+      this.selectedStep = null;
+      this._evidenceLightboxOpen = false;
+      this._evidenceLightboxItems = [];
+      this._evidenceArtifactUnavailable = null;
+      this._evidenceGallery = false;
+      this._publicationActions = {};
+      this._visualReviewReasons = {};
+      this._visualReviewMessage = '';
+      this._outputError = '';
+      this._closingOutput = false;
+      this._refreshingOutput = false;
+      this._visualReviewBusy = false;
+      this._rereviewInFlight = false;
+      this._showTerminal = false;
+      this._liveTimeoutRequestSeq++;
+      this._liveTimeoutKey = '';
+      this.liveTimeoutPrStatus = null;
+      this.liveTimeoutPrStatusRefreshing = false;
+      this.liveTimeoutPrStatusFailed = false;
+      this._autoResolvedTimeoutDecisionIds.clear();
       // Copied/error/liveness state belongs to the run it was fetched for.
       // Carrying it across would label the next run's contexts with the
       // previous run's liveness.
@@ -365,17 +396,10 @@ export class RunDetail extends RunDetailState {
       this._triageDecisionLink = null;
       this._decisionResolveError = null;
       this._ciPoke.reset();
-      this._missingRunFetchAttempted = false;
       this._directRunRefreshFailed = false;
       this._directRunUnavailable = false;
-      this._directRun = null;
       this._directRunRefreshing = false;
-      this._directRunRequestSeq++;
-      this._taskProgressRequestSeq++;
       this._taskProgressLoading = false;
-      this._acceptanceRequested = false;
-      this._siblingsRequestSeq++;
-      this._lastTaskProgressFetchAt = 0;
       this.taskProgress = null;
       this.acceptanceStatus = null;
       this.acceptanceCriteria = null;
@@ -383,7 +407,6 @@ export class RunDetail extends RunDetailState {
       this.acceptanceEvidenceLinks = null;
       this.acceptanceEvidenceLinksError = null;
       this.selectedStepProgress = null;
-      this._selectedStepProgressKey = '';
       this.ciStatus = null;
       this.siblings = [];
       this._resetRecipeRuns();
@@ -396,34 +419,24 @@ export class RunDetail extends RunDetailState {
       this._postureStatusKey = '';
       this._postureStatusRequestSeq++;
     }
-    this._hydrating = isHydrating(s, 'runs');
-    this._bootstrapFailed = s.bootstrapFailed.runs;
-    this._connectionStale = s.connection !== 'connected';
-    if (wasHydrating && !this._hydrating) this._missingRunFetchAttempted = false;
-    const sharedRun = s.runs.find((r) => r.id === this.runId) ?? null;
-    // List rows omit large decision payloads and output manifests. Keep the
-    // direct copy so the gate and file browser retain their full detail.
-    const sharedTrimmed = sharedRun ? runHasTrimmedDetail(sharedRun) : false;
-    if (sharedRun && !sharedTrimmed) {
-      if (
-        this._directRun ||
-        this._directRunRefreshing ||
-        this._directRunRefreshFailed ||
-        this._directRunUnavailable
-      ) {
-        this._directRunRequestSeq++;
-        this._directRunRefreshing = false;
-      }
-      this._directRun = null;
-      this._directRunRefreshFailed = false;
-      this._directRunUnavailable = false;
-    }
-    const directRun = this._directRun?.id === this.runId ? this._directRun : null;
-    this.run = sharedRun
-      ? sharedTrimmed
-        ? mergeTrimmedRunDetail(sharedRun, directRun)
-        : sharedRun
-      : directRun;
+    this.detailQuery.setQuery(
+      this.runId ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: this.runId }) : undefined,
+    );
+    const observation: ResourceQueryState<RunGetResult> = this.detailQuery.belongsToWorkspace
+      ? this.detailQuery.state
+      : { status: 'loading' };
+    this._hydrating = observation.status === 'loading' && !observation.data;
+    this._bootstrapFailed = Boolean(observation.error);
+    this._connectionStale = !this.detailQuery.ready;
+    this._directRunRefreshing =
+      gateway.connectionState === 'connected' &&
+      (observation.status === 'loading' || (observation.status === 'stale' && !observation.error));
+    this._directRunRefreshFailed = Boolean(observation.error);
+    this._directRunUnavailable = observation.error?.code === 'RUN_NOT_FOUND';
+    const sharedRun = s.runs.find((run) => run.id === this.runId) ?? null;
+    // Compact rows are placeholders while this query hydrates. Full detail and
+    // its freshness belong solely to the authoritative run.get observation.
+    this.run = observation.data?.run ?? (observation.status === 'loading' ? sharedRun : null);
     // Reset transient nudge-decision-card state when the bound run changes or when the
     // current `branch_affinity_nudge` decision has been resolved server-side. Without this,
     // _branchNudgeShowPicker / _selectedSlotId leak into the next decision render and the
@@ -447,84 +460,31 @@ export class RunDetail extends RunDetailState {
       this._branchNudgeShowPicker = false;
       this._selectedSlotId = null;
     }
-    const activeTaskChanged =
-      prev?.id === this.run?.id &&
-      (prev && runChecklistProgressTarget(prev)?.key) !==
-        (this.run && runChecklistProgressTarget(this.run)?.key);
-    if (activeTaskChanged) {
-      this._taskProgressRequestSeq++;
-      this._taskProgressLoading = false;
-      this._acceptanceRequested = false;
-      this._lastTaskProgressFetchAt = 0;
-      this.taskProgress = null;
-      this.acceptanceStatus = null;
-      this.acceptanceCriteria = null;
-      this.acceptanceStatusError = null;
-      this.acceptanceEvidenceLinks = null;
-      this.acceptanceEvidenceLinksError = null;
-    }
-    const runsForMeta = this.run && !sharedRun ? [this.run, ...s.runs] : s.runs;
+    const runsForMeta = this.run
+      ? [this.run, ...s.runs.filter((row) => row.id !== this.runId)]
+      : s.runs;
     this.prStatus = this.run ? runFamilyPrStatus(this.run, runsForMeta, s.prs ?? []) : null;
-    if (this.run) {
-      this._missingRunFetchAttempted = false;
-    }
     if (this.run && this.selectedStep) {
       this.selectedStep =
         this.run.steps.find((step) => step.name === this.selectedStep?.name) ??
         publicationReviewStepForName(this.run, this.selectedStep.name) ??
         this.selectedStep;
-      void this._loadSelectedStepProgress();
     }
-    // The shared RUN_LIST is capped and can omit deep-linked historical runs.
-    // Retry the route target directly once the slice is no longer hydrating so
-    // reconnects do not fall through to "not found" prematurely.
-    if (!this.run && this.runId && !this._hydrating && !this._missingRunFetchAttempted) {
-      this._missingRunFetchAttempted = true;
-      void this.fetchRun(this.runId);
-    }
-    if (wasHydrating && !this._hydrating && !sharedRun && this._directRun?.id === this.runId) {
-      void this.fetchRun(this.runId);
-    }
-    // The list row's payloads are trimmed: fetch the full run once, again
-    // whenever the row moves past the copy we hold, and after a failure once
-    // the retry window has passed (the clock tick re-enters syncRun).
-    if (
-      this.runId &&
-      (shouldFetchTrimmedRun({
-        sharedRun,
-        directRun,
-        refreshing: this._directRunRefreshing,
-        failedAt: this._directRunFailedAt,
-        now: Date.now(),
-      }) ||
-        (this._runBootstrapBlocked() &&
-          !this._connectionStale &&
-          !this._directRunRefreshing &&
-          (this._directRunFailedAt === null || Date.now() - this._directRunFailedAt >= 5000)))
-    ) {
-      void this.fetchRun(this.runId);
-    }
-    // Fetch initial task progress when entering monitoring (or on mount if already monitoring)
-    const isWorkerActive = this.run ? isTaskProgressRunActive(this.run) : false;
-    const inlineCIFixActive = this.run ? hasActiveInlineCiFix(this.run) : false;
-    const shouldRefreshTaskProgress =
-      !this.taskProgress ||
-      activeTaskChanged ||
-      (inlineCIFixActive && Date.now() - this._lastTaskProgressFetchAt > 5_000);
-    if (
-      (isWorkerActive || (this.run?.reviewWorkspace && !this.taskProgress)) &&
-      (this.run?.slotId || this.run?.reviewWorkspace) &&
-      shouldRefreshTaskProgress
-    ) {
-      this.fetchTaskProgress(this.run!.slotId ?? '');
-    }
-    if (this.run && prev?.id !== this.run.id) {
-      void this.fetchSiblings(this.run);
-      void this._refreshRecipeRunsForRun(this.run);
+    this._bindTaskProgress();
+    // A saved/compact run can arrive before the full snapshot names the linked
+    // step. Reapply the URL when that snapshot changes, even for the same run.
+    if (this.run && (viewChanged || prev !== this.run)) {
       this._applySelectedStepFromHash();
     }
-    if (this.run && runEvidenceSettled(prev, this.run))
-      void this._refreshRecipeRunsForRun(this.run, { force: true });
+    this._loadSelectedStepProgress();
+    if (this.run) {
+      this.fetchSiblings(this.run);
+      if (observation.data?.run) this._bindRecipeRuns(observation.data.run);
+      else this.recipeQuery.setQuery(undefined);
+    } else {
+      this.siblingQuery.setQuery(undefined);
+      this.recipeQuery.setQuery(undefined);
+    }
     this._maybeRefreshLiveTimeoutPrStatus();
     this._maybeRefreshPostureStatus();
     this._maybeResetPostureGate();
@@ -617,8 +577,9 @@ export class RunDetail extends RunDetailState {
   }
 
   private async _refreshPostureStatus(runId: string): Promise<void> {
+    const current = this._captureView(runId);
     const requestSeq = ++this._postureStatusRequestSeq;
-    const stillCurrent = () => requestSeq === this._postureStatusRequestSeq && this.runId === runId;
+    const stillCurrent = () => current() && requestSeq === this._postureStatusRequestSeq;
     if (this._postureStatus.status === 'idle') {
       this._postureStatus = { status: 'loading' };
     }
@@ -656,6 +617,7 @@ export class RunDetail extends RunDetailState {
     runId: string,
     choice: ResourcePostureGateChoice | null,
   ): Promise<void> {
+    const current = this._captureView(runId);
     const requestSeq = ++this._posturePreviewRequestSeq;
     if (!choice) {
       this._postureGate = postureGateWithSelection(this._postureGate, {
@@ -680,14 +642,14 @@ export class RunDetail extends RunDetailState {
       );
       // Guarded on the run and on the exact gate: a response that lands after
       // the operator moved on must not repopulate cleared state.
-      if (!this._previewStillCurrent(requestSeq, runId, gateKey)) return;
+      if (!current() || !this._previewStillCurrent(requestSeq, runId, gateKey)) return;
       this._postureGate = postureGateWithSelection(this._postureGate, {
         choice,
         status: 'ready',
         plan,
       });
     } catch (err) {
-      if (!this._previewStillCurrent(requestSeq, runId, gateKey)) return;
+      if (!current() || !this._previewStillCurrent(requestSeq, runId, gateKey)) return;
       this._postureGate = postureGateWithSelection(this._postureGate, {
         choice,
         status: 'error',
@@ -732,6 +694,7 @@ export class RunDetail extends RunDetailState {
   }
 
   private async _fetchLiveTimeoutPrStatus(run: Run): Promise<void> {
+    const current = this._captureView(run.id);
     if (!run.prNumber) return;
     const requestSeq = ++this._liveTimeoutRequestSeq;
     const key = `${run.id}:${run.project}:${run.prNumber}`;
@@ -744,21 +707,24 @@ export class RunDetail extends RunDetailState {
         { pr: run.prNumber, project: run.project, force: true },
         30_000,
       );
-      if (requestSeq !== this._liveTimeoutRequestSeq || key !== this._liveTimeoutKey) return;
+      if (!current() || requestSeq !== this._liveTimeoutRequestSeq || key !== this._liveTimeoutKey)
+        return;
       this.liveTimeoutPrStatus = res.pr;
       void this._autoResolveRecoveredCITimeout(run, res.pr);
     } catch (err) {
-      if (requestSeq !== this._liveTimeoutRequestSeq || key !== this._liveTimeoutKey) return;
+      if (!current() || requestSeq !== this._liveTimeoutRequestSeq || key !== this._liveTimeoutKey)
+        return;
       console.warn('Failed to refresh live CI status:', err);
       this.liveTimeoutPrStatusFailed = true;
     } finally {
-      if (requestSeq === this._liveTimeoutRequestSeq && key === this._liveTimeoutKey) {
+      if (current() && requestSeq === this._liveTimeoutRequestSeq && key === this._liveTimeoutKey) {
         this.liveTimeoutPrStatusRefreshing = false;
       }
     }
   }
 
   private async _autoResolveRecoveredCITimeout(run: Run, pr: PRStatus): Promise<void> {
+    if (!this.detailQuery.ready || this.runId !== run.id) return;
     const decision = pendingCITimeoutDecision(run);
     if (!decision) return;
     if (this._autoResolvedTimeoutDecisionIds.has(decision.id)) return;
@@ -784,79 +750,39 @@ export class RunDetail extends RunDetailState {
     }
   }
 
-  private _verifiedRunSnapshot: { runId: string; connectionEpoch: number } | null = null;
-
   private _runBootstrapBlocked(): boolean {
-    return runBootstrapBlocksActions(
-      this._bootstrapFailed,
-      this.runId,
-      this._verifiedRunSnapshot,
-      gateway.connectionEpoch,
+    return Boolean(
+      this._runObservation.error &&
+      !this._runObservation.data &&
+      this._runObservation.error.code !== 'RUN_NOT_FOUND',
     );
   }
 
-  private async fetchRun(runId: string) {
-    const requestSeq = ++this._directRunRequestSeq;
-    const connectionEpoch = gateway.connectionEpoch;
-    const requestStillCurrent = () =>
-      requestSeq === this._directRunRequestSeq &&
+  /** Raw side reads and acknowledgements cannot outlive their displayed owner or connection. */
+  private _captureView(runId = this.runId): () => boolean {
+    const version = this._viewVersion;
+    const key = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    return () =>
+      this.isConnected &&
       this.runId === runId &&
-      gateway.connectionEpoch === connectionEpoch;
-    this._directRunRefreshing = true;
-    this._directRunRefreshFailed = false;
-    this._directRunUnavailable = false;
-    try {
-      const res = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId });
-      if (!requestStillCurrent()) return;
-      if (res.run) {
-        this._verifiedRunSnapshot = { runId, connectionEpoch };
-        this._directRun = res.run;
-        this.run = res.run;
-        this._directRunRefreshFailed = false;
-        this._directRunFailedAt = null;
-        this._directRunUnavailable = false;
-        void this.fetchSiblings(res.run);
-        void this._refreshRecipeRunsForRun(res.run);
-        this._applySelectedStepFromHash();
-      } else {
-        this._markDirectRunUnavailable(runId);
-      }
-    } catch (err) {
-      if (!requestStillCurrent()) return;
-      if (this._isRunNotFoundError(err)) {
-        this._markDirectRunUnavailable(runId);
-      } else {
-        this._directRunRefreshFailed = true;
-        this._directRunFailedAt = Date.now();
-      }
-    } finally {
-      if (requestSeq === this._directRunRequestSeq && this.runId === runId) {
-        this._directRunRefreshing = false;
-      }
-    }
+      this._viewVersion === version &&
+      getResourceWorkspaceKey() === key &&
+      gateway.resourceConnectionId === connection &&
+      this.detailQuery.belongsToWorkspace;
   }
 
-  private _markDirectRunUnavailable(runId: string): void {
-    this._verifiedRunSnapshot = null;
-    if (this._directRun?.id === runId) {
-      this._directRun = null;
-      this.run = null;
-    }
-    this._directRunRefreshFailed = false;
-    this._directRunUnavailable = true;
-  }
-
-  private _isRunNotFoundError(err: unknown): boolean {
-    return err instanceof Error && /^Run not found(?::|$)/.test(err.message);
+  private _assertRunReady(runId: string): Run {
+    const { run } = this.detailQuery.requireReady();
+    if (run.id !== runId)
+      throw new Error('The run changed. Review its current state before acting.');
+    return run;
   }
 
   private _resetRecipeRuns(): void {
-    this._recipeRunsRefreshToken = Symbol('run-detail-recipe-runs');
-    this._recipeRunsRefreshInFlight = null;
-    this._recipeRunsRefreshInFlightRunId = '';
+    this._recipeRequestedId = '';
     this._pendingRecipeRunSelectionId = '';
-    if (this._recipeRunsDelayedRefreshTimer) clearTimeout(this._recipeRunsDelayedRefreshTimer);
-    this._recipeRunsDelayedRefreshTimer = undefined;
+    this.recipeQuery.setQuery(undefined);
     this._recipeRuns = [];
     this.evidenceModel = null;
     this._recordedEvidence = undefined;
@@ -865,153 +791,93 @@ export class RunDetail extends RunDetailState {
     this._selectedRecipeRunId = '';
   }
 
-  private async _refreshRecipeRunsForRun(
-    run: Run,
-    options: { force?: boolean } = {},
-  ): Promise<void> {
-    if (
-      !options.force &&
-      this._recipeRunsRefreshInFlight &&
-      this._recipeRunsRefreshInFlightRunId === run.id
-    ) {
-      return this._recipeRunsRefreshInFlight;
-    }
-    const refreshPromise = this._refreshRecipeRunsForRunUncoalesced(run);
-    this._recipeRunsRefreshInFlight = refreshPromise;
-    this._recipeRunsRefreshInFlightRunId = run.id;
-    try {
-      await refreshPromise;
-    } finally {
-      if (this._recipeRunsRefreshInFlight === refreshPromise) {
-        this._recipeRunsRefreshInFlight = null;
-        this._recipeRunsRefreshInFlightRunId = '';
-      }
-    }
+  private _bindRecipeRuns(run: Run): void {
+    const outputDecision = pendingOutputReview(run);
+    const recipeRunId = this._recipeRequestedId;
+    const recordedRecipeRunId = this._recipeRuns.find(
+      (group) => group.id === recipeRunId,
+    )?.recipeRunId;
+    const params: RunRecipeRunsForRunParams = {
+      runId: run.id,
+      includeRecordedEvidence: true,
+      ...(recipeRunId ? { recipeRunId } : {}),
+      ...(outputDecision
+        ? {
+            decisionId: outputDecision.id,
+            ...(recordedRecipeRunId ? { recordedRecipeRunId } : {}),
+            evidenceSnapshotHash: outputDecision.payload.manifestDigest,
+          }
+        : {}),
+    };
+    this.recipeQuery.setQuery(resourceQuery(Methods.RUN_RECIPE_RUNS_FOR_RUN, params));
   }
 
-  private async _refreshRecipeRunsForRunUncoalesced(run: Run): Promise<void> {
-    const refreshToken = Symbol('run-detail-recipe-runs');
-    const recipeRunId = this._pendingRecipeRunSelectionId || this._selectedRecipeRunId;
-    this._recipeRunsRefreshToken = refreshToken;
-    try {
-      const outputDecision = pendingOutputReview(run);
-      const recordedRecipeRunId = this._recipeRuns.find(
-        (group) => group.id === recipeRunId,
-      )?.recipeRunId;
-      const params = {
-        runId: run.id,
-        includeRecordedEvidence: true,
-        ...(recipeRunId ? { recipeRunId } : {}),
-        ...(outputDecision
-          ? {
-              decisionId: outputDecision.id,
-              ...(recordedRecipeRunId ? { recordedRecipeRunId } : {}),
-              evidenceSnapshotHash: outputDecision.payload.manifestDigest,
-            }
-          : {}),
-      };
-      let result = await gateway.request<RunRecipeRunsForRunResult>(
-        Methods.RUN_RECIPE_RUNS_FOR_RUN,
-        params,
-        60_000,
-      );
-      // A completion can fail before publishing a group. A missing preference
-      // must not replace the last available package with its hint refusal.
-      const missingHint = Boolean(
-        !outputDecision && recipeRunId && recipeRunId !== result.selectedRecipeRunId,
-      );
-      if (missingHint && result.selectedRecipeRunId) {
-        result = await gateway.request<RunRecipeRunsForRunResult>(
-          Methods.RUN_RECIPE_RUNS_FOR_RUN,
-          {
-            ...params,
-            recipeRunId: result.selectedRecipeRunId,
-          },
-          60_000,
-        );
-      }
-      if (refreshToken !== this._recipeRunsRefreshToken || this.run?.id !== run.id) return;
-      this._recipeRuns = result.recipeRuns;
-      this._recordedEvidence = result.recordedEvidence;
-      this._evidenceGroupId = result.selectedRecipeRunId;
-      this._evidenceTaskRelative = Boolean(outputDecision) || !result.recordedEvidence?.input;
-      const pendingRecipeRunId = this._pendingRecipeRunSelectionId;
-      const desiredId = runDetailDesiredRecipeRunId({
-        recipeRuns: result.recipeRuns,
-        pendingRecipeRunId,
-        currentRecipeRunId: this._selectedRecipeRunId,
-        gatewaySelectedRecipeRunId: result.selectedRecipeRunId,
-      });
-      this._selectedRecipeRunId = desiredId;
-      if (
-        pendingRecipeRunId &&
-        (desiredId === pendingRecipeRunId || (pendingRecipeRunId === recipeRunId && missingHint))
-      ) {
-        this._pendingRecipeRunSelectionId = '';
-      }
-    } catch (err) {
-      if (refreshToken !== this._recipeRunsRefreshToken || this.run?.id !== run.id) return;
-      // Recipe-run evidence is optional in run-detail. Keep the gate usable if
-      // an older run has no recipe artifact index or the mirror is temporarily unavailable.
+  private _acceptRecipeObservation(state: ResourceQueryState<RunRecipeRunsForRunResult>): void {
+    const run = this.run;
+    const result = this.recipeQuery.belongsToWorkspace ? state.data : undefined;
+    if (!run || !result) {
       this._recipeRuns = [];
-      this._recordedEvidence = {
-        artifactPrefix: 'artifacts/',
-        contractVersion: run.recordedEvidenceContractVersion ?? 0,
-        errors: [err instanceof Error ? err.message : String(err)],
-      };
+      this._recordedEvidence =
+        run && state.error
+          ? {
+              artifactPrefix: 'artifacts/',
+              contractVersion: run.recordedEvidenceContractVersion ?? 0,
+              errors: [state.error.message],
+            }
+          : undefined;
       this._evidenceGroupId = null;
       this._evidenceTaskRelative = true;
-      this._selectedRecipeRunId = '';
-      console.warn('Failed to load run recipe evidence:', err);
+      return;
+    }
+    this._recipeRuns = result.recipeRuns;
+    const outputDecision = pendingOutputReview(run);
+    if (
+      !outputDecision &&
+      this._recipeRequestedId &&
+      result.selectedRecipeRunId &&
+      this._recipeRequestedId !== result.selectedRecipeRunId
+    ) {
+      // A removed preference falls back through another canonical query, so its
+      // hint error never replaces the retained package that remains readable.
+      this._recipeRequestedId = result.selectedRecipeRunId;
+      this._selectedRecipeRunId = result.selectedRecipeRunId;
+      this._recordedEvidence = undefined;
+      this._bindRecipeRuns(run);
+      return;
+    }
+    this._recordedEvidence = result.recordedEvidence;
+    this._evidenceGroupId = result.selectedRecipeRunId;
+    this._evidenceTaskRelative = Boolean(outputDecision) || !result.recordedEvidence?.input;
+    const desired = runDetailDesiredRecipeRunId({
+      recipeRuns: result.recipeRuns,
+      pendingRecipeRunId: this._pendingRecipeRunSelectionId,
+      currentRecipeRunId: this._selectedRecipeRunId,
+      gatewaySelectedRecipeRunId: result.selectedRecipeRunId,
+    });
+    this._selectedRecipeRunId = desired;
+    if (desired === this._pendingRecipeRunSelectionId) this._pendingRecipeRunSelectionId = '';
+    if (desired && desired !== result.selectedRecipeRunId) {
+      this._recipeRequestedId = desired;
+      this._bindRecipeRuns(run);
     }
   }
 
-  private _handleRecipeRunArtifacts(
-    run: Run,
-    detail: RecipeCompleteDetail,
-    delayed: boolean,
-  ): void {
-    if (detail.requestId) {
-      this._pendingRecipeRunSelectionId = `live-run:${detail.requestId}`;
-    }
-    void this._refreshRecipeRunsForRun(run, { force: true });
-    if (!delayed || !detail.requestId) return;
-    const pendingId = `live-run:${detail.requestId}`;
-    if (this._recipeRunsDelayedRefreshTimer) clearTimeout(this._recipeRunsDelayedRefreshTimer);
-    this._recipeRunsDelayedRefreshTimer = setTimeout(() => {
-      this._recipeRunsDelayedRefreshTimer = undefined;
-      if (this.run?.id === run.id && this._pendingRecipeRunSelectionId === pendingId) {
-        void this._refreshRecipeRunsForRun(run, { force: true });
-      }
-    }, 1500);
+  private _handleRecipeRunArtifacts(run: Run, detail: RecipeCompleteDetail): void {
+    if (detail.requestId) this._pendingRecipeRunSelectionId = `live-run:${detail.requestId}`;
+    // Acquisition publishes the artifacts key. Keep the requested selection until
+    // that query observes the new group instead of guessing a mirror delay.
+    this._bindRecipeRuns(run);
   }
 
   private _actionsBlocked(): boolean {
-    return (
-      this._closingOutput ||
-      this._connectionStale ||
-      this._hydrating ||
-      this._runBootstrapBlocked() ||
-      this._directRunRefreshing ||
-      this._directRunRefreshFailed
-    );
+    return this._closingOutput || (!this.mockData && !this.detailQuery.ready);
   }
 
-  private async fetchSiblings(run: Run) {
-    const requestSeq = ++this._siblingsRequestSeq;
-    const requestStillCurrent = () =>
-      requestSeq === this._siblingsRequestSeq && this.runId === run.id;
-    try {
-      const res = await gateway.request<RunListResult>(Methods.RUN_LIST, {
-        familyId: run.familyId,
-      });
-      if (!requestStillCurrent()) return;
-      this.siblings = sortRunsForFamilyView((res.runs ?? []).filter((r) => r.id !== run.id));
-    } catch (err) {
-      if (!requestStillCurrent()) return;
-      this.siblings = [];
-      console.warn(`Failed to load siblings for ${run.id}: ${(err as Error).message}`);
-    }
+  private fetchSiblings(run: Run): void {
+    this.siblingQuery.setQuery(resourceQuery(Methods.RUN_LIST, { familyId: run.familyId }));
+    this.siblings = sortRunsForFamilyView(
+      (this.siblingQuery.state.data?.runs ?? []).filter((row) => row.id !== run.id),
+    );
   }
 
   private _onHashChange = () => {
@@ -1026,14 +892,13 @@ export class RunDetail extends RunDetailState {
     const stepName = selectedStepNameFromRunDetailHash();
     if (!stepName) {
       this.selectedStep = null;
-      this.selectedStepProgress = null;
-      this._selectedStepProgressKey = '';
+      this._loadSelectedStepProgress();
       return;
     }
     this.selectedStep =
       this.run.steps.find((s) => s.name === stepName) ??
       publicationReviewStepForName(this.run, stepName);
-    void this._loadSelectedStepProgress();
+    this._loadSelectedStepProgress();
   }
 
   /**
@@ -1102,9 +967,6 @@ export class RunDetail extends RunDetailState {
     // Re-applied when the run, worker progress or acceptance data updates, so a
     // link that arrives before they load still opens; until then, say so.
     const acceptanceRows = runAcceptanceCriterionEvidence(this);
-    if (artifactAc && !acceptanceRows.some((row) => row.id === artifactAc)) {
-      this._requestAcceptanceData();
-    }
     const selection = resolveEvidenceLightboxLink({
       path: artifact,
       criterionId: artifactAc,
@@ -1117,7 +979,7 @@ export class RunDetail extends RunDetailState {
         loaded: Boolean(this.taskProgress?.operations || this.selectedStepProgress?.operations),
         runActive: isRunWorking(this.run),
       },
-      acceptancePending: this._taskProgressLoading || this._acceptanceFetchQueued,
+      acceptancePending: this._taskProgressLoading,
     });
     // An AC link waits for the progress read that carries its criterion.
     if ('pending' in selection) return;
@@ -1160,12 +1022,14 @@ export class RunDetail extends RunDetailState {
   private async _rereviewLatestHead(run: Run) {
     if (this._actionsBlocked() || this._rereviewInFlight) return;
     this._rereviewInFlight = true;
+    const current = this._captureView(run.id);
     try {
       const result = await gateway.request<RunRereviewLatestHeadResult>(
         Methods.RUN_REREVIEW_LATEST_HEAD,
         { runId: run.id },
         30_000,
       );
+      if (!current()) return;
       if (result.mode === 'warm-handoff' && result.runId) {
         // The follow-up went to the retained reviewer session; watch it there.
         location.hash = `runs?run=${result.runId}`;
@@ -1184,9 +1048,10 @@ export class RunDetail extends RunDetailState {
       // The round lives in the review queue; follow it there.
       location.hash = `prs?${params.toString()}`;
     } catch (err) {
+      if (!current()) return;
       alert(`Re-review failed: ${(err as Error).message}`);
     } finally {
-      this._rereviewInFlight = false;
+      if (current()) this._rereviewInFlight = false;
     }
   }
   private _requestCopilotRunDiagnosis(run: Run) {
@@ -1209,78 +1074,67 @@ export class RunDetail extends RunDetailState {
     );
   }
 
-  /**
-   * A criterion link on a run whose worker progress is not being read (a finished
-   * run) reads its acceptance data once, so the link can reopen that criterion.
-   */
-  private _requestAcceptanceData(): void {
-    if (this._acceptanceRequested || this._taskProgressLoading || !this.run) return;
-    if (!this.run.slotId && !this.run.reviewWorkspace) return;
-    this._acceptanceRequested = true;
-    this._acceptanceFetchQueued = true;
-    // Called from updated(): the fetch sets reactive state, so it starts after
-    // this update; the link stays pending meanwhile.
-    queueMicrotask(() => {
-      this._acceptanceFetchQueued = false;
-      if (this.run) void this.fetchTaskProgress(this.run.slotId ?? '');
-    });
-  }
-
-  private async fetchTaskProgress(slotId: string) {
-    const runId = this.runId;
-    const requestSeq = ++this._taskProgressRequestSeq;
-    const requestStillCurrent = () =>
-      requestSeq === this._taskProgressRequestSeq &&
-      this.runId === runId &&
-      (this.run?.slotId ?? '') === slotId;
-    this._lastTaskProgressFetchAt = Date.now();
-    this._taskProgressLoading = true;
-    try {
-      const res = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-        slotId,
-        runId,
-      });
-      if (!requestStillCurrent()) return;
-      if (res.structured) this.taskProgress = res.structured;
-      this.acceptanceStatus = res.acceptanceStatus ?? null;
-      this.acceptanceCriteria = res.acceptanceCriteria ?? null;
-      this.acceptanceStatusError = res.acceptanceStatusError ?? null;
-      this.acceptanceEvidenceLinks = res.acceptanceEvidenceLinks ?? null;
-      this.acceptanceEvidenceLinksError = res.acceptanceEvidenceLinksError ?? null;
-    } catch (err) {
-      if (!requestStillCurrent()) return;
-      // During slot release/replay the slot can briefly have no task file; keep
-      // the existing UI snapshot instead of failing the whole run detail render.
-      console.debug(`Task progress unavailable for ${slotId}: ${(err as Error).message}`);
-    } finally {
-      // A superseded read leaves the flag to the read that replaced it.
-      if (requestSeq === this._taskProgressRequestSeq) this._taskProgressLoading = false;
-    }
-  }
-
-  private async _loadSelectedStepProgress(): Promise<void> {
-    const step = this.selectedStep;
+  private _bindTaskProgress(): void {
     const run = this.run;
-    const artifactPath = (step?.outputs as Record<string, unknown> | undefined)
-      ?.taskProgressArtifactPath;
-    const key = `${run?.id ?? ''}:${step?.name ?? ''}:${typeof artifactPath === 'string' ? artifactPath : ''}`;
-    if (key === this._selectedStepProgressKey) return;
-    this._selectedStepProgressKey = key;
-    this.selectedStepProgress = null;
-    if (!run?.slotId || !step || typeof artifactPath !== 'string' || !artifactPath.trim()) return;
-    try {
-      const res = await gateway.request<TaskProgressResult>(
-        Methods.TASK_PROGRESS,
-        { slotId: run.slotId, runId: run.id, taskFile: artifactPath },
-        15_000,
-      );
-      if (key !== this._selectedStepProgressKey) return;
-      this.selectedStepProgress = res.structured ?? null;
-    } catch (err) {
-      console.warn(
-        `Task progress artifact unavailable for ${step.name}: ${(err as Error).message}`,
-      );
-    }
+    this.progressQuery.setQuery(
+      run && (run.slotId || run.reviewWorkspace)
+        ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
+            slotId: run.slotId ?? '',
+            runId: run.id,
+          })
+        : undefined,
+    );
+    // An owner/connection reset may clear copied fields without changing the
+    // canonical query id. Adopt its current state even when setQuery is a no-op.
+    this._acceptProgressObservation();
+  }
+
+  private _acceptProgressObservation(): void {
+    if (this.mockData) return;
+    const observation = this.progressQuery.belongsToWorkspace
+      ? this.progressQuery.state
+      : undefined;
+    const data = observation?.data;
+    this.taskProgress = data?.structured ?? null;
+    this.acceptanceStatus = data?.acceptanceStatus ?? null;
+    this.acceptanceCriteria = data?.acceptanceCriteria ?? null;
+    this.acceptanceStatusError = observation?.error?.message ?? data?.acceptanceStatusError ?? null;
+    this.acceptanceEvidenceLinks = data?.acceptanceEvidenceLinks ?? null;
+    this.acceptanceEvidenceLinksError = data?.acceptanceEvidenceLinksError ?? null;
+    this._taskProgressLoading = Boolean(
+      this.run &&
+      (this.run.slotId || this.run.reviewWorkspace) &&
+      !data &&
+      !observation?.error &&
+      (!observation || observation.status === 'loading' || observation.status === 'stale'),
+    );
+  }
+
+  private _selectedProgressArtifactPath(): string | undefined {
+    const path = this.selectedStep?.outputs?.taskProgressArtifactPath;
+    return typeof path === 'string' && path.trim() ? path : undefined;
+  }
+
+  private _loadSelectedStepProgress(): void {
+    const run = this.run;
+    const taskFile = this._selectedProgressArtifactPath();
+    this.selectedProgressQuery.setQuery(
+      !this.mockData && run && (run.slotId || run.reviewWorkspace) && taskFile
+        ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
+            slotId: run.slotId ?? '',
+            runId: run.id,
+            taskFile,
+          })
+        : undefined,
+    );
+    this._acceptSelectedProgressObservation();
+  }
+
+  private _acceptSelectedProgressObservation(): void {
+    if (this.mockData) return;
+    this.selectedStepProgress = this.selectedProgressQuery.belongsToWorkspace
+      ? (this.selectedProgressQuery.state.data?.structured ?? null)
+      : null;
   }
 
   private _artifactUrl = (artifact: FamilyObservabilityArtifact): string => {
@@ -1337,10 +1191,14 @@ export class RunDetail extends RunDetailState {
     const model = this.evidenceModel;
     const run = this.run;
     if (!model || !run || this._visualReviewBusy) return;
+    const current = this._captureView(run.id);
     this._visualReviewBusy = true;
     this._visualReviewMessage = '';
     this._visualReviewFeedback = { claimId, phase: 'saving' };
     try {
+      this._assertRunReady(run.id);
+      this.recipeQuery.requireReady();
+      this.progressQuery.requireReady();
       const request = model.visualReviewRequest(
         claimId,
         gateway.authenticatedPrincipal,
@@ -1355,19 +1213,15 @@ export class RunDetail extends RunDetailState {
       if (request.runId !== run.id)
         throw new Error('The evidence selection changed. Refresh the run.');
       await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, request, { timeout: null });
-      if (this.run?.id !== run.id) return;
-      this._visualReviewFeedback = { claimId, phase: 'refreshing' };
-      await this.fetchRun(run.id);
-      await this._refreshRecipeRunsForRun(this.run ?? run, { force: true });
-      if (this.run?.id !== run.id) return;
+      if (!current()) return;
       this._visualReviewMessage = 'Visual judgment recorded.';
       this._visualReviewFeedback = undefined;
     } catch (error) {
-      if (this.run?.id !== run.id) return;
+      if (!current()) return;
       this._visualReviewMessage = error instanceof Error ? error.message : String(error);
       this._visualReviewFeedback = { claimId, phase: 'error', message: this._visualReviewMessage };
     } finally {
-      if (this.run?.id === run.id) this._visualReviewBusy = false;
+      if (current()) this._visualReviewBusy = false;
     }
   }
 
@@ -1406,7 +1260,10 @@ export class RunDetail extends RunDetailState {
       changeReviewReason: (id, reason) => {
         this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
       },
-      recordReview: (id, verdict) => this._recordVisualReview(id, verdict),
+      recordReview:
+        this.detailQuery.ready && this.recipeQuery.ready && this.progressQuery.ready
+          ? (id, verdict) => this._recordVisualReview(id, verdict)
+          : undefined,
       artifactUrl: resolve,
       changed: () => this.requestUpdate(),
       openMedia: (media, index) => {
@@ -1435,6 +1292,7 @@ export class RunDetail extends RunDetailState {
     const run = this.run;
     const model = this.evidenceModel;
     if (!run || !model) return;
+    const current = this._captureView(run.id);
     const resolveArtifactUrl = this._captureEvidenceResolver();
     try {
       const report = await readEvidenceReviewReport(model, async (path) => {
@@ -1447,7 +1305,7 @@ export class RunDetail extends RunDetailState {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return new Uint8Array(await response.arrayBuffer());
       });
-      if (this.run?.id !== run.id || this.evidenceModel !== model) return;
+      if (!current() || this.evidenceModel !== model) return;
       this._openEvidenceLightbox({
         items: [
           {
@@ -1471,7 +1329,7 @@ export class RunDetail extends RunDetailState {
         criterionId: null,
       });
     } catch (error) {
-      if (this.run?.id === run.id)
+      if (current())
         this._evidenceArtifactUnavailable = {
           path: model.report?.reportPath ?? 'report',
           reason: error instanceof Error ? error.message : String(error),
@@ -1678,45 +1536,42 @@ export class RunDetail extends RunDetailState {
 
   private async _closeOutput(run: Run, decision: RunDecision): Promise<void> {
     if (this._closingOutput || this._actionsBlocked()) return;
+    const current = this._captureView(run.id);
     this._closingOutput = true;
     this._outputError = '';
     try {
-      const result = await gateway.request<RunResolveDecisionResult>(
+      this._assertRunReady(run.id);
+      await gateway.request<RunResolveDecisionResult>(
         Methods.RUN_RESOLVE_DECISION,
         { runId: run.id, decisionId: decision.id, actionId: 'close-run' },
         120_000,
       );
-      if (this.run?.id === run.id) {
-        this.run = result.run;
-        this._directRun = result.run;
-      }
     } catch (error) {
+      if (!current()) return;
       this._outputError = error instanceof Error ? error.message : String(error);
     } finally {
-      this._closingOutput = false;
+      if (current()) this._closingOutput = false;
     }
   }
 
   private async _refreshOutput(run: Run): Promise<void> {
     if (this._refreshingOutput) return;
+    const current = this._captureView(run.id);
     this._refreshingOutput = true;
     this._outputError = '';
     try {
+      this._assertRunReady(run.id);
       const result = await gateway.request<{ ok: boolean; reason?: string }>(
         Methods.RUN_REFRESH_MIRROR,
         { runId: run.id },
         120_000,
       );
       if (!result.ok) throw new Error(result.reason ?? 'Could not retrieve worker output');
-      const updated = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId: run.id });
-      if (this.run?.id === run.id) {
-        this.run = updated.run;
-        this._directRun = updated.run;
-      }
     } catch (error) {
+      if (!current()) return;
       this._outputError = error instanceof Error ? error.message : String(error);
     } finally {
-      this._refreshingOutput = false;
+      if (current()) this._refreshingOutput = false;
     }
   }
 
@@ -1772,8 +1627,94 @@ export class RunDetail extends RunDetailState {
     `;
   }
 
+  private _renderProgressReadStatus(
+    query: ResourceQueryController<TaskProgressResult>,
+    observation: ResourceQueryState<TaskProgressResult>,
+    scope: 'run' | 'selected',
+  ) {
+    if (this.mockData || !query.belongsToWorkspace) return nothing;
+    const label = scope === 'run' ? 'Progress' : 'Selected step progress';
+    return html`
+      ${observation.status === 'loading' && !observation.data && !observation.error
+        ? html`<div class="rehydrating-banner">Loading ${label.toLowerCase()}.</div>`
+        : nothing}
+      ${observation.status === 'stale' && observation.observedAt !== undefined
+        ? html`<div
+            class="rehydrating-banner"
+            data-run-progress-freshness=${scope === 'run' ? 'stale' : nothing}
+            data-selected-progress-freshness=${scope === 'selected' ? 'stale' : nothing}
+          >
+            Saved ${label.toLowerCase()},
+            ${sourceObservationAge(observation.observedAt, this._now)}.
+          </div>`
+        : nothing}
+      ${observation.status === 'unsupported'
+        ? html`<div class="rehydrating-banner">
+            ${label} updates are unavailable on this gateway.
+          </div>`
+        : nothing}
+      ${observation.error
+        ? html`<div
+            class="rehydrating-banner"
+            role="alert"
+            data-run-progress-error=${scope === 'run' ? '' : nothing}
+            data-selected-progress-error=${scope === 'selected' ? '' : nothing}
+          >
+            ${label} read failed: ${observation.error.message}
+            <button
+              ?disabled=${gateway.connectionState !== 'connected'}
+              @click=${() => query.retry()}
+            >
+              Retry reading ${label.toLowerCase()}
+            </button>
+          </div>`
+        : nothing}
+    `;
+  }
+
+  private _renderReadStatus() {
+    const observation = this.detailQuery.belongsToWorkspace ? this._runObservation : undefined;
+    return html`
+      ${observation?.status === 'loading' && this.run
+        ? html`<div class="rehydrating-banner">
+            Loading run details. Actions wait for a current read.
+          </div>`
+        : nothing}
+      ${observation?.status === 'stale' && observation.observedAt !== undefined
+        ? html`<div class="rehydrating-banner" data-run-detail-freshness="stale">
+            Saved run, ${sourceObservationAge(observation.observedAt, this._now)}. Actions wait for
+            a current read.
+          </div>`
+        : nothing}
+      ${observation?.status === 'unsupported'
+        ? html`<div class="rehydrating-banner">Run updates are unavailable on this gateway.</div>`
+        : nothing}
+      ${observation?.error && observation.error.code !== 'RUN_NOT_FOUND'
+        ? html`<div class="rehydrating-banner" role="alert">
+            Run read failed: ${observation.error.message}
+            <button
+              ?disabled=${gateway.connectionState !== 'connected'}
+              @click=${() => this.detailQuery.retry()}
+            >
+              Retry reading run
+            </button>
+          </div>`
+        : nothing}
+      ${this.run && (this.run.slotId || this.run.reviewWorkspace)
+        ? this._renderProgressReadStatus(this.progressQuery, this._progressObservation, 'run')
+        : nothing}
+      ${this._selectedProgressArtifactPath()
+        ? this._renderProgressReadStatus(
+            this.selectedProgressQuery,
+            this._selectedProgressObservation,
+            'selected',
+          )
+        : nothing}
+    `;
+  }
+
   render() {
-    return renderRunDetailView({
+    const view = renderRunDetailView({
       embedded: this.embedded,
       run: this.run,
       prStatus: this.prStatus,
@@ -1842,8 +1783,8 @@ export class RunDetail extends RunDetailState {
         getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.health ?? null,
       _cancelledRunSlot: this.run ? cancelledRunSlotChoices(this.run, this._fleetSlots) : null,
       _setRunLinkedTickets: async (run, linkedTicketRefs) => {
+        this._assertRunReady(run.id);
         await gateway.request(Methods.RUN_LINKED_TICKETS_SET, { runId: run.id, linkedTicketRefs });
-        await this.fetchRun(run.id);
       },
       _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _publicationActions: this._publicationActions,
@@ -1898,6 +1839,7 @@ export class RunDetail extends RunDetailState {
       _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
       _renderAgentSessions: (run) =>
         renderRunAgentSessions(run, {
+          actionsBlocked: this._actionsBlocked(),
           states: this._sessionStates,
           onCopy: (row, kind) => void this._copyRunnerSessionCommand(run, row, kind),
           onOpenOnHost: (row) => void this._openRunnerSessionOnHost(run, row),
@@ -1909,10 +1851,11 @@ export class RunDetail extends RunDetailState {
       onStepSelect: (step) => {
         this.selectedStep = step;
         this._syncSelectedStepToHash();
-        void this._loadSelectedStepProgress();
+        this._loadSelectedStepProgress();
       },
       onStepInspectorClose: () => {
         this.selectedStep = null;
+        this._loadSelectedStepProgress();
         this._syncSelectedStepToHash();
       },
       toggleTerminal: () => {
@@ -1923,6 +1866,7 @@ export class RunDetail extends RunDetailState {
         this._showTerminal = !this._showTerminal;
       },
     });
+    return html`${this._renderReadStatus()}${view}`;
   }
 
   /**
@@ -1930,15 +1874,27 @@ export class RunDetail extends RunDetailState {
    * run terminal on that exact pane. Copy stays available if the host refuses.
    */
   private async _openRunnerSessionOnHost(run: Run, row: RunSessionRow): Promise<void> {
+    const current = this._captureView(run.id);
+    if (!this.detailQuery.ready || this.runId !== run.id) {
+      this._sessionStates = {
+        ...this._sessionStates,
+        [row.contextId]: {
+          status: 'error',
+          message: 'Wait for current run details before opening its session.',
+        },
+      };
+      return;
+    }
     const requestSeq = (this._sessionRequestSeq[row.contextId] ?? 0) + 1;
     this._sessionRequestSeq = { ...this._sessionRequestSeq, [row.contextId]: requestSeq };
     const requestStillCurrent = () =>
-      requestSeq === this._sessionRequestSeq[row.contextId] && this.runId === run.id;
+      current() && requestSeq === this._sessionRequestSeq[row.contextId];
     this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'opening' } };
     const opened = await openRunnerSessionOnHost({
       runId: run.id,
       runStatus: run.status,
       row,
+      isCurrent: requestStillCurrent,
     });
     if (!requestStillCurrent()) return;
     if (!opened.ok) {
@@ -1989,6 +1945,7 @@ export class RunDetail extends RunDetailState {
     row: RunSessionRow,
     kind: RunSessionCopyKind,
   ): Promise<void> {
+    const current = this._captureView(run.id);
     // Sequenced per context: one global counter meant a click on a second row
     // invalidated the first row's in-flight request, leaving it stuck on
     // "Loading…" forever.
@@ -1997,7 +1954,7 @@ export class RunDetail extends RunDetailState {
     // A response that lands after the operator moved to another run, or after a
     // newer click on this row, must not overwrite what is on screen now.
     const requestStillCurrent = () =>
-      requestSeq === this._sessionRequestSeq[row.contextId] && this.runId === run.id;
+      current() && requestSeq === this._sessionRequestSeq[row.contextId];
     this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'loading' } };
     try {
       const result = await gateway.request<RunSessionCommandResult>(Methods.RUN_SESSION_COMMAND, {
@@ -2007,6 +1964,7 @@ export class RunDetail extends RunDetailState {
         contextId: row.contextId,
         role: row.role,
       });
+      if (!requestStillCurrent()) return;
       const command = runSessionCommandTextForKind(result, kind);
       let copyError: string | null = null;
       if (command) {
@@ -2034,12 +1992,14 @@ export class RunDetail extends RunDetailState {
 
   private async _retryReviewPublication(run: Run): Promise<void> {
     if (this._publicationActions[run.id]?.busy || this._actionsBlocked()) return;
+    const current = this._captureView(run.id);
     this._publicationActions = { ...this._publicationActions, [run.id]: { busy: true } };
     try {
       await gateway.request(Methods.PR_REVIEW_PUBLISH, { runId: run.id }, 60_000);
+      if (!current()) return;
       this._publicationActions = { ...this._publicationActions, [run.id]: { busy: false } };
-      if (this.run?.id === run.id) await this.fetchRun(run.id);
     } catch (error) {
+      if (!current()) return;
       this._publicationActions = {
         ...this._publicationActions,
         [run.id]: { busy: false, error: error instanceof Error ? error.message : String(error) },
@@ -2048,10 +2008,12 @@ export class RunDetail extends RunDetailState {
   }
 
   private async _setRunTags(run: Run, tags: string[]) {
+    this._assertRunReady(run.id);
     await gateway.request(Methods.RUN_TAGS_SET, { runId: run.id, tags });
   }
 
   private async _pokeCIWatch(runId: string): Promise<void> {
+    if (!this.detailQuery.ready || this.runId !== runId) return;
     const ciStep = this.run?.steps.find((step) => step.name === 'ci-watch');
     const outputPollCount = readCiWatchOutputs(ciStep?.outputs)?.pollCount;
     const beforePoll = this.ciStatus?.pollCount ?? outputPollCount;
@@ -2109,8 +2071,8 @@ export class RunDetail extends RunDetailState {
       resolveSlotPick: (runId, decisionId) => this._resolveSlotPick(runId, decisionId),
       resolveBranchNudgePick: (runId, decisionId) =>
         this._resolveBranchNudgePick(runId, decisionId),
-      handleRecipeRunArtifacts: (targetRun, detail, preferSelectedArtifacts) =>
-        this._handleRecipeRunArtifacts(targetRun, detail, preferSelectedArtifacts),
+      handleRecipeRunArtifacts: (targetRun, detail) =>
+        this._handleRecipeRunArtifacts(targetRun, detail),
     });
   }
 
@@ -2255,13 +2217,15 @@ export class RunDetail extends RunDetailState {
     runId: string,
     observation: PostureTransitionObservation,
   ): Promise<void> {
+    const current = this._captureView(runId);
     for (let attempt = 0; attempt < POSTURE_TRANSITION_POLL_LIMIT; attempt += 1) {
+      if (!current()) return;
       // One read per attempt. Clearing `_postureStatusKey` here let the refresh
       // in `updated()` fire a second, concurrent read whose sequence number
       // invalidated this loop's own request, doubling the RPCs and burning an
       // attempt. The key is only cleared once the wait is over.
       await this._refreshPostureStatus(runId);
-      if (this.runId !== runId) return;
+      if (!current()) return;
       const observed = correlatedPostureTransition(
         observation,
         postureTransitionsOf(this._postureStatus.state),
@@ -2279,7 +2243,7 @@ export class RunDetail extends RunDetailState {
       this._postureGate = { ...this._postureGate, reconciliationPending: true };
       await new Promise((resolve) => setTimeout(resolve, POSTURE_TRANSITION_POLL_INTERVAL_MS));
     }
-    if (this.runId !== runId) return;
+    if (!current()) return;
     // Bounded and honest: say the Gateway has not finished rather than showing
     // an outcome that is not this resolution's.
     this._postureGate = { ...this._postureGate, reconciliationPending: true };
@@ -2290,6 +2254,7 @@ export class RunDetail extends RunDetailState {
     decision: RunDecision,
     resumeWorker = false,
   ) {
+    const current = this._captureView(runId);
     // A refused posture choice blocks the resume for the same reason it blocks
     // any other resolution: the decision would be consumed by a refusal.
     if (!canResolveWithPostureChoice(this._postureGateStateForRender())) return;
@@ -2300,19 +2265,19 @@ export class RunDetail extends RunDetailState {
       runId,
       decision,
       {
-        actionsBlocked: () => this._actionsBlocked(),
+        actionsBlocked: () => !current() || this._actionsBlocked(),
         busy: () => this._handoffSignalCheckBusy,
         setBusy: (busy) => {
-          this._handoffSignalCheckBusy = busy;
+          if (current()) this._handoffSignalCheckBusy = busy;
         },
         setError: (error) => {
-          this._handoffSignalCheckError = error;
+          if (current()) this._handoffSignalCheckError = error;
         },
         // Only ever forwarded where the Gateway would honour it; a hidden panel
         // must not send a choice the operator cannot see or clear.
         resourcePosture: () => forwardedChoice,
         onDecisionResolved: (run) => {
-          if (this.runId !== run.id) return;
+          if (!current() || this.runId !== run.id) return;
           this._adoptResolvedPostureTransition(run, observation);
         },
       },
@@ -2380,6 +2345,7 @@ export class RunDetail extends RunDetailState {
   ) {
     if (this._actionsBlocked()) return;
     if (!this.run) return;
+    const current = this._captureView(this.run.id);
     if (
       freshDispatch &&
       !window.confirm('Abandon the ambiguous retained handoff, stop its runner, and launch fresh?')
@@ -2394,8 +2360,9 @@ export class RunDetail extends RunDetailState {
         prepareProfile: prepareProfile || undefined,
         freshDispatch: freshDispatch || undefined,
       });
-      this.selectedStep = null;
+      if (current()) this.selectedStep = null;
     } catch (err) {
+      if (!current()) return;
       const msg = (err as Error)?.message ?? String(err);
       console.error('Replay step failed:', err);
       alert(`Retry from "${stepName}" failed: ${msg}`);

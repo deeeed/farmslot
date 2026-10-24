@@ -61,6 +61,9 @@ mock.module('../fleet/node-rpc.js', {
     nodeExecArgv: () => {
       throw new Error('Unexpected remote argv execution');
     },
+    sendNodeRequest: () => {
+      throw new Error('Unexpected source observation RPC');
+    },
   },
 });
 process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'owner';

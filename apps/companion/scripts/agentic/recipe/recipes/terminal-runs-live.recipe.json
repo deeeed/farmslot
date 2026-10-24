@@ -1,0 +1,81 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native shared terminal run context",
+  "description": "Use the owned native device and private gateway with FARMSLOT_RUN_PROOF_FIXTURE. The actual terminal creates only its configured private idle shell on an existing tmux server. A real Clear key runs only after native process metadata confirms that shell has no child. Temporary tags restore and only the same verified idle test-created session is retired. No tmux server is started or killed.",
+  "proofTargets": [
+    {
+      "id": "native-terminal-shared",
+      "claim": "The actual terminal uses canonical full-run and recipe observations; an external write refreshes facts without restarting its stream."
+    },
+    {
+      "id": "native-terminal-command",
+      "claim": "A real terminal control key reaches the verified private idle shell through the current target."
+    },
+    {
+      "id": "native-terminal-cold",
+      "claim": "A cold offline terminal restores the exact saved run timestamp and age with commands disabled; reconnect never replays its key."
+    },
+    {
+      "id": "native-terminal-pinned",
+      "claim": "An unavailable explicit actor is refused by the gateway, never falls back to another target, and clears the actual previous pane buffer."
+    }
+  ],
+  "workflow": {
+    "entry": "before",
+    "nodes": {
+      "before": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-terminal-before.png",
+        "intent": "Start the native device session before opening the actual terminal.",
+        "next": "prove"
+      },
+      "prove": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs terminal-context",
+        "timeout_ms": 240000,
+        "intent": "Prove terminal observations, safe keys, cold restore and exact actor pins.",
+        "next": "shared"
+      },
+      "shared": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalShared\":true",
+        "intent": "Require canonical context and updates without stream restarts.",
+        "proves": ["native-terminal-shared"],
+        "next": "command"
+      },
+      "command": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalCommand\":true",
+        "intent": "Require a real key through the verified private idle shell.",
+        "proves": ["native-terminal-command"],
+        "next": "cold"
+      },
+      "cold": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalCold\":true",
+        "intent": "Require cold saved facts, disabled commands and no key replay.",
+        "proves": ["native-terminal-cold"],
+        "next": "pin"
+      },
+      "pin": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalPinRefused\":true",
+        "intent": "Require real refusal of an unavailable exact actor pin.",
+        "proves": ["native-terminal-pinned"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

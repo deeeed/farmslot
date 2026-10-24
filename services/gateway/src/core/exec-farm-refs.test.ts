@@ -34,6 +34,7 @@ mock.module('../fleet/node-rpc.js', {
       return { exitCode: 0, stdout: '', stderr: '' };
     },
     nodeExecArgv: async () => assert.fail('argv exec is not under test'),
+    sendNodeRequest: async () => assert.fail('source observation RPC is not under test'),
   },
 });
 

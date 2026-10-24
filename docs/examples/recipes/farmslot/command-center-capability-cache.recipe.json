@@ -1,0 +1,75 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Capability observations follow real catalog and lease commits and persist offline",
+  "description": "Living ADR-071 capability migration example. Use the isolated one-slot CLI fixture selected by FARMSLOT_OFFLINE_PROOF=1, FARMSLOT_DISABLE_ORCHESTRATION=1, FARMSLOT_HOME, FARMSLOT_ROOT, FARMSLOT_PROJECTS_DIR, FARMSLOT_RUNS_DIR, FARMSLOT_GATEWAY_PROFILE, FARMSLOT_SLOT_RESOURCE_PROOF, GATEWAY_PORT, FARMSLOT_UI_URL, FARMSLOT_CDP_PORT and FARMSLOT_RUN_WEB_EVIDENCE_DIR. Keep FARMSLOT_MONITOR_FLEET_POLL_MS=600000. The gateway needs its own surviving tsx watcher for guarded outage/recovery. The fixture project starts without runtime capabilities and its worker repo is inside the selected home. Only one low-cost marker-file provider is declared; its normal configured slot actions create/check/remove .capability-cache-proof. No device, model, daemon or tmux server starts. Setup creates one owned blocked run while the gateway is stopped, then real RPCs acquire its capability and a real click stops it. Actual project-file corruption/recovery must reach the read contract. Offline navigation restores the same canonical snapshot and disables Stop. Finally the real release removes the marker, the owned run is removed under guarded outage, and exact config bytes/permissions restore. No UI/cache values are injected. Native capability acceptance remains separate.",
+  "proofTargets": [
+    {
+      "id": "capabilityCatalogNotified",
+      "claim": "Real project config changes and recovery reach the same canonical capability panel with newer read stamps."
+    },
+    {
+      "id": "capabilityLeaseNotified",
+      "claim": "Real acquire and explicit UI Stop commit lease transitions and create/remove only the owned provider marker."
+    },
+    {
+      "id": "capabilityReadFailureVisible",
+      "claim": "A corrupt catalog retains stale capability facts, displays the actual read error and disables commands."
+    },
+    {
+      "id": "coldCapabilitiesRestored",
+      "claim": "A new offline document restores capability state and age with disabled commands; a gateway restart requires a current read before authority returns."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs capabilities-web",
+        "timeout_ms": 240000,
+        "intent": "Use real capability RPCs and the production Slot Info panel against one owned marker-file provider, then restore exact project bytes and remove its owned run.",
+        "next": "capabilityCatalogNotified"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "capabilityCatalogNotified": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"capabilityCatalogNotified\":true",
+        "intent": "Real project config changes and recovery reach the same canonical capability panel with newer read stamps.",
+        "proves": ["capabilityCatalogNotified"],
+        "next": "capabilityLeaseNotified"
+      },
+      "capabilityLeaseNotified": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"capabilityLeaseNotified\":true",
+        "intent": "Real acquire and explicit UI Stop commit lease transitions and create/remove only the owned provider marker.",
+        "proves": ["capabilityLeaseNotified"],
+        "next": "capabilityReadFailureVisible"
+      },
+      "capabilityReadFailureVisible": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"capabilityReadFailureVisible\":true",
+        "intent": "A corrupt catalog retains stale capability facts, displays the actual read error and disables commands.",
+        "proves": ["capabilityReadFailureVisible"],
+        "next": "coldCapabilitiesRestored"
+      },
+      "coldCapabilitiesRestored": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"coldCapabilitiesRestored\":true",
+        "intent": "A new offline document restores capability state and age with disabled commands; a gateway restart requires a current read before authority returns.",
+        "proves": ["coldCapabilitiesRestored"],
+        "next": "done"
+      }
+    }
+  }
+}

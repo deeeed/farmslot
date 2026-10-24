@@ -10,9 +10,27 @@ import type { RequestFrame } from '@farmslot/protocol';
 
 export interface FakeGatewaySocket {
   readyState: number;
+  readonly sent: Array<{ id: string; method: string }>;
+  response(id: string, payload: unknown, resourceState?: unknown): void;
+  failure(id: string, error: { code: string; message: string }): void;
+  event(event: string, payload: unknown): void;
+}
+
+interface FakeGatewayRequest {
+  id: string;
+  method: string;
+  params?: unknown;
+}
+interface FakeGatewayResponse {
+  payload: unknown;
+  resourceState?: unknown;
 }
 
 export interface FakeGateway {
+  authPayload?: unknown;
+  resourceEpoch?: string;
+  responseForRequest?: (request: FakeGatewayRequest) => FakeGatewayResponse | undefined;
+  beforeRestore?: () => void | Promise<void>;
   /** Every socket the client opened, oldest first. */
   readonly sockets: FakeGatewaySocket[];
   /** Tokens presented to `auth.connect`, in order. */
@@ -36,6 +54,7 @@ const GLOBAL_KEYS = [
   'document',
   'history',
   'WebSocket',
+  'BroadcastChannel',
 ] as const;
 
 export function installFakeGateway(t: TestContext, principalId = 'operator'): FakeGateway {
@@ -62,6 +81,7 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
     static OPEN = 1;
     static CONNECTING = 0;
     readyState = 0;
+    readonly sent: Array<{ id: string; method: string }> = [];
     constructor() {
       super();
       sockets.push(this);
@@ -72,8 +92,14 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
     }
     send(text: string) {
       const request: RequestFrame = JSON.parse(text);
+      this.sent.push({ id: request.id, method: request.method });
       fake.requests.push(request);
-      if (request.method !== 'auth.connect') return;
+      if (request.method !== 'auth.connect') {
+        const response = fake.responseForRequest?.(request);
+        if (response)
+          queueMicrotask(() => this.response(request.id, response.payload, response.resourceState));
+        return;
+      }
       const params = request.params;
       fake.tokens.push(
         params && typeof params === 'object' && 'token' in params ? params.token : undefined,
@@ -86,11 +112,25 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
               type: 'res',
               id: request.id,
               ok: true,
-              payload: {
+              payload: fake.authPayload ?? {
                 ok: true,
-                capabilities: { workspaceAccess: 'farm' },
+                ...(fake.resourceEpoch ? { authMode: 'token' } : {}),
+                capabilities: {
+                  workspaceAccess: 'farm',
+                  ...(fake.resourceEpoch
+                    ? {
+                        resourceChanges: {
+                          version: 1,
+                          epoch: fake.resourceEpoch,
+                          versionLists: false,
+                          observedReads: 1,
+                        },
+                      }
+                    : {}),
+                },
                 principal: {
                   id: fake.principalId,
+                  ...(fake.resourceEpoch ? { generation: 0 } : {}),
                   subjectKind: 'service',
                   displayName: fake.principalId,
                   roles: [{ role: 'admin', scope: { kind: 'global' } }],
@@ -103,6 +143,33 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
     }
     close() {
       this.readyState = 3;
+    }
+    response(id: string, payload: unknown, resourceState?: unknown) {
+      this.dispatchEvent(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'res',
+            id,
+            ok: true,
+            payload,
+            resourceState,
+          }),
+        }),
+      );
+    }
+    failure(id: string, error: { code: string; message: string }) {
+      this.dispatchEvent(
+        new MessageEvent('message', {
+          data: JSON.stringify({ type: 'res', id, ok: false, error }),
+        }),
+      );
+    }
+    event(event: string, payload: unknown) {
+      this.dispatchEvent(
+        new MessageEvent('message', {
+          data: JSON.stringify({ type: 'event', event, payload, seq: 1 }),
+        }),
+      );
     }
     respond(id: string, payload: unknown) {
       this.dispatchEvent(
@@ -128,10 +195,12 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
     document: { cookie: '' },
     history: { replaceState: () => {} },
     WebSocket: Socket,
+    BroadcastChannel: undefined,
   };
   for (const key of GLOBAL_KEYS)
     Object.defineProperty(globalThis, key, { configurable: true, value: values[key] });
-  t.after(() => {
+  t.after(async () => {
+    await fake.beforeRestore?.();
     for (const [key, descriptor] of descriptors) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else Reflect.deleteProperty(globalThis, key);

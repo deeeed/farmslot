@@ -8,6 +8,7 @@ import type { Principal, ReadyGatePayload, RunExtendReviewBudgetParams } from '@
 
 import '../../runtime/mock-pty.test-support.js';
 
+import { resourceRevisions } from '../../resources/revisions.js';
 import {
   admitReviewRound,
   assertReviewRoundAvailable,
@@ -68,7 +69,17 @@ test('five spent rounds stay spent; durable grant admits sixth/seventh and block
   const { run, params, deps } = fixture(t);
   for (let i = 0; i < 5; i++) await admitReviewRound(run.id, `spent-${i}`);
   await assert.rejects(admitReviewRound(run.id, 'sixth'), /five review rounds/);
+  const watched = resourceRevisions.sample([
+    { family: 'run', runId: run.id },
+    { family: 'review', runId: run.id },
+    { family: 'decisions', scope: 'farm' },
+  ]).dependencies;
   const result = await runExtendReviewBudget(params, emit, deps);
+  for (const { key, revision } of watched)
+    assert(
+      resourceRevisions.revision(key) > revision,
+      'A durable review grant must invalidate its readers',
+    );
   assert.equal(result.budget.used, 5);
   assert.equal(result.budget.remaining, 2);
   const upcoming = await nextReviewBudgetScopeBrief(getRun(run.id)!);

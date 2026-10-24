@@ -140,7 +140,12 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
       } catch (error) {
         if (!socket.destroyed)
           socket.end(
-            JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
+            JSON.stringify({
+              error: error instanceof Error ? error.message : String(error),
+              ...((error as { code?: string }).code === 'NOT_FOUND'
+                ? { errorCode: 'NOT_FOUND' }
+                : {}),
+            }),
           );
       }
     })();

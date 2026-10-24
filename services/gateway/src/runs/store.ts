@@ -63,6 +63,7 @@ import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
 import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
+import { captureRunResources, publishRunResources } from '../resources/run-changes.js';
 import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
 import {
   assertRunNotArchiving,
@@ -503,6 +504,7 @@ export async function discardUndurableRun(id: string): Promise<void> {
   const run = runs.get(id);
   if (!run) return;
   runs.delete(id);
+  publishRunResources(captureRunResources(run), undefined, 'deleted');
   try {
     await unlink(path.join(RUNS_DIR, `${id}.json`));
   } catch (err) {
@@ -556,6 +558,7 @@ export async function quarantineLeakedRun(run: Run): Promise<void> {
   const filePath = path.join(RUNS_DIR, `${run.id}.json`);
   await quarantineRunFile(run.id, filePath, run);
   runs.delete(run.id);
+  publishRunResources(captureRunResources(run), undefined, 'deleted');
 }
 
 function isRunStoreLeak(run: Run): boolean {
@@ -711,7 +714,12 @@ export async function loadAllRuns(): Promise<void> {
         skippedSynthetic++;
       }
       const changed = normalizePersistedRun(run);
+      const previous = runs.get(run.id);
       runs.set(run.id, run);
+      publishRunResources(
+        captureRunResources(run),
+        previous ? captureRunResources(previous) : undefined,
+      );
       if (changed) {
         persistRunBackground(run, 'load migration');
       }
@@ -1119,6 +1127,7 @@ export function createRun(params: RunCreateParams, options?: RunRecordBuildOptio
   if (!options?.deferBackgroundPersist) {
     persistRunBackground(run, 'create');
   }
+  publishRunResources(captureRunResources(run));
   return run;
 }
 
@@ -1400,6 +1409,7 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
         );
     }
   }
+  const previousResources = captureRunResources(run);
   const previousStatus = run.status;
   const statusProvided = Object.prototype.hasOwnProperty.call(partial, 'status');
   if (
@@ -1489,6 +1499,7 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
     });
   }
   persistRunBackground(run, 'update');
+  publishRunResources(captureRunResources(run), previousResources);
   return run;
 }
 
@@ -1550,6 +1561,7 @@ export function updateRunStep(id: string, stepName: string, partial: Partial<Run
   }
   run.updatedAt = new Date().toISOString();
   persistRunBackground(run, 'step update');
+  publishRunResources(captureRunResources(run));
   return run;
 }
 
@@ -1628,6 +1640,7 @@ async function deleteRunBody(id: string): Promise<boolean> {
     }
   }
   runs.delete(id);
+  publishRunResources(captureRunResources(run), undefined, 'deleted');
   try {
     await unlink(path.join(RUNS_DIR, `${id}.json`));
   } catch {
@@ -1765,6 +1778,7 @@ export async function updateQaFollowUp(
     next.checkedAt = new Date().toISOString();
     if (getRun(id) === run) {
       run.qaAfterReview = next;
+      publishRunResources(captureRunResources(run));
       await persistBody(run);
     } else {
       const file = path.join(ARCHIVE_DIR, `${run.id}.json`);
@@ -1774,6 +1788,7 @@ export async function updateQaFollowUp(
       });
       await rename(temporary, file);
       invalidateArchivedRunsCache();
+      publishRunResources(captureRunResources(run));
     }
     changed = true;
   });
@@ -1791,6 +1806,7 @@ export async function updateReviewPublication(
     const publication = { ...run.reviewPublication, ...patch, checkedAt: new Date().toISOString() };
     if (getRun(id) === run) {
       run.reviewPublication = publication;
+      publishRunResources(captureRunResources(run));
       await persistBody(run);
     } else {
       const file = path.join(ARCHIVE_DIR, `${run.id}.json`);
@@ -1802,6 +1818,7 @@ export async function updateReviewPublication(
       );
       await rename(temporary, file);
       invalidateArchivedRunsCache();
+      publishRunResources(captureRunResources(run));
     }
   });
 }
@@ -1830,6 +1847,7 @@ async function commitRetainedRunMutation(
     const authority = live ?? structuredClone(run);
     if (!live) normalizePersistedRun(authority);
     assertCurrent(authority);
+    const previousResources = captureRunResources(run);
     const baseline = structuredClone(run);
     const snapshot = build(run);
     if (live && !isTerminalRunStatus(snapshot.status))
@@ -1847,6 +1865,7 @@ async function commitRetainedRunMutation(
       }
       Object.assign(live, snapshot);
       invalidateLiveRecipeContextMemo(id);
+      publishRunResources(captureRunResources(live), previousResources);
       committed = live;
     } else {
       const temporary = `${file}.tmp.${randomUUID()}`;
@@ -1861,6 +1880,7 @@ async function commitRetainedRunMutation(
       if (getRun(id)) throw new Error('Archived publication run was restored during persistence');
       await rename(temporary, file);
       invalidateArchivedRunsCache();
+      publishRunResources(captureRunResources(snapshot), previousResources);
       const directory = await open(ARCHIVE_DIR, 'r');
       try {
         await directory.sync();
@@ -2002,6 +2022,7 @@ async function archiveRunBody(id: string): Promise<boolean> {
   }
   runs.delete(id);
   invalidateArchivedRunsCache();
+  publishRunResources(captureRunResources(archivedRun));
   try {
     await rm(runSessionArchiveDir(id), { recursive: true, force: true });
   } catch (err) {
@@ -2048,6 +2069,7 @@ export function runTaskDirectories(run: Run): string[] {
 
 /** Run retention removes an archived record and its session archive (ADR-039 Amendment 2). */
 export async function deleteArchivedRun(id: string): Promise<boolean> {
+  const previous = (await getArchivedRuns()).find((run) => run.id === id);
   try {
     await unlink(path.join(ARCHIVE_DIR, `${id}.json`));
   } catch (err) {
@@ -2059,6 +2081,12 @@ export async function deleteArchivedRun(id: string): Promise<boolean> {
     archivedRunsCache = archivedRunsCache.filter((run) => run.id !== id);
     archivedRunsGeneration++;
   } else invalidateArchivedRunsCache();
+  const current = getRun(id);
+  publishRunResources(
+    captureRunResources(current ?? previous ?? { id, familyId: id, decisions: [] }),
+    previous ? captureRunResources(previous) : undefined,
+    current ? 'updated' : 'deleted',
+  );
   await rm(runSessionArchiveDir(id), { recursive: true, force: true });
   return true;
 }
@@ -2086,6 +2114,7 @@ export async function cleanupRuns(
       const filePath = path.join(RUNS_DIR, `${id}.json`);
       await quarantineRunFile(id, filePath, run);
       runs.delete(id);
+      publishRunResources(captureRunResources(run), undefined, 'deleted');
     }
   }
 

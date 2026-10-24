@@ -219,7 +219,7 @@ export class RunTagEditor extends LitElement {
             class="tag-input"
             placeholder=${tickets ? 'TEAM-123, TEAM-456' : 'demo, onboarding'}
             .value=${this.draft}
-            ?disabled=${this.saving}
+            ?disabled=${this.disabled || this.saving}
             @input=${(e: Event) => {
               this.draft = (e.target as HTMLInputElement).value;
               this.error = '';
@@ -231,7 +231,7 @@ export class RunTagEditor extends LitElement {
               }
             }}
           />
-          <button class="tag-save" type="submit" ?disabled=${this.saving}>
+          <button class="tag-save" type="submit" ?disabled=${this.disabled || this.saving}>
             ${this.saving ? 'Saving…' : 'Save'}
           </button>
           <button

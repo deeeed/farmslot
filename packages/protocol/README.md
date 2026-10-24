@@ -7,6 +7,14 @@ This package is intentionally small at runtime: it exports protocol constants,
 TypeScript types, and validation helpers. It does **not** execute recipes, talk
 to browsers/devices, or contain project-specific actions.
 
+The experimental `@farmslot/protocol/client-cache` is the portable ADR-071 client
+controller shared by Command Center and Companion. It owns query identities,
+freshness and the `ResourceStore` seam; socket and storage adapters remain with
+their platform owners. It requires gateway builds advertising
+`capabilities.resourceChanges.version: 1`. Older published gateway builds are
+reported as unsupported, without panel polling. Protocol, gateway and client
+builds containing this unreleased contract must be released together.
+
 ## Canonical documents
 
 The npm package is a consumable API surface. The source-of-truth architecture is
@@ -51,6 +59,7 @@ import {
 | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `@farmslot/protocol`                                            | Root import for common recipe validators, constants, shared contracts, RPC names, and transport helpers. |
 | `@farmslot/protocol/contracts`                                  | Shared domain data contracts.                                                                            |
+| `@farmslot/protocol/client-cache`                               | Experimental shared resource cache, memory store and portable store conformance contract.                |
 | `@farmslot/protocol/contracts/runs`                             | Run, run-family, evidence, and publication contracts.                                                    |
 | `@farmslot/protocol/contracts/slots`                            | Slot and slot-adjacent contracts.                                                                        |
 | `@farmslot/protocol/rpc`                                        | Gateway RPC method registry and typed method maps.                                                       |

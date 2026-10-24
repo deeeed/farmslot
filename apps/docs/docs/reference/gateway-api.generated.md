@@ -15,24 +15,26 @@ Protocol version: `0.63.0`
 
 Source: `packages/protocol/src/transport/frames.ts`
 
-| Field    | Required | Comment |
-| -------- | -------- | ------- |
-| `type`   | yes      | —       |
-| `id`     | yes      | —       |
-| `method` | yes      | —       |
-| `params` | no       | —       |
+| Field          | Required | Comment                                                                    |
+| -------------- | -------- | -------------------------------------------------------------------------- |
+| `type`         | yes      | —                                                                          |
+| `id`           | yes      | —                                                                          |
+| `method`       | yes      | —                                                                          |
+| `params`       | no       | —                                                                          |
+| `resourceRead` | no       | Optional experimental observed-read contract; never authorizes a mutation. |
 
 ### `ResponseFrame`
 
 Source: `packages/protocol/src/transport/frames.ts`
 
-| Field     | Required | Comment |
-| --------- | -------- | ------- |
-| `type`    | yes      | —       |
-| `id`      | yes      | —       |
-| `ok`      | yes      | —       |
-| `payload` | no       | —       |
-| `error`   | no       | —       |
+| Field           | Required | Comment                                                                 |
+| --------------- | -------- | ----------------------------------------------------------------------- |
+| `type`          | yes      | —                                                                       |
+| `id`            | yes      | —                                                                       |
+| `ok`            | yes      | —                                                                       |
+| `payload`       | no       | —                                                                       |
+| `resourceState` | no       | Sampled before the cacheable read, independently of its domain payload. |
+| `error`         | no       | —                                                                       |
 
 ### `EventFrame`
 
@@ -465,6 +467,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `prWatch.policy.updated`        | prWatch   | PrWatch Policy Updated gateway event.        |
 | `prWatch.updated`               | prWatch   | PrWatch Updated gateway event.               |
 | `queue.updated`                 | queue     | Queue Updated gateway event.                 |
+| `resource.changed`              | resource  | Resource Changed gateway event.              |
 | `resource.relaunched`           | resource  | Resource Relaunched gateway event.           |
 | `resource.status.updated`       | resource  | Resource Status Updated gateway event.       |
 | `run.completed`                 | run       | Run Completed gateway event.                 |

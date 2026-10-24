@@ -31,6 +31,7 @@ import { Events, Methods } from '@farmslot/protocol';
 import '../shared/slot-prepare-options.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getState, isFleetCurrent, requireCurrentFleet, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
@@ -48,10 +49,8 @@ export class SlotActionsPanel extends LitElement {
   /** Hide the output panel when an embedding view (e.g. slot-view) renders its own. */
   @property({ type: Boolean }) hideOutput = false;
   /**
-   * Override the slot status snapshot. When set, the panel skips its
-   * `fleet.status` fetch and uses this directly. Used by the dev harness to
-   * showcase visibility logic across lifecycle states without hitting the
-   * gateway. Live event subscriptions still apply.
+   * Override displayed slot facts for dev harness lifecycle examples.
+   * Commands still require the current shared fleet observation.
    */
   @property({ attribute: false }) slotOverride: SlotStatus | null = null;
 
@@ -100,9 +99,9 @@ export class SlotActionsPanel extends LitElement {
     void this._loadActions();
 
     this._unsubs.push(
-      gateway.subscribe(Events.SLOT_CHANGED, (payload: unknown) => {
-        const s = payload as SlotStatus;
-        if (s.slot === this.slotId) this._slot = s;
+      subscribe(() => {
+        this._loadSlot();
+        this.requestUpdate();
       }),
     );
 
@@ -169,23 +168,15 @@ export class SlotActionsPanel extends LitElement {
     }
   }
 
-  private async _loadSlot() {
+  private _loadSlot() {
     if (this.slotOverride) {
       this._slot = this.slotOverride;
       return;
     }
-    try {
-      const fleet = await gateway.request<{ fleet: { slots: SlotStatus[] } }>(
-        Methods.FLEET_STATUS,
-        {},
-      );
-      this._slot = fleet.fleet.slots.find((s) => s.slot === this.slotId) ?? null;
-      void this._reattachIfPreparing();
-    } catch (err) {
-      // Expected when the gateway is transiently unreachable; recovery is to
-      // leave the last-known slot snapshot (or the "Loading…" banner) in place.
-      console.warn('[slot-actions-panel] fleet.status failed:', err);
-    }
+    const slot = getState().fleet?.slots.find((row) => row.slot === this.slotId) ?? null;
+    if (slot === this._slot) return;
+    this._slot = slot;
+    if (isFleetCurrent()) void this._reattachIfPreparing();
   }
 
   // Re-attach to a prepare already running server-side (e.g. after a page
@@ -245,6 +236,7 @@ export class SlotActionsPanel extends LitElement {
     this._activeActionId = actionId;
     this._lastRefreshReason = undefined;
     try {
+      this._requireCurrentSlot();
       const result = await gateway.request<T>(method, { ...params, requestId: reqId }, timeoutMs);
       // Methods that short-circuit before emitting script.complete (e.g.
       // safe-mode refresh on dirty tree, or any synchronous slot action)
@@ -331,6 +323,7 @@ export class SlotActionsPanel extends LitElement {
     this._activeActionId = 'prepare';
     this._lastRefreshReason = undefined;
     try {
+      this._requireCurrentSlot();
       await runSlotPrepare({
         slotId: this.slotId,
         requestId: reqId,
@@ -369,6 +362,7 @@ export class SlotActionsPanel extends LitElement {
     // this for built-in actions; configured actions take a separate path.
     this._lastRefreshReason = undefined;
     try {
+      this._requireCurrentSlot();
       const result = await gateway.request<SlotActionRunResult>(
         Methods.SLOT_ACTION_RUN,
         { slotId: this.slotId, actionId: action.id },
@@ -492,9 +486,14 @@ export class SlotActionsPanel extends LitElement {
   }
 
   private _isDisabled(id: string): boolean {
-    if (this._running) return true;
+    if (this._running || !isFleetCurrent()) return true;
     const a = this._actionAvailability(id as Parameters<typeof this._actionAvailability>[0]);
     return !a.available;
+  }
+
+  private _requireCurrentSlot(): void {
+    if (!requireCurrentFleet().slots.some((row) => row.slot === this.slotId))
+      throw new Error('The slot is no longer in the current fleet.');
   }
 
   private _btnClass(id: string, base = ''): string {
@@ -986,7 +985,9 @@ export class SlotActionsPanel extends LitElement {
                 (action) => html`
                   <button
                     class=${`sap-btn ${this._copiedSlotActionId === action.id ? 'confirming' : (action.style ?? '')}`}
-                    ?disabled=${this._runningSlotActionIds.includes(action.id) || this._running}
+                    ?disabled=${!isFleetCurrent() ||
+                    this._runningSlotActionIds.includes(action.id) ||
+                    this._running}
                     title=${action.description ?? ''}
                     @click=${() => this._runConfiguredAction(action.id)}
                   >

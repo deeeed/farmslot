@@ -11,6 +11,8 @@ export class RunChecklistProgress extends LitElement {
   @property({ attribute: false }) run?: Run;
   @property({ attribute: false }) progress?: TaskProgressStructured | null;
   @property() error?: string;
+  @property({ type: Boolean }) stale = false;
+  @property() age = '';
 
   static styles = css`
     :host {
@@ -69,12 +71,17 @@ export class RunChecklistProgress extends LitElement {
     const view = this.run && runChecklistProgressView(this.run, this.progress);
     if (!view)
       return this.error
-        ? html`<div class="label" role="status" title=${this.error}>Checklist unavailable</div>`
+        ? html`<div class="label" role="status" title=${this.error}>
+            Checklist unavailable: ${this.error}
+          </div>`
         : nothing;
     return html`
-      <div class="strip" title=${view.accessibleLabel}>
+      <div class="strip" title=${this.error || view.accessibleLabel}>
         <div class="label">
-          <span class="counts">${view.counts}</span><span class="item">${view.label}</span>
+          <span class="counts">${view.counts}</span>
+          <span class="item" role=${this.error ? 'status' : nothing}>
+            ${this.error || (this.stale ? `Saved checklist, ${this.age}` : view.label)}
+          </span>
         </div>
         <div
           class="track"

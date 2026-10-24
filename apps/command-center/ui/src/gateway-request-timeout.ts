@@ -3,8 +3,9 @@ import {
   FILE_TRANSFER_IDLE_TIMEOUT_MS,
   type FileTransferProgress,
 } from '@farmslot/protocol';
+import type { ResourceReadOptions } from '@farmslot/protocol/client-cache';
 
-export interface GatewayRequestOptions {
+export interface GatewayRequestOptions extends ResourceReadOptions {
   /** null waits for the server response or disconnection, including a slow mutation. */
   timeout?: number | null;
   /** Reset the idle timer when this gateway event arrives. */

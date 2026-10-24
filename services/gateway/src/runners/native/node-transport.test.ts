@@ -259,7 +259,14 @@ test('a reply from a replaced authorized connection is retryable; owner/principa
 test('deadline uncertainty is classified only after rechecking live authority', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const machine = 'native-timeout-fixture';
-  const ws = { readyState: WebSocket.OPEN, send() {} } as unknown as WebSocket;
+  let markSent!: () => void;
+  const nextSend = () => new Promise<void>((resolve) => (markSent = resolve));
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send() {
+      markSent();
+    },
+  } as unknown as WebSocket;
   let active = true;
   registerNode(
     machine,
@@ -271,6 +278,7 @@ test('deadline uncertainty is classified only after rechecking live authority', 
     { principalId: 'node', valid: () => active },
   );
   try {
+    const firstSend = nextSend();
     const timeout = assert.rejects(
       routeNativeExecution('owner', Methods.NATIVE_SESSION_LIST, { executionNodeId: machine }),
       (error: unknown) => {
@@ -279,12 +287,15 @@ test('deadline uncertainty is classified only after rechecking live authority', 
         return true;
       },
     );
+    await firstSend;
     t.mock.timers.tick(60_000);
     await timeout;
+    const secondSend = nextSend();
     const revoked = assert.rejects(
       routeNativeExecution('owner', Methods.NATIVE_SESSION_LIST, { executionNodeId: machine }),
       permanent,
     );
+    await secondSend;
     active = false;
     t.mock.timers.tick(60_000);
     await revoked;

@@ -17,6 +17,7 @@ import { gateway } from '../../gateway-client.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+import { WorkspaceReads } from '../workspace/workspace-reads.js';
 
 export interface NativeSessionApi {
   request<T = unknown>(method: string, params?: unknown): Promise<T>;
@@ -39,6 +40,18 @@ export class NativeWorkspace extends LitElement {
   @state() private error = '';
   @state() private loading = false;
   private revision = 0;
+  private readonly reads: WorkspaceReads = new WorkspaceReads(
+    this,
+    () => {},
+    undefined,
+    () => {
+      this.revision++;
+      this.listing = undefined;
+      this.changes = undefined;
+      this.source = undefined;
+      this.diff = undefined;
+    },
+  );
   // Native sessions carry no project, so the default test globs apply.
   private readonly testFilter = new DiffTestFilterController(this, {
     onChange: () => this.leaveHiddenFile(),
@@ -141,6 +154,7 @@ export class NativeWorkspace extends LitElement {
         JSON.stringify(changed.get('worker')) !== JSON.stringify(this.worker))
     ) {
       this.revision++;
+      this.reads.clear();
       this.directory = '.';
       this.selected = '';
       this.source = undefined;
@@ -157,6 +171,7 @@ export class NativeWorkspace extends LitElement {
   }
 
   private async refresh() {
+    this.reads.clear();
     const revision = ++this.revision;
     const sessionId = this.sessionId;
     const executionNodeId = this.executionNodeId;
@@ -164,7 +179,7 @@ export class NativeWorkspace extends LitElement {
     this.error = '';
     try {
       if (this.tab === 'files') {
-        const result = await this.api.request<NativeWorkspaceListResult>(
+        const result = await this.reads.read<NativeWorkspaceListResult>(
           Methods.NATIVE_SESSION_WORKSPACE_LIST,
           {
             sessionId,
@@ -172,16 +187,26 @@ export class NativeWorkspace extends LitElement {
             path: this.directory,
             ...(this.worker ? { worker: this.worker } : {}),
           },
+          (result) => {
+            this.listing = result;
+            this.error = '';
+          },
         );
         if (revision !== this.revision) return;
         this.listing = result;
+        this.error = '';
       } else {
-        const result = await this.api.request<NativeWorkspaceChangesResult>(
+        const result = await this.reads.read<NativeWorkspaceChangesResult>(
           Methods.NATIVE_SESSION_WORKSPACE_CHANGES,
           { sessionId, executionNodeId, ...(this.worker ? { worker: this.worker } : {}) },
+          (result) => {
+            this.changes = result;
+            this.error = '';
+          },
         );
         if (revision !== this.revision) return;
         this.changes = result;
+        this.error = '';
       }
       if (this.selected)
         await this.openFile(this.selected, this.display, sessionId, executionNodeId);
@@ -199,6 +224,10 @@ export class NativeWorkspace extends LitElement {
     executionNodeId = this.executionNodeId,
   ) {
     const revision = ++this.revision;
+    this.reads.releaseMethods([
+      Methods.NATIVE_SESSION_WORKSPACE_READ,
+      Methods.NATIVE_SESSION_WORKSPACE_DIFF,
+    ]);
     this.selected = path;
     this.display = display;
     this.source = undefined;
@@ -207,17 +236,35 @@ export class NativeWorkspace extends LitElement {
     this.loading = true;
     try {
       if (display === 'source') {
-        const result = await this.api.request<NativeWorkspaceReadResult>(
+        const result = await this.reads.read<NativeWorkspaceReadResult>(
           Methods.NATIVE_SESSION_WORKSPACE_READ,
           { sessionId, executionNodeId, path, ...(this.worker ? { worker: this.worker } : {}) },
+          (result) => {
+            if (revision === this.revision) {
+              this.source = result;
+              this.error = '';
+            }
+          },
         );
-        if (revision === this.revision) this.source = result;
+        if (revision === this.revision) {
+          this.source = result;
+          this.error = '';
+        }
       } else {
-        const result = await this.api.request<NativeWorkspaceDiffResult>(
+        const result = await this.reads.read<NativeWorkspaceDiffResult>(
           Methods.NATIVE_SESSION_WORKSPACE_DIFF,
           { sessionId, executionNodeId, path, ...(this.worker ? { worker: this.worker } : {}) },
+          (result) => {
+            if (revision === this.revision) {
+              this.diff = result;
+              this.error = '';
+            }
+          },
         );
-        if (revision === this.revision) this.diff = result;
+        if (revision === this.revision) {
+          this.diff = result;
+          this.error = '';
+        }
       }
     } catch (error) {
       if (revision === this.revision) this.error = (error as Error).message;
@@ -271,6 +318,7 @@ export class NativeWorkspace extends LitElement {
   }
 
   private switchTab(tab: 'files' | 'changes') {
+    this.reads.clear();
     this.tab = tab;
     this.selected = '';
     this.source = undefined;
@@ -298,9 +346,11 @@ export class NativeWorkspace extends LitElement {
             Files
           </button>
         </div>
-        <button data-testid="workspace-refresh" ?disabled=${this.loading} @click=${this.refresh}>
-          Refresh
-        </button>
+        ${this.reads.error
+          ? html`<button data-testid="workspace-retry" @click=${() => this.reads.retry()}>
+              Retry
+            </button>`
+          : nothing}
         ${this.tab === 'changes' ? this.testFilter.renderControls(changeSplit.summary) : nothing}
       </header>
       <p class="scope">
@@ -308,6 +358,7 @@ export class NativeWorkspace extends LitElement {
           ? 'Current workspace compared with HEAD, including staged and untracked files. Changes may come from any writer.'
           : 'Read-only current workspace files.'}
       </p>
+      ${this.reads.status ? html`<p class="scope" role="status">${this.reads.status}</p>` : nothing}
       ${this.error ? html`<div class="error" role="alert">${this.error}</div>` : nothing}
       <div class="body">
         <nav aria-label=${this.tab === 'files' ? 'Workspace files' : 'Changed files'}>

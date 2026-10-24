@@ -50,6 +50,7 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @state() _refreshError = '';
   @state() _proposing = false;
   @state() _proposeError: string | null = null;
+  @state() _actionError = '';
   @state() _pendingConfirm: string | null = null;
   readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,

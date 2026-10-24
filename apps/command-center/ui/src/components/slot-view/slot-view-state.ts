@@ -12,8 +12,10 @@ import type {
   SlotActionSummary,
   SlotResource,
   SlotStatus,
+  TaskProgressResult,
   TaskProgressStructured,
 } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 import type { ChecklistProgressStep } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
@@ -26,6 +28,7 @@ import {
   type RecipeRunnerUiOptions,
   recipeRunnerUiOptions,
 } from '../workspace/recipe-runner-options-model.js';
+import { WorkspaceReads } from '../workspace/workspace-reads.js';
 
 import { type CheckResult, type EditorId, type GitData, type OpenFile } from './slot-view-model.js';
 import type { SlotViewRecipeEvidenceResult } from './slot-view-recipe-helpers.js';
@@ -54,6 +57,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _taskSteps: ChecklistProgressStep[] = [];
   @state() _taskProgress = 0;
   @state() _structuredProgress?: TaskProgressStructured;
+  @state() _progressObservation: ResourceQueryState<TaskProgressResult> = { status: 'loading' };
   @state() _selectedAgentContextId = 'primary';
   @state() _tmuxSessionSelection: string | null = null;
   @state() _selectedAgentContextIds: Record<string, string> = {};
@@ -139,7 +143,13 @@ export abstract class SlotViewState extends LitElement {
   @state() _revealLine = 0;
   @state() _showInlineComments = false;
   @state() _linkedRun: Run | null = null;
+  @state() _linkedRunCurrent = false;
+  @state() _linkedRunReadError = '';
+  @state() _runCommandError = '';
+  @state() _linkedRunObservedAt?: number;
+  @state() _recipeRunsCurrent = false;
   @state() _tmuxRestoreRunning = false;
+  _tmuxRestoreRequest?: symbol;
   @state() _tmuxRestoreFeedback = '';
   @state() _tmuxRestoreError = '';
   @state() _recipeRunnerUiOptions: RecipeRunnerUiOptions = recipeRunnerUiOptions(null);
@@ -152,8 +162,6 @@ export abstract class SlotViewState extends LitElement {
   @state() _sidebarOpen = true;
   @state() _terminalOpen = true;
   @state() _sidebarWidth = 260;
-  _linkedRunRefreshToken = Symbol('linked-run-refresh');
-  _recipeRunsRefreshToken = Symbol('recipe-runs-refresh');
   @state() _terminalHeight = 250;
   /** Live height of `.sv-right-col` — used to clamp persisted terminal height. */
   @state() _rightColHeight = 0;
@@ -204,6 +212,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _recipeLightboxScopeLabel = '';
   @state() _selectedRecipeEvidenceManifestDroppedVideoCount = 0;
   @state() _mirrorRefreshing = false;
+  _mirrorRequest?: symbol;
   @state() _mirrorRefreshFeedback = '';
   @state() _artifactMirrorEpoch = 0;
   _selectedRecipeDependencyLoadToken = Symbol('recipe-library-load');
@@ -225,13 +234,8 @@ export abstract class SlotViewState extends LitElement {
   _resizeStartValue = 0;
 
   // --- Subscriptions ---
-  _unsubSlot?: () => void;
   _unsubState?: () => void;
   _unsubConn?: () => void;
-  _unsubRunUpdated?: () => void;
-  _unsubRunCreated?: () => void;
-  _unsubStateChange?: () => void;
-  _unsubTaskProgress?: () => void;
   _unsubResourceStatus?: () => void;
   _unsubPrepareTracker?: () => void;
   _liveInitPending = false;
@@ -248,8 +252,24 @@ export abstract class SlotViewState extends LitElement {
       this._copiedSlotActionId = key;
     },
   });
-  _gitPollTimer: ReturnType<typeof setInterval> | null = null;
-  _fileRestoreRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  readonly _workspaceReads: WorkspaceReads = new WorkspaceReads(
+    this,
+    () => {
+      if (this._workspaceReads?.ready) {
+        this._recoveryPhase = 'live';
+        this._recoveryMessage = '';
+        this._wsError = '';
+      }
+    },
+    () => this._linkedRun?.id,
+    () => {
+      this._liveEntries = [];
+      this._pinnedEntries = [];
+      this._liveGitData = null;
+      this._liveFileContents = new Map();
+      this._liveDiffContents = new Map();
+    },
+  );
   _resourceRestoreRetryTimer: ReturnType<typeof setTimeout> | null = null;
   _prevSlotId = '';
   _slotSwitcherSignature = '';
@@ -300,7 +320,16 @@ export abstract class SlotViewState extends LitElement {
   }
 
   get _isRecoveryBlocked(): boolean {
-    return this._isLive && this._recoveryPhase !== 'live';
+    return this._isLive && !this._workspaceReads.hasData && this._recoveryPhase !== 'live';
+  }
+
+  get _runActionsBlocked(): boolean {
+    return (
+      this._isRecoveryBlocked ||
+      !this._workspaceReads.ready ||
+      !this._linkedRunCurrent ||
+      gateway.connectionState !== 'connected'
+    );
   }
 
   get _canRetryRecovery(): boolean {

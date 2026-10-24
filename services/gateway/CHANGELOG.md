@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publish configuration changes from owning stores and existing file watchers, including rapid replacements and optional registration directories created later. Observe roadmap deletion after atomic replacement across supported hosts. Report malformed project and provider-registration sources as client read errors and omit declared webhook secrets while retaining internal webhook verification.
+
+- Publish readable PR automation, assessment, analytics and copilot changes after their owning commits. Reload external PR-rule configuration with source-error refusal and recovery, and observe assessment policy files.
+
 - Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.
 - Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
@@ -30,6 +34,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Accept clean detached before captures at the recorded dispatch head, and name the failing provenance field when baseline validation refuses a capture.
 
 - Keep root-qualified evidence selections scoped to the root artifact instead of matching nested recipe files with the same name.
+
+- Admit shared worker and file observations only from current capable node producers; invalidate inventory on source failure, recovery and replacement while preserving retained/frozen progress, independent review producers, default gateway-owned fleet reads and imperative commands.
 
 - Give a native reviewer with valid findings but no terminal signal one durable completion turn in the same saved conversation, preserving its admission and reconciling delivery after restart.
 
@@ -99,6 +105,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Reclaim cancelled replay holds safely when another run needs the slot, detect structured runner failures and check provider authentication before dispatch, and keep operator-driven development out of monitor nudges.
+
+- Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot facts, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire. Slot facts, overlays, node-health, resource status and snapshot age invalidate their fleet and scoped readers without refetching unchanged run bindings. Failed fleet reads report source errors instead of caching an empty fleet. Node registration, replacement and disconnect advance inventory and per-node revisions. Capability catalog and committed lease changes update their shared readers. Worker checklist and review-workspace observations notify shared progress readers, including source failures and recovery. Node file observations retain watch-request ownership, report disappearance and read failures, and refresh progress when the owning connection or watch changes. Run-bound progress refuses missing runs, fences binding changes during reads, and keeps retired worker, reviewer and selected-step history separate from a reused slot's new task. Static review workspaces read only their declared selected-step artifacts, confined to the live task or retained view. Backlog, roadmap, work-graph and dispatch-queue stores publish planning changes through their owning writers, retaining each collection's existing read permissions. Raw roadmap file creation, edits, atomic replacements and deletions also update open planning lists; source observation failures refuse fresh reads until restart.
+- Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
 
 ## 0.30.0 - 2026-10-21
 

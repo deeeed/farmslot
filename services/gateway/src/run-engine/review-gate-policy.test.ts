@@ -18,6 +18,11 @@ const unused = () => {
 };
 mock.module('../review-workspaces/task.js', {
   namedExports: {
+    reviewWorkspaceProgressLocation: async () => ({
+      io: { host: 'localhost', machine: 'local', sshTarget: '' },
+      taskDir: '/owned/task',
+      checklistPath: '/owned/task/CHECKLIST.md',
+    }),
     readReviewWorkspaceCompletion: async () => {
       if (latest instanceof Error) throw latest;
       return latest;

@@ -11,6 +11,8 @@ import {
   GLOBAL_CHAT_SESSION_ID,
 } from '@farmslot/protocol';
 
+import { resourceRevisions } from '../resources/revisions.js';
+
 import { getCopilotDir } from './chat-memory.js';
 
 const GLOBAL_SESSION_ID = GLOBAL_CHAT_SESSION_ID;
@@ -148,6 +150,11 @@ function restoreSession(session: ChatSession): ChatSession {
   const existing = sessions.get(session.id);
   const restored = existing ? mergeSessionsByMessageId(session, existing) : session;
   sessions.set(session.id, restored);
+  resourceRevisions.advance({
+    family: 'copilot',
+    ownerId: 'gateway-copilot',
+    sessionId: session.id,
+  });
   return restored;
 }
 
@@ -288,6 +295,11 @@ export function appendMessage(sessionId: string | undefined, message: ChatMessag
   session.messages.push(message);
   session.updatedAt = new Date().toISOString();
   schedulePersist(session.id);
+  resourceRevisions.advance({
+    family: 'copilot',
+    ownerId: 'gateway-copilot',
+    sessionId: session.id,
+  });
 }
 
 export function clearSession(sessionId?: string): void {
@@ -298,6 +310,7 @@ export function clearSession(sessionId?: string): void {
     existing.messages = [];
     existing.updatedAt = now;
     schedulePersist(id);
+    resourceRevisions.advance({ family: 'copilot', ownerId: 'gateway-copilot', sessionId: id });
   }
 }
 
@@ -309,6 +322,9 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     throw new Error('Cannot delete the shared global chat session');
   }
   const existed = sessions.delete(id);
+  // Session context reads the in-memory store, including during durable deletion.
+  if (existed)
+    resourceRevisions.advance({ family: 'copilot', ownerId: 'gateway-copilot', sessionId: id });
   const timer = persistTimers.get(id);
   if (timer) {
     clearTimeout(timer);

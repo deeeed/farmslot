@@ -144,6 +144,7 @@ export function renderSourcePanel(view: SlotView) {
             ? html`
                 <div class="sv-section-body sv-pinned-body" style="height:${view._pinnedHeight}px">
                   <file-tree
+                    .actionsDisabled=${view._isLive && !view._workspaceReads.ready}
                     .entries=${view._pinnedEntries}
                     .gitStatus=${view._gitStatusMap}
                     .selectedPath=${realPath(view._activeFile)}
@@ -227,7 +228,8 @@ export function renderEditorHeader(view: SlotView) {
           ? html`
               <button
                 class="sv-save-btn ${view._saveFeedback}"
-                ?disabled=${view._saveFeedback === 'saving'}
+                ?disabled=${view._saveFeedback === 'saving' ||
+                (view._isLive && !view._workspaceReads.ready)}
                 @click=${view._saveFile}
                 title="Save (writes to disk)"
               >

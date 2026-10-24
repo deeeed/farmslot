@@ -9,6 +9,8 @@ import path from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import { publishConfigurationResources } from '../resources/configuration-changes.js';
+
 // ─── Types ───
 
 export type CredentialType = 'api_key' | 'token' | 'oauth';
@@ -69,14 +71,42 @@ function emptyStore(): AuthProfileStore {
   return { version: 1, profiles: {} };
 }
 
-export async function loadAuthProfileStore(storePath: string): Promise<AuthProfileStore | null> {
-  if (!existsSync(storePath)) return null;
+interface AuthProfileLoadOptions {
+  strict?: boolean;
+}
+
+export async function loadAuthProfileStore(
+  storePath: string,
+  options: AuthProfileLoadOptions = {},
+): Promise<AuthProfileStore | null> {
   try {
     const raw = await readFile(storePath, 'utf-8');
     const data = JSON.parse(raw);
-    if (data.version !== 1 || typeof data.profiles !== 'object') return null;
+    if (
+      !data ||
+      data.version !== 1 ||
+      !data.profiles ||
+      typeof data.profiles !== 'object' ||
+      Array.isArray(data.profiles) ||
+      !Object.values(data.profiles).every(
+        (credential) =>
+          credential &&
+          typeof credential === 'object' &&
+          'provider' in credential &&
+          typeof credential.provider === 'string' &&
+          'type' in credential &&
+          typeof credential.type === 'string' &&
+          ['api_key', 'token', 'oauth'].includes(credential.type),
+      )
+    )
+      throw new Error('Invalid provider registration format.');
     return data as AuthProfileStore;
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    // Client reads must keep the last good facts. Never expose parser excerpts,
+    // which can contain a credential from the malformed file.
+    if (options.strict) throw new Error('Could not read provider registrations.');
+    // Internal credential resolution may continue through its other sources.
     return null;
   }
 }
@@ -90,6 +120,12 @@ export async function saveAuthProfileStore(
     await mkdir(dir, { recursive: true });
   }
   await writeFile(storePath, JSON.stringify(store, null, 2) + '\n', 'utf-8');
+  if (
+    [getFarmslotStorePath(), getOpenClawStorePath()].some(
+      (file) => path.resolve(file) === path.resolve(storePath),
+    )
+  )
+    publishConfigurationResources();
 }
 
 export async function ensureAuthStoreFile(storePath: string): Promise<AuthProfileStore> {

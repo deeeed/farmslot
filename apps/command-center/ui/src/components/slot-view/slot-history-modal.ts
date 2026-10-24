@@ -6,14 +6,17 @@ import {
   Methods,
   type SlotRunHistoryEntry,
   type SlotRunHistoryResult,
+  sourceObservationAge,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../shared/slot-prepare-popover.js';
 
-import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { formatCreatedAt, formatDuration, routeForRun, runStatusColor } from '../runs/run-utils.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
 const DEFAULT_LIMIT = 25;
@@ -25,26 +28,85 @@ export class SlotHistoryModal extends LitElement {
   @property({ attribute: 'slot-branch' }) slotBranch = '';
   @property({ attribute: false }) slotHealth: import('@farmslot/protocol').SlotHealth | null = null;
   @property({ type: Boolean }) open = false;
+  @property({ type: Boolean }) disabled = false;
   /** When set, the modal expands this run row + scrolls it into view on open. */
   @property({ attribute: 'selected-run-id' }) selectedRunId = '';
   /** Dev harness escape hatch: when provided, no gateway call is made. */
   @property({ attribute: false }) historyEntries?: SlotRunHistoryEntry[];
 
-  @state() private _loading = false;
-  @state() private _error = '';
-  @state() private _runs: SlotRunHistoryEntry[] = [];
-  @state() private _totalCount = 0;
+  private readonly historyQuery = new ResourceQueryController<SlotRunHistoryResult>(this, () =>
+    this._onReadChange(),
+  );
   @state() private _expanded = new Set<string>();
   @state() private _copiedKey = '';
   @state() private _copyError = '';
-  @state() private _slotExists = true;
-  private _loadToken = Symbol('slot-history-load');
+  private _ownerKey?: string;
+  private _savedAgeClock?: number;
   private readonly _copyFeedback = new CopyFeedbackTimer({
     copiedKey: () => this._copiedKey,
     setCopiedKey: (key) => {
       this._copiedKey = key;
     },
   });
+
+  private get _runs(): SlotRunHistoryEntry[] {
+    return this.historyEntries ?? this.historyQuery.state.data?.runs ?? [];
+  }
+  private get _totalCount(): number {
+    return this.historyEntries?.length ?? this.historyQuery.state.data?.totalCount ?? 0;
+  }
+  private get _slotExists(): boolean {
+    return this.historyEntries ? true : (this.historyQuery.state.data?.slotExists ?? true);
+  }
+  private get _loading(): boolean {
+    return (
+      !this.historyEntries &&
+      !this.historyQuery.state.data &&
+      this.historyQuery.state.status === 'loading'
+    );
+  }
+  private get _error(): string {
+    return this.historyEntries ? '' : (this.historyQuery.state.error?.message ?? '');
+  }
+  private get _commandsReady(): boolean {
+    return (
+      !this.disabled && this._slotExists && Boolean(this.historyEntries || this.historyQuery.ready)
+    );
+  }
+  private _onReadChange(): void {
+    const owner = getResourceWorkspaceKey();
+    if (owner !== this._ownerKey) {
+      this._ownerKey = owner;
+      this._expanded = new Set();
+      this._copyFeedback.clear();
+      this._copiedKey = '';
+      this._copyError = '';
+    }
+    const saved =
+      this.open && this.historyQuery.state.status !== 'ready' && this.historyQuery.state.data;
+    if (saved && !this._savedAgeClock)
+      this._savedAgeClock = window.setInterval(() => this.requestUpdate(), 1000);
+    else if (!saved && this._savedAgeClock) {
+      window.clearInterval(this._savedAgeClock);
+      this._savedAgeClock = undefined;
+    }
+  }
+
+  private _requireCurrentRun(expected: SlotRunHistoryEntry): void {
+    if (!this.isConnected || !this.open || this.disabled)
+      throw new Error('The history dialog changed. Open it again before acting.');
+    const current = this.historyQuery.requireReady();
+    const run = current.runs.find(({ runId }) => runId === expected.runId);
+    if (
+      current.slotId !== this.slotId ||
+      !current.slotExists ||
+      !run ||
+      run.branch !== expected.branch ||
+      run.project !== expected.project ||
+      !canActivateRunOnSlot(run.status)
+    )
+      throw new Error('The selected run changed. Review the current history before loading it.');
+  }
 
   static override styles = css`
     .shm-backdrop {
@@ -311,14 +373,20 @@ export class SlotHistoryModal extends LitElement {
     super.disconnectedCallback();
     document.removeEventListener('keydown', this._onKeydown);
     this._copyFeedback.clear();
+    window.clearInterval(this._savedAgeClock);
+    this._savedAgeClock = undefined;
   }
 
   override updated(changed: Map<string, unknown>) {
-    if (
-      (changed.has('open') || changed.has('slotId') || changed.has('historyEntries')) &&
-      this.open
-    ) {
-      void this._load();
+    if (changed.has('open') || changed.has('slotId') || changed.has('historyEntries')) {
+      this.historyQuery.setQuery(
+        this.open && this.slotId && !this.historyEntries
+          ? resourceQuery<SlotRunHistoryResult>(Methods.RUN_SLOT_HISTORY, {
+              slotId: this.slotId,
+              limit: DEFAULT_LIMIT,
+            })
+          : undefined,
+      );
     }
     // Auto-expand + scroll the URL-pinned run into view once the row is in
     // the DOM. Triggered when the selection arrives (deep-link), when the
@@ -326,7 +394,9 @@ export class SlotHistoryModal extends LitElement {
     if (
       this.open &&
       this.selectedRunId &&
-      (changed.has('selectedRunId') || changed.has('open') || changed.has('_runs'))
+      (changed.has('selectedRunId') ||
+        changed.has('open') ||
+        !this._expanded.has(this.selectedRunId))
     ) {
       const target = this._runs.find((run) => run.runId === this.selectedRunId);
       if (target && !this._expanded.has(target.runId)) {
@@ -350,39 +420,8 @@ export class SlotHistoryModal extends LitElement {
   };
 
   private _close() {
+    this.historyQuery.setQuery(undefined);
     this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }));
-  }
-
-  private async _load() {
-    const token = Symbol('slot-history-load');
-    this._loadToken = token;
-    this._error = '';
-
-    if (this.historyEntries) {
-      this._runs = this.historyEntries;
-      this._totalCount = this.historyEntries.length;
-      this._slotExists = true;
-      this._loading = false;
-      return;
-    }
-
-    if (!this.slotId) return;
-    this._loading = true;
-    try {
-      const result = await gateway.request<SlotRunHistoryResult>(Methods.RUN_SLOT_HISTORY, {
-        slotId: this.slotId,
-        limit: DEFAULT_LIMIT,
-      });
-      if (token !== this._loadToken) return;
-      this._runs = result.runs;
-      this._totalCount = result.totalCount;
-      this._slotExists = result.slotExists;
-    } catch (error) {
-      if (token !== this._loadToken) return;
-      this._error = error instanceof Error ? error.message : String(error);
-    } finally {
-      if (token === this._loadToken) this._loading = false;
-    }
   }
 
   private _toggle(runId: string) {
@@ -394,14 +433,22 @@ export class SlotHistoryModal extends LitElement {
 
   private async _copy(key: string, value: string | null | undefined) {
     if (!value) return;
+    const owner = getResourceWorkspaceKey();
+    const slotId = this.slotId;
+    const current = () =>
+      this.isConnected &&
+      this.open &&
+      owner === getResourceWorkspaceKey() &&
+      slotId === this.slotId;
     this._copyError = '';
     try {
       await this._writeClipboard(value);
     } catch (error) {
-      this._copyError = `Copy failed: ${error instanceof Error ? error.message : String(error)}`;
+      if (current())
+        this._copyError = `Copy failed: ${error instanceof Error ? error.message : String(error)}`;
       return;
     }
-    this._copyFeedback.show(key, 1600);
+    if (current()) this._copyFeedback.show(key, 1600);
   }
 
   private async _writeClipboard(value: string) {
@@ -590,6 +637,8 @@ export class SlotHistoryModal extends LitElement {
                           button-label="Load this slot with run →"
                           button-class="shm-retry"
                           .slotHealth=${this.slotHealth}
+                          .disabled=${!this._commandsReady}
+                          .beforePrepare=${() => this._requireCurrentRun(run)}
                           rebind
                         ></slot-prepare-popover>
                       `
@@ -623,10 +672,9 @@ export class SlotHistoryModal extends LitElement {
           </div>
           <div class="shm-body">
             <div class="shm-note">
-              Retained run records for this slot. "Reload on this slot" re-binds a run and re-drives
-              prepare+dispatch with the cheapest warm profile (no new run); recorded task/artifact
-              paths may be stale if files were cleaned. It does not delete, archive, or change
-              retention.
+              Retained run records for this slot. Loading a run re-binds it and prepares the slot
+              without creating a new run; recorded task/artifact paths may be stale if files were
+              cleaned. It does not delete, archive, or change retention.
             </div>
             ${!this._slotExists
               ? html`<div class="shm-state error">
@@ -637,14 +685,34 @@ export class SlotHistoryModal extends LitElement {
             ${this._copyError
               ? html`<div class="shm-state error">${this._copyError}</div>`
               : nothing}
+            ${!this.historyEntries &&
+            this.historyQuery.state.status !== 'ready' &&
+            this.historyQuery.state.data &&
+            this.historyQuery.state.observedAt !== undefined
+              ? html`<div class="shm-state" data-history-freshness="stale">
+                  Saved history, ${sourceObservationAge(this.historyQuery.state.observedAt)}.
+                  Actions wait for a current read.
+                </div>`
+              : nothing}
+            ${!this.historyEntries && this.historyQuery.state.status === 'unsupported'
+              ? html`<div class="shm-state">History updates are unavailable on this gateway.</div>`
+              : nothing}
+            ${this._error && this._runs.length
+              ? html`<div class="shm-state error" role="alert">
+                  Failed to read current history: ${this._error}
+                  <button class="shm-retry" @click=${() => this.historyQuery.retry()}>Retry</button>
+                </div>`
+              : nothing}
             ${this._loading
               ? html`<div class="shm-state">Loading slot history…</div>`
-              : this._error
+              : this._error && !this._runs.length
                 ? html`
                     <div class="shm-state error">
                       Failed to load slot history: ${this._error}
                       <div style="margin-top:${spacing.sm};">
-                        <button class="shm-retry" @click=${() => this._load()}>Retry</button>
+                        <button class="shm-retry" @click=${() => this.historyQuery.retry()}>
+                          Retry
+                        </button>
                       </div>
                     </div>
                   `
