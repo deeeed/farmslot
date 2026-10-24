@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   Events,
   type HumanGrade,
+  isCompletionPrerequisiteFailure,
   isSettledBlockedRun,
   isTerminalRunStatus,
   normalizeRunLinkedTicketRefs,
@@ -124,7 +125,7 @@ export async function runDelete(
   emit: Emit,
   slot: ArchiveSlotRelease = ARCHIVE_SLOT_RELEASE,
 ): Promise<RunDeleteResult> {
-  const ok = await withCancelledRunSlotReleased(getRun(params.runId), emit, slot, () =>
+  const ok = await withTerminalRunSlotReleased(getRun(params.runId), emit, slot, () =>
     storeDeleteRun(params.runId),
   );
   if (!ok) throw new Error(`Run not found: ${params.runId}`);
@@ -158,7 +159,7 @@ export async function runArchive(
       await releaseBlockedRunSlot(run, emit, slot);
     }
     const archive = () => storeArchiveRun(params.runId);
-    const ok = await (fenced ? archive() : withCancelledRunSlotReleased(run, emit, slot, archive));
+    const ok = await (fenced ? archive() : withTerminalRunSlotReleased(run, emit, slot, archive));
     if (!ok) throw new Error(`Run not found: ${params.runId}`);
   } finally {
     if (fenced) endRunArchive(params.runId);
@@ -220,22 +221,27 @@ async function releaseBlockedRunSlot(
 }
 
 /**
- * Deleting or archiving a cancelled run ends it, so the slot its cancel kept for
- * replay is released with the reset of `slot release --reset` (ADR-054 amendment,
- * 2026-10-19), before the run leaves the store. The archive fence covers both, as
- * for a blocked run: replay refuses a fenced run, so it cannot reclaim the slot
- * while the reset runs. A replay admitted first leaves the run no longer
- * cancelled, and nothing is released.
+ * Eviction stops a terminal run's owned worker before its ownership record leaves
+ * the live store. Done/failed runs keep their checkout; a cancelled run retains
+ * its existing explicit-reset policy (ADR-054, 2026-10-19). The archive fence
+ * prevents replay from reclaiming the slot during teardown.
  */
-async function withCancelledRunSlotReleased(
+async function withTerminalRunSlotReleased(
   run: Run | undefined,
   emit: Emit,
   slot: ArchiveSlotRelease,
   evict: () => Promise<boolean>,
 ): Promise<boolean> {
-  if (run?.status !== 'cancelled') return evict();
+  if (!run || !isTerminalRunStatus(run.status)) return evict();
+  // The store owns this recovery hold's eviction fence and requires explicit
+  // workspace release before removal. Do not bypass it with ordinary cleanup.
+  if (isCompletionPrerequisiteFailure(run)) return evict();
+  assertRunArchivable(run);
+  const expectedStatus = run.status;
   const fenced = await withRunTransition(run.id, async () => {
-    if (getRun(run.id)?.status !== 'cancelled') return false;
+    const current = getRun(run.id);
+    if (!current || current.status !== expectedStatus) return false;
+    assertRunArchivable(current);
     assertRunNotArchiving(run.id);
     beginRunArchive(run.id);
     return true;
@@ -249,18 +255,24 @@ async function withCancelledRunSlotReleased(
   }
 }
 
-/** No unrelated process blocks this release; it logs the work its reset discards. */
+/** Existing release guards protect foreign owners; keep finished workers' checkouts. */
 async function releaseKeptSlot(run: Run, emit: Emit, slot: ArchiveSlotRelease): Promise<void> {
   if (!run.slotId) return;
   const slotId = run.slotId;
   // Another active run owns the slot now; it keeps it.
   if (!ownsRunSlotCleanup(await readSlotRow(slotId), run.id)) return;
   const { released } = await slot.release(
-    { slotId, expectedRunId: run.id, forceReset: true },
+    {
+      slotId,
+      expectedRunId: run.id,
+      ...(run.status === 'cancelled' ? { forceReset: true } : { keepWork: true }),
+    },
     emit,
   );
   if (!released && ownsRunSlotCleanup(await readSlotRow(slotId), run.id))
-    throw new Error(`Cannot release slot ${slotId} of cancelled run ${run.id}: it is still held`);
+    throw new Error(
+      `Cannot release slot ${slotId} of ${run.status} run ${run.id}: it is still held`,
+    );
 }
 
 async function slotStillHeldError(runId: string, slotId: string): Promise<Error> {
@@ -287,7 +299,7 @@ export async function runBulkDelete(
   let deleted = 0;
   for (const id of params.runIds) {
     try {
-      const ok = await withCancelledRunSlotReleased(getRun(id), emit, ARCHIVE_SLOT_RELEASE, () =>
+      const ok = await withTerminalRunSlotReleased(getRun(id), emit, ARCHIVE_SLOT_RELEASE, () =>
         storeDeleteRun(id),
       );
       if (!ok) continue;
@@ -316,7 +328,7 @@ export async function runCleanup(
   // the slot its cancel kept (ADR-054, 2026-10-19), so cleanup never orphans it.
   // Cleanup reports only its result, not release progress.
   const result = await storeCleanup(dryRun, (run) =>
-    withCancelledRunSlotReleased(
+    withTerminalRunSlotReleased(
       run,
       () => {},
       slot,

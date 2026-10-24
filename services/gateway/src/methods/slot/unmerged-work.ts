@@ -336,16 +336,38 @@ export async function findUnmergedSlotWork(
   // runs `git push -u`, which records that remote as the branch's upstream;
   // push-remote config may name a different one and proves nothing. A remote
   // that cannot be asked proves nothing either, so the work stays protected.
-  const remote = `$(${git} config --get ${shellQuote(`branch.${branch}.remote`)} || echo origin)`;
+  const upstream = await exec(
+    vars,
+    `${git} for-each-ref --format='%(upstream:remotename)%09%(upstream:remoteref)' ${shellQuote(`refs/heads/${branch}`)}`,
+  );
+  if (upstream.exitCode !== 0) return 'unpushed commits';
+  const [configuredRemote, configuredRef] = upstream.stdout.trim().split('\t');
+  const remote = configuredRemote || 'origin';
+  const ref = configuredRef || `refs/heads/${branch}`;
+  if (remote === '.') return 'unpushed commits';
   const probe = await exec(
     vars,
-    `${git} ls-remote --heads "${remote}" ${shellQuote(branch)} 2>/dev/null`,
+    `${git} ls-remote --heads ${shellQuote(remote)} ${shellQuote(ref)}`,
+    { timeout: 30_000 },
   );
-  if (probe.exitCode === 0 && !probe.stdout.trim()) {
+  if (probe.exitCode !== 0) return 'unpushed commits';
+  if (!probe.stdout.trim() && configuredRemote && configuredRef) {
     console.log(
       `[slot.release] ${vars.slotId}: remote branch '${branch}' deleted (merged) — allowing recycle`,
     );
     return null;
+  }
+  if (probe.stdout.trim()) {
+    // A single-branch clone may never have fetched this published branch.
+    // Fetch only its advertised ref, without moving HEAD or pruning history.
+    const fetched = await exec(
+      vars,
+      `${git} fetch --no-tags ${shellQuote(remote)} ${shellQuote(ref)}`,
+      { timeout: 120_000 },
+    );
+    if (fetched.exitCode !== 0) return 'unpushed commits';
+    const contained = await exec(vars, `${git} merge-base --is-ancestor HEAD FETCH_HEAD`);
+    if (contained.exitCode === 0) return null;
   }
   return 'unpushed commits';
 }

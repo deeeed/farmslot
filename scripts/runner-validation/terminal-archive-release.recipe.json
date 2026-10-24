@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Terminal archive confirms owned worker release",
+  "description": "Use a disposable authenticated gateway and private IPC workers to prove archive invokes owner-bound keep-work release before evicting done/failed run records. No product slot or real tmux server.",
+  "workflow": {
+    "entry": "archive",
+    "nodes": {
+      "archive": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --import ./services/gateway/src/runtime/mock-pty.test-support.ts scripts/runner-validation/gateway/terminal-archive-release.mts",
+        "timeout_ms": 120000,
+        "intent": "Archive confirms an owned worker stopped through keep-work release before removing its live ownership record.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
