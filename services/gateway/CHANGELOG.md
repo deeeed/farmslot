@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.
+- Transfer prepare scripts through the file API so large task inputs do not exceed shell argument limits, including orchestrator-local preparation for remote slots.
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.
 - Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
 - Keep reviewer recipe replay output outside worker task evidence so a passing review does not request another round.
