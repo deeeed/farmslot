@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { EXEC_TIMEOUT_EXIT_CODE } from '../../core/exec.js';
 import {
   execLocal,
   execOnSlot,
@@ -821,9 +822,25 @@ export async function runPrepareCommand(
   // clean target. We do this BEFORE launching the window so pipe-pane doesn't race the
   // mkdir inside the wrapped cmd. Also stage the wrapped script here so the respawn
   // call can exec it directly without going through a host-shell parser.
+  const stageTimeout = 10_000;
+  let stagedCommand = wrappedCmd;
+  if (!useLocal && !slotIsLocal && wrappedCmd.includes('~/farmslot-node')) {
+    const { NodeSupportPendingError, resolveRemoteFarmCommand } =
+      await import('../../node-support/remote-command.js');
+    try {
+      stagedCommand = await resolveRemoteFarmCommand(vars, wrappedCmd, { budgetMs: stageTimeout });
+    } catch (error) {
+      if (!(error instanceof NodeSupportPendingError)) throw error;
+      return failSetup('stage prepare script', {
+        stdout: '',
+        stderr: error.message,
+        exitCode: EXEC_TIMEOUT_EXIT_CODE,
+      });
+    }
+  }
   const stageR = await exec(
     `mkdir -p ${shellQuote(slotHostScratchDir)} && ${buildPrepareStaleLaunchCleanupCommand(slotHostScratchDir, phaseFileName)} && : > ${shellQuote(slotHostLogPath)}`,
-    { cwd: opts?.cwd, timeout: 10_000 },
+    { cwd: opts?.cwd, timeout: stageTimeout },
   );
   if (stageR.exitCode !== 0) {
     return failSetup('stage prepare script', stageR);
@@ -833,7 +850,7 @@ export async function runPrepareCommand(
   await slotWriteFiles(useLocal ? ORCHESTRATOR_LOCALITY : vars, slotHostScratchDir, [
     {
       path: path.posix.basename(wrappedScriptPath),
-      content: Buffer.from(`${wrappedCmd}\n`).toString('base64'),
+      content: Buffer.from(`${stagedCommand}\n`).toString('base64'),
       mode: 0o600,
     },
   ]);

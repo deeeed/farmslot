@@ -19,6 +19,8 @@ import path from 'node:path';
 import { mock } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { GIT_LOCATION_ENV } from '../../quality/run-tsx-tests.mjs';
+for (const name of GIT_LOCATION_ENV) delete process.env[name];
 const runFile = promisify(execFile);
 const code = fileURLToPath(new URL('../../../', import.meta.url));
 const root = await mkdtemp(path.join(os.tmpdir(), 'prepare-payload-proof-'));

@@ -19,6 +19,8 @@ interface StagedFiles {
 }
 const staged: StagedFiles[] = [];
 let writeFailure: Error | undefined;
+const resolutions: string[] = [];
+let resolutionFailure: Error | undefined;
 /** Runs when the wrapper launch (respawn-pane) is issued. */
 let onLaunch: (() => void) | null;
 const fakeExec = async (cmd: string) => {
@@ -43,6 +45,22 @@ mock.module('../../core/slot-io.js', {
     slotWriteFiles: async (ctx: SlotLocality, root: string, files: SlotWriteFileEntry[]) => {
       if (writeFailure) throw writeFailure;
       staged.push({ ctx, root, files });
+    },
+  },
+});
+const realRemoteCommand = await import('../../node-support/remote-command.js');
+mock.module('../../node-support/remote-command.js', {
+  namedExports: {
+    ...realRemoteCommand,
+    resolveRemoteFarmCommand: async (
+      _vars: unknown,
+      command: string,
+      options: { budgetMs?: number },
+    ) => {
+      resolutions.push(command);
+      assert.equal(options.budgetMs, 10_000);
+      if (resolutionFailure) throw resolutionFailure;
+      return realRemoteCommand.remapRemoteFarmRefs(command, '/node/support/selected', ['scripts']);
     },
   },
 });
@@ -73,6 +91,8 @@ beforeEach(() => {
   commands.length = 0;
   staged.length = 0;
   writeFailure = undefined;
+  resolutions.length = 0;
+  resolutionFailure = undefined;
   onLaunch = null;
 });
 
@@ -178,7 +198,7 @@ test('a large diff is transferred as a script file while every exec command stay
 test('force-local staging writes on the orchestrator even when the slot is remote', async () => {
   const controller = new AbortController();
   onLaunch = () => controller.abort();
-  const result = await runPrepareCommand(vars, await logPath(), 'true', {
+  const result = await runPrepareCommand(vars, await logPath(), 'printf %s ~/farmslot-node', {
     forceLocal: true,
     signal: controller.signal,
     windowLabel: 'local-stage',
@@ -188,6 +208,40 @@ test('force-local staging writes on the orchestrator even when the slot is remot
   assert.equal(result.exitCode, 130);
   assert.equal(staged[0]?.ctx.host, 'localhost');
   assert.notEqual(staged[0]?.ctx, vars);
+  assert.equal(resolutions.length, 0, 'orchestrator scripts keep local resolution');
+});
+
+test('large remote scripts bind bare farm roots before the file transfer', async () => {
+  const controller = new AbortController();
+  onLaunch = () => controller.abort();
+  const command = `printf %s ~/farmslot-node\n: #${'x'.repeat(1536 * 1024)}`;
+  const result = await runPrepareCommand(vars, await logPath(), command, {
+    signal: controller.signal,
+    windowLabel: 'bound-large',
+    phase: 'deps',
+    tailPollIntervalMs: 10,
+  });
+  assert.equal(result.exitCode, 130);
+  assert.equal(resolutions.length, 1);
+  const file = staged[0]?.files[0];
+  assert.ok(file);
+  const script = Buffer.from(file.content, 'base64').toString();
+  assert.ok(script.includes('printf %s /node/support/selected'));
+  assert.ok(!script.includes('~/farmslot-node'));
+  assert.ok(Math.max(...commands.map((cmd) => Buffer.byteLength(cmd))) < 65536);
+});
+
+test('pending support delivery keeps the existing staging timeout and starts no wrapper', async () => {
+  resolutionFailure = new realRemoteCommand.NodeSupportPendingError(
+    'Fixture support delivery pending',
+  );
+  const result = await runPrepareCommand(vars, await logPath(), 'printf %s ~/farmslot-node', {
+    windowLabel: 'pending-support',
+    phase: 'deps',
+  });
+  assert.equal(result.exitCode, 124);
+  assert.equal(staged.length, 0);
+  assert.ok(!commands.some((command) => command.includes('respawn-pane')));
 });
 
 test('a failed script transfer refuses before the wrapper launches', async () => {
