@@ -1,87 +1,32 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Native fleet, slots and saved conversations after a cold start",
-  "description": "The proof controller owns the already booted reserved iOS simulator, compatible cached app, fresh app profile, one Metro and one private gateway. Run dry-preflight and retain its input-hashed plan first. The root-started passive method-counting proxy stays alive across the single app cold restart and gateway outage. Setup CLOSED source journals are fixtures; no provider runs and no UI/cache data is injected. The helper reuses the existing device session and committed owned-gateway outage and dev-client readiness helpers. It never boots a simulator, reseeds a profile, starts services or records video. A failed attempt is retained and requires root disposition. Params are deliberately absent; private fixture identities and paths come from the checked plan. The private setup pool and existing fleet.status projection prove live slot membership, exact cold fleet data and age, and the saved slot screen during the same intentional app restart.",
+  "title": "Companion planning and configuration after a cold start",
+  "description": "D07 static candidate for the canonical cold-start proof. Root must first authorize and prepare a fresh isolated fixture, native compatibility receipt, exact input plan, full-run recording and proved-owned controller. One already reserved device, one deliberate app cold restart, no provider or runner launch, no UI/cache/SQL injection. Existing mounted backlog/roadmap/project views and read-only PR/copilot consumers only. No native work-graph viewer or cold queue rendering is claimed. Engine pass does not substitute for independent actual target-at-press video audit. No params or unverified readiness receipts. D06 history-specific claims remain in immutable prior sources and accepted packets.",
   "proofTargets": [
     {
-      "id": "native-store-retention",
-      "claim": "Twelve genuine session routes warm canonical current histories; actual Expo SQLite retains exactly the last ten sessions, each with 200 complete messages and original observation times."
+      "id": "d07-mounted-sources",
+      "claim": "External backlog, roadmap and project files change their mounted current Companion views without Refresh."
     },
     {
-      "id": "native-store-cold-age",
-      "claim": "One offline app restart restores the selected standalone session, cursor and 200 complete messages with exact SQLite age, a new JS runtime and visible saved-age caption."
+      "id": "d07-cold-data",
+      "claim": "A new offline process retains exact saved backlog, roadmap, project and observed queue rows and original SQLite observation times."
     },
     {
-      "id": "native-store-disabled-resume",
-      "claim": "Actual stale Resume remains visible and accessibility-disabled; a real point tap sends no native command RPC, including failed requests, through the passive counting proxy."
+      "id": "d07-saved-age",
+      "claim": "Existing backlog, roadmap and project controls visibly report saved data age after cold restoration."
     },
     {
-      "id": "native-store-recovery",
-      "claim": "The owned gateway recovers to current history without a second app restart, command replay or changes to the setup CLOSED journals."
+      "id": "d07-disabled-no-replay",
+      "claim": "The actual fully visible disabled Mark ready control receives one paired AX/OCR-guarded press and sends no command on outage or recovery; independent press-video audit remains required."
     },
     {
-      "id": "native-fleet-live",
-      "claim": "An independent setup pool writer updates the open native fleet without Refresh."
-    },
-    {
-      "id": "native-fleet-cold",
-      "claim": "A new offline app process renders saved fleet and slot facts with exact SQLite observation time and visible age."
-    },
-    {
-      "id": "native-slot-cold",
-      "claim": "The same configured slot opens from its saved fleet data while the gateway is offline."
+      "id": "d07-observed-memory",
+      "claim": "Actual mounted PR and stopped Co-Pilot consumers issue their four read-only queries; only these observed memory-only methods are checked absent from SQLite."
     }
   ],
   "workflow": {
     "entry": "native-ready",
     "nodes": {
-      "prove": {
-        "action": "command",
-        "cmd": "node scripts/agentic/prove-native-store.mjs prove",
-        "timeout_ms": 1200000,
-        "intent": "Prove native histories, cold age, disabled Resume and recovery on the owned app.",
-        "next": "retention"
-      },
-      "retention": {
-        "action": "assert_output",
-        "source": "prove",
-        "stream": "stdout",
-        "match": "\"nativeStoreWarmRetention\":true",
-        "intent": "Inspect twelve opened histories and ten saved, complete SQLite entries.",
-        "proves": ["native-store-retention"],
-        "next": "cold-age"
-      },
-      "cold-age": {
-        "action": "assert_output",
-        "source": "prove",
-        "stream": "stdout",
-        "match": "\"nativeStoreColdAge\":true",
-        "intent": "Restore the exact saved history and age in a new offline app runtime.",
-        "proves": ["native-store-cold-age"],
-        "next": "disabled-resume"
-      },
-      "disabled-resume": {
-        "action": "assert_output",
-        "source": "prove",
-        "stream": "stdout",
-        "match": "\"nativeStoreDisabledResumeNoRpc\":true",
-        "intent": "Tap disabled native Resume and verify no command RPC, including failed requests.",
-        "proves": ["native-store-disabled-resume"],
-        "next": "recovery"
-      },
-      "recovery": {
-        "action": "assert_output",
-        "source": "prove",
-        "stream": "stdout",
-        "match": "\"nativeStoreRecoveryNoReplay\":true",
-        "intent": "Recover current history without a second restart or replayed command.",
-        "proves": ["native-store-recovery"],
-        "next": "native-fleet-live"
-      },
-      "done": {
-        "action": "end",
-        "status": "pass"
-      },
       "native-ready": {
         "action": "ui.wait_for",
         "test_id": "companion-screen-native",
@@ -89,32 +34,61 @@
         "intent": "Attach one owned device session to the already launched native screen.",
         "next": "prove"
       },
-      "native-fleet-live": {
-        "action": "assert_output",
-        "source": "prove",
-        "stream": "stdout",
-        "match": "\"nativeFleetLiveWriter\":true",
-        "intent": "An independent setup pool writer updates the open native fleet without Refresh.",
-        "proves": ["native-fleet-live"],
-        "next": "native-fleet-cold"
+      "prove": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-native-planning.mjs prove",
+        "timeout_ms": 480000,
+        "intent": "Prove current planning, cold saved rows and disabled action on the owned app.",
+        "next": "d07-mounted-sources"
       },
-      "native-fleet-cold": {
+      "d07-mounted-sources": {
         "action": "assert_output",
         "source": "prove",
         "stream": "stdout",
-        "match": "\"nativeFleetColdAge\":true",
-        "intent": "A new offline app process renders saved fleet and slot facts with exact SQLite observation time and visible age.",
-        "proves": ["native-fleet-cold"],
-        "next": "native-slot-cold"
+        "match": "\"d07ExternalMountedChanges\":true",
+        "intent": "Inspect real external source changes on mounted native planning views.",
+        "proves": ["d07-mounted-sources"],
+        "next": "d07-cold-data"
       },
-      "native-slot-cold": {
+      "d07-cold-data": {
         "action": "assert_output",
         "source": "prove",
         "stream": "stdout",
-        "match": "\"nativeSlotColdView\":true",
-        "intent": "The same configured slot opens from its saved fleet data while the gateway is offline.",
-        "proves": ["native-slot-cold"],
+        "match": "\"d07ColdExactRows\":true",
+        "intent": "Compare complete saved SQL rows and original ages after one app restart.",
+        "proves": ["d07-cold-data"],
+        "next": "d07-saved-age"
+      },
+      "d07-saved-age": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07VisibleSavedAge\":true",
+        "intent": "Show saved backlog, roadmap and project ages in existing views.",
+        "proves": ["d07-saved-age"],
+        "next": "d07-disabled-no-replay"
+      },
+      "d07-disabled-no-replay": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07DisabledTapNoReplay\":true",
+        "intent": "Verify the actual disabled press sends no command or recovery replay.",
+        "proves": ["d07-disabled-no-replay"],
+        "next": "d07-observed-memory"
+      },
+      "d07-observed-memory": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07MemoryOnlyObservedQueries\":true",
+        "intent": "Check persistence only for four queries observed through mounted consumers.",
+        "proves": ["d07-observed-memory"],
         "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
       }
     }
   }

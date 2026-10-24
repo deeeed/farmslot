@@ -70,12 +70,33 @@ async function proxyServer() {
     Object.create(null),
     Object.fromEntries(forbidden.map((method) => [method, 0])),
   );
+  // Read-only D07 response provenance from the app's existing transport. Never retain params/auth.
+  const observedReadMethods = new Set([
+    'backlog.list',
+    'roadmap.list',
+    'config.projects',
+    'dispatch.queue.list',
+    'prWatch.list',
+    'prRules.list',
+    'prPush.list',
+    'copilot.status',
+  ]);
+  const successfulReads = Object.create(null);
+  const lastObservedReads = Object.create(null);
   let sequence = 0;
   let failure;
   let writes = Promise.resolve();
   let closing = false;
   const pairs = new Set();
-  const state = () => ({ startId, sequence, counts: { ...counts }, failure, stopped: closing });
+  const state = () => ({
+    startId,
+    sequence,
+    counts: { ...counts },
+    successfulReads: { ...successfulReads },
+    lastObservedReads: { ...lastObservedReads },
+    failure,
+    stopped: closing,
+  });
   const persist = () => {
     const content = JSON.stringify(state());
     writes = writes.then(async () => {
@@ -123,7 +144,7 @@ async function proxyServer() {
   const sockets = new WebSocketServer({ server });
   sockets.on('connection', (downstream, incoming) => {
     const upstream = new WebSocket(`ws://127.0.0.1:7914${incoming.url}`);
-    const pair = { downstream, upstream };
+    const pair = { downstream, upstream, reads: new Map() };
     pairs.add(pair);
     const waiting = [];
     let queuedBytes = 0;
@@ -137,6 +158,10 @@ async function proxyServer() {
           return;
         }
         if (frame.type === 'req' && typeof frame.method === 'string') {
+          if (frame.method === 'auth.connect') {
+            pair.authRequestId = frame.id;
+            pair.epoch = undefined;
+          }
           // Bound keys to known protocol method syntax. Never persist params or auth frames.
           if (!/^[a-zA-Z][a-zA-Z0-9_.]{0,100}$/.test(frame.method)) {
             void fail('INVALID_METHOD');
@@ -147,6 +172,16 @@ async function proxyServer() {
             return;
           }
           counts[frame.method] = (counts[frame.method] || 0) + 1;
+          if (observedReadMethods.has(frame.method)) {
+            if (pair.reads.size >= 200 || pair.reads.has(frame.id)) {
+              void fail('READ_TRACKING_LIMIT');
+              return;
+            }
+            pair.reads.set(frame.id, {
+              method: frame.method,
+              observedRequest: frame.resourceRead?.version === 1,
+            });
+          }
           sequence++;
           void persist();
         }
@@ -166,6 +201,60 @@ async function proxyServer() {
       waiting.length = 0;
     });
     upstream.on('message', (bytes, binary) => {
+      if (!binary) {
+        let frame;
+        try {
+          frame = JSON.parse(String(bytes));
+        } catch {
+          void fail('INVALID_UPSTREAM_JSON');
+          return;
+        }
+        if (frame.type === 'res' && frame.id === pair.authRequestId) {
+          const capability = frame.payload?.capabilities?.resourceChanges;
+          pair.epoch =
+            frame.ok === true &&
+            capability?.version === 1 &&
+            typeof capability.epoch === 'string' &&
+            capability.epoch.length > 0
+              ? capability.epoch
+              : undefined;
+        }
+        const read = frame.type === 'res' ? pair.reads.get(frame.id) : undefined;
+        if (read) {
+          pair.reads.delete(frame.id);
+          const dependencies = frame.resourceState?.dependencies;
+          if (
+            frame.ok === true &&
+            read.observedRequest &&
+            pair.epoch &&
+            frame.resourceState?.epoch === pair.epoch &&
+            Array.isArray(dependencies) &&
+            dependencies.length > 0 &&
+            dependencies.every(
+              (entry) =>
+                entry &&
+                entry.key &&
+                typeof entry.key === 'object' &&
+                !Array.isArray(entry.key) &&
+                typeof entry.key.family === 'string' &&
+                entry.key.family.length > 0 &&
+                Number.isSafeInteger(entry.revision) &&
+                entry.revision >= 0,
+            ) &&
+            frame.payload &&
+            typeof frame.payload === 'object' &&
+            !Array.isArray(frame.payload)
+          ) {
+            successfulReads[read.method] = (successfulReads[read.method] || 0) + 1;
+            lastObservedReads[read.method] = {
+              completedAt: Date.now(),
+              resourceState: frame.resourceState,
+              payloadSha256: sha256(JSON.stringify(frame.payload)),
+            };
+            void persist();
+          }
+        }
+      }
       if (downstream.readyState === WebSocket.OPEN) downstream.send(bytes, { binary });
     });
     for (const peer of [downstream, upstream]) {

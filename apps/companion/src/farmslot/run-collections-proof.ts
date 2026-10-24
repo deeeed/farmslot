@@ -289,6 +289,27 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
         connectionGeneration: useConnectionStore.getState().client?.connectionGeneration,
         connectionProfileId: useConnectionStore.getState().activeProfileId,
         connectionProfileIds: useConnectionStore.getState().profiles.map((profile) => profile.id),
+        // Inspect existing cache entries only. This does not observe, fetch or seed these reads.
+        domainObservations: Object.fromEntries(
+          (['prWatch.list', 'prRules.list', 'prPush.list', 'copilot.status'] as const).map(
+            (method) => {
+              const query = resourceQuery(method);
+              const state = cache?.read(query);
+              return [
+                method,
+                {
+                  id: query.id,
+                  persisted: query.persisted,
+                  status: state?.status ?? 'loading',
+                  hasData: state?.data !== undefined,
+                  observedAt: state?.observedAt,
+                  errorCode: state?.error?.code,
+                  resourceState: state?.resourceState,
+                },
+              ];
+            },
+          ),
+        ),
         ...(conversation
           ? {
               conversation: {

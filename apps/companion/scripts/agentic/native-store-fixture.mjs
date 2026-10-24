@@ -93,6 +93,18 @@ export function nativeResumeFitsScrollView(screen, selector) {
     target.visibleToUser === false
   )
     return false;
+  const viewport = screen.nodes.find((node) => ['Application', 'Window'].includes(node.type))?.rect;
+  if (
+    !viewport ||
+    !['x', 'y', 'width', 'height'].every((key) => Number.isFinite(viewport[key])) ||
+    viewport.width <= 0 ||
+    viewport.height <= 0 ||
+    rect.x < viewport.x ||
+    rect.y < viewport.y ||
+    rect.x + rect.width > viewport.x + viewport.width ||
+    rect.y + rect.height > viewport.y + viewport.height
+  )
+    return false;
   const nodes = new Map(screen.nodes.map((node) => [node.index, node]));
   const visited = new Set();
   let ancestor = target;
@@ -127,6 +139,11 @@ export function nativeResumeFitsScrollView(screen, selector) {
 
 /** Reject a stale accessibility target when its paired screenshot no longer renders Resume. */
 export function renderedNativeResumeTarget(screen, image, selector) {
+  return renderedNativeDisabledTarget(screen, image, selector, 'Resume conversation');
+}
+
+/** Same paired AX/image guard for an existing disabled planning control. */
+export function renderedNativeDisabledTarget(screen, image, selector, labelText) {
   const targets = screen.nodes.filter((node) => node.identifier === selector);
   assert.equal(targets.length, 1, 'Require one actual Resume accessibility target');
   const target = targets[0];
@@ -145,7 +162,7 @@ export function renderedNativeResumeTarget(screen, image, selector) {
     Math.abs(image.width / viewport.width - image.height / viewport.height) < 0.001,
     'Require matching screenshot and native viewport dimensions',
   );
-  const labels = image.text.filter((node) => node.text.trim() === 'Resume conversation');
+  const labels = image.text.filter((node) => node.text.trim() === labelText);
   assert.equal(labels.length, 1, 'The paired screenshot must visibly render Resume conversation');
   const label = labels[0];
   assert(['x', 'y', 'width', 'height'].every((key) => Number.isFinite(label[key])));
@@ -157,13 +174,15 @@ export function renderedNativeResumeTarget(screen, image, selector) {
       label.x + label.width <= 1 &&
       label.y + label.height <= 1,
   );
-  const labelX = viewport.x + (label.x + label.width / 2) * viewport.width;
-  const labelY = viewport.y + (1 - label.y - label.height / 2) * viewport.height;
+  const labelLeft = viewport.x + label.x * viewport.width;
+  const labelRight = viewport.x + (label.x + label.width) * viewport.width;
+  const labelTop = viewport.y + (1 - label.y - label.height) * viewport.height;
+  const labelBottom = viewport.y + (1 - label.y) * viewport.height;
   assert(
-    labelX >= rect.x &&
-      labelX <= rect.x + rect.width &&
-      labelY >= rect.y &&
-      labelY <= rect.y + rect.height,
+    labelLeft >= rect.x &&
+      labelRight <= rect.x + rect.width &&
+      labelTop >= rect.y &&
+      labelBottom <= rect.y + rect.height,
     'Rendered Resume must match the actual disabled control bounds',
   );
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
