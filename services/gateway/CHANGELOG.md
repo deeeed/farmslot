@@ -18,6 +18,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Keep bundles referenced by active slot fixtures until their run ends, including after support selections advance or fixtures refresh.
 
 - Project current-attempt checklist timing and preserve step durations in monthly analytics.
+- Project CI-watch deadlines from existing monitor clocks without changing polling or timeout behavior.
 
 - Stop workers and slot runtimes when runs finish, fail or are cancelled, while preserving live stacked children, fix rounds and replay checkouts.
 - Prune unused node-support bundles during activation, retaining slot selections and references from every non-archived run.

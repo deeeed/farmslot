@@ -19,6 +19,7 @@ import {
   type TaskProgressStructured,
 } from '@farmslot/protocol';
 import {
+  ciWatchStatusView,
   recoveredReviewFailureColor,
   runActivityStepStatus,
   runActivityView,
@@ -71,6 +72,19 @@ function usePipelineClock(running: boolean, intervalMs = 1000) {
     const timer = setInterval(() => tick((value) => value + 1), intervalMs);
     return () => clearInterval(timer);
   }, [running, intervalMs]);
+}
+
+function RunCIWatchStatus({ run }: { run: Run }) {
+  const view = ciWatchStatusView(run);
+  return view ? (
+    <Text
+      testID="ci-watch-status"
+      accessibilityLabel={view.description}
+      style={{ color: colors.textSecondary, fontSize: fonts.sizeSm, lineHeight: 18 }}
+    >
+      {view.label}
+    </Text>
+  ) : null;
 }
 
 export function RunElapsedTime({ run }: { run: Run }) {
@@ -175,6 +189,7 @@ export function RunPipelineMini({ run }: { run: Run }) {
         </View>
       </View>
       <RunChecklistProgress run={run} progress={checklist?.progress} error={checklist?.error} />
+      <RunCIWatchStatus run={run} />
     </View>
   );
 }
@@ -271,6 +286,7 @@ export function RunPipelineFull({
         })}
       </ScrollView>
       <RunChecklistProgress run={run} progress={taskProgress} />
+      <RunCIWatchStatus run={run} />
     </View>
   );
 }

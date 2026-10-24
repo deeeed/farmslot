@@ -48,6 +48,8 @@ export interface CIWatchPhasePatch {
   lastFixCommitSha?: string | null;
   fixProgress?: CIWatchFixProgress;
   timeoutWindowStartedAt?: string;
+  progressTimeoutAt?: string;
+  totalTimeoutAt?: string;
   lastProgressAt?: string;
   lastProgressReason?: string;
   // Persisted as part of step.outputs so consumers reading step state mid-case
@@ -70,6 +72,8 @@ export interface CIOutcome {
   lastFixCommitSha?: string | null;
   fixProgress?: CIWatchFixProgress;
   timeoutWindowStartedAt?: string;
+  progressTimeoutAt?: string;
+  totalTimeoutAt?: string;
   lastProgressAt?: string;
   lastProgressReason?: string;
   pollCount: number;
@@ -235,6 +239,8 @@ export function readCIWatchPhaseSnapshot(runId: string): Partial<CIWatchPhasePat
     lastFixCommitSha: out.lastFixCommitSha,
     fixProgress: out.fixProgress,
     timeoutWindowStartedAt: out.timeoutWindowStartedAt,
+    progressTimeoutAt: out.progressTimeoutAt,
+    totalTimeoutAt: out.totalTimeoutAt,
     lastProgressAt: out.lastProgressAt,
     lastProgressReason: out.lastProgressReason,
   };
