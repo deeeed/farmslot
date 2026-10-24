@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import { FLOW_STEPS, type Run, type RunStep, type SubStepRecord } from '@farmslot/protocol';
 
+import '../runtime/mock-pty.test-support.js';
+
 import {
   hasPendingPublicationReviewContinuation,
   hasRecoverablePublicationReviewer,
@@ -27,6 +29,26 @@ test('truthful pending-gate states retain publication review recovery ownership'
     assert.equal(isPublicationReviewRecoveryHeld(run), true, status);
     assert.equal(isPublicationReviewRecoveryHeld({ ...run, status: 'done' }), false);
   }
+});
+
+test('a consumed publication review request retains recovery ownership while HUMAN_GATE runs', () => {
+  const run = minimalActiveRun({
+    status: 'reviewing',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [
+      {
+        ...humanGateDecision('consumed'),
+        resolvedAt: '2026-10-24T05:30:00Z',
+        resolvedAction: 'request-review',
+      },
+    ],
+  });
+  assert.equal(isPublicationReviewRecoveryHeld(run), true);
+  assert.equal(
+    isPublicationReviewRecoveryHeld({ ...run, steps: [{ name: 'review', status: 'running' }] }),
+    false,
+  );
+  assert.equal(isPublicationReviewRecoveryHeld({ ...run, status: 'done' }), false);
 });
 
 test('recoveryHealthIsReady requires configured ready indicator to match', () => {
@@ -892,6 +914,57 @@ function publicationReviewRecoveryDeps(
     },
   } as unknown as RunRecoveryCollaborators;
   return { deps, calls };
+}
+
+for (const completed of [false, true]) {
+  test(`startup ${completed ? 'ingests' : 'watches'} an authorized fallback after its review request was consumed`, async () => {
+    const run = withRecoverableReviewer(
+      minimalActiveRun({
+        status: 'reviewing',
+        ticketOrPr: 'FALLBACK-REVIEW-RECOVERY',
+        familyRootTicketOrPr: 'FALLBACK-REVIEW-RECOVERY',
+        taskFile: '/tmp/fallback-review-recovery/TASK.md',
+        steps: FLOW_STEPS['fix-bug'].map((name) => ({
+          name,
+          status:
+            name === 'human-gate'
+              ? 'running'
+              : name === 'finalize' || name === 'complete'
+                ? 'pending'
+                : 'done',
+        })),
+        decisions: [
+          {
+            ...humanGateDecision('consumed'),
+            resolvedAt: '2026-10-24T05:30:00Z',
+            resolvedAction: 'request-review',
+          },
+        ],
+      }),
+    );
+    run.agentContexts![0]!.reviewFallback = {
+      reason: 'session-unavailable',
+      detail: 'retained launch configuration changed',
+      comparedRanges: ['old..current'],
+    };
+    const { deps, calls } = publicationReviewRecoveryDeps(run);
+    let ingestions = 0;
+    let starts = 0;
+    deps.recoverInflightPublicationReviews = async () => {
+      ingestions++;
+      return { recoveredIds: completed ? ['fallback-review'] : [], terminalErrors: [] };
+    };
+    deps.startRun = async () => {
+      starts++;
+    };
+    assert.equal(isPublicationReviewRecoveryHeld(run), true);
+    await recoverActiveRuns(deps);
+    assert.equal(ingestions, 1);
+    assert.equal(starts, 0, 'do not relaunch the lost await or present stale findings');
+    assert.equal(calls.reconciled, 0);
+    assert.deepEqual(calls.replayed, completed ? [run.id] : []);
+    assert.equal(calls.rearmed.length, completed ? 0 : 1);
+  });
 }
 
 test('restart re-enters a resolved monitor handoff instead of completing its running step', async () => {

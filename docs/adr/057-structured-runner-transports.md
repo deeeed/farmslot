@@ -258,3 +258,23 @@ The gateway owns this reviewer policy separately from the run tier. It rederives
 Sandboxed reviewers inherited `untrusted`, while the gateway denied every approval request. Commands requiring approval could never run, so a review could stall without inspecting the code. Reviewers must be able to execute commands inside their existing sandbox without requesting escalation.
 
 This changes command approval inside that sandbox, not filesystem access. The private runtime launch contract carries the reviewer policy; it adds no public session permission control. The owning spec is [Agent runtime](../reference/agent-runtime.md#managed-native-reviewer-approval-policy).
+
+## Amendment 6: retain in-flight reviewer ownership across gateway updates, 2026-10-24
+
+**Status:** Proposed; lead selected ADR-057 as owner on 2026-10-24.
+
+### Decision
+
+A running HUMAN_GATE retains publication-review recovery ownership after its review-request decision is consumed. Startup collects an already completed reviewer or re-arms the existing bounded recovery watcher until that reviewer finishes. A relaunch fallback's completed signal and result are ingested into its existing lineage; stale findings do not remain authoritative because the original await was lost.
+
+An already accepted, still-live native reviewer generation is reattached by validating and monitoring its persisted binding. Reattachment does not rebuild a launch from current pool, project or source configuration and does not send its task again. Its original launch settings and filesystem grants remain in force. Slot, task, owner, profile, lease and generation fences still apply.
+
+This applies to observing the existing process. Unconfirmed launches, stopped processes, explicit recovery, task transfers and parking restores retain their existing launch-digest checks. Held or accepted publication approvals retain their existing recovery priority; no new review or fix is authorized by restart.
+
+### Rationale and consequences
+
+A gateway update interrupted the await of an authorized review. The consumed decision stopped identifying recovery ownership, so the gate retained older findings even after its fallback reviewer finished. Rebuilding an accepted reviewer's launch also treated a configuration change as a reason to refuse monitoring, although its original process was still owned and running.
+
+### Public surface
+
+No public RPC, field, CLI flag, SDK export or harness extension changes. The gateway uses the existing native snapshot and command contracts. Runtime and decoder bytes do not change; no runtime publication or native-host restart is needed. The [agent-runtime specification](../reference/agent-runtime.md#in-flight-reviewer-continuity) defines the boundary.
