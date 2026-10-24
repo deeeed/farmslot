@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.
+- Preserve the parent run's autonomous or interactive mode when CI watch creates a follow-up, including decision and recovery paths.
 - Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
 - Keep reviewer recipe replay output outside worker task evidence so a passing review does not request another round.
 - Include evidence-manifest field errors when publication refuses invalid declarations or selected recipe evidence.
