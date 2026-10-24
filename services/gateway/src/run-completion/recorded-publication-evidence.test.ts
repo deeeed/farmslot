@@ -3,11 +3,26 @@ import { createHash, randomUUID } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 
 import type { ArtifactRef, Run } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
+const config = await import('../core/config.js');
+let forbidUpload = false;
+let uploadConfigReads = 0;
+mock.module('../core/config.js', {
+  namedExports: {
+    ...config,
+    loadProjectVars: async (...args: Parameters<typeof config.loadProjectVars>) => {
+      if (forbidUpload) {
+        uploadConfigReads++;
+        throw new Error('Publication reached upload configuration without a source head.');
+      }
+      return config.loadProjectVars(...args);
+    },
+  },
+});
 const { readFrozenRecordedEvidenceSources, readGateRecordedEvidenceSources } =
   await import('../run-engine/recorded-evidence-sources.js');
 const { buildPackageEvidenceManifest } = await import('./package-evidence-manifest.js');
@@ -15,7 +30,7 @@ const { readFrozenPublicationManifest, verifyFrozenPublicationEvidence } =
   await import('./recorded-publication-evidence.js');
 const { allSelectedEvidenceKeysForPublication, assertPublicationEvidenceSelection } =
   await import('./publication-evidence-policy.js');
-const { expandPublicationEvidenceSelection, readEvidenceManifest } =
+const { expandPublicationEvidenceSelection, readEvidenceManifest, publishSelectedEvidence } =
   await import('./publication-artifacts.js');
 const { publicationBaselineContext } = await import('./publication-artifacts.js');
 const { computeReadyGatePackageHash } = await import('./ready-gate-package.js');
@@ -414,7 +429,13 @@ test('same-run attempts at the selected head publish after and standalone eviden
     );
     assert.equal(sources[0]?.input.claims?.criteria[0]?.verdict, 'proven');
     assert.equal(f.baseline.claims.criteria[0]?.verdict, 'failed');
-    await verifyFrozenPublicationEvidence(f.run, inventory, prepared.selectedEvidenceKeys!);
+    await verifyFrozenPublicationEvidence(
+      f.run,
+      inventory,
+      prepared.selectedEvidenceKeys!,
+      undefined,
+      f.headSha,
+    );
     await assert.rejects(
       readGateRecordedEvidenceSources(f.run, {
         ...prepared,
@@ -479,12 +500,65 @@ test('extra current-head attempts require run-captured identity and a complete i
   );
   await retainRunFixture(f.run);
   const keys = [`artifacts/${f.baselineRoot}/proof.png`];
-  await verifyFrozenPublicationEvidence(f.run, inventory, keys);
-  await overwriteRetainedFixture(f.run, `artifacts/${f.baselineRoot}/trace.json`, '{}');
   await assert.rejects(
     verifyFrozenPublicationEvidence(f.run, inventory, keys),
-    /closure|hash mismatch|digest|invalid|changed/,
+    /requires a known publication head/,
   );
+  await verifyFrozenPublicationEvidence(f.run, inventory, keys, undefined, f.headSha);
+  await overwriteRetainedFixture(f.run, `artifacts/${f.baselineRoot}/trace.json`, '{}');
+  await assert.rejects(
+    verifyFrozenPublicationEvidence(f.run, inventory, keys, undefined, f.headSha),
+    /Retained artifact is missing, pruned or changed: artifacts\/recipe-baseline-run\/trace\.json/,
+  );
+});
+
+test('an unavailable live head refuses additional-attempt upload before external IO', async (t) => {
+  const f = await sameHeadFixture(t);
+  await writeFile(
+    f.declarationPath,
+    JSON.stringify({
+      version: 1,
+      standalone: [{ label: 'Restart proof', file: `${f.baselineRoot}/proof.png` }],
+    }),
+  );
+  await retainRunFixture(f.run);
+  const effective = await readEvidenceManifest(f.run);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    effective,
+    1,
+    publicationBaselineContext(f.run),
+  );
+  await retainRunFixture(f.run);
+  uploadConfigReads = 0;
+  forbidUpload = true;
+  try {
+    await assert.rejects(
+      publishSelectedEvidence(
+        f.run,
+        1,
+        {
+          selectedEvidenceKeys: [`artifacts/${f.baselineRoot}/proof.png`],
+          evidenceManifest: inventory,
+          trustedEvidenceManifest: effective,
+        },
+        undefined,
+        undefined,
+      ),
+      /requires a known publication head/,
+    );
+    assert.equal(uploadConfigReads, 0);
+  } finally {
+    forbidUpload = false;
+  }
+});
+
+test('additional before-only captures still require the original dispatch baseline', async (t) => {
+  const f = await sameHeadFixture(t);
+  assert.notEqual(f.headSha, f.run.worktreeHeadAtDispatch);
+  await retainRunFixture(f.run);
+  await assert.rejects(readEvidenceManifest(f.run), /product-provenance\.json.*git_ref/);
 });
 
 test('publication scans the retained text of additional current-head attempts', async (t) => {
@@ -507,7 +581,13 @@ test('publication scans the retained text of additional current-head attempts', 
   );
   await retainRunFixture(f.run);
   await assert.rejects(
-    verifyFrozenPublicationEvidence(f.run, inventory, [`artifacts/${f.baselineRoot}/proof.png`]),
+    verifyFrozenPublicationEvidence(
+      f.run,
+      inventory,
+      [`artifacts/${f.baselineRoot}/proof.png`],
+      undefined,
+      f.headSha,
+    ),
     /Publication blocked by secret values: private-key sha256:/,
   );
 });

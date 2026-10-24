@@ -1087,7 +1087,10 @@ separate repair contract. No new pointer, package format or public RPC is added.
 
 A network change or application restart needs a fresh recipe attempt, while its
 captures may document the same code revision. Restricting publication media to
-one attempt rejects valid proof without adding source integrity. Several checked
+one attempt rejects valid proof without adding source integrity. This amendment
+chooses several attempts per publication package for session-persistence proof:
+retain the recorded write and the relaunched session's assertion of the same
+value. Recording remains bound to each original session. Several checked
 closures can share the existing publication package and approval hash. Missing,
 foreign, dirty, stale-head or changed closures still refuse, and all selected
 closures retain the existing secret scan and publication approval requirements.

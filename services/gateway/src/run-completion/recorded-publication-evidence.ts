@@ -240,7 +240,7 @@ async function frozenPublicationTextClosure(
   inventory: readonly ArtifactRef[],
   selected: readonly ArtifactRef[],
   bundleRef?: RunArtifactBundleRef,
-  headSha?: string,
+  headSha?: string | null,
 ): Promise<FrozenPublicationTextClosure> {
   const media = selected
     .filter((artifact) => isUploadableMediaPath(artifact.path))
@@ -254,7 +254,7 @@ async function frozenPublicationTextClosure(
     inventory,
     selectedRecordedMedia,
     bundleRef,
-    headSha,
+    headSha ?? null,
   );
   // This inventory is the frozen publication closure, not the task's historical
   // artifacts. Media pixels retain their existing visual-review requirements.

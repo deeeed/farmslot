@@ -19,7 +19,7 @@ import { sameHeadFixture } from './recorded-publication-evidence.test-support.js
 
 test(
   'authenticated refresh retains same-run multi-attempt captures and refuses a stale revision',
-  { timeout: 90_000 },
+  { timeout: 180_000 },
   async (t) => {
     assert.equal(process.env.FARMSLOT_MULTI_ATTEMPT_LIVE, '1');
     const output = process.env.FARMSLOT_MULTI_ATTEMPT_PROOF_OUT;
@@ -90,6 +90,7 @@ test(
         ],
       }),
     );
+    // The fixture owns root, credentials and WebSocket cleanup on every exit path.
     const fixture = await createNativeProofFixture(t, root);
     const { createRun, updateRun } = await import('../runs/store.js');
     const { updateSlotStatus } = await import('../core/index.js');
@@ -97,7 +98,12 @@ test(
     const { readGateRecordedEvidenceSources } =
       await import('../run-engine/recorded-evidence-sources.js');
     const { verifyFrozenPublicationEvidence } = await import('./recorded-publication-evidence.js');
-    const f = await sameHeadFixture(t, undefined, headSha);
+    const f =
+      process.env.FARMSLOT_MULTI_ATTEMPT_BROWSER_LIVE === '1'
+        ? await (
+            await import('./multi-attempt-browser.live-support.js')
+          ).browserPersistenceAttempts(root, repo, headSha)
+        : await sameHeadFixture(t, undefined, headSha);
     await cp(f.taskDir, workerTask, { recursive: true });
     await mkdir(taskDir, { recursive: true });
     await writeFile(path.join(taskDir, 'TASK.md'), '# Disposable publication proof\n');
@@ -241,6 +247,7 @@ test(
           staleAttemptRefused: true,
           externalOperations: [],
           root,
+          ...('browserProof' in f ? { browserProof: f.browserProof } : {}),
         },
         null,
         2,
