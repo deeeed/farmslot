@@ -1,4 +1,10 @@
-import { type BacklogListResult, Methods, type RoadmapListResult } from '@farmslot/protocol';
+import {
+  type BacklogListResult,
+  type DispatchQueueListResult,
+  Methods,
+  type RoadmapListResult,
+  type WorkGraphListResult,
+} from '@farmslot/protocol';
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { currentFarmConnection } from '../../lib/connection-authority';
@@ -11,6 +17,12 @@ export const backlogPlanningQuery = resourceQuery<BacklogListResult>(Methods.BAC
 export const roadmapPlanningQuery = resourceQuery<RoadmapListResult>(Methods.ROADMAP_LIST, {
   includeArchived: true,
 });
+export const workGraphsPlanningQuery = resourceQuery<WorkGraphListResult>(Methods.WORK_GRAPH_LIST, {
+  includeArchived: true,
+});
+export const dispatchQueuePlanningQuery = resourceQuery<DispatchQueueListResult>(
+  Methods.DISPATCH_QUEUE_LIST,
+);
 
 /** Commands capture current authority and data; a rendered saved row cannot authorize a write. */
 export function currentPlanningRead<T>(query: ResourceQuery<T>, expected: T | undefined) {

@@ -97,6 +97,18 @@ export function assertObservedMemoryQueries(snapshot, wire, methods) {
   }
 }
 
+/** Startup may legitimately read Backlog before the recipe begins; preboot probes cannot count. */
+export function assertPlanningReadsFromRuntime(snapshot, wire, methods) {
+  assert(Number.isFinite(snapshot.startedAt) && snapshot.startedAt > 0);
+  for (const method of methods) {
+    assert((wire.successfulReads?.[method] ?? 0) > 0, `Missing observed app read: ${method}`);
+    assert(
+      wire.lastObservedReads?.[method]?.completedAt >= snapshot.startedAt,
+      `A pre-app reply cannot prove current ${method}`,
+    );
+  }
+}
+
 async function prove() {
   await authorizePlanningProof();
   const plan = await resolveNativePlanningInputs(process.env, source);
@@ -278,10 +290,14 @@ async function prove() {
     };
     await waitForSimulatorRecipeBridge({ platform: 'ios', simulator });
     const initial = await counts();
+    for (const method of forbiddenPlanningMethods)
+      assert.equal(initial.counts[method] ?? 0, 0, `No command during app bootstrap: ${method}`);
     await open('backlog');
     const beforeBacklog = await view('backlog-before', [
       plan.expected.backlog.before,
       'Mark ready',
+      'Work graphs',
+      'Dispatch queue',
     ]);
     const selector = `companion-backlog-${plan.expected.backlog.id}-ready`;
     assert.equal(beforeBacklog.nodes.find((node) => node.identifier === selector)?.enabled, true);
@@ -295,6 +311,13 @@ async function prove() {
     await view('projects-before', [plan.project]);
     await writePlanningSource(plan, 'newProject', artifacts);
     await view('projects-after', [plan.addedProject]);
+    await open('work-graphs');
+    await view('work-graphs-warm', [plan.expected.graph.title]);
+    await open('dispatch-queue');
+    await view('dispatch-queue-warm', [
+      plan.expected.queue.label,
+      `Priority ${plan.expected.queue.priority}`,
+    ]);
     await open('pr-automation');
     const prScreen = await view(
       'pr-read-only',
@@ -314,19 +337,16 @@ async function prove() {
     await view('copilot-read-only', ['Operator Co-Pilot', 'Co-Pilot is stopped']);
     await currentMemory('d07-copilot-canonical-readiness.json', ['copilot.status']);
     const warmCounts = await counts();
-    for (const method of [
+    const warm = await sqlite('d07-warm');
+    assertPlanningReadsFromRuntime(warm.state, warmCounts, [
       ...observedMemoryMethods,
       'dispatch.queue.list',
       'config.projects',
       'backlog.list',
       'roadmap.list',
-    ])
-      assert(
-        (warmCounts.successfulReads?.[method] ?? 0) > (initial.successfulReads?.[method] ?? 0),
-        `Existing mounted consumers must complete observed ${method}`,
-      );
+      'workGraph.list',
+    ]);
     unchangedCommands(initial, warmCounts);
-    const warm = await sqlite('d07-warm');
     const retained = retainedPlanningRows(warm.result);
     for (const row of Object.values(retained)) {
       const method = row.id.slice(0, row.id.indexOf(':'));
@@ -352,6 +372,12 @@ async function prove() {
     );
     assert(retained.projects.data.projects.some((project) => project.name === plan.addedProject));
     assert(retained.queue.data.items.some((item) => item.id === plan.expected.queue.id));
+    assert(
+      retained.graph.data.graphs.some(
+        ({ graph }) =>
+          graph.id === plan.expected.graph.id && graph.title === plan.expected.graph.title,
+      ),
+    );
     await save('d07-observed-methods.json', {
       methods: observedMemoryMethods,
       counts: warmCounts,
@@ -467,6 +493,14 @@ async function prove() {
         await device.interactions.swipe({ ...selection, ...gesture });
       }
       assert(ageVisible, 'Current product must visibly render saved projects age');
+      await open('work-graphs');
+      await view('work-graphs-cold', [plan.expected.graph.title, 'Saved work graphs,']);
+      await open('dispatch-queue');
+      await view('dispatch-queue-cold', [
+        plan.expected.queue.label,
+        `Priority ${plan.expected.queue.priority}`,
+        'Saved dispatch queue,',
+      ]);
       const finalCold = await sqlite('d07-cold-final');
       assert.deepEqual(retainedPlanningRows(finalCold.result), retained);
       assert.equal(finalCold.state.startedAt, coldStartedAt);
@@ -513,8 +547,8 @@ async function prove() {
       status: 'pass',
       inputHash: plan.inputHash,
       observedMemoryMethods,
-      workGraphNativeUi: 'unimplemented',
-      queueColdUi: 'unimplemented',
+      workGraphNativeUi: 'warm-and-cold',
+      queueColdUi: 'warm-and-cold',
       independentPressVideoAudit: 'required',
       coldStartedAt,
     });

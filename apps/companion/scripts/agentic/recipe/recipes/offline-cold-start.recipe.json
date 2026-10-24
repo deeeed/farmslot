@@ -1,19 +1,19 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion planning and configuration after a cold start",
-  "description": "D07 static candidate for the canonical cold-start proof. Root must first authorize and prepare a fresh isolated fixture, native compatibility receipt, exact input plan, full-run recording and proved-owned controller. One already reserved device, one deliberate app cold restart, no provider or runner launch, no UI/cache/SQL injection. Existing mounted backlog/roadmap/project views and read-only PR/copilot consumers only. No native work-graph viewer or cold queue rendering is claimed. Engine pass does not substitute for independent actual target-at-press video audit. No params or unverified readiness receipts. D06 history-specific claims remain in immutable prior sources and accepted packets.",
+  "description": "D07 candidate, not native acceptance. Requires separate authorization, fresh fixture/native/source/recording preflights, one reserved device and one deliberate app restart. Prove five planning collections in actual warm/cold views and four observed memory-only reads. No provider/runner launch or UI/cache/SQL injection. Independent target-at-press video audit remains required. Accepted D06 records stay immutable.",
   "proofTargets": [
     {
       "id": "d07-mounted-sources",
-      "claim": "External backlog, roadmap and project files change their mounted current Companion views without Refresh."
+      "claim": "The owning backlog API and roadmap/project file writers update mounted current Companion views without Refresh."
     },
     {
       "id": "d07-cold-data",
-      "claim": "A new offline process retains exact saved backlog, roadmap, project and observed queue rows and original SQLite observation times."
+      "claim": "A new offline process restores exact backlog, roadmap, project, work-graph and queue rows with original SQLite observation times."
     },
     {
       "id": "d07-saved-age",
-      "claim": "Existing backlog, roadmap and project controls visibly report saved data age after cold restoration."
+      "claim": "All five planning views visibly report actual saved data age after cold restoration."
     },
     {
       "id": "d07-disabled-no-replay",
@@ -25,13 +25,13 @@
     }
   ],
   "workflow": {
-    "entry": "native-ready",
+    "entry": "planning-ready",
     "nodes": {
-      "native-ready": {
+      "planning-ready": {
         "action": "ui.wait_for",
-        "test_id": "companion-screen-native",
+        "test_id": "companion-screen-backlog",
         "timeout_ms": 30000,
-        "intent": "Attach one owned device session to the already launched native screen.",
+        "intent": "Attach the owned session to the already launched Backlog screen.",
         "next": "prove"
       },
       "prove": {
@@ -64,7 +64,7 @@
         "source": "prove",
         "stream": "stdout",
         "match": "\"d07VisibleSavedAge\":true",
-        "intent": "Show saved backlog, roadmap and project ages in existing views.",
+        "intent": "Show actual saved age in all five planning views.",
         "proves": ["d07-saved-age"],
         "next": "d07-disabled-no-replay"
       },

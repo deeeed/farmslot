@@ -32,7 +32,11 @@ import {
   nativeResumeFitsScrollView,
   renderedNativeDisabledTarget,
 } from './native-store-fixture.mjs';
-import { assertObservedMemoryQueries } from './prove-native-planning.mjs';
+import {
+  assertObservedMemoryQueries,
+  assertPlanningReadsFromRuntime,
+  retainedPlanningRows,
+} from './prove-native-planning.mjs';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 
@@ -138,6 +142,50 @@ const scene = () => ({
     },
   ],
 });
+test('planning retention requires every collection and bounds the whole graph cohort', () => {
+  const ids = [
+    'backlog.list:{"includeArchived":true}',
+    'roadmap.list:{"includeArchived":true}',
+    'config.projects:{}',
+    'dispatch.queue.list:{}',
+    'workGraph.list:{"includeArchived":true}',
+  ];
+  const rows = ids.map((id, index) => ({
+    id,
+    observedAt: 1700000000000 + index,
+    data: { source: id },
+    bytes: 20,
+  }));
+  const result = { integrity: 'ok', rows };
+  assert.deepEqual(Object.keys(retainedPlanningRows(result)).sort(), [
+    'backlog',
+    'graph',
+    'projects',
+    'queue',
+    'roadmap',
+  ]);
+  for (const id of ids)
+    assert.throws(
+      () => retainedPlanningRows({ ...result, rows: rows.filter((row) => row.id !== id) }),
+      /Actual UI did not persist/,
+    );
+  assert.throws(
+    () =>
+      retainedPlanningRows({
+        ...result,
+        rows: [
+          ...rows,
+          {
+            id: 'workGraph.list:{"project":"other"}',
+            observedAt: 1700000000000,
+            data: {},
+            bytes: 2 * 1024 * 1024,
+          },
+        ],
+      }),
+    /workGraph.list aggregate exceeds/,
+  );
+});
 const image = () => ({
   width: 804,
   height: 1748,
@@ -171,6 +219,51 @@ test('transport success cannot replace actual canonical query readiness', () => 
       assertObservedMemoryQueries(frame({ ...current, ...change }), wire, ['prWatch.list']),
     );
   assert.throws(() => assertObservedMemoryQueries({}, wire, ['prWatch.list']));
+});
+
+test('initial-view reads belong to the current app; preboot source probes do not', () => {
+  const snapshot = { startedAt: 1700000000100 };
+  const wire = {
+    successfulReads: { 'backlog.list': 1 },
+    lastObservedReads: { 'backlog.list': { completedAt: 1700000000200 } },
+  };
+  assert.doesNotThrow(() => assertPlanningReadsFromRuntime(snapshot, wire, ['backlog.list']));
+  assert.throws(
+    () =>
+      assertPlanningReadsFromRuntime(
+        snapshot,
+        {
+          ...wire,
+          lastObservedReads: { 'backlog.list': { completedAt: 1700000000000 } },
+        },
+        ['backlog.list'],
+      ),
+    /pre-app reply/,
+  );
+  assert.throws(
+    () =>
+      assertPlanningReadsFromRuntime(
+        snapshot,
+        {
+          ...wire,
+          successfulReads: {},
+        },
+        ['backlog.list'],
+      ),
+    /Missing observed app read/,
+  );
+  assert.throws(
+    () =>
+      assertPlanningReadsFromRuntime(
+        snapshot,
+        {
+          ...wire,
+          lastObservedReads: {},
+        },
+        ['backlog.list'],
+      ),
+    /pre-app reply/,
+  );
 });
 
 test('a disabled planning point requires full ancestor containment and a paired rendered label', () => {
@@ -346,6 +439,7 @@ test(
       dependencies = [{ key: { family: 'pr-automation', scope: 'farm' }, revision: 3 }],
     ) => ({ epoch, dependencies });
     const payload = { monitors: [], privateReply: 'NEVER_RETAIN_PAYLOAD' };
+    const graphPayload = { graphs: [] };
     source.on('connection', (peer) => {
       sockets.add(peer);
       peer.on('close', () => sockets.delete(peer));
@@ -363,6 +457,15 @@ test(
           return;
         }
         const response = { type: 'res', id: request.id, ok: true, payload, resourceState: stamp() };
+        if (request.method === 'workGraph.list') {
+          response.payload = graphPayload;
+          response.resourceState = stamp('host-epoch', [
+            {
+              key: { family: 'planning', collection: 'work-graphs' },
+              revision: 4,
+            },
+          ]);
+        }
         if (request.params?.kind === 'error') {
           response.ok = false;
           response.error = { code: 'REFUSED', message: 'NEVER_RETAIN_ERROR' };
@@ -437,6 +540,7 @@ test(
     for (const kind of ['error', 'no-stamp', 'wrong-epoch', 'empty-deps', 'bad-deps', 'no-payload'])
       await request('prWatch.list', { kind, privateParam: 'NEVER_RETAIN_PARAMS' });
     await request('prWatch.list', {}, false);
+    await request('workGraph.list', { kind: 'no-payload' });
     await request('config.projects');
     async function countsAt(barriers) {
       const end = Date.now() + 1000;
@@ -448,15 +552,22 @@ test(
       assert.fail('Observe the actual persisted response barrier');
     }
     const rejected = await countsAt(1);
+    assert.equal(rejected.successfulReads['workGraph.list'] ?? 0, 0);
     assert.equal(
       rejected.successfulReads['prWatch.list'] ?? 0,
       0,
       'Invalid/unstamped/error replies are not successful observed reads',
     );
     await request('prWatch.list');
+    await request('workGraph.list');
     await request('config.projects');
     const successful = await countsAt(2);
     assert.equal(successful.successfulReads['prWatch.list'], 1);
+    assert.equal(successful.successfulReads['workGraph.list'], 1);
+    assert.equal(
+      successful.lastObservedReads['workGraph.list'].payloadSha256,
+      createHash('sha256').update(JSON.stringify(graphPayload)).digest('hex'),
+    );
     assert.equal(successful.lastObservedReads['prWatch.list'].resourceState.epoch, 'host-epoch');
     assert.equal(
       successful.lastObservedReads['prWatch.list'].payloadSha256,

@@ -15,7 +15,17 @@ export const persistedQueries = {
   roadmap: 'roadmap.list:{"includeArchived":true}',
   projects: 'config.projects:{}',
   queue: 'dispatch.queue.list:{}',
+  graph: 'workGraph.list:{"includeArchived":true}',
 };
+export const nativePlanningConsumerPaths = [
+  'apps/companion/src/app/work-graphs.tsx',
+  'apps/companion/src/app/dispatch-queue.tsx',
+  'apps/companion/src/features/planning/WorkGraphsScreen.tsx',
+  'apps/companion/src/features/planning/DispatchQueueScreen.tsx',
+  'apps/companion/src/features/planning/use-work-graphs-controller.ts',
+  'apps/companion/src/features/planning/use-dispatch-queue-controller.ts',
+  'apps/companion/src/features/planning/styles/planning-lists.ts',
+];
 export const observedMemoryMethods = [
   'prWatch.list',
   'prRules.list',
@@ -31,6 +41,21 @@ export const forbiddenPlanningMethods = [
   'backlog.autoDispatchTick',
   'dispatch.queue.add',
   'dispatch.queue.remove',
+  'dispatch.queue.removeOrphan',
+  'dispatch.queue.update',
+  'dispatch.queue.reorder',
+  'workGraph.create',
+  'workGraph.addNode',
+  'workGraph.addEdge',
+  'workGraph.removeNode',
+  'workGraph.removeEdge',
+  'workGraph.updateNode',
+  'workGraph.activate',
+  'workGraph.pause',
+  'workGraph.retry',
+  'workGraph.attachRun',
+  'workGraph.gateResolve',
+  'workGraph.schedulerTick',
   'run.create',
   'roadmap.save',
   'roadmap.delete',
@@ -138,6 +163,7 @@ export async function resolveNativePlanningInputs(env, sourceRoot) {
   const sourceVerification = await verifyNativePlanningSource(root, authorization.sourceHead);
   assert.equal(f.sourceHead, sourceVerification.sourceHead);
   assert.deepEqual(f.sourceVerification, sourceVerification, 'Frozen source verification changed');
+  assert.equal(f.initialRoute, 'backlog', 'D07 starts in planning, not a native conversation');
   assert.equal(await realpath(f.sourceRoot), root);
   assert.equal(await realpath(f.home), await realpath(env.FARMSLOT_HOME));
   assert.equal(await realpath(f.farmRoot), await realpath(env.FARMSLOT_ROOT));
@@ -205,6 +231,7 @@ export async function resolveNativePlanningInputs(env, sourceRoot) {
     'apps/companion/src/features/copilot/use-copilot-controller.ts',
     'apps/companion/src/farmslot/run-collections-proof.ts',
     'packages/protocol/src/client-cache/registry.ts',
+    ...nativePlanningConsumerPaths,
   ])
     inputs.push({
       label: relative,
@@ -217,7 +244,11 @@ export async function resolveNativePlanningInputs(env, sourceRoot) {
     inputs.push({ label: `actual-setup-${name}`, path: entry.path, sha256: entry.sha256 });
   }
   assert.equal(f.expected.backlog.status, 'candidate');
-  assert(f.expected.backlog.id && f.expected.roadmap.id && f.expected.queue.id);
+  assert(
+    f.expected.backlog.id && f.expected.roadmap.id && f.expected.queue.id && f.expected.graph.id,
+  );
+  assert(f.expected.graph.title && f.expected.queue.label);
+  assert(Number.isFinite(f.expected.queue.priority));
   assert(f.expected.backlog.before !== f.expected.backlog.after);
   assert(f.expected.roadmap.before !== f.expected.roadmap.after);
   assert(

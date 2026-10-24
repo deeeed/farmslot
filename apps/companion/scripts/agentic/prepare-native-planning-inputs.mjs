@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   digest,
   exclusiveJson,
+  nativePlanningConsumerPaths,
   verifyNativePlanningSource,
   within,
 } from './native-planning-fixture.mjs';
@@ -23,6 +24,7 @@ assert.equal(authorization.purpose, 'D07-native-planning');
 const sourceRoot = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 const sourceVerification = await verifyNativePlanningSource(sourceRoot, authorization.sourceHead);
 const sourceHead = sourceVerification.sourceHead;
+for (const relative of nativePlanningConsumerPaths) await readFile(path.join(sourceRoot, relative));
 const relative = 'apps/companion/scripts/agentic/prepare-native-planning-inputs.mjs';
 assert.equal(
   digest(await readFile(fileURLToPath(import.meta.url))),
@@ -99,6 +101,7 @@ await exclusiveJson(outputFile, {
   version: 2,
   sourceHead,
   sourceVerification,
+  initialRoute: 'backlog',
   sourceRoot,
   fixtureRoot,
   farmRoot,
@@ -125,7 +128,7 @@ await exclusiveJson(outputFile, {
       status: 'candidate',
     },
     roadmap: { id: roadmap.id, before: roadmap.title, after: specification.labels.roadmapAfter },
-    queue: { id: queue.id },
-    graph: { id: graph.id, nativeUi: 'unimplemented' },
+    queue: { id: queue.id, label: queue.label || queue.ticketOrPr, priority: queue.priority },
+    graph: { id: graph.id, title: graph.title },
   },
 });

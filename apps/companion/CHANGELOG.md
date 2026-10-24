@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Share observed project and template choices and restore bounded projects, backlog and roadmap lists offline with saved age. Observe PR automation and the shared copilot in memory. Actions require current observations and authority; commands stay live-only.
+- Share observed project and template choices and restore bounded projects, backlog, roadmap, work graphs and dispatch queue offline with saved age. Graph details and queue rows are read-only; read failures offer Retry. Observe PR automation and the shared copilot in memory. Actions require current observations and authority; commands stay live-only.
 
 - Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls.
 - Open saved native conversations under their retained workspace scope after an offline cold start; actions still require current authority.

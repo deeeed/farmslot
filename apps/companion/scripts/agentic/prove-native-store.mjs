@@ -76,6 +76,7 @@ async function proxyServer() {
     'roadmap.list',
     'config.projects',
     'dispatch.queue.list',
+    'workGraph.list',
     'prWatch.list',
     'prRules.list',
     'prPush.list',

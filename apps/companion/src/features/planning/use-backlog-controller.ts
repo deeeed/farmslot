@@ -120,6 +120,8 @@ export function useBacklogController() {
       loading: observation.status === 'loading',
     },
     actions: {
+      openWorkGraphs: () => router.push('/work-graphs'),
+      openQueue: () => router.push('/dispatch-queue'),
       refresh,
       enqueue,
       markReady: (item: BacklogItem) => runAction(item, 'ready'),

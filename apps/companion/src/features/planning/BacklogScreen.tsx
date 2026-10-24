@@ -24,7 +24,7 @@ export default function BacklogScreen({
 }) {
   const { state, actions } = screen;
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID="companion-screen-backlog">
       <View style={styles.toolbar}>
         <View>
           <Text style={styles.title}>Backlog</Text>
@@ -33,6 +33,24 @@ export default function BacklogScreen({
         <Pressable style={styles.createButton} disabled={!state.ready} onPress={actions.openCreate}>
           <Ionicons name="add" size={18} color={colors.bgBase} />
           <Text style={styles.createText}>New</Text>
+        </Pressable>
+      </View>
+      <View style={styles.planningLinks}>
+        <Pressable
+          testID="companion-backlog-work-graphs"
+          accessibilityRole="button"
+          style={styles.secondaryButton}
+          onPress={actions.openWorkGraphs}
+        >
+          <Text style={styles.secondaryText}>Work graphs</Text>
+        </Pressable>
+        <Pressable
+          testID="companion-backlog-dispatch-queue"
+          accessibilityRole="button"
+          style={styles.secondaryButton}
+          onPress={actions.openQueue}
+        >
+          <Text style={styles.secondaryText}>Dispatch queue</Text>
         </Pressable>
       </View>
       <ResourceReadStatus observation={state.observation} label="backlog" />
@@ -166,6 +184,12 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   title: { color: colors.textPrimary, fontSize: fonts.sizeXl, fontWeight: '900' },
+  planningLinks: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
   count: { color: colors.textMuted, fontSize: fonts.sizeXs, marginTop: 2 },
   createButton: {
     alignItems: 'center',
