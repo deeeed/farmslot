@@ -433,7 +433,7 @@ There is no new configuration, environment variable or RPC. The reviewer contrac
 
 ## Amendment 2: isolate reviewer recipe replay output, 2026-10-24
 
-**Status:** Proposed; lead approved this ADR as owner on 2026-10-24.
+**Status:** Accepted (approved by the lead 2026-10-24).
 
 ### Decision
 

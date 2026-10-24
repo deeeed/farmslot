@@ -30,7 +30,7 @@ gate. Runs without a sequence take the pipeline reviewer from the project
 
 ## Reviewer recipe replays
 
-**Status:** Proposed under ADR-032 Amendment 2.
+**Status:** Accepted under ADR-032 Amendment 2 (approved by the lead 2026-10-24).
 
 The reviewer-specific execution contract MUST direct recipe replays into a fresh
 directory under that reviewer's temporary scratch root, using the project's
