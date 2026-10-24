@@ -17,6 +17,9 @@ export type GatewayWorkspaceAccess = 'farm' | 'native' | 'none';
 
 /** Experimental ADR-071 notification capability, present on every new gateway connect reply. */
 export interface GatewayResourceChangesCapability {
+  /** Dispatch verifies node producer admission for source-backed observed reads. */
+  observedReads?: 1;
+  workspaceReads?: 1;
   version: 1;
   epoch: string;
   versionLists: boolean;

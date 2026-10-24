@@ -8,14 +8,20 @@ import {
 import type {
   FamilyObservabilityGetResult,
   FamilyObservabilitySnapshot,
+  GitDiffResult,
   NativeSessionInfo,
   NativeSessionReadResult,
   Run,
   RunGetResult,
   RunRecipeRunsForRunResult,
   SlotRunHistoryResult,
+  SlotStatus,
+  TaskProgressResult,
+  TaskProgressStructured,
 } from '@farmslot/protocol';
 import {
+  type NativeHistorySnapshot,
+  nativeHistoryStorageId,
   type ResourceQuery,
   resourceQuery,
   type ResourceQueryState,
@@ -23,7 +29,11 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import type { VisualReviewScreenState } from '../features/visual-review/visual-review-controller';
-import { nativeActiveRunsQuery, nativeDecisionsQuery } from '../lib/gateway-run-sync';
+import {
+  nativeActiveRunsQuery,
+  nativeDecisionsQuery,
+  nativeFleetQuery,
+} from '../lib/gateway-run-sync';
 import type { NativeTimelineEntry } from '../lib/native-conversation';
 import type {
   NativeWorkerViewSelection,
@@ -32,6 +42,7 @@ import type {
 import { getResourceCache, getResourceWorkspaceKey } from '../lib/resource-cache';
 import { useConnectionStore } from '../store/connection';
 import { useDecisionStore } from '../store/decisions';
+import { useFleetStore } from '../store/fleet';
 import { useRunStore } from '../store/runs';
 
 import type { FarmslotRecipeUiObserver } from './RecipeBridgeProvider';
@@ -40,6 +51,8 @@ const startedAt = Date.now();
 interface ConversationProofFrame {
   focused: boolean;
   observation: ResourceQueryState<RunGetResult>;
+  historyQuery?: ResourceQuery<NativeHistorySnapshot>;
+  historyObservation: ResourceQueryState<NativeHistorySnapshot>;
   selection: NativeWorkerViewSelection;
   worker?: NativeWorkerViewTarget;
   session?: NativeSessionInfo;
@@ -56,6 +69,8 @@ interface ConversationProofFrame {
   caughtUp: boolean;
   writable: boolean;
   canSend: boolean;
+  resumeAvailable: boolean;
+  resumeReady: boolean;
   busy: boolean;
 }
 const conversationFrames = new Map<string, Set<() => ConversationProofFrame>>();
@@ -101,6 +116,16 @@ interface DiffProofFrame {
 }
 const diffFrames = new Map<string, Set<() => DiffProofFrame>>();
 export interface SlotProofFrame extends DiffProofFrame {
+  // Dev-only render evidence. These fields never fetch or adopt query data.
+  ac4SlotId?: string;
+  ac4Slot?: SlotStatus;
+  ac4ProgressQuery?: ResourceQuery<TaskProgressResult>;
+  ac4Progress?: ResourceQueryState<TaskProgressResult>;
+  ac4RenderedProgress?: TaskProgressStructured;
+  ac4ProgressShown?: boolean;
+  ac4DiffQuery?: ResourceQuery<GitDiffResult>;
+  ac4Diff?: ResourceQueryState<GitDiffResult>;
+  ac4DiffText?: string;
   history?: ResourceQueryState<SlotRunHistoryResult>;
   historyRunIds?: readonly string[];
   historyRuns?: readonly ResourceQueryState<RunGetResult>[];
@@ -208,6 +233,7 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
   if (refs[0] !== 'runs-cache:snapshot' && !detailId) return undefined;
   const runStore = useRunStore.getState();
   const decisionStore = useDecisionStore.getState();
+  const fleetStore = useFleetStore.getState();
   const cache = getResourceCache();
   const conversation =
     detailId && match?.[1] === 'conversation'
@@ -216,6 +242,19 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
           .find((value) => value.focused)
       : undefined;
   const diagnostics = await nativeResourceStoreDiagnostics();
+  const storedFleet = fleetStore.observation.data
+    ? await storedNativeQuery(diagnostics, getResourceWorkspaceKey(), nativeFleetQuery.id)
+    : undefined;
+  const storedHistory = conversation?.historyQuery
+    ? await storedNativeQuery(
+        diagnostics,
+        getResourceWorkspaceKey(),
+        nativeHistoryStorageId(conversation.historyQuery),
+      )
+    : undefined;
+  const historyMessages = conversation?.timeline.filter(
+    (entry) => entry.kind === 'user' || entry.kind === 'assistant',
+  );
   const storedDetail =
     detailId && match?.[1] === 'terminal'
       ? await storedNativeQuery(
@@ -253,6 +292,18 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
         ...(conversation
           ? {
               conversation: {
+                history: {
+                  status: conversation.historyObservation.status,
+                  observedAt: conversation.historyObservation.observedAt,
+                  canonical: Boolean(
+                    conversation.historyQuery &&
+                    conversation.historyObservation === cache?.read(conversation.historyQuery),
+                  ),
+                  stored: storedHistory,
+                  messageCount: historyMessages?.length ?? 0,
+                  firstMessage: historyMessages?.[0]?.text,
+                  lastMessage: historyMessages?.at(-1)?.text,
+                },
                 observation: conversation.observation,
                 canonical:
                   conversation.observation ===
@@ -291,6 +342,8 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
                 caughtUp: conversation.caughtUp,
                 writable: conversation.writable,
                 canSend: conversation.canSend,
+                resumeAvailable: conversation.resumeAvailable,
+                resumeReady: conversation.resumeReady,
                 busy: conversation.busy,
               },
             }
@@ -323,6 +376,15 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
             }
           : {}),
         workspaceKey: getResourceWorkspaceKey(),
+        fleet: {
+          status: fleetStore.observation.status,
+          resourceState: fleetStore.observation.resourceState,
+          observedAt: fleetStore.observation.observedAt,
+          canonical: fleetStore.observation === cache?.read(nativeFleetQuery),
+          projectionMatches: fleetStore.fleet === fleetStore.observation.data?.fleet,
+          data: fleetStore.fleet,
+          stored: storedFleet,
+        },
         storedDetail,
         runsStatus: runStore.observation.status,
         runsObservedAt: runStore.observation.observedAt,
@@ -335,6 +397,50 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
         decisionProjectionMatches: decisionStore.observation === cache?.read(nativeDecisionsQuery),
         ...(slotFrame && detailId
           ? {
+              nativeAc4: {
+                version: 1,
+                focused: slotFrame.focused,
+                runId: slotFrame.run?.id,
+                slotId: slotFrame.ac4SlotId,
+                slot: slotFrame.ac4Slot,
+                slotCanonical: Boolean(
+                  slotFrame.ac4Slot &&
+                  slotFrame.ac4Slot ===
+                    cache
+                      ?.read(nativeFleetQuery)
+                      .data?.fleet.slots.find((slot) => slot.slot === slotFrame.ac4SlotId),
+                ),
+                ...(slotFrame.ac4ProgressQuery
+                  ? {
+                      progress: {
+                        query: {
+                          id: slotFrame.ac4ProgressQuery.id,
+                          method: slotFrame.ac4ProgressQuery.method,
+                          params: slotFrame.ac4ProgressQuery.params,
+                        },
+                        observation: slotFrame.ac4Progress,
+                        canonical:
+                          slotFrame.ac4Progress === cache?.read(slotFrame.ac4ProgressQuery),
+                        rendered: slotFrame.ac4RenderedProgress,
+                        shown: slotFrame.ac4ProgressShown,
+                      },
+                    }
+                  : {}),
+                ...(slotFrame.ac4DiffQuery
+                  ? {
+                      diff: {
+                        query: {
+                          id: slotFrame.ac4DiffQuery.id,
+                          method: slotFrame.ac4DiffQuery.method,
+                          params: slotFrame.ac4DiffQuery.params,
+                        },
+                        observation: slotFrame.ac4Diff,
+                        canonical: slotFrame.ac4Diff === cache?.read(slotFrame.ac4DiffQuery),
+                        text: slotFrame.ac4DiffText,
+                      },
+                    }
+                  : {}),
+              },
               slotProjectionMatches:
                 slotFrame.run ===
                 cache?.read(resourceQuery<RunGetResult>('run.get', { runId: detailId })).data?.run,

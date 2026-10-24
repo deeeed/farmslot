@@ -9,7 +9,7 @@ export type ResourceKey =
   | { family: 'gate' | 'package'; runId: string; decisionId?: string }
   | { family: 'slots'; scope: 'farm'; project?: string; nodeId?: string }
   | { family: 'slot'; slotId: string }
-  | { family: 'node'; scope: 'farm' }
+  | { family: 'node' | 'workers'; scope: 'farm' }
   | { family: 'node' | 'pressure' | 'workers'; nodeId: string }
   | { family: 'review'; runId: string; reviewId?: string }
   | { family: 'artifacts'; runId: string; invocationId?: string }
@@ -17,6 +17,7 @@ export type ResourceKey =
   | { family: 'capabilities'; nodeId?: string; slotId?: string }
   | { family: 'capability'; capabilityId: string }
   | { family: 'workspace'; slotId: string; runId?: string }
+  | { family: 'workspace'; nodeId: string; ownerId: string; sessionId: string; contextId?: string }
   | { family: 'workspace'; nodeId: string; ownerId: string; workspaceId: string }
   | {
       family: 'native-session';
@@ -26,6 +27,7 @@ export type ResourceKey =
       workerId?: string;
     }
   | { family: 'profiles'; nodeId: string; ownerId: string }
+  | { family: 'native-session' | 'profiles'; scope: 'owner'; ownerId: string }
   | { family: 'configuration' | 'pr-automation' | 'analytics'; scope: 'farm'; project?: string }
   | {
       family: 'planning';
@@ -69,6 +71,7 @@ export function resourceKeyId(key: ResourceKey): string {
 /** Busy observations have one gateway publication cadence, shared by all readers. */
 export const RESOURCE_PUBLISH_INTERVAL_MS: Partial<Record<ResourceKey['family'], number>> = {
   workspace: 200,
+  workers: 200,
   progress: 200,
   'native-session': 200,
 };

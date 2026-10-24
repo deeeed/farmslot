@@ -42,6 +42,7 @@ export function nativeNodeDeclaration(
     'supportsEnsure',
     'supportsWorkers',
     'supportsProfiles',
+    'supportsObservations',
     'supportsStructuredResults',
   ] as const) {
     const capability = capabilities[field];

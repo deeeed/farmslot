@@ -5,7 +5,6 @@ import { repeat } from 'lit/directives/repeat.js';
 
 import {
   type ChatMessage,
-  Events,
   Methods,
   type NativeCommandReceipt,
   type NativeProfileInfo,
@@ -19,6 +18,14 @@ import {
   type NativeSessionSendResult,
   type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
+import { sourceObservationAge } from '@farmslot/protocol';
+import {
+  nativeHistoryCanAct,
+  nativeHistoryQuery,
+  nativeObservationQuery,
+  type ResourceQuery,
+  type ResourceQueryState,
+} from '@farmslot/protocol/client-cache';
 import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import '../shared/review-dispatch-picker.js';
@@ -27,6 +34,12 @@ import './native-workspace.js';
 import './native-profiles.js';
 
 import { gateway } from '../../gateway-client.js';
+import {
+  getResourceCache,
+  getResourceNativeOwnerId,
+  getResourceWorkspaceKey,
+  subscribeResourceCache,
+} from '../../resource-cache.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 
 import type { NativeProfileSelection } from './native-profiles.js';
@@ -38,6 +51,7 @@ import {
   nativeTimeline,
   type NativeTranscript,
 } from './native-session-model.js';
+import { observeNativeResource } from './native-session-observation.js';
 import { renderNativeSessionRequest } from './native-session-request.js';
 import { nativeSessionStyles } from './native-session-styles.js';
 import {
@@ -63,6 +77,7 @@ export class NativeSessionView extends LitElement {
   /** Fixture clients are supplied before connection; production always follows gateway authentication. */
   @property({ type: Boolean }) fixture = false;
   @property({ attribute: false }) worker?: NativeWorkerViewTarget;
+  private catalogCurrent = false;
   @state() private catalog?: NativeSessionCatalogResult;
   @state() private sessions: NativeSessionInfo[] = [];
   @state() private session?: NativeSessionInfo;
@@ -105,6 +120,8 @@ export class NativeSessionView extends LitElement {
   @state() private busy = false;
   @state() private error = '';
   @state() private pollError = '';
+  @state() private inventoryError = '';
+  @state() private catalogError = '';
   @state() private workspace = false;
   @state() private fullscreen = false;
   private readonly fullscreenChanged = () => {
@@ -123,11 +140,16 @@ export class NativeSessionView extends LitElement {
   private revision = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private unsubscribe?: () => void;
-  private nodeUnsubscribers: Array<() => void> = [];
-  private inventoryTimer?: ReturnType<typeof setTimeout>;
   private inventoryRevision = 0;
   private storageScope = '';
   private polling = false;
+  private historyStop?: () => void;
+  private inventoryStops: Array<() => void> = [];
+  private ownerStop?: () => void;
+  private historyQuery?: ResourceQuery<NativeSessionReadResult>;
+  @state() private historyObservation: ResourceQueryState<NativeSessionReadResult> = {
+    status: 'loading',
+  };
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
 
@@ -169,7 +191,69 @@ export class NativeSessionView extends LitElement {
   }
 
   private get inputAllowed() {
-    return !this.worker || Boolean(this.workerControl);
+    return this.historyCurrent && (!this.worker || Boolean(this.workerControl));
+  }
+
+  private get historyCurrent() {
+    if (this.fixture) return this.caughtUp;
+    const state = this.historyQuery && getResourceCache()?.read(this.historyQuery);
+    return (
+      nativeHistoryCanAct(state, this.historyObservation.data, this.connected) &&
+      state?.data?.session === this.session
+    );
+  }
+
+  private observeHistory() {
+    this.historyStop?.();
+    this.historyStop = undefined;
+    this.historyQuery = undefined;
+    if (!this.selectedId || this.fixture) return;
+    const owner = getResourceNativeOwnerId();
+    if (!owner) return;
+    const revision = this.revision;
+    const query = nativeHistoryQuery(
+      {
+        sessionId: this.selectedId,
+        executionNodeId: this.selectedNodeId,
+        ...(this.worker ? { worker: nativeWorkerViewPin(this.worker) } : {}),
+      },
+      owner,
+    );
+    this.historyQuery = query;
+    this.historyStop = observeNativeResource(query, (state) => {
+      if (!this.isConnected || revision !== this.revision) return;
+      this.historyObservation = state;
+      const page = state.data;
+      this.session = page?.session;
+      this.transcript = { events: page?.events ?? [], cursor: page?.cursor ?? 0 };
+      this.historyScope = page?.scope;
+      this.receipts = page?.commands ?? [];
+      this.requests = page?.pendingRequests ?? [];
+      this.caughtUp = state.status === 'ready' && !!page && !page.hasMore;
+      this.pollError = state.error?.message ?? '';
+      if (page && this.caughtUp)
+        for (const event of page.events) {
+          if (event.type === 'approval.resolved' && event.request) {
+            safeLsRemove(this.sessionKey(`response:${event.sessionId}:${event.request.id}`));
+            this.responseAttempts = new Set(
+              [...this.responseAttempts].filter((id) => id !== event.request?.id),
+            );
+          }
+        }
+      if (this.caughtUp && page && this.localCommand) {
+        const receipt = page.commands.find(
+          (item) =>
+            item.commandId === this.localCommand?.commandId &&
+            item.generation === this.localCommand?.generation,
+        );
+        if (
+          nativeCommandLockSettled(this.localCommand, page.session.generation, receipt, page.events)
+        ) {
+          safeLsRemove(this.sessionKey(`command:${this.selectedId}`));
+          this.localCommand = undefined;
+        }
+      }
+    });
   }
 
   private get taskHistory() {
@@ -190,21 +274,20 @@ export class NativeSessionView extends LitElement {
     super.connectedCallback();
     document.addEventListener('fullscreenchange', this.fullscreenChanged);
     this.connected = this.fixture || gateway.connectionState === 'connected';
+    if (!this.fixture) {
+      this.ownerStop = subscribeResourceCache(() => {
+        void this.connect();
+      });
+      void this.connect();
+    }
     if (this.fixture) void this.connect();
     else {
-      this.nodeUnsubscribers = [Events.NODE_CONNECTED, Events.NODE_DISCONNECTED].map((event) =>
-        gateway.subscribe(event, () => {
-          clearTimeout(this.inventoryTimer);
-          this.inventoryTimer = setTimeout(() => void this.refreshSessions(), 100);
-        }),
-      );
       this.unsubscribe = gateway.onConnectionChange((status) => {
         this.connected = status === 'connected';
         if (this.connected) void this.connect();
         else {
           this.caughtUp = false;
           clearTimeout(this.timer);
-          clearTimeout(this.inventoryTimer);
           this.inventoryRevision++;
         }
       });
@@ -217,10 +300,11 @@ export class NativeSessionView extends LitElement {
     document.removeEventListener('fullscreenchange', this.fullscreenChanged);
     this.revision++;
     clearTimeout(this.timer);
-    clearTimeout(this.inventoryTimer);
-    this.nodeUnsubscribers.forEach((unsubscribe) => unsubscribe());
-    this.nodeUnsubscribers = [];
     this.unsubscribe?.();
+    this.historyStop?.();
+    this.ownerStop?.();
+    this.inventoryStops.forEach((stop) => stop());
+    this.inventoryStops = [];
   }
 
   private key(suffix: string) {
@@ -249,9 +333,7 @@ export class NativeSessionView extends LitElement {
   }
 
   private async connect() {
-    const scope = this.fixture
-      ? 'fixture'
-      : `${gateway.gatewayUrl}:${gateway.authenticatedPrincipalId}`;
+    const scope = this.fixture ? 'fixture' : (getResourceWorkspaceKey() ?? '');
     if (scope !== this.storageScope) {
       this.storageScope = scope;
       this.revision++;
@@ -312,6 +394,50 @@ export class NativeSessionView extends LitElement {
   }
 
   private async refreshSessions() {
+    if (!this.fixture) {
+      this.inventoryStops.forEach((stop) => stop());
+      this.inventoryStops = [];
+      if (this.worker) {
+        this.observeHistory();
+        return;
+      }
+      const owner = getResourceNativeOwnerId();
+      if (!owner) return;
+      this.inventoryStops.push(
+        observeNativeResource(
+          nativeObservationQuery<NativeSessionListResult>(Methods.NATIVE_SESSION_LIST, {}, owner),
+          (state) => {
+            this.inventoryError = state.error?.message ?? '';
+            this.sessions = (state.data?.sessions ?? [])
+              .filter((session) => !session.workerManaged)
+              .slice()
+              .reverse();
+            this.unavailableNodes = state.data?.unavailableExecutionNodes ?? [];
+          },
+        ),
+      );
+      this.inventoryStops.push(
+        observeNativeResource(
+          nativeObservationQuery<NativeSessionCatalogResult>(
+            Methods.NATIVE_SESSION_CATALOG,
+            {},
+            owner,
+          ),
+          (state) => {
+            this.catalogError = state.error?.message ?? '';
+            this.catalog = state.data;
+            this.catalogCurrent = state.status === 'ready';
+            if (this.catalog)
+              this.executionPicker.setCatalog(catalogForNativeRunners(this.catalog.runners));
+            if (!this.cwd && !this.customCwd && this.catalog) {
+              this.cwd = this.catalog.contexts[0]?.cwd ?? '';
+              this.executionNodeId = this.catalog.contexts[0]?.executionNodeId ?? 'local';
+            }
+          },
+        ),
+      );
+      return;
+    }
     if (this.worker) {
       this.schedule(0);
       return;
@@ -366,7 +492,11 @@ export class NativeSessionView extends LitElement {
     }
   }
 
-  private schedule(delay = 1000) {
+  private schedule(delay = 0) {
+    if (!this.fixture) {
+      this.observeHistory();
+      return;
+    }
     clearTimeout(this.timer);
     if (this.isConnected && this.connected) this.timer = setTimeout(() => void this.poll(), delay);
   }
@@ -458,7 +588,7 @@ export class NativeSessionView extends LitElement {
       }
     } finally {
       this.polling = false;
-      this.schedule(this.caughtUp ? 1000 : 300);
+      // Fixture previews drain on explicit events only; production observes the shared cache.
     }
   }
 
@@ -473,6 +603,7 @@ export class NativeSessionView extends LitElement {
     this.session = undefined;
     this.transcript = { events: [], cursor: 0 };
     this.historyScope = undefined;
+    this.historyObservation = { status: 'loading' };
     this.receipts = [];
     this.requests = [];
     this.caughtUp = false;
@@ -488,7 +619,13 @@ export class NativeSessionView extends LitElement {
   }
 
   private async create(resume?: NativeSessionInfo) {
-    if (this.worker) return;
+    if (
+      this.worker ||
+      !this.connected ||
+      (resume && !this.historyCurrent) ||
+      (!resume && !this.fixture && !this.catalogCurrent)
+    )
+      return;
     if (
       !resume &&
       (!this.profileReady || (this.profile && this.profileNodeId !== this.executionNodeId))
@@ -644,6 +781,10 @@ export class NativeSessionView extends LitElement {
       !this.connected ||
       !this.inputAllowed ||
       !this.caughtUp ||
+      !this.requests.some(
+        (current) =>
+          current.request?.id === event.request?.id && current.generation === event.generation,
+      ) ||
       event.generation !== this.session?.generation ||
       !!event.responseState ||
       this.responseAttempts.has(event.request?.id ?? '') ||
@@ -692,6 +833,21 @@ export class NativeSessionView extends LitElement {
       ['closed', 'failed'].includes(session.state) &&
       (!session.processPid || session.processStopped);
     return html`
+      ${this.historyObservation.status === 'stale' &&
+      this.historyObservation.observedAt !== undefined
+        ? html`<p
+            role="status"
+            data-testid="native-history-saved"
+            data-observed-at=${this.historyObservation.observedAt}
+          >
+            Saved conversation history,
+            ${sourceObservationAge(this.historyObservation.observedAt, Date.now())}. Actions wait
+            for a current read.
+          </p>`
+        : nothing}
+      ${this.historyObservation.status === 'unsupported'
+        ? html`<p role="status">Live conversation updates are unavailable on this gateway.</p>`
+        : nothing}
       ${renderNativeSessionHeader({
         worker: this.worker,
         sessions: this.sessions,
@@ -709,10 +865,22 @@ export class NativeSessionView extends LitElement {
         requestCount: this.requests.length,
         sessionChoice: (item) => this.sessionChoice(item),
         select: (id, node) => this.select(id, node),
+        readError: this.pollError || this.inventoryError || this.catalogError,
         refresh: () => {
-          this.error = '';
-          void this.refreshSessions();
-          this.schedule(0);
+          const cache = getResourceCache();
+          const owner = getResourceNativeOwnerId();
+          if (!cache || !owner) return;
+          const queries = this.historyQuery
+            ? [this.historyQuery]
+            : [
+                nativeObservationQuery(Methods.NATIVE_SESSION_LIST, {}, owner),
+                nativeObservationQuery(Methods.NATIVE_SESSION_CATALOG, {}, owner),
+              ];
+          void Promise.all(
+            queries.filter((query) => cache.read(query).error).map((query) => cache.retry(query)),
+          ).catch((cause) => {
+            this.error = cause instanceof Error ? cause.message : String(cause);
+          });
         },
         toggleWorkspace: () => {
           this.workspace = !this.workspace;
@@ -720,6 +888,12 @@ export class NativeSessionView extends LitElement {
       })}
       ${this.error ? html`<div class="error" role="alert">${this.error}</div>` : nothing}
       ${this.pollError ? html`<div class="error" role="alert">${this.pollError}</div>` : nothing}
+      ${this.inventoryError
+        ? html`<div class="error" role="alert">${this.inventoryError}</div>`
+        : nothing}
+      ${this.catalogError
+        ? html`<div class="error" role="alert">${this.catalogError}</div>`
+        : nothing}
       ${this.worker && !this.inputAllowed
         ? html`<p class="meta" data-testid="native-worker-read-only">
             ${this.taskHistory
@@ -860,6 +1034,7 @@ export class NativeSessionView extends LitElement {
                 class="primary"
                 data-testid="native-create"
                 ?disabled=${!this.connected ||
+                (!this.fixture && !this.catalogCurrent) ||
                 this.busy ||
                 !this.cwd.trim() ||
                 !this.runner ||
@@ -1043,7 +1218,7 @@ ${JSON.stringify(
                       ${canResume
                         ? html`<button
                             data-testid="native-resume"
-                            ?disabled=${!this.connected || this.busy}
+                            ?disabled=${!this.connected || !this.historyCurrent || this.busy}
                             @click=${() => this.create(session)}
                           >
                             Resume conversation

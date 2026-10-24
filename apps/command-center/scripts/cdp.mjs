@@ -12,6 +12,7 @@
 //   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
 //   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
 //   node scripts/cdp.mjs click <hash> <selector>       Click a control, searching shadow roots.
+//   node scripts/cdp.mjs click <hash> <selector> --allow-disabled  Send real pointer input to a disabled control for stale-action proofs.
 //   node scripts/cdp.mjs click <hash> <selector> --observe-file <path>  Read a probe immediately after the real click.
 //   node scripts/cdp.mjs key <hash> <1-9|Enter|Escape|Tab> Send a real key to the focused control.
 //   node scripts/cdp.mjs select <hash> <selector> <value> Choose a styled choice or native select option.
@@ -384,7 +385,14 @@ async function screenshotTab(hash, outputPath, options) {
   }
 }
 
-async function clickInTab(hash, selector, dialogChoice, expectedDialog, observationSource) {
+async function clickInTab(
+  hash,
+  selector,
+  dialogChoice,
+  expectedDialog,
+  observationSource,
+  allowDisabled = false,
+) {
   const tab = await findTab(hash);
   if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
   let dialog, dialogResult, dialogError;
@@ -421,11 +429,21 @@ async function clickInTab(hash, selector, dialogChoice, expectedDialog, observat
           if (index < parts.length-1) root=element?.shadowRoot;
         }
         if(!element) throw Error('Click target unavailable: missing');
-        if(element.disabled) throw Error('Click target unavailable: disabled');
+        if(element.disabled && !${JSON.stringify(allowDisabled)}) throw Error('Click target unavailable: disabled');
         element.scrollIntoView({block:'center'});
         if(!element.getClientRects().length) throw Error('Click target unavailable: hidden');
         const rect=element.getBoundingClientRect();
-        return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};
+        const x=rect.x+rect.width/2,y=rect.y+rect.height/2;
+        if(${JSON.stringify(allowDisabled)}) {
+          let hit=document.elementFromPoint(x,y);
+          while(hit?.shadowRoot) {
+            const nested=hit.shadowRoot.elementFromPoint(x,y);
+            if(!nested || nested===hit) break;
+            hit=nested;
+          }
+          if(hit!==element && !element.contains(hit)) throw Error('Click target unavailable: covered or clipped');
+        }
+        return {x,y};
       })()`,
         returnByValue: true,
       });
@@ -462,7 +480,7 @@ async function clickInTab(hash, selector, dialogChoice, expectedDialog, observat
         );
       return { clicked: selector, clickedAt, observation: observed.result.value };
     }
-    return { clicked: selector };
+    return { clicked: selector, ...(allowDisabled ? { disabledTargetAllowed: true } : {}) };
   } finally {
     close();
   }
@@ -711,12 +729,24 @@ try {
           ? 'dismiss'
           : undefined;
     const observe = dialogFlag === '--observe-file';
-    if (dialogFlag && ((!dialogChoice && !observe) || expectedDialog === undefined))
+    const allowDisabled = dialogFlag === '--allow-disabled';
+    if (
+      dialogFlag &&
+      !allowDisabled &&
+      ((!dialogChoice && !observe) || expectedDialog === undefined)
+    )
       die('click dialog option requires an exact expected message');
     const observationSource = observe ? readFileSync(resolve(expectedDialog), 'utf8') : undefined;
     console.log(
       JSON.stringify(
-        await clickInTab(hash, selector, dialogChoice, expectedDialog, observationSource),
+        await clickInTab(
+          hash,
+          selector,
+          dialogChoice,
+          expectedDialog,
+          observationSource,
+          allowDisabled,
+        ),
         null,
         2,
       ),

@@ -1,0 +1,121 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native fleet, slots and saved conversations after a cold start",
+  "description": "The proof controller owns the already booted reserved iOS simulator, compatible cached app, fresh app profile, one Metro and one private gateway. Run dry-preflight and retain its input-hashed plan first. The root-started passive method-counting proxy stays alive across the single app cold restart and gateway outage. Setup CLOSED source journals are fixtures; no provider runs and no UI/cache data is injected. The helper reuses the existing device session and committed owned-gateway outage and dev-client readiness helpers. It never boots a simulator, reseeds a profile, starts services or records video. A failed attempt is retained and requires root disposition. Params are deliberately absent; private fixture identities and paths come from the checked plan. The private setup pool and existing fleet.status projection prove live slot membership, exact cold fleet data and age, and the saved slot screen during the same intentional app restart.",
+  "proofTargets": [
+    {
+      "id": "native-store-retention",
+      "claim": "Twelve genuine session routes warm canonical current histories; actual Expo SQLite retains exactly the last ten sessions, each with 200 complete messages and original observation times."
+    },
+    {
+      "id": "native-store-cold-age",
+      "claim": "One offline app restart restores the selected standalone session, cursor and 200 complete messages with exact SQLite age, a new JS runtime and visible saved-age caption."
+    },
+    {
+      "id": "native-store-disabled-resume",
+      "claim": "Actual stale Resume remains visible and accessibility-disabled; a real point tap sends no native command RPC, including failed requests, through the passive counting proxy."
+    },
+    {
+      "id": "native-store-recovery",
+      "claim": "The owned gateway recovers to current history without a second app restart, command replay or changes to the setup CLOSED journals."
+    },
+    {
+      "id": "native-fleet-live",
+      "claim": "An independent setup pool writer updates the open native fleet without Refresh."
+    },
+    {
+      "id": "native-fleet-cold",
+      "claim": "A new offline app process renders saved fleet and slot facts with exact SQLite observation time and visible age."
+    },
+    {
+      "id": "native-slot-cold",
+      "claim": "The same configured slot opens from its saved fleet data while the gateway is offline."
+    }
+  ],
+  "workflow": {
+    "entry": "native-ready",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-native-store.mjs prove",
+        "timeout_ms": 1200000,
+        "intent": "Prove native histories, cold age, disabled Resume and recovery on the owned app.",
+        "next": "retention"
+      },
+      "retention": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeStoreWarmRetention\":true",
+        "intent": "Inspect twelve opened histories and ten saved, complete SQLite entries.",
+        "proves": ["native-store-retention"],
+        "next": "cold-age"
+      },
+      "cold-age": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeStoreColdAge\":true",
+        "intent": "Restore the exact saved history and age in a new offline app runtime.",
+        "proves": ["native-store-cold-age"],
+        "next": "disabled-resume"
+      },
+      "disabled-resume": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeStoreDisabledResumeNoRpc\":true",
+        "intent": "Tap disabled native Resume and verify no command RPC, including failed requests.",
+        "proves": ["native-store-disabled-resume"],
+        "next": "recovery"
+      },
+      "recovery": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeStoreRecoveryNoReplay\":true",
+        "intent": "Recover current history without a second restart or replayed command.",
+        "proves": ["native-store-recovery"],
+        "next": "native-fleet-live"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "native-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-native",
+        "timeout_ms": 30000,
+        "intent": "Attach one owned device session to the already launched native screen.",
+        "next": "prove"
+      },
+      "native-fleet-live": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeFleetLiveWriter\":true",
+        "intent": "An independent setup pool writer updates the open native fleet without Refresh.",
+        "proves": ["native-fleet-live"],
+        "next": "native-fleet-cold"
+      },
+      "native-fleet-cold": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeFleetColdAge\":true",
+        "intent": "A new offline app process renders saved fleet and slot facts with exact SQLite observation time and visible age.",
+        "proves": ["native-fleet-cold"],
+        "next": "native-slot-cold"
+      },
+      "native-slot-cold": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeSlotColdView\":true",
+        "intent": "The same configured slot opens from its saved fleet data while the gateway is offline.",
+        "proves": ["native-slot-cold"],
+        "next": "done"
+      }
+    }
+  }
+}

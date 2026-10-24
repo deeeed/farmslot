@@ -24,9 +24,14 @@ export class FileTree extends LitElement {
   @property({ attribute: false }) gitStatus: Map<string, GitChangeStatus> = new Map();
   @state() private expandedPaths = new Set<string>();
   @property() selectedPath = '';
+  @property({ type: Boolean }) actionsDisabled = false;
   @state() private _ctxMenu: { x: number; y: number; entry: FileEntry } | null = null;
 
   static styles = css`
+    .ctx-item[aria-disabled='true'] {
+      opacity: 0.5;
+      cursor: default;
+    }
     :host {
       display: block;
       font-family: ${unsafeCSS(fonts.mono)};
@@ -222,6 +227,8 @@ export class FileTree extends LitElement {
   }
 
   private _ctxAction(action: string) {
+    if (this.actionsDisabled && ['new-file', 'new-folder', 'rename', 'delete'].includes(action))
+      return;
     if (!this._ctxMenu) return;
     const entry = this._ctxMenu.entry;
     this._ctxMenu = null;
@@ -319,17 +326,41 @@ export class FileTree extends LitElement {
       <div class="ctx-menu" style="left:${x}px; top:${y}px">
         ${isDir
           ? html`
-              <div class="ctx-item" @click=${() => this._ctxAction('new-file')}>New File Here</div>
-              <div class="ctx-item" @click=${() => this._ctxAction('new-folder')}>New Folder</div>
+              <div
+                class="ctx-item"
+                aria-disabled=${this.actionsDisabled}
+                @click=${() => this._ctxAction('new-file')}
+              >
+                New File Here
+              </div>
+              <div
+                class="ctx-item"
+                aria-disabled=${this.actionsDisabled}
+                @click=${() => this._ctxAction('new-folder')}
+              >
+                New Folder
+              </div>
               <div class="ctx-item" @click=${() => this._ctxAction('pin-folder')}>Pin Folder</div>
               <div class="ctx-sep"></div>
             `
           : ''}
-        <div class="ctx-item" @click=${() => this._ctxAction('rename')}>Rename</div>
+        <div
+          class="ctx-item"
+          aria-disabled=${this.actionsDisabled}
+          @click=${() => this._ctxAction('rename')}
+        >
+          Rename
+        </div>
         <div class="ctx-item" @click=${() => this._ctxAction('copy-path')}>Copy Path</div>
         <div class="ctx-item" @click=${() => this._ctxAction('reveal')}>Reveal in Finder</div>
         <div class="ctx-sep"></div>
-        <div class="ctx-item danger" @click=${() => this._ctxAction('delete')}>Delete</div>
+        <div
+          class="ctx-item danger"
+          aria-disabled=${this.actionsDisabled}
+          @click=${() => this._ctxAction('delete')}
+        >
+          Delete
+        </div>
       </div>
     `;
   }

@@ -141,6 +141,9 @@ export class ResourceStoreWorkerClient {
       async putQuery(entry) {
         if (available()) await request({ operation: 'putQuery', handle, entry });
       },
+      async touchQuery(key, accessedAt) {
+        if (available()) await request({ operation: 'touchQuery', handle, key, accessedAt });
+      },
       async deleteQuery(key) {
         if (available()) await request({ operation: 'deleteQuery', handle, key });
       },

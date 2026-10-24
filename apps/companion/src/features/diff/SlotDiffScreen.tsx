@@ -1,5 +1,5 @@
 import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -28,7 +28,7 @@ import {
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
-import { getResourceCache, getResourceWorkspaceKey } from '../../lib/resource-cache';
+import { getResourceCache } from '../../lib/resource-cache';
 import {
   selectSlotCompareTarget,
   selectSlotRecipeArtifactsForPreviewScope,
@@ -54,13 +54,6 @@ import { useSlotWorkspaceTabs } from '../workspace-shared/slot-workspace-tabs';
 import { routeParamString, SlotDiffCockpit } from './components/slot-diff-panels';
 import { slotDiffStyles as styles } from './styles/slot-diff.styles';
 
-interface SlotDiffRead {
-  key: string;
-  diff: string;
-  loading: boolean;
-  error?: string;
-}
-
 export default function SlotDiffViewerScreen() {
   const { slotId, path, workspace, decisionKind } = useLocalSearchParams<{
     slotId: string;
@@ -71,7 +64,6 @@ export default function SlotDiffViewerScreen() {
   const router = useRouter();
   const focused = useIsFocused();
   const insideSlotWorkspaceTabs = useSlotWorkspaceTabs();
-  const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const slot = useFleetStore((s) => s.fleet?.slots.find((entry) => entry.slot === slotId));
@@ -104,20 +96,29 @@ export default function SlotDiffViewerScreen() {
   const recipeObservation = useResourceQuery(recipeQuery);
   const recipeRuns = recipeObservation.data?.recipeRuns ?? [];
   const recipeRunsLoaded = Boolean(recipeObservation.data);
-  const workspaceKey = getResourceWorkspaceKey();
-  const [diffRead, setDiffRead] = useState<SlotDiffRead>();
-  const diffScope = JSON.stringify([workspaceKey, slotId, currentRunId]);
-  const currentDiff = diffRead?.key === diffScope ? diffRead : undefined;
-  const diffText = currentDiff?.diff ?? '';
-  const loading = currentDiff?.loading ?? false;
-  const error = currentDiff?.error ?? null;
+  const diffQuery = useMemo(
+    () =>
+      slotId
+        ? resourceQuery<GitDiffResult>(Methods.GIT_DIFF, {
+            slotId,
+            ...(currentRunId ? { runId: currentRunId } : {}),
+          })
+        : undefined,
+    [slotId, currentRunId],
+  );
+  const diffObservation = useResourceQuery(diffQuery);
+  const diffText = diffObservation.data?.diff ?? '';
+  const loading = diffObservation.status === 'loading';
+  const error = diffObservation.error?.message;
   const readError =
+    diffObservation.error?.message ??
     slotRunObservation.error?.message ??
     runObservation.error?.message ??
     recipeObservation.error?.message;
   const retryRead = async () => {
     const cache = getResourceCache();
     const queries: Array<ResourceQuery<unknown> | undefined> = [
+      diffQuery,
       slotRunQuery,
       runQuery,
       recipeQuery,
@@ -128,13 +129,30 @@ export default function SlotDiffViewerScreen() {
         .map((query) => cache?.retry(query!)),
     );
   };
-  const frame = useRef({ focused, run: currentRun, recipes: recipeObservation });
-  frame.current = { focused, run: currentRun, recipes: recipeObservation };
+  const frame = useRef({
+    focused,
+    run: currentRun,
+    recipes: recipeObservation,
+    ac4SlotId: slotId,
+    ac4Slot: slot,
+    ac4DiffQuery: diffQuery,
+    ac4Diff: diffObservation,
+    ac4DiffText: diffText,
+  });
+  frame.current = {
+    focused,
+    run: currentRun,
+    recipes: recipeObservation,
+    ac4SlotId: slotId,
+    ac4Slot: slot,
+    ac4DiffQuery: diffQuery,
+    ac4Diff: diffObservation,
+    ac4DiffText: diffText,
+  };
   useEffect(() => {
     if (__DEV__ && currentRunId)
       return observeNativeSlotFrame('slot-diff', currentRunId, () => frame.current);
   }, [currentRunId]);
-  const diffRefreshRequestRef = useRef(0);
 
   const pathParamError = Array.isArray(path) ? 'Only one diff path can be opened at a time.' : null;
   const requestedPath = !pathParamError && typeof path === 'string' ? path.trim() : '';
@@ -155,72 +173,6 @@ export default function SlotDiffViewerScreen() {
     () => targetWorkspaceRouteContextParams('compare', workspaceRouteContext.decisionKind),
     [workspaceRouteContext.decisionKind],
   );
-
-  const refreshDiff = useCallback(
-    async (reason: string, reset: boolean) => {
-      const requestId = diffRefreshRequestRef.current + 1;
-      diffRefreshRequestRef.current = requestId;
-      if (
-        !client ||
-        client.connectionState !== 'connected' ||
-        !slotId ||
-        pathParamError ||
-        (currentRunId && runObservation.status !== 'ready') ||
-        slotRunObservation.status !== 'ready'
-      ) {
-        setDiffRead((previous) =>
-          previous?.key === diffScope ? { ...previous, loading: false } : undefined,
-        );
-        return;
-      }
-
-      setDiffRead((previous) => ({
-        key: diffScope,
-        diff: previous?.key === diffScope ? previous.diff : '',
-        loading: reset,
-      }));
-      const generation = client.connectionGeneration;
-      const current = () =>
-        diffRefreshRequestRef.current === requestId &&
-        workspaceKey === getResourceWorkspaceKey() &&
-        generation === client.connectionGeneration;
-      try {
-        const result = await client.request<GitDiffResult>(Methods.GIT_DIFF, { slotId });
-        if (!current()) return;
-        setDiffRead({ key: diffScope, diff: result.diff, loading: false });
-      } catch (err) {
-        if (!current()) return;
-        setDiffRead({
-          key: diffScope,
-          diff: '',
-          loading: false,
-          error: `Failed to refresh live workspace diff after ${reason}: ${(err as Error).message}`,
-        });
-      } finally {
-        if (diffRefreshRequestRef.current === requestId)
-          setDiffRead((previous) =>
-            previous?.key === diffScope ? { ...previous, loading: false } : previous,
-          );
-      }
-    },
-    [
-      client,
-      currentRunId,
-      pathParamError,
-      slotId,
-      runObservation.status,
-      slotRunObservation.status,
-      diffScope,
-      workspaceKey,
-    ],
-  );
-
-  useEffect(() => {
-    void refreshDiff('initial load', true);
-    return () => {
-      diffRefreshRequestRef.current++;
-    };
-  }, [refreshDiff, requestedPath]);
 
   const goBackOrSlot = useCallback(() => {
     if (router.canGoBack()) {
@@ -378,6 +330,7 @@ export default function SlotDiffViewerScreen() {
             />
           </View>
         ) : null}
+        <ResourceReadStatus observation={diffObservation} label="workspace diff" />
         {pathParamError || error ? (
           <Text style={styles.errorText}>{pathParamError ?? error}</Text>
         ) : null}

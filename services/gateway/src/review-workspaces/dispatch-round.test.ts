@@ -15,6 +15,11 @@ after(() => {
 // can load the pipeline through it.
 mock.module('./task.js', {
   namedExports: {
+    reviewWorkspaceProgressLocation: async () => ({
+      io: { host: 'localhost', machine: 'local', sshTarget: '' },
+      taskDir: '/owned/task',
+      checklistPath: '/owned/task/CHECKLIST.md',
+    }),
     materializeReviewWorkspaceTask: async () => ({
       prompt: 'Review the frozen head.',
       taskFile: '/owned/task/TASK.md',

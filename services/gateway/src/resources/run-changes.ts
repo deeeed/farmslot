@@ -3,6 +3,7 @@ import type { Run } from '@farmslot/protocol';
 import { completedDecisionExpiresAt, type RunDecisionInboxRecord } from '../runs/decision-inbox.js';
 
 import { resourceRevisions } from './revisions.js';
+import { publishWorkerResources } from './worker-changes.js';
 
 interface RunResourceRecord extends Pick<Run, 'id'>, RunDecisionInboxRecord {
   familyId?: Run['familyId'];
@@ -53,6 +54,7 @@ export function publishRunResources(
     { family: 'decisions', scope: 'farm' },
     kind === 'deleted' ? undefined : current.decisionExpiresAt,
   );
+  publishWorkerResources(undefined, revisions);
   revisions.advance({ family: 'runs', scope: 'farm' });
   revisions.advance({ family: 'run', runId: current.id }, kind);
   revisions.advance({ family: 'decisions', scope: 'farm' });

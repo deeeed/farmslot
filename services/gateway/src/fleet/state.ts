@@ -55,6 +55,7 @@ import {
   statusCheckedAt,
   statusSlotResources,
 } from '../resources/slot-run-bindings.js';
+import { publishWorkerResources } from '../resources/worker-changes.js';
 
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
 import { getActiveResources, getCachedSlotResources } from './resource-manager.js';
@@ -734,6 +735,7 @@ export function startFileWatcher() {
   poolWatcher.on('all', (event, file) => {
     if (file === poolDir || !['add', 'change', 'unlink'].includes(event)) return;
     capabilityResourceChanges.catalogChanged();
+    publishWorkerResources();
     clearTimeout(poolDebounce);
     poolDebounce = setTimeout(async () => {
       try {
@@ -783,6 +785,7 @@ export function startFileWatcher() {
     if (path.basename(file) !== 'project.json' && path.dirname(file) !== runtimeSettingsDir) return;
     invalidateProjectVarsCache(project);
     capabilityResourceChanges.catalogChanged();
+    publishWorkerResources();
   });
   return {
     ready: Promise.all([

@@ -142,6 +142,7 @@ export class GitChanges extends LitElement {
   @property({ attribute: false }) changes: GitChange[] = [];
   @property({ attribute: false }) committedFiles: BranchDiffFile[] = [];
   @property() branch = '';
+  @property({ type: Boolean }) actionsDisabled = false;
   @property({ type: Number }) ahead = 0;
   @property({ type: Number }) behind = 0;
   @property() branchDiffBase = '';
@@ -473,6 +474,10 @@ export class GitChanges extends LitElement {
   }
 
   private _stage(path: string, e: Event) {
+    if (this.actionsDisabled) {
+      e.stopPropagation();
+      return;
+    }
     e.stopPropagation();
     this.dispatchEvent(
       new CustomEvent('git-stage', {
@@ -484,6 +489,10 @@ export class GitChanges extends LitElement {
   }
 
   private _unstage(path: string, e: Event) {
+    if (this.actionsDisabled) {
+      e.stopPropagation();
+      return;
+    }
     e.stopPropagation();
     this.dispatchEvent(
       new CustomEvent('git-unstage', {
@@ -495,6 +504,10 @@ export class GitChanges extends LitElement {
   }
 
   private _discard(path: string, e: Event) {
+    if (this.actionsDisabled) {
+      e.stopPropagation();
+      return;
+    }
     e.stopPropagation();
     if (this._confirmDiscard === path) {
       this._confirmDiscard = '';
@@ -667,6 +680,7 @@ export class GitChanges extends LitElement {
           ? html`<span class="file-actions">
               ${wtStaged
                 ? html`<button
+                    ?disabled=${this.actionsDisabled}
                     class="file-action-btn"
                     title="Unstage"
                     @click=${(e: Event) => this._unstage(f.path, e)}
@@ -676,6 +690,7 @@ export class GitChanges extends LitElement {
                 : nothing}
               ${wtUnstaged
                 ? html`<button
+                      ?disabled=${this.actionsDisabled}
                       class="file-action-btn"
                       title="Stage"
                       @click=${(e: Event) => this._stage(f.path, e)}
@@ -683,6 +698,7 @@ export class GitChanges extends LitElement {
                       +
                     </button>
                     <button
+                      ?disabled=${this.actionsDisabled}
                       class="file-action-btn danger ${this._confirmDiscard === f.path
                         ? 'confirming'
                         : ''}"
@@ -757,6 +773,7 @@ export class GitChanges extends LitElement {
           ${group === 'staged'
             ? html`
                 <button
+                  ?disabled=${this.actionsDisabled}
                   class="file-action-btn"
                   title="Unstage"
                   @click=${(e: Event) => this._unstage(c.path, e)}
@@ -766,6 +783,7 @@ export class GitChanges extends LitElement {
               `
             : html`
                 <button
+                  ?disabled=${this.actionsDisabled}
                   class="file-action-btn"
                   title="Stage"
                   @click=${(e: Event) => this._stage(c.path, e)}
@@ -776,6 +794,7 @@ export class GitChanges extends LitElement {
           ${group !== 'staged'
             ? html`
                 <button
+                  ?disabled=${this.actionsDisabled}
                   class="file-action-btn danger ${this._confirmDiscard === c.path
                     ? 'confirming'
                     : ''}"

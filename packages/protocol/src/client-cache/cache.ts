@@ -1,6 +1,13 @@
+import type { NativeSessionReadResult, NativeSessionTargetParams } from '../rpc/native-session.js';
+import { Methods } from '../rpc/registry.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
 import { resourceKeyId, type ResourceReadStamp } from './keys.js';
+import {
+  nativeHistoryStorageId,
+  readNativeHistory,
+  storedNativeHistoryMatches,
+} from './native-history.js';
 import type { ResourceQuery } from './registry.js';
 import {
   createMemoryResourceStore,
@@ -19,6 +26,7 @@ import type {
   ResourceQueryError,
   ResourceQueryState,
 } from './types.js';
+import { workspaceRetentionEvictions } from './workspace-retention.js';
 
 interface PendingRead {
   version: number;
@@ -445,7 +453,9 @@ export function createGatewayResourceCache(
       const ownerVersion = hydrationOwnerVersion;
       const readingStore = store;
       try {
-        const saved = query.persisted ? await readingStore.getQuery(query.id) : undefined;
+        const saved = query.persisted
+          ? await readingStore.getQuery(nativeHistoryStorageId(query))
+          : undefined;
         if (
           !disposed &&
           !readingStore.deleted &&
@@ -455,7 +465,9 @@ export function createGatewayResourceCache(
           entry.hydrationSerial === hydrationSerial &&
           entry.state.status !== 'ready' &&
           saved &&
-          saved.bytes <= query.maxBytes
+          saved.bytes <= query.maxBytes &&
+          (query.method !== Methods.NATIVE_SESSION_READ ||
+            storedNativeHistoryMatches(query.params as NativeSessionTargetParams, saved.data))
         ) {
           entry.state = { status: 'stale', data: saved.data, observedAt: saved.observedAt };
           notify(entry);
@@ -501,6 +513,38 @@ export function createGatewayResourceCache(
       (observedOnly && !entry.listeners.size)
     )
       return;
+    if (
+      entry.query.requiresWorkspaceRead &&
+      connection.capabilities?.resourceChanges?.workspaceReads !== 1
+    ) {
+      entry.state = {
+        ...entry.state,
+        status: 'unsupported',
+        error: {
+          code: 'RESOURCE_OBSERVATION_UNSUPPORTED',
+          message: 'This gateway cannot observe mutable workspace sources.',
+        },
+      };
+      entry.dirty = false;
+      notify(entry);
+      return;
+    }
+    if (
+      entry.query.requiresObservedRead &&
+      connection.capabilities?.resourceChanges?.observedReads !== 1
+    ) {
+      entry.state = {
+        ...entry.state,
+        status: 'unsupported',
+        error: {
+          code: 'RESOURCE_OBSERVATION_UNSUPPORTED',
+          message: 'This gateway does not verify node observation admission.',
+        },
+      };
+      entry.dirty = false;
+      notify(entry);
+      return;
+    }
     if (entry.pending?.version === version) return entry.pending.promise;
     const pending: PendingRead = {
       version,
@@ -521,11 +565,24 @@ export function createGatewayResourceCache(
     notify(entry);
     pending.promise = (async () => {
       try {
-        const reply = await transport.request(
-          entry.query.method,
-          entry.query.params,
-          pending.controller.signal,
-        );
+        const reply =
+          entry.query.method === Methods.NATIVE_SESSION_READ
+            ? await readNativeHistory(
+                entry.query.params as NativeSessionTargetParams,
+                entry.state.data as NativeSessionReadResult | undefined,
+                (params, signal) =>
+                  transport.request<NativeSessionReadResult>(
+                    Methods.NATIVE_SESSION_READ,
+                    params,
+                    signal,
+                  ),
+                pending.controller.signal,
+              )
+            : await transport.request(
+                entry.query.method,
+                entry.query.params,
+                pending.controller.signal,
+              );
         if (
           disposed ||
           store.deleted ||
@@ -569,9 +626,10 @@ export function createGatewayResourceCache(
           bytes <= entry.query.maxBytes &&
           (!retention || bytes <= retention.maxBytes)
             ? {
-                id: entry.query.id,
+                id: nativeHistoryStorageId(entry.query),
                 data: JSON.parse(serialized),
                 observedAt,
+                accessedAt: Date.now(),
                 bytes,
               }
             : undefined;
@@ -590,10 +648,30 @@ export function createGatewayResourceCache(
         if (persistResult && current()) {
           await updateStore(writingStore, current, async () => {
             if (!saved) {
-              await writingStore.deleteQuery(entry.query.id);
+              await writingStore.deleteQuery(nativeHistoryStorageId(entry.query));
               return;
             }
-            if (retention) {
+            if (retention?.cohort === 'workspace') {
+              const contentBytes = (await writingStore.byteTotals()).content;
+              const budget = options.contentBudgetBytes ?? 500 * 1024 * 1024;
+              if (!current()) return;
+              if (saved.bytes + contentBytes > budget) {
+                await writingStore.deleteQuery(saved.id);
+                return;
+              }
+              const victims = workspaceRetentionEvictions(
+                entry.query,
+                saved,
+                await writingStore.listQueries(),
+                budget,
+                contentBytes,
+              );
+              if (!current()) return;
+              for (const id of victims) {
+                await writingStore.deleteQuery(id);
+                if (!current()) return;
+              }
+            } else if (retention) {
               const previous = (await writingStore.listQueries())
                 .filter(
                   (value) => value.id !== saved.id && value.id.startsWith(`${entry.query.method}:`),
@@ -626,7 +704,10 @@ export function createGatewayResourceCache(
         )
           return;
         const failure = queryError(error);
-        entry.dirty = false;
+        // An intervening write still needs one read after failed I/O. Terminal
+        // refusals retire that work; an unchanged failed source never retries.
+        entry.dirty &&=
+          !evictionCodes.has(failure.code) && failure.code !== 'RESOURCE_OBSERVATION_UNSUPPORTED';
         if (evictionCodes.has(failure.code)) {
           const evictingStore = store;
           const evictingIncarnation = storeVersion;
@@ -638,7 +719,7 @@ export function createGatewayResourceCache(
               evictingStore === store &&
               evictingIncarnation === storeVersion &&
               !evictingStore.deleted,
-            () => evictingStore.deleteQuery(entry.query.id),
+            () => evictingStore.deleteQuery(nativeHistoryStorageId(entry.query)),
           );
           notify(entry);
           await eviction;
@@ -652,7 +733,12 @@ export function createGatewayResourceCache(
         } else
           entry.state = {
             ...entry.state,
-            status: entry.state.data === undefined ? 'error' : 'stale',
+            status:
+              failure.code === 'RESOURCE_OBSERVATION_UNSUPPORTED'
+                ? 'unsupported'
+                : entry.state.data === undefined
+                  ? 'error'
+                  : 'stale',
             error: failure,
           };
         notify(entry);
@@ -673,6 +759,44 @@ export function createGatewayResourceCache(
       const entry = entryFor(query);
       const receive = (state: ResourceQueryState) => listener(state as ResourceQueryState<T>);
       entry.listeners.add(receive);
+      if (query.retention?.cohort === 'workspace') {
+        const bindingVersion = version;
+        const sessionId = connection.id;
+        const hydrationVersion = hydrationOwnerVersion;
+        const entryQuery = entry.query;
+        const accessedAt = Date.now();
+        const sameBinding = () =>
+          !disposed &&
+          connection.id === sessionId &&
+          version === bindingVersion &&
+          hydrationOwnerVersion === hydrationVersion &&
+          entries.get(query.id) === entry &&
+          entry.query === entryQuery;
+        const touch = async () => {
+          // Let cold hydration establish the saved authority before selecting the store to touch.
+          await entry.hydration;
+          if (!sameBinding()) return;
+          const accessedStore = store;
+          const incarnation = storeVersion;
+          const authority = metadata;
+          const current = () =>
+            sameBinding() &&
+            metadata === authority &&
+            store === accessedStore &&
+            storeVersion === incarnation &&
+            !accessedStore.deleted;
+          await updateStore(accessedStore, current, async () => {
+            if (current())
+              await accessedStore.touchQuery?.(nativeHistoryStorageId(query), accessedAt);
+          });
+        };
+        void touch().catch((error: unknown) => {
+          if (!sameBinding()) return;
+          storageNotice = `Cache recency could not be saved: ${queryError(error).message}`;
+          options.onStorageNotice?.(storageNotice);
+          notify(entry);
+        });
+      }
       receive(entry.state);
       if (entry.state.status !== 'ready' || entry.dirty) schedule(entry);
       return () => {

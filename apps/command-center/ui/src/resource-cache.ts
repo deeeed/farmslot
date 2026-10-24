@@ -3,7 +3,7 @@ import {
   closeBrowserResourceStores,
   createBrowserSqliteResourceStore,
 } from '@farmslot/local-store/browser';
-import type { GatewayResourceCache } from '@farmslot/protocol/client-cache';
+import type { GatewayResourceCache, ResourceStoreMetadata } from '@farmslot/protocol/client-cache';
 
 import { gateway } from './gateway-client.js';
 
@@ -19,6 +19,7 @@ function reportCloseError(error: unknown): void {
   notify();
 }
 const owner = new ResourceCacheOwner({
+  contentBudgetBytes: 2 * 1024 * 1024 * 1024,
   identities(gatewayUrl, profileId) {
     const key = resourceIdentityStorageKey(gatewayUrl, profileId);
     return {
@@ -89,6 +90,9 @@ export function getResourceWorkspaceAccess(): 'farm' | 'native' | 'none' {
 export function getResourceWorkspaceKey(): string | undefined {
   return owner.renderKey;
 }
+export function getResourceStoreMetadata(): ResourceStoreMetadata | undefined {
+  return owner.renderMetadata;
+}
 export function getResourceStoreNotice(): string | undefined {
   return owner.cache ? notice : undefined;
 }
@@ -108,4 +112,9 @@ export async function disposeResourceCache(): Promise<void> {
   const retiring = owner.dispose();
   closeBrowserResourceStores();
   await retiring;
+}
+
+/** Last verified owner for native query dependencies, also available during cold offline render. */
+export function getResourceNativeOwnerId(): string | undefined {
+  return owner.renderMetadata?.scope.principalId;
 }

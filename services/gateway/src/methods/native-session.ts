@@ -113,7 +113,16 @@ export async function nativeSessionRoute(
       throw new GatewayMethodError(error.code, error.message);
     if (error instanceof GatewayMethodError) throw error;
     const nodeCode = (error as NodeJS.ErrnoException).code;
-    if (nodeCode && ['INVALID_PARAMS', 'AUTH_FORBIDDEN', 'NATIVE_SESSION_ERROR'].includes(nodeCode))
+    if (
+      nodeCode &&
+      [
+        'INVALID_PARAMS',
+        'AUTH_FORBIDDEN',
+        'NATIVE_SESSION_ERROR',
+        'NOT_FOUND',
+        'NATIVE_SOURCE_UNAVAILABLE',
+      ].includes(nodeCode)
+    )
       throw new GatewayMethodError(nodeCode, (error as Error).message);
     throw new GatewayMethodError('NATIVE_SESSION_ERROR', (error as Error).message);
   }

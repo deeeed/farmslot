@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./fs-watch": "./src/fs-watch.ts",
+    "./workspace-watch": "./src/workspace-watch.ts",
     "./screen-frame": "./src/screen-frame.ts",
     "./screen-h264": "./src/screen-h264.ts"
   },

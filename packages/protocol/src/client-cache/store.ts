@@ -29,6 +29,7 @@ export interface ResourceStoreIdentity {
 export interface StoredResourceQueryInfo {
   id: string;
   observedAt: number;
+  accessedAt?: number;
   bytes: number;
 }
 
@@ -51,6 +52,8 @@ export interface ResourceStore {
   getQuery<T = unknown>(id: string): Promise<StoredResourceQuery<T> | undefined>;
   putQuery<T>(entry: StoredResourceQuery<T>): Promise<void>;
   deleteQuery(id: string): Promise<void>;
+  /** Access recency never changes observation age. Optional for older custom stores. */
+  touchQuery?(id: string, accessedAt: number): Promise<void>;
   listQueries(): Promise<StoredResourceQueryInfo[]>;
   byteTotals(): Promise<ResourceStoreByteTotals>;
   deleteAll(): Promise<void>;
@@ -119,12 +122,23 @@ export function createMemoryResourceStore(): ResourceStore {
     async putQuery(entry) {
       if (available()) entries.set(entry.id, copy(entry));
     },
+    async touchQuery(id, accessedAt) {
+      if (available()) {
+        const entry = entries.get(id);
+        if (entry) entry.accessedAt = accessedAt;
+      }
+    },
     async deleteQuery(id) {
       if (available()) entries.delete(id);
     },
     async listQueries() {
       return available()
-        ? [...entries.values()].map(({ id, observedAt, bytes }) => ({ id, observedAt, bytes }))
+        ? [...entries.values()].map(({ id, observedAt, accessedAt, bytes }) => ({
+            id,
+            observedAt,
+            accessedAt,
+            bytes,
+          }))
         : [];
     },
     async byteTotals() {

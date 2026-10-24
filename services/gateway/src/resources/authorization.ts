@@ -27,6 +27,9 @@ export function canReadResourceKey(
     case 'node':
       method = 'scope' in key ? Methods.NODES_LIST : Methods.NODE_HEALTH;
       break;
+    case 'workers':
+      method = Methods.TMUX_WORKER_LIST;
+      break;
     case 'pressure':
       method = Methods.RESOURCE_PRESSURE_SNAPSHOT;
       break;

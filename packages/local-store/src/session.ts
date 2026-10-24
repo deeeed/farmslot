@@ -20,6 +20,7 @@ export interface ResourceIdentityStorage {
 }
 
 export interface StoredResourceCacheOptions {
+  contentBudgetBytes?: number;
   client: ResourceClientConnection;
   snapshot(): ResourceConnectionInputs;
   identities: ResourceIdentityStorage;
@@ -160,6 +161,7 @@ export function createStoredResourceCache(
       );
   });
   const cache = createGatewayResourceCache({
+    contentBudgetBytes: options.contentBudgetBytes,
     transport,
     openStore: async (metadata) => {
       await identityReady;

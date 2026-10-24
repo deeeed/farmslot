@@ -842,6 +842,13 @@ async function progressLocation(
   };
 }
 
+/** Resolve ownership/locality without reading checklist bytes or creating another producer. */
+export async function reviewWorkspaceProgressLocation(
+  runId: string,
+): Promise<ReviewWorkspaceProgressSource> {
+  return progressLocation(ownedRun(runId, defaults), defaults);
+}
+
 /**
  * Read progress from the same confined, owned task as completion validation.
  *

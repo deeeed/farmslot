@@ -1,0 +1,22 @@
+ObjC.import('Foundation');
+ObjC.import('AppKit');
+ObjC.import('Vision');
+function run(args) {
+  const url = $.NSURL.fileURLWithPath(args[0]);
+  const request = $.VNRecognizeTextRequest.alloc.init;
+  request.recognitionLevel = $.VNRequestTextRecognitionLevelAccurate;
+  request.usesLanguageCorrection = false;
+  const handler = $.VNImageRequestHandler.alloc.initWithURLOptions(url, $({}));
+  const error = Ref();
+  if (!handler.performRequestsError($([request]), error)) throw Error(ObjC.unwrap(error[0].localizedDescription));
+  const bitmap = $.NSBitmapImageRep.imageRepWithContentsOfFile(args[0]);
+  const results = [];
+  const observations = request.results;
+  for (let i = 0; i < observations.count; i++) {
+    const observation = observations.objectAtIndex(i);
+    const text = ObjC.unwrap(observation.topCandidates(1).objectAtIndex(0).string);
+    const box = observation.boundingBox;
+    results.push({text, x:box.origin.x, y:box.origin.y, width:box.size.width, height:box.size.height});
+  }
+  return JSON.stringify({width:Number(bitmap.pixelsWide),height:Number(bitmap.pixelsHigh),text:results});
+}

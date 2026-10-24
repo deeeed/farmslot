@@ -73,9 +73,10 @@ export function renderSlotViewAgentContexts(view: SlotView) {
 }
 
 export function renderSlotViewSidebarFiles(view: SlotView) {
-  if (view._wsLoading || view._wsError)
+  if ((view._wsLoading || view._wsError) && !view._entries.length)
     return renderSlotFilesSkeleton(view._wsError, () => void view._reloadTree());
   return html`<file-tree
+    .actionsDisabled=${view._isLive && !view._workspaceReads.ready}
     .entries=${view._entries}
     .gitStatus=${view._gitStatusMap}
     .selectedPath=${realPath(view._activeFile)}
@@ -99,6 +100,7 @@ export function renderSlotViewSidebarSource(view: SlotView) {
     </div>`;
   }
   return html`<git-changes
+    .actionsDisabled=${view._isLive && !view._workspaceReads.ready}
     .changes=${git.changes}
     .committedFiles=${view._branchDiffFiles}
     .testPatterns=${view._branchDiffTestPatterns}
@@ -322,6 +324,15 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
 
       <!-- Right column: editor + terminal stacked vertically -->
       <div class="sv-right-col">
+        ${view._isLive && view._workspaceReads.status
+          ? html`<div role="status">
+              ${view._workspaceReads.status}${view._workspaceReads.error
+                ? html`<button @click=${() => view._workspaceReads.retry()}>
+                    Retry workspace
+                  </button>`
+                : nothing}
+            </div>`
+          : nothing}
         ${view._isRecoveryBlocked
           ? html`
               <div class="sv-recovery-overlay" role="status" aria-live="polite">

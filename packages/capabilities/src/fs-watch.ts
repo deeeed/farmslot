@@ -82,13 +82,36 @@ export function watchFile(
     // sees the first replacement and then silently follows the orphaned inode.
     const dir = dirname(targetPath);
     if (!existsSync(dir)) {
-      console.log(`[fs.watch] parent dir doesn't exist: ${dir} — skipping watch`);
+      if (options.onUnavailable) {
+        throw Object.assign(new Error(`Watch parent does not exist: ${dir}`), { code: 'ENOENT' });
+      }
+      // Legacy content-only consumers keep their existing inactive-watch behavior.
       return;
     }
     const target = basename(targetPath);
     watcher = watch(dir, { persistent: false }, (_, filename) => {
       if (filename != null && filename.toString() !== target) return;
       void observe();
+    });
+    watcher.on('error', (error) => {
+      if (stopped) return;
+      // A failed native watch can no longer prove subsequent changes. Revoke
+      // admission explicitly; the caller must establish a new watch to retry.
+      generation++;
+      watcher?.close();
+      watcher = null;
+      stopped = true;
+      if (options.onUnavailable) {
+        options.onUnavailable({
+          kind: 'error',
+          error: {
+            message: error.message,
+            ...('code' in error && typeof error.code === 'string' ? { code: error.code } : {}),
+          },
+        });
+      } else {
+        throw error;
+      }
     });
   };
 

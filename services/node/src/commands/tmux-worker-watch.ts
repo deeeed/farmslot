@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { NodeTmuxPane } from '@farmslot/protocol';
+import type { NodeTmuxPane, NodeTmuxWorkerObservation } from '@farmslot/protocol';
 
 import { listPanes } from './tmux.js';
 
@@ -8,16 +8,18 @@ const DEFAULT_INTERVAL_MS = 2_000;
 const MIN_INTERVAL_MS = 1_000;
 const SIGNAL_FRESH_MS = 120_000;
 
-export interface TmuxWorkerWatchChange {
-  observedAt: number;
-  panes: NodeTmuxPane[];
+type EmitChange = (change: NodeTmuxWorkerObservation) => void;
+
+interface WorkerWatch {
+  emit: EmitChange;
+  running: boolean;
+  lastSignature: string;
+  unavailable: boolean;
+  sample: () => Promise<NodeTmuxPane[]>;
 }
 
-type EmitChange = (change: TmuxWorkerWatchChange) => void;
-
 let timer: ReturnType<typeof setInterval> | null = null;
-let running = false;
-let lastSignature = '';
+let activeWatch: WorkerWatch | null = null;
 
 function signalFreshnessBucket(observedAt: number | undefined, now: number): string | undefined {
   if (observedAt == null) return undefined;
@@ -83,41 +85,68 @@ export function panesSignature(panes: NodeTmuxPane[], now = Date.now()): string 
   return createHash('sha1').update(JSON.stringify(stable)).digest('hex');
 }
 
-async function sampleAndEmit(emit: EmitChange): Promise<void> {
-  if (running) return;
-  running = true;
+async function sampleAndEmit(watch: WorkerWatch): Promise<void> {
+  if (watch.running || activeWatch !== watch) return;
+  watch.running = true;
+  let change: NodeTmuxWorkerObservation | undefined;
   try {
+    const panes = await watch.sample();
+    if (activeWatch !== watch) return;
     const observedAt = Date.now();
-    const panes = await listPanes();
     const signature = panesSignature(panes, observedAt);
-    if (signature !== lastSignature) {
-      lastSignature = signature;
-      emit({ observedAt, panes });
+    if (watch.unavailable || signature !== watch.lastSignature) {
+      watch.lastSignature = signature;
+      watch.unavailable = false;
+      change = { status: 'ready', observedAt, panes };
     }
   } catch (error) {
-    // The watcher is telemetry-only. Keep it alive after transient tmux/fs errors;
-    // request-time tmux.panes still surfaces hard failures to operators.
-    console.warn(`[tmux-worker-watch] sample failed: ${(error as Error).message}`);
+    if (activeWatch !== watch) return;
+    // A failed sample revokes observation admission. The same producer remains
+    // armed and publishes recovery even when the recovered panes are unchanged.
+    if (!watch.unavailable) {
+      watch.unavailable = true;
+      change = {
+        status: 'unavailable',
+        observedAt: Date.now(),
+        error: {
+          code: 'WORKER_SAMPLE_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
   } finally {
-    running = false;
+    watch.running = false;
   }
+  // Delivery failures must not be mislabeled as sampler failures.
+  if (change && activeWatch === watch) watch.emit(change);
 }
 
-export function startTmuxWorkerWatch(intervalMs: number | undefined, emit: EmitChange): void {
+export function startTmuxWorkerWatch(
+  intervalMs: number | undefined,
+  emit: EmitChange,
+  sample: () => Promise<NodeTmuxPane[]> = listPanes,
+): void {
   stopTmuxWorkerWatch();
-  lastSignature = '';
+  const watch: WorkerWatch = {
+    emit,
+    running: false,
+    lastSignature: '',
+    unavailable: false,
+    sample,
+  };
+  activeWatch = watch;
   const effectiveInterval = Math.max(MIN_INTERVAL_MS, intervalMs ?? DEFAULT_INTERVAL_MS);
-  void sampleAndEmit(emit);
+  void sampleAndEmit(watch);
   timer = setInterval(() => {
-    void sampleAndEmit(emit);
+    void sampleAndEmit(watch);
   }, effectiveInterval);
   timer.unref();
 }
 
 export function stopTmuxWorkerWatch(): void {
+  activeWatch = null;
   if (timer) {
     clearInterval(timer);
     timer = null;
   }
-  running = false;
 }

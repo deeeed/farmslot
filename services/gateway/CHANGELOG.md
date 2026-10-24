@@ -17,6 +17,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Keep root-qualified evidence selections scoped to the root artifact instead of matching nested recipe files with the same name.
 
+- Admit shared worker and file observations only from current capable node producers; invalidate inventory on source failure, recovery and replacement while preserving retained/frozen progress, independent review producers, default gateway-owned fleet reads and imperative commands.
+
 - Give a native reviewer with valid findings but no terminal signal one durable completion turn in the same saved conversation, preserving its admission and reconciling delivery after restart.
 
 - Allow one person approval to accept checked review findings and attest eligible evidence-policy gaps, retaining and validating both receipts.

@@ -3,11 +3,15 @@
 
 import type { ResourceReadStamp } from '../client-cache/keys.js';
 
+import type { ResourceReadContext } from './observations.js';
+
 export interface RequestFrame {
   type: 'req';
   id: string;
   method: string;
   params?: unknown;
+  /** Optional experimental observed-read contract; never authorizes a mutation. */
+  resourceRead?: ResourceReadContext;
 }
 
 export interface ResponseFrame {

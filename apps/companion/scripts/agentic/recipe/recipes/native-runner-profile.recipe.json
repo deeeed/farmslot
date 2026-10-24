@@ -50,8 +50,8 @@
       },
       "model-scroll": {
         "action": "command",
-        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-profile-refresh",
-        "intent": "Bring the selected configuration and its refresh action into view.",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-runner-profile-existing-claude",
+        "intent": "Keep the selected configuration visible while its observed login state settles.",
         "next": "verify-authenticated"
       },
       "model": {
@@ -175,12 +175,6 @@
         "action": "command",
         "cmd": "node scripts/agentic/native-profile-proof.mjs replace",
         "intent": "Replace only the private profile registration while preserving its native directory and credentials.",
-        "next": "refresh-visible"
-      },
-      "refresh-registration": {
-        "action": "ui.press",
-        "test_id": "companion-native-profile-refresh",
-        "intent": "Refresh the selected configuration after its registration changed on the node.",
         "next": "verify-stale"
       },
       "verify-stale": {
@@ -220,12 +214,6 @@
         "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-runner-profile-existing-claude",
         "intent": "Make the signed-in configuration reachable after the login warning appears.",
         "next": "authenticated"
-      },
-      "refresh-visible": {
-        "action": "command",
-        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-profile-refresh",
-        "intent": "Keep profile refresh reachable after reconnecting.",
-        "next": "refresh-registration"
       },
       "updated-visible": {
         "action": "command",

@@ -92,25 +92,25 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
   const ticket = branchDiffTicket(view);
   const isCurrent = () => isTicketCurrent(view, ticket);
   const reviewSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
-  const requestedHeadSha = reviewSnapshot?.headSha ?? view._liveGitData?.headSha;
   view._branchDiffLoading = true;
   try {
-    const result = await gateway.request<GitBranchDiffResult>(
+    await view._workspaceReads.read<GitBranchDiffResult>(
       Methods.GIT_BRANCH_DIFF,
       committedReviewBranchDiffRequest(view.slotId, view._branchDiffBase, reviewSnapshot),
+      (result) => {
+        if (!isCurrent()) return;
+        view._branchDiffBase = result.base;
+        view._branchDiffFiles = result.files;
+        view._branchDiffTestPatterns = result.testFilePatterns ?? null;
+        view._branchDiffHead = result.head;
+        view._branchDiffTotalAdd = result.totalAdditions;
+        view._branchDiffTotalDel = result.totalDeletions;
+        view._branchDiffError = null;
+      },
     );
-    if (!isCurrent()) return;
-    view._branchDiffBase = result.base;
-    view._branchDiffFiles = result.files;
-    view._branchDiffTestPatterns = result.testFilePatterns ?? null;
-    view._branchDiffHead = result.head;
-    view._branchDiffTotalAdd = result.totalAdditions;
-    view._branchDiffTotalDel = result.totalDeletions;
-    view._branchDiffError = null;
   } catch (err) {
     // Expected transient failures (node reconnecting, gateway restart). The
-    // error is surfaced in the panel and the git-status poll retries the load
-    // — see branchDiffPollAction.
+    // error is surfaced in the panel; the shared query exposes Retry.
     const message = err instanceof Error ? err.message : String(err);
     console.warn('[slot-view] branch diff files load failed:', message);
     if (!isCurrent()) return;
@@ -125,10 +125,6 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     // flag the new slot's own load now owns.
     if (isCurrent()) {
       view._branchDiffLoading = false;
-      if (!reviewSnapshot && requestedHeadSha && view._liveGitData?.headSha !== requestedHeadSha) {
-        view._liveDiffContents.clear();
-        void view._loadBranchDiff();
-      }
     }
   }
 
@@ -139,31 +135,12 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
 }
 
 export async function loadSlotViewBranchList(view: SlotView) {
-  if (!view._isLive) return;
-  const ticket = branchDiffTicket(view);
-  try {
-    // Use git log to list branches via gateway
-    await gateway.request<{
-      entries: Array<{ hash: string; message: string; author: string; date: string }>;
-    }>(Methods.GIT_LOG, { slotId: view.slotId, limit: 1 });
-    if (!isTicketCurrent(view, ticket)) return;
-    // We need branch names — use a git command via the status branch name + common branches.
-    // For now, provide the known base + current branch.
-    view._branchDiffBranches = slotViewBranchList({
-      branchDiffBase: view._branchDiffBase,
-      branchDiffHead: view._branchDiffHead,
-      gitBranch: view._git?.branch,
-    });
-  } catch (err) {
-    console.warn(
-      '[slot-view] branch list load failed:',
-      err instanceof Error ? err.message : String(err),
-    );
-    // A stale rejection (slot switched, reconnect) must not clobber the
-    // current slot's branch list with the fallback.
-    if (!isTicketCurrent(view, ticket)) return;
-    view._branchDiffBranches = ['main'];
-  }
+  // This dropdown is derived from the observed status/range, never from git.log.
+  view._branchDiffBranches = slotViewBranchList({
+    branchDiffBase: view._branchDiffBase,
+    branchDiffHead: view._branchDiffHead,
+    gitBranch: view._git?.branch,
+  });
 }
 
 export function handleSlotViewBranchDiffBaseChange(view: SlotView, base: string) {
@@ -178,7 +155,6 @@ export async function handleSlotViewBranchDiffSelect(
   status: string,
   oldPath?: string,
 ) {
-  view._cancelFileRestoreRetry();
   const useCodeView = status === 'A';
   const snapshot = slotViewPendingReviewSnapshot(view._linkedRun);
   const base = snapshot?.baseSha ?? view._branchDiffBase;

@@ -20,6 +20,7 @@ export type StoreWorkerRequest =
       handle: number;
     }
   | { id: number; operation: 'getQuery' | 'deleteQuery'; handle: number; key: string }
+  | { id: number; operation: 'touchQuery'; handle: number; key: string; accessedAt: number }
   | { id: number; operation: 'setMetadata'; handle: number; metadata: ResourceStoreMetadata }
   | { id: number; operation: 'putQuery'; handle: number; entry: StoredResourceQuery };
 

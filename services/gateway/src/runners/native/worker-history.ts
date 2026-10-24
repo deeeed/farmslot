@@ -88,15 +88,17 @@ export function nativeWorkerHistoryBinding(
   };
 }
 
-export async function routeNativeWorkerRead(method: string, params: Record<string, unknown>) {
+export async function authorizeNativeWorkerHistory(
+  method: string,
+  params: Record<string, unknown>,
+) {
   const target = readTarget(params.worker);
   const archived = getRun(target.runId)
     ? undefined
     : (await getAllRunsWithArchived()).find((run) => run.id === target.runId);
   const current = () => {
     const run = getRun(target.runId) ?? archived;
-    if (!run)
-      throw new GatewayMethodError('NATIVE_SESSION_ERROR', 'Native worker run is unavailable');
+    if (!run) throw new GatewayMethodError('NOT_FOUND', 'Native worker run is unavailable');
     assertNativeRunOwner(run);
     const selected = nativeWorkerHistoryBinding(run, target);
     const binding = selected?.binding;
@@ -108,10 +110,7 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
       binding.sessionId !== params.sessionId ||
       binding.executionNodeId !== (params.executionNodeId ?? 'local')
     )
-      throw new GatewayMethodError(
-        'NATIVE_SESSION_ERROR',
-        'Worker history target is unavailable or stale',
-      );
+      throw new GatewayMethodError('NOT_FOUND', 'Worker history target is unavailable or stale');
     if (method !== Methods.NATIVE_SESSION_READ && (selected.readOnly || binding.recovery))
       throw new GatewayMethodError(
         'NATIVE_SESSION_ERROR',
@@ -120,7 +119,13 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
     if (run.transport !== 'native') resolveReviewWorkspaceOwner(binding.ownerPrincipalId);
     return selected;
   };
-  const { binding } = current();
+  return current();
+}
+
+export async function routeNativeWorkerRead(method: string, params: Record<string, unknown>) {
+  const target = readTarget(params.worker);
+  const current = () => authorizeNativeWorkerHistory(method, params);
+  const { binding } = await current();
   const nativeParams = {
     ...params,
     sessionId: binding.sessionId,
@@ -132,7 +137,7 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
       ...nativeParams,
       worker: target,
     });
-    current();
+    await current();
     return result;
   }
   const result = (await routeNativeExecution(
@@ -140,7 +145,7 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
     NATIVE_WORKER_READ,
     nativeParams,
   )) as NativeSessionReadResult;
-  current();
+  await current();
   if (
     !result.scope ||
     result.scope.leaseId !== binding.leaseId ||

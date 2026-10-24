@@ -91,6 +91,8 @@ mock.module('../runs/store.js', {
 });
 
 const { taskProgress } = await import('./task.js');
+const observedProgress = (params: Parameters<typeof taskProgress>[0]) =>
+  taskProgress(params, { observed: true });
 const {
   importRetainedAcceptanceLinks,
   RETAINED_LINK_SOURCE,
@@ -301,7 +303,7 @@ function writeReleasedRun(options: { workerMirror: boolean }) {
 test('a finished run whose slot no longer holds its task reads its recorded task directory', async () => {
   const fixture = writeReleasedRun({ workerMirror: true });
   try {
-    const result = await taskProgress({ slotId: 'slot-acceptance', runId: 'run-released' });
+    const result = await observedProgress({ slotId: 'slot-acceptance', runId: 'run-released' });
     assert.equal(result.acceptanceCriteria?.length, 3);
     assert.equal(result.acceptanceEvidenceLinks, undefined);
     assert.equal(result.structured?.totalSteps, 2);
@@ -312,7 +314,7 @@ test('a finished run whose slot no longer holds its task reads its recorded task
     );
 
     await assert.rejects(
-      taskProgress({ slotId: 'slot-acceptance', runId: 'run-unknown' }),
+      observedProgress({ slotId: 'slot-acceptance', runId: 'run-unknown' }),
       (error: unknown) => error instanceof GatewayMethodError && error.code === 'RUN_NOT_FOUND',
       'a missing requested run is an authorized not-found, not another slot task',
     );
@@ -431,7 +433,7 @@ test('a retained selected-step artifact remains readable after slot reuse', asyn
   currentRunId = 'successor';
   currentTaskFile = 'dev/successor';
   try {
-    const result = await taskProgress({
+    const result = await observedProgress({
       slotId: 'slot-acceptance',
       runId: 'run-released',
       taskFile: artifact,
@@ -443,7 +445,7 @@ test('a retained selected-step artifact remains readable after slot reuse', asyn
       runs.set(run.id, { ...run, steps: [] });
     };
     await assert.rejects(
-      taskProgress({ slotId: 'slot-acceptance', runId: 'run-released', taskFile: artifact }),
+      observedProgress({ slotId: 'slot-acceptance', runId: 'run-released', taskFile: artifact }),
       (error: unknown) =>
         error instanceof GatewayMethodError && error.code === 'PROGRESS_OWNER_CHANGED',
       'An artifact removed from the run during I/O cannot publish under its old selection',
@@ -485,7 +487,7 @@ test('retained role progress stays within its run and rejects a replaced context
   currentRunId = 'successor';
   currentTaskFile = 'dev/successor';
   try {
-    const result = await taskProgress({
+    const result = await observedProgress({
       slotId: 'slot-acceptance',
       runId: run.id,
       contextId: context.id,
@@ -496,7 +498,7 @@ test('retained role progress stays within its run and rejects a replaced context
     assert(result.markdown.includes('Old reviewer'));
     beforeRead = () => runs.set(run.id, { ...run, agentContexts: [] });
     await assert.rejects(
-      taskProgress({ slotId: 'slot-acceptance', runId: run.id, contextId: context.id }),
+      observedProgress({ slotId: 'slot-acceptance', runId: run.id, contextId: context.id }),
       (error: unknown) => error instanceof GatewayMethodError && error.code === 'NOT_FOUND',
     );
   } finally {

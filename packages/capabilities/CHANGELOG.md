@@ -4,6 +4,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 ## Unreleased
 
+- Observe opened workspace names, bytes and linked-worktree Git metadata through one owned filesystem source.
+
+- Report unavailable file observation watches rather than silently admitting missing parents or failed watchers.
+
 - Report optional file-deletion and read-error observations, recover identical contents after an unavailable state, and discard late reads after replacement or stop.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

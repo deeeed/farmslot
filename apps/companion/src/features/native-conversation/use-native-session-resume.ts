@@ -7,7 +7,12 @@ import { useConnectionStore } from '../../store/connection';
 
 import { useNativeProfileSelection } from './use-native-profile-selection';
 
-export function useNativeSessionResume(session: NativeSessionInfo | undefined, enabled: boolean) {
+export function useNativeSessionResume(
+  session: NativeSessionInfo | undefined,
+  enabled: boolean,
+  eligible: boolean,
+  assertCurrent: () => void,
+) {
   const client = useConnectionStore((state) => state.client);
   const connection = useConnectionStore((state) => state.status);
   const principalId = useConnectionStore((state) => state.principalId);
@@ -17,7 +22,7 @@ export function useNativeSessionResume(session: NativeSessionInfo | undefined, e
   const mutation = useRef(false);
   let profile: NativeProfileReference | undefined;
   let available = false;
-  if (session && enabled) {
+  if (session && eligible) {
     try {
       profile = sessionNativeProfile(session);
       nativeResumeRequest(session, profile);
@@ -27,7 +32,7 @@ export function useNativeSessionResume(session: NativeSessionInfo | undefined, e
     }
   }
   const profiles = useNativeProfileSelection({
-    enabled: available,
+    enabled: available && enabled,
     node: session?.executionNodeId ?? 'local',
     runner: session?.runner ?? '',
     supported: !!profile,
@@ -40,6 +45,7 @@ export function useNativeSessionResume(session: NativeSessionInfo | undefined, e
     session?.generation,
     profile,
     available,
+    enabled,
   ]);
   const keyRef = useRef(key);
   keyRef.current = key;
@@ -52,7 +58,8 @@ export function useNativeSessionResume(session: NativeSessionInfo | undefined, e
   return {
     viewModel: {
       available,
-      ready: available && profiles.viewModel.ready && connection === 'connected' && !busy,
+      ready:
+        enabled && available && profiles.viewModel.ready && connection === 'connected' && !busy,
       profiles: profiles.viewModel,
       busy,
       error,
@@ -66,13 +73,21 @@ export function useNativeSessionResume(session: NativeSessionInfo | undefined, e
         },
       },
       resume: async (): Promise<NativeSessionInfo | undefined> => {
-        if (!available || !session || !client || !profiles.viewModel.ready || mutation.current)
+        if (
+          !enabled ||
+          !available ||
+          !session ||
+          !client ||
+          !profiles.viewModel.ready ||
+          mutation.current
+        )
           return;
         mutation.current = true;
         setBusy(true);
         setError('');
         const generation = client.connectionGeneration;
         try {
+          assertCurrent();
           const selected = await profiles.actions.validate();
           if (
             !alive.current ||
@@ -80,6 +95,7 @@ export function useNativeSessionResume(session: NativeSessionInfo | undefined, e
             client.connectionGeneration !== generation
           )
             throw new Error('Conversation changed before resume.');
+          assertCurrent();
           const result = await client.request<{ session: NativeSessionInfo }>(
             Methods.NATIVE_SESSION_CREATE,
             nativeResumeRequest(session, selected),

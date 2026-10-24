@@ -28,6 +28,7 @@ import {
   type RecipeRunnerUiOptions,
   recipeRunnerUiOptions,
 } from '../workspace/recipe-runner-options-model.js';
+import { WorkspaceReads } from '../workspace/workspace-reads.js';
 
 import { type CheckResult, type EditorId, type GitData, type OpenFile } from './slot-view-model.js';
 import type { SlotViewRecipeEvidenceResult } from './slot-view-recipe-helpers.js';
@@ -251,8 +252,24 @@ export abstract class SlotViewState extends LitElement {
       this._copiedSlotActionId = key;
     },
   });
-  _gitPollTimer: ReturnType<typeof setInterval> | null = null;
-  _fileRestoreRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  readonly _workspaceReads: WorkspaceReads = new WorkspaceReads(
+    this,
+    () => {
+      if (this._workspaceReads?.ready) {
+        this._recoveryPhase = 'live';
+        this._recoveryMessage = '';
+        this._wsError = '';
+      }
+    },
+    () => this._linkedRun?.id,
+    () => {
+      this._liveEntries = [];
+      this._pinnedEntries = [];
+      this._liveGitData = null;
+      this._liveFileContents = new Map();
+      this._liveDiffContents = new Map();
+    },
+  );
   _resourceRestoreRetryTimer: ReturnType<typeof setTimeout> | null = null;
   _prevSlotId = '';
   _slotSwitcherSignature = '';
@@ -303,12 +320,15 @@ export abstract class SlotViewState extends LitElement {
   }
 
   get _isRecoveryBlocked(): boolean {
-    return this._isLive && this._recoveryPhase !== 'live';
+    return this._isLive && !this._workspaceReads.hasData && this._recoveryPhase !== 'live';
   }
 
   get _runActionsBlocked(): boolean {
     return (
-      this._isRecoveryBlocked || !this._linkedRunCurrent || gateway.connectionState !== 'connected'
+      this._isRecoveryBlocked ||
+      !this._workspaceReads.ready ||
+      !this._linkedRunCurrent ||
+      gateway.connectionState !== 'connected'
     );
   }
 

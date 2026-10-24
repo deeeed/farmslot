@@ -7,6 +7,7 @@ import {
 import { fleetStaleDeadline } from '../fleet/freshness.js';
 
 import { type GatewayResourceRevisions, resourceRevisions } from './revisions.js';
+import { publishWorkerResources } from './worker-changes.js';
 
 interface SlotResourceSnapshot {
   slot: string;
@@ -33,8 +34,10 @@ export class SlotResourceChanges {
       (id) => this.failed || previous?.get(id)?.fingerprint !== current.get(id)?.fingerprint,
     );
     const metadataChanged = !previous || this.failed || this.previousCheckedAt !== checkedAt;
-    if (metadataChanged || changed.length)
+    if (metadataChanged || changed.length) {
       this.invalidateSlots(metadataChanged ? ids : changed, current, previous);
+      if (changed.length) publishWorkerResources(undefined, this.revisions);
+    }
     if (
       !previous ||
       this.failed ||

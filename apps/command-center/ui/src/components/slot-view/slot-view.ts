@@ -195,7 +195,6 @@ import {
 import { updateSlotViewTreeChildren } from './slot-view-tree-model.js';
 import { handleSlotViewUpdated, handleSlotViewWillUpdate } from './slot-view-update-effects.js';
 import {
-  cancelSlotViewFileRestoreRetry,
   cancelSlotViewResourceRestoreRetry,
   ensureSlotViewResourcePanelSelection,
   handleSlotViewHashChange,
@@ -203,7 +202,6 @@ import {
   restoreSlotViewFileFromUrl,
   restoreSlotViewHistoryFromUrl,
   restoreSlotViewResourceFromUrl,
-  scheduleSlotViewUrlRestoreRetry,
   syncSlotViewUrlState,
 } from './slot-view-url-effects.js';
 import {
@@ -393,14 +391,6 @@ export class SlotView extends SlotViewRecipePresenter {
     cancelSlotViewResourceRestoreRetry(this);
   }
 
-  _cancelFileRestoreRetry() {
-    cancelSlotViewFileRestoreRetry(this);
-  }
-
-  _scheduleUrlRestoreRetry(file: string, attemptsLeft = 2) {
-    scheduleSlotViewUrlRestoreRetry(this, file, attemptsLeft);
-  }
-
   async _openFileFromUrl(file: string) {
     await openSlotViewFileFromUrl(this, file);
   }
@@ -490,8 +480,10 @@ export class SlotView extends SlotViewRecipePresenter {
     this._wsError = '';
     this._wsLoading = true;
 
-    const hydrated = await waitForRecoveryHydration(epoch);
-    if (!hydrated || this._recoveryEpoch !== epoch) return;
+    if (gateway.connectionState === 'connected') {
+      const hydrated = await waitForRecoveryHydration(epoch);
+      if (!hydrated || this._recoveryEpoch !== epoch) return;
+    }
 
     await this._initLive(epoch);
     const requestedFile = this._requestedFileFromUrl();
@@ -502,9 +494,6 @@ export class SlotView extends SlotViewRecipePresenter {
       this._recoveryEpoch === epoch
     ) {
       await this._openFileFromUrl(requestedFile);
-      if (!this._activeFile) {
-        this._scheduleUrlRestoreRetry(requestedFile);
-      }
     }
   }
 

@@ -6,9 +6,16 @@ import { type AgentRole, Events, type NodeFsChangedPayload } from '@farmslot/pro
 
 import { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { taskProgress } from '../methods/task.js';
+import {
+  assertFileObservationsAdmitted,
+  forgetNodeFileObservation,
+  watchNodeFile,
+} from '../resources/node-file-observations.js';
+import { registerProgressObservation } from '../resources/progress-observations.js';
 import { publishProgressResources } from '../resources/run-changes.js';
 import { getRun, updateRunStep } from '../runs/store.js';
 
@@ -76,9 +83,33 @@ export function startProgressWatcher(
   const fallbackContextId = label === 'Fix' ? 'review-fix' : 'review';
   const contextId = options.contextId ?? fallbackContextId;
   const role = options.role ?? (fallbackContextId as AgentRole);
+  let failure: unknown = new GatewayMethodError(
+    'RESOURCE_OBSERVATION_UNAVAILABLE',
+    'The review watch is still arming.',
+  );
+  let remoteId: string | undefined;
+  const local = isLocal(vars.host, vars.machine);
+  const unregister = registerProgressObservation({
+    runId,
+    contextId,
+    path: filePath,
+    current: () => !stopped && options.isCurrent?.() !== false,
+    check: () => {
+      if (failure) throw failure;
+      if (!local) {
+        if (!remoteId)
+          throw new GatewayMethodError(
+            'RESOURCE_OBSERVATION_UNAVAILABLE',
+            'The review node watch is not armed.',
+          );
+        assertFileObservationsAdmitted([remoteId])();
+      }
+    },
+  });
 
   const compute = async (content: string): Promise<void> => {
     if (stopped || options.isCurrent?.() === false) return;
+    failure = undefined;
     publishProgressResources(vars.slotId, runId, contextId);
     const total = (content.match(/- \[[ x]\]/g) || []).length;
     const done = (content.match(/- \[x\]/gi) || []).length;
@@ -109,27 +140,38 @@ export function startProgressWatcher(
     }
   };
 
-  if (isLocal(vars.host, vars.machine)) {
+  if (local) {
     const watcher = watch(filePath, { persistent: false, ignoreInitial: true });
     const onUpdate = async () => {
       try {
         await compute(await readFile(filePath, 'utf-8'));
       } catch (err) {
         if (stopped || options.isCurrent?.() === false) return;
+        failure = err;
         publishProgressResources(vars.slotId, runId, contextId);
         console.warn(
           `[review] progress file read skipped for ${filePath}: ${(err as Error).message}`,
         );
       }
     };
+    watcher.on('error', (error) => {
+      failure = error;
+      publishProgressResources(vars.slotId, runId, contextId);
+    });
     watcher.on('change', onUpdate);
     watcher.on('add', onUpdate);
     watcher.on('unlink', onUpdate);
-    const ready = onUpdate();
+    const ready = new Promise<void>((resolve, reject) => {
+      watcher.on('ready', () => {
+        void onUpdate().then(resolve, reject);
+      });
+      watcher.on('error', reject);
+    });
     return {
       ready,
       stop: async () => {
         stopped = true;
+        unregister();
         await watcher.close();
       },
     };
@@ -155,18 +197,27 @@ export function startProgressWatcher(
   remoteProgressEntries.set(key, entry);
   const node = getNode(vars.machine);
   if (node) {
-    sendNodeRequest(
+    watchNodeFile(
       node,
-      'fs.watch',
-      { observations: 1, path: filePath },
-      {
-        onRequestId: (id) => {
-          entry.watchRequestId = id;
-        },
+      filePath,
+      (id) => {
+        entry.watchRequestId = id;
+        remoteId = id;
       },
-    ).catch((err) => {
-      debugReviewLog(`[review] remote fs.watch failed for ${filePath}: ${(err as Error).message}`);
-    });
+      entry.onUnavailable,
+    )
+      .then(() => {
+        if (!stopped) {
+          failure = undefined;
+          publishProgressResources(vars.slotId, runId, contextId);
+        }
+      })
+      .catch((err) => {
+        failure = err;
+        debugReviewLog(
+          `[review] remote fs.watch failed for ${filePath}: ${(err as Error).message}`,
+        );
+      });
   } else {
     debugReviewLog(`[review] no node for ${vars.machine} — progress updates will be silent`);
   }
@@ -174,8 +225,10 @@ export function startProgressWatcher(
     ready: Promise.resolve(),
     stop: async () => {
       stopped = true;
+      unregister();
       if (remoteProgressEntries.get(key) === entry) remoteProgressEntries.delete(key);
       if (!entry.watchRequestId) return;
+      forgetNodeFileObservation(entry.watchRequestId);
       const liveNode = getNode(vars.machine);
       if (liveNode) {
         await sendNodeRequest(liveNode, 'fs.watch.stop', { requestId: entry.watchRequestId });

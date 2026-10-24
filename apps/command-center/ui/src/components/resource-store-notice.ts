@@ -1,15 +1,37 @@
 import { css, html, LitElement, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
-import { browserResourceStoreDiagnostics } from '@farmslot/local-store/browser';
+import {
+  browserResourceStoreDiagnostics,
+  createBrowserSqliteResourceStore,
+} from '@farmslot/local-store/browser';
+import type { StoredResourceQueryInfo } from '@farmslot/protocol/client-cache';
 
-import { getResourceStoreNotice, subscribeResourceCache } from '../resource-cache.js';
+import {
+  getResourceStoreMetadata,
+  getResourceStoreNotice,
+  getResourceWorkspaceKey,
+  subscribeResourceCache,
+} from '../resource-cache.js';
 
 @customElement('farm-resource-store-notice')
 export class ResourceStoreNotice extends LitElement {
   /** Read-only storage receipt for browser/desktop validation, with no query data or SQL execution. */
   resourceStoreDiagnostics() {
     return browserResourceStoreDiagnostics();
+  }
+  /** Inspect only this rendered owner's stored IDs and ages, without data or SQL access. */
+  async resourceStoreQueryMetadata(): Promise<StoredResourceQueryInfo[]> {
+    const metadata = getResourceStoreMetadata();
+    const identity = getResourceWorkspaceKey();
+    if (!metadata?.scope.principalId || !identity) return [];
+    const store = await createBrowserSqliteResourceStore({ scope: metadata.scope });
+    try {
+      const queries = await store.listQueries();
+      return identity === getResourceWorkspaceKey() ? queries : [];
+    } finally {
+      await store.close();
+    }
   }
   @state() private notice = getResourceStoreNotice();
   private stop?: () => void;

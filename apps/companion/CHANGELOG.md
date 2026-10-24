@@ -4,9 +4,15 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls.
+- Open saved native conversations under their retained workspace scope after an offline cold start; actions still require current authority.
+- Preserve a saved conversation's position while offline connection retries continue.
+
 - Bind run report visual judgments to the pending output-review snapshot and block submissions when evidence, progress or review context changes.
 
 - Show completed checklist durations and live current-step elapsed time in Worker progress.
+
+- Share worker inventory across workers, keyboard context and terminal controls, with explicit unavailable states and Retry.
 
 - Keep run source and covered tickets on one compact line without duplicate ticket pills; show shared total and current-step elapsed time on the existing metadata line.
 

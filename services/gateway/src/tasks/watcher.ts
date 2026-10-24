@@ -26,12 +26,18 @@ import {
 } from '../core/active-run-selection.js';
 import { resolveTaskPaths } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { slotFileExists, slotMkdir, slotReadFile } from '../core/slot-io.js';
 import { updateSlotStatus } from '../core/state.js';
 import { getNode } from '../fleet/machine-registry.js';
-import { sendNodeRequest } from '../fleet/node-rpc.js';
+import { sendNodeRequest as sendRawNodeRequest } from '../fleet/node-rpc.js';
 import { clearTaskProgressOverlay, loadFleetStatus } from '../fleet/state.js';
 import { taskProgress } from '../methods/task.js';
+import {
+  assertFileObservationsAdmitted,
+  forgetNodeFileObservation,
+  watchNodeFile,
+} from '../resources/node-file-observations.js';
 import { publishProgressResources } from '../resources/run-changes.js';
 import { listRuns } from '../runs/store.js';
 
@@ -50,6 +56,30 @@ import {
   subtaskUnitsForParentChecklist,
 } from './subtasks.js';
 import { normalizeWorkerSignal } from './worker-signals.js';
+
+// Keep imperative watch consumers compatible while recording shared-read admission centrally.
+const sendNodeRequest: typeof sendRawNodeRequest = (node, method, params, options) => {
+  if (method === 'fs.watch') {
+    const filePath = (params as { path: string }).path;
+    return watchNodeFile(
+      node,
+      filePath,
+      (id) => options?.onRequestId?.(id),
+      () => {
+        for (const sw of activeWatches.values()) {
+          if (
+            sw.machine === node.machine &&
+            sw.agentRequestIds?.some((entry) => entry.path === filePath)
+          )
+            publishProgressResources(sw.slotId, sw.runId, sw.contextId);
+        }
+      },
+    );
+  }
+  if (method === 'fs.watch.stop')
+    forgetNodeFileObservation((params as { requestId: string }).requestId);
+  return sendRawNodeRequest(node, method, params, options);
+};
 
 export type TaskProgressHandler = (
   slotId: string,
@@ -86,6 +116,9 @@ interface SlotWatch {
   watcher?: FSWatcher; // chokidar watcher for local (TASK.md)
   signalWatcher?: FSWatcher; // chokidar watcher for local (SIGNAL.json)
   agentRequestIds?: WatchedRemoteFile[]; // fs.watch request IDs for remote task, signal, and child-unit watches
+  observationRevision?: number;
+  observationPending?: number;
+  observationError?: string;
   lastCheckboxHash?: string; // debounce: only emit when checkboxes actually change
   /** `artifacts/acceptance-status.json` beside this context's checklist — the AC ledger. */
   acceptanceStatusFilePath: string;
@@ -353,6 +386,7 @@ export async function watchSlot(
     // to change, so the authoritative check happens inside the chained promise.
     if (
       existingWatch &&
+      !existingWatch.observationError &&
       !pendingWatchKeys.has(key) &&
       (!shouldRebindWatch(existingWatch, identityFor(candidateTaskPath)) ||
         !shouldRebindWatch(existingWatch, identityFor(checklistCandidatePath)))
@@ -383,7 +417,12 @@ export async function watchSlot(
       if (options.assertCurrent) await options.assertCurrent();
       const nextWatchIdentity = identityFor(contextTaskPath);
       const staleWatch = activeWatches.get(key);
-      if (staleWatch && !shouldRebindWatch(staleWatch, nextWatchIdentity)) return;
+      if (
+        staleWatch &&
+        !staleWatch.observationError &&
+        !shouldRebindWatch(staleWatch, nextWatchIdentity)
+      )
+        return;
       if (staleWatch) {
         // Raw teardown: this code IS the chained operation for this key —
         // the chain-aware unwatchKey would await its own promise.
@@ -413,8 +452,26 @@ export async function watchSlot(
           return;
         }
 
+        const observeLocal = (watcher: FSWatcher) => {
+          sw.observationPending = (sw.observationPending ?? 0) + 1;
+          watcher.once('ready', () => {
+            sw.observationPending = (sw.observationPending ?? 1) - 1;
+            publishProgressResources(sw.slotId, sw.runId, sw.contextId);
+          });
+          watcher.on('all', () => {
+            // Capture writes immediately; existing semantic handlers coalesce publications.
+            sw.observationRevision = (sw.observationRevision ?? 0) + 1;
+          });
+          watcher.on('error', (error) => {
+            sw.observationError = error instanceof Error ? error.message : String(error);
+            sw.observationRevision = (sw.observationRevision ?? 0) + 1;
+            publishProgressResources(sw.slotId, sw.runId, sw.contextId);
+          });
+        };
+
         // Watch task markdown with chokidar
         const chokidarWatcher = watch(contextTaskPath, { persistent: false, ignoreInitial: true });
+        observeLocal(chokidarWatcher);
         chokidarWatcher.on('add', () => debouncedUpdate(key));
         chokidarWatcher.on('change', () => debouncedUpdate(key));
         chokidarWatcher.on('unlink', () => debouncedUpdate(key));
@@ -422,6 +479,7 @@ export async function watchSlot(
 
         // Watch signal with chokidar (watches for creation + changes)
         const signalWatcher = watch(contextSignalPath, { persistent: false, ignoreInitial: false });
+        observeLocal(signalWatcher);
         signalWatcher.on('add', () => handleSignalChange(key));
         signalWatcher.on('change', () => handleSignalChange(key));
         sw.signalWatcher = signalWatcher;
@@ -450,6 +508,7 @@ export async function watchSlot(
           if (path.basename(entryPath) === 'operations-updated.json') throttledOperationUpdate(key);
           else debouncedAcceptanceUpdate(key);
         };
+        observeLocal(acceptanceWatcher);
         acceptanceWatcher.on('add', onArtifactsEntry);
         acceptanceWatcher.on('change', onArtifactsEntry);
         acceptanceWatcher.on('unlink', onArtifactsEntry);
@@ -489,6 +548,7 @@ export async function watchSlot(
           // drives run lifecycle, so no WORKER_SIGNAL is emitted for it.
           debouncedSubtaskUpdate(key);
         };
+        observeLocal(subtasksDirWatcher);
         subtasksDirWatcher.on('add', onSubtasksEntry);
         subtasksDirWatcher.on('change', onSubtasksEntry);
         subtasksDirWatcher.on('unlink', onSubtasksEntry);
@@ -522,8 +582,11 @@ export async function watchSlot(
           return;
         }
 
+        const requestIds: WatchedRemoteFile[] = [];
+        sw.agentRequestIds = requestIds;
+        sw.observationPending = 1;
+        activeWatches.set(key, sw);
         try {
-          const requestIds: WatchedRemoteFile[] = [];
           (await sendNodeRequest(
             node,
             'fs.watch',
@@ -629,9 +692,12 @@ export async function watchSlot(
           // the only thing that reports a pre-existing registry.
           await handleSubtaskIndexChange(key);
         } catch (err) {
+          sw.observationError = err instanceof Error ? err.message : String(err);
           console.log(
             `[task-watcher] failed to start remote watch for ${key}: ${(err as Error).message}`,
           );
+        } finally {
+          sw.observationPending = 0;
         }
       }
       // A read may have raced registration or node reconnection. Once the watch
@@ -813,6 +879,7 @@ async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<vo
   await closeSubtaskUnitWatchers(sw);
 
   if (!sw.isLocal && sw.agentRequestIds?.length) {
+    for (const entry of sw.agentRequestIds) forgetNodeFileObservation(entry.requestId);
     const fleet = await loadFleetStatus();
     const slot = fleet.slots.find((s) => s.slot === sw.slotId);
     if (slot) {
@@ -852,6 +919,65 @@ async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<vo
 }
 
 // ─── Handle remote agent fs.changed events ───
+
+/** Live slot-worker source only. taskProgress resolves retained/review owners before reaching here. */
+export function assertLiveSlotProgressObservationAdmitted(params: {
+  slotId?: string;
+  runId?: string;
+  contextId?: string;
+  role?: AgentRole;
+  taskFile?: string;
+}): () => void {
+  const relevant = [...activeWatches.values()].filter(
+    (sw) =>
+      (params.runId ? sw.runId === params.runId : sw.slotId === params.slotId) &&
+      (!params.contextId || sw.contextId === params.contextId) &&
+      (!params.role || sw.role === params.role),
+  );
+  if (
+    relevant.length === 0 ||
+    (params.taskFile &&
+      !relevant.some((sw) => path.normalize(sw.taskFilePath) === path.normalize(params.taskFile!)))
+  )
+    throw new GatewayMethodError(
+      'RESOURCE_OBSERVATION_UNSUPPORTED',
+      'The requested progress source has no active verified watch.',
+    );
+  const checks = relevant.map((sw) => {
+    if (sw.observationPending)
+      throw new GatewayMethodError(
+        'RESOURCE_OBSERVATION_UNAVAILABLE',
+        'The local file watches are still arming.',
+      );
+    if (sw.observationError)
+      throw new GatewayMethodError('RESOURCE_OBSERVATION_FAILED', sw.observationError);
+    const localRevision = sw.observationRevision ?? 0;
+    const capturedIds = sw.agentRequestIds?.map((entry) => entry.requestId) ?? [];
+    const check = sw.isLocal ? () => {} : assertFileObservationsAdmitted(capturedIds);
+    if (!sw.isLocal && capturedIds.length === 0)
+      throw new GatewayMethodError(
+        'RESOURCE_OBSERVATION_UNAVAILABLE',
+        'The remote progress watch is not armed.',
+      );
+    return () => {
+      if (
+        activeWatches.get(watchKey(sw.slotId, sw.contextId)) !== sw ||
+        sw.observationError ||
+        (sw.observationRevision ?? 0) !== localRevision ||
+        JSON.stringify(sw.agentRequestIds?.map((entry) => entry.requestId) ?? []) !==
+          JSON.stringify(capturedIds)
+      )
+        throw new GatewayMethodError(
+          'RESOURCE_OBSERVATION_CHANGED',
+          'The progress watch changed during the read.',
+        );
+      check();
+    };
+  });
+  return () => {
+    for (const check of checks) check();
+  };
+}
 
 export function invalidateTaskProgressForMachine(machine: string): void {
   for (const sw of activeWatches.values())
@@ -1187,6 +1313,7 @@ async function closeSubtaskUnitWatchers(sw: SlotWatch): Promise<void> {
     (entry) => entry.kind === 'subtask-checklist' || entry.kind === 'subtask-signal',
   );
   if (unitRequests.length === 0) return;
+  for (const entry of unitRequests) forgetNodeFileObservation(entry.requestId);
   sw.agentRequestIds = (sw.agentRequestIds ?? []).filter(
     (entry) => entry.kind !== 'subtask-checklist' && entry.kind !== 'subtask-signal',
   );

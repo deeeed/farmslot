@@ -4,21 +4,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   Methods,
-  type NativeSessionInfo,
   type NativeSessionListResult,
-  type NativeSessionReadResult,
   type NativeSessionResponse,
   type NativeSessionSendParams,
   type NativeSessionTargetParams,
   type RunGetResult,
 } from '@farmslot/protocol';
-import { resourceQuery } from '@farmslot/protocol/client-cache';
+import {
+  nativeHistoryCanAct,
+  nativeHistoryQuery,
+  nativeObservationQuery,
+  resourceQuery,
+} from '@farmslot/protocol/client-cache';
 
 import { observeNativeConversation } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import {
-  appendNativePage,
   nativeCommandLockSettled,
   nativeTimeline,
   type NativeTranscript,
@@ -34,7 +36,8 @@ import {
   type NativeWorkerViewTarget,
   sameNativeWorkerViewBinding,
 } from '../../lib/native-worker-target';
-import { getResourceCache } from '../../lib/resource-cache';
+import { getResourceCache, getResourceNativeOwnerId } from '../../lib/resource-cache';
+import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { canOpenNativeConversation } from '../../lib/workspace-access';
 import { useConnectionStore } from '../../store/connection';
 
@@ -61,27 +64,18 @@ export function useNativeConversationController(params: NativeConversationParams
   const profile = useConnectionStore((state) => state.activeProfileId);
   const gatewayUrl = useConnectionStore((state) => state.gatewayUrl);
   const principalId = useConnectionStore((state) => state.principalId);
-  const access = useConnectionStore((state) => state.workspaceAccess);
+  const access = useWorkspaceRenderAccess();
   const authorityEpoch = useConnectionStore((state) => state.authorityEpoch);
   const creation = useNativeSessionSetup(!params.sessionId);
-  const [sessions, setSessions] = useState<NativeSessionInfo[]>([]);
-  const [unavailable, setUnavailable] = useState<string[]>([]);
-  const [snapshot, setSnapshot] = useState<NativeSessionReadResult>();
-  const [transcript, setTranscript] = useState<NativeTranscript>({ events: [], cursor: 0 });
   const [draft, setDraft] = useState(params.draft ?? '');
   const [pending, setPending] = useState<PendingCommand>();
   const [responses, setResponses] = useState<string[]>([]);
   const [error, setError] = useState('');
-  const [pollError, setPollError] = useState('');
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
-  const [caughtUp, setCaughtUp] = useState(false);
   const alive = useRef(true);
   const mutation = useRef(false);
   const draftRef = useRef(draft);
-  const transcriptRef = useRef(transcript);
-  const pageReadCount = useRef(0);
-  const pageAfters = useRef<number[]>([]);
   const pendingRef = useRef(pending);
   const responsesRef = useRef(responses);
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
@@ -96,6 +90,8 @@ export function useNativeConversationController(params: NativeConversationParams
     contextId: params.contextId,
     leaseId: params.leaseId,
   });
+  const currentStorageKey = useRef(storageKey);
+  currentStorageKey.current = storageKey;
   const selection = useMemo<NativeWorkerViewSelection>(
     () => ({
       runId: params.runId ?? '',
@@ -141,10 +137,18 @@ export function useNativeConversationController(params: NativeConversationParams
 
   useEffect(() => {
     alive.current = true;
+    let restoring = true;
+    setReady(false);
+    setPending(undefined);
+    pendingRef.current = undefined;
+    setResponses([]);
+    responsesRef.current = [];
+    setDraft(params.draft ?? '');
+    draftRef.current = params.draft ?? '';
     void (async () => {
       try {
         const saved = await conversationStorage.read(storageKey);
-        if (!alive.current) return;
+        if (!alive.current || !restoring) return;
         if (saved) {
           const value = JSON.parse(saved) as {
             draft?: string;
@@ -160,10 +164,12 @@ export function useNativeConversationController(params: NativeConversationParams
         }
         setReady(true);
       } catch (cause) {
-        if (alive.current) setError(`Cannot restore conversation controls: ${message(cause)}`);
+        if (alive.current && restoring)
+          setError(`Cannot restore conversation controls: ${message(cause)}`);
       }
     })();
     return () => {
+      restoring = false;
       alive.current = false;
     };
   }, [storageKey, params.draft]);
@@ -176,155 +182,94 @@ export function useNativeConversationController(params: NativeConversationParams
     [storageKey],
   );
 
-  // A reconnect replays the same journal; it never resends a prompt or an approval.
-  useEffect(() => {
-    if (!ready || !client || connection !== 'connected') return;
-    if (
-      !canOpenNativeConversation(
-        access,
-        params.runId || params.contextId || params.leaseId || params.generation,
-      )
-    ) {
-      setPollError('This account cannot open a farm worker conversation.');
-      return;
-    }
-    let active = true;
-    let polling = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const generation = client.connectionGeneration;
-    const current = () =>
-      active &&
-      client.connectionGeneration === generation &&
-      (client.authenticatedPrincipal?.id ?? null) === principalId &&
-      (!farmConnection || farmConnection());
-    const poll = async () => {
-      if (polling || !current()) return;
-      clearTimeout(timer);
-      polling = true;
-      try {
-        if (!params.sessionId) {
-          const result = await client.request<NativeSessionListResult>(
+  const historyOwner = getResourceNativeOwnerId();
+  const historyQuery = useMemo(
+    () =>
+      params.sessionId && historyOwner && (!params.runId || worker)
+        ? nativeHistoryQuery(
+            {
+              sessionId: params.sessionId,
+              executionNodeId: node,
+              ...(worker
+                ? {
+                    worker: {
+                      runId: worker.runId,
+                      contextId: worker.contextId,
+                      generation: worker.binding.generation ?? '',
+                      leaseId: worker.binding.leaseId,
+                    },
+                  }
+                : {}),
+            },
+            historyOwner,
+          )
+        : undefined,
+    [params.sessionId, params.runId, node, worker, historyOwner],
+  );
+  const inventoryQuery = useMemo(
+    () =>
+      !params.sessionId && historyOwner
+        ? nativeObservationQuery<NativeSessionListResult>(
             Methods.NATIVE_SESSION_LIST,
             {},
-          );
-          if (!current()) return;
-          setSessions(result.sessions.filter((session) => !session.workerManaged).reverse());
-          setUnavailable(
-            (result.unavailableExecutionNodes ?? []).map(
-              (item) => `${item.executionNodeId}: ${item.message}`,
-            ),
-          );
-        } else {
-          const target = currentWorker();
-          if (params.runId && !target) {
-            setCaughtUp(false);
-            return;
-          }
-          for (let count = 0; count < 20; count++) {
-            const after = transcriptRef.current.cursor;
-            const page: NativeSessionReadResult = await client.request<NativeSessionReadResult>(
-              Methods.NATIVE_SESSION_READ,
-              {
-                sessionId: params.sessionId,
-                executionNodeId: node,
-                ...(after ? { after } : {}),
-                ...(target
-                  ? {
-                      worker: {
-                        runId: target.runId,
-                        contextId: target.contextId,
-                        generation: target.binding.generation ?? '',
-                        leaseId: target.binding.leaseId,
-                      },
-                    }
-                  : {}),
-                limit: 200,
-              },
-            );
-            if (__DEV__) {
-              pageReadCount.current++;
-              pageAfters.current = [...pageAfters.current.slice(-19), after];
-            }
-            if (!current()) return;
-            if (params.runId && !sameNativeWorkerViewBinding(target, currentWorker())) {
-              setCaughtUp(false);
-              return;
-            }
-            if (page.session.id !== params.sessionId || page.session.executionNodeId !== node)
-              throw new Error('Conversation replay returned another session or execution node.');
-            if (
-              target &&
-              (page.session.workerLeaseId !== target.binding.leaseId ||
-                page.scope?.leaseId !== target.binding.leaseId)
-            )
-              throw new Error(
-                'This conversation belongs to another task. Open that task to continue.',
-              );
-            if (!transcriptRef.current.events.length && page.scope) {
-              transcriptRef.current = { events: [], cursor: page.scope.startAfter };
-            }
-            transcriptRef.current = appendNativePage(transcriptRef.current, page);
-            setTranscript(transcriptRef.current);
-            setSnapshot(page);
-            setCaughtUp(!page.hasMore);
-            const command = pendingRef.current;
-            const receipt = page.commands.find(
-              (item) =>
-                item.commandId === command?.commandId && item.generation === command?.generation,
-            );
-            if (
-              command &&
-              nativeCommandLockSettled(
-                command,
-                page.session.generation,
-                receipt,
-                transcriptRef.current.events,
-              )
-            ) {
-              pendingRef.current = undefined;
-              setPending(undefined);
-              await persist(draftRef.current, undefined, responsesRef.current);
-            }
-            if (!page.hasMore) break;
-          }
-        }
-        if (current()) setPollError('');
-      } catch (cause) {
-        if (current()) {
-          setPollError(message(cause));
-          setCaughtUp(false);
-        }
-      } finally {
-        polling = false;
-        if (current()) timer = setTimeout(() => void poll(), params.sessionId ? 1200 : 5000);
-      }
-    };
-    refreshRef.current = poll;
-    void poll();
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [
-    client,
-    connection,
-    principalId,
+            historyOwner,
+          )
+        : undefined,
+    [params.sessionId, historyOwner],
+  );
+  const historyObservation = useResourceQuery(historyQuery);
+  const inventoryObservation = useResourceQuery(inventoryQuery);
+  const allowed = canOpenNativeConversation(
     access,
-    ready,
-    params.sessionId,
-    params.runId,
-    params.contextId,
-    params.leaseId,
-    params.generation,
-    node,
-    storageKey,
-    persist,
-    currentWorker,
-    farmConnection,
-  ]);
+    params.runId || params.contextId || params.leaseId || params.generation,
+  );
+  const snapshot = allowed ? historyObservation.data : undefined;
+  const transcript: NativeTranscript = {
+    events: snapshot?.events ?? [],
+    cursor: snapshot?.cursor ?? 0,
+  };
+  const sessions = allowed
+    ? (inventoryObservation.data?.sessions ?? [])
+        .filter((session) => !session.workerManaged)
+        .slice()
+        .reverse()
+    : [];
+  const unavailable = (inventoryObservation.data?.unavailableExecutionNodes ?? []).map(
+    (item) => `${item.executionNodeId}: ${item.message}`,
+  );
+  const caughtUp = historyObservation.status === 'ready' && !!snapshot && !snapshot.hasMore;
+  const pollError = !allowed
+    ? 'This account cannot open a farm worker conversation.'
+    : ((params.sessionId ? historyObservation : inventoryObservation).error?.message ?? '');
+  refreshRef.current = async () => {
+    const query = historyQuery ?? inventoryQuery;
+    try {
+      if (query && getResourceCache()?.read<unknown>(query).error)
+        await getResourceCache()?.retry<unknown>(query);
+    } catch (cause) {
+      if (alive.current && currentStorageKey.current === storageKey) setError(message(cause));
+    }
+  };
+  // Reconcile a journal from accepted observations only. Reconnect never dispatches it.
+  useEffect(() => {
+    if (!caughtUp || !snapshot || !ready) return;
+    const command = pendingRef.current;
+    const receipt = snapshot.commands.find(
+      (item) => item.commandId === command?.commandId && item.generation === command?.generation,
+    );
+    if (
+      command &&
+      nativeCommandLockSettled(command, snapshot.session.generation, receipt, snapshot.events)
+    ) {
+      pendingRef.current = undefined;
+      setPending(undefined);
+      void persist(draftRef.current, undefined, responsesRef.current).catch((cause) => {
+        if (alive.current && currentStorageKey.current === storageKey) setError(message(cause));
+      });
+    }
+  }, [caughtUp, snapshot, ready, persist]);
 
   const session = snapshot?.session;
-  const resume = useNativeSessionResume(session, !params.runId && caughtUp && !pollError && !busy);
   const workerControl = worker && nativeWorkerViewControl(worker, session);
   const writable =
     !!session &&
@@ -333,7 +278,7 @@ export function useNativeConversationController(params: NativeConversationParams
     !pollError &&
     !snapshot?.scope?.released &&
     (!params.runId || runObservation.status === 'ready') &&
-    connection === 'connected' &&
+    nativeHistoryCanAct(historyObservation, snapshot, connection === 'connected') &&
     !['closed', 'failed', 'closing', 'starting'].includes(session.state) &&
     (session.workerManaged ? !!workerControl : !params.runId);
   const target: NativeSessionTargetParams = {
@@ -355,6 +300,15 @@ export function useNativeConversationController(params: NativeConversationParams
       live.authorityEpoch !== authorityEpoch
     )
       throw new Error('The conversation connection changed. Reopen it before acting.');
+    if (
+      !historyQuery ||
+      !nativeHistoryCanAct(
+        getResourceCache()?.read(historyQuery),
+        snapshot,
+        live.status === 'connected',
+      )
+    )
+      throw new Error('Wait for current conversation history before acting.');
     if (!params.runId) return;
     if (!farmConnection?.()) throw new Error('The worker conversation connection changed.');
     const current = currentWorker();
@@ -365,6 +319,12 @@ export function useNativeConversationController(params: NativeConversationParams
     )
       throw new Error('Wait for the current worker conversation before acting.');
   };
+  const resume = useNativeSessionResume(
+    session,
+    caughtUp && !pollError && !busy,
+    !params.runId,
+    assertCurrentControls,
+  );
   const mutate = async (action: () => Promise<void>) => {
     if (!client || !writable || mutation.current) return;
     mutation.current = true;
@@ -376,10 +336,10 @@ export function useNativeConversationController(params: NativeConversationParams
         await action();
       });
     } catch (cause) {
-      if (alive.current) setError(message(cause));
+      if (alive.current && currentStorageKey.current === storageKey) setError(message(cause));
     } finally {
       mutation.current = false;
-      if (alive.current) {
+      if (alive.current && currentStorageKey.current === storageKey) {
         setBusy(false);
         await refreshRef.current();
       }
@@ -466,8 +426,10 @@ export function useNativeConversationController(params: NativeConversationParams
     timeline: entries,
     cursor: transcript.cursor,
     eventCount: transcript.events.length,
-    pageReadCount: pageReadCount.current,
-    pageAfters: pageAfters.current,
+    pageReadCount: snapshot?.historyRead?.pageReadCount ?? 0,
+    pageAfters: snapshot?.historyRead?.pageAfters ?? [],
+    historyObservation,
+    historyQuery,
     commands: snapshot?.commands ?? [],
     draft,
     pendingCommandId: pending?.commandId,
@@ -476,6 +438,8 @@ export function useNativeConversationController(params: NativeConversationParams
     caughtUp,
     writable,
     canSend,
+    resumeAvailable: resume.viewModel.available,
+    resumeReady: resume.viewModel.ready,
     busy,
   });
   proof.current = {
@@ -487,8 +451,10 @@ export function useNativeConversationController(params: NativeConversationParams
     timeline: entries,
     cursor: transcript.cursor,
     eventCount: transcript.events.length,
-    pageReadCount: pageReadCount.current,
-    pageAfters: pageAfters.current,
+    pageReadCount: snapshot?.historyRead?.pageReadCount ?? 0,
+    pageAfters: snapshot?.historyRead?.pageAfters ?? [],
+    historyObservation,
+    historyQuery,
     commands: snapshot?.commands ?? [],
     draft,
     pendingCommandId: pending?.commandId,
@@ -497,16 +463,16 @@ export function useNativeConversationController(params: NativeConversationParams
     caughtUp,
     writable,
     canSend,
+    resumeAvailable: resume.viewModel.available,
+    resumeReady: resume.viewModel.ready,
     busy,
   };
   useEffect(() => {
-    if (__DEV__ && params.runId)
-      return observeNativeConversation(params.runId, () => ({
+    if (__DEV__ && (params.runId || params.sessionId))
+      return observeNativeConversation((params.runId || params.sessionId)!, () => ({
         ...proof.current,
-        pageReadCount: pageReadCount.current,
-        pageAfters: pageAfters.current,
       }));
-  }, [params.runId, storageKey]);
+  }, [params.runId, params.sessionId, storageKey]);
   return {
     viewModel: {
       sessions,
@@ -534,6 +500,8 @@ export function useNativeConversationController(params: NativeConversationParams
       workerLabel: worker
         ? `${worker.label}${snapshot?.scope?.released || worker.readOnly ? ' · Task history' : ''}`
         : undefined,
+      historyObservation,
+      inventoryObservation,
       runObservation: params.runId ? runObservation : undefined,
     },
     actions: {
@@ -572,7 +540,7 @@ export function useNativeConversationController(params: NativeConversationParams
           if (cache?.read(runQuery).error) await cache.retry(runQuery);
           if (alive.current) await refreshRef.current();
         } catch (cause) {
-          if (alive.current) setError(message(cause));
+          if (alive.current && currentStorageKey.current === storageKey) setError(message(cause));
         }
       },
       send,

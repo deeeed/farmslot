@@ -541,7 +541,15 @@ async function observeResources({ clientKind = 'ui', token = profile.credential.
         10000,
       );
       socket.addEventListener('message', receive);
-      socket.send(JSON.stringify({ type: 'req', id, method, params }));
+      socket.send(
+        JSON.stringify({
+          type: 'req',
+          id,
+          method,
+          params,
+          ...(stamped ? { resourceRead: { version: 1 } } : {}),
+        }),
+      );
     });
   try {
     await new Promise((resolve, reject) => {

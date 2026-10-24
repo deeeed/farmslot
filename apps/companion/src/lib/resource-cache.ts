@@ -13,6 +13,7 @@ const notify = () => {
   for (const listener of listeners) listener();
 };
 const owner = new ResourceCacheOwner({
+  contentBudgetBytes: 500 * 1024 * 1024,
   identities(gatewayUrl, profileId) {
     const key = resourceIdentityStorageKey(gatewayUrl, profileId);
     return {
@@ -85,4 +86,9 @@ export function subscribeResourceCache(listener: () => void): () => void {
   return () => {
     listeners.delete(listener);
   };
+}
+
+/** Last verified owner for native query dependencies, also available during cold offline render. */
+export function getResourceNativeOwnerId(): string | undefined {
+  return owner.renderMetadata?.scope.principalId;
 }

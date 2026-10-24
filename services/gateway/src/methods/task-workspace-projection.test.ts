@@ -21,6 +21,7 @@ import * as realRunStore from '../runs/store.js';
 
 let workspaceRun: Run | undefined;
 let snapshotRoot = '';
+let workspaceHost = 'localhost';
 let beforeRead: (() => void) | undefined;
 
 mock.module('../runs/store.js', {
@@ -48,12 +49,18 @@ mock.module('../fleet/state.js', {
   namedExports: {
     ...realFleetState,
     loadPoolConfigs: async () => [
-      { machine: 'local', host: 'localhost', sshUser: 'fixture' } as PoolConfig,
+      {
+        machine: workspaceRun?.reviewWorkspace?.machine ?? 'local',
+        host: workspaceHost,
+        sshUser: 'fixture',
+      } as PoolConfig,
     ],
   },
 });
 
 const { taskProgress } = await import('./task.js');
+const observedProgress = (params: Parameters<typeof taskProgress>[0]) =>
+  taskProgress(params, { observed: true });
 
 const PARENT = [
   '# Review',
@@ -193,6 +200,7 @@ async function withWorkspace(work: (root: string) => Promise<void>): Promise<voi
     workspaceRun = undefined;
     beforeRead = undefined;
     snapshotRoot = '';
+    workspaceHost = 'localhost';
     rmSync(root, { recursive: true, force: true });
     if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
     else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
@@ -305,7 +313,11 @@ test('cleaned workspace selections map the original task root and relative decla
       SELECTED_RELATIVE,
       path.join(viewer, SELECTED_RELATIVE),
     ]) {
-      const progress = await taskProgress({ slotId: '', runId: 'workspace-projection', taskFile });
+      const progress = await observedProgress({
+        slotId: '',
+        runId: 'workspace-projection',
+        taskFile,
+      });
       assert.equal(progress.markdown, SELECTED);
       assert.equal(progress.structured?.completedSteps, 2);
       assert.equal(progress.acceptanceStatus?.criteria[0].verdict, 'proven');
@@ -313,7 +325,7 @@ test('cleaned workspace selections map the original task root and relative decla
     declareSelected(SELECTED_RELATIVE);
     assert.equal(
       (
-        await taskProgress({
+        await observedProgress({
           slotId: '',
           runId: 'workspace-projection',
           taskFile: originalArtifact,
@@ -322,7 +334,7 @@ test('cleaned workspace selections map the original task root and relative decla
       SELECTED,
       'A task-relative declaration also resolves the original absolute selection',
     );
-    const parent = await taskProgress({ slotId: '', runId: 'workspace-projection' });
+    const parent = await observedProgress({ slotId: '', runId: 'workspace-projection' });
     assert.equal(parent.markdown, PARENT);
     assert.equal(
       parent.structured?.phases.flatMap((phase) => phase.steps).find((step) => step.index === 2)
@@ -410,6 +422,99 @@ test('a selected workspace read rejects owner, declaration or workspace replacem
         (error: unknown) =>
           error instanceof GatewayMethodError && error.code === 'PROGRESS_OWNER_CHANGED',
       );
+    }
+  });
+});
+
+test('observed slot-free workspace uses its existing local monitor owner without a slot watch', async () => {
+  await withWorkspace(async () => {
+    const { createReviewWorkspaceProgressPublisher } =
+      await import('../review-workspaces/progress.js');
+    let current = true;
+    const publisher = createReviewWorkspaceProgressPublisher('workspace-projection', () => {}, {
+      isCurrent: () => current,
+    });
+    try {
+      await publisher.publish();
+      const progress = await taskProgress(
+        { slotId: '', runId: 'workspace-projection' },
+        { observed: true },
+      );
+      assert.equal(progress.structured?.totalSteps, 3);
+      assert.equal(
+        progress.structured?.phases.flatMap((phase) => phase.steps).find((step) => step.index === 2)
+          ?.subtask?.id,
+        'perps-review',
+      );
+      current = false;
+      await assert.rejects(
+        taskProgress({ slotId: '', runId: 'workspace-projection' }, { observed: true }),
+        { code: 'RESOURCE_OBSERVATION_UNAVAILABLE' },
+      );
+    } finally {
+      current = false;
+    }
+  });
+});
+
+test('observed declared workspace artifact needs no active worker watch and still fences declaration replacement', async () => {
+  await withWorkspace(async (root) => {
+    const selected = path.join(root, 'task', 'artifacts', 'selected-review.md');
+    writeFileSync(selected, SELECTED);
+    workspaceRun!.steps = [
+      { name: 'review', status: 'done', outputs: { taskProgressArtifactPath: selected } },
+    ];
+    const progress = await taskProgress(
+      { slotId: '', runId: workspaceRun!.id, taskFile: selected },
+      { observed: true },
+    );
+    assert.equal(progress.structured?.completedSteps, 2);
+    beforeRead = () => {
+      workspaceRun = { ...workspaceRun!, steps: [] };
+    };
+    await assert.rejects(
+      taskProgress({ slotId: '', runId: workspaceRun!.id, taskFile: selected }, { observed: true }),
+      { code: 'PROGRESS_OWNER_CHANGED' },
+    );
+  });
+});
+
+test('an observed selected workspace artifact on an old remote node is refused before remote reads', async () => {
+  await withWorkspace(async (root) => {
+    const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
+    const machine = 'workspace-old-observation-node';
+    const ws = { readyState: 1 } as import('ws').WebSocket;
+    registerNode(
+      machine,
+      1,
+      ws,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      {},
+      () => true,
+    );
+    const selected = path.join(root, 'task', 'artifacts', 'selected-review.md');
+    workspaceHost = '192.0.2.23';
+    workspaceRun = {
+      ...workspaceRun!,
+      reviewWorkspaceTarget: { machine },
+      reviewWorkspace: { ...workspaceRun!.reviewWorkspace!, machine, executionNodeId: machine },
+      steps: [{ name: 'review', status: 'done', outputs: { taskProgressArtifactPath: selected } }],
+    };
+    try {
+      await assert.rejects(
+        taskProgress(
+          { slotId: '', runId: workspaceRun.id, taskFile: selected },
+          { observed: true },
+        ),
+        { code: 'RESOURCE_OBSERVATION_UNSUPPORTED' },
+      );
+    } finally {
+      unregisterByWs(ws);
     }
   });
 });

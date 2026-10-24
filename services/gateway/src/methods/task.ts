@@ -36,7 +36,15 @@ import {
   slotReadFile,
 } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { readReviewWorkspaceProgress } from '../review-workspaces/task.js';
+import {
+  assertProgressOwnerAdmitted,
+  captureProgressProducer,
+  hasProgressObservationOwner,
+} from '../resources/progress-observations.js';
+import {
+  readReviewWorkspaceProgress,
+  reviewWorkspaceProgressLocation,
+} from '../review-workspaces/task.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
@@ -56,7 +64,15 @@ import {
 } from '../tasks/subtasks.js';
 import { generateTaskSchema } from '../tasks/writer.js';
 
-export async function taskProgress(params: TaskProgressParams): Promise<TaskProgressResult> {
+export interface TaskProgressReadOptions {
+  /** Set only by the shared observed-read dispatch, never by domain params. */
+  observed?: boolean;
+}
+
+export async function taskProgress(
+  params: TaskProgressParams,
+  options: TaskProgressReadOptions = {},
+): Promise<TaskProgressResult> {
   const requested = params.runId ? getRun(params.runId) : undefined;
   if (params.runId && !requested)
     throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${params.runId}`);
@@ -69,6 +85,9 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
     !requested ||
     !params.slotId ||
     (requested.slotId === params.slotId && slot?.currentRunId === requested.id);
+  const checkSource = options.observed
+    ? await admitProgressSource(params, requested, slot, live)
+    : undefined;
   const result = live
     ? await readTaskProgress(params, slot, requested)
     : await recordedRunProgress(params, requested);
@@ -96,7 +115,82 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
         'The slot binding changed during the progress read.',
       );
   }
+  checkSource?.();
   return result;
+}
+
+/** Admission follows the same retained/live choice as the read, rather than requiring a live slot. */
+async function admitProgressSource(
+  params: TaskProgressParams,
+  run: Run | undefined,
+  slot: SlotStatus | undefined,
+  live: boolean,
+): Promise<() => void> {
+  // These bytes are served from gateway-owned mirrors. Run/artifact writers
+  // invalidate their keys; taskProgress rechecks the exact run/context/declaration
+  // identity after I/O. A successor slot/node is not this retained source's owner.
+  if (
+    run &&
+    (!live ||
+      (!params.taskFile && !slot?.taskFile && params.slotId) ||
+      run.reviewWorkspace?.cleanedAt)
+  )
+    return () => {};
+  if (run && !params.slotId) {
+    // Frozen declared outputs are immutable once published. The confined reader
+    // still validates declaration, native owner and workspace binding.
+    if (params.taskFile) {
+      // selectedProgressArtifact in the confined reader validates this declared
+      // immutable output, including normalized aliases, before any data returns.
+      return captureProgressProducer((await reviewWorkspaceProgressLocation(run.id)).io);
+    }
+    return assertProgressOwnerAdmitted(run.id, 'review');
+  }
+  const context = run ? selectAgentContext(run, params) : undefined;
+  if (params.taskFile && run) {
+    const vars = await loadSlotVars(params.slotId);
+    const selected = run.steps.some((step) => {
+      const file = step.outputs?.taskProgressArtifactPath;
+      return (
+        typeof file === 'string' &&
+        path.resolve(vars.remoteRepo, file) === path.resolve(vars.remoteRepo, params.taskFile!)
+      );
+    });
+    if (selected) return captureProgressProducer(vars);
+  }
+  // Review producers own exact files independently of the slot-worker registry.
+  // Match the same active-file/context precedence used below by readTaskProgress.
+  const vars = await loadSlotVars(params.slotId);
+  const checkProducer = captureProgressProducer(vars);
+  const explicitContext = Boolean(params.contextId || params.role || params.target);
+  const candidate =
+    params.taskFile ??
+    (!explicitContext && run?.activeTaskFile && run.activeTaskFile !== run.taskFile
+      ? run.activeTaskFile
+      : context?.taskFile);
+  const file = candidate
+    ? await resolveTaskProgressMarkdownPathForSlot(vars, path.resolve(vars.remoteRepo, candidate))
+    : undefined;
+  if (run && file && hasProgressObservationOwner(run.id, file)) {
+    const check = assertProgressOwnerAdmitted(
+      run.id,
+      explicitContext ? context?.id : undefined,
+      file,
+    );
+    return () => {
+      checkProducer();
+      check();
+    };
+  }
+  const { assertLiveSlotProgressObservationAdmitted } = await import('../tasks/watcher.js');
+  const check = assertLiveSlotProgressObservationAdmitted({
+    ...params,
+    ...(file ? { taskFile: file } : {}),
+  });
+  return () => {
+    checkProducer();
+    check();
+  };
 }
 
 function progressRunIdentity(run: Run, params: TaskProgressParams): string {
@@ -109,6 +203,9 @@ function progressRunIdentity(run: Run, params: TaskProgressParams): string {
     run.taskFile,
     run.activeTaskFile,
     run.nativeOwnerPrincipalId,
+    run.engineState?.generation,
+    run.executionTemplate,
+    run.reviewWorkspaceSubject,
     run.reviewWorkspace,
     context?.id,
     context?.taskFile,

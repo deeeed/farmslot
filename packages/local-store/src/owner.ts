@@ -21,6 +21,7 @@ export interface ResourceCacheOwnerInput {
 }
 
 export interface ResourceCacheOwnerOptions {
+  contentBudgetBytes?: number;
   identities(gatewayUrl: string, profileId?: string): ResourceIdentityStorage;
   openStore(
     metadata: ResourceStoreMetadata,
@@ -185,6 +186,7 @@ export class ResourceCacheOwner {
       if (this.owned === owned) this.options.onNotice(notice);
     };
     cache = createStoredResourceCache({
+      contentBudgetBytes: this.options.contentBudgetBytes,
       client,
       snapshot: () => owned.input.connection,
       identities: {

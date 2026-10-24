@@ -137,6 +137,7 @@ import {
   broadcastEvent,
   broadcastPrincipalEvent,
   createWebSocketServer,
+  disposeServerResourceObservations,
   hasConnectedViewers,
   initServerGlobals,
 } from './server.js';
@@ -228,6 +229,7 @@ async function main(): Promise<void> {
     stopCredentialFreshnessPolling();
     releaseGatewayPresence();
     stopSourceReconciliation();
+    disposeServerResourceObservations();
     releaseGatewaySingletonLock();
   };
   process.once('exit', releaseIdentityResources);

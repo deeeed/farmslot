@@ -4,7 +4,11 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls. Restore both workspace types offline and keep conversation controls visible beside a scrolling transcript.
+
 - Show muted step durations and live elapsed time in Worker progress.
+
+- Use shared worker inventory observations for pinned workspaces and split terminals, retaining saved selections and disabling actions while stale or unavailable.
 
 - Show each run source and covered ticket once as compact inline Jira/PR links; show shared total and current-step elapsed time on the existing metadata line.
 

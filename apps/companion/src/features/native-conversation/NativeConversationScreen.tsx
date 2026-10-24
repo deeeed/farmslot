@@ -53,15 +53,20 @@ export function NativeConversationScreen({
                 ? `${vm.session.runner} · ${vm.session.model ?? 'Default model'} · ${vm.session.state}`
                 : 'Start a conversation or continue an existing one.'}
           </Text>
-          <Pressable
-            testID="companion-native-refresh"
-            accessibilityRole="button"
-            style={styles.button}
-            onPress={() => void actions.refresh()}
-          >
-            <Text style={styles.buttonText}>Refresh</Text>
-          </Pressable>
+          {vm.historyObservation.error || vm.inventoryObservation.error ? (
+            <Pressable
+              testID="companion-native-refresh"
+              accessibilityRole="button"
+              style={styles.button}
+              onPress={() => void actions.refresh()}
+            >
+              <Text style={styles.buttonText}>Retry reading conversation</Text>
+            </Pressable>
+          ) : null}
         </View>
+        {selected ? (
+          <ResourceReadStatus observation={vm.historyObservation} label="conversation history" />
+        ) : null}
         {vm.runObservation ? (
           <ResourceReadStatus observation={vm.runObservation} label="conversation run" />
         ) : null}

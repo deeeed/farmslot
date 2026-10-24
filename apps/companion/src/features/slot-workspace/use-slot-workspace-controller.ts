@@ -290,8 +290,22 @@ export function useSlotWorkspaceController() {
         .map((query) => cache?.retry(query!)),
     );
   };
+  const slotWorkerProgressActive = isSlotWorkerProgressActive(slot);
+  const taskProgressTrackingActive = slotWorkerProgressActive || isWorkerProgressActive(currentRun);
+  const activeTaskProgress = effectiveTaskProgressForRun(currentRun, taskProgress?.structured);
+  const shouldShowTaskProgress =
+    Boolean(activeTaskProgress?.totalSteps) && taskProgressTrackingActive;
+  const fallbackTaskProgress = taskProgressTrackingActive
+    ? fallbackTaskProgressSummary(currentRun, slot)
+    : null;
   const frame = useRef({
     focused,
+    ac4SlotId: id,
+    ac4Slot: slot,
+    ac4ProgressQuery: progressQuery,
+    ac4Progress: progressObservation,
+    ac4RenderedProgress: shouldShowTaskProgress ? activeTaskProgress : undefined,
+    ac4ProgressShown: shouldShowTaskProgress,
     run: currentRun,
     recipes: recipeObservation,
     history: historyObservation,
@@ -301,6 +315,12 @@ export function useSlotWorkspaceController() {
   });
   frame.current = {
     focused,
+    ac4SlotId: id,
+    ac4Slot: slot,
+    ac4ProgressQuery: progressQuery,
+    ac4Progress: progressObservation,
+    ac4RenderedProgress: shouldShowTaskProgress ? activeTaskProgress : undefined,
+    ac4ProgressShown: shouldShowTaskProgress,
     run: currentRun,
     recipes: recipeObservation,
     history: historyObservation,
@@ -321,8 +341,6 @@ export function useSlotWorkspaceController() {
     requestedRecipeRunId === DECISION_EVIDENCE_RECIPE_RUN_PARAM
       ? DECISION_EVIDENCE_RECIPE_RUN_PARAM
       : (selectedRecipeRunId ?? requestedRecipeRunId) || null;
-  const slotWorkerProgressActive = isSlotWorkerProgressActive(slot);
-  const taskProgressTrackingActive = slotWorkerProgressActive || isWorkerProgressActive(currentRun);
 
   const setStickyNavVisible = useCallback((visible: boolean) => {
     if (stickyNavVisibleRef.current === visible) return;
@@ -365,12 +383,6 @@ export function useSlotWorkspaceController() {
     setNavLayout({ y, height });
   }, []);
 
-  const activeTaskProgress = effectiveTaskProgressForRun(currentRun, taskProgress?.structured);
-  const shouldShowTaskProgress =
-    Boolean(activeTaskProgress?.totalSteps) && taskProgressTrackingActive;
-  const fallbackTaskProgress = taskProgressTrackingActive
-    ? fallbackTaskProgressSummary(currentRun, slot)
-    : null;
   const openLiveTerminal = () => {
     if (!id) return;
     router.push({

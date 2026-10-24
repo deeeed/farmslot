@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Advertise worker/file observation support and revoke failed worker samples until the existing sampler recovers, fencing stopped watches and superseded connections.
+
 - Support opt-in file-watch deletion and read-error notifications while preserving content-only requests and fencing delivery to the requesting connection.
 
 - Report failed dev worker CLI verification as node health until a later successful verification.

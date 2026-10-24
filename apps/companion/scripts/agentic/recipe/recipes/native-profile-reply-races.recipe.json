@@ -65,25 +65,13 @@
         "action": "command",
         "cmd": "node scripts/agentic/native-profile-reply-proof.mjs release-status",
         "intent": "The delayed authenticated response must not replace or enable the signed-out choice.",
-        "next": "show-refresh"
-      },
-      "show-refresh": {
-        "action": "command",
-        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-profile-refresh up",
-        "intent": "Reach profile refresh for the inventory race.",
         "next": "arm-list"
       },
       "arm-list": {
         "action": "command",
         "cmd": "node scripts/agentic/native-profile-reply-proof.mjs arm-list",
         "intent": "Delay the next actual mobile profile inventory response.",
-        "next": "refresh"
-      },
-      "refresh": {
-        "action": "ui.press",
-        "test_id": "companion-native-profile-refresh",
-        "intent": "Start a real inventory refresh for the current runner.",
-        "next": "list-held"
+        "next": "invalidate-list"
       },
       "list-held": {
         "action": "command",
@@ -130,6 +118,12 @@
         "cmd": "node scripts/agentic/native-profile-reply-proof.mjs other-selected",
         "intent": "The alternate configuration selection takes effect before the old response arrives.",
         "next": "release-status"
+      },
+      "invalidate-list": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reply-proof.mjs invalidate-list",
+        "intent": "A real owned profile registration change invalidates the observed inventory.",
+        "next": "list-held"
       }
     }
   }

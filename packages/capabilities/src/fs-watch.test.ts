@@ -205,3 +205,18 @@ test(
     }
   },
 );
+
+test('observation watches refuse a missing parent instead of admitting an inactive source', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-fs-missing-parent-'));
+  try {
+    assert.throws(
+      () =>
+        watchFile(path.join(dir, 'missing', 'state.md'), () => {}, {
+          onUnavailable: () => assert.fail('inactive watch must be refused before admission'),
+        }),
+      { code: 'ENOENT' },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

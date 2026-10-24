@@ -12,6 +12,7 @@ import { createExpoSqliteDriver } from '../src/native.js';
 import {
   createSqliteResourceStore,
   readSqliteResourceQueryInfo,
+  RESOURCE_STORE_SCHEMA_VERSION,
   type ResourceSqliteDatabase,
   type SqliteValue,
 } from '../src/sqlite-store.js';
@@ -131,12 +132,15 @@ test('schema reset rebuilds the query cache and fences the old open handle', asy
     fresh = await createSqliteResourceStore({
       database: adapter,
       scope: scope('schema'),
-      schemaVersion: 2,
+      schemaVersion: RESOURCE_STORE_SCHEMA_VERSION + 1,
     });
     assert(old.deleted);
     await old.putQuery({ id: 'q', data: { value: 'late old handle' }, observedAt: 2, bytes: 22 });
     assert.equal(await fresh.getQuery('q'), undefined);
-    assert.equal(sqlite.prepare('PRAGMA user_version').get()?.user_version, 2);
+    assert.equal(
+      sqlite.prepare('PRAGMA user_version').get()?.user_version,
+      RESOURCE_STORE_SCHEMA_VERSION + 1,
+    );
   } finally {
     await old?.close();
     await fresh?.close();

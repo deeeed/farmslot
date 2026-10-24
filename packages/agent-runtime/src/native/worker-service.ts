@@ -116,6 +116,8 @@ export async function routeNativeWorkerSession(
     throw new NativeSessionMethodError('INVALID_PARAMS', 'Unknown native worker operation');
   } catch (error) {
     if (error instanceof NativeSessionMethodError) throw error;
+    if ((error as { code?: string }).code === 'NOT_FOUND')
+      throw new NativeSessionMethodError('NOT_FOUND', (error as Error).message);
     throw new NativeSessionMethodError('NATIVE_SESSION_ERROR', (error as Error).message);
   }
 }

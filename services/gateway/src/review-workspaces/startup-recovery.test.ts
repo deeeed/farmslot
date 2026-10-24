@@ -31,6 +31,11 @@ const result: RunReviewResult = {
 };
 mock.module('./task.js', {
   namedExports: {
+    reviewWorkspaceProgressLocation: async () => ({
+      io: { host: 'localhost', machine: 'local', sshTarget: '' },
+      taskDir: '/owned/task',
+      checklistPath: '/owned/task/CHECKLIST.md',
+    }),
     materializeReviewWorkspaceTask: async () => {
       launches++;
       throw new Error('Recovery must not recreate the task or dispatch a reviewer');

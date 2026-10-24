@@ -1,9 +1,12 @@
 // server.ts — WebSocket server setup, connection handling, frame routing
-
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
 
 import { WebSocket, WebSocketServer } from 'ws';
 
+import {
+  type NativeSourceReceipt,
+  NativeSourceUnavailable,
+} from '@farmslot/agent-runtime/native/observation';
 import { decodeNodeFrame } from '@farmslot/capabilities/screen-frame';
 import {
   type AuthenticationRef,
@@ -21,11 +24,16 @@ import {
 } from '@farmslot/protocol';
 import {
   resourceDependenciesForRead,
+  resourceQuery,
+  type ResourceReadMethod,
   type ResourceReadStamp,
 } from '@farmslot/protocol/client-cache';
 import { SlotConfigError } from '@farmslot/slot-config';
 
-import { handleBranchFsChanged } from './automation/branch-watcher.js';
+import {
+  assertBranchObservationsAdmitted,
+  handleBranchFsChanged,
+} from './automation/branch-watcher.js';
 import { tryDispatchNext } from './backlog/dispatch-queue.js';
 import { autoDispatchBacklogReady, listBacklogItems } from './backlog/store.js';
 import { ChatActionRejectError } from './chat/chat-actions.js';
@@ -41,16 +49,42 @@ import {
   startResourcePolling,
 } from './fleet/resource-manager.js';
 import { loadFleetStatus, onStateChange } from './fleet/state.js';
+import { resolveObservedNativeWorkspace } from './methods/native-workspace.js';
 import { resetClientResourceIndex, streamUnsubscribe } from './methods/stream-feed.js';
+import { taskProgress } from './methods/task.js';
 import { parseTerminalKey } from './methods/terminal.js';
 import { unsubscribeWorkerTerminalPty } from './methods/terminal-worker.js';
-import { buildTmuxWorkerUpdateFromNodeSnapshot } from './methods/tmux-workers.js';
+import { tmuxWorkerObservedList } from './methods/tmux-workers.js';
 import { metroUnsubscribeAll } from './methods/workspace.js';
 import { initThumbnailCache, unsubscribeThumbnails } from './observability/thumbnail-cache.js';
 import { canReadResourceKey } from './resources/authorization.js';
+import { nativeCatalogChanges } from './resources/native-catalog-changes.js';
+import {
+  NATIVE_OBSERVED_READS,
+  nativeObservations,
+  nativeReadInterests,
+} from './resources/native-observations.js';
+import {
+  acceptNodeFileObservation,
+  revokeNodeFileObservations,
+} from './resources/node-file-observations.js';
 import { readWithResourceState, resourceRevisions } from './resources/revisions.js';
+import { acceptWorkerObservation } from './resources/worker-observations.js';
+import {
+  canReadWorkspaceResourceKey,
+  registerWorkspaceReadAlias,
+} from './resources/workspace-authorization.js';
+import { acceptWorkspaceSourceEvent } from './resources/workspace-node-observations.js';
+import { workspaceObservations } from './resources/workspace-observations.js';
+import {
+  captureWorkspaceRead,
+  nativeWorkspaceReadMethods,
+  runWorkspaceObservedRead,
+  workspaceReadMethods,
+} from './resources/workspace-read.js';
 import { handleReviewFsChanged } from './review/orchestrator.js';
 import { invalidateReviewProgressForMachine } from './review/progress.js';
+import { resolveNativeExecutionNode } from './runners/native/node.js';
 import { onPtyExit, unsubscribeAllPty } from './runtime/pty-stream.js';
 import {
   cleanupAgentScreenSessions,
@@ -198,6 +232,9 @@ export function createWebSocketServer(
     };
     initializedState = state;
     clients.set(ws, state);
+    nativeObservations.attachClient(ws, () =>
+      authorizeGatewayMethod(authRuntime, state, Methods.NATIVE_SESSION_READ),
+    );
 
     // Send privileged hello snapshot only after auth when auth is enabled.
     if (soloMode && canReceiveBroadcast(authRuntime, state, Events.HELLO)) {
@@ -258,11 +295,14 @@ export function createWebSocketServer(
             ws.close(1008, 'node authentication required');
             return;
           }
-          if (handleBranchFsChanged(peek.payload)) {
+          if (acceptWorkspaceSourceEvent(ws, peek.payload)) return;
+          const accepted = acceptNodeFileObservation(ws, peek.payload);
+          if (!accepted) return;
+          if (handleBranchFsChanged(accepted)) {
             return;
           }
-          if (!handleReviewFsChanged(peek.payload)) {
-            handleAgentFsChanged(peek.payload);
+          if (!handleReviewFsChanged(accepted)) {
+            handleAgentFsChanged(accepted);
           }
           return;
         }
@@ -274,6 +314,23 @@ export function createWebSocketServer(
             return;
           }
           handleNodeExecOutput(peek.payload.requestId, peek.payload.stream, peek.payload.data, ws);
+          return;
+        }
+        if (peek.type === 'event' && peek.event === 'node.native.observation') {
+          if (!isNodeSubjectSession(authRuntime, state)) {
+            ws.close(1008, 'node authentication required');
+            return;
+          }
+          const receipt = peek.payload as NativeSourceReceipt;
+          const registered = resolveNativeExecutionNode(receipt.ownerId, receipt.nodeId);
+          if (registered.ws !== ws) {
+            ws.close(1008, 'native source socket is not current');
+            return;
+          }
+          nativeObservations.acceptRemote(ws, receipt, () => {
+            const current = resolveNativeExecutionNode(receipt.ownerId, receipt.nodeId);
+            return current === registered && current.ws === ws && current.nativeAuthority.valid();
+          });
           return;
         }
         // Route node resource.changed events to resource manager
@@ -295,20 +352,7 @@ export function createWebSocketServer(
             ws.close(1008, 'node authentication required');
             return;
           }
-          buildTmuxWorkerUpdateFromNodeSnapshot(peek.payload)
-            .then((result) => {
-              broadcast({
-                type: 'event',
-                event: Events.TMUX_WORKER_INVENTORY_UPDATED,
-                payload: { result },
-                seq: ++eventSeq,
-              });
-            })
-            .catch((err) => {
-              // Node-pushed inventory is a live cache optimization. Keep the gateway serving
-              // request-time tmux.worker.list even if one pushed snapshot is malformed/stale.
-              console.warn(`[server] tmux worker update failed: ${(err as Error).message}`);
-            });
+          acceptWorkerObservation(ws, peek.payload);
           return;
         }
         // Route node metrics events to node health
@@ -344,8 +388,11 @@ export function createWebSocketServer(
     });
 
     ws.on('close', () => {
+      nativeObservations.detachClient(ws);
+      nativeObservations.disconnectRemote(ws);
       failRequestsBoundTo(ws);
       // Cleanup node registration
+      revokeNodeFileObservations(ws);
       const disconnectedMachine = unregisterByWs(ws);
       if (disconnectedMachine) {
         invalidateTaskProgressForMachine(disconnectedMachine);
@@ -485,8 +532,22 @@ export function initServerGlobals(): void {
   startScreenRelaunchWatcher();
 
   // Init thumbnail cache (demand-driven — only polls when clients subscribe)
+  const nativeOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  if (nativeOwner)
+    void nativeObservations.startLocal(nativeOwner).catch((error) => {
+      if (!(error instanceof NativeSourceUnavailable)) throw error;
+      // Source failure is published and marked reads expose error/Retry; no host launches.
+    });
   initThumbnailCache(broadcastEvent);
-  resourceRevisions.setPublisher((payload) => broadcastEvent(Events.RESOURCE_CHANGED, payload));
+  resourceRevisions.setPublisher((payload) => {
+    if (
+      payload.changes.some(
+        ({ key }) => key.family === 'capabilities' && Object.keys(key).length === 1,
+      )
+    )
+      nativeCatalogChanges.catalogChanged();
+    broadcastEvent(Events.RESOURCE_CHANGED, payload);
+  });
 
   // Watch for fleet state changes and broadcast
   const publishFleetChange = (fleet: FleetStatus) => {
@@ -517,12 +578,18 @@ export function initServerGlobals(): void {
   });
 }
 
+export function disposeServerResourceObservations(): void {
+  nativeObservations.dispose();
+  workspaceObservations.dispose();
+}
+
 /** Test-only: reset the once-guard so a suite can re-exercise initServerGlobals. */
 export function resetServerGlobalsForTests(): void {
   if (process.env.NODE_TEST_CONTEXT !== '1') {
     throw new Error('resetServerGlobalsForTests is only available during tests');
   }
   serverGlobalsInitialized = false;
+  disposeServerResourceObservations();
   if (backlogAutoDispatchInterval) {
     clearInterval(backlogAutoDispatchInterval);
     backlogAutoDispatchInterval = null;
@@ -693,7 +760,13 @@ async function handleMessage(
         personSessions: true,
         voiceInstructionFormatting: true,
         gatewayPing,
-        resourceChanges: { version: 1, epoch: resourceRevisions.epoch, versionLists: false },
+        resourceChanges: {
+          version: 1,
+          epoch: resourceRevisions.epoch,
+          versionLists: false,
+          observedReads: 1,
+          workspaceReads: 1,
+        },
         batchedContent: false,
         workspaceAccess: gatewayWorkspaceAccess(
           result.principal,
@@ -711,7 +784,7 @@ async function handleMessage(
         : undefined,
     });
     const changes = currentSourceResourceChanges();
-    if (changes) broadcastResourceChanges(changes, state.ws);
+    if (changes) await broadcastResourceChanges(changes, state.ws);
     if (canReceiveBroadcast(authRuntime, state, Events.HELLO)) await sendHello(state.ws);
     return;
   }
@@ -774,20 +847,116 @@ async function handleMessage(
       requestAllowsWorkers = nativeOwnerCanUseWorkers(
         authorizeGatewayMethod(authRuntime, state, frame.method),
       );
+    const observed = frame.resourceRead !== undefined;
+    if (observed && (!frame.resourceRead || frame.resourceRead.version !== 1))
+      throw new GatewayMethodError(
+        'RESOURCE_OBSERVATION_UNSUPPORTED',
+        'Unsupported observed-read version',
+      );
+    // One typed adapter validates all marked reads. Domain params do not carry view flags.
+    const reader = frame.method.startsWith('native.')
+      ? authorizeGatewayMethod(authRuntime, state, frame.method)
+      : undefined;
+    // Real history cursor pages keep after/limit on the route; durable query identity excludes them.
+    const nativeInterests =
+      observed && reader ? nativeReadInterests(frame.method, frame.params, reader.id) : undefined;
+    const query =
+      observed && !nativeInterests
+        ? resourceQuery(frame.method as ResourceReadMethod, frame.params, reader?.id)
+        : undefined;
+    const params = query?.params ?? frame.params;
+    const workspace =
+      observed &&
+      (workspaceReadMethods.includes(frame.method) ||
+        nativeWorkspaceReadMethods.includes(frame.method));
+    // runId pins mutable slot identity only on marked reads. Legacy slotless frozen Git semantics remain unchanged.
+    const workspaceParams = params as Record<string, unknown> | undefined;
+    if (workspace) authorizeGatewayMethod(authRuntime, state, frame.method);
+    const dispatchParams =
+      workspace && workspaceParams?.slotId && workspaceParams?.runId
+        ? Object.fromEntries(Object.entries(workspaceParams).filter(([key]) => key !== 'runId'))
+        : params;
+    let nativeWorkspaceIdentity:
+      | import('./resources/workspace-read.js').NativeWorkspaceIdentity
+      | undefined;
+    const checkWorkspace = workspace
+      ? await captureWorkspaceRead(
+          params as Record<string, unknown>,
+          [...query!.dependencies],
+          nativeWorkspaceReadMethods.includes(frame.method)
+            ? async () => {
+                nativeWorkspaceIdentity = await resolveObservedNativeWorkspace(
+                  authorizeGatewayMethod(authRuntime, state, frame.method),
+                  params as Record<string, unknown>,
+                );
+                return nativeWorkspaceIdentity;
+              }
+            : undefined,
+        )
+      : undefined;
     const read = () =>
-      routeMethod(frame.method, frame.params, {
-        authRuntime,
-        broadcast,
-        emit,
-        isActiveClient,
-        nextEventSeq,
-        state,
-      });
-    const dependencies = resourceDependenciesForRead(frame.method, frame.params);
-    const result = dependencies
-      ? await readWithResourceState(dependencies, read)
-      : { payload: await read(), resourceState: undefined };
+      observed && frame.method === Methods.FLEET_STATUS
+        ? loadFleetStatus(false, true).then((fleet) => ({ fleet }))
+        : observed && frame.method === Methods.TASK_PROGRESS
+          ? taskProgress(params as import('@farmslot/protocol').TaskProgressParams, {
+              observed: true,
+            })
+          : observed && frame.method === Methods.TMUX_WORKER_LIST
+            ? tmuxWorkerObservedList(params as import('@farmslot/protocol').TmuxWorkerListParams)
+            : routeMethod(frame.method, dispatchParams, {
+                authRuntime,
+                broadcast,
+                emit,
+                isActiveClient,
+                nextEventSeq,
+                state,
+              });
+    const checkSource =
+      observed && frame.method === Methods.FLEET_STATUS
+        ? await assertBranchObservationsAdmitted()
+        : undefined;
+    const dependencies =
+      nativeInterests?.map(({ key }) => key) ??
+      query?.dependencies ??
+      (workspaceReadMethods.includes(frame.method) ||
+      nativeWorkspaceReadMethods.includes(frame.method)
+        ? undefined
+        : resourceDependenciesForRead(frame.method, frame.params, reader?.id));
+    const needsAdmission = [
+      Methods.TMUX_WORKER_LIST,
+      Methods.TASK_PROGRESS,
+      Methods.FLEET_STATUS,
+      ...workspaceReadMethods,
+      ...nativeWorkspaceReadMethods,
+      ...NATIVE_OBSERVED_READS,
+    ].some((method) => method === frame.method);
+    const performRead = () => (workspace ? runWorkspaceObservedRead(read) : read());
+    const result = nativeInterests
+      ? await nativeObservations.read(state.ws, nativeInterests, performRead, () =>
+          resourceRevisions.sample(nativeInterests.map(({ key }) => key)),
+        )
+      : dependencies && (observed || !needsAdmission)
+        ? await readWithResourceState(dependencies, performRead)
+        : { payload: await performRead(), resourceState: undefined };
+    checkSource?.();
+    await checkWorkspace?.();
+    if (observed) {
+      const changedCredential =
+        state.authentication?.kind === 'credential'
+          ? state.authentication.credentialId !== requestCredential
+          : requestCredential !== undefined;
+      if (changedCredential || state.clientKind !== requestClientKind)
+        throw new GatewayMethodError(
+          'AUTH_FORBIDDEN',
+          'Observed read identity changed before delivery',
+        );
+      requireAuthenticatedSession(authRuntime, state);
+      authorizeGatewayMethod(authRuntime, state, frame.method);
+    }
     const refusal = nativeResponseRefusal();
+    if (!refusal && nativeWorkspaceIdentity && query)
+      for (const key of query.dependencies)
+        registerWorkspaceReadAlias(state, key, nativeWorkspaceIdentity);
     sendResponse(
       state.ws,
       frame.id,
@@ -814,6 +983,8 @@ async function handleMessage(
       console.error(`[server] route method ${frame.method} failed on ${state.id}: ${causeMessage}`);
     } else if (rawMessage.startsWith('Unknown method:')) {
       code = 'METHOD_NOT_FOUND';
+    } else if (err instanceof NativeSourceUnavailable) {
+      code = err.code;
     } else if (err instanceof GatewayAuthError) {
       code = err.code;
     } else if (err instanceof GatewayMethodError || err instanceof SlotConfigError) {
@@ -867,17 +1038,62 @@ function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
   ws.send(JSON.stringify(frame));
 }
 
+let resourcePublicationTail: Promise<void> = Promise.resolve();
 function broadcastResourceChanges(
   payload: import('@farmslot/protocol').ResourceChangedPayload,
   only?: WebSocket,
-): void {
+): Promise<void> {
+  const recipients = [...clients].map(([ws, state]) => ({
+    ws,
+    state,
+    authentication: state.authentication,
+    clientKind: state.clientKind,
+  }));
+  const delivery = resourcePublicationTail.then(() =>
+    deliverResourceChanges(payload, only, recipients),
+  );
+  resourcePublicationTail = delivery;
+  return delivery;
+}
+
+async function deliverResourceChanges(
+  payload: import('@farmslot/protocol').ResourceChangedPayload,
+  only: WebSocket | undefined,
+  recipients: Array<{
+    ws: WebSocket;
+    state: ClientState;
+    authentication: ClientState['authentication'];
+    clientKind: ClientState['clientKind'];
+  }>,
+): Promise<void> {
   if (!activeAuthRuntime) return;
-  for (const [ws, state] of clients) {
-    if ((only && ws !== only) || ws.readyState !== WebSocket.OPEN) continue;
+  for (const { ws, state, authentication, clientKind } of recipients) {
+    if (
+      (only && ws !== only) ||
+      ws.readyState !== WebSocket.OPEN ||
+      clients.get(ws) !== state ||
+      state.authentication !== authentication ||
+      state.clientKind !== clientKind
+    )
+      continue;
     try {
-      const changes = payload.changes.filter(({ key }) =>
-        canReadResourceKey(activeAuthRuntime!, state, key),
+      const allowed = await Promise.all(
+        payload.changes.map(({ key }) =>
+          key.family === 'native-session' || key.family === 'profiles'
+            ? nativeObservations.canReadKey(ws, key)
+            : key.family === 'workspace'
+              ? canReadWorkspaceResourceKey(activeAuthRuntime!, state, key)
+              : canReadResourceKey(activeAuthRuntime!, state, key),
+        ),
       );
+      if (
+        state.authentication !== authentication ||
+        state.clientKind !== clientKind ||
+        clients.get(ws) !== state ||
+        ws.readyState !== WebSocket.OPEN
+      )
+        continue;
+      const changes = payload.changes.filter((_, index) => allowed[index]);
       if (!changes.length) continue;
       const frame: EventFrame = {
         type: 'event',

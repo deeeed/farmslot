@@ -41,17 +41,17 @@ export async function runSlotViewGitAction(
   method: string,
   path: string,
 ): Promise<void> {
-  if (!view._isLive || view._isRecoveryBlocked) return;
+  if (!view._isLive || view._isRecoveryBlocked || !view._workspaceReads.ready) return;
   try {
     await gateway.request(method, { slotId: view.slotId, path });
-    // Refresh git status after action.
-    await view._refreshGitStatus();
+    // The existing workspace source publishes after the git writer becomes visible.
   } catch (err) {
     console.error(`[slot-view] ${method} failed:`, err);
   }
 }
 
 export async function saveSlotViewFile(view: SlotView): Promise<void> {
+  if (!view._workspaceReads.ready) return;
   const tab = view._openFiles.find((file) => file.path === view._activeFile);
   if (
     !canSaveSlotViewFile({

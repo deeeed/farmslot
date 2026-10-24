@@ -150,7 +150,7 @@ test('a replacement admin supervises the pinned generation-zero worker without o
           person,
         ),
       ),
-      /unavailable or stale/,
+      { code: 'NOT_FOUND' },
     );
     assert.equal(calls.length, count);
     await assert.rejects(

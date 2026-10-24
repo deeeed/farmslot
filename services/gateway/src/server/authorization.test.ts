@@ -882,6 +882,8 @@ test('resource capabilities and principal generations reach farm, node and nativ
         version: 1,
         epoch: resourceRevisions.epoch,
         versionLists: false,
+        observedReads: 1,
+        workspaceReads: 1,
       });
       assert.equal(auth.capabilities.batchedContent, false);
       if (subject.access === 'native') {

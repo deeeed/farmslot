@@ -452,7 +452,13 @@ export class GatewayClient {
     }
 
     const id = String(++this.reqId);
-    const frame: RequestFrame = { type: 'req', id, method, params };
+    const frame: RequestFrame = {
+      type: 'req',
+      id,
+      method,
+      params,
+      ...(options?.includeResourceState ? { resourceRead: { version: 1 as const } } : {}),
+    };
 
     const result = await new Promise<T>((resolve, reject) => {
       const cleanup = () => options?.signal?.removeEventListener('abort', abort);

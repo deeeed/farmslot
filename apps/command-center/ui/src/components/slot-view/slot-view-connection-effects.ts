@@ -94,7 +94,6 @@ export function disconnectSlotView(view: SlotView): void {
   view._unsubResourceStatus?.();
   view._unsubPrepareTracker?.();
   disconnectSlotViewLayoutObserver(view);
-  view._cancelFileRestoreRetry();
   view._cancelResourceRestoreRetry();
   view._teardownLive();
   view._confirmTimer.clear();

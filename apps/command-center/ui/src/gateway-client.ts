@@ -761,7 +761,13 @@ export class GatewayClient {
     if (options.signal?.aborted) throw new Error('Resource read aborted');
     const timeout = options.timeout;
     const id = String(++this.reqId);
-    const frame: RequestFrame = { type: 'req', id, method, params };
+    const frame: RequestFrame = {
+      type: 'req',
+      id,
+      method,
+      params,
+      ...(options.includeResourceState ? { resourceRead: { version: 1 as const } } : {}),
+    };
     const t0 = performance.now();
 
     const result = await new Promise<T>((resolve, reject) => {

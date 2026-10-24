@@ -76,6 +76,8 @@ export interface GatewayResourceCacheOptions {
   /** Reopens a fresh scoped incarnation after authority deletion or a profile switch. */
   openStore?: (metadata: ResourceStoreMetadata) => Promise<ResourceStore>;
   maxInactiveEntries?: number;
+  /** Shared workspace/content budget supplied once by the platform owner. */
+  contentBudgetBytes?: number;
 }
 
 export interface GatewayResourceCache {

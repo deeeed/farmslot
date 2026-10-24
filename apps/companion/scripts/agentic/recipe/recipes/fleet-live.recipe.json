@@ -1,0 +1,95 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion actual node, Git and task progress pushes",
+  "description": "D06 AC4 proof using real private source writers. Root owns all execution authorization, private authenticated node/gateway/proxy, app signing/profile/bootstrap and serial device window. Prepare the exclusive source fixture before root starts its services, integrate the separate read-only dev-frame patch, then retain the dry input-hashed plan. The command never starts services, launches or restarts an app, boots/erases a simulator, dispatches a worker/provider, or records video. It opens genuine routes and writes only real private source files. The marked slotted diff query keeps the current runId ownership pin; the gateway strips that metadata before legacy Git dispatch. No nodes.list mounted-consumer, node lifecycle, cold-store or idle claim. Params are absent.",
+  "proofTargets": [
+    {
+      "id": "node-slot",
+      "claim": "A real private node HEAD observation changes the actual branch on the still-open Companion slot panel without Refresh."
+    },
+    {
+      "id": "task-mark",
+      "claim": "The task-local mark writer changes CHECKLIST.md and SIGNAL.json; the still-open canonical progress panel shows the completed step and its actual timing."
+    },
+    {
+      "id": "git",
+      "claim": "A real temporary worktree write changes the still-open canonical slotted Git diff and visible content without Refresh."
+    },
+    {
+      "id": "no-refresh",
+      "claim": "The existing passive method-counting proxy confirms no Refresh or native command RPC while actual app fleet/progress/Git reads traverse it."
+    },
+    {
+      "id": "slot-diff-routing",
+      "claim": "The marked live diff retains the exact slot and current run ownership pin and loads current worktree bytes through the node."
+    }
+  ],
+  "workflow": {
+    "entry": "attached",
+    "nodes": {
+      "attached": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-fleet",
+        "timeout_ms": 30000,
+        "intent": "Attach to the existing owned iOS app and device session.",
+        "next": "prove"
+      },
+      "prove": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-native-fleet.mjs prove",
+        "timeout_ms": 240000,
+        "intent": "Prove real source pushes in mounted panels with the checked private fixture.",
+        "next": "node-slot"
+      },
+      "node-slot": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeNodeSlotPush\":true",
+        "intent": "Verify the node HEAD change in the open slot panel without Refresh.",
+        "proves": ["node-slot"],
+        "next": "task-mark"
+      },
+      "task-mark": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTaskMarkPush\":true",
+        "intent": "Verify the real mark updates the open checklist and step timing.",
+        "proves": ["task-mark"],
+        "next": "git"
+      },
+      "git": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeGitPush\":true",
+        "intent": "Verify the worktree write updates the open slotted diff without Refresh.",
+        "proves": ["git"],
+        "next": "slot-diff-routing"
+      },
+      "no-refresh": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeAc4NoRefresh\":true",
+        "intent": "Verify real panel reads and no Refresh or native command through the passive proxy.",
+        "proves": ["no-refresh"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "slot-diff-routing": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeSlottedDiffRoute\":true",
+        "intent": "Inspect the actual mounted canonical request and current worktree diff.",
+        "proves": ["slot-diff-routing"],
+        "next": "no-refresh"
+      }
+    }
+  }
+}

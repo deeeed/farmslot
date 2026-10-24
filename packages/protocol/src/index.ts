@@ -52,6 +52,7 @@ export * from './surfaces/command-center.js';
 export * from './transport/events.js';
 export * from './transport/frames.js';
 export * from './transport/gateway-tls.js';
+export * from './transport/observations.js';
 export * from './transport/signal.js';
 export { PROTOCOL_VERSION } from './version.js';
 export * from './workers/tmux-worker-watchlist.js';
