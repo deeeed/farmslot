@@ -1063,3 +1063,34 @@ A code review already certifies the exact package head before publication. Showi
   - It blocks at a different head, with an open finding, after a pass is replaced by a failure, or when the review comes from a non-qualifying session.
   - Planning refuses `proves` on a `review` claim.
   - A confirmed receipt reads as proven in `run.get` while keeping its engine verdict.
+
+## Amendment 19 (2026-10-24): Publish captures from same-run attempts at one head
+
+**Status:** Proposed under the lead's approved multi-attempt evidence scope.
+**Specification:** [Consumers and publication](../reference/recorded-run-evidence.md#consumers-and-publication).
+
+### Decision
+
+One publication package may include after and standalone captures from several
+recipe attempts captured by the same run at its clean publication head. Each
+attempt keeps its original path, execution identity and complete immutable
+closure. Admission and frozen readers check the run's captured inventory,
+product provenance and every consumed byte. Before captures retain their existing
+exception for the run's unchanged dispatch baseline.
+
+The successful-attempt pointer still selects claim verdicts. Additional captures
+do not combine ledgers, borrow passing sibling verdicts or qualify visual claims
+from another execution. Cross-head claim retention remains Amendment 10's
+separate repair contract. No new pointer, package format or public RPC is added.
+
+### Rationale and consequences
+
+A network change or application restart needs a fresh recipe attempt, while its
+captures may document the same code revision. Restricting publication media to
+one attempt rejects valid proof without adding source integrity. This amendment
+chooses several attempts per publication package for session-persistence proof:
+retain the recorded write and the relaunched session's assertion of the same
+value. Recording remains bound to each original session. Several checked
+closures can share the existing publication package and approval hash. Missing,
+foreign, dirty, stale-head or changed closures still refuse, and all selected
+closures retain the existing secret scan and publication approval requirements.

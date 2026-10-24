@@ -180,12 +180,14 @@ async function refreshPublishedEvidenceLocked(
     inventory,
     selectedEvidenceKeys,
     prepared.artifactBundle,
+    prepared.headSha,
   );
   const { artifactUrls, selectedEvidenceKeys: expanded } = await publishSelectedEvidence(
     run,
     run.prNumber,
     selection,
     prepared.artifactBundle,
+    prepared.headSha,
   );
   if (!expanded.length) throw new Error('No local visual evidence is available to refresh');
   assertCurrent();
@@ -204,7 +206,13 @@ async function refreshPublishedEvidenceLocked(
     checkAuthorChecklist: false,
     evidenceManifest: manifest,
     validateBody: async () => {
-      await verifyFrozenPublicationEvidence(run, inventory, expanded, prepared.artifactBundle);
+      await verifyFrozenPublicationEvidence(
+        run,
+        inventory,
+        expanded,
+        prepared.artifactBundle,
+        prepared.headSha,
+      );
       const current = await readPr();
       assertAdoptedTarget(current);
       assertCurrent();
