@@ -107,9 +107,41 @@ const {
 }: typeof import('../../run-engine/dispatch-lifecycle-steps.js') = await import(engineModule);
 
 for (const scenario of [
-  { name: 'checkout-preserving replay', skipPrepare: true, prior: baseline, expected: baseline },
-  { name: 'first prepared dispatch', skipPrepare: true, prior: null, expected: fixedHead },
-  { name: 'new preparation', skipPrepare: false, prior: baseline, expected: fixedHead },
+  {
+    name: 'checkout-preserving replay',
+    skipPrepare: true,
+    prior: baseline,
+    expected: baseline,
+    activation: false,
+  },
+  {
+    name: 'first prepared dispatch',
+    skipPrepare: true,
+    prior: null,
+    expected: fixedHead,
+    activation: false,
+  },
+  {
+    name: 'new preparation',
+    skipPrepare: false,
+    prior: baseline,
+    expected: fixedHead,
+    activation: false,
+  },
+  {
+    name: 'slot activation preparation',
+    skipPrepare: false,
+    prior: baseline,
+    expected: baseline,
+    activation: true,
+  },
+  {
+    name: 'first slot activation',
+    skipPrepare: false,
+    prior: null,
+    expected: fixedHead,
+    activation: true,
+  },
 ]) {
   test(`${scenario.name} keeps the correct before-evidence baseline`, async (t) => {
     const task = path.join(root, 'TASK.md');
@@ -153,6 +185,7 @@ for (const scenario of [
           skipPrepare: scenario.skipPrepare,
         },
         () => {},
+        { preserveDispatchBaseline: scenario.activation },
       ),
       (error: unknown) => error === stop,
     );
@@ -163,8 +196,38 @@ for (const scenario of [
   });
 }
 
-for (const skipPrepare of [false, true]) {
-  test(`engine prepare then dispatch ${skipPrepare ? 'retains' : 'refreshes'} the baseline`, async (t) => {
+for (const scenario of [
+  {
+    name: 'ordinary preparation',
+    skipPrepare: false,
+    activation: false,
+    prior: baseline,
+    expected: fixedHead,
+  },
+  {
+    name: 'retained checkout',
+    skipPrepare: true,
+    activation: false,
+    prior: baseline,
+    expected: baseline,
+  },
+  {
+    name: 'slot activation',
+    skipPrepare: false,
+    activation: true,
+    prior: baseline,
+    expected: baseline,
+  },
+  {
+    name: 'first slot activation',
+    skipPrepare: false,
+    activation: true,
+    prior: null,
+    expected: fixedHead,
+  },
+]) {
+  const { skipPrepare } = scenario;
+  test(`engine prepare then dispatch preserves the correct baseline for ${scenario.name}`, async (t) => {
     const taskFile = path.join(root, 'ENGINE-TASK.md');
     await writeFile(taskFile, '# Worker: dev\n\n**Branch:** feat/dispatch-baseline\n');
     const run = createRun({
@@ -177,7 +240,12 @@ for (const skipPrepare of [false, true]) {
     });
     updateRun(run.id, {
       taskFile,
-      worktreeHeadAtDispatch: baseline,
+      worktreeHeadAtDispatch: scenario.prior,
+      steps: run.steps.map((step) =>
+        step.name === 'dispatch' && scenario.activation && scenario.prior
+          ? { ...step, inputs: { activationDispatchBaseline: scenario.prior } }
+          : step,
+      ),
       engineState: { flags: skipPrepare ? { skipPrepare: true } : {} },
       metrics: { ...run.metrics, runner: 'claude', model: 'opus' },
     });
@@ -218,7 +286,7 @@ for (const skipPrepare of [false, true]) {
       (error: unknown) => error === stop,
     );
     assert.equal(engineSkipPrepare, true, 'engine prevents duplicate preparation inside dispatch');
-    assert.equal(getRun(run.id)!.worktreeHeadAtDispatch, skipPrepare ? baseline : fixedHead);
+    assert.equal(getRun(run.id)!.worktreeHeadAtDispatch, scenario.expected);
     assert.deepEqual(captured, [fixedHead]);
   });
 }

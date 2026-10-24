@@ -579,7 +579,12 @@ export async function executeDispatchStep(
     : bound;
   if (!current.slotId) throw new Error('No slot assigned');
   if (!current.taskFile) throw new Error('No task file specified');
+  const activationBaseline = current.steps.find((step) => step.name === 'dispatch')?.inputs
+    ?.activationDispatchBaseline;
+  const preserveDispatchBaseline =
+    typeof activationBaseline === 'string' && activationBaseline === current.worktreeHeadAtDispatch;
   const inputs: Record<string, unknown> = {
+    ...(preserveDispatchBaseline ? { activationDispatchBaseline: activationBaseline } : {}),
     slotId: current.slotId,
     runner: current.metrics.runner,
     model: current.metrics.model,
@@ -845,7 +850,10 @@ export async function executeDispatchStep(
           providerAccountLabel: forcedLabel,
         },
         collector.emit,
-        { preparationRan: current.engineState?.flags?.skipPrepare !== true },
+        {
+          preparationRan: current.engineState?.flags?.skipPrepare !== true,
+          preserveDispatchBaseline,
+        },
       );
       if (forcedLabel && slotVars) {
         await hostRecordAccountSuccess({ vars: slotVars, label: forcedLabel });

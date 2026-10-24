@@ -1040,6 +1040,8 @@ export async function dispatchExecute(
     assertCurrent?: () => void;
     /** PREPARE ran in the engine; params.skipPrepare only avoids doing it twice. */
     preparationRan?: boolean;
+    /** Slot activation keeps its run's existing evidence baseline after preparation. */
+    preserveDispatchBaseline?: boolean;
   } = {},
 ): Promise<{ dispatched: boolean; launchCommand?: string }> {
   options.assertCurrent?.();
@@ -1538,6 +1540,7 @@ export async function dispatchExecute(
     // A retained checkout keeps its original before-evidence base.
     if (
       worktreeHeadAtDispatch &&
+      (!options.preserveDispatchBaseline || !dispatchRun?.worktreeHeadAtDispatch) &&
       (!params.skipPrepare || options.preparationRan || !dispatchRun?.worktreeHeadAtDispatch)
     ) {
       updateRunStore(params.runId, { worktreeHeadAtDispatch });
