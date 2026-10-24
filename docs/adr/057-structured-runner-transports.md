@@ -261,7 +261,7 @@ This changes command approval inside that sandbox, not filesystem access. The pr
 
 ## Amendment 6: retain in-flight reviewer ownership across gateway updates, 2026-10-24
 
-**Status:** Proposed; lead selected ADR-057 as owner on 2026-10-24.
+**Status:** Accepted (approved by the lead 2026-10-24).
 
 ### Decision
 

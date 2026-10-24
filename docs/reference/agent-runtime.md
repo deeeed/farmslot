@@ -252,7 +252,7 @@ This optional private field accepts only `never`. It is not a public session par
 
 ## In-flight reviewer continuity
 
-**Status:** Proposed under ADR-057 Amendment 6.
+**Status:** Accepted under ADR-057 Amendment 6 (approved by the lead 2026-10-24).
 
 A running HUMAN_GATE MUST retain publication-review recovery ownership after its
 review-request decision has been consumed. Startup MUST ingest its completed
