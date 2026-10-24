@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -22,7 +22,33 @@ import {
   selectCdpTarget,
 } from '@farmslot/recipe-runner/runtime/cdp';
 
-/** Two real browser processes share only this disposable profile; recipes drive the rendered page. */
+interface ProofBrowserClose {
+  requestClose?(): Promise<unknown>;
+  closeConnection?(): void;
+}
+
+/** The owned process exit completes cleanup even if its CDP close command stalls. */
+export async function closeProofBrowser(
+  child: ChildProcess,
+  exited: Promise<unknown>,
+  connection: ProofBrowserClose,
+  killAfterMs = 10_000,
+): Promise<void> {
+  const killTimer = setTimeout(() => child.kill('SIGKILL'), killAfterMs);
+  try {
+    try {
+      if (connection.requestClose) await Promise.race([connection.requestClose(), exited]);
+      else child.kill('SIGTERM');
+    } finally {
+      await exited;
+    }
+  } finally {
+    clearTimeout(killTimer);
+    connection.closeConnection?.();
+  }
+}
+
+/** Two browser processes share only a disposable profile. FARMSLOT_BROWSER_PROOF_BINARY overrides Canary. */
 export async function browserPersistenceAttempts(
   root: string,
   projectRoot: string,
@@ -273,18 +299,11 @@ export async function browserPersistenceAttempts(
         attempts.push(result);
       } finally {
         page?.close();
-        try {
-          if (browser) await browser.call('Browser.close');
-          else child.kill('SIGTERM');
-        } finally {
-          const killTimer = setTimeout(() => child.kill('SIGKILL'), 10_000);
-          try {
-            await exited;
-          } finally {
-            clearTimeout(killTimer);
-            browser?.close();
-          }
-        }
+        const ownedBrowser = browser;
+        await closeProofBrowser(child, exited, {
+          ...(ownedBrowser ? { requestClose: () => ownedBrowser.call('Browser.close') } : {}),
+          closeConnection: () => ownedBrowser?.close(),
+        });
       }
     }
     assert.notEqual(pids[0], pids[1]);
