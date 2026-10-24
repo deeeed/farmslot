@@ -242,6 +242,10 @@ for (const source of ['pool', 'project'] as const)
     const expected: ResourceKey[] = [
       { family: 'capabilities' },
       { family: 'workers', scope: 'farm' },
+      { family: 'configuration', scope: 'farm' },
+      ...(source === 'project'
+        ? [{ family: 'configuration' as const, scope: 'farm' as const, project: 'owned-project' }]
+        : []),
     ];
     const deadline = Date.now() + 1000;
     while (

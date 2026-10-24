@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import type { ClientState } from '../server/client-state.js';
 
@@ -57,9 +57,14 @@ process.env.FARMSLOT_ROOT = root;
 process.env.FARMSLOT_HOME = path.join(root, 'home');
 process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
 process.env.FARMSLOT_PROJECTS_DIR = path.join(root, 'projects');
+// Optional registration starts absent, as on a fresh host. Never inspect personal stores.
+const privateOs = { ...os, homedir: () => path.join(root, 'external-home') };
+mock.module('node:os', { defaultExport: privateOs, namedExports: privateOs });
+await import('../runtime/mock-pty.test-support.js');
 const config = await import('../methods/config.js');
 const { getLLMConfig, setLLMConfig } = await import('../llm/config.js');
-const { saveAuthProfileStore, getFarmslotStorePath } = await import('../llm/auth-store.js');
+const { saveAuthProfileStore, getFarmslotStorePath, getOpenClawStorePath } =
+  await import('../llm/auth-store.js');
 const { llmAuthList } = await import('../methods/llm-auth.js');
 const { startFileWatcher, loadProjectConfig } = await import('../fleet/state.js');
 const { resourceRevisions } = await import('./revisions.js');
@@ -141,7 +146,9 @@ test('actual external template/project/registration file writes use the existing
       [path.join(root, 'home/llm-config.json'), JSON.stringify({ defaultProvider: 'google' })],
       [getFarmslotStorePath(), JSON.stringify({ version: 1, profiles: {} })],
       [poolFile, (await readFile(poolFile, 'utf8')) + '\n'],
+      [getOpenClawStorePath(), JSON.stringify({ version: 1, profiles: {} })],
     ]) {
+      if (file === getOpenClawStorePath()) await mkdir(path.dirname(file), { recursive: true });
       const before = resourceRevisions.revision(farm);
       await writeFile(file, content);
       const deadline = Date.now() + 1500;

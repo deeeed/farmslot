@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Publish configuration changes from owning stores and existing file watchers; omit declared webhook secrets from client project replies while retaining internal webhook verification.
+- Publish configuration changes from owning stores and existing file watchers, including rapid replacements and optional registration directories created later. Observe roadmap deletion after atomic replacement across supported hosts. Omit declared webhook secrets from client project replies while retaining internal webhook verification.
 
 - Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
 

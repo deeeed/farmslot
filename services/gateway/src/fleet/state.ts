@@ -2,6 +2,7 @@
 // Transforms raw JSON into protocol types
 
 import { once } from 'node:events';
+import { statSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -47,6 +48,7 @@ import {
   readSourceRuntimeSettings,
   usesRuntimeSettings,
 } from '../core/config.js';
+import { watchedEventPath } from '../core/file-observation.js';
 import { onStatusCommit } from '../core/state.js';
 import { getFarmslotStorePath, getOpenClawStorePath } from '../llm/auth-store.js';
 import { invalidateLLMConfig } from '../llm/config.js';
@@ -735,8 +737,13 @@ export function startFileWatcher() {
     ignored: (file) =>
       file !== poolDir && (!file.endsWith('.json') || isIgnoredPoolFile(path.basename(file))),
   });
-  poolWatcher.on('all', (event, file) => {
-    if (file === poolDir || !['add', 'change', 'unlink'].includes(event)) return;
+  const poolChanged = (file: string) => {
+    if (
+      path.dirname(file) !== poolDir ||
+      !file.endsWith('.json') ||
+      isIgnoredPoolFile(path.basename(file))
+    )
+      return;
     publishConfigurationResources();
     capabilityResourceChanges.catalogChanged();
     publishWorkerResources();
@@ -758,6 +765,13 @@ export function startFileWatcher() {
         console.error('[state] pool refresh failed:', (err as Error).message);
       }
     }, 2000);
+  };
+  poolWatcher.on('all', (event, file) => {
+    if (['add', 'change', 'unlink'].includes(event)) poolChanged(file);
+  });
+  poolWatcher.on('raw', (_event, filename: unknown, details: unknown) => {
+    const file = watchedEventPath(filename, details);
+    if (file) poolChanged(file);
   });
   const selectedHome = farmslotHome();
   const runtimeSettingsDir = path.join(selectedHome, 'sources', 'runtime-settings');
@@ -766,7 +780,28 @@ export function startFileWatcher() {
   const llmConfigFile = path.join(selectedHome, 'llm-config.json');
   const registrationFiles = [llmConfigFile, getFarmslotStorePath(), getOpenClawStorePath()];
   const registrationParent = path.dirname(getOpenClawStorePath());
-  const projectWatcher = watch([projectsDir, selectedHome, registrationParent], {
+  // A missing optional root can finish Chokidar's multi-root readiness before
+  // its other trees are armed. Give it an existing ancestor and its own owner.
+  let registrationRoot = registrationParent;
+  while (!statSync(registrationRoot, { throwIfNoEntry: false }))
+    registrationRoot = path.dirname(registrationRoot);
+  const registrationWatcher = watch(registrationRoot, {
+    persistent: true,
+    ignoreInitial: true,
+    ignored: (file) =>
+      file !== registrationRoot &&
+      file !== getOpenClawStorePath() &&
+      !getOpenClawStorePath().startsWith(`${file}${path.sep}`),
+  });
+  registrationWatcher.on('all', (event, file) => {
+    if (file === getOpenClawStorePath() && ['add', 'change', 'unlink'].includes(event))
+      publishConfigurationResources();
+  });
+  registrationWatcher.on('raw', (_event, filename: unknown, details: unknown) => {
+    if (watchedEventPath(filename, details) === getOpenClawStorePath())
+      publishConfigurationResources();
+  });
+  const projectWatcher = watch([projectsDir, selectedHome], {
     persistent: true,
     ignoreInitial: true,
     depth: 4,
@@ -791,38 +826,61 @@ export function startFileWatcher() {
       return path.dirname(file) !== runtimeSettingsDir || !file.endsWith('.json');
     },
   });
-  projectWatcher.on('all', (event, file) => {
-    if (!['add', 'change', 'unlink'].includes(event)) return;
+  const projectChanged = (file: string) => {
     if (registrationFiles.includes(file)) {
       if (file === llmConfigFile) invalidateLLMConfig();
       publishConfigurationResources();
       return;
     }
+    if (path.dirname(file) === runtimeSettingsDir && file.endsWith('.json')) {
+      const project = path.basename(file, '.json');
+      invalidateProjectVarsCache(project);
+      publishConfigurationResources(project);
+      capabilityResourceChanges.catalogChanged();
+      publishWorkerResources();
+      return;
+    }
     const projectRelative = path.relative(projectsDir, file).split(path.sep);
-    if (projectRelative.length >= 3 && ['templates', 'learnings'].includes(projectRelative[1])) {
+    if (projectRelative[0] === '..' || path.isAbsolute(projectRelative[0])) return;
+    if (
+      (projectRelative.length >= 3 && projectRelative[1] === 'templates' && file.endsWith('.md')) ||
+      (projectRelative.length === 3 &&
+        projectRelative[1] === 'learnings' &&
+        projectRelative[2] === 'LEARNINGS.md')
+    ) {
       invalidateProjectVarsCache(projectRelative[0]);
       publishConfigurationResources(projectRelative[0]);
       return;
     }
-    const project =
-      path.dirname(file) === runtimeSettingsDir
-        ? path.basename(file, '.json')
-        : path.basename(path.dirname(file));
-    if (path.basename(file) !== 'project.json' && path.dirname(file) !== runtimeSettingsDir) return;
+    if (projectRelative.length !== 2 || projectRelative[1] !== 'project.json') return;
+    const project = projectRelative[0];
     invalidateProjectVarsCache(project);
     publishConfigurationResources(project);
     capabilityResourceChanges.catalogChanged();
     publishWorkerResources();
+  };
+  projectWatcher.on('all', (event, file) => {
+    if (['add', 'change', 'unlink'].includes(event)) projectChanged(file);
+  });
+  projectWatcher.on('raw', (_event, filename: unknown, details: unknown) => {
+    const file = watchedEventPath(filename, details);
+    if (file) projectChanged(file);
   });
   return {
     ready: Promise.all([
       once(watcher, 'ready'),
       once(poolWatcher, 'ready'),
       once(projectWatcher, 'ready'),
+      once(registrationWatcher, 'ready'),
     ]),
     async close(): Promise<void> {
       clearTimeout(poolDebounce);
-      await Promise.all([watcher.close(), poolWatcher.close(), projectWatcher.close()]);
+      await Promise.all([
+        watcher.close(),
+        poolWatcher.close(),
+        projectWatcher.close(),
+        registrationWatcher.close(),
+      ]);
     },
   };
 }

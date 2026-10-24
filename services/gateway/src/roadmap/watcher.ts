@@ -1,12 +1,10 @@
-import {
-  type FSWatcher,
-  watch,
-  type WatchListener,
-  type WatchOptionsWithStringEncoding,
-} from 'node:fs';
+import { once } from 'node:events';
 import { mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
+import { type ChokidarOptions, type FSWatcher, watch } from 'chokidar';
+
+import { watchedEventPath } from '../core/file-observation.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { publishPlanningResources } from '../resources/planning-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
@@ -16,13 +14,8 @@ export interface RoadmapItemObservation {
   close(): Promise<void>;
 }
 
-type RoadmapDirectoryWatch = (
-  directory: string,
-  options: WatchOptionsWithStringEncoding,
-  listener: WatchListener<string>,
-) => FSWatcher;
+type RoadmapDirectoryWatch = (directory: string, options: ChokidarOptions) => FSWatcher;
 
-/** Item directories may be created or replaced after observation starts. */
 function itemPath(root: string, file: string): boolean {
   const relative = path.relative(root, file);
   if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`))
@@ -34,7 +27,7 @@ function itemPath(root: string, file: string): boolean {
   );
 }
 
-/** Native directory events retain rapid atomic replacements that Chokidar's change throttle drops. */
+/** Track replacement inodes on Linux and retain changes inside Chokidar's 50ms throttle. */
 export async function watchRoadmapItems(
   directory: string,
   revisions = resourceRevisions,
@@ -44,37 +37,49 @@ export async function watchRoadmapItems(
   const root = await realpath(directory);
   let status: 'starting' | 'ready' | 'failed' | 'closed' = 'starting';
   let failure: Error | undefined;
+  const publish = (file: string | null) => {
+    if (status === 'closed' || status === 'failed') return;
+    if (
+      file === null ||
+      (itemPath(root, file) && (path.extname(file) === '' || file.endsWith('.md')))
+    )
+      publishPlanningResources('roadmap', undefined, 'updated', revisions);
+  };
   const fail = (error: Error) => {
     if (status === 'closed' || status === 'failed') return;
     failure = error;
     status = 'failed';
     publishPlanningResources('roadmap', undefined, 'updated', revisions);
   };
-  const watcher: FSWatcher = watchDirectory(
-    root,
-    { recursive: true, persistent: false },
-    (event, filename) => {
-      if (status === 'closed' || status === 'failed') return;
-      // A missing filename or a renamed item directory cannot safely narrow the affected items.
-      if (
-        filename === null ||
-        (itemPath(root, path.join(root, String(filename))) &&
-          (event === 'rename' || String(filename).endsWith('.md')))
-      )
-        publishPlanningResources('roadmap', undefined, 'updated', revisions);
-    },
+  const watcher = watchDirectory(root, {
+    persistent: false,
+    ignoreInitial: true,
+    ignored: (file) => file !== root && !itemPath(root, file),
+  });
+  watcher.on('all', (event, file) => {
+    // Discovery catches new descendants before their native handles existed.
+    // Existing-file changes use raw events, without delayed atomic reconciliation.
+    if (event === 'add' || event === 'addDir') publish(file);
+  });
+  watcher.on('raw', (_event, filename: unknown, details: unknown) => {
+    const file = watchedEventPath(filename, details);
+    if (file) publish(file);
+  });
+  watcher.on('error', (error: unknown) =>
+    fail(error instanceof Error ? error : new Error(String(error))),
   );
-  watcher.on('error', fail);
-  watcher.on('close', () => fail(new Error('Roadmap filesystem watcher closed unexpectedly')));
-  // The native handle is armed on return; also surface a queued startup error before admission.
-  await Promise.resolve();
-  if (failure) {
-    watcher.close();
-    throw failure;
+  try {
+    await once(watcher, 'ready');
+    if (failure) throw failure;
+    status = 'ready';
+  } catch (error) {
+    await watcher.close();
+    throw error;
   }
-  status = 'ready';
   return {
     assertReady() {
+      if (status === 'ready' && watcher.closed)
+        fail(new Error('Roadmap filesystem watcher closed unexpectedly'));
       if (status !== 'ready')
         throw new GatewayMethodError(
           'RESOURCE_OBSERVATION_UNAVAILABLE',
@@ -84,7 +89,7 @@ export async function watchRoadmapItems(
     },
     async close() {
       status = 'closed';
-      watcher.close();
+      await watcher.close();
     },
   };
 }

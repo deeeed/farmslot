@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { type FSWatcher, watch } from 'node:fs';
 import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
+
+import { type FSWatcher, watch } from 'chokidar';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import { GatewayResourceRevisions } from '../resources/revisions.js';
@@ -12,13 +13,14 @@ import { GatewayResourceRevisions } from '../resources/revisions.js';
 import { watchRoadmapItems } from './watcher.js';
 
 const home = await mkdtemp(path.join(os.tmpdir(), 'roadmap-observed-reads-'));
+test.after(() => rm(home, { recursive: true, force: true }));
 process.env.FARMSLOT_ROADMAP_DIR = path.join(home, 'roadmap');
 process.env.FARMSLOT_BACKLOG_FILE = path.join(home, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(home, 'queue.json');
 process.env.FARMSLOT_WORK_GRAPH_DIR = path.join(home, 'graphs');
 process.env.FARMSLOT_RUNS_DIR = path.join(home, 'runs');
+await import('../runtime/mock-pty.test-support.js');
 const store = await import('./store.js');
-test.after(() => rm(home, { recursive: true, force: true }));
 
 function item(title: string): string {
   return `---\nid: "ri_observed_file"\nkind: "roadmap-item"\nproject: "unassigned"\ntitle: ${JSON.stringify(title)}\nstage: "rough"\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\n\nFile-backed body.\n`;
@@ -31,8 +33,8 @@ test('real observed files feed the actual store and read failures remain visible
   const observation = await watchRoadmapItems(
     store.roadmapRoot,
     revisions,
-    (directory, options, listener) => {
-      source = watch(directory, options, listener);
+    (directory, options) => {
+      source = watch(directory, options);
       return source;
     },
   );

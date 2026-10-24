@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { type FSWatcher, watch } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
+
+import { type FSWatcher, watch } from 'chokidar';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import { GatewayResourceRevisions } from '../resources/revisions.js';
@@ -28,7 +29,11 @@ test('real item add, malformed edit, atomic replacement and unlink invalidate ro
   const revisions = new GatewayResourceRevisions();
   t.after(() => revisions.dispose());
   const root = path.join(home, 'configured-roadmap');
-  const observation = await watchRoadmapItems(root, revisions);
+  let source!: FSWatcher;
+  const observation = await watchRoadmapItems(root, revisions, (directory, options) => {
+    source = watch(directory, options);
+    return source;
+  });
   t.after(() => observation.close());
   observation.assertReady();
   assert.equal(revisions.revision(key), 0, 'Startup scanning is not a source mutation');
@@ -82,8 +87,8 @@ test('an observation error invalidates the collection and refuses freshness unti
   const revisions = new GatewayResourceRevisions();
   t.after(() => revisions.dispose());
   let source!: FSWatcher;
-  const observation = await watchRoadmapItems(root, revisions, (directory, options, listener) => {
-    source = watch(directory, options, listener);
+  const observation = await watchRoadmapItems(root, revisions, (directory, options) => {
+    source = watch(directory, options);
     return source;
   });
   t.after(() => observation.close());
@@ -96,12 +101,28 @@ test('an observation error invalidates the collection and refuses freshness unti
       error.code === 'RESOURCE_OBSERVATION_UNAVAILABLE' &&
       error.message.includes('watch descriptor lost'),
   );
-  source.emit('change', 'change', 'inbox/items/item.md');
+  source.emit('all', 'change', 'inbox/items/item.md');
   assert.throws(
     () => observation.assertReady(),
     /filesystem observation is failed/,
     'A later event cannot silently restore a broken feed',
   );
+});
+
+test('a closed source cannot admit a fresh roadmap read', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'roadmap-watch-closed-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const revisions = new GatewayResourceRevisions();
+  t.after(() => revisions.dispose());
+  let source!: FSWatcher;
+  const observation = await watchRoadmapItems(root, revisions, (directory, options) => {
+    source = watch(directory, options);
+    return source;
+  });
+  t.after(() => observation.close());
+  await source.close();
+  assert.throws(() => observation.assertReady(), /filesystem observation is failed/);
+  assert.equal(revisions.revision(key), 1);
 });
 
 test('startup refuses a real non-directory root and a queued native watch error', async (t) => {
@@ -111,8 +132,8 @@ test('startup refuses a real non-directory root and a queued native watch error'
   await writeFile(file, 'owned');
   await assert.rejects(watchRoadmapItems(file));
   await assert.rejects(
-    watchRoadmapItems(path.join(home, 'failed-root'), undefined, (directory, options, listener) => {
-      const source = watch(directory, options, listener);
+    watchRoadmapItems(path.join(home, 'failed-root'), undefined, (directory, options) => {
+      const source = watch(directory, options);
       queueMicrotask(() => source.emit('error', new Error('startup watch denied')));
       return source;
     }),
