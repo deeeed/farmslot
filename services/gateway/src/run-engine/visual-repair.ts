@@ -28,16 +28,19 @@ import {
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   recordedVisualJudgments,
+  reviewFindingIsSettled,
   type ReviewIssue,
   reviewRetryCount,
   type ReviewStatus,
   type Run,
   type RunDecision,
   type RunGatePrerequisiteReason,
+  SEND_BACK_TO_AGENT_ACTION,
   validateRecipeClaimDeclarations,
   validateRecipeRepairScope,
   type VisualRepairRecord,
 } from '@farmslot/protocol';
+import { reviewFindingEntries } from '@farmslot/review-dispatch';
 
 import { loadSlotVars } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
@@ -408,9 +411,40 @@ export async function visualRepairOffered(
 }
 
 /** Rendered through the existing REVIEW-FIX task; no second sender or template. */
-export function visualRepairIssues(scope: RecipeRepairScope, taskDir: string): ReviewIssue[] {
+export function visualRepairIssues(
+  scope: RecipeRepairScope,
+  taskDir: string,
+  run: Run,
+): ReviewIssue[] {
+  const decisionIndex = run.decisions.findIndex(({ id }) => id === scope.decisionId);
+  const decision = run.decisions[decisionIndex];
+  const payload = decision?.payload?.kind === 'ready' ? decision.payload : undefined;
+  const findings =
+    payload?.gateReadiness?.findings ??
+    reviewFindingEntries(run.engineState?.publishGate?.reviews ?? []).flatMap(
+      ({ review, entry, head }) =>
+        head === scope.packageHeadSha
+          ? (entry.issues ?? []).filter((issue) => !reviewFindingIsSettled(review, entry, issue))
+          : [],
+    );
+  const open = new Map<string, ReviewIssue>();
+  for (const issue of findings) {
+    open.set(JSON.stringify([issue.file, issue.line ?? null, issue.description]), issue);
+  }
+  const feedback = new Set(
+    run.decisions
+      .slice(decisionIndex < 0 ? run.decisions.length : decisionIndex)
+      .filter(
+        (entry) =>
+          entry.id === scope.decisionId || entry.resolvedAction === SEND_BACK_TO_AGENT_ACTION,
+      )
+      .map((entry) => entry.selectionData?.feedback ?? entry.selectionData?.comment)
+      .filter((note): note is string => typeof note === 'string' && note.trim().length > 0),
+  );
   const roots = new Map(scope.sources.map((source) => [source.recipeRunId, source.artifactRoot]));
   return [
+    ...[...feedback].map((description) => ({ file: 'Operator feedback', description })),
+    ...open.values(),
     {
       file: RECIPE_REPAIR_SCOPE_TASK_PATH,
       description:

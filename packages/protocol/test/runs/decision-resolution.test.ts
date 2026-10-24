@@ -63,6 +63,19 @@ test('Send back resolves the frozen gate decision with no selection data', () =>
   );
 });
 
+test('Send back keeps the operator note and strips client selections and findings', () => {
+  for (const field of ['feedback', 'comment']) {
+    const note = 'Fix both findings as well as AC-1.';
+    const params = buildRunResolveDecisionParams({
+      runId: 'run-1',
+      decision: { id: 'decision-1', payload },
+      actionId: SEND_BACK_TO_AGENT_ACTION,
+      selectionData: { [field]: note, issues: ['invented'], selectedEvidenceKeys: ['other.png'] },
+    });
+    assert.deepEqual(params.selectionData, { feedback: note });
+  }
+});
+
 test('run decision params preserve action selection and bind ready package identity', () => {
   assert.deepEqual(
     buildRunResolveDecisionParams({

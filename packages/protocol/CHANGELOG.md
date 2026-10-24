@@ -14,6 +14,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.70.1 - 2026-10-24
+
+- Preserve operator notes when returning publication findings to the worker, without accepting client-supplied findings.
+
 ## 0.70.0 - 2026-10-23
 
 - Add optional CI-watch progress and total deadlines; wire protocol remains 0.63.0.
