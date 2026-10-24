@@ -248,6 +248,33 @@ try {
   assert(!JSON.stringify(evidence.registration).includes(canary));
   await screenshot('provider-registration-external');
   claims.registrationWriter = true;
+  const registered = await readFile(auth);
+  await commit(auth, '{"version":1,"profiles":');
+  evidence.registrationError = await until(
+    (v) =>
+      !!v.observations?.['llm.auth.list']?.error &&
+      !v.observations['llm.auth.list'].ready &&
+      v.observations['llm.auth.list'].observedAt ===
+        evidence.registration.observations['llm.auth.list'].observedAt &&
+      v.providers?.text.includes(id) &&
+      v.providers.alert?.includes('Could not read provider registrations.') &&
+      v.providers.buttons.length > 0 &&
+      v.providers.buttons.every((button) => button.disabled),
+    'Malformed registration must retain the visible provider facts, report an error and disable actions',
+  );
+  await screenshot('provider-registration-error-retained');
+  await commit(auth, registered);
+  evidence.registrationRecovery = await until(
+    (v) =>
+      v.observations?.['llm.auth.list']?.ready &&
+      !v.providers?.alert &&
+      v.providers?.text.includes(id) &&
+      v.providers.buttons.some((button) => !button.disabled),
+    'Valid registration recovery must replace the error through the actual file watcher',
+  );
+  assert(!JSON.stringify(evidence).includes(canary));
+  await screenshot('provider-registration-recovery');
+  claims.registrationSourceError = true;
 } catch (error) {
   failures.push(error);
 } finally {

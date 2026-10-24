@@ -374,7 +374,13 @@ controls. The raw pool editor observes `config.pool.raw`: clean text follows new
 revisions while real typed drafts survive invalidation. Selection and authority
 changes fence editor reads and save replies. The old one-shot editor fails the
 external-write assertion; restoring the observer passes all six recipe steps.
-These checks do not accept unrun source-error or lifecycle variants.
+The seventh step corrupts the private registration file, requires the original
+visible provider facts and observation time beside an error with actions
+disabled, then repairs the file through the actual watcher. Registration-list
+RPCs reject malformed or unreadable selected stores without exposing parser
+excerpts; missing optional files remain valid absence. Internal credential
+resolution keeps its existing fallback behavior. Other lifecycle variants
+remain unaccepted.
 
 The browser planning recipe covers external writers, real read failure with draft
 retention, five cold collections with original SQLite times and age, disabled

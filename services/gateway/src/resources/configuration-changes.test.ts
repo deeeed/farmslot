@@ -66,7 +66,7 @@ mock.module('node:os', { defaultExport: privateOs, namedExports: privateOs });
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../methods/config.js');
 const { getLLMConfig, setLLMConfig } = await import('../llm/config.js');
-const { saveAuthProfileStore, getFarmslotStorePath, getOpenClawStorePath } =
+const { saveAuthProfileStore, getFarmslotStorePath, getOpenClawStorePath, loadAuthProfileStore } =
   await import('../llm/auth-store.js');
 const { llmAuthList } = await import('../methods/llm-auth.js');
 const { startFileWatcher, loadProjectConfig } = await import('../fleet/state.js');
@@ -94,6 +94,53 @@ async function advances(write: () => Promise<unknown> | unknown): Promise<void> 
     'The owning writer must publish after its commit',
   );
 }
+
+test('registration reads refuse malformed sources without exposing secrets or losing fallback resolution', async (t) => {
+  const files = [getFarmslotStorePath(), getOpenClawStorePath()];
+  for (const file of files) {
+    let original: Buffer | undefined;
+    try {
+      original = await readFile(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    t.after(async () => {
+      await rm(file, { recursive: true, force: true });
+      if (original) await writeFile(file, original);
+    });
+    await mkdir(path.dirname(file), { recursive: true });
+  }
+  const valid = JSON.stringify({
+    version: 1,
+    profiles: { fixture: { type: 'api_key', provider: 'google', key: 'SECRET_CANARY' } },
+  });
+  await writeFile(files[0], valid);
+  const listed = await llmAuthList();
+  assert.equal(listed.profiles[0].profileId, 'fixture');
+  assert(!JSON.stringify(listed).includes('SECRET_CANARY'));
+  for (const invalid of [
+    '{"SECRET_CANARY":',
+    '{"version":2,"profiles":{}}',
+    '{"version":1,"profiles":null}',
+    '{"version":1,"profiles":[]}',
+    '{"version":1,"profiles":{"bad":null}}',
+    '{"version":1,"profiles":{"bad":{"provider":"google","type":["api_key"]}}}',
+  ]) {
+    await writeFile(files[0], invalid);
+    await assert.rejects(llmAuthList, { message: 'Could not read provider registrations.' });
+    assert.equal(await loadAuthProfileStore(files[0]), null);
+  }
+  await writeFile(files[0], valid);
+  await writeFile(files[1], '{"SECRET_CANARY":');
+  await assert.rejects(llmAuthList, { message: 'Could not read provider registrations.' });
+  await rm(files[1]);
+  assert.equal((await llmAuthList()).profiles[0].profileId, 'fixture');
+  await rm(files[0]);
+  await mkdir(files[0]);
+  await assert.rejects(llmAuthList, { message: 'Could not read provider registrations.' });
+  await rm(files[0], { recursive: true });
+  assert.deepEqual((await llmAuthList()).profiles, []);
+});
 
 test('owning project/pool/slot/provider/registration writers publish readable configuration changes', async () => {
   await advances(() =>

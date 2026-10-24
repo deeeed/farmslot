@@ -18,6 +18,10 @@
     {
       "id": "registrationWriter",
       "claim": "An owned registration file changes its provider card without exposing its key."
+    },
+    {
+      "id": "registrationSourceError",
+      "claim": "Malformed registration retains visible facts with an error and disabled actions until valid recovery."
     }
   ],
   "workflow": {
@@ -64,6 +68,15 @@
         "match": "\"registrationWriter\":true",
         "intent": "Private registration metadata updates without exposing its secret or contacting a provider.",
         "proves": ["registrationWriter"],
+        "next": "registration-error"
+      },
+      "registration-error": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"registrationSourceError\":true",
+        "intent": "Malformed registration retains provider facts, blocks actions and recovers after a real file repair.",
+        "proves": ["registrationSourceError"],
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

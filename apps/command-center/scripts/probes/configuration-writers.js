@@ -52,5 +52,12 @@ return {
     text: templates.shadowRoot?.textContent,
     raw: templates.shadowRoot?.querySelector('.raw-content pre')?.textContent,
   },
-  providers: llm && { text: llm.shadowRoot?.textContent, cards: Reflect.get(llm, '_providers') },
+  providers: llm && {
+    text: llm.shadowRoot?.textContent,
+    cards: Reflect.get(llm, '_providers'),
+    alert: llm.shadowRoot?.querySelector('[role="alert"]')?.textContent,
+    buttons: [...(llm.shadowRoot?.querySelectorAll('.provider-card button') ?? [])].map(
+      (button) => ({ text: button.textContent.trim(), disabled: button.disabled }),
+    ),
+  },
 };

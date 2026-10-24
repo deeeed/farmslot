@@ -501,10 +501,22 @@ export class LLMConfig extends LitElement {
   }
 
   override render() {
-    if (this._configurationError) return html`<p role="alert">${this._configurationError}</p>`;
-    if (this._loading) return html`<div>Loading LLM config...</div>`;
+    if (this._loading && !this._config && !this._providers.length)
+      return html`<div>Loading LLM config...</div>`;
 
     return html`
+      ${this._configurationError
+        ? html`<p role="alert">
+            ${this._configurationError}
+            <button
+              ?disabled=${gateway.connectionState !== 'connected' ||
+              !this._authQuery.belongsToWorkspace}
+              @click=${() => this._loadData()}
+            >
+              Retry configuration read
+            </button>
+          </p>`
+        : nothing}
       <h2>LLM Provider Settings</h2>
 
       <div class="provider-grid">${this._providers.map((p) => this._renderProviderCard(p))}</div>
