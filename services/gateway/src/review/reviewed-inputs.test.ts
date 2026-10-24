@@ -35,24 +35,24 @@ async function reviewPasses(runId: string) {
   await recordReviewedInputs(runId);
 }
 
-test('reviewer replay shells allocate fresh output, preserve arguments and return command failures', async (t) => {
-  const scratch = await mkdtemp(path.join(os.tmpdir(), 'review recipe shell-'));
-  t.after(() => rm(scratch, { recursive: true, force: true }));
-  const wrapper = /```sh\n([\s\S]*?)\n```/.exec(reviewerScratchRule('reviewer'))?.[1];
-  assert.ok(wrapper);
-  const command = [
-    process.execPath,
-    '-e',
-    'console.log(JSON.stringify(process.argv.slice(1)))',
-    'an argument with spaces',
-  ]
-    .map(shellQuote)
-    .join(' ');
-  for (const [shell, flags] of [
-    ['bash', ['--noprofile', '--norc']],
-    ['zsh', ['-f']],
-  ] as const) {
-    const { stdout } = await execFileAsync(
+for (const [shell, flags] of [
+  ['bash', ['--noprofile', '--norc']],
+  ['zsh', ['-f']],
+] as const) {
+  test(`reviewer replay ${shell} allocates fresh output, preserves arguments and returns failures`, async (t) => {
+    const scratch = await mkdtemp(path.join(os.tmpdir(), 'review recipe shell-'));
+    t.after(() => rm(scratch, { recursive: true, force: true }));
+    const wrapper = /```sh\n([\s\S]*?)\n```/.exec(reviewerScratchRule('reviewer'))?.[1];
+    assert.ok(wrapper);
+    const command = [
+      process.execPath,
+      '-e',
+      'console.log(JSON.stringify(process.argv.slice(1)))',
+      'an argument with spaces',
+    ]
+      .map(shellQuote)
+      .join(' ');
+    const result = await execFileAsync(
       shell,
       [
         ...flags,
@@ -61,7 +61,16 @@ test('reviewer replay shells allocate fresh output, preserve arguments and retur
           'if reviewer_recipe_replay sh -c \'exit 27\'; then exit 99; else test "$?" -eq 27; fi',
       ],
       { env: { ...process.env, TMPDIR: scratch } },
-    );
+    ).catch((error: unknown) => {
+      if (shell === 'zsh' && error instanceof Error && 'code' in error && error.code === 'ENOENT')
+        return null;
+      throw error;
+    });
+    if (!result) {
+      t.skip('zsh is not installed');
+      return;
+    }
+    const { stdout } = result;
     const attempts: string[][] = stdout
       .trim()
       .split('\n')
@@ -72,8 +81,8 @@ test('reviewer replay shells allocate fresh output, preserve arguments and retur
       assert.deepEqual(attempt.slice(0, 2), ['an argument with spaces', '--artifacts-dir']);
       assert.ok(attempt[2]!.startsWith(path.join(scratch, 'farmslot-review/reviewer') + path.sep));
     }
-  }
-});
+  });
+}
 
 test('what a passing review judged changes with the evidence or HEAD, not the description', async (t) => {
   const { run, repo, artifacts } = await slotWithTask(t);
