@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { ReviewAttempt } from '../../src/contracts/runs.js';
 import {
   latestExhaustedReview,
+  MAX_UPDATE_BRANCH_REVIEW_ROUNDS,
   REVIEW_NO_VERDICT_LIMIT,
   reviewFixRetriesExhausted,
   reviewRetryCapReason,
@@ -196,6 +197,19 @@ test('round budget shows spent rounds independently of passing-review counts', (
   assert.equal(reviewRoundBudget(5).remaining, 0);
   assert.match(reviewRoundBudget(5).diagnosis!, /design problem or scope creep/);
   assert.equal(reviewRoundBudget(8).label, 'Review rounds 8/5');
+});
+
+test('bounded update-branch budget reports two rounds with the existing no-verdict labels', () => {
+  const budget = reviewRoundBudget(1, [], 1, MAX_UPDATE_BRANCH_REVIEW_ROUNDS);
+  assert.equal(budget.limit, 2);
+  assert.equal(budget.remaining, 1);
+  assert.equal(reviewRoundBudgetLabel(budget), 'Review rounds 1/2 · 1/3 no-verdict');
+  assert.equal(reviewRoundBudget(2, [], 0, MAX_UPDATE_BRANCH_REVIEW_ROUNDS).remaining, 0);
+  assert.doesNotMatch(
+    reviewRoundBudget(2, [], 0, MAX_UPDATE_BRANCH_REVIEW_ROUNDS).diagnosis!,
+    /extension/,
+  );
+  assert.equal(reviewRoundBudget(2).remaining, 3);
 });
 
 test('round budget reports no-verdict attempts against their cap without changing the rounds', () => {
