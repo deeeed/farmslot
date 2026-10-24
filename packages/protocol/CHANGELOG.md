@@ -14,6 +14,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.70.2 - 2026-10-24
+
+- Track per-run update-branch review admissions and expose bounded two-round budgets, preserving existing feature PR history.
+
 ## 0.70.1 - 2026-10-24
 
 - Preserve operator notes when returning publication findings to the worker, without accepting client-supplied findings.

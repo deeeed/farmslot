@@ -141,6 +141,65 @@ test('two concurrent grants cannot both increase an expected limit', async (t) =
   assert.equal(getRun(run.id)!.reviewBudgetExtensions!.length, 1);
 });
 
+test('a parent PR grant preserves the update-branch limit, gate refusal and instruction scope', async (t) => {
+  const parent = fixture(t);
+  const update = fixture(t, parent.run.ticketOrPr);
+  const url = `https://github.com/${parent.run.ticketOrPr.replace('#', '/pull/')}`;
+  for (const entry of [parent, update]) updateRun(entry.run.id, { links: [{ label: 'PR', url }] });
+  const gate: ReadyGatePayload = {
+    kind: 'ready',
+    prNumber: 42,
+    repo: null,
+    branch: 'owned-change',
+    workerReport: '',
+    diffStat: { files: 0, additions: 0, deletions: 0 },
+  };
+  updateRun(update.run.id, {
+    flowType: 'update-branch',
+    decisions: [
+      {
+        id: 'ready',
+        type: 'engine_human_gate',
+        title: 'Ready',
+        description: '',
+        actions: [],
+        createdAt: new Date().toISOString(),
+        payload: gate,
+      },
+    ],
+    engineState: {
+      publishGate: {
+        reviewLaunchRejection: {
+          code: 'REVIEW_ROUND_LIMIT_REACHED',
+          message: 'Two maintenance rounds spent',
+          userAction: 'Stop and narrow the branch update.',
+          rejectedAt: new Date().toISOString(),
+        },
+      },
+    },
+  });
+  await admitReviewRound(update.run.id, 'maintenance-one');
+  await admitReviewRound(update.run.id, 'maintenance-two');
+  await runExtendReviewBudget(parent.params, emit, parent.deps);
+  const budget = await runReviewRoundBudget(getRun(update.run.id)!);
+  assert.deepEqual([budget.used, budget.limit, budget.extensions], [2, 2, undefined]);
+  const current = getRun(update.run.id)!;
+  assert.equal(
+    (current.decisions[0].payload as ReadyGatePayload).reviewRoundBudget?.label,
+    'Review rounds 2/2',
+  );
+  assert.equal(
+    current.engineState?.publishGate?.reviewLaunchRejection?.code,
+    'REVIEW_ROUND_LIMIT_REACHED',
+  );
+  assert.equal(reviewBudgetScopeBrief(current), '');
+  assert.equal(await nextReviewBudgetScopeBrief(current), '');
+  await assert.rejects(
+    runExtendReviewBudget({ ...update.params, expectedLimit: 2, limit: 4 }, emit, update.deps),
+    /update-branch/,
+  );
+});
+
 test('PR-scoped grant survives retirement of its original run and retains spent history', async (t) => {
   const first = fixture(t);
   const second = fixture(t, first.run.ticketOrPr);

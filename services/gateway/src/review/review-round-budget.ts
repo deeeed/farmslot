@@ -1,5 +1,7 @@
 import {
   type AgentContext,
+  MAX_REVIEW_ROUNDS,
+  MAX_UPDATE_BRANCH_REVIEW_ROUNDS,
   type Principal,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReviewAttempt,
@@ -169,18 +171,47 @@ function settlementsFor(runs: readonly Run[]): Record<string, ReviewRoundSettlem
   return Object.assign({}, ...runs.map((run) => run.reviewRoundSettlements ?? {}));
 }
 
+function ownersFor(runs: readonly Run[]): Record<string, string> {
+  return Object.assign({}, ...runs.map((run) => run.reviewRoundOwners ?? {}));
+}
+
+function budgetAdmissions(
+  run: Run,
+  admissions: readonly string[],
+  owners: Record<string, string>,
+): string[] {
+  return admissions.filter((id) =>
+    run.flowType === 'update-branch' ? owners[id] === run.id : !owners[id],
+  );
+}
+
 // A settlement refunds a round only while its receipt is admitted in scope.
 function budgetFrom(
+  run: Run,
   admissions: readonly string[],
   extensions: readonly ReviewBudgetExtension[],
   settlements: Record<string, ReviewRoundSettlement>,
+  owners: Record<string, string>,
 ): ReviewRoundBudget {
-  const noVerdict = admissions.filter((id) => settlements[id]).length;
-  return reviewRoundBudget(admissions.length - noVerdict, extensions, noVerdict);
+  const scoped = budgetAdmissions(run, admissions, owners);
+  const noVerdict = scoped.filter((id) => settlements[id]).length;
+  const maintenance = run.flowType === 'update-branch';
+  return reviewRoundBudget(
+    scoped.length - noVerdict,
+    maintenance ? [] : extensions,
+    noVerdict,
+    maintenance ? MAX_UPDATE_BRANCH_REVIEW_ROUNDS : MAX_REVIEW_ROUNDS,
+  );
 }
 
-function budgetFor(runs: readonly Run[]): ReviewRoundBudget {
-  return budgetFrom(admissionsFor(runs), extensionsFor(runs), settlementsFor(runs));
+function budgetFor(run: Run, runs: readonly Run[]): ReviewRoundBudget {
+  return budgetFrom(
+    run,
+    admissionsFor(runs),
+    extensionsFor(runs),
+    settlementsFor(runs),
+    ownersFor(runs),
+  );
 }
 
 function budgetScopeKey(run: Run): string {
@@ -237,7 +268,7 @@ function budgetForRun(run: Run, budget: ReviewRoundBudget): ReviewRoundBudget {
 }
 
 export async function runReviewRoundBudget(run: Run): Promise<ReviewRoundBudget> {
-  return budgetForRun(run, budgetFor(scopedRuns(run, await getAllRunsWithArchived())));
+  return budgetForRun(run, budgetFor(run, scopedRuns(run, await getAllRunsWithArchived())));
 }
 
 function refuseSpentBudget(budget: ReviewRoundBudget): void {
@@ -272,7 +303,8 @@ export async function assertReviewRoundAvailable(run: Run): Promise<void> {
 }
 
 export function reviewBudgetScopeBrief(run: Run): string {
-  return formatReviewBudgetScopeBrief(budgetFor([run]).used, run.reviewBudgetExtensions ?? []);
+  const budget = budgetFor(run, [run]);
+  return formatReviewBudgetScopeBrief(budget.used, budget.extensions ?? []);
 }
 
 /** Static task inputs freeze before dispatch reserves its next admission. */
@@ -299,7 +331,7 @@ export async function prepareReviewRoundAvailabilityCheck(runId: string): Promis
   return () => {
     const run = getRun(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
-    refuseSpentBudget(budgetForRun(run, budgetFor(scopedRuns(run, stored))));
+    refuseSpentBudget(budgetForRun(run, budgetFor(run, scopedRuns(run, stored))));
   };
 }
 
@@ -307,9 +339,9 @@ async function persistScopedRounds(
   scope: readonly Run[],
   admissions: string[],
   settlements: Record<string, ReviewRoundSettlement>,
+  owners = ownersFor(scope),
 ): Promise<void> {
   const extensions = extensionsFor(scope);
-  const budget = budgetFrom(admissions, extensions, settlements);
   const runs = scope.flatMap((current) => {
     const live = getRun(current.id);
     return live ? [live] : [];
@@ -319,11 +351,15 @@ async function persistScopedRounds(
   for (const current of runs) {
     updateRun(current.id, {
       reviewRoundAdmissions: admissions,
+      ...(Object.keys(owners).length ? { reviewRoundOwners: owners } : {}),
       ...(extensions.length ? { reviewBudgetExtensions: extensions } : {}),
       ...(Object.keys(settlements).length || current.reviewRoundSettlements
         ? { reviewRoundSettlements: settlements }
         : {}),
-      decisions: decisionsWithBudget(current, budgetForRun(current, budget)),
+      decisions: decisionsWithBudget(
+        current,
+        budgetForRun(current, budgetFrom(current, admissions, extensions, settlements, owners)),
+      ),
     });
   }
   await Promise.all(runs.map((current) => persistRunNow(getRun(current.id)!)));
@@ -333,12 +369,14 @@ async function persistScopedRounds(
 export async function admitReviewRound(runId: string, attemptId: string): Promise<void> {
   return withBudget(runId, async (run, scope) => {
     const admissions = admissionsFor(scope);
+    const owners = ownersFor(scope);
     // A receipt admitted again (a reattach) is the same attempt and keeps its settlement.
     if (!admissions.includes(attemptId)) {
-      refuseSpentBudget(budgetForRun(run, budgetFor(scope)));
+      refuseSpentBudget(budgetForRun(run, budgetFor(run, scope)));
       admissions.push(attemptId);
+      if (run.flowType === 'update-branch') owners[attemptId] = run.id;
     }
-    await persistScopedRounds(scope, admissions, settlementsFor(scope));
+    await persistScopedRounds(scope, admissions, settlementsFor(scope), owners);
   });
 }
 
@@ -379,10 +417,10 @@ export async function clearReviewRoundSettlement(runId: string, attemptId: strin
  */
 export async function reviewNoVerdictCapReason(run: Run): Promise<string | undefined> {
   const scope = scopedRuns(run, await getAllRunsWithArchived());
-  const budget = budgetFor(scope);
+  const budget = budgetFor(run, scope);
   if (budget.noVerdict < budget.noVerdictLimit) return undefined;
   const settlements = settlementsFor(scope);
-  const last = admissionsFor(scope)
+  const last = budgetAdmissions(run, admissionsFor(scope), ownersFor(scope))
     .flatMap((id) => settlements[id] ?? [])
     .sort((a, b) => a.at.localeCompare(b.at))
     .slice(-budget.noVerdictLimit)
@@ -410,9 +448,9 @@ export function extendReviewRoundBudget(
         JSON.stringify(prior.principalSubject) !== JSON.stringify(principal.subject)
       )
         throw new Error('Review budget request ID already records a different grant');
-      return { receipt: prior, budget: budgetFor(scope) };
+      return { receipt: prior, budget: budgetFor(run, scope) };
     }
-    const budget = budgetFor(scope);
+    const budget = budgetFor(run, scope);
     if (params.expectedLimit !== budget.limit)
       throw new Error(
         `Review budget changed; expected ${params.expectedLimit}, current ${budget.limit}`,
@@ -445,10 +483,21 @@ export function extendReviewRoundBudget(
     const live = scope.flatMap((entry) => (getRun(entry.id) ? [getRun(entry.id)!] : []));
     for (const current of live) {
       const gate = current.engineState?.publishGate;
+      const currentBudget = budgetForRun(
+        current,
+        budgetFrom(
+          current,
+          admissionsFor(scope),
+          nextExtensions,
+          settlementsFor(scope),
+          ownersFor(scope),
+        ),
+      );
       updateRun(current.id, {
         reviewBudgetExtensions: nextExtensions,
-        decisions: decisionsWithBudget(current, nextBudget),
-        ...(gate?.reviewLaunchRejection?.code === 'REVIEW_ROUND_LIMIT_REACHED'
+        decisions: decisionsWithBudget(current, currentBudget),
+        ...(currentBudget.remaining &&
+        gate?.reviewLaunchRejection?.code === 'REVIEW_ROUND_LIMIT_REACHED'
           ? {
               engineState: {
                 ...current.engineState,

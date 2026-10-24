@@ -1,6 +1,7 @@
 import type { ReviewBudgetExtension, ReviewRoundBudget, ReviewStatus } from '../contracts/runs.js';
 
 export const MAX_REVIEW_ROUNDS = 5;
+export const MAX_UPDATE_BRANCH_REVIEW_ROUNDS = 2;
 /** No-verdict reviewer attempts after which automatic review launches stop (ADR-063 Amendment 2). */
 export const REVIEW_NO_VERDICT_LIMIT = 3;
 
@@ -9,9 +10,10 @@ export function reviewRoundBudget(
   used: number,
   extensions: readonly ReviewBudgetExtension[] = [],
   noVerdict = 0,
+  baseLimit: typeof MAX_REVIEW_ROUNDS | typeof MAX_UPDATE_BRANCH_REVIEW_ROUNDS = MAX_REVIEW_ROUNDS,
 ): ReviewRoundBudget {
   const count = Number.isFinite(used) ? Math.max(0, Math.floor(used)) : 0;
-  const limit = Math.max(MAX_REVIEW_ROUNDS, ...extensions.map((entry) => entry.limit));
+  const limit = Math.max(baseLimit, ...extensions.map((entry) => entry.limit));
   return {
     used: count,
     limit,

@@ -2773,6 +2773,8 @@ export interface Run {
   sourceProvenance?: import('../sources/contracts.js').RunSourceProvenance;
   /** Gateway-owned, opaque reviewer admission receipts. Replay must retain these. */
   reviewRoundAdmissions?: string[];
+  /** Gateway-owned update-branch run ID by admission receipt; absent receipts retain PR scope. */
+  reviewRoundOwners?: Record<string, string>;
   /** Gateway-owned no-verdict settlements by admission receipt; copied with the admissions. */
   reviewRoundSettlements?: Record<string, ReviewRoundSettlement>;
   /** Gateway-authorized scoped grants; copied with admissions when a PR scope is shared. */
