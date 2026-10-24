@@ -1,6 +1,6 @@
 # Current-view links
 
-**Status:** Proposed under [ADR-033 Amendment 1](../adr/033-mobile-tmux-worker-control.md#amendment-1-share-the-current-companion-view-2026-10-24). No implementation or native association is claimed.
+**Status:** Accepted (approved by the lead 2026-10-24) under [ADR-033 Amendment 1](../adr/033-mobile-tmux-worker-control.md#amendment-1-share-the-current-companion-view-2026-10-24). No implementation or native association is claimed.
 
 ## Public surface
 

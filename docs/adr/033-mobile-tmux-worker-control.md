@@ -209,7 +209,7 @@ Required operations:
 
 ## Amendment 1: Share the current Companion view, 2026-10-24
 
-**Status:** Proposed. The base ADR remains Accepted. This amendment requires approval before implementation.
+**Status:** Accepted (approved by the lead 2026-10-24). The base ADR remains Accepted.
 
 ### Decision
 
