@@ -244,6 +244,35 @@ The builder preserves additive metadata under `extra` while protecting the requi
 
 The previous script paths in `@farmslot/skills` and `scripts/quality/` remain compatibility shims for one migration window. New templates should point to `packages/agent-runtime/scripts/*` in the Farmslot monorepo or use `farmslot-agent` when installed as a package.
 
+## Managed native reviewer approval policy
+
+The gateway sets the private worker launch `approvalPolicy` to `never` only for the review role. Native Codex applies that policy to both `thread/start` and `thread/resume`. Reviewers keep the run's safety tier and the same sandbox, Git metadata write roots and optional filesystem policy they already had. Producing workers and standalone sessions keep their existing approval defaults.
+
+This optional private field accepts only `never`. It is not a public session parameter. The gateway rederives it on reviewer resume; it does not enter the launch digest, so applying the approved policy does not invalidate retained reviewer sessions. The tier, environment and filesystem grants remain digest-bound. The gateway continues to deny any unexpected approval request, and never grants sandbox escalation.
+
+## In-flight reviewer continuity
+
+**Status:** Accepted under ADR-057 Amendment 6 (approved by the lead 2026-10-24).
+
+A running HUMAN_GATE MUST retain publication-review recovery ownership after its
+review-request decision has been consumed. Startup MUST ingest its completed
+reviewer or re-arm the existing bounded watcher while that reviewer runs. The
+watcher MUST retain attempt freshness, lineage, captured-head and artifact checks;
+collecting a relaunch fallback MUST update its existing review rather than leave
+older findings authoritative. Existing held/accepted approval priority stays intact.
+
+Reattaching an accepted, still-live native reviewer MUST validate its persisted
+slot, task, owner, profile, lease and process generation and monitor that generation.
+It MUST NOT rebuild launch configuration or redeliver the task because pool,
+project or source settings changed. The existing process retains its original
+launch settings and filesystem grants. Unconfirmed launches, stopped processes,
+explicit recovery, task transfers and parking restores retain their existing
+launch-digest checks.
+
+This gateway-only behavior uses existing native snapshot and command contracts.
+It adds no public RPC, field, CLI flag, SDK export or harness configuration and
+requires no runtime publication or native-host restart.
+
 ## Native session host
 
 Claude saved-session recovery requires sessions started with Claude Code 2.1.265

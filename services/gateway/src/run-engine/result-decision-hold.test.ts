@@ -6,6 +6,8 @@ import { mock, test } from 'node:test';
 
 import {
   FLOW_STEPS,
+  hasUnsettledRunExecution,
+  isCompletionPrerequisiteFailure,
   type PipelineStep,
   PipelineSteps as S,
   type ResultDecisionPayload,
@@ -99,6 +101,14 @@ mock.module('./post-dispatch-steps.js', {
       throw new Error('Unexpected hold');
     },
     rerunReviewIfReviewedInputsChanged: async () => false,
+  },
+});
+mock.module('./finalize-step.js', {
+  namedExports: {
+    executeFinalizeStep: async () => {
+      if (completeError) throw await completeError();
+      throw new Error('Unexpected finalize');
+    },
   },
 });
 const store = await import('../runs/store.js');
@@ -356,3 +366,45 @@ test('a refused publish package without a delivered result still fails', async (
     false,
   );
 });
+
+for (const step of [S.COMPLETE, S.FINALIZE]) {
+  for (const persistFails of [false, true]) {
+    test(`${step} package refusal retains its worker with result-decision persistence failure ${persistFails}`, async () => {
+      run = delivered('dev', 'completing', step);
+      run.output = persistFails
+        ? v2Output
+        : { ...v2Output, captureError: 'Artifact mirror unavailable' };
+      const worker = {
+        id: 'primary',
+        role: 'primary' as const,
+        label: 'Retained worker',
+        status: 'working' as const,
+        slotId: 'retained-slot',
+        runId: run.id,
+      };
+      run.agentContexts = [worker];
+      completeError = async () => {
+        const { PublishPackageRefusedError } =
+          await import('../run-completion/publish-package-refused.js');
+        return new PublishPackageRefusedError(v2Refusal);
+      };
+      failHoldPersist = persistFails;
+      try {
+        await startRun(run.id);
+      } finally {
+        completeError = null;
+        failHoldPersist = false;
+      }
+      assert.equal(run.status, 'failed');
+      assert.equal(run.error, v2Refusal);
+      assert.equal(run.metrics.outcome, 'failure');
+      assert.equal(isCompletionPrerequisiteFailure(run), true);
+      assert.equal(hasUnsettledRunExecution(run), true);
+      assert.deepEqual(run.agentContexts, [worker]);
+      run.slotId = worker.slotId;
+      const retained = structuredClone(run);
+      await startRun(run.id);
+      assert.deepEqual(run, retained, 're-entry cannot retire the original worker or slot');
+    });
+  }
+}

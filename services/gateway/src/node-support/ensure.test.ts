@@ -17,6 +17,7 @@ import {
   RUNNER_OBSERVABILITY_SUPPORT_PATHS,
 } from '../runners/runner-observability.js';
 
+import { persistedNodeSupportRuns } from './activation.js';
 import {
   collectNodeSupportBundle,
   ensureNodeSupportBundle,
@@ -251,6 +252,32 @@ test('a bundle whose files are gone is reported and never selected', async () =>
     /Node support bundle corrupt/,
   );
   assert.equal(rec.written.length, 0);
+});
+
+test('unreadable run inventory preserves all bundles without blocking delivery or reuse', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'support-unreadable-run-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { io, rec } = fakeIo({ remoteManifestHash: null });
+  io.retentionReferences = async () => {
+    await persistedNodeSupportRuns(directory);
+    return { selectionPaths: [], runHashes: [] };
+  };
+  const details: string[] = [];
+  const options = {
+    projectVars,
+    io,
+    step: (_name: string, detail: string) => details.push(detail),
+  };
+  for (const content of ['{', JSON.stringify({ id: 'broken' })]) {
+    await writeFile(path.join(directory, 'broken.json'), content);
+    const state = await ensureNodeSupportBundle(remoteVars(), '.agent', options);
+    assert.ok(state?.hash);
+  }
+  assert.equal(rec.execs.filter((cmd) => kind(cmd) === 'activate').length, 2);
+  for (const cmd of rec.execs.filter((cmd) => kind(cmd) === 'activate'))
+    assert.ok(cmd.includes('"references":null'));
+  assert.equal(details.filter((detail) => detail.includes('pruning skipped')).length, 2);
+  assert.deepEqual(rec.written.at(-1)?.paths, ['node-support-hash']);
 });
 
 test('a failed upload discards the incoming dir and aborts the launch', async () => {

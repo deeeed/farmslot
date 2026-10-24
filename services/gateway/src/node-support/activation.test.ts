@@ -19,7 +19,7 @@ import { makeRun } from '../run-engine/test-fixtures.js';
 
 import {
   buildNodeSupportActivationCommand,
-  persistedNodeSupportHashes,
+  persistedNodeSupportRuns,
   referencedNodeSupportHashes,
   wrapNodeSupportReadCommand,
 } from './activation.js';
@@ -42,11 +42,13 @@ test('one-shot activation retains persisted non-archived run references without 
   t.after(() => rm(directory, { recursive: true, force: true }));
   await writeFile(
     path.join(directory, 'done.json'),
-    JSON.stringify({
-      id: 'done',
-      status: 'done',
-      steps: [{ outputs: { nodeSupportHash: hash('a') } }],
-    }),
+    JSON.stringify(
+      makeRun({
+        id: 'done',
+        status: 'done',
+        steps: [{ name: 'prepare', status: 'done', outputs: { nodeSupportHash: hash('a') } }],
+      }),
+    ),
   );
   await mkdir(path.join(directory, 'archive'));
   await writeFile(
@@ -55,14 +57,45 @@ test('one-shot activation retains persisted non-archived run references without 
   );
   await writeFile(
     path.join(directory, 'archived.json'),
-    JSON.stringify({ archivedAt: 'now', bundle: hash('c') }),
+    JSON.stringify({
+      ...makeRun({
+        id: 'archived',
+        steps: [{ name: 'prepare', status: 'done', outputs: { nodeSupportHash: hash('c') } }],
+      }),
+      archivedAt: 'now',
+    }),
   );
-  assert.deepEqual(await persistedNodeSupportHashes(directory), [hash('a')]);
+  for (const [id, fields] of [
+    ['read-only', { readOnly: true }],
+    ['unconvertible', { conversionStatus: 'unconvertible-historical' }],
+    ['legacy', { readOnly: true, conversionStatus: 'unconvertible-historical' }],
+  ] as const) {
+    await writeFile(path.join(directory, `${id}.json`), JSON.stringify({ id, ...fields }));
+  }
+  assert.deepEqual(referencedNodeSupportHashes(await persistedNodeSupportRuns(directory)), [
+    hash('a'),
+  ]);
+  assert.deepEqual(
+    referencedNodeSupportHashes([
+      {
+        ...makeRun({ steps: [{ name: 'prepare', status: 'done', outputs: { hash: hash('d') } }] }),
+        readOnly: true,
+      },
+    ]),
+    [],
+  );
   // A listed entry whose target vanished produces the same read-time ENOENT as archiving.
   await symlink(path.join(directory, 'removed-run'), path.join(directory, 'vanished.json'));
-  assert.deepEqual(await persistedNodeSupportHashes(directory), [hash('a')]);
+  assert.deepEqual(referencedNodeSupportHashes(await persistedNodeSupportRuns(directory)), [
+    hash('a'),
+  ]);
   await writeFile(path.join(directory, 'broken.json'), '{');
-  await assert.rejects(persistedNodeSupportHashes(directory));
+  await assert.rejects(persistedNodeSupportRuns(directory));
+  await writeFile(path.join(directory, 'broken.json'), JSON.stringify({ id: 'broken' }));
+  await assert.rejects(
+    persistedNodeSupportRuns(directory),
+    /Unreadable node-support run references/,
+  );
 });
 
 async function fixture(t: test.TestContext) {
@@ -160,6 +193,35 @@ test('an unreadable selection or failed verification prevents activation and pru
   );
   assert.equal((await readFile(mine, 'utf8')).trim(), hash('a'));
   assert.ok((await readdir(f.root)).includes(hash('a')));
+});
+
+test('unknown run inventory selects verified support without pruning bundles or retention journals', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b', 'c'].map(hash)) await f.bundle(id);
+  const mine = await f.pointer('mine', hash('a'));
+  const journal = path.join(f.root, '.active-run-references', 'unknown.json');
+  await mkdir(path.dirname(journal));
+  await writeFile(journal, 'unreadable retained ownership');
+  const params = {
+    supportDir: path.join(f.root, hash('b')),
+    supportHash: hash('b'),
+    selectionPath: mine,
+    references: null,
+    verifyCommand: 'false',
+  };
+  await assert.rejects(exec('/bin/sh', ['-c', buildNodeSupportActivationCommand(params)]));
+  assert.equal((await readFile(mine, 'utf8')).trim(), hash('a'));
+  const result = await exec('/bin/sh', [
+    '-c',
+    buildNodeSupportActivationCommand({ ...params, verifyCommand: 'true' }),
+  ]);
+  assert.deepEqual(JSON.parse(result.stdout), { selected: hash('b'), removed: [] });
+  assert.equal((await readFile(mine, 'utf8')).trim(), hash('b'));
+  assert.deepEqual(
+    (await readdir(f.root)).filter((id) => /^[a-f0-9]{64}$/.test(id)).sort(),
+    ['a', 'b', 'c'].map(hash),
+  );
+  assert.equal(await readFile(journal, 'utf8'), 'unreadable retained ownership');
 });
 
 test('pruning ignores staging, active publishers and symlinks outside the bundle root', async (t) => {
@@ -339,4 +401,181 @@ test('a read-only zsh command preserves the node no-startup-file policy', async 
   });
   assert.equal(result.stdout, 'expected');
   assert.equal(await present(sentinel), false);
+});
+
+test('an active run retains an old fixture bundle until it ends, across later selections and fixture refresh', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b', 'c']) await f.bundle(hash(id));
+  await writeFile(path.join(f.root, hash('a'), 'payload'), 'active runtime');
+  const parity = path.join(f.home, 'slot/temp/farmslot/ci-parity');
+  await mkdir(path.dirname(parity), { recursive: true });
+  await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('a')}/projects/fixture"\n`);
+  const selected = await f.pointer('slot', hash('b'));
+  const active = [{ runId: 'active-run', paths: [parity, selected] }];
+  const activate = (id: string, activeRuns = active, endedRunIds: string[] = []) =>
+    exec('/bin/sh', [
+      '-c',
+      buildNodeSupportActivationCommand({
+        supportDir: path.join(f.root, hash(id)),
+        supportHash: hash(id),
+        selectionPath: selected,
+        references: { selectionPaths: [selected], runHashes: [], activeRuns, endedRunIds },
+        verifyCommand: 'true',
+      }),
+    ]);
+  await activate('b');
+  assert.equal(await readFile(path.join(f.root, hash('a'), 'payload'), 'utf8'), 'active runtime');
+  await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('b')}/projects/fixture"\n`);
+  await f.bundle(hash('c'));
+  await activate('c');
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'references observed during the active run remain retained',
+  );
+  await activate('c', []);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'an unloaded or unrelated caller cannot release active references',
+  );
+  await activate('c', [], ['active-run']);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    false,
+    'run completion releases its fixture references',
+  );
+});
+
+test('only the owning run inventory releases a deleted run journal', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b']) await f.bundle(hash(id));
+  const selected = await f.pointer('slot', hash('b'));
+  const parity = path.join(f.home, 'ci-parity');
+  await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('a')}/projects/fixture"\n`);
+  let generation = 0;
+  const activate = (active: boolean, scope: string, runIds: string[]) =>
+    exec('/bin/sh', [
+      '-c',
+      buildNodeSupportActivationCommand({
+        supportDir: path.join(f.root, hash('b')),
+        supportHash: hash('b'),
+        selectionPath: selected,
+        references: {
+          selectionPaths: [selected],
+          runHashes: [],
+          activeRuns: active ? [{ runId: 'deleted-owner', paths: [parity] }] : [],
+          runInventory: {
+            scope,
+            runIds,
+            generation: String(++generation),
+            capturedThrough: String(++generation),
+          },
+        },
+        verifyCommand: 'true',
+      }),
+    ]);
+  await activate(true, 'owning-gateway', ['deleted-owner']);
+  await activate(false, 'other-gateway', []);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'another gateway cannot infer deletion',
+  );
+  await activate(false, 'owning-gateway', []);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    false,
+    'a removed run does not leak its journal indefinitely',
+  );
+});
+
+test('an older inventory executing last cannot release newer active references', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b']) await f.bundle(hash(id));
+  const selected = await f.pointer('slot', hash('b'));
+  const parity = path.join(f.home, 'ci-parity');
+  await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('a')}/projects/fixture"\n`);
+  const command = (id: string, generation: string, active: boolean, endedRunIds: string[] = []) =>
+    buildNodeSupportActivationCommand({
+      supportDir: path.join(f.root, hash(id)),
+      supportHash: hash(id),
+      selectionPath: selected,
+      references: {
+        selectionPaths: [selected],
+        runHashes: [],
+        activeRuns: active ? [{ runId: 'new-owner', paths: [parity] }] : [],
+        endedRunIds,
+        runInventory: {
+          scope: 'owning-gateway',
+          generation,
+          capturedThrough: String(BigInt(generation) + 1n),
+          runIds: active ? ['new-owner'] : [],
+        },
+      },
+      verifyCommand: 'true',
+    });
+  const stale = command('c', '1', false);
+  await exec('/bin/sh', ['-c', command('b', '3', true)]);
+  await f.bundle(hash('c'));
+  await exec('/bin/sh', ['-c', stale]);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'stale absence cannot release a newer owner',
+  );
+  await exec('/bin/sh', ['-c', command('c', '1', false, ['new-owner'])]);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'a stale terminal receipt cannot release a newer owner',
+  );
+  await exec('/bin/sh', ['-c', command('c', '5', false)]);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    false,
+    'a fresh owning inventory can release a deleted owner',
+  );
+});
+
+test('overlapping captures cannot release an observation completed after their start', async (t) => {
+  const f = await fixture(t);
+  for (const id of ['a', 'b']) await f.bundle(hash(id));
+  const selected = await f.pointer('slot', hash('b'));
+  const parity = path.join(f.home, 'ci-parity');
+  await writeFile(parity, `PROJECT_ROOT="${f.root}/${hash('a')}/projects/fixture"\n`);
+  const capture = (id: string, generation: string, capturedThrough: string, active: boolean) =>
+    buildNodeSupportActivationCommand({
+      supportDir: path.join(f.root, hash(id)),
+      supportHash: hash(id),
+      selectionPath: selected,
+      references: {
+        selectionPaths: [selected],
+        runHashes: [],
+        activeRuns: active ? [{ runId: 'overlapping-owner', paths: [parity] }] : [],
+        runInventory: {
+          scope: 'owning-gateway',
+          generation,
+          capturedThrough,
+          runIds: active ? ['overlapping-owner'] : [],
+        },
+      },
+      verifyCommand: 'true',
+    });
+  // A starts first; B captures absence; the run starts; A observes it and finishes last.
+  const absence = capture('c', '2', '3', false);
+  await exec('/bin/sh', ['-c', capture('b', '1', '4', true)]);
+  await f.bundle(hash('c'));
+  await exec('/bin/sh', ['-c', absence]);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    true,
+    'an overlapping absence cannot release the later observation',
+  );
+  await exec('/bin/sh', ['-c', capture('c', '5', '6', false)]);
+  assert.equal(
+    await present(path.join(f.root, hash('a'))),
+    false,
+    'a capture starting after the observation can release it',
+  );
 });

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const { validateEvidenceManifest } = require('./evidence-manifest.cjs');
 const {
   expandedArtifactsForCommand,
   resolveWorkerTerminalArtifactPath,
@@ -117,20 +118,6 @@ const issues = [];
 const mediaExt = /\.(png|jpe?g|gif|webp|mp4|mov|webm)$/i;
 const internalArtifactPath =
   /^artifacts\/(?:harness-launch|harness-relaunch|harness-relaunch-node20|runtime-launch|runtime-relaunch|runner-blockers)\//;
-const allowedManifestKeys = new Set([
-  'version',
-  'preferred_mode',
-  'summary',
-  'before_after_pairs',
-  'standalone',
-  'omit',
-  'videos',
-  'before_state_capture',
-]);
-const allowedPairKeys = new Set(['label', 'covers', 'before', 'after', 'note']);
-const allowedStandaloneKeys = new Set(['label', 'covers', 'file', 'note']);
-const allowedVideoKeys = new Set(['before', 'after', 'preferred', 'note']);
-const allowedOmitKeys = new Set(['file', 'reason']);
 
 function fileExists(rel) {
   try {
@@ -259,25 +246,6 @@ function isRecipeQualityArtifactFallback(value) {
 function isRecipeQualityArtifactStrict(value) {
   const validator = sharedRecipeQualityValidator ?? isRecipeQualityArtifactFallback;
   return validator(value);
-}
-
-function unknownKeys(record, allowed, prefix) {
-  for (const key of Object.keys(record)) {
-    if (!allowed.has(key)) issues.push(`${prefix}.${key}: unknown key`);
-  }
-}
-
-function optionalString(record, key, prefix) {
-  if (record[key] !== undefined && typeof record[key] !== 'string') {
-    issues.push(`${prefix}.${key}: expected string`);
-  }
-}
-
-function optionalStringArray(record, key, prefix) {
-  if (record[key] === undefined) return;
-  if (!Array.isArray(record[key]) || record[key].some((entry) => typeof entry !== 'string')) {
-    issues.push(`${prefix}.${key}: expected string[]`);
-  }
 }
 
 function normalizeArtifactPath(value, mediaOnly = true) {
@@ -530,91 +498,10 @@ function parseManifest() {
     issues.push(`evidence-manifest.json: invalid JSON: ${error.message}`);
     return null;
   }
-  if (!isRecord(manifest)) {
-    issues.push('evidence-manifest.json: expected object');
+  const manifestIssues = validateEvidenceManifest(manifest);
+  if (manifestIssues.length > 0) {
+    issues.push(...manifestIssues);
     return null;
-  }
-  unknownKeys(manifest, allowedManifestKeys, 'manifest');
-  if (manifest.version !== undefined && typeof manifest.version !== 'number') {
-    issues.push('manifest.version: expected number');
-  }
-  if (
-    manifest.preferred_mode !== undefined &&
-    !['screenshots', 'video'].includes(manifest.preferred_mode)
-  ) {
-    issues.push('manifest.preferred_mode: expected screenshots or video');
-  }
-  optionalString(manifest, 'summary', 'manifest');
-
-  if (manifest.before_after_pairs !== undefined) {
-    if (!Array.isArray(manifest.before_after_pairs)) {
-      issues.push('manifest.before_after_pairs: expected array');
-    } else {
-      manifest.before_after_pairs.forEach((entry, index) => {
-        const prefix = `manifest.before_after_pairs[${index}]`;
-        if (!isRecord(entry)) return issues.push(`${prefix}: expected object`);
-        unknownKeys(entry, allowedPairKeys, prefix);
-        if (typeof entry.label !== 'string' || !entry.label.trim())
-          issues.push(`${prefix}.label: expected non-empty string`);
-        optionalStringArray(entry, 'covers', prefix);
-        optionalString(entry, 'before', prefix);
-        optionalString(entry, 'after', prefix);
-        optionalString(entry, 'note', prefix);
-        if (entry.before === undefined && entry.after === undefined)
-          issues.push(`${prefix}: expected before or after`);
-      });
-    }
-  }
-
-  if (manifest.standalone !== undefined) {
-    if (!Array.isArray(manifest.standalone)) {
-      issues.push('manifest.standalone: expected array');
-    } else {
-      manifest.standalone.forEach((entry, index) => {
-        const prefix = `manifest.standalone[${index}]`;
-        if (!isRecord(entry)) return issues.push(`${prefix}: expected object`);
-        unknownKeys(entry, allowedStandaloneKeys, prefix);
-        if (typeof entry.label !== 'string' || !entry.label.trim())
-          issues.push(`${prefix}.label: expected non-empty string`);
-        optionalStringArray(entry, 'covers', prefix);
-        if (typeof entry.file !== 'string' || !entry.file.trim())
-          issues.push(`${prefix}.file: expected non-empty string`);
-        optionalString(entry, 'note', prefix);
-      });
-    }
-  }
-
-  if (manifest.videos !== undefined) {
-    if (!isRecord(manifest.videos)) {
-      issues.push('manifest.videos: expected object');
-    } else {
-      unknownKeys(manifest.videos, allowedVideoKeys, 'manifest.videos');
-      optionalString(manifest.videos, 'before', 'manifest.videos');
-      optionalString(manifest.videos, 'after', 'manifest.videos');
-      optionalString(manifest.videos, 'note', 'manifest.videos');
-      if (
-        manifest.videos.preferred !== undefined &&
-        typeof manifest.videos.preferred !== 'boolean'
-      ) {
-        issues.push('manifest.videos.preferred: expected boolean');
-      }
-    }
-  }
-
-  if (manifest.omit !== undefined) {
-    if (!Array.isArray(manifest.omit)) {
-      issues.push('manifest.omit: expected array');
-    } else {
-      manifest.omit.forEach((entry, index) => {
-        const prefix = `manifest.omit[${index}]`;
-        if (typeof entry === 'string') return;
-        if (!isRecord(entry)) return issues.push(`${prefix}: expected string or object`);
-        unknownKeys(entry, allowedOmitKeys, prefix);
-        if (typeof entry.file !== 'string' || !entry.file.trim())
-          issues.push(`${prefix}.file: expected non-empty string`);
-        optionalString(entry, 'reason', prefix);
-      });
-    }
   }
 
   const refs = new Set();

@@ -14,6 +14,7 @@ import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.j
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { hasUserSlotChanges } from '../fleet/slot-scaffolding.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
@@ -113,6 +114,7 @@ import {
   TerminalReviewArtifactError,
   terminalReviewArtifactErrorForCompletion,
 } from './terminal-result.js';
+import { UncommittedReviewFixError } from './uncommitted-fix-error.js';
 
 type NativeReviewInput = {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -322,6 +324,26 @@ async function runNativeReviewAttempt(
       }
     }
   }
+  const lastReviewedHeadSha = input.rereview?.lastReviewedHeadSha ?? retained?.lastReviewedHeadSha;
+  if (!recovering && lastReviewedHeadSha) {
+    const tree = await execOnSlot(
+      vars,
+      'git rev-parse HEAD && git status --porcelain=v1 -z --untracked-files=all',
+      { timeout: 10_000 },
+    );
+    if (tree.exitCode !== 0)
+      throw new Error('Re-review preflight failed: could not read HEAD and worktree status.');
+    const separator = tree.stdout.indexOf('\n');
+    if (tree.stdout.slice(0, separator).trim() === lastReviewedHeadSha) {
+      const { projectJson } = await loadProjectVars(original.project);
+      const dirtyPaths = tree.stdout
+        .slice(separator + 1)
+        .split('\0')
+        .filter((entry) => entry && hasUserSlotChanges(entry, projectJson));
+      if (dirtyPaths.length > 0)
+        throw new UncommittedReviewFixError(lastReviewedHeadSha, dirtyPaths);
+    }
+  }
   const target = targetForChecklistBasename(reviewerChecklistBasename(contextId));
   const feedbackRelPath = reviewerFeedbackRelPath(contextId);
   const resultRelPath = reviewerResultRelPath(contextId);
@@ -502,6 +524,7 @@ async function runNativeReviewAttempt(
     if (existingTerminal && !existingTerminal.ok && existingTerminal.code === 'artifact_contract')
       throw new TerminalReviewArtifactError(existingTerminal.message);
     if (!existingTerminal?.ok) {
+      let attachedToLiveCommand = false;
       await withNativeReviewMutation(() =>
         syncChecklistTargetForRole(vars, taskDir, 'review', {
           reportPath: feedbackRelPath,
@@ -514,6 +537,19 @@ async function runNativeReviewAttempt(
         const snapshot = pendingRecovery
           ? null
           : await readNativeWorkerSnapshot(runId, 'review', contextId);
+        // The accepted process retains its original launch settings across updates.
+        // Reading this snapshot already fenced its owner, profile, lease and generation.
+        attachedToLiveCommand = Boolean(
+          context.nativeSession.acceptedAt &&
+          snapshot?.session.processStopped === false &&
+          ['running', 'waiting', 'idle'].includes(snapshot.session.state) &&
+          snapshot.commands.some(
+            (command) =>
+              command.commandId === context!.nativeSession!.commandId &&
+              command.generation === context!.nativeSession!.generation &&
+              command.accepted,
+          ),
+        );
         if (pendingRecovery || snapshot?.session.processStopped) {
           admit();
           const completing = context.nativeCommandId && context.nativeCommandText;
@@ -553,8 +589,9 @@ async function runNativeReviewAttempt(
         context?.nativeSession?.handoffFrom ??
         (warm ? { runId: warmRunId!, contextId: warm.id } : undefined);
       const dispatched =
-        recovering &&
-        getRun(runId)?.agentContexts?.find((entry) => entry.id === contextId)?.nativeCommandId
+        attachedToLiveCommand ||
+        (recovering &&
+          getRun(runId)?.agentContexts?.find((entry) => entry.id === contextId)?.nativeCommandId)
           ? Promise.resolve()
           : dispatchNativeWorker({
               runId,

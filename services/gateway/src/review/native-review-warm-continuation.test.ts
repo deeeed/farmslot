@@ -27,6 +27,7 @@ const owner: Principal = {
 };
 const head = 'a'.repeat(40);
 let currentHead = head;
+let worktreeStatus = '';
 const noop = async () => {};
 // Scripted host behaviour; the run store, the session registry and the round budget are real.
 let ancestorExitCode = 0;
@@ -51,7 +52,9 @@ mock.module('../core/exec.js', {
     ...exec,
     execOnSlot: async (_vars: unknown, command: string) => ({
       exitCode: command.startsWith('git merge-base --is-ancestor') ? ancestorExitCode : 0,
-      stdout: '',
+      stdout: command.startsWith('git rev-parse HEAD && git status')
+        ? `${currentHead}\n${worktreeStatus}`
+        : '',
       stderr: '',
     }),
   },
@@ -296,6 +299,7 @@ async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
   resetWarmReviewerSessionsForTest();
   ancestorExitCode = 0;
   currentHead = head;
+  worktreeStatus = '';
   commandFailed = false;
   expectedFixCheck = undefined;
   resumed.length = 0;
@@ -366,6 +370,44 @@ const reviewerTask = (runId: string, contextId: string) => {
 };
 const reviewers = (runId: string): AgentContext[] =>
   getRun(runId)!.agentContexts!.filter((context) => context.role === 'review');
+
+for (const status of [' M a.ts\0', 'M  a.ts\0', '?? new.ts\0']) {
+  test(`an unchanged-head re-review refuses uncommitted work (${status.replaceAll('\0', '').trim()}) without spending a round`, async (t) => {
+    const run = await prePublishRun(t);
+    await review(run.id);
+    const admissions = [...(getRun(run.id)!.reviewRoundAdmissions ?? [])];
+    const contexts = reviewers(run.id).map((context) => context.id);
+    worktreeStatus = status;
+    await assert.rejects(reReview(run.id), /fix not committed/i);
+    assert.equal(dispatches.length, 1);
+    assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, admissions);
+    assert.deepEqual(
+      reviewers(run.id).map((context) => context.id),
+      contexts,
+    );
+
+    worktreeStatus = '';
+    await reReview(run.id);
+    assert.equal(dispatches[1]?.retainedFrom?.contextId, dispatches[0]!.contextId);
+  });
+}
+
+test('generated untracked slot support does not block an evidence re-review', async (t) => {
+  const run = await prePublishRun(t);
+  await review(run.id);
+  worktreeStatus = '?? .agent/generated.json\0?? .claude/CLAUDE.local.md\0';
+  await reReview(run.id);
+  assert.equal(dispatches.length, 2);
+});
+
+test('a changed committed head can be re-reviewed while other work remains dirty', async (t) => {
+  const run = await prePublishRun(t);
+  await review(run.id);
+  currentHead = 'c'.repeat(40);
+  worktreeStatus = ' M a.ts\n';
+  await reReview(run.id);
+  assert.equal(dispatches.length, 2);
+});
 
 test('a pre-publish reviewer registers its session and the WARM re-review continues it', async (t) => {
   const run = await prePublishRun(t);

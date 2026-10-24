@@ -247,6 +247,7 @@ export async function runActivateOnSlot(
         triggeredBy: 'operator',
       },
       emit,
+      { preserveDispatchBaseline: true },
     );
   } catch (err) {
     // Roll back only OUR claim: a newer claim that took the slot after this

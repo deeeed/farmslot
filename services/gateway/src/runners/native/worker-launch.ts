@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import type { NativeWorkerLaunch } from '@farmslot/agent-runtime/native';
-import type { NativeProfileReference, SafetyTier } from '@farmslot/protocol';
+import type { AgentRole, NativeProfileReference, SafetyTier } from '@farmslot/protocol';
 import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
 import { runnerRuntimeDir } from '../../../../../scripts/lib/runner-runtime.cjs';
@@ -36,6 +36,7 @@ export async function prepareNativeWorkerLaunch(input: {
   model: string;
   effort?: string;
   safetyTier: SafetyTier;
+  role: AgentRole;
   domain?: string;
   taskDir: string;
   leaseId: string;
@@ -158,6 +159,7 @@ export async function prepareNativeWorkerLaunch(input: {
       executable,
       environment,
       safetyTier: input.safetyTier,
+      ...(input.role === 'review' ? { approvalPolicy: 'never' } : {}),
       ...(accountLabel ? { accountLabel } : {}),
       ...(effort ? { effort } : {}),
     },

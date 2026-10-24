@@ -292,7 +292,10 @@ export const codexNativeAdapter: NativeAdapter = {
               }
             : {
                 approvalPolicy:
-                  options.safetyTier && options.safetyTier !== 'sandboxed' ? 'never' : 'untrusted',
+                  options.approvalPolicy ??
+                  (options.safetyTier && options.safetyTier !== 'sandboxed'
+                    ? 'never'
+                    : 'untrusted'),
                 sandbox:
                   options.safetyTier === 'dangerous' ? 'danger-full-access' : 'workspace-write',
                 ...(gitRoot

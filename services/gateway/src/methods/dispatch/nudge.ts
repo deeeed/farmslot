@@ -55,6 +55,7 @@ import {
   SLOT_CLAIM_REFUSED_CODE,
   slotClaimBlockedByRelease,
 } from './slot-scoring.js';
+import { recordRetainedPrBaseline } from './worktree-baseline.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
 
@@ -363,6 +364,7 @@ export async function nudgeDispatch(
   // task without dispatchExecute, so run the gate after all target resolution
   // and immediately before the irreversible send. Re-read the run so an
   // earlier gate's durable consumption stamp is visible to this boundary.
+  await recordRetainedPrBaseline(params.runId, vars);
   const latestRequestingRun = getRun(params.runId) ?? requestingRun;
   await enforceDispatchPressureGate({
     machine: vars.machine,

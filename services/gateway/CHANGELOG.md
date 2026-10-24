@@ -6,6 +6,19 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Publish configuration changes from owning stores and existing file watchers; omit declared webhook secrets from client project replies while retaining internal webhook verification.
 
+- Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
+
+- Keep reviewer recipe replay output outside worker task evidence so a passing review does not request another round.
+
+- Include evidence-manifest field errors when publication refuses invalid declarations or selected recipe evidence.
+- Require a usable Git identity and signing session during prepare, and refuse unsigned outgoing worker commits at completion or before publication.
+- Publish after and standalone captures from additional same-run recipe attempts at the clean publication head, retaining each checked closure and the selected attempt's claim verdicts.
+- Retain the original worker and slot when COMPLETE or FINALIZE refuses a publish package, including failed output capture or a result-decision write failure, so recovery can continue in place.
+- Ignore read-only historical run records during node-support retention scans, and preserve all bundles when an unreadable inventory prevents pruning without blocking reviews.
+- Let managed native reviewers run commands without approval prompts, preserving run tiers, worker policy and sandbox write scope. Upgrade every native host to `@farmslot/agent-runtime` 0.38.2 before activating this gateway policy; older hosts reject reviewer launches.
+- Refuse a re-review before spending a round when its reviewed HEAD is unchanged and the slot still has uncommitted fixes.
+- Keep bundles referenced by active slot fixtures until their run ends, including after support selections advance or fixtures refresh.
+
 - Project current-attempt checklist timing and preserve step durations in monthly analytics.
 
 - Stop workers and slot runtimes when runs finish, fail or are cancelled, while preserving live stacked children, fix rounds and replay checkouts.
@@ -26,7 +39,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Allow one person approval to accept checked review findings and attest eligible evidence-policy gaps, retaining and validating both receipts.
 
 - Prepare publication gates from current admitted visual reviews, skipping retained results whose replayed command was released.
-- Preserve the original before-evidence baseline when dispatch replays on an existing checkout without preparation.
+- Preserve the original before-evidence baseline during slot activation and dispatch replay on an existing checkout without preparation.
 - Persist operator-added run tickets through supported metadata edits and include covered keys in summaries.
 
 - Bound concurrent evidence and progress reads during node recovery, and preserve replayed review slot claims while fleet refresh completes.
