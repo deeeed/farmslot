@@ -88,6 +88,20 @@ mock.module('../slot.js', {
     },
   },
 });
+const signatureChecks = await import('../../run-completion/commit-signatures.js');
+let refuseInheritedUnsigned = false;
+const unsignedRefusal = new Error('Unsigned outgoing commit(s): fixture-before-dispatch');
+mock.module('../../run-completion/commit-signatures.js', {
+  namedExports: {
+    ...signatureChecks,
+    assertInheritedPrCommitsSigned: async (
+      ...args: Parameters<typeof signatureChecks.assertInheritedPrCommitsSigned>
+    ) => {
+      if (refuseInheritedUnsigned) throw unsignedRefusal;
+      return signatureChecks.assertInheritedPrCommitsSigned(...args);
+    },
+  },
+});
 const modulePath: string = './execute.js?dispatch-baseline';
 const { dispatchExecute } = (await import(modulePath)) as typeof import('./execute.js');
 let engineSkipPrepare: boolean | undefined;
@@ -222,3 +236,51 @@ for (const skipPrepare of [false, true]) {
     assert.deepEqual(captured, [fixedHead]);
   });
 }
+
+test('fresh dispatch validates inherited local commits before trusting its baseline', async (t) => {
+  const task = path.join(root, 'SIGNED-TASK.md');
+  await writeFile(task, '# Worker: dev\n\n**Branch:** feat/dispatch-baseline\n');
+  const run = createRun({
+    flowType: 'dev',
+    project: vars.projectName,
+    ticketOrPr: 'TAT-4153',
+    slotId: vars.slotId,
+    transport: 'tmux',
+    mode: 'autonomous',
+  });
+  updateRun(run.id, { prNumber: 1, branch: 'feat/dispatch-baseline' });
+  await core.rewriteStatusFile(() => ({
+    slots: [
+      {
+        slot: vars.slotId,
+        current_run_id: run.id,
+        slot_epoch: 1,
+        lifecycle: 'ready',
+        phase: null,
+        agent: 'idle',
+      },
+    ],
+  }));
+  t.after(async () => {
+    refuseInheritedUnsigned = false;
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  refuseInheritedUnsigned = true;
+  await assert.rejects(
+    dispatchExecute(
+      {
+        slotId: vars.slotId,
+        runId: run.id,
+        taskFile: task,
+        runner: 'claude',
+        model: 'opus',
+        mode: 'autonomous',
+        skipPrepare: true,
+      },
+      () => undefined,
+    ),
+    (error) => error === unsignedRefusal,
+  );
+  assert.equal(getRun(run.id)?.worktreeHeadAtDispatch, undefined);
+});

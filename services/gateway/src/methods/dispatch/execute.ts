@@ -1540,6 +1540,9 @@ export async function dispatchExecute(
       worktreeHeadAtDispatch &&
       (!params.skipPrepare || options.preparationRan || !dispatchRun?.worktreeHeadAtDispatch)
     ) {
+      const { assertInheritedPrCommitsSigned } =
+        await import('../../run-completion/commit-signatures.js');
+      await assertInheritedPrCommitsSigned(dispatchRun, vars, worktreeHeadAtDispatch);
       updateRunStore(params.runId, { worktreeHeadAtDispatch });
     }
   }

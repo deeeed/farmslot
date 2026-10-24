@@ -56,6 +56,22 @@ export async function assertCommitSignatures(
 
 const COMMITTING_FLOWS = new Set<FlowType>(['dev', 'fix-bug', 'pr-complete', 'update-branch']);
 
+/** Local commits inherited from another worker must pass before becoming trusted history. */
+export async function assertInheritedPrCommitsSigned(
+  run: Run | undefined,
+  vars: SlotVars,
+  headRef: string,
+): Promise<void> {
+  if (
+    !run?.prNumber ||
+    !run.branch ||
+    !COMMITTING_FLOWS.has(run.flowType) ||
+    isInteractiveDevRun(run)
+  )
+    return;
+  await assertCommitSignatures(vars, `refs/remotes/origin/${run.branch}`, headRef);
+}
+
 export async function assertRunCommitSignatures(run: Run): Promise<void> {
   if (!run.slotId || !run.branch || !COMMITTING_FLOWS.has(run.flowType) || isInteractiveDevRun(run))
     return;

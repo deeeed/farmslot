@@ -225,3 +225,66 @@ test('unreadable retained PR checkout refuses delivery without inventing a basel
   );
   assert.equal(store.getRun(run.id)?.worktreeHeadAtDispatch, undefined);
 });
+
+for (const mode of ['warm', 'nudge'] as const) {
+  test(`${mode} refuses an unsigned unpublished commit inherited from the prior worker`, async (t) => {
+    git('update-ref', 'HEAD', main);
+    git(
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'test: published author history',
+    );
+    git('update-ref', 'refs/remotes/origin/feature', 'HEAD');
+    const unsigned = git(
+      'commit-tree',
+      git('rev-parse', 'HEAD^{tree}'),
+      '-p',
+      git('rev-parse', 'HEAD'),
+      '-m',
+      'test: prior worker subject rewrite',
+    );
+    git('update-ref', 'HEAD', unsigned);
+    const run = store.createRun({
+      flowType: 'pr-complete',
+      project: 'proof',
+      ticketOrPr: 'example/repo#1',
+      runner: 'claude',
+    });
+    store.updateRun(run.id, { slotId, taskFile, branch: 'feature', prNumber: 1 });
+    t.after(async () => {
+      store.updateRun(run.id, { status: 'done' });
+      await store.deleteRun(run.id);
+    });
+    const delivery =
+      mode === 'warm'
+        ? warmSessionHandoffDispatch(
+            {
+              slotId,
+              taskFile,
+              runId: run.id,
+              ticketOrPr: 'example/repo#1',
+              flowType: 'pr-complete',
+            },
+            () => undefined,
+          )
+        : nudgeDispatch(
+            {
+              slotId,
+              taskFile,
+              runId: run.id,
+              ticketOrPr: 'example/repo#1',
+              flowType: 'pr-complete',
+              targetBranch: 'feature',
+            },
+            () => undefined,
+          );
+    await assert.rejects(delivery, (error: Error) =>
+      error.message.includes(`Unsigned outgoing commit(s): ${unsigned.slice(0, 12)}`),
+    );
+    assert.equal(store.getRun(run.id)?.worktreeHeadAtDispatch, undefined);
+  });
+}
