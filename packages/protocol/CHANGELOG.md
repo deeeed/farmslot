@@ -22,6 +22,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Add the experimental ADR-071 resource query cache and store seam, persisted Sources/run/decision/fleet/node/capability/progress observations with shared retention bounds, bounded native history with mobile-compatible cancellation and reader-private native keys, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases. Accepted observations remain saved when a connection pauses or a view closes. Saved facts hydrate through offline reconnect attempts, while authority changes fence pending storage reads. Fleet observations share one 2 MB query and leave force-refresh commands outside the cache. Read errors survive disconnects, and saved-data refreshes retain the last failure until a successful replacement arrives. A source change during a failed read schedules one replacement read; authority and not-found refusals remain final. Register bounded backlog, roadmap, work-graph, dispatch-queue and project collections with canonical planning/configuration keys. Project configuration persists within one aggregate 2 MiB bound; previews and registration metadata stay in memory, and commands stay outside cached queries.
 
+## 0.70.2 - 2026-10-24
+
+- Track per-run update-branch review admissions and share bounded budget projections between the gateway and activity labels, preserving feature PR history.
+
 ## 0.70.1 - 2026-10-24
 
 - Preserve operator notes when returning publication findings to the worker, without accepting client-supplied findings.

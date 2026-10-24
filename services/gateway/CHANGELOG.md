@@ -8,6 +8,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Publish readable PR automation, assessment, analytics and copilot changes after their owning commits. Reload external PR-rule configuration with source-error refusal and recovery, and observe assessment policy files.
 
+- Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.
 - Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
 - Keep reviewer recipe replay output outside worker task evidence so a passing review does not request another round.

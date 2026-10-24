@@ -73,6 +73,12 @@ Prove terminal input/resize, source/diff viewing, live device streams, authentic
 
 Initial delivery connects to an existing gateway. Performance benchmarking/optimization, automatic updates, bundled gateway installation/upgrades, multiple windows, and a separate SwiftUI interface are outside this first release. See the [staged delivery and acceptance checks](ROADMAP-next.md#electron-desktop-client).
 
+### 9. Shared current-view web links (proposed)
+
+Subject to [ADR-033 Amendment 1](adr/033-mobile-tmux-worker-control.md#amendment-1-share-the-current-companion-view-2026-10-24), Command Center and Companion use one [current-view link model](reference/view-links.md) for Companion link generation and CC web receipt. A Companion link opens the exact supported CC view and selection through normal authentication, including a run that was stale on the phone. URL navigation grants no authority and executes no command. Phase 1 adds no browser Copy action; desktop Copy continues to produce its existing custom-scheme links.
+
+Use an explicit deployment Command Center web URL bound to one gateway, never a guessed WebSocket port or loopback destination. CC refuses a conflicting saved gateway before resolving the shared route. Unsupported exact views report why sharing is unavailable instead of opening a parent. Phase 1 proves the same run from the actual Android clipboard URL in CC web; native app-link association is deferred to phase 2.
+
 ## Boundaries
 
 - This document is the canonical command-center contract.

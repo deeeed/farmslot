@@ -12,6 +12,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.18.1 - 2026-10-24
+
+- Count activity review rounds in the owning budget, excluding other maintenance runs and refunded attempts while retaining legacy gate fallback.
+
 ## 0.18.0 - 2026-10-23
 
 - Add shared CI-watch card summary and countdown presentation.
