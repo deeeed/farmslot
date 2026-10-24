@@ -1,48 +1,24 @@
 import path from 'node:path';
 
-import { GatewayMethodError } from '../../core/method-error.js';
-
 import { corpusIntegrityPassed } from './corpus-integrity.js';
 import { CORPORA } from './corpus-lock.js';
 import { triageGate, triageMetrics } from './metrics.js';
 import { RUBRIC_VERSION, textDigest } from './packet.js';
+import { TRIAGE_PILOT_RECEIPT_HASH } from './pilot-source.js';
 import { readTriageFile } from './read-source.js';
 import type { TriageCorpus, TriageResult } from './types.js';
 
-/** Exact receipts from one reviewed experiment. Admitting another requires a reviewed source change. */
-export const TRIAGE_PILOT_RECEIPT_HASH =
-  'afe213b7c88ed4e0b2a9d432144c9f8417f4cddfa778a0f48a766e09b5ca8862';
-
-/** The exact admitted manifest contains only these eight artifacts. */
-export const TRIAGE_PILOT_FILE_NAMES = [
-  'receipt-manifest.json',
-  'baseline-results.json',
-  'candidate-results.json',
-  'candidate-results.jsonl',
-  'corpus-manifest.json',
-  'evaluation.json',
-  'report.md',
-  'run.json',
-  'source-manifest.json',
-] as const;
+export {
+  TRIAGE_PILOT_FILE_NAMES,
+  TRIAGE_PILOT_RECEIPT_HASH,
+  TriagePilotObservationUnavailable,
+} from './pilot-source.js';
 
 let assertObserved: (directory: string) => void = () => undefined;
 
 /** The gateway owns observation; standalone receipt verification remains usable offline. */
 export function setTriagePilotObservationGuard(guard: (directory: string) => void): void {
   assertObserved = guard;
-}
-
-export class TriagePilotObservationUnavailable extends GatewayMethodError {
-  constructor() {
-    super(
-      'RESOURCE_OBSERVATION_UNAVAILABLE',
-      'Triage evaluation source observation is unavailable.',
-      {
-        userAction: 'Repair the selected evaluation directory or restart the gateway.',
-      },
-    );
-  }
 }
 
 export async function verifyTriagePilotEvidence(directory: string) {

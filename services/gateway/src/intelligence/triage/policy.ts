@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-import { digest } from '../../assessment/failure-triage/packet.js';
+import { digest } from '../../assessment/failure-triage/packet-identity.js';
 import { readTriageFile } from '../../assessment/failure-triage/read-source.js';
 import type { TriagePrice } from '../../assessment/failure-triage/types.js';
 import { assertNoCredentials } from '../../assessment/record-validation.js';

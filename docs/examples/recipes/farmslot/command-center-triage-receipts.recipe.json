@@ -4,6 +4,10 @@
   "description": "ADR-071 D07 source observation. Use copied approved receipts outside the selected home and a launch-time failed run. Edit, restore, remove and recreate admitted files and switch the actual policy directory. Assert canonical query revisions and visible prerequisite state without provider execution or UI/cache/SQLite injection.",
   "proofTargets": [
     {
+      "id": "sourceModuleAdmission",
+      "claim": "The production transport module initializes alongside selected triage source observation before actual browser reads."
+    },
+    {
       "id": "receiptChangeAndRecovery",
       "claim": "Actual admitted receipt replacement changes the mounted triage prerequisite and exact byte restoration recovers without Refresh."
     },
@@ -21,8 +25,24 @@
     }
   ],
   "workflow": {
-    "entry": "prove",
+    "entry": "module-load",
     "nodes": {
+      "module-load": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --input-type=module -e \"await import('./.agents/skills/tmux-model-driver/scripts/native-evidence.mjs'); console.log('source-module-admission-ok')\"",
+        "timeout_ms": 15000,
+        "intent": "Initialize the production transport entry without starting a worker.",
+        "next": "module-load-check"
+      },
+      "module-load-check": {
+        "action": "assert_output",
+        "source": "module-load",
+        "stream": "stdout",
+        "match": "source-module-admission-ok",
+        "intent": "Reject a source-observation import cycle before browser validation.",
+        "proves": ["sourceModuleAdmission"],
+        "next": "prove"
+      },
       "prove": {
         "action": "command",
         "cmd": "node apps/command-center/scripts/prove-triage-receipts.mjs",

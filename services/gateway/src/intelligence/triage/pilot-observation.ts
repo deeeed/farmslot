@@ -7,7 +7,7 @@ import { type ChokidarOptions, type FSWatcher, watch } from 'chokidar';
 import {
   TRIAGE_PILOT_FILE_NAMES,
   TriagePilotObservationUnavailable,
-} from '../../assessment/failure-triage/pilot-evidence.js';
+} from '../../assessment/failure-triage/pilot-source.js';
 import { watchedEventPath } from '../../core/file-observation.js';
 import { resourceRevisions } from '../../resources/revisions.js';
 
