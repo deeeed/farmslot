@@ -205,6 +205,10 @@ test('bounded update-branch budget reports two rounds with the existing no-verdi
   assert.equal(budget.remaining, 1);
   assert.equal(reviewRoundBudgetLabel(budget), 'Review rounds 1/2 · 1/3 no-verdict');
   assert.equal(reviewRoundBudget(2, [], 0, MAX_UPDATE_BRANCH_REVIEW_ROUNDS).remaining, 0);
+  assert.doesNotMatch(
+    reviewRoundBudget(2, [], 0, MAX_UPDATE_BRANCH_REVIEW_ROUNDS).diagnosis!,
+    /extension/,
+  );
   assert.equal(reviewRoundBudget(2).remaining, 3);
 });
 

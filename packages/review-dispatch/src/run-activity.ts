@@ -6,6 +6,7 @@ import {
   isTerminalRunStatus,
   primaryRoleForFlow,
   resolveRunSlotId,
+  reviewRoundBudgetForRun,
   type Run,
   type RunStep,
   type RunStepDisplayStatus,
@@ -177,12 +178,14 @@ export function runActivityView(run: Run): RunActivityView | null {
         ? 'post-gate'
         : 'pre-gate'
       : undefined;
-  const used = Math.max(
-    new Set(run.reviewRoundAdmissions ?? []).size,
-    ...run.decisions.map((decision) =>
-      decision.payload?.kind === 'ready' ? (decision.payload.reviewRoundBudget?.used ?? 0) : 0,
-    ),
-  );
+  const used = run.reviewRoundAdmissions
+    ? reviewRoundBudgetForRun(run).used
+    : Math.max(
+        0,
+        ...run.decisions.map((decision) =>
+          decision.payload?.kind === 'ready' ? (decision.payload.reviewRoundBudget?.used ?? 0) : 0,
+        ),
+      );
   // A fix prepares the next review round; a reviewer is in the round already admitted.
   const round = used ? used + (kind === 'worker-fix' ? 1 : 0) : undefined;
   // This gateway progress field supplies the current count before the result is archived.

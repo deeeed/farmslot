@@ -1,13 +1,13 @@
 import {
   type AgentContext,
-  MAX_REVIEW_ROUNDS,
-  MAX_UPDATE_BRANCH_REVIEW_ROUNDS,
   type Principal,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReviewAttempt,
   type ReviewBudgetExtension,
+  reviewRoundAdmissionsInScope,
   type ReviewRoundBudget,
   reviewRoundBudget,
+  reviewRoundBudgetForRun,
   type ReviewRoundSettlement,
   type Run,
   type RunExtendReviewBudgetParams,
@@ -175,16 +175,6 @@ function ownersFor(runs: readonly Run[]): Record<string, string> {
   return Object.assign({}, ...runs.map((run) => run.reviewRoundOwners ?? {}));
 }
 
-function budgetAdmissions(
-  run: Run,
-  admissions: readonly string[],
-  owners: Record<string, string>,
-): string[] {
-  return admissions.filter((id) =>
-    run.flowType === 'update-branch' ? owners[id] === run.id : !owners[id],
-  );
-}
-
 // A settlement refunds a round only while its receipt is admitted in scope.
 function budgetFrom(
   run: Run,
@@ -193,15 +183,13 @@ function budgetFrom(
   settlements: Record<string, ReviewRoundSettlement>,
   owners: Record<string, string>,
 ): ReviewRoundBudget {
-  const scoped = budgetAdmissions(run, admissions, owners);
-  const noVerdict = scoped.filter((id) => settlements[id]).length;
-  const maintenance = run.flowType === 'update-branch';
-  return reviewRoundBudget(
-    scoped.length - noVerdict,
-    maintenance ? [] : extensions,
-    noVerdict,
-    maintenance ? MAX_UPDATE_BRANCH_REVIEW_ROUNDS : MAX_REVIEW_ROUNDS,
-  );
+  return reviewRoundBudgetForRun({
+    ...run,
+    reviewRoundAdmissions: [...admissions],
+    reviewRoundOwners: owners,
+    reviewRoundSettlements: settlements,
+    reviewBudgetExtensions: [...extensions],
+  });
 }
 
 function budgetFor(run: Run, runs: readonly Run[]): ReviewRoundBudget {
@@ -258,6 +246,7 @@ export function reviewBudgetExtensionRefusal(run: Run): string | undefined {
 
 // A spent budget points at an extension only for a run that can receive one.
 function budgetForRun(run: Run, budget: ReviewRoundBudget): ReviewRoundBudget {
+  if (run.flowType === 'update-branch') return budget;
   const refusal = budget.diagnosis && reviewBudgetExtensionRefusal(run);
   return refusal
     ? {
@@ -420,7 +409,11 @@ export async function reviewNoVerdictCapReason(run: Run): Promise<string | undef
   const budget = budgetFor(run, scope);
   if (budget.noVerdict < budget.noVerdictLimit) return undefined;
   const settlements = settlementsFor(scope);
-  const last = budgetAdmissions(run, admissionsFor(scope), ownersFor(scope))
+  const last = reviewRoundAdmissionsInScope({
+    ...run,
+    reviewRoundAdmissions: admissionsFor(scope),
+    reviewRoundOwners: ownersFor(scope),
+  })
     .flatMap((id) => settlements[id] ?? [])
     .sort((a, b) => a.at.localeCompare(b.at))
     .slice(-budget.noVerdictLimit)

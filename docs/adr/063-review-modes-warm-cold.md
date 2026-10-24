@@ -499,6 +499,7 @@ spending the budget does not invalidate an already qualifying pass.
 
 There is no new RPC, CLI action or harness setting. `@farmslot/protocol` 0.70.2
 adds optional `Run.reviewRoundOwners`, the update-branch limit constant and a
-bounded base-limit argument to `reviewRoundBudget`. Existing calls keep five
-rounds. The wire protocol remains 0.63.0. Clients keep rendering the shared budget
+bounded base-limit argument to `reviewRoundBudget`. `reviewRoundBudgetForRun`
+and `reviewRoundAdmissionsInScope` share accounting between the gateway and
+`@farmslot/review-dispatch` 0.18.1 activity labels. Existing calls keep five rounds. The wire protocol remains 0.63.0. Clients keep rendering the shared budget
 projection; they do not infer scope themselves.

@@ -86,7 +86,11 @@ New update-branch admissions MUST record the owning run ID in
 PR lock and durable snapshot copies MUST retain admissions, ownership,
 settlements and grants. Feature budgets MUST exclude owned maintenance
 receipts; an update-branch budget MUST count only its own receipts. No-verdict
-counts, failure reasons and gate labels MUST use the same scope.
+counts, failure reasons, activity rounds and gate labels MUST use the same scope.
+The shared `reviewRoundBudgetForRun` and `reviewRoundAdmissionsInScope` SDK
+helpers own that projection. Activity MUST prefer durable receipts and settlements
+over stale gate counts, retaining gate-count fallback for legacy records without
+admission metadata.
 
 Legacy unowned receipts MUST retain their PR accounting. Reattaching an existing
 receipt MUST NOT assign ownership, spend another round or clear a settlement.

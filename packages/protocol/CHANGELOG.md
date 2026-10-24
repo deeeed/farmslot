@@ -16,7 +16,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## 0.70.2 - 2026-10-24
 
-- Track per-run update-branch review admissions and expose bounded two-round budgets, preserving existing feature PR history.
+- Track per-run update-branch review admissions and share bounded budget projections between the gateway and activity labels, preserving feature PR history.
 
 ## 0.70.1 - 2026-10-24
 

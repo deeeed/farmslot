@@ -1,9 +1,46 @@
-import type { ReviewBudgetExtension, ReviewRoundBudget, ReviewStatus } from '../contracts/runs.js';
+import type {
+  ReviewBudgetExtension,
+  ReviewRoundBudget,
+  ReviewStatus,
+  Run,
+} from '../contracts/runs.js';
 
 export const MAX_REVIEW_ROUNDS = 5;
 export const MAX_UPDATE_BRANCH_REVIEW_ROUNDS = 2;
 /** No-verdict reviewer attempts after which automatic review launches stop (ADR-063 Amendment 2). */
 export const REVIEW_NO_VERDICT_LIMIT = 3;
+
+export type ReviewRoundBudgetSource = Pick<
+  Run,
+  | 'id'
+  | 'flowType'
+  | 'reviewRoundAdmissions'
+  | 'reviewRoundOwners'
+  | 'reviewRoundSettlements'
+  | 'reviewBudgetExtensions'
+>;
+
+/** Scope normalized receipts without changing their opaque identity. */
+export function reviewRoundAdmissionsInScope(run: ReviewRoundBudgetSource): string[] {
+  return [...new Set(run.reviewRoundAdmissions ?? [])].filter((id) =>
+    run.flowType === 'update-branch'
+      ? run.reviewRoundOwners?.[id] === run.id
+      : !run.reviewRoundOwners?.[id],
+  );
+}
+
+/** Shared gateway/client projection from durable admission and settlement metadata. */
+export function reviewRoundBudgetForRun(run: ReviewRoundBudgetSource): ReviewRoundBudget {
+  const admissions = reviewRoundAdmissionsInScope(run);
+  const noVerdict = admissions.filter((id) => run.reviewRoundSettlements?.[id]).length;
+  const maintenance = run.flowType === 'update-branch';
+  return reviewRoundBudget(
+    admissions.length - noVerdict,
+    maintenance ? [] : (run.reviewBudgetExtensions ?? []),
+    noVerdict,
+    maintenance ? MAX_UPDATE_BRANCH_REVIEW_ROUNDS : MAX_REVIEW_ROUNDS,
+  );
+}
 
 /** Round budget is separate from the number of qualifying passing reviewers. */
 export function reviewRoundBudget(
@@ -35,9 +72,11 @@ export function reviewRoundBudget(
     ...(count >= limit
       ? {
           diagnosis:
-            limit === MAX_REVIEW_ROUNDS
-              ? 'The five review rounds are spent. A design problem or scope creep has exhausted the review budget; stop and narrow the change or redesign it.'
-              : `All ${limit} authorized review rounds are spent; stop and narrow the change or request a lead-approved scoped extension.`,
+            limit === MAX_UPDATE_BRANCH_REVIEW_ROUNDS
+              ? 'All 2 review rounds for this update-branch run are spent. Stop and narrow the branch update.'
+              : limit === MAX_REVIEW_ROUNDS
+                ? 'The five review rounds are spent. A design problem or scope creep has exhausted the review budget; stop and narrow the change or redesign it.'
+                : `All ${limit} authorized review rounds are spent; stop and narrow the change or request a lead-approved scoped extension.`,
         }
       : {}),
   };
