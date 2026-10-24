@@ -69,7 +69,14 @@ export async function assertInheritedPrCommitsSigned(
     isInteractiveDevRun(run)
   )
     return;
-  await assertCommitSignatures(vars, `refs/remotes/origin/${run.branch}`, headRef);
+  const pv = await loadProjectVars(run.project);
+  const base = await publicationBaseForRun(run, getProjectField(pv.projectJson, 'default_branch'));
+  await assertCommitSignatures(
+    vars,
+    `refs/remotes/origin/${run.branch}`,
+    headRef,
+    `refs/remotes/origin/${base}`,
+  );
 }
 
 export async function assertRunCommitSignatures(run: Run): Promise<void> {

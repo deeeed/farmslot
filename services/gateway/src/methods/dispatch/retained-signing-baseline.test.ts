@@ -288,3 +288,78 @@ for (const mode of ['warm', 'nudge'] as const) {
     assert.equal(store.getRun(run.id)?.worktreeHeadAtDispatch, undefined);
   });
 }
+
+test('nudge accepts a signed merge of unsigned publication-base history and still rejects new unsigned work', async (t) => {
+  git('update-ref', 'HEAD', main);
+  git(
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'test: published author history',
+  );
+  const published = git('rev-parse', 'HEAD');
+  git('update-ref', 'refs/remotes/origin/feature', published);
+  git('update-ref', 'HEAD', main);
+  git(
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'test: trusted new main',
+  );
+  const updatedMain = git('rev-parse', 'HEAD');
+  git('update-ref', 'refs/remotes/origin/main', updatedMain);
+  const merged = git(
+    'commit-tree',
+    '-S',
+    git('rev-parse', 'HEAD^{tree}'),
+    '-p',
+    published,
+    '-p',
+    updatedMain,
+    '-m',
+    'test: signed merge main',
+  );
+  git('update-ref', 'HEAD', merged);
+  const run = store.createRun({
+    flowType: 'pr-complete',
+    project: 'proof',
+    ticketOrPr: 'example/repo#1',
+    runner: 'claude',
+  });
+  store.updateRun(run.id, { slotId, taskFile, branch: 'feature', prNumber: 1 });
+  t.after(async () => {
+    store.updateRun(run.id, { status: 'done' });
+    await store.deleteRun(run.id);
+  });
+  await assert.rejects(
+    nudgeDispatch(
+      {
+        slotId,
+        taskFile,
+        runId: run.id,
+        ticketOrPr: 'example/repo#1',
+        flowType: 'pr-complete',
+        targetBranch: 'feature',
+      },
+      () => undefined,
+    ),
+    (error) => error === STOP,
+  );
+  assert.equal(store.getRun(run.id)?.worktreeHeadAtDispatch, merged);
+  git(
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'test: unsigned new contribution',
+  );
+  await assert.rejects(verifyWorkerPushedBranch(run.id, slotId), /Unsigned outgoing commit/);
+});
