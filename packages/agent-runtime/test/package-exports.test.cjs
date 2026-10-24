@@ -45,6 +45,15 @@ assert.ok(
   typeof require(path.join(packageRoot, 'scripts', 'mark-io.cjs')).writeSignal === 'function',
   'mark-io.cjs must export writeSignal',
 );
+assert.equal(
+  packageJson.exports['./scripts/evidence-manifest.cjs'].types,
+  './scripts/evidence-manifest.d.cts',
+);
+assert.ok(packageJson.files.includes('scripts/evidence-manifest.d.cts'));
+assert.equal(
+  typeof require('@farmslot/agent-runtime/scripts/evidence-manifest.cjs').validateEvidenceManifest,
+  'function',
+);
 assert.ok(packageJson.exports['./scripts/worker-terminal-contract.cjs']);
 assert.ok(packageJson.exports['./scripts/check-task-artifact-contract.mjs']);
 assert.ok(packageJson.exports['./scripts/execution-template-cli.mjs']);

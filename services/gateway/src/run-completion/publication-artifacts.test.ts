@@ -12,6 +12,7 @@ const {
   filterArtifactUrlsByEvidenceSelection,
   scanArtifacts,
   resolvePublicationManifest,
+  readSelectedPublicationManifest,
 } = await import('./publication-artifacts.js');
 
 test('the selected attempt preserves non-recipe declarations and missing selection never falls back', async (t) => {
@@ -171,4 +172,37 @@ test('collectUploadableMediaFiles excludes internal launch artifact media', asyn
   } finally {
     await rm(taskDir, { recursive: true, force: true });
   }
+});
+
+test('completion refusal includes TAT-4259 field issues and preserves mirror fallback', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'invalid-publication-manifest-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'artifacts/recipe-runs/current'), { recursive: true });
+  await writeFile(
+    path.join(root, 'artifacts/latest-valid-recipe-run.json'),
+    JSON.stringify({
+      version: 1,
+      relativeArtifactRoot: 'recipe-runs/current',
+    }),
+  );
+  const declaration = path.join(root, 'artifacts/evidence-manifest.json');
+  const selected = path.join(root, 'artifacts/recipe-runs/current/evidence-manifest.json');
+  const invalid = { preferred_mode: 'state', videos: [] };
+  const assertFieldIssues = (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /manifest.preferred_mode: expected "screenshots" or "video"/);
+    assert.match(error.message, /manifest.videos: expected object/);
+    return true;
+  };
+  await writeFile(selected, JSON.stringify({ version: 1 }));
+  await writeFile(declaration, JSON.stringify(invalid));
+  await assert.rejects(resolvePublicationManifest(root), assertFieldIssues);
+  assert.notEqual(await readSelectedPublicationManifest(root), null);
+  await writeFile(declaration, JSON.stringify({ version: 1 }));
+  await writeFile(selected, JSON.stringify(invalid));
+  await assert.rejects(resolvePublicationManifest(root), assertFieldIssues);
+  assert.equal(await readSelectedPublicationManifest(root), null);
+  await writeFile(declaration, '{');
+  await writeFile(selected, JSON.stringify({ version: 1 }));
+  await assert.rejects(resolvePublicationManifest(root), /manifest: invalid JSON:/);
 });
