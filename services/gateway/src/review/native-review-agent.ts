@@ -524,6 +524,7 @@ async function runNativeReviewAttempt(
     if (existingTerminal && !existingTerminal.ok && existingTerminal.code === 'artifact_contract')
       throw new TerminalReviewArtifactError(existingTerminal.message);
     if (!existingTerminal?.ok) {
+      let attachedToLiveCommand = false;
       await withNativeReviewMutation(() =>
         syncChecklistTargetForRole(vars, taskDir, 'review', {
           reportPath: feedbackRelPath,
@@ -536,6 +537,19 @@ async function runNativeReviewAttempt(
         const snapshot = pendingRecovery
           ? null
           : await readNativeWorkerSnapshot(runId, 'review', contextId);
+        // The accepted process retains its original launch settings across updates.
+        // Reading this snapshot already fenced its owner, profile, lease and generation.
+        attachedToLiveCommand = Boolean(
+          context.nativeSession.acceptedAt &&
+          snapshot?.session.processStopped === false &&
+          ['running', 'waiting', 'idle'].includes(snapshot.session.state) &&
+          snapshot.commands.some(
+            (command) =>
+              command.commandId === context!.nativeSession!.commandId &&
+              command.generation === context!.nativeSession!.generation &&
+              command.accepted,
+          ),
+        );
         if (pendingRecovery || snapshot?.session.processStopped) {
           admit();
           const completing = context.nativeCommandId && context.nativeCommandText;
@@ -575,8 +589,9 @@ async function runNativeReviewAttempt(
         context?.nativeSession?.handoffFrom ??
         (warm ? { runId: warmRunId!, contextId: warm.id } : undefined);
       const dispatched =
-        recovering &&
-        getRun(runId)?.agentContexts?.find((entry) => entry.id === contextId)?.nativeCommandId
+        attachedToLiveCommand ||
+        (recovering &&
+          getRun(runId)?.agentContexts?.find((entry) => entry.id === contextId)?.nativeCommandId)
           ? Promise.resolve()
           : dispatchNativeWorker({
               runId,

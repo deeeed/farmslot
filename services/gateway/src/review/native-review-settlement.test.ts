@@ -39,8 +39,11 @@ type Ending =
   | 'completion-deferred'
   | 'completion-interrupted'
   | 'completion-invalid-idle'
+  | 'reattach-config-changed'
   | 'completion-invalid';
 let ending: Ending = 'verdict';
+let dispatchCalls = 0;
+let reattachProbes = 0;
 let timeline: { now: number; polls: number; stepMs?: number } | undefined;
 let configuredInactivityMinutes: number | undefined;
 const readCursors: Array<number | undefined> = [];
@@ -91,6 +94,12 @@ mock.module('../methods/dispatch/slot-file-write.js', {
 mock.module('../run-engine/run-monitor.js', {
   namedExports: {
     probeWorkerSignalForRun: async (runId: string) => {
+      if (ending === 'reattach-config-changed' && ++reattachProbes === 1)
+        return {
+          ok: false,
+          code: 'non_terminal',
+          signal: { status: 'running', timestamp: new Date().toISOString() },
+        };
       if (completionCase()) {
         const context = getRun(runId)!.agentContexts?.find((entry) => entry.role === 'review');
         if (
@@ -154,9 +163,14 @@ mock.module('../runners/native/worker.js', {
       if (stopFails) throw new Error('native worker stop is unconfirmed');
     },
     dispatchNativeWorker: async (input: { runId: string; contextId: string }) => {
+      dispatchCalls++;
       const current = getRun(input.runId)!.agentContexts?.find(
         (entry) => entry.id === input.contextId,
       );
+      if (ending === 'reattach-config-changed' && current?.nativeSession?.acceptedAt)
+        throw new Error(
+          'Native worker launch configuration changed; explicit recovery is required',
+        );
       if (current?.nativeSession?.closedAt)
         throw new Error('Native worker task lease is closed; use explicit recovery');
       if (
@@ -270,13 +284,21 @@ mock.module('../runners/native/worker-control.js', {
         session:
           ending === 'exit'
             ? { state: 'closed', processStopped: true, error: 'reviewer process exited' }
-            : { state: 'running' },
+            : { state: 'running', processStopped: false },
         commands:
           ending === 'command-failed'
             ? [{ commandId: binding.commandId, state: 'failed', outcome: 'failed' }]
             : ending === 'timeout' || ending === 'exit'
               ? []
-              : [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }],
+              : [
+                  {
+                    commandId: binding.commandId,
+                    generation: binding.generation,
+                    accepted: true,
+                    state: 'completed',
+                    outcome: 'completed',
+                  },
+                ],
         events: [],
         cursor: 0,
         hasMore: false,
@@ -772,6 +794,40 @@ for (const [end, uncertainty] of [
 
 // TAT-4006 run 7721a02b, 10-20: its reviewer completed at 03:15Z and its
 // process, with seven MCP servers, was still alive at 08:20Z.
+test('an accepted live review reattaches after launch configuration changes without redispatch', async (t) => {
+  ending = 'verdict';
+  const run = await nativeRun(t);
+  await review(run.id);
+  const before = getRun(run.id)!;
+  const context = before.agentContexts!.find((entry) => entry.role === 'review')!;
+  updateRun(run.id, {
+    agentContexts: before.agentContexts!.map((entry) =>
+      entry.id === context.id
+        ? {
+            ...entry,
+            status: 'working',
+            completedAt: undefined,
+            reviewResultValidatedAt: undefined,
+            nativeSession: { ...entry.nativeSession!, acceptedAt: new Date().toISOString() },
+          }
+        : entry,
+    ),
+  });
+  ending = 'reattach-config-changed';
+  reattachProbes = 0;
+  const launches = dispatchCalls;
+  const admitted = getRun(run.id)!.reviewRoundAdmissions!.length;
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(dispatchCalls, launches);
+  const after = getRun(run.id)!;
+  const current = after.agentContexts!.find((entry) => entry.id === context.id)!;
+  assert.equal(current.status, 'complete');
+  assert.equal(current.nativeSession!.sessionId, context.nativeSession!.sessionId);
+  assert.equal(current.nativeSession!.leaseId, context.nativeSession!.leaseId);
+  assert.equal(current.nativeSession!.generation, context.nativeSession!.generation);
+  assert.equal(after.reviewRoundAdmissions!.length, admitted);
+});
+
 test('a settled reviewer stops its process and keeps its resumable identity', async (t) => {
   for (const end of ['verdict', 'incomplete'] as const) {
     ending = end;

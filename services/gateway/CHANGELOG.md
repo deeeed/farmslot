@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
+
 - Keep reviewer recipe replay output outside worker task evidence so a passing review does not request another round.
 
 - Include evidence-manifest field errors when publication refuses invalid declarations or selected recipe evidence.
