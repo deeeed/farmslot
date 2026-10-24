@@ -353,6 +353,12 @@ and the configured simulator, even when no resource watcher still reports them.
 Successful CI completion without a successor owes the same cleanup. Publishing
 the terminal run remains ahead of cleanup.
 
+Explicit archive/delete also confirms the terminal run's owned release before
+its live ownership record leaves the store. Done and failed runs use keep-work
+release so their checkout survives. Cancelled runs retain the existing reset
+policy for explicit eviction. Replay is fenced during cleanup, and foreign or
+successor ownership still prevents teardown.
+
 A live stacked child, fix round, successor reservation or foreign capability
 owner keeps the resources it still owns. Cleanup rechecks slot ownership and
 epoch before each resource shutdown. Unconfirmed shutdown is recorded and cannot

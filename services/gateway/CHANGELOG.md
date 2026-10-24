@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Stop owned workers before terminal runs leave the live store while preserving finished checkouts, and verify published commits against the actual remote when tracking refs are stale.
 - Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.
 - Transfer prepare scripts through the file API so large task inputs do not exceed shell argument limits, including orchestrator-local preparation for remote slots.
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.
