@@ -23,6 +23,7 @@ import {
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import { checklistTimingContext, checklistTimingForAttempt } from '../tasks/checklist-timing.js';
 
 import { getAllRuns, shouldUseIsolatedRunsDir } from './store.js';
@@ -284,6 +285,15 @@ export function buildAnalyticsRecord(
 export async function appendAnalyticsRecord(record: RunAnalyticsRecord): Promise<void> {
   await mkdir(analyticsDir(), { recursive: true });
   await appendFile(monthFile(record.ts), `${JSON.stringify(record)}\n`, 'utf-8');
+  // Every query includes corpus-wide dimensions and counts, even with a project filter.
+  resourceRevisions.advance({ family: 'analytics', scope: 'farm' });
+  if (
+    record.project &&
+    !/[/\\]/.test(record.project) &&
+    record.project !== '.' &&
+    record.project !== '..'
+  )
+    resourceRevisions.advance({ family: 'analytics', scope: 'farm', project: record.project });
 }
 
 export interface AnalyticsReadResult {

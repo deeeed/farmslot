@@ -6,7 +6,6 @@ import {
   BACKLOG_SOURCE_KINDS,
   type BacklogCreateResult,
   type BacklogItem,
-  type BacklogListResult,
   type BacklogSourceKind,
   type BacklogUpdateResult,
   type ConfigTemplateOptionsResult,
@@ -17,6 +16,7 @@ import {
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
+import { backlogPlanningQuery, currentPlanningRead } from '../features/planning/planning-resources';
 import {
   PlanningChoices,
   PlanningField,
@@ -28,11 +28,13 @@ import { useConfigurationProjects } from '../hooks/useConfigurationProjects';
 import { useResourceQuery } from '../hooks/useResourceQuery';
 import { backlogExecutionDefaults } from '../lib/backlog-review-dispatch';
 import { colors, fonts, radii, spacing } from '../lib/theme';
+import { useWorkspaceRenderAccess } from '../lib/use-workspace-render-access';
 import { useConnectionStore } from '../store/connection';
 import { useFilterStore } from '../store/filters';
 import { useFleetStore } from '../store/fleet';
 
 import { FormSheetHeader } from './FormSheetHeader';
+import { ResourceReadStatus } from './ResourceReadStatus';
 
 const FLOW_OPTIONS: readonly { value: FlowType; label: string }[] = [
   { value: 'fix-bug', label: 'Fix bug' },
@@ -65,6 +67,9 @@ export function BacklogCreateForm({
   const initialSelectedProject = useRef(
     item?.project ?? (selectedProjects.length === 1 ? selectedProjects[0] : ''),
   );
+  const access = useWorkspaceRenderAccess();
+  const planning = useResourceQuery(access === 'farm' ? backlogPlanningQuery : undefined);
+  const planningReady = status === 'connected' && planning.status === 'ready';
   const projectsObservation = useConfigurationProjects();
   const projects = useMemo(
     () =>
@@ -185,7 +190,11 @@ export function BacklogCreateForm({
     }
     setSubmitting(true);
     setError(null);
+    let current = () => true;
     try {
+      const command = currentPlanningRead(backlogPlanningQuery, planning.data);
+      current = command.current;
+      if (command.client !== client) throw new Error('The planning connection changed.');
       const execution = executionPicker.toSelection();
       const {
         reviewSequence,
@@ -248,6 +257,7 @@ export function BacklogCreateForm({
           reviewContext: common.reviewContext ?? null,
           reviewSequenceContext: common.reviewSequenceContext ?? null,
         });
+        if (!current()) return;
         setCreatedLabel(updated.item.sourceRef || updated.item.id);
         onSaved?.(updated.item);
         return;
@@ -257,15 +267,21 @@ export function BacklogCreateForm({
         ...common,
         status: createReady ? 'ready' : 'candidate',
       });
-      const listed = await client.request<BacklogListResult>(Methods.BACKLOG_LIST, {
-        project: project.trim(),
-      });
-      if (!listed.items.some((item) => item.id === created.item.id)) {
-        throw new Error('The gateway created the item but did not return it from backlog.list.');
+      if (!current()) return;
+      const listed = await command.cache.retry(backlogPlanningQuery);
+      if (!current()) return;
+      if (
+        listed.status !== 'ready' ||
+        !listed.data?.items.some((entry) => entry.id === created.item.id)
+      ) {
+        throw new Error(
+          'The gateway created the item but its current planning observation is unavailable.',
+        );
       }
       setCreatedLabel(created.item.sourceRef || created.item.id);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : String(submitError));
+      if (current())
+        setError(submitError instanceof Error ? submitError.message : String(submitError));
     } finally {
       setSubmitting(false);
     }
@@ -509,6 +525,7 @@ export function BacklogCreateForm({
         </Text>
       </PlanningSection>
 
+      <ResourceReadStatus observation={planning} label="backlog" />
       {projectsObservation.status === 'stale' && projectsObservation.observedAt ? (
         <Text>
           Saved projects,{' '}
@@ -530,10 +547,10 @@ export function BacklogCreateForm({
         testID="companion-backlog-submit"
         style={[
           styles.submit,
-          (submitting || Boolean(createdLabel) || status !== 'connected') && styles.disabled,
+          (submitting || Boolean(createdLabel) || !planningReady) && styles.disabled,
         ]}
         onPress={() => void submit()}
-        disabled={submitting || Boolean(createdLabel) || status !== 'connected'}
+        disabled={submitting || Boolean(createdLabel) || !planningReady}
       >
         {submitting ? (
           <ActivityIndicator color={colors.bgBase} />

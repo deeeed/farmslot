@@ -1,5 +1,5 @@
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
 import { Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -7,64 +7,39 @@ import {
   isUnscopedGlobalRoadmapItem,
   Methods,
   type RoadmapDeliveryFilter,
-  type RoadmapDeliveryProjection,
   type RoadmapDeliverySummary,
   roadmapDeliveryView,
   type RoadmapGetResult,
   type RoadmapItem,
   type RoadmapItemStage,
-  type RoadmapListResult,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { useResourceQueries, useResourceQuery } from '../../hooks/useResourceQuery';
+import { getResourceCache } from '../../lib/resource-cache';
 import { spacing } from '../../lib/theme';
-import { useConnectionStore } from '../../store/connection';
+import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { useFilterStore } from '../../store/filters';
 
+import { roadmapPlanningQuery } from './planning-resources';
+
 export type StageFilter = 'all' | RoadmapItemStage;
+const EMPTY_ITEMS: RoadmapItem[] = [];
+const EMPTY_DELIVERY: RoadmapDeliverySummary[] = [];
 
 export function useRoadmapController() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const client = useConnectionStore((state) => state.client);
-  const connectionStatus = useConnectionStore((state) => state.status);
+  const access = useWorkspaceRenderAccess();
+  const observation = useResourceQuery(access === 'farm' ? roadmapPlanningQuery : undefined);
   const selectedProjects = useFilterStore((state) => state.filters.projects);
-  const [items, setItems] = useState<RoadmapItem[]>([]);
-  const [delivery, setDelivery] = useState<RoadmapDeliverySummary[]>([]);
+  const items = observation.data?.items ?? EMPTY_ITEMS;
+  const delivery = observation.data?.delivery ?? EMPTY_DELIVERY;
   const [stage, setStage] = useState<StageFilter>('all');
   const [deliveryFilter, setDeliveryFilter] = useState<RoadmapDeliveryFilter>('all');
   const [deliveredExpanded, setDeliveredExpanded] = useState(false);
-  const [deliveredDetails, setDeliveredDetails] = useState<RoadmapDeliveryProjection[]>([]);
-  const [deliveredLoading, setDeliveredLoading] = useState(false);
-  const [deliveredError, setDeliveredError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!client || connectionStatus !== 'connected') {
-      setError('Connect to the gateway to load the roadmap.');
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await client.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
-        includeArchived: true,
-      });
-      setItems(result.items);
-      setDelivery(result.delivery ?? []);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, [client, connectionStatus]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void refresh();
-    }, [refresh]),
-  );
+  const refresh = useCallback(() => getResourceCache()?.retry(roadmapPlanningQuery), []);
 
   const visibleItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -92,39 +67,22 @@ export function useRoadmapController() {
     [visibleItems, delivery, deliveryFilter],
   );
 
-  useEffect(() => {
-    let current = true;
-    setDeliveredDetails([]);
-    setDeliveredError(null);
-    setDeliveredLoading(false);
-    if (!deliveredExpanded) return;
-    if (!client || connectionStatus !== 'connected') {
-      setDeliveredError('Connect to the gateway to load delivered PR links.');
-      return;
-    }
-    setDeliveredLoading(true);
-    void Promise.all(
-      deliveryView.delivered.map((item) =>
-        client.request<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId: item.id }),
-      ),
-    ).then(
-      (results) => {
-        if (!current) return;
-        setDeliveredDetails(
-          results.flatMap((result) => (result.delivery ? [result.delivery] : [])),
-        );
-        setDeliveredLoading(false);
-      },
-      (loadError: unknown) => {
-        if (!current) return;
-        setDeliveredError(loadError instanceof Error ? loadError.message : String(loadError));
-        setDeliveredLoading(false);
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [client, connectionStatus, deliveredExpanded, deliveryView]);
+  const deliveredQueries = useMemo(
+    () =>
+      deliveredExpanded && access === 'farm'
+        ? deliveryView.delivered.map((item) =>
+            resourceQuery<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId: item.id }),
+          )
+        : [],
+    [access, deliveredExpanded, deliveryView.delivered],
+  );
+  const deliveredObservations = useResourceQueries(deliveredQueries);
+  const deliveredDetails = deliveredObservations.flatMap((result) =>
+    result.data?.delivery ? [result.data.delivery] : [],
+  );
+  const deliveredLoading = deliveredObservations.some((result) => result.status === 'loading');
+  const deliveredError =
+    deliveredObservations.find((result) => result.error)?.error?.message ?? null;
 
   return {
     state: {
@@ -136,8 +94,9 @@ export function useRoadmapController() {
       deliveredDetails,
       deliveredLoading,
       deliveredError,
-      error,
-      loading,
+      observation,
+      error: observation.error?.message ?? null,
+      loading: observation.status === 'loading',
       search,
       stage,
       visibleItems,

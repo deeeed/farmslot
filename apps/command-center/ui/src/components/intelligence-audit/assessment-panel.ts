@@ -13,12 +13,17 @@ import {
   Methods,
   type RunGetResult,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import './assessment-suggestion-panel.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { getHashParam } from '../../utils/url-state.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
+
+import { readAssessment } from './assessment-resources.js';
 
 function adviceRating(record: AssessmentRecord): string {
   const feedback = record.feedback.filter((item) => item.questionId === 'action').at(-1);
@@ -49,6 +54,21 @@ export class AssessmentPanel extends LitElement {
     if (this.busy) this.reloadPending = true;
     else void this.load();
   };
+  private readonly assessmentSummary: ResourceQueryController<AssessmentSummary> =
+    new ResourceQueryController<AssessmentSummary>(this, (state) => {
+      if (this.injectedHistory || !this.isConnected) return;
+      if (!this.assessmentSummary.belongsToWorkspace || state.data === undefined) {
+        this.records = [];
+        this.summary = null;
+        this.cursor = undefined;
+        this.decisionOutcomes.clear();
+      }
+      if (state.error) this.error = state.error.message;
+      if (state.status === 'ready') {
+        if (this.busy) this.reloadPending = true;
+        else void this.load(false, false);
+      }
+    });
   private reloadPending = false;
   private loadedPages = 1;
   private readonly decisionOutcomes = new Map<string, { label: string; final: boolean }>();
@@ -143,6 +163,7 @@ export class AssessmentPanel extends LitElement {
       this.summary = this.injectedSummary;
       return;
     }
+    this.assessmentSummary.setQuery(resourceQuery<AssessmentSummary>(Methods.ASSESSMENT_SUMMARY));
     this.unsubscribe = gateway.onConnectionChange((status) => {
       if (status === 'connected') void this.load();
     });
@@ -157,48 +178,71 @@ export class AssessmentPanel extends LitElement {
     this.unsubscribe?.();
     clearInterval(this.interval);
   }
-  private async load(more = false) {
+  private async load(more = false, refresh = true) {
     if (this.busy || this.injectedHistory || !this.isConnected) return;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.connectionEpoch;
+    const filter = this.historyFilter;
+    const stillCurrent = () =>
+      this.isConnected &&
+      owner === getResourceWorkspaceKey() &&
+      connection === gateway.connectionEpoch;
     this.busy = true;
     try {
       const consumer = this.historyFilter === 'all' ? {} : { consumer: this.historyFilter };
       const [history, summary] = await Promise.all([
-        gateway.request<AssessmentHistoryResult>(Methods.ASSESSMENT_LIST, {
-          ...consumer,
-          limit: 50,
-          ...(more && this.cursor ? { before: this.cursor } : {}),
-        }),
-        gateway.request<AssessmentSummary>(Methods.ASSESSMENT_SUMMARY, {}),
+        readAssessment<AssessmentHistoryResult>(
+          Methods.ASSESSMENT_LIST,
+          {
+            ...consumer,
+            limit: 50,
+            ...(more && this.cursor ? { before: this.cursor } : {}),
+          },
+          refresh,
+        ),
+        readAssessment<AssessmentSummary>(Methods.ASSESSMENT_SUMMARY, {}, refresh),
       ]);
-      if (!this.isConnected) return;
+      if (!stillCurrent()) return;
       const selectedId = this.selectedId;
       let page = history;
       let refreshed = history.records;
       if (!more && !selectedId) {
         for (let i = 1; i < this.loadedPages && page.nextCursor; i++) {
-          page = await gateway.request<AssessmentHistoryResult>(Methods.ASSESSMENT_LIST, {
-            ...consumer,
-            limit: 50,
-            before: page.nextCursor,
-          });
+          page = await readAssessment<AssessmentHistoryResult>(
+            Methods.ASSESSMENT_LIST,
+            {
+              ...consumer,
+              limit: 50,
+              before: page.nextCursor,
+            },
+            refresh,
+          );
           refreshed = [...refreshed, ...page.records];
         }
       }
-      this.records = selectedId
-        ? [await gateway.request<AssessmentRecord>(Methods.ASSESSMENT_GET, { id: selectedId })]
+      const records = selectedId
+        ? [
+            await readAssessment<AssessmentRecord>(
+              Methods.ASSESSMENT_GET,
+              { id: selectedId },
+              refresh,
+            ),
+          ]
         : more
           ? [...this.records, ...history.records]
           : refreshed;
+      if (!stillCurrent()) return;
+      if (filter !== this.historyFilter || selectedId !== this.selectedId) {
+        this.reloadPending = true;
+        return;
+      }
+      this.records = records;
       this.auditError =
         history.auditHealth.status === 'degraded'
           ? `${history.auditHealth.failedWritesSinceStart} assessment writes failed since startup. History may be incomplete.`
           : '';
       if (more) this.loadedPages++;
       this.cursor = page.nextCursor;
-      if (selectedId !== this.selectedId) {
-        this.reloadPending = true;
-        return;
-      }
       for (const record of this.records) {
         if (
           (selectedId === record.id || this.expandedOutcomeIds.has(record.id)) &&
@@ -208,13 +252,17 @@ export class AssessmentPanel extends LitElement {
       }
       this.summary = summary;
       this.error = '';
-    } catch {
-      this.error = 'Assessment history could not be loaded. Refresh to retry.';
+    } catch (error) {
+      if (stillCurrent())
+        this.error =
+          error instanceof Error
+            ? error.message
+            : 'Assessment history could not be loaded. Refresh to retry.';
     } finally {
       this.busy = false;
       if (this.reloadPending) {
         this.reloadPending = false;
-        void this.load();
+        void this.load(false, false);
       }
     }
   }
@@ -230,8 +278,21 @@ export class AssessmentPanel extends LitElement {
       this.error = 'Choose the corrected answer before saving an incorrect judgment.';
       return;
     }
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.connectionEpoch;
+    const stillCurrent = () =>
+      owner === getResourceWorkspaceKey() && connection === gateway.connectionEpoch;
     this.busy = true;
     try {
+      if (!this.assessmentSummary.ready)
+        throw new Error('Wait for current assessment history before acting.');
+      const current = await readAssessment<AssessmentRecord>(
+        Methods.ASSESSMENT_GET,
+        { id: record.id },
+        true,
+      );
+      if (!stillCurrent() || current.feedback.length !== record.feedback.length)
+        throw new Error('Feedback changed; reload the assessment');
       const updated = await gateway.request<AssessmentRecord>(Methods.ASSESSMENT_FEEDBACK, {
         id: record.id,
         expectedRevision: record.feedback.length,
@@ -242,11 +303,16 @@ export class AssessmentPanel extends LitElement {
         evidenceRef,
         ...(correctedAnswer !== undefined ? { correctedAnswer } : {}),
       });
+      if (!stillCurrent()) return;
       this.records = this.records.map((r) => (r.id === updated.id ? updated : r));
       this.busy = false;
       await this.load();
-    } catch {
-      this.error = 'Feedback was not saved. Refresh the record before retrying.';
+    } catch (error) {
+      if (stillCurrent())
+        this.error =
+          error instanceof Error
+            ? error.message
+            : 'Feedback was not saved. Refresh the record before retrying.';
     } finally {
       this.busy = false;
     }
@@ -261,11 +327,18 @@ export class AssessmentPanel extends LitElement {
       this.injectedHistory
     )
       return;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.connectionEpoch;
+    const stillCurrent = () =>
+      this.isConnected &&
+      owner === getResourceWorkspaceKey() &&
+      connection === gateway.connectionEpoch;
     this.outcomeRequests.add(record.id);
     this.decisionOutcomes.set(record.id, { label: 'Checking run outcome…', final: false });
     this.requestUpdate();
     try {
-      const result = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId: run.id });
+      const result = await readAssessment<RunGetResult>(Methods.RUN_GET, { runId: run.id }, true);
+      if (!stillCurrent()) return;
       const associated =
         record.consumer === 'failure-triage'
           ? (result.run?.decisions.filter((item) => item.triageAssessmentId === record.id) ?? [])
@@ -299,6 +372,7 @@ export class AssessmentPanel extends LitElement {
               },
       );
     } catch (error) {
+      if (!stillCurrent()) return;
       this.decisionOutcomes.set(record.id, {
         label: `Could not load run outcome: ${error instanceof Error ? error.message : String(error)}`,
         final: false,
@@ -325,12 +399,17 @@ export class AssessmentPanel extends LitElement {
       this.error = 'Select a completed workflow assessment to export its case.';
       return;
     }
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.connectionEpoch;
     this.busy = true;
     try {
+      if (!this.assessmentSummary.ready)
+        throw new Error('Wait for current assessment history before exporting.');
       const report = await gateway.request<AssessmentReport>(
         Methods.ASSESSMENT_REPORT,
         this.selectedId ? { assessmentId: this.selectedId } : {},
       );
+      if (owner !== getResourceWorkspaceKey() || connection !== gateway.connectionEpoch) return;
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }),
       );
@@ -339,8 +418,12 @@ export class AssessmentPanel extends LitElement {
       link.download = `assessment-${report.reportId}.json`;
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
-      this.error = 'Report could not be saved. Try again after checking gateway storage.';
+    } catch (error) {
+      if (owner === getResourceWorkspaceKey() && connection === gateway.connectionEpoch)
+        this.error =
+          error instanceof Error
+            ? error.message
+            : 'Report could not be saved. Try again after checking gateway storage.';
     } finally {
       this.busy = false;
     }
@@ -401,7 +484,9 @@ export class AssessmentPanel extends LitElement {
           ? 'Export assessment report'
           : 'Select a completed PR assessment to export its case'}
         @click=${() => this.exportReport()}
-        ?disabled=${this.busy || !this.canExportSelected}
+        ?disabled=${this.busy ||
+        !this.canExportSelected ||
+        (!this.injectedHistory && !this.assessmentSummary.ready)}
       >
         ${this.selectedId ? 'Export selected case' : 'Export effectiveness snapshot'}
       </button>
@@ -704,7 +789,13 @@ export class AssessmentPanel extends LitElement {
                         </select>
                       </label>
                       <label><input name="used" type="checkbox" />I used this advice</label>
-                      <button type="submit" ?disabled=${this.busy}>Save feedback</button>
+                      <button
+                        type="submit"
+                        ?disabled=${this.busy ||
+                        (!this.injectedHistory && !this.assessmentSummary.ready)}
+                      >
+                        Save feedback
+                      </button>
                     </form>
                   </section>`,
               )}

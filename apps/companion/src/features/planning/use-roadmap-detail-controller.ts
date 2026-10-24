@@ -1,45 +1,52 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Methods, type RoadmapGetResult } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { useResourceQuery } from '../../hooks/useResourceQuery';
+import { getResourceCache } from '../../lib/resource-cache';
 import { spacing } from '../../lib/theme';
-import { useConnectionStore } from '../../store/connection';
+import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
+
+import { roadmapPlanningQuery } from './planning-resources';
 
 export function useRoadmapDetailController(itemId: string | undefined) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const client = useConnectionStore((state) => state.client);
-  const connectionStatus = useConnectionStore((state) => state.status);
-  const [result, setResult] = useState<RoadmapGetResult | null>(null);
+  const access = useWorkspaceRenderAccess();
+  const query = useMemo(
+    () =>
+      access === 'farm' && itemId
+        ? resourceQuery<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId })
+        : undefined,
+    [access, itemId],
+  );
+  const detail = useResourceQuery(query);
+  const collection = useResourceQuery(access === 'farm' ? roadmapPlanningQuery : undefined);
+  const savedItem = collection.data?.items.find((item) => item.id === itemId);
+  const result = detail.data ?? (savedItem ? { item: savedItem } : null);
+  const observation = detail.data ? detail : collection;
   const [documentOpen, setDocumentOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!itemId) {
-      setError('Roadmap item id is required.');
-      return;
-    }
-    if (!client || connectionStatus !== 'connected') {
-      setError('Connect to the gateway to load roadmap work.');
-      return;
-    }
-    setError(null);
-    try {
-      setResult(await client.request<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId }));
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
-    }
-  }, [client, connectionStatus, itemId]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
+  const refresh = useCallback(
+    () => (query ? getResourceCache()?.retry(query) : undefined),
+    [query],
+  );
+  const error = !itemId
+    ? 'Roadmap item id is required.'
+    : (detail.error?.message ??
+      collection.error?.message ??
+      (collection.status === 'ready' && !result ? `Roadmap item ${itemId} was not found.` : null));
   return {
-    state: { bottomPadding: insets.bottom + spacing.xxxl, documentOpen, error, result },
+    state: {
+      bottomPadding: insets.bottom + spacing.xxxl,
+      documentOpen,
+      error,
+      result,
+      observation,
+    },
     actions: {
       closeDocument: () => setDocumentOpen(false),
       openBacklogItem: (backlogItemId: string) =>

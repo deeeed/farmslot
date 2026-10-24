@@ -7,6 +7,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { getQueueSnapshot } from '../backlog/dispatch-queue.js';
+import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import { getAllRuns } from '../runs/store.js';
 import { runWithPrincipalOwner, runWithSystemOriginator } from '../security/work-originator.js';
 
@@ -23,6 +24,12 @@ export class PRMonitoringService {
   private readonly refreshing = new Map<string, Promise<PRMonitor>>();
   private readonly workSnapshots = new Map<string, string>();
   schedulerError?: string;
+
+  private setSchedulerError(error: string | undefined): void {
+    if (this.schedulerError === error) return;
+    this.schedulerError = error;
+    publishPRAutomationResources();
+  }
 
   constructor(
     readonly store: PRMonitorStore,
@@ -46,12 +53,12 @@ export class PRMonitoringService {
     const poll = () => {
       void this.tick().then(
         () => {
-          this.schedulerError = undefined;
+          this.setSchedulerError(undefined);
         },
         (error: unknown) => {
           // Persistence/system failures remain visible through status; the next sweep retries.
           // Provider failures are separately persisted on each monitor by refresh().
-          this.schedulerError = error instanceof Error ? error.message : String(error);
+          this.setSchedulerError(error instanceof Error ? error.message : String(error));
         },
       );
     };
@@ -84,8 +91,10 @@ export class PRMonitoringService {
       if (
         (previous !== undefined && previous !== snapshot) ||
         (previous === undefined && work.length > 0)
-      )
+      ) {
+        publishPRAutomationResources();
         this.broadcast(monitor.ownerId, monitor);
+      }
       if (
         monitor.lifecycle !== 'active' ||
         work.length > 0 ||

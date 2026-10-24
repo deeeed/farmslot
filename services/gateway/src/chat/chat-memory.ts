@@ -8,6 +8,7 @@ import { type ChatMessage, Events } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../fleet/state.js';
 import { callLLM } from '../llm/index.js';
+import { resourceRevisions } from '../resources/revisions.js';
 
 // ─── File-watch cache for soul + memory ───
 // Read from disk once; fs.watch invalidates on change.
@@ -20,10 +21,14 @@ function watchFile(filePath: string, invalidate: () => void): void {
   try {
     const watcher = watch(filePath, () => {
       invalidate();
+      resourceRevisions.advance({ family: 'copilot', ownerId: 'gateway-copilot' });
       watcher.close(); // re-watch happens on next read
     });
     watcher.on('error', () => {
-      /* file removed/renamed — cache will be re-populated on next read */
+      // File removal/rename invalidates the readable cache before publication.
+      invalidate();
+      resourceRevisions.advance({ family: 'copilot', ownerId: 'gateway-copilot' });
+      watcher.close();
     });
   } catch {
     /* file doesn't exist yet — no watch needed */
@@ -107,6 +112,7 @@ export async function saveMemory(content: string): Promise<void> {
   const memoryPath = path.join(getCopilotDir(), 'MEMORY.md');
   await writeFile(memoryPath, content, 'utf-8');
   memoryCache = content; // update cache immediately — watcher will fire but cache is already current
+  resourceRevisions.advance({ family: 'copilot', ownerId: 'gateway-copilot' });
   console.log(`[chat] MEMORY.md saved: ${content.length} chars`);
 }
 
@@ -156,6 +162,7 @@ export async function saveSessionMemory(
   await writeFile(savePath, content, 'utf-8');
   console.log(`[chat] session summary saved: ${savePath}`);
 
+  resourceRevisions.advance({ family: 'copilot', ownerId: 'gateway-copilot' });
   broadcastFn(Events.CHAT_MEMORY_SAVED, { path: savePath, sessionId });
   return savePath;
 }

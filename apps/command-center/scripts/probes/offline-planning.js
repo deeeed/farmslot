@@ -149,7 +149,9 @@ return {
     .map((node) => node.textContent)
     .join('\n'),
   errorText: [
-    ...root.querySelectorAll('[data-testid$="-read-error"],[data-testid="roadmap-detail-error"]'),
+    ...root.querySelectorAll(
+      '[data-testid$="-read-error"],[data-testid="roadmap-detail-error"],.cp-content [role="alert"]',
+    ),
   ]
     .map((node) => node.textContent)
     .join('\n'),

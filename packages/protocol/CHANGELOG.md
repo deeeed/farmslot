@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Register memory-only PR automation, assessment, analytics and shared copilot observations with canonical selectors and scoped change dependencies.
+
 - Expose checklist timing in task progress and per-step worker durations in monthly analytics.
 
 - Add experimental verified node observation admission for shared, nonpersisted worker inventory reads, with mixed-version refusal and structured producer failures.

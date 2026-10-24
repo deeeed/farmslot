@@ -42,6 +42,10 @@
     {
       "id": "configurationProjectsBound",
       "claim": "A real project collection persists below2MiB with exact cold rows/age/disabled writes; an oversized collection evicts and is absent offline, then recovers."
+    },
+    {
+      "id": "configurationSourceError",
+      "claim": "Malformed project JSON preserves saved project rows and timestamps with a visible source error and disabled writes; valid source repair recovers."
     }
   ],
   "workflow": {
@@ -137,7 +141,7 @@
         "match": "\"configurationWriters\":true",
         "intent": "Observed configuration file and second-client writes update the mounted form without Refresh.",
         "proves": ["configurationWriters"],
-        "next": "configurationProjectsBound"
+        "next": "configurationSourceError"
       },
       "configurationProjectsBound": {
         "action": "assert_output",
@@ -147,6 +151,15 @@
         "intent": "Real project collections enforce2MiB persistence and exact offline restoration with disabled writes.",
         "proves": ["configurationProjectsBound"],
         "next": "done"
+      },
+      "configurationSourceError": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"configurationSourceError\":true",
+        "intent": "Malformed project JSON retains saved rows and age with a visible error and disabled actions, then recovers.",
+        "proves": ["configurationSourceError"],
+        "next": "configurationProjectsBound"
       }
     }
   }

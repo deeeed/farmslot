@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { mock } from 'node:test';
 
+import type { PRTeamConfig } from '@farmslot/protocol';
+
 import type { ClientState } from '../server/client-state.js';
 
 // All owning files and env are private before importing the config decision core.
@@ -57,6 +59,7 @@ process.env.FARMSLOT_ROOT = root;
 process.env.FARMSLOT_HOME = path.join(root, 'home');
 process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
 process.env.FARMSLOT_PROJECTS_DIR = path.join(root, 'projects');
+process.env.FARMSLOT_TEST_STATUS_FILE = path.join(root, '.farm-status.json');
 // Optional registration starts absent, as on a fresh host. Never inspect personal stores.
 const privateOs = { ...os, homedir: () => path.join(root, 'external-home') };
 mock.module('node:os', { defaultExport: privateOs, namedExports: privateOs });
@@ -72,6 +75,12 @@ const { canReadResourceKey } = await import('./authorization.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import('../security/auth.js');
 const farm = { family: 'configuration', scope: 'farm' } as const;
 const project = { ...farm, project: 'example' };
+
+async function until(check: () => boolean, label: string): Promise<void> {
+  const deadline = Date.now() + 1500;
+  while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert(check(), label);
+}
 
 test.after(async () => {
   await rm(root, { recursive: true, force: true });
@@ -280,5 +289,124 @@ test('persisted project RPCs redact webhook credentials without changing the gat
     assert.equal((await loadProjectConfig('example'))?.webhooks?.jira_secret, 'PRIVATE_JIRA_TOKEN');
   } finally {
     await writeFile(projectFile, original);
+  }
+});
+
+test('malformed project sources fail client observations instead of returning an empty list or NOT_FOUND', async () => {
+  const original = await readFile(projectFile, 'utf8');
+  try {
+    assert((await config.configProjects()).projects.some((item) => item.name === 'example'));
+    await writeFile(projectFile, '{broken');
+    await assert.rejects(config.configProjects(), SyntaxError);
+    await assert.rejects(config.configProject({ project: 'example' }), SyntaxError);
+  } finally {
+    await writeFile(projectFile, original);
+  }
+  assert((await config.configProjects()).projects.some((item) => item.name === 'example'));
+});
+
+test('the selected-home observer invalidates each assessment policy on add, replacement and deletion', async () => {
+  const watcher = startFileWatcher();
+  const key = { family: 'assessment', scope: 'farm' } as const;
+  try {
+    await watcher.ready;
+    for (const name of [
+      'assessment-config.json',
+      'assessment-suggestion-policy.json',
+      'decision-advice-policy.json',
+      'triage-policy.json',
+    ]) {
+      const file = path.join(root, 'home', name);
+      for (const write of [
+        () => writeFile(file, '{}'),
+        async () => {
+          await writeFile(`${file}.tmp`, '{"enabled":false}');
+          await rename(`${file}.tmp`, file);
+        },
+        () => rm(file),
+      ]) {
+        const before = resourceRevisions.revision(key);
+        await write();
+        await until(() => resourceRevisions.revision(key) > before, name);
+      }
+    }
+  } finally {
+    await watcher.close();
+  }
+});
+
+test('the actual PR rule file observer reloads replacements and refuses malformed/deleted sources until recovery', async (t) => {
+  const { initPRMonitoring } = await import('../methods/pr-watch.js');
+  const { initPRRules } = await import('../methods/pr-rules.js');
+  const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: path.join(root, 'pr-authorization') });
+  initializeGatewayIdentity(auth, { host: '127.0.0.1' });
+  const owner = auth.writer.createPrincipal(
+    { type: 'person', displayName: 'Private rule reader' },
+    [{ role: 'admin', scope: { kind: 'global' } }],
+  );
+  const publications: unknown[] = [];
+  const publish = (...args: unknown[]) => {
+    publications.push(args);
+  };
+  const monitors = await initPRMonitoring(auth, publish, false);
+  const rules = await initPRRules(auth, publish, false, monitors);
+  const config: PRTeamConfig = {
+    name: 'Initial team',
+    account: { host: 'github.com', login: 'private-reader' },
+    sources: [{ kind: 'repository', repo: 'private/repo' }],
+    predicate: { kind: 'compare', field: 'state', operator: 'equals', value: 'open' },
+    repositories: [
+      { repo: 'private/repo', project: 'example', reviewProfile: 'standard', excludedLabels: [] },
+    ],
+    execution: {
+      slotPolicy: { kind: 'exact', slotId: 'config-slot' },
+      models: [{ mode: 'cold', runner: 'runner', model: 'model', effort: 'high' }],
+    },
+    githubTeams: [],
+    notificationPrincipalIds: [],
+  };
+  await rules.store.saveTeam(owner.id, config);
+  const file = path.join(root, '.pr-rules.json');
+  const watcher = startFileWatcher();
+  const diagnostics: unknown[][] = [];
+  t.mock.method(console, 'error', (...args: unknown[]) => {
+    diagnostics.push(args);
+  });
+  const unavailable = () => {
+    try {
+      rules.store.snapshot();
+      return false;
+    } catch (error) {
+      assert.equal((error as { code: string }).code, 'SOURCE_UNAVAILABLE');
+      return true;
+    }
+  };
+  try {
+    await watcher.ready;
+    const external = rules.store.snapshot();
+    external.teams[0].config.name = 'External team';
+    await writeFile(`${file}.tmp`, JSON.stringify(external));
+    await rename(`${file}.tmp`, file);
+    await until(
+      () => rules.store.snapshot().teams[0].config.name === 'External team',
+      'External rule rename must replace readable memory',
+    );
+    assert(publications.length > 0);
+    for (const breakSource of [() => writeFile(file, '{broken'), () => rm(file)]) {
+      await breakSource();
+      await until(unavailable, 'A broken rule source must refuse retained memory');
+      await assert.rejects(rules.store.saveTeam(owner.id, config), { code: 'SOURCE_UNAVAILABLE' });
+      await writeFile(file, JSON.stringify(external));
+      await until(
+        () => !unavailable(),
+        'A valid source must recover without reinitializing schedulers',
+      );
+      assert.equal(rules.store.snapshot().teams[0].config.name, 'External team');
+    }
+    assert(diagnostics.some((args) => args[0] === '[state] PR rule source reload failed:'));
+  } finally {
+    await watcher.close();
+    rules.stop();
+    monitors.stop();
   }
 });

@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 
 import Ajv from 'ajv';
 
 import type { PRPushDelivery, PRPushDevice, PRPushRegisterParams } from '@farmslot/protocol';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import {
   matchesPrincipalOwner,
   ownerGenerationSchema,
@@ -194,8 +196,10 @@ export class PRPushStore {
     const work = this.pending.then(async () => {
       const copy = structuredClone(this.data);
       const result = apply(copy);
+      const changed = !isDeepStrictEqual(copy, this.data);
       await writeAtomicJSON(this.file, copy);
       this.data = copy;
+      if (changed) publishPRAutomationResources();
       return structuredClone(result);
     });
     this.pending = work.then(

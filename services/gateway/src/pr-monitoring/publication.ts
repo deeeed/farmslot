@@ -1,6 +1,7 @@
 import { monitoredPRKey, type PRProjectMonitorPolicy, type Run } from '@farmslot/protocol';
 
 import { loadProjectConfig } from '../fleet/state.js';
+import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import { getAllRuns } from '../runs/store.js';
 import {
   matchesPrincipalOwner,
@@ -59,24 +60,27 @@ export class PRPublicationEnrollment {
     for (const policy of this.store.snapshot().projectPolicies ?? []) {
       const key = JSON.stringify([policy.ownerId, policy.ownerGeneration ?? 0, policy.project]);
       if (!policy.enabled) {
-        this.failures.delete(key);
+        if (this.failures.delete(key)) publishPRAutomationResources();
         continue;
       }
       try {
         if (!this.authorized(policy.ownerId, policy.ownerGeneration ?? 0))
           throw new Error('Publication policy owner no longer has monitoring authority');
         await runWithPrincipalOwner(policy, () => this.enroll(policy));
-        this.failures.delete(key);
+        if (this.failures.delete(key)) publishPRAutomationResources();
       } catch (error) {
         // Enrollment is retried from durable publication records, with a visible owner-scoped error.
+        const message = error instanceof Error ? error.message : String(error);
+        const changed = this.failures.get(key)?.message !== message;
         this.failures.set(key, {
           ownerId: policy.ownerId,
           ...(policy.ownerGeneration !== undefined
             ? { ownerGeneration: policy.ownerGeneration }
             : {}),
           project: policy.project,
-          message: error instanceof Error ? error.message : String(error),
+          message,
         });
+        if (changed) publishPRAutomationResources();
       }
     }
   }

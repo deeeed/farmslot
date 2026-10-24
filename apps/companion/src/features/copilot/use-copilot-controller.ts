@@ -1,52 +1,34 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback } from 'react';
 
-import {
-  type CopilotRuntimeSession,
-  type CopilotRuntimeUpdatedPayload,
-  type CopilotStatusResult,
-  Events,
-  Methods,
-} from '@farmslot/protocol';
+import { type CopilotStatusResult, Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { useResourceQuery } from '../../hooks/useResourceQuery';
+import { getResourceCache } from '../../lib/resource-cache';
+import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { useConnectionStore } from '../../store/connection';
 
+const runtimeQuery = resourceQuery<CopilotStatusResult>(Methods.COPILOT_STATUS, {});
+
 export function useCopilotController() {
-  const client = useConnectionStore((state) => state.client);
   const connectionStatus = useConnectionStore((state) => state.status);
-  const [runtime, setRuntime] = useState<CopilotRuntimeSession | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const revision = useRef(0);
+  const renderAccess = useWorkspaceRenderAccess();
+  const state = useResourceQuery(renderAccess === 'farm' ? runtimeQuery : undefined);
   const refresh = useCallback(async () => {
-    const attempt = ++revision.current;
-    if (!client || connectionStatus !== 'connected') return;
-    setLoading(true);
-    setError('');
-    try {
-      const result = await client.request<CopilotStatusResult>(Methods.COPILOT_STATUS, {}, 10_000);
-      if (attempt === revision.current) setRuntime(result.session);
-    } catch (cause) {
-      if (attempt === revision.current)
-        setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      if (attempt === revision.current) setLoading(false);
-    }
-  }, [client, connectionStatus]);
-  useEffect(() => {
-    setRuntime(null);
-    void refresh();
-    return () => {
-      revision.current++;
-    };
-  }, [refresh]);
-  useEffect(() => {
-    if (!client) return;
-    return client.subscribe(Events.COPILOT_RUNTIME_UPDATED, (payload) => {
-      setRuntime((payload as CopilotRuntimeUpdatedPayload).session);
-    });
-  }, [client]);
+    if (useConnectionStore.getState().status !== 'connected') return;
+    if (useConnectionStore.getState().workspaceAccess !== 'farm') return;
+    await getResourceCache()?.retry(runtimeQuery);
+  }, []);
   return {
-    viewModel: { runtime, loading, error, connected: connectionStatus === 'connected' },
+    viewModel: {
+      runtime: state.data?.session ?? null,
+      loading: state.status === 'loading',
+      error: state.error?.message ?? '',
+      connected: connectionStatus === 'connected',
+      ready: connectionStatus === 'connected' && state.status === 'ready',
+      status: state.status,
+      observedAt: state.observedAt,
+    },
     actions: { refresh },
   };
 }

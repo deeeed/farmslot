@@ -25,6 +25,7 @@ import {
   runOwnsPR,
 } from '../backlog/pr-admission.js';
 import { resolvePRExecution, verifyPRRepairExecution } from '../backlog/pr-execution.js';
+import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import { getAllRuns, runRecordPath } from '../runs/store.js';
 import {
   principalOwnerOriginator,
@@ -95,6 +96,12 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
   >();
   error?: string;
 
+  private setError(error: string | undefined): void {
+    if (this.error === error) return;
+    this.error = error;
+    publishPRAutomationResources();
+  }
+
   constructor(
     private readonly store: PRMonitorStore,
     private readonly monitors: Pick<PRMonitoringService, 'refresh'>,
@@ -117,11 +124,11 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
   wake(): void {
     void this.reconcile().then(
       () => {
-        this.error = undefined;
+        this.setError(undefined);
       },
       (error: unknown) => {
         // The API exposes persistence/system faults; later ticks retry without publishing partial state.
-        this.error = error instanceof Error ? error.message : String(error);
+        this.setError(error instanceof Error ? error.message : String(error));
       },
     );
   }

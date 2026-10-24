@@ -2,8 +2,11 @@ import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import { type DecisionAdviceResult, Methods, type RunDecision } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { supportsDecisionAdvice } from './decision-advice-model.js';
 
@@ -29,6 +32,13 @@ export class DecisionAdvicePanel extends LitElement {
   @state() private loading = false;
   @state() private error = '';
   private generation = 0;
+  private acting = false;
+  private readonly observation: ResourceQueryController<DecisionAdviceResult> =
+    new ResourceQueryController<DecisionAdviceResult>(this, (state) => {
+      this.view = state.data;
+      this.loading = this.acting || state.status === 'loading';
+      this.error = state.error?.message ?? '';
+    });
 
   static styles = css`
     :host {
@@ -76,49 +86,41 @@ export class DecisionAdvicePanel extends LitElement {
   `;
 
   protected override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has('runId') || changed.has('snapshotKey')) {
+    if (changed.has('runId') || changed.has('snapshotKey') || changed.has('decision')) {
       this.view = undefined;
       this.error = '';
+      this.acting = false;
+      this.loading = false;
       this.generation++;
       if (this.runId && this.decision && supportsDecisionAdvice(this.decision)) void this.load();
+      else this.observation.setQuery(undefined);
     }
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.generation++;
+    this.acting = false;
     this.loading = false;
   }
 
   private async load() {
     const decisionId = this.decision?.id;
-    const runId = this.runId;
-    const snapshotKey = this.snapshotKey;
-    if (!decisionId || !this.decision || !supportsDecisionAdvice(this.decision)) return;
-    const generation = ++this.generation;
-    this.loading = true;
-    this.error = '';
-    try {
-      const view = await gateway.request<DecisionAdviceResult>(Methods.DECISION_ADVICE_GET, {
-        runId,
+    if (!this.runId || !decisionId || !this.decision || !supportsDecisionAdvice(this.decision))
+      return;
+    this.observation.setQuery(
+      resourceQuery<DecisionAdviceResult>(Methods.DECISION_ADVICE_GET, {
+        runId: this.runId,
         decisionId,
-      });
-      if (
-        generation === this.generation &&
-        this.runId === runId &&
-        this.snapshotKey === snapshotKey &&
-        this.decision?.id === decisionId
-      )
-        this.view = view;
-    } catch {
-      if (generation === this.generation) this.error = 'Recommendation status could not be loaded.';
-    } finally {
-      if (generation === this.generation) this.loading = false;
-    }
+      }),
+    );
+    await this.observation.retry();
   }
 
   private async analyze() {
-    const view = this.view;
+    const view = this.observation.ready ? this.observation.requireReady() : undefined;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.connectionEpoch;
     const runId = this.runId;
     const decisionId = this.decision?.id;
     const snapshotKey = this.snapshotKey;
@@ -131,6 +133,7 @@ export class DecisionAdvicePanel extends LitElement {
     )
       return;
     const generation = ++this.generation;
+    this.acting = true;
     this.loading = true;
     this.error = '';
     try {
@@ -145,19 +148,28 @@ export class DecisionAdvicePanel extends LitElement {
       );
       if (
         generation === this.generation &&
+        owner === getResourceWorkspaceKey() &&
+        connection === gateway.connectionEpoch &&
         this.runId === runId &&
         this.snapshotKey === snapshotKey &&
         this.decision?.id === decisionId
       ) {
         if (result.snapshotHash === view.snapshotHash && result.reason !== 'stale')
-          this.view = result;
+          await this.observation.retry();
         else this.error = 'Decision changed while advice was running. Refresh its status.';
       }
     } catch {
-      if (generation === this.generation)
+      if (
+        generation === this.generation &&
+        owner === getResourceWorkspaceKey() &&
+        connection === gateway.connectionEpoch
+      )
         this.error = 'Advice could not be returned. Refresh its saved status before retrying.';
     } finally {
-      if (generation === this.generation) this.loading = false;
+      if (generation === this.generation) {
+        this.acting = false;
+        this.loading = false;
+      }
     }
   }
 
@@ -221,6 +233,7 @@ export class DecisionAdvicePanel extends LitElement {
       <button
         data-advice-action="analyze"
         ?disabled=${this.loading ||
+        !this.observation.ready ||
         !view?.eligible ||
         !view.snapshotHash ||
         Boolean(view.assessment)}

@@ -496,6 +496,34 @@ async function configuration() {
     await rename(temporary, file);
     evidence.replaced = await renderBranch(edited.default_branch, before.connectionId);
     await screenshot('configuration-atomic-project-replace');
+    const beforeError = await durable(
+      (value) => value.cacheStatus === 'ready' && value.storedDataSha256 === value.cacheDataSha256,
+      'Persist the readable project snapshot before breaking its source',
+    );
+    await writeFile(file, '{broken');
+    evidence.projectSourceError = await until(
+      (value) =>
+        value.connectionId === before.connectionId &&
+        !observation(value, 'config.projects')?.ready &&
+        observation(value, 'config.projects')?.error &&
+        observation(value, 'config.projects')?.observedAt === beforeError.storedObservedAt &&
+        row(value, 'config.projects', project)?.defaultBranch === edited.default_branch &&
+        value.configuration?.labels.includes(project) &&
+        value.errorText.length > 0 &&
+        value.mutationButtons.length > 0 &&
+        value.mutationButtons.every((button) => button.disabled),
+      'Malformed project JSON must retain the saved collection with a visible error and disabled actions',
+    );
+    evidence.projectSourceErrorSqlite = await inspect();
+    assert.equal(evidence.projectSourceErrorSqlite.storedDataSha256, beforeError.storedDataSha256);
+    assert.equal(evidence.projectSourceErrorSqlite.storedObservedAt, beforeError.storedObservedAt);
+    await screenshot('configuration-source-error-retained');
+    await writeFile(file, JSON.stringify(edited));
+    evidence.projectSourceRecovered = await renderBranch(
+      edited.default_branch,
+      before.connectionId,
+    );
+    receipts.configurationSourceError = true;
     const mutation = await rpc('config.project.autoRecovery.update', {
       project,
       autoRecovery: { enabled: true },
@@ -587,12 +615,24 @@ async function configuration() {
     );
     evidence.warm = await snapshot();
     await withOwnedGatewayOffline(async () => {
+      // Native filesystem events can finish after the first size/hash observation.
+      // Once offline, capture the final saved timestamp before opening a new document.
+      evidence.belowAtOffline = await durable(
+        (value) =>
+          value.storedObservedAt !== undefined &&
+          value.storedObservedAt === value.cacheObservedAt &&
+          value.storedDataSha256 === value.cacheDataSha256 &&
+          value.storedBytes > budget - 64 * 1024 &&
+          value.storedBytes <= budget,
+        'The offline source and SQLite must agree before the cold document opens',
+      );
       await navigate(hash, { freshDocument: true });
       evidence.cold = await until(
         (value) =>
           value.timeOrigin !== evidence.warm.timeOrigin &&
           observation(value, 'config.projects')?.status === 'stale' &&
-          observation(value, 'config.projects')?.observedAt === evidence.below.storedObservedAt &&
+          observation(value, 'config.projects')?.observedAt ===
+            evidence.belowAtOffline.storedObservedAt &&
           row(value, 'config.projects', project) &&
           row(value, 'config.projects', budgetProject) &&
           value.configuration?.info.includes(edited.default_branch) &&
@@ -602,7 +642,7 @@ async function configuration() {
         'A new offline document must render exact saved projects and age with actual writes disabled',
       );
       evidence.coldSqlite = await inspect();
-      assert.equal(evidence.coldSqlite.cacheDataSha256, evidence.below.storedDataSha256);
+      assert.equal(evidence.coldSqlite.cacheDataSha256, evidence.belowAtOffline.storedDataSha256);
       await screenshot('configuration-cold-below-bound');
     });
     await ready('config.projects');

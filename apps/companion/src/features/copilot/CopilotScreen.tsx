@@ -21,7 +21,7 @@ export function CopilotScreen({
   openNative: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const available = vm.connected && vm.runtime?.status === 'running' && !!vm.runtime.terminalWorker;
+  const available = vm.ready && vm.runtime?.status === 'running' && !!vm.runtime.terminalWorker;
   return (
     <View
       testID="companion-screen-copilot"
@@ -53,6 +53,12 @@ export function CopilotScreen({
           <Text style={styles.pendingDraftLabel}>Pending instruction</Text>
           <Text style={styles.pendingDraftText}>{draft}</Text>
         </View>
+      ) : null}
+      {vm.status === 'stale' ? (
+        <Text style={styles.hint}>
+          Saved status{vm.observedAt ? ` from ${new Date(vm.observedAt).toLocaleString()}` : ''}.
+          Waiting for a current read.
+        </Text>
       ) : null}
       {vm.error ? <Text style={styles.error}>{vm.error}</Text> : null}
       {vm.runtime?.terminalReason ? (

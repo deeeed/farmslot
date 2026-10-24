@@ -5,6 +5,7 @@ import path from 'node:path';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import { principalIdentityKey } from '../security/work-originator.js';
 
 import { assertNoCredentials } from './record-validation.js';
@@ -27,8 +28,10 @@ async function prune(dir: string) {
   let retained = 0;
   for (const name of names) {
     const file = path.join(dir, name);
-    if ((await stat(file)).mtimeMs < Date.now() - 30 * 86400_000) await rm(file);
-    else retained++;
+    if ((await stat(file)).mtimeMs < Date.now() - 30 * 86400_000) {
+      await rm(file);
+      resourceRevisions.advance({ family: 'assessment', scope: 'farm' });
+    } else retained++;
   }
   return retained;
 }
@@ -51,6 +54,7 @@ export function saveAssessmentArtifact(
         'Assessment artifact limit reached; export retained artifacts before removing them locally',
       );
     await writeAtomicJSON(path.join(dir, `${id}.json`), value);
+    resourceRevisions.advance({ family: 'assessment', scope: 'farm' });
   });
   // The caller receives the failure; subsequent independent writes can still proceed.
   tail = operation.then(

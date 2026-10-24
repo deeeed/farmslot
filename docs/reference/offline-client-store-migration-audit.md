@@ -293,9 +293,9 @@ and zero idle history refetches. A separate three-connection proof exercises eac
 owner's actual profile writer and private profile-key delivery. The unrelated admin
 receives no profile keys; foreign reads disclose neither payload nor revision stamps.
 Both disposable profiles are retired through their owning routes. Schema-reset/draft-preservation
-and assignment-removal regressions pass after their fixture corrections. These results
-do not accept D06: Companion native proof, the held desktop cold proof, real node/Git/progress delivery in Companion
-and final validation remain separate gates. The combined endpoint proof
+and assignment-removal regressions pass after their fixture corrections. Companion additionally proves native cold retention, disabled actions and recovery,
+plus real node/Git/progress changes on mounted panels without Refresh. D06 is accepted
+under the lead disposition while desktop cold remains explicitly held and unproved. The combined endpoint proof
 opens eleven canonical queries with three observers each. Its eleven-second idle window
 has zero reads. During 36 real workspace writes, six 200-ms source publications cause
 at most one refetch per workspace query and publication. This does not prove platform
@@ -319,3 +319,120 @@ publisher. The account collector's structured test seam changes login status wit
 changing journal or registration bytes; only profile keys publish. Stopping that
 runtime source invalidates both private families and rejects a later read before
 its route executes. These are source-owner tests, not account-login or device proofs.
+
+## Configuration and planning query ownership
+
+Configuration readers require observed-read support and retain their existing admin
+permissions. Query selectors reject paths, command payloads and credential fields.
+Every configuration query depends on `configuration/farm` and `sources/farm`;
+project selectors also depend on `configuration/farm/{project}`.
+
+| Read                                                                    | Persistence                     | Readers                                                                                                |
+| ----------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `config.projects`                                                       | One collection, aggregate 2 MiB | Both clients' project choices; web configuration, dispatch, graph, backlog, evaluation and PR metadata |
+| `config.pools`, `config.pool`, `config.pool.raw`                        | Memory                          | Web configuration/editor, dispatch, PR and scoped slot/workspace metadata                              |
+| `config.project`                                                        | Memory                          | Web project learnings; its content is not an additional durable project payload                        |
+| `config.templates`, `config.templateOptions`, `config.templatePreview`  | Memory                          | Mounted web template/flow views, both clients' template choices and explicit execution previews        |
+| `llm.config.get`, `llm.auth.list`, `llm.tiers`                          | Memory                          | Web provider configuration, redacted registration metadata and model context                           |
+| `backlog.list`, `roadmap.list`, `workGraph.list`, `dispatch.queue.list` | Aggregate 2 MiB per collection  | Web planning panels; Companion's existing backlog/roadmap readers and PR queue                         |
+| `roadmap.get`, `workGraph.get`                                          | Memory                          | Authored detail and derived delivery/context readers                                                   |
+
+`config.projects`, `config.project` and project mutation replies omit declared
+GitHub/Jira webhook secrets. Internal project loading retains those source values
+for webhook verification. Registration observations contain redacted metadata;
+login, refresh, tests and configuration writes remain imperative commands.
+
+| Configuration owner                                                       | Publication after readable commit                                                      |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `config.slot.update`, `config.pool.update`                                | Farm configuration key after pool/status writes                                        |
+| `config.project.backlog.update`, `config.project.autoRecovery.update`     | Farm and project configuration keys after settings/config writes and memo invalidation |
+| `setLLMConfig`, including `llm.config.set`                                | Farm configuration key after file and memo update                                      |
+| `saveAuthProfileStore` for selected Farmslot/OpenClaw registration stores | Farm configuration key after the existing owning store write                           |
+| Existing pool file watcher                                                | Farm configuration key for JSON creation/change/deletion                               |
+| Existing project and source runtime-settings watcher                      | Farm/project configuration keys after project memo invalidation                        |
+| Existing watcher extended to project templates and learnings              | Farm/project configuration keys for template Markdown and `LEARNINGS.md` changes       |
+| Existing watcher extended to selected LLM and registration files          | Farm configuration key; LLM file edits also clear the owning memo                      |
+
+These producers extend existing observation boundaries and add no polling.
+Planning stores retain their collection/item publications. Roadmap directory
+observation also covers raw creation, edits, atomic replacement and deletion;
+observation failure refuses fresh reads. Notification keys contain no credentials
+or filesystem paths.
+
+Web controllers and Companion query hooks own active observations. Demand-only
+configuration reads share the same cache and reject replies after an owner
+change. Local option arrays and forms are projections, not freshness owners.
+Clean configuration forms follow a new read; actual unsaved policy edits survive
+it. Companion backlog commands require the displayed current collection and
+capture profile, principal and connection authority before dispatch. An explicit
+backlog spec preview remains nonpersisted and fences late replies by its owner
+and selected item; content persistence belongs to the later content slice.
+
+The browser planning recipe covers external writers, real read failure with draft
+retention, five cold collections with original SQLite times and age, disabled
+writes, and actual project collections on both sides of the aggregate bound.
+Cache regressions cover revocation while each persisted collection has a reply
+in flight. Companion planning runtime proof and the remaining automation,
+assessment, analytics and copilot migrations remain acceptance gates. Existing
+manual Retry/Refresh controls remain until their replacement proof is accepted;
+upstream collectors remain outside this slice.
+
+## D07 memory-only domain migration
+
+Implementation and local regression coverage do not accept the draft. Mounted-client writer, authority, late-read and recovery evidence remains required for these domains. Companion planning/configuration runtime proof and desktop cold proof are still pending.
+
+All 17 added queries are memory-only, require observed reads and use the current owner cache. No new persistence class is introduced. Existing projects/planning persistence is unchanged.
+
+| Canonical read                  | Selectors and dependencies                                                                 | Actual client consumers                                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| prWatch.list / prWatch.get      | Empty / id. PR farm, runs farm, planning dispatch-queue, configuration farm                | Both PR controllers consume list. Detail remains existing RPC/CLI read                                          |
+| prRules.list / prReview.get     | Empty / id. Same dependencies                                                              | Both PR controllers consume list. Existing request-detail RPC/CLI                                               |
+| prPush.list                     | Empty. Same dependencies                                                                   | Both PR controllers; Companion registration admission                                                           |
+| assessment.list / get / summary | before/limit/consumer; id; empty. Assessment farm                                          | Web assessment history/detail/summary. No direct Companion caller exists                                        |
+| assessment.report               | Existing id only. Assessment farm                                                          | Existing RPC read. No-id/cohort report generation stays an explicit command                                     |
+| assessment.status               | Empty. Assessment farm + configuration farm                                                | Existing RPC/provider-status consumers; no direct screen call                                                   |
+| decision.advice.get             | runId/decisionId. Assessment farm, run, decisions farm, configuration farm                 | Web decision-advice panel. No Companion GET caller                                                              |
+| intelligence.triage.get         | runId/step/includeEvidence. Assessment farm, run/artifacts, configuration farm             | Web failure-triage panel. No Companion GET caller                                                               |
+| analytics.query                 | project/host/flowType/runner/model/lane/since/until. Analytics farm                        | Web analytics panel. Companion has no analytics.query consumer; run-list summaries retain their run-cache owner |
+| copilot.status                  | Empty. Shared copilot owner gateway-copilot, runs/slots/workers/configuration/sources farm | Web chat runtime and Companion copilot controller                                                               |
+| chat.sessionContext             | Normalized sessionId. Shared copilot runtime + exact session                               | Web usage drawer. No Companion caller                                                                           |
+| chat.context                    | Empty. Shared copilot + runs/slots/decisions/dispatch-queue                                | Existing RPC/tools. Neither screen directly calls it                                                            |
+| chat.observerEvidence           | Bounded window/limit + severity/type/runId/slotId                                          | Existing RPC/tools. Shared copilot key. Neither screen directly calls it                                        |
+
+Global-admin method authorization remains authoritative for these families. PR and assessment handlers preserve principal/generation filtering. Notifications use farm-only PR/assessment keys, exposing no private monitor, team, record, owner or source path. Copilot keys authorize only the actual shared gateway-copilot identity through existing global-admin reads. Arbitrary native/foreign owners are refused. Cache authority metadata continues to drop old-owner/role replies. Ordinary errors retain stale data and explicit errors; authorized missing details are NOT_FOUND, never empty successes.
+
+### Owning publications
+
+Every listed durable owner publishes after successful persistence and its new readable memory is installed. Refused/failed commits do not publish success. No-op PR transactions stay quiet.
+
+| Boundary                           | Actual writers and derived results                                                                                                                       | Key/event                                                                                                                               |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| PRMonitorStore.change              | subscribe/enrollRule/enrollPublication/configure/lifecycle/observe/acknowledge/policy/repair/history/update                                              | PR farm; existing decisions publication retained                                                                                        |
+| PRRuleStore.change                 | team/rule/enable/webhook admission/submission/cancel/apply/decide/dispatch/action validation/completion/acknowledgement/replaced-contribution withdrawal | PR farm                                                                                                                                 |
+| PRPushStore.change                 | register/disable/acknowledge/reserve/delivery update/failure/token replacement                                                                           | PR farm; no token in payload                                                                                                            |
+| PR derived owners                  | Three scheduler errors, two dispatcher errors, enrollment failure/recovery, monitor activeRuns, changed owner-scoped push attention                      | PR farm only on readable transition. Existing D08 schedules unchanged                                                                   |
+| PRRuleStore.reloadFromFile         | Actual external scripts/migrate-review-configuration.mjs rename, through the existing farm-directory watcher                                             | Serialized decode/swap; PR farm after change. Invalid/deleted source latches SOURCE_UNAVAILABLE; valid recovery invalidates error       |
+| Assessment store                   | begin/reserve/finish/feedback, active-to-interrupted completion failure, expiry prune, audit-health failure                                              | Assessment farm, no private detail IDs                                                                                                  |
+| Assessment artifacts               | Input/report/evaluation atomic save and expiry prune                                                                                                     | Assessment farm. No-id report generation remains live                                                                                   |
+| Analytics appendAnalyticsRecord    | Terminal/archive/delete run analytics, recovery held result, explicit backfill                                                                           | Analytics farm + safe project key after appendFile succeeds. Query still depends farm because dimensions/scannedRuns cover all projects |
+| Copilot persist                    | Initialize/reconcile/configure/start/reconnect/send/stop/ambiguous/runtime failure                                                                       | Shared copilot, material saved-session differences only. Read timestamp/transcript offset alone do not self-invalidate                  |
+| Copilot checkout                   | Existing WorkspaceObservations.capture around trusted checkout inspection                                                                                | Shared copilot. Realpath and post-read confirmation; no path in key. Git status disables optional locks                                 |
+| Chat store                         | append/clear/delete/restore readable usage changes                                                                                                       | Exact copilot session key                                                                                                               |
+| Observer log                       | Existing source event append and bounded-window expiry; pending decision age boundary                                                                    | Shared copilot. Infrastructure resource.changed cannot create observer evidence                                                         |
+| Existing saved-memory writer/watch | MEMORY/SOUL/SKILLS invalidation/error; memory/session-summary writes                                                                                     | Shared copilot after readable change. No new saved-memory endpoint or UI                                                                |
+
+All domain publications use existing resource.changed and pre-handler revision stamps. There is no invented event transport or added polling. Copilot uses the existing 200ms publication pattern for busy source writes.
+
+### Deliberately uncached operations and limits
+
+PR refresh/scan/repair/request/publish, assessment analyze/test/evaluate/feedback/report creation, analytics backfill and copilot configure/start/stop remain direct live operations. prRules.preview invokes upstream collectors and is left explicit under D08 ownership. assessment.suggestion.preview is read-only but takes full operator context/evidence/source refs; it stays explicit and memory-only because putting those raw inputs in canonical IDs would violate key constraints. No alternate API or digest protocol is invented.
+
+Launch plans/delivery are embedded backlog/roadmap reads; no independent read endpoint intrinsic to these four families was found. Existing planning readers retain their separate migration ownership. Upstream account observations, GitHub polling/CI monitor source schedules, source checkpoints and provider collectors remain excluded.
+
+The existing farm-directory observer reloads the exact `.pr-rules.json` path across replacements and recreation. The selected-home observer invalidates assessment reads for `assessment-config.json`, `assessment-suggestion-policy.json`, `decision-advice-policy.json` and `triage-policy.json`. Policy-selected triage pilot evidence still needs a bounded source-observation proof, so its explicit Refresh remains. Arbitrary manual analytics NDJSON and assessment-record edits are outside the admitted writer contract.
+
+### Configuration read errors
+
+Client project collection/detail reads use strict decoding so a malformed project cannot become an authoritative empty collection or an authorized-not-found eviction. The internal fleet loader retains its tolerant default. A real-file regression covers list/detail failure and recovery, while the browser recipe checks retained rows, exact saved timestamps, visible errors and disabled writes. Its cold reference is captured after the gateway stops so delayed valid notifications cannot invalidate the reference timestamp.
+
+PR dashboard data belongs to its query observers. Transport loss keeps their stale projections; owner or authority changes clear them through the cache lifecycle. Existing explicit retry controls and the assessment timer remain until replacement client evidence is accepted.

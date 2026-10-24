@@ -72,6 +72,7 @@ export function resourceKeyId(key: ResourceKey): string {
 export const RESOURCE_PUBLISH_INTERVAL_MS: Partial<Record<ResourceKey['family'], number>> = {
   workspace: 200,
   workers: 200,
+  copilot: 200,
   progress: 200,
   'native-session': 200,
 };

@@ -40,6 +40,22 @@ export function canReadResourceKey(
     case 'progress':
       method = Methods.TASK_PROGRESS;
       break;
+    case 'pr-automation':
+      method = Methods.PR_WATCH_LIST;
+      break;
+    case 'assessment':
+      // Only collection keys are emitted. Detail IDs remain private to their owning reads.
+      if (key.assessmentId !== undefined) return false;
+      method = Methods.ASSESSMENT_LIST;
+      break;
+    case 'analytics':
+      method = Methods.ANALYTICS_QUERY;
+      break;
+    case 'copilot':
+      // The existing runtime/chat API is shared by global administrators, not native owners.
+      if (key.ownerId !== 'gateway-copilot') return false;
+      method = key.sessionId === undefined ? Methods.COPILOT_STATUS : Methods.CHAT_SESSION_CONTEXT;
+      break;
     case 'configuration':
       method = Methods.CONFIG_PROJECTS;
       break;

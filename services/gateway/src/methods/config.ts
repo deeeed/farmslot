@@ -229,12 +229,12 @@ export async function configPool(params: ConfigPoolParams): Promise<ConfigPoolRe
 }
 
 export async function configProjects(): Promise<ConfigProjectsResult> {
-  const projects = await loadProjectConfigs();
+  const projects = await loadProjectConfigs(true);
   return { projects: projects.map(clientProjectConfig) };
 }
 
 export async function configProject(params: ConfigProjectParams): Promise<ConfigProjectResult> {
-  const project = await loadProjectConfig(params.project);
+  const project = await loadProjectConfig(params.project, true);
   if (!project) throw new GatewayMethodError('NOT_FOUND', `Project not found: ${params.project}`);
   return {
     project: clientProjectConfig(project),

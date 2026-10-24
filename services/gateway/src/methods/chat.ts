@@ -199,7 +199,7 @@ export function chatAbort(_params: ChatAbortParams): Promise<ChatAbortResult> {
 }
 
 export async function chatContext(): Promise<ChatContextResult> {
-  const context = await buildFleetContext();
+  const context = await buildFleetContext({ fresh: true });
   return {
     context,
     generatedAt: new Date().toISOString(),

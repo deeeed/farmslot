@@ -1,5 +1,17 @@
 import { Methods } from '../rpc/registry.js';
 
+import {
+  analyticsParams,
+  assessmentDependencies,
+  assessmentHistoryParams,
+  copilotRuntimeKey,
+  domainParams,
+  idParams,
+  observerEvidenceParams,
+  prAutomationDependencies,
+  sessionContextParams,
+  triageParams,
+} from './d07-domains.js';
 import { canonicalResourceJson, type ResourceKey } from './keys.js';
 import { nativeHistoryParams, nativeObservationDependencies } from './native-history.js';
 
@@ -243,8 +255,112 @@ const workspaceDefinition: ResourceQueryDefinition = {
   dependencies: workspaceDependencies,
 };
 
+const domainDefinition: ResourceQueryDefinition = {
+  persisted: false,
+  maxBytes: 2 * mb,
+  live: true,
+  requiresObservedRead: true,
+  normalizeParams: (params) => domainParams(params, []),
+  dependencies: prAutomationDependencies,
+};
+const assessmentDefinition: ResourceQueryDefinition = {
+  ...domainDefinition,
+  dependencies: assessmentDependencies,
+};
+
 /** Closed to runtime registration. Each migration changes its owning definition here. */
 export const RESOURCE_QUERY_DEFINITIONS = {
+  // D07 observations. Their imperative siblings are deliberately absent.
+  [Methods.PR_WATCH_LIST]: domainDefinition,
+  [Methods.PR_WATCH_GET]: {
+    ...domainDefinition,
+    normalizeParams: (params: unknown) => idParams(params, ['id']),
+  },
+  [Methods.PR_RULES_LIST]: domainDefinition,
+  [Methods.PR_REVIEW_REQUEST_GET]: {
+    ...domainDefinition,
+    normalizeParams: (params: unknown) => idParams(params, ['id']),
+  },
+  [Methods.PR_PUSH_LIST]: domainDefinition,
+  [Methods.ASSESSMENT_LIST]: {
+    ...assessmentDefinition,
+    normalizeParams: assessmentHistoryParams,
+  },
+  [Methods.ASSESSMENT_GET]: {
+    ...assessmentDefinition,
+    normalizeParams: (params: unknown) => idParams(params, ['id']),
+  },
+  [Methods.ASSESSMENT_SUMMARY]: assessmentDefinition,
+  [Methods.ASSESSMENT_REPORT]: {
+    ...assessmentDefinition,
+    // The no-id variant creates an artifact and must remain an explicit command.
+    normalizeParams: (params: unknown) => idParams(params, ['id']),
+  },
+  [Methods.ASSESSMENT_STATUS]: {
+    ...assessmentDefinition,
+    dependencies: () => [...assessmentDependencies(), { family: 'configuration', scope: 'farm' }],
+  },
+  [Methods.DECISION_ADVICE_GET]: {
+    ...assessmentDefinition,
+    normalizeParams: (params: unknown) => idParams(params, ['runId', 'decisionId']),
+    dependencies: (params: unknown) => [
+      ...assessmentDependencies(),
+      { family: 'run', runId: String(idParams(params, ['runId', 'decisionId']).runId) },
+      { family: 'decisions', scope: 'farm' },
+      { family: 'configuration', scope: 'farm' },
+    ],
+  },
+  [Methods.FAILURE_TRIAGE_GET]: {
+    ...assessmentDefinition,
+    normalizeParams: triageParams,
+    dependencies: (params: unknown) => [
+      ...assessmentDependencies(),
+      { family: 'run', runId: String(triageParams(params).runId) },
+      { family: 'artifacts', runId: String(triageParams(params).runId) },
+      { family: 'configuration', scope: 'farm' },
+    ],
+  },
+  [Methods.ANALYTICS_QUERY]: {
+    ...domainDefinition,
+    normalizeParams: analyticsParams,
+    // Dimensions/scannedRuns cover the whole corpus even on a project-filtered read.
+    dependencies: () => [{ family: 'analytics', scope: 'farm' }],
+  },
+  [Methods.COPILOT_STATUS]: {
+    ...domainDefinition,
+    timeoutMs: 10_000,
+    dependencies: () => [
+      copilotRuntimeKey,
+      { family: 'runs', scope: 'farm' },
+      { family: 'slots', scope: 'farm' },
+      { family: 'workers', scope: 'farm' },
+      { family: 'configuration', scope: 'farm' },
+      { family: 'sources', scope: 'farm' },
+    ],
+  },
+  [Methods.CHAT_CONTEXT]: {
+    ...domainDefinition,
+    dependencies: () => [
+      copilotRuntimeKey,
+      { family: 'runs', scope: 'farm' },
+      { family: 'slots', scope: 'farm' },
+      { family: 'decisions', scope: 'farm' },
+      { family: 'planning', collection: 'dispatch-queue' },
+    ],
+  },
+  [Methods.CHAT_OBSERVER_EVIDENCE]: {
+    ...domainDefinition,
+    normalizeParams: observerEvidenceParams,
+    dependencies: () => [copilotRuntimeKey],
+  },
+  [Methods.CHAT_SESSION_CONTEXT]: {
+    ...domainDefinition,
+    normalizeParams: sessionContextParams,
+    dependencies: (params: unknown) => [
+      copilotRuntimeKey,
+      { ...copilotRuntimeKey, sessionId: String(sessionContextParams(params).sessionId) },
+    ],
+  },
   [Methods.CONFIG_PROJECTS]: {
     ...configurationDefinition,
     persisted: true,

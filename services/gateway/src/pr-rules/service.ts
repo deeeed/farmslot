@@ -28,6 +28,7 @@ import { resolvePRExecution } from '../backlog/pr-execution.js';
 import { loadProjectConfig } from '../fleet/state.js';
 import { GitHubPRUnavailableError } from '../integrations/github-errors.js';
 import type { PRMonitoringService } from '../pr-monitoring/service.js';
+import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import { captureDirectReviewPublication } from '../review-publication/direct.js';
 import {
   publishWorkspaceReview,
@@ -83,6 +84,12 @@ export class PRRuleService {
   private previousAudience = new Map<string, PrincipalOwner>();
   schedulerError?: string;
 
+  private setSchedulerError(error: string | undefined): void {
+    if (this.schedulerError === error) return;
+    this.schedulerError = error;
+    publishPRAutomationResources();
+  }
+
   constructor(
     readonly store: PRRuleStore,
     private readonly authorized: (ownerId: string, generation?: number) => boolean,
@@ -116,11 +123,11 @@ export class PRRuleService {
     const poll = () => {
       void this.tick().then(
         () => {
-          this.schedulerError = undefined;
+          this.setSchedulerError(undefined);
         },
         (error: unknown) => {
           // System failures remain visible in API status while the next scheduled sweep retries.
-          this.schedulerError = error instanceof Error ? error.message : String(error);
+          this.setSchedulerError(error instanceof Error ? error.message : String(error));
         },
       );
     };
@@ -671,7 +678,9 @@ export class PRRuleService {
         if (error instanceof GitHubPRUnavailableError) continue;
         // Failed membership reads must block legacy fallback; the delivery can
         // be retried after access/quota recovers and the reason stays visible.
-        this.schedulerError = `Webhook source lookup failed: ${error instanceof Error ? error.message : String(error)}`;
+        this.setSchedulerError(
+          `Webhook source lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
         uncertain = true;
       }
     }
@@ -983,7 +992,7 @@ export class PRRuleService {
     this.notifyChanges();
     void this.refreshSubmission(ownerId, submission.id).catch((error: unknown) => {
       // The receipt is durable. Expose persistence/policy races while the scheduled sweep retries.
-      this.schedulerError = error instanceof Error ? error.message : String(error);
+      this.setSchedulerError(error instanceof Error ? error.message : String(error));
       this.notifyChanges();
     });
     return submission;

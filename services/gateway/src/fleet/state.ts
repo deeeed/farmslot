@@ -55,6 +55,7 @@ import { invalidateLLMConfig } from '../llm/config.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
 import { capabilityResourceChanges } from '../resources/capability-changes.js';
 import { publishConfigurationResources } from '../resources/configuration-changes.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import {
   slotResourceChanges as slotResources,
   statusCheckedAt,
@@ -716,16 +717,33 @@ export function startFileWatcher() {
   // A file watch can lose an unlink immediately after a change on macOS.
   // Keep watching its directory across atomic replacements and recreation.
   const directory = path.dirname(statusFile);
+  const prRulesFile = path.resolve(farmslotRoot, '.pr-rules.json');
+  const reloadPRRules = async () => {
+    try {
+      const { reloadPRRulesFromFile } = await import('../methods/pr-rules.js');
+      await reloadPRRulesFromFile();
+    } catch (error) {
+      // The owning store latches this failure and refuses reads/actions until a valid reload.
+      console.error('[state] PR rule source reload failed:', error);
+    }
+  };
   const watcher = watch(directory, {
     persistent: true,
     ignoreInitial: true,
     depth: 0,
-    ignored: (file) => file !== directory && file !== statusFile,
+    ignored: (file) => file !== directory && file !== statusFile && file !== prRulesFile,
   });
-  watcher.on('all', async (event) => {
+  watcher.on('all', async (event, file) => {
     if (event !== 'change' && event !== 'add' && event !== 'unlink') return;
+    if (file === prRulesFile) {
+      await reloadPRRules();
+      return;
+    }
     const fleet = await loadFleetStatus(true);
     for (const handler of changeHandlers) handler(fleet);
+  });
+  watcher.on('raw', (_event, filename: unknown, details: unknown) => {
+    if (watchedEventPath(filename, details) === prRulesFile) void reloadPRRules();
   });
 
   // Watch pool config changes — hot-reload without gateway restart
@@ -778,6 +796,12 @@ export function startFileWatcher() {
   // Watch only each project's config and the bounded runtime settings directory.
   // Source-bound immutable packs announce their new lock through the sources key.
   const llmConfigFile = path.join(selectedHome, 'llm-config.json');
+  const assessmentFiles = [
+    'assessment-config.json',
+    'assessment-suggestion-policy.json',
+    'decision-advice-policy.json',
+    'triage-policy.json',
+  ].map((name) => path.join(selectedHome, name));
   const registrationFiles = [llmConfigFile, getFarmslotStorePath(), getOpenClawStorePath()];
   const registrationParent = path.dirname(getOpenClawStorePath());
   // A missing optional root can finish Chokidar's multi-root readiness before
@@ -806,6 +830,7 @@ export function startFileWatcher() {
     ignoreInitial: true,
     depth: 4,
     ignored: (file, stats) => {
+      if (assessmentFiles.includes(file)) return false;
       if (registrationFiles.includes(file) || file === registrationParent) return false;
       if (file === projectsDir || file === selectedHome || file === runtimeSettingsDir)
         return false;
@@ -827,6 +852,10 @@ export function startFileWatcher() {
     },
   });
   const projectChanged = (file: string) => {
+    if (assessmentFiles.includes(file)) {
+      resourceRevisions.advance({ family: 'assessment', scope: 'farm' });
+      return;
+    }
     if (registrationFiles.includes(file)) {
       if (file === llmConfigFile) invalidateLLMConfig();
       publishConfigurationResources();
@@ -959,7 +988,7 @@ export async function loadPoolConfig(machine: string): Promise<PoolConfig | null
 
 // ─── Project configs ───
 
-export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
+export async function loadProjectConfigs(strictRead = false): Promise<ProjectConfig[]> {
   const projects: ProjectConfig[] = [];
   try {
     const dirs = declaredProjectNames() ?? (await readdir(projectsDir));
@@ -1146,6 +1175,8 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         // An entry with no project.json at all — a bare directory, or a plain
         // file like README.md — is not a project and is not worth reporting.
         const code = (error as NodeJS.ErrnoException).code;
+        // Client observations must not turn a failed decode into authoritative empty membership.
+        if (strictRead && code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
         if (code !== 'ENOENT' && code !== 'ENOTDIR') {
           console.error(
             `[state] project ${dir}: skipped, its project.json could not be loaded: ${(error as Error).message}`,
@@ -1153,14 +1184,19 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         }
       }
     }
-  } catch {
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (strictRead && code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
     /* projects dir might not exist */
   }
   return projects;
 }
 
-export async function loadProjectConfig(project: string): Promise<ProjectConfig | null> {
-  const projects = await loadProjectConfigs();
+export async function loadProjectConfig(
+  project: string,
+  strictRead = false,
+): Promise<ProjectConfig | null> {
+  const projects = await loadProjectConfigs(strictRead);
   return projects.find((p) => p.name === project) ?? null;
 }
 
