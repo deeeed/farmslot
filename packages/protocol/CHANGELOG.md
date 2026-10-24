@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Preserve operator notes when returning publication findings to the worker, without accepting client-supplied findings.
+
 - Expose checklist timing in task progress and per-step worker durations in monthly analytics.
 
 - Share source-first, deduplicated run reference links between Command Center and Companion; show shared total and current-step elapsed time on the existing metadata line.

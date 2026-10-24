@@ -28,6 +28,7 @@ import {
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   recordedVisualJudgments,
+  reviewFindingIsSettled,
   type ReviewIssue,
   reviewRetryCount,
   type ReviewStatus,
@@ -38,6 +39,7 @@ import {
   validateRecipeRepairScope,
   type VisualRepairRecord,
 } from '@farmslot/protocol';
+import { reviewFindingEntries } from '@farmslot/review-dispatch';
 
 import { loadSlotVars } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
@@ -408,9 +410,32 @@ export async function visualRepairOffered(
 }
 
 /** Rendered through the existing REVIEW-FIX task; no second sender or template. */
-export function visualRepairIssues(scope: RecipeRepairScope, taskDir: string): ReviewIssue[] {
+export function visualRepairIssues(
+  scope: RecipeRepairScope,
+  taskDir: string,
+  run: Run,
+): ReviewIssue[] {
+  const decision = run.decisions.find(({ id }) => id === scope.decisionId);
+  const payload = decision?.payload?.kind === 'ready' ? decision.payload : undefined;
+  const findings =
+    payload?.gateReadiness?.findings ??
+    reviewFindingEntries(run.engineState?.publishGate?.reviews ?? []).flatMap(
+      ({ review, entry, head }) =>
+        head === scope.packageHeadSha
+          ? (entry.issues ?? []).filter((issue) => !reviewFindingIsSettled(review, entry, issue))
+          : [],
+    );
+  const open = new Map<string, ReviewIssue>();
+  for (const issue of findings) {
+    open.set(JSON.stringify([issue.file, issue.line ?? null, issue.description]), issue);
+  }
+  const feedback = decision?.selectionData?.feedback ?? decision?.selectionData?.comment;
   const roots = new Map(scope.sources.map((source) => [source.recipeRunId, source.artifactRoot]));
   return [
+    ...(typeof feedback === 'string' && feedback.trim()
+      ? [{ file: 'Operator feedback', description: feedback }]
+      : []),
+    ...open.values(),
     {
       file: RECIPE_REPAIR_SCOPE_TASK_PATH,
       description:

@@ -377,7 +377,7 @@ async function resumeVisualRepairOnce(
       resumeFromResult: {
         ...reviewResultFromInterruptedReview(review),
         verdict: 'issues',
-        issues: visualRepairIssues(repair.scope, taskDir),
+        issues: visualRepairIssues(repair.scope, taskDir, run),
         // A retry never rolls the loop's persisted budget back.
         retryCount: Math.max(repair.reservedRetryCount, review.retryCount ?? 0),
         feedbackSent: false,

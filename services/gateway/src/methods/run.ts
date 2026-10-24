@@ -2111,10 +2111,15 @@ export async function resolveRunDecision(
   // Send back derives every Issue from the frozen gate; refusals leave the gate pending.
   let visualRepair: VisualRepairAdmission | undefined;
   if (decision.type === 'engine_human_gate' && params.actionId === SEND_BACK_TO_AGENT_ACTION) {
-    if (params.selectionData && Object.keys(params.selectionData).length)
+    if (
+      params.selectionData &&
+      Object.entries(params.selectionData).some(
+        ([key, value]) => !['feedback', 'comment'].includes(key) || typeof value !== 'string',
+      )
+    )
       throw new GatewayMethodError(
         'VISUAL_REPAIR_REFUSED',
-        'Send back derives its Issues from the gate. Send no selection data.',
+        'Send back derives its Issues from the gate. Only an operator feedback or comment note is accepted.',
       );
     visualRepair = await (dependencies.admitVisualRepair ?? admitVisualRepair)(existing, decision);
   }
