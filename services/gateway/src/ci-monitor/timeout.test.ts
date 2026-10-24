@@ -144,6 +144,10 @@ test('keep waiting grants a fresh window without inventing CI progress', async (
     assert.equal(dedupCalls, 1);
     assert.equal(getRun(run.id)?.ciWatchState?.lastProgressAt, new Date(0).toISOString());
     assert.ok(Date.parse(getRun(run.id)!.ciWatchState!.timeoutWindowStartedAt!) > 0);
+    const output = getRun(run.id)!.steps.find((step) => step.name === 'ci-watch')!.outputs!;
+    const progressStart = Date.parse(getRun(run.id)!.ciWatchState!.timeoutWindowStartedAt!);
+    assert.equal(Date.parse(String(output.progressTimeoutAt)) - progressStart, 120 * 60_000);
+    assert.equal(Date.parse(String(output.totalTimeoutAt)) - progressStart, 360 * 60_000);
   } finally {
     controller.abort();
     initCIMonitor(() => {});

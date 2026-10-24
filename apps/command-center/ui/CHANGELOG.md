@@ -6,6 +6,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls. Restore both workspace types offline and keep conversation controls visible beside a scrolling transcript.
 
+- Show check counts, failures, next poll and time left on CI-watch run cards and pipelines.
+
 - Show muted step durations and live elapsed time in Worker progress.
 
 - Use shared worker inventory observations for pinned workspaces and split terminals, retaining saved selections and disabling actions while stale or unavailable.

@@ -12,6 +12,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Bind run report visual judgments to the pending output-review snapshot and block submissions when evidence, progress or review context changes.
 
+- Show shared CI-watch status and live poll/timeout countdowns as plain text on run cards and pipelines.
+
 - Show completed checklist durations and live current-step elapsed time in Worker progress.
 
 - Share worker inventory across workers, keyboard context and terminal controls, with explicit unavailable states and Retry.

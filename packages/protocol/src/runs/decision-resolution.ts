@@ -173,8 +173,11 @@ export function buildRunResolveDecisionParams(input: {
       ...selectionData,
       claimOverrideSnapshot: runClaimOverrideSnapshotIdentity(input.decision),
     };
-  // Send back derives its Issues from the frozen gate decision; the gateway refuses selection data.
-  if (input.actionId === SEND_BACK_TO_AGENT_ACTION) selectionData = undefined;
+  // Findings and repair scope stay gateway-owned; keep only the operator's note.
+  if (input.actionId === SEND_BACK_TO_AGENT_ACTION) {
+    const feedback = input.selectionData?.feedback ?? input.selectionData?.comment;
+    selectionData = typeof feedback === 'string' && feedback.trim() ? { feedback } : undefined;
+  }
   const reason = input.reason?.trim();
   // Accepting findings binds to the ones this client showed.
   const findingsDigest =

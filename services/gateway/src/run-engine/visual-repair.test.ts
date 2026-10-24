@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -16,9 +18,13 @@ import {
   type RunDecision,
   type VisualRepairRecord,
 } from '@farmslot/protocol';
+import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 
+import { farmslotRoot } from '../fleet/state.js';
 import { repairFeedbackCandidates } from '../intelligence/feedback-candidates.js';
+import { expandReviewFixTemplate } from '../review/templates.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
+import { makeVars } from '../runners/test-fixtures.js';
 
 import { stampPublishGateReviewStatusForPackage } from './gate-policy.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
@@ -317,7 +323,7 @@ test('an undelivered repair stays offered and retries its frozen scope under its
 });
 
 test('the existing REVIEW-FIX renderer receives the repair contract and each rejected criterion', () => {
-  const [contract, issue] = visualRepairIssues(scope, 'tasks/dev/PROOF-1');
+  const [contract, issue] = visualRepairIssues(scope, 'tasks/dev/PROOF-1', repairRun([]));
   assert.equal(contract!.file, 'artifacts/visual-repair-scope.json');
   assert.match(contract!.description, /recipes\/visual-repair\.json/u);
   assert.match(
@@ -362,5 +368,183 @@ test('Send back reasons become learning candidates bound to their receipt and re
   assert.equal(
     repairFeedbackCandidates(repairRun([record({ status: 'reserved' })]))[0]!.resolution.state,
     'open',
+  );
+});
+
+test('TAT-4085 REVIEW-FIX keeps the note and both findings alongside the AC repair', async (t) => {
+  const project = `.send-back-feedback-${process.pid}`;
+  const root = path.join(farmslotRoot, 'projects', project);
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+    invalidateProjectVarsCache(project);
+  });
+  await mkdir(path.join(root, 'templates/worker'), { recursive: true });
+  await writeFile(path.join(root, 'project.json'), JSON.stringify({ name: project }));
+  await writeFile(
+    path.join(root, 'templates/worker/review-fix.md'),
+    '# Review fix\n\n{{ISSUES}}\n',
+  );
+  invalidateProjectVarsCache(project);
+  const note = 'Fix both findings, and keep the before-only capture out of the after evidence.';
+  const findings = [
+    {
+      reviewId: 'review-1',
+      file: 'src/order.ts',
+      line: 1184,
+      description: 'Clear the exact row size after manual edits.',
+      severity: 'minor' as const,
+    },
+    {
+      reviewId: 'review-2',
+      file: 'artifacts/evidence-manifest.json',
+      line: 5,
+      description: 'Supply provenance-valid paired evidence.',
+      severity: 'minor' as const,
+    },
+  ];
+  const run = repairRun([]);
+  run.project = project;
+  run.decisions = [
+    {
+      id: scope.decisionId,
+      type: 'engine_human_gate',
+      title: 'Publication gate',
+      description: '',
+      actions: [],
+      createdAt: '2026-10-24T00:00:00Z',
+      resolvedAction: 'send-feedback',
+      selectionData: { feedback: note },
+      payload: {
+        kind: 'ready',
+        prNumber: null,
+        repo: null,
+        diffStat: { files: 0, additions: 0, deletions: 0 },
+        workerReport: 'Fixture evidence',
+        branch: 'feature/proof',
+        gateReadiness: {
+          identity: { runId: run.id, generation: 0, packageHash, headSha: scope.packageHeadSha },
+          state: 'not-ready',
+          reasons: [],
+          findings,
+        },
+      },
+    },
+  ];
+  const repairScope: RecipeRepairScope = {
+    ...scope,
+    rejected: [{ ...scope.rejected[0]!, claimId: 'AC-1' }],
+    retained: [{ claimId: 'AC-2', recipeRunId: 'original' }],
+  };
+  const issues = visualRepairIssues(repairScope, 'tasks/dev/PROOF-1', run);
+  const rendered = await expandReviewFixTemplate(
+    makeVars({ projectName: project }),
+    'tasks/dev/PROOF-1',
+    run,
+    issues,
+  );
+  assert.ok(rendered.includes(note));
+  for (const finding of findings) {
+    assert.ok(rendered.includes(`${finding.file}:${finding.line}`));
+    assert.ok(rendered.includes(finding.description));
+  }
+  assert.ok(rendered.includes(scope.rejected[0]!.reason));
+  assert.ok(rendered.includes(scope.repairRecipe));
+  assert.equal(issues.length, 5);
+  assert.deepEqual(
+    issues.filter(({ file }) => file === 'src/order.ts'),
+    [findings[0]],
+  );
+});
+
+test('Send back falls back to current open findings and deduplicates recorded attempts', () => {
+  const run = repairRun([]);
+  const issue = { file: 'src/order.ts', line: 17, description: 'Fix the amount reset.' };
+  const current: ReviewStatus = {
+    ...review('open'),
+    verdict: 'issues',
+    unresolvedCount: 1,
+    issues: [issue],
+    reviewedHeadSha: scope.packageHeadSha,
+    reviewSnapshot: {
+      source: 'local-git',
+      baseSha: scope.reviewBaseSha,
+      headSha: scope.packageHeadSha,
+      capturedAt: '2026-10-24T00:00:00Z',
+    },
+    attempts: [
+      {
+        mode: 'cold',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        issues: [issue],
+        loopNumber: 1,
+        reviewSnapshot: {
+          source: 'local-git',
+          baseSha: scope.reviewBaseSha,
+          headSha: scope.packageHeadSha,
+          capturedAt: '2026-10-24T00:00:00Z',
+        },
+      },
+    ],
+  };
+  run.engineState = {
+    publishGate: {
+      reviews: [
+        current,
+        {
+          ...current,
+          id: 'old-head',
+          reviewedHeadSha: 'old',
+          attempts: [],
+          issues: [{ file: 'old.ts', description: 'Old finding.' }],
+        },
+        {
+          ...current,
+          id: 'passed',
+          verdict: 'pass',
+          unresolvedCount: 0,
+          attempts: [],
+          issues: [{ file: 'passed.ts', description: 'Settled finding.' }],
+        },
+      ],
+    },
+  };
+  const issues = visualRepairIssues(scope, 'tasks/dev/PROOF-1', run);
+  assert.deepEqual(
+    issues.filter(({ file }) => file === issue.file),
+    [issue],
+  );
+  assert.ok(!issues.some(({ file }) => file === 'old.ts' || file === 'passed.ts'));
+});
+
+test('an undelivered Send back retry retains original and new operator notes once', () => {
+  const run = repairRun([]);
+  const decision: RunDecision = {
+    id: scope.decisionId,
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: '',
+    actions: [],
+    createdAt: '2026-10-24T00:00:00Z',
+    resolvedAction: 'send-feedback',
+    selectionData: { feedback: 'Keep the original instruction.' },
+  };
+  run.decisions = [
+    { ...decision, id: 'earlier-repair', selectionData: { feedback: 'Older repair note.' } },
+    decision,
+    { ...decision, id: 'retry-gate', selectionData: { feedback: 'Also fix the amount boundary.' } },
+    { ...decision, id: 'duplicate-gate' },
+    {
+      ...decision,
+      id: 'another-action',
+      resolvedAction: 'hold',
+      selectionData: { feedback: 'Unrelated note.' },
+    },
+  ];
+  assert.deepEqual(
+    visualRepairIssues(scope, 'tasks/dev/PROOF-1', run)
+      .filter(({ file }) => file === 'Operator feedback')
+      .map(({ description }) => description),
+    ['Keep the original instruction.', 'Also fix the amount boundary.'],
   );
 });

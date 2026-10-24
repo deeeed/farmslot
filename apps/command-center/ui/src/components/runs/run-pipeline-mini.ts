@@ -13,6 +13,7 @@ import {
 import { recoveredReviewFailureColor, runRecoveredReviewFailures } from '@farmslot/review-dispatch';
 
 import './run-checklist-progress.js';
+import './run-ci-watch-status.js';
 
 import { colors } from '../../styles/theme-tokens.js';
 import {
@@ -223,6 +224,7 @@ export class RunPipelineMini extends LitElement {
             .age=${this.taskProgressAge}
           ></run-checklist-progress>`
         : null}
+      ${this.run ? html`<run-ci-watch-status .run=${this.run}></run-ci-watch-status>` : null}
     `;
   }
 
