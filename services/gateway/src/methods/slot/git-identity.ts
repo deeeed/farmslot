@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-import { EXEC_TIMEOUT_EXIT_CODE } from '../../core/exec.js';
+import { EXEC_TIMEOUT_EXIT_CODE, type ExecResult } from '../../core/exec.js';
 import { execOnSlot, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 
@@ -27,7 +27,7 @@ export type GitIdentity = Partial<Record<(typeof GIT_IDENTITY_KEYS)[number], str
 
 /** git's boolean grammar for config values. */
 const GIT_BOOLEAN = /^(true|false|yes|no|on|off|1|0)$/i;
-const isGitTrue = (value: string | undefined) => /^(true|yes|on|1)$/i.test(value ?? '');
+export const isGitTrue = (value: string | undefined) => /^(true|yes|on|1)$/i.test(value ?? '');
 
 export function gitIdentityConfigPath(home = farmslotHome()): string {
   return path.join(home, 'git-identity.json');
@@ -130,6 +130,8 @@ export async function syncGitIdentity(vars: SlotVars, identity: GitIdentity): Pr
   return skipped ? `${summary} (${skipped})` : summary;
 }
 
+export type SigningExecutor = (command: string, timeoutMs: number) => Promise<ExecResult>;
+
 /** Bound for the test signature: gpg-agent can wait on a pinentry nobody answers. */
 export const SIGNING_PROBE_TIMEOUT_MS = 20_000;
 
@@ -141,9 +143,10 @@ export const SIGNING_PROBE_TIMEOUT_MS = 20_000;
 export async function checkCommitSigning(
   vars: SlotVars,
   farmIdentity: GitIdentity | null,
-  options: { identityPath?: string; probeTimeoutMs?: number } = {},
+  options: { identityPath?: string; probeTimeoutMs?: number; execute?: SigningExecutor } = {},
 ): Promise<CheckStep> {
   const name = 'git.signing';
+  const execute = options.execute ?? ((command, timeout) => execOnSlot(vars, command, { timeout }));
   const prepareFix = `run \`farmslot slot prepare ${vars.slotId}\`, which writes the farm identity into the repo`;
   let identity: GitIdentity;
   try {
@@ -176,10 +179,9 @@ export async function checkCommitSigning(
 
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const timeoutMs = options.probeTimeoutMs ?? SIGNING_PROBE_TIMEOUT_MS;
-  const probe = await execOnSlot(
-    vars,
+  const probe = await execute(
     `${git} commit-tree -S $(${git} hash-object -t tree /dev/null) -m 'farmslot signing probe' </dev/null 2>&1`,
-    { timeout: timeoutMs },
+    timeoutMs,
   );
   if (probe.exitCode === EXEC_TIMEOUT_EXIT_CODE) {
     return {

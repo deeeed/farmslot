@@ -69,7 +69,12 @@ import {
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
-import { gitIdentityConfigPath, loadGitIdentity, syncGitIdentity } from './git-identity.js';
+import {
+  checkCommitSigning,
+  gitIdentityConfigPath,
+  loadGitIdentity,
+  syncGitIdentity,
+} from './git-identity.js';
 import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
@@ -528,21 +533,33 @@ async function slotPrepareInner(
   await ensureSlotReachable(vars, step);
   await materializeHookSupport();
 
-  // Signing is slot configuration, independent of refs or runtime readiness.
-  // Sync before profile preconditions so a cold attach can repair signing
-  // without entering a git phase or discarding working-tree files.
-  // A sync failure remains visible in slot check without blocking preparation.
-  try {
-    const identity = loadGitIdentity();
-    step(
-      'git-identity',
-      identity
-        ? await syncGitIdentity(vars, identity)
-        : `No farm git identity at ${gitIdentityConfigPath()}; nothing copied`,
-    );
-  } catch (err) {
-    step('git-identity', `Git identity not synced: ${(err as Error).message}`);
-  }
+  // Prove signing in the slot's tmux context before touching refs or installing
+  // dependencies. A healthy node shell does not prove its tmux agent can sign.
+  const identity = loadGitIdentity();
+  step(
+    'git-identity',
+    identity
+      ? await syncGitIdentity(vars, identity)
+      : `No farm git identity at ${gitIdentityConfigPath()}; nothing copied`,
+  );
+  const signing = await checkCommitSigning(vars, identity, {
+    execute: async (command, timeout) => {
+      let output = '';
+      const result = await runPrepareCommand(vars, phaseLog('signing'), applyCommandEnv(command), {
+        timeout,
+        signal,
+        windowLabel,
+        phase: 'signing',
+        preserveOtherPrepareWindows: true,
+        onOutput: (_stream, data) => {
+          output += data;
+        },
+      });
+      return { ...result, stdout: output || result.stdout };
+    },
+  });
+  step(signing.name, signing.detail);
+  if (signing.status === 'fail') throw new Error(`Commit signing is not ready: ${signing.detail}`);
 
   // 1b. Resolve prepare profile (ADR-037): explicit request → prepare.default →
   // implicit full. Precondition failures walk the project's declared fallback

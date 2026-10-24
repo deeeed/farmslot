@@ -774,30 +774,36 @@ function prefixPromotedEvidenceManifest(
   };
 }
 
+type EvidenceManifestFileRead =
+  | { manifest: EvidenceManifest; sourceBytes: string }
+  | { issues: string[] };
+
 async function readEvidenceManifestFile(
   manifestPath: string,
   artifactRoot: string | null,
   sourceBytes: string,
-): Promise<{ manifest: EvidenceManifest; sourceBytes: string } | null> {
+): Promise<EvidenceManifestFileRead> {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(sourceBytes);
-    const issues = validateEvidenceManifest(parsed);
-    if (issues.length > 0) {
-      console.warn(
-        `[run-completion] invalid evidence manifest ${manifestPath}: ${issues.join('; ')}`,
-      );
-      return null;
-    }
-    return {
-      manifest: prefixPromotedEvidenceManifest(parsed as EvidenceManifest, artifactRoot),
-      sourceBytes,
-    };
-  } catch (err) {
+    parsed = JSON.parse(sourceBytes);
+  } catch (error) {
+    const issues = [`manifest: invalid JSON: ${(error as Error).message}`];
     console.warn(
-      `[run-completion] invalid evidence manifest ${manifestPath}: ${(err as Error).message}`,
+      `[run-completion] invalid evidence manifest ${manifestPath}: ${issues.join('; ')}`,
     );
-    return null;
+    return { issues };
   }
+  const issues = validateEvidenceManifest(parsed);
+  if (issues.length > 0) {
+    console.warn(
+      `[run-completion] invalid evidence manifest ${manifestPath}: ${issues.join('; ')}`,
+    );
+    return { issues };
+  }
+  return {
+    manifest: prefixPromotedEvidenceManifest(parsed as EvidenceManifest, artifactRoot),
+    sourceBytes,
+  };
 }
 
 export interface ResolvedPublicationManifest {
@@ -1031,10 +1037,10 @@ async function includePublicationDeclarations(
   const bytes = await io.readText(declarationPath);
   if (bytes === null) return { manifest: selected };
   const declaration = await readEvidenceManifestFile(declarationPath, null, bytes);
-  if (!declaration)
+  if ('issues' in declaration)
     throw new RecordedEvidenceReadError(
       'evidence-package-unverifiable',
-      'The publication declarations are invalid. Correct evidence-manifest.json.',
+      `The publication declarations are invalid. Correct evidence-manifest.json: ${declaration.issues.join('; ')}`,
     );
 
   const additionalArtifactRoots = await assertPublicationManifestOwnership(
@@ -1114,10 +1120,13 @@ export async function readSelectedPublicationManifest(
   const selected = await readSelectedPublicationManifestReference(taskDir, io);
   if (!selected) return null;
   const bytes = await io.readText(selected.manifestPath);
-  return bytes === null
-    ? null
-    : ((await readEvidenceManifestFile(selected.manifestPath, selected.artifactRoot, bytes))
-        ?.manifest ?? null);
+  if (bytes === null) return null;
+  const result = await readEvidenceManifestFile(
+    selected.manifestPath,
+    selected.artifactRoot,
+    bytes,
+  );
+  return 'manifest' in result ? result.manifest : null;
 }
 
 function evidenceManifestCandidatePaths(
@@ -1181,11 +1190,12 @@ export async function resolvePublicationManifest(
         );
       continue;
     }
-    const resolved = await readEvidenceManifestFile(manifestPath, artifactRoot, sourceBytes);
-    if (!resolved && pointerBytes !== undefined && contractVersion !== 0)
+    const result = await readEvidenceManifestFile(manifestPath, artifactRoot, sourceBytes);
+    const resolved = 'manifest' in result ? result : null;
+    if ('issues' in result && pointerBytes !== undefined && contractVersion !== 0)
       throw new RecordedEvidenceReadError(
         'evidence-package-unverifiable',
-        'The selected recipe attempt evidence-manifest.json is invalid. Re-run the recipe.',
+        `The selected recipe attempt evidence-manifest.json is invalid. Re-run the recipe: ${result.issues.join('; ')}`,
       );
     if (contractVersion !== 0 && resolved && !artifactRoot && selected?.artifactRoot)
       await assertPublicationManifestOwnership(
