@@ -752,6 +752,8 @@ test('a slot reviewer is told to keep probe tests and scratch out of the checkou
   assert.ok(contract.includes(`\${TMPDIR:-/tmp}/farmslot-review/${reviewer.id}`));
   assert.match(contract, /write nothing in the checkout/);
   assert.match(contract, /delete it before you write your result/);
+  assert.match(contract, /reviewer_recipe_replay\(\)/);
+  assert.match(contract, /env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR/);
 });
 
 for (const [end, uncertainty] of [

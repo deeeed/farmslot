@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep reviewer recipe replay output outside worker task evidence so a passing review does not request another round.
+
 - Include evidence-manifest field errors when publication refuses invalid declarations or selected recipe evidence.
 - Require a usable Git identity and signing session during prepare, and refuse unsigned outgoing worker commits at completion or before publication.
 - Publish after and standalone captures from additional same-run recipe attempts at the clean publication head, retaining each checked closure and the selected attempt's claim verdicts.
