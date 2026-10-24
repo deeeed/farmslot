@@ -430,3 +430,21 @@ A session that still runs with the old in-checkout path when its state moves, or
 ### Public surface
 
 There is no new configuration, environment variable or RPC. The reviewer contract names the scratch directory. Packs that excluded `temp/**` can keep or drop the exclusion.
+
+## Amendment 2: isolate reviewer recipe replay output, 2026-10-24
+
+**Status:** Proposed; lead approved this ADR as owner on 2026-10-24.
+
+### Decision
+
+Reviewer recipe replays write to a fresh directory under the reviewer's temporary scratch root. They do not bind to the parent worker task or update its recipe attempts, selected-attempt pointer or acceptance ledger. This supersedes Amendment 1's task-artifact exception for recipe replay output. Checklist, signal, feedback and result paths remain unchanged.
+
+The reviewer-specific execution contract supplies a shell wrapper around the project's existing recipe command. It clears both task-binding environment variables and supplies a fresh explicit artifacts directory on every call. COLD and WARM reviewers receive the same rule. The [review and dispatch contract](../reference/review-modes-warm-cold.md#reviewer-recipe-replays) specifies the boundary.
+
+### Rationale and consequences
+
+A passing review could replay the worker's recipe into its task artifacts, change the reviewed-input fingerprint and request another review indefinitely. Isolating the replay preserves the author's evidence and its change detection. Reviewer diagnostics are separate from publication evidence; replacing author evidence still requires another review.
+
+### Public surface
+
+No public command, flag, SDK export, package version or harness extension changes. The private gateway reviewer contract uses the existing recipe CLI `--artifacts-dir` flag and clears the existing `RECIPE_TASK_DIR` and `FARMSLOT_TASK_DIR` bindings. Harnesses keep their configured recipe command.
