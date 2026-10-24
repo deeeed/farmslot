@@ -75,9 +75,9 @@ Initial delivery connects to an existing gateway. Performance benchmarking/optim
 
 ### 9. Shared current-view web links (proposed)
 
-Subject to [ADR-033 Amendment 1](adr/033-mobile-tmux-worker-control.md#amendment-1-share-the-current-companion-view-2026-10-24), Command Center and Companion use one [current-view link model](reference/view-links.md). A Companion link opens the exact supported CC view and selection through normal authentication, including a run that was stale on the phone. URL navigation grants no authority and executes no command. Browser Copy link consumes the same model; existing desktop custom-scheme links remain compatible.
+Subject to [ADR-033 Amendment 1](adr/033-mobile-tmux-worker-control.md#amendment-1-share-the-current-companion-view-2026-10-24), Command Center and Companion use one [current-view link model](reference/view-links.md) for Companion link generation and CC web receipt. A Companion link opens the exact supported CC view and selection through normal authentication, including a run that was stale on the phone. URL navigation grants no authority and executes no command. Phase 1 adds no browser Copy action; desktop Copy continues to produce its existing custom-scheme links.
 
-Use an explicit deployment Command Center web URL, never a guessed WebSocket port or loopback destination. Unsupported exact views report why sharing is unavailable instead of opening a parent. Phase 1 proves the same run from the actual Android clipboard URL in CC web; native app-link association is deferred to phase 2.
+Use an explicit deployment Command Center web URL bound to one gateway, never a guessed WebSocket port or loopback destination. CC refuses a conflicting saved gateway before resolving the shared route. Unsupported exact views report why sharing is unavailable instead of opening a parent. Phase 1 proves the same run from the actual Android clipboard URL in CC web; native app-link association is deferred to phase 2.
 
 ## Boundaries
 

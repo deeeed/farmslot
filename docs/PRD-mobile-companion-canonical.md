@@ -58,9 +58,9 @@ Expose the shared [trigger-rule review intake](PRD-automation-intelligence-canon
 
 ### 7. Share the current view (proposed)
 
-Subject to [ADR-033 Amendment 1](adr/033-mobile-tmux-worker-control.md#amendment-1-share-the-current-companion-view-2026-10-24), replace competing floating microphone/Co-Pilot entries with one quick-action button on every product screen. Tap opens Copy link, Share, Voice; long press invokes the existing foreground voice flow directly. Sending remains explicit.
+Subject to [ADR-033 Amendment 1](adr/033-mobile-tmux-worker-control.md#amendment-1-share-the-current-companion-view-2026-10-24), replace competing floating microphone/Co-Pilot entries with one quick-action button on every product screen. Tap opens Copy link, Share, Voice; long press invokes Voice directly. Terminals retain their current recorder/target. Other screens carry the existing route-context draft into the already-running Co-Pilot worker terminal's voice flow, or show the existing Co-Pilot status/setup screen when unavailable. No worker is launched implicitly; sending remains explicit.
 
-Use the [shared current-view link model](reference/view-links.md) with Command Center. Copy and Share preserve the displayed resource and supported selection, including a stale run, using an explicit profile/deployment Command Center web URL. Missing configuration or an exact CC counterpart disables sharing with a precise reason and no parent fallback. Phase 1 shares web URLs; verified native app links are phase 2. Acceptance includes copying a real Android run link into CC web and observing the same run, plus the actual share sheet and voice gestures.
+Use the [shared current-view link model](reference/view-links.md) with Command Center. Copy and Share preserve the displayed resource and supported selection, including a stale run, using an explicit profile/deployment Command Center web URL. Missing configuration or a missing exact CC counterpart disables sharing with a precise reason and no parent fallback. Phase 1 shares web URLs; verified native app links are phase 2. Acceptance includes copying a real Android run link into CC web and observing the same run, plus the actual share sheet and voice gestures.
 
 ## Boundaries
 
