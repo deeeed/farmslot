@@ -123,6 +123,7 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
                           version: 1,
                           epoch: fake.resourceEpoch,
                           versionLists: false,
+                          observedReads: 1,
                         },
                       }
                     : {}),

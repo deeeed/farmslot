@@ -30,7 +30,20 @@ function mount(request: (method: string) => Promise<unknown>) {
   const transport = new ResourceCacheConformanceTransport({
     gatewayUrl: 'ws://acceptance.invalid/',
   });
-  transport.setConnection({ connected: true, id: 1 });
+  transport.setConnection({
+    connected: true,
+    id: 1,
+    capabilities: {
+      httpBearerAuth: true,
+      voiceInstructionFormatting: false,
+      resourceChanges: {
+        version: 1,
+        epoch: 'conformance-epoch',
+        versionLists: false,
+        observedReads: 1,
+      },
+    },
+  });
   transport.request = async <T>(method: Parameters<typeof resourceQuery>[0], params: unknown) => {
     const dependencies = resourceQuery(method, params).dependencies.map((key) => ({
       key,

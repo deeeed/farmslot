@@ -57,7 +57,7 @@ class CollectionTransport implements ResourceCacheTransport {
     capabilities: {
       httpBearerAuth: true,
       voiceInstructionFormatting: false,
-      resourceChanges: { version: 1, epoch: 'collections', versionLists: false },
+      resourceChanges: { version: 1, epoch: 'collections', versionLists: false, observedReads: 1 },
     },
   };
   revision = 0;

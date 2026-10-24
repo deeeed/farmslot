@@ -15,12 +15,13 @@ Protocol version: `0.63.0`
 
 Source: `packages/protocol/src/transport/frames.ts`
 
-| Field    | Required | Comment |
-| -------- | -------- | ------- |
-| `type`   | yes      | —       |
-| `id`     | yes      | —       |
-| `method` | yes      | —       |
-| `params` | no       | —       |
+| Field          | Required | Comment                                                                    |
+| -------------- | -------- | -------------------------------------------------------------------------- |
+| `type`         | yes      | —                                                                          |
+| `id`           | yes      | —                                                                          |
+| `method`       | yes      | —                                                                          |
+| `params`       | no       | —                                                                          |
+| `resourceRead` | no       | Optional experimental observed-read contract; never authorizes a mutation. |
 
 ### `ResponseFrame`
 

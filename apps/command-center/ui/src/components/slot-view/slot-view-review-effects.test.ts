@@ -1,18 +1,13 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-// Deferred-resolution gateway stub: each request returns a promise the test
-// settles explicitly, so completions can be forced to land after a simulated
-// slot switch (generation bump).
+// Deferred shared-query port: force canonical completions after a slot-generation change.
 type Deferred = { resolve: (value: unknown) => void; reject: (err: Error) => void };
 const pending: Deferred[] = [];
 mock.module('../../gateway-client.js', {
   namedExports: {
     gateway: {
-      request: () =>
-        new Promise((resolve, reject) => {
-          pending.push({ resolve, reject });
-        }),
+      request: () => assert.fail('Branch views must use the shared workspace query port'),
     },
   },
 });
@@ -25,7 +20,27 @@ mock.module('../../utils/reconnect.js', {
 const { loadSlotViewBranchDiff, loadSlotViewBranchList } =
   await import('./slot-view-review-effects.js');
 
+class DeferredWorkspaceReads {
+  private adopt?: (value: unknown) => void;
+  read<T>(_method: string, _params: unknown, apply: (value: T) => void): Promise<T> {
+    this.adopt = (value) => apply(value as T);
+    return new Promise((resolve, reject) => {
+      pending.push({
+        resolve: (value) => {
+          this.adopt?.(value);
+          resolve(value as T);
+        },
+        reject,
+      });
+    });
+  }
+  publish(value: unknown): void {
+    this.adopt?.(value);
+  }
+}
+
 interface FakeView {
+  _workspaceReads: DeferredWorkspaceReads;
   slotId: string;
   _isLive: boolean;
   _recoveryEpoch: number;
@@ -49,6 +64,7 @@ interface FakeView {
 
 function makeView(): FakeView {
   return {
+    _workspaceReads: new DeferredWorkspaceReads(),
     slotId: 'slot-a',
     _isLive: true,
     _recoveryEpoch: 7,
@@ -75,31 +91,19 @@ function makeView(): FakeView {
 
 const asView = (view: FakeView) => view as any;
 
-test('stale branch-list success after a slot switch does not write branches', async () => {
+test('branch choices use the observed range and status without an independent request', async () => {
   const view = makeView();
-  const inFlight = loadSlotViewBranchList(asView(view));
-  view._branchDiffGeneration += 1; // simulate A→B (or A→B→A) switch
-  pending.shift()?.resolve({ entries: [] });
-  await inFlight;
-  assert.deepEqual(view._branchDiffBranches, []);
-});
-
-test('stale branch-list failure after a slot switch does not clobber branches with the fallback', async () => {
-  const view = makeView();
-  view._branchDiffBranches = ['main', 'develop', 'feat/current'];
-  const inFlight = loadSlotViewBranchList(asView(view));
-  view._branchDiffGeneration += 1;
-  pending.shift()?.reject(new Error('node reconnecting'));
-  await inFlight;
-  assert.deepEqual(view._branchDiffBranches, ['main', 'develop', 'feat/current']);
-});
-
-test('current branch-list completion writes branches', async () => {
-  const view = makeView();
-  const inFlight = loadSlotViewBranchList(asView(view));
-  pending.shift()?.resolve({ entries: [] });
-  await inFlight;
-  assert.ok(view._branchDiffBranches.includes('feat/x'));
+  view._branchDiffBase = 'release/base';
+  view._branchDiffHead = 'release/head';
+  await loadSlotViewBranchList(asView(view));
+  assert.deepEqual(view._branchDiffBranches, [
+    'develop',
+    'feat/x',
+    'main',
+    'release/base',
+    'release/head',
+  ]);
+  assert.equal(pending.length, 0);
 });
 
 test('stale branch-diff failure after a slot switch does not surface an error or clear files', async () => {
@@ -111,6 +115,24 @@ test('stale branch-diff failure after a slot switch does not surface an error or
   await inFlight;
   assert.equal(view._branchDiffError, null);
   assert.deepEqual(view._branchDiffFiles, [{ path: 'kept.ts' }]);
+});
+
+test('stale canonical success after a slot switch cannot replace the current files', async () => {
+  const view = makeView();
+  view._branchDiffFiles = [{ path: 'current.ts' }];
+  const inFlight = loadSlotViewBranchDiff(asView(view));
+  view._branchDiffGeneration++;
+  pending
+    .shift()
+    ?.resolve({
+      base: 'main',
+      head: 'old-head',
+      files: [{ path: 'old.ts' }],
+      totalAdditions: 1,
+      totalDeletions: 0,
+    });
+  await inFlight;
+  assert.deepEqual(view._branchDiffFiles, [{ path: 'current.ts' }]);
 });
 
 test('current branch-diff completion writes files and clears the error', async () => {
@@ -132,19 +154,28 @@ test('current branch-diff completion writes files and clears the error', async (
   assert.equal(view._branchDiffLoading, false);
 });
 
-test('branch-diff completion reloads when HEAD changed while its request was in flight', async () => {
+test('a later canonical branch snapshot updates the view without a manual reload', async () => {
   const view = makeView();
-  view._liveDiffContents.set('branch:main:a.ts', 'stale');
   const inFlight = loadSlotViewBranchDiff(asView(view));
-  view._liveGitData.headSha = 'head-b';
   pending.shift()?.resolve({
     base: 'main',
-    head: 'feat/x',
+    head: 'head-a',
     files: [{ path: 'a.ts', status: 'M', additions: 1, deletions: 0 }],
     totalAdditions: 1,
     totalDeletions: 0,
   });
   await inFlight;
-  assert.equal(view.branchDiffReloads, 1);
-  assert.equal(view._liveDiffContents.size, 0);
+  view._workspaceReads.publish({
+    base: 'main',
+    head: 'head-b',
+    files: [{ path: 'b.ts', status: 'M', additions: 2, deletions: 1 }],
+    totalAdditions: 2,
+    totalDeletions: 1,
+  });
+  assert.equal(view._branchDiffHead, 'head-b');
+  assert.deepEqual(view._branchDiffFiles, [
+    { path: 'b.ts', status: 'M', additions: 2, deletions: 1 },
+  ]);
+  assert.equal(view._branchDiffTotalAdd, 2);
+  assert.equal(view.branchDiffReloads, 0);
 });
