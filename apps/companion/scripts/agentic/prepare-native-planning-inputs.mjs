@@ -3,7 +3,12 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { D07_HEAD, digest, exclusiveJson, within } from './native-planning-fixture.mjs';
+import {
+  digest,
+  exclusiveJson,
+  verifyNativePlanningSource,
+  within,
+} from './native-planning-fixture.mjs';
 
 // Receipt encoder only. ROOT's future setup invokes owning APIs before app startup.
 // No RPC, service, device, credential, cache or SQLite writer lives here.
@@ -14,9 +19,10 @@ assert(
 );
 const authorization = JSON.parse(await readFile(authorizationFile, 'utf8'));
 assert.equal(authorization.executionAuthorized, true, 'Static proposal grants no setup execution');
-assert.equal(authorization.sourceHead, D07_HEAD);
 assert.equal(authorization.purpose, 'D07-native-planning');
 const sourceRoot = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
+const sourceVerification = await verifyNativePlanningSource(sourceRoot, authorization.sourceHead);
+const sourceHead = sourceVerification.sourceHead;
 const relative = 'apps/companion/scripts/agentic/prepare-native-planning-inputs.mjs';
 assert.equal(
   digest(await readFile(fileURLToPath(import.meta.url))),
@@ -36,7 +42,7 @@ assert(!within(await realpath(sourceRoot), farmRoot));
 const readReceipt = async (file, method) => {
   const receipt = JSON.parse(await readFile(file, 'utf8'));
   assert.equal(receipt.method, method);
-  assert.equal(receipt.sourceHead, D07_HEAD);
+  assert.equal(receipt.sourceHead, sourceHead);
   assert.equal(receipt.ok, true);
   assert(receipt.completedAt > 0);
   return receipt.payload;
@@ -90,8 +96,9 @@ try {
   if (error.code !== 'ENOENT') throw error;
 }
 await exclusiveJson(outputFile, {
-  version: 1,
-  sourceHead: D07_HEAD,
+  version: 2,
+  sourceHead,
+  sourceVerification,
   sourceRoot,
   fixtureRoot,
   farmRoot,

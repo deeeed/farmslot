@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
-export const D07_HEAD = '68a97c7be927c0512761f68e21b3605ae0ada7ab';
 export const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 export const within = (root, file) =>
   file !== root &&
@@ -58,6 +59,70 @@ export async function exclusiveJson(file, value) {
   await writeFile(file, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
 }
 
+/** Match actual committed source bytes, independent of index flags or cached Git stat data. */
+export async function verifyNativePlanningSource(sourceRoot, sourceHead) {
+  assert.match(sourceHead, /^[a-f0-9]{40}$/, 'Require the authorized full source commit');
+  const root = await realpath(sourceRoot);
+  const env = { ...process.env };
+  for (const name of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_COMMON_DIR',
+    'GIT_NAMESPACE',
+    'GIT_PREFIX',
+  ])
+    delete env[name];
+  const execute = promisify(execFile);
+  const git = async (...args) =>
+    (
+      await execute('git', ['-C', root, ...args], {
+        env,
+        maxBuffer: 16 * 1024 * 1024,
+      })
+    ).stdout;
+  assert.equal(await realpath((await git('rev-parse', '--show-toplevel')).trim()), root);
+  assert.equal((await git('rev-parse', 'HEAD')).trim(), sourceHead, 'Source commit changed');
+  const extra = (await git('ls-files', '--others', '--exclude-standard', '-z'))
+    .split('\0')
+    .filter(Boolean);
+  assert.equal(extra.length, 0, `Untracked source files: ${extra.join(', ')}`);
+  const entries = (await git('ls-tree', '-rz', '--full-tree', sourceHead))
+    .split('\0')
+    .filter(Boolean);
+  assert(entries.length, 'The frozen source tree must contain files');
+  const manifest = [];
+  for (const entry of entries) {
+    const split = entry.indexOf('\t');
+    const [mode, type, oid] = entry.slice(0, split).split(' ');
+    const relative = entry.slice(split + 1);
+    assert(
+      type === 'blob' && ['100644', '100755'].includes(mode),
+      `Unsupported source entry: ${relative}`,
+    );
+    const file = path.resolve(root, relative);
+    assert(within(root, file), `Foreign source path: ${relative}`);
+    const info = await lstat(file);
+    assert(info.isFile(), `Source file is not regular: ${relative}`);
+    assert.equal(
+      info.mode & 0o777,
+      mode === '100755' ? 0o755 : 0o644,
+      `Source mode drift: ${relative}`,
+    );
+    const bytes = await readFile(file);
+    const actual = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+    assert.equal(actual, oid, `Source bytes drift: ${relative}`);
+    manifest.push({ path: relative, mode, oid });
+  }
+  return {
+    sourceHead,
+    sourceTreeSha256: digest(JSON.stringify(manifest)),
+    fileCount: manifest.length,
+  };
+}
+
 /** Read-only, action-free input resolution. This never prepares fixtures or contacts a device. */
 export async function resolveNativePlanningInputs(env, sourceRoot) {
   assert(env.FARMSLOT_D07_NATIVE_FIXTURE, 'Canonical D07 recipe requires a prepared fixture input');
@@ -65,8 +130,14 @@ export async function resolveNativePlanningInputs(env, sourceRoot) {
   const fixtureFile = await realpath(env.FARMSLOT_D07_NATIVE_FIXTURE);
   const fixtureRaw = await readFile(fixtureFile);
   const f = JSON.parse(fixtureRaw);
-  assert.equal(f.version, 1);
-  assert.equal(f.sourceHead, D07_HEAD);
+  assert.equal(f.version, 2, 'Prepare a fresh D07 fixture; legacy source pins cannot be reused');
+  assert(env.FARMSLOT_D07_NATIVE_AUTHORIZATION, 'Require the actual source authorization');
+  const authorization = JSON.parse(await readFile(env.FARMSLOT_D07_NATIVE_AUTHORIZATION, 'utf8'));
+  assert.equal(authorization.executionAuthorized, true);
+  assert.equal(authorization.purpose, 'D07-native-planning');
+  const sourceVerification = await verifyNativePlanningSource(root, authorization.sourceHead);
+  assert.equal(f.sourceHead, sourceVerification.sourceHead);
+  assert.deepEqual(f.sourceVerification, sourceVerification, 'Frozen source verification changed');
   assert.equal(await realpath(f.sourceRoot), root);
   assert.equal(await realpath(f.home), await realpath(env.FARMSLOT_HOME));
   assert.equal(await realpath(f.farmRoot), await realpath(env.FARMSLOT_ROOT));
@@ -155,7 +226,7 @@ export async function resolveNativePlanningInputs(env, sourceRoot) {
   );
   const compatibilityRaw = await readFile(f.nativeCompatibilityReceipt);
   const compatibility = JSON.parse(compatibilityRaw);
-  assert.equal(compatibility.sourceHead, D07_HEAD);
+  assert.equal(compatibility.sourceHead, f.sourceHead);
   assert.equal(
     compatibility.compatibilityVerified,
     true,
@@ -251,6 +322,11 @@ async function updateOwnedBacklog(plan) {
 
 /** One real external source mutation, once, with immutable raw before/after provenance. */
 export async function writePlanningSource(plan, kind, artifacts) {
+  assert.match(
+    plan.sourceHead,
+    /^[a-f0-9]{40}$/,
+    'Source writer requires the verified source commit',
+  );
   assert(['backlog', 'roadmap', 'newProject'].includes(kind));
   const receipt = path.join(artifacts, `d07-writer-${kind}.json`);
   try {
@@ -329,6 +405,6 @@ export async function writePlanningSource(plan, kind, artifacts) {
     before: before ? digest(before) : null,
     after: digest(after),
     committedAt: Date.now(),
-    sourceHead: D07_HEAD,
+    sourceHead: plan.sourceHead,
   });
 }

@@ -1,19 +1,33 @@
 // Explicit host guards, outside device execution and the default test suite.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import WebSocket, { WebSocketServer } from 'ws';
 
-import { digest, writePlanningSource } from './native-planning-fixture.mjs';
+import {
+  digest,
+  verifyNativePlanningSource,
+  writePlanningSource,
+} from './native-planning-fixture.mjs';
 import {
   nativeResumeFitsScrollView,
   renderedNativeDisabledTarget,
@@ -21,6 +35,90 @@ import {
 import { assertObservedMemoryQueries } from './prove-native-planning.mjs';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
+
+test('source pins verify actual committed bytes and modes before any native preparation', async (t) => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), 'd07-source-pin-')));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const env = { ...process.env };
+  for (const name of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_COMMON_DIR',
+    'GIT_NAMESPACE',
+    'GIT_PREFIX',
+  ])
+    delete env[name];
+  const execute = promisify(execFile);
+  const git = async (...args) =>
+    (
+      await execute(
+        'git',
+        [
+          '-C',
+          directory,
+          '-c',
+          'core.hooksPath=/dev/null',
+          '-c',
+          'commit.gpgsign=false',
+          '-c',
+          'user.name=Source fixture',
+          '-c',
+          'user.email=source@example.invalid',
+          ...args,
+        ],
+        { env },
+      )
+    ).stdout;
+  await git('init', '--initial-branch=fixture-source');
+  const file = path.join(directory, 'source.ts');
+  const bytes = 'export const value = 7;\n';
+  await writeFile(file, bytes, { mode: 0o644 });
+  const executable = path.join(directory, 'run.sh');
+  await writeFile(executable, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  await git('add', '--', 'source.ts', 'run.sh');
+  await git('commit', '-m', 'test: establish source fixture');
+  const head = (await git('rev-parse', 'HEAD')).trim();
+  const verified = await verifyNativePlanningSource(directory, head);
+  assert.equal(verified.sourceHead, head);
+  assert.equal(verified.fileCount, 2);
+  assert.match(verified.sourceTreeSha256, /^[a-f0-9]{64}$/);
+  await assert.rejects(
+    () => verifyNativePlanningSource(directory, '0'.repeat(40)),
+    /Source commit changed/,
+  );
+  await assert.rejects(() => verifyNativePlanningSource(directory, 'short'), /full source commit/);
+
+  // A stat cache or assume-unchanged flag cannot hide different source bytes.
+  await git('update-index', '--assume-unchanged', '--', 'source.ts');
+  await writeFile(file, 'export const value = 9;\n');
+  await assert.rejects(
+    () => verifyNativePlanningSource(directory, head),
+    /Source bytes drift: source.ts/,
+  );
+  await writeFile(file, bytes);
+  await chmod(file, 0o755);
+  await assert.rejects(
+    () => verifyNativePlanningSource(directory, head),
+    /Source mode drift: source.ts/,
+  );
+  await chmod(file, 0o644);
+  await writeFile(path.join(directory, 'untracked.ts'), 'export const extra = true;\n');
+  await assert.rejects(() => verifyNativePlanningSource(directory, head), /Untracked source files/);
+  await rm(path.join(directory, 'untracked.ts'));
+  await rm(file);
+  await symlink(executable, file);
+  await assert.rejects(
+    () => verifyNativePlanningSource(directory, head),
+    /Source file is not regular/,
+  );
+  await rm(file);
+  await writeFile(file, bytes, { mode: 0o644 });
+  assert.deepEqual(await verifyNativePlanningSource(directory, head), verified);
+});
+
 const scene = () => ({
   nodes: [
     { index: 0, type: 'Application', rect: { x: 0, y: 0, width: 402, height: 874 } },
@@ -199,6 +297,7 @@ test(
       server.listen(7914, '127.0.0.1', resolve);
     });
     const plan = {
+      sourceHead: 'a'.repeat(40),
       farmRoot: directory,
       projectsDir: directory,
       files: { backlog: { path: file, sha256: digest(before) } },
@@ -215,6 +314,7 @@ test(
     assert.equal(JSON.parse(await readFile(file, 'utf8'))[0].serverManaged, 'must-survive');
     const receipt = await readFile(path.join(artifacts, 'd07-writer-backlog.json'), 'utf8');
     assert.equal(JSON.parse(receipt).method, 'backlog.update');
+    assert.equal(JSON.parse(receipt).sourceHead, plan.sourceHead);
     assert(!receipt.includes('PRIVATE_SOURCE_TEST_CREDENTIAL'));
     await assert.rejects(writePlanningSource(plan, 'backlog', artifacts), /already consumed/);
   },

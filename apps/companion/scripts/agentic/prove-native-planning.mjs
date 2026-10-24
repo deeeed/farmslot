@@ -4,13 +4,13 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
-  D07_HEAD,
   digest,
   exclusiveJson,
   forbiddenPlanningMethods,
   observedMemoryMethods,
   persistedQueries,
   resolveNativePlanningInputs,
+  verifyNativePlanningSource,
   writePlanningSource,
 } from './native-planning-fixture.mjs';
 import { nativeScrollViewGesture, renderedNativeDisabledTarget } from './native-store-fixture.mjs';
@@ -37,7 +37,7 @@ export async function authorizePlanningProof() {
   );
   const a = JSON.parse(await readFile(process.env.FARMSLOT_D07_NATIVE_AUTHORIZATION, 'utf8'));
   assert.equal(a.executionAuthorized, true);
-  assert.equal(a.sourceHead, D07_HEAD);
+  await verifyNativePlanningSource(source, a.sourceHead);
   assert.equal(a.purpose, 'D07-native-planning');
   assert.equal(a.oneBoot, true);
   assert.equal(a.deliberateColdRestart, true);

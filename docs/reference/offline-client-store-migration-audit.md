@@ -401,6 +401,14 @@ Implementation and local regression coverage do not accept the draft. Mounted-cl
 
 The Companion cold-start recipe has a D07 preparation candidate, not native acceptance. Explicit host guards cover successful observed replies under the negotiated epoch, canonical cache readiness, complete viewport/scroll clipping and paired OCR bounds. The development-only snapshot reads existing PR/copilot cache entries without observing or fetching them. Backlog source changes use the owning API on the isolated backend; roadmap and project changes use their supported file observers. Native artifact compatibility, controller integration and actual device evidence remain required. No native work-graph viewer or standalone cold queue rendering is established by this preparation.
 
+D07 fixture version 2 binds the actual authorized source commit to a Git checkout.
+Before preparation or runtime imports, every tracked source file's bytes and mode
+must match that commit, with no untracked files or substituted symlinks. This
+check does not rely on Git's stat cache or assume-unchanged flags. The prepared
+fixture records the verified tree and setup receipts use the same commit;
+legacy fixture/source pins are refused. Generated native files, installed
+dependencies and compiled JavaScript remain separate compatibility inputs.
+
 All 17 added queries are memory-only, require observed reads and use the current owner cache. No new persistence class is introduced. Existing projects/planning persistence is unchanged.
 
 | Canonical read                  | Selectors and dependencies                                                                 | Actual client consumers                                                                                         |
