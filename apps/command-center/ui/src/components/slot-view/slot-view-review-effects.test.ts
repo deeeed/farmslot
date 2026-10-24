@@ -122,15 +122,13 @@ test('stale canonical success after a slot switch cannot replace the current fil
   view._branchDiffFiles = [{ path: 'current.ts' }];
   const inFlight = loadSlotViewBranchDiff(asView(view));
   view._branchDiffGeneration++;
-  pending
-    .shift()
-    ?.resolve({
-      base: 'main',
-      head: 'old-head',
-      files: [{ path: 'old.ts' }],
-      totalAdditions: 1,
-      totalDeletions: 0,
-    });
+  pending.shift()?.resolve({
+    base: 'main',
+    head: 'old-head',
+    files: [{ path: 'old.ts' }],
+    totalAdditions: 1,
+    totalDeletions: 0,
+  });
   await inFlight;
   assert.deepEqual(view._branchDiffFiles, [{ path: 'current.ts' }]);
 });
