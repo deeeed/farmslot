@@ -11,12 +11,18 @@ import WebSocket, { WebSocketServer } from 'ws';
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const controlPath = '/api/planning-race-control';
 
-export async function startPlanningRaceProxy({ port, upstream, directory }) {
+export async function startPlanningRaceProxy({
+  port,
+  upstream,
+  directory,
+  method = 'backlog.list',
+}) {
   const target = new URL(upstream);
   assert.equal(target.protocol, 'ws:');
   assert.equal(target.hostname, '127.0.0.1');
   assert.equal(target.port, '7913', 'Use the isolated proof gateway');
   assert.equal(port, 7915, 'Use the isolated browser race proxy');
+  assert(['backlog.list', 'roadmap.list'].includes(method));
   const artifacts = await realpath(directory);
   const owner = randomUUID();
   const startId = randomUUID();
@@ -31,6 +37,8 @@ export async function startPlanningRaceProxy({ port, upstream, directory }) {
   const events = [];
   const controls = [];
   const duplicates = [];
+  const authentications = [];
+  const barrierReplies = [];
   let persistence = Promise.resolve();
   const status = () => ({
     startId,
@@ -41,6 +49,9 @@ export async function startPlanningRaceProxy({ port, upstream, directory }) {
     events,
     controls,
     duplicates,
+    method,
+    authentications,
+    barrierReplies,
     held: held?.receipt,
   });
   const persist = () => {
@@ -91,7 +102,11 @@ export async function startPlanningRaceProxy({ port, upstream, directory }) {
         assert(bytes.length <= 4096, 'Bound control metadata');
       }
       const input = JSON.parse(bytes);
-      assert(['trace-ready', 'arm', 'duplicate', 'release'].includes(input.action));
+      assert(
+        ['trace-ready', 'arm', 'duplicate', 'release', 'release-after-authority-change'].includes(
+          input.action,
+        ),
+      );
       if (input.action === 'arm') {
         assert(!armed && !held, 'One held reply per case');
         armed = true;
@@ -104,19 +119,34 @@ export async function startPlanningRaceProxy({ port, upstream, directory }) {
           ),
         );
         duplicates.push({ ...latestEvent.receipt, duplicatedAt: Date.now() });
-      } else if (input.action === 'release') {
+      } else if (input.action === 'release' || input.action === 'release-after-authority-change') {
         assert(held && !held.receipt.releasedAt, 'Release the original held reply once');
         assert.equal(digest(held.bytes), held.receipt.frameSha256, 'Held bytes changed');
-        assert.equal(
-          held.pair.client.readyState,
-          WebSocket.OPEN,
-          'Release on the same live socket',
-        );
+        let destination = held.pair;
+        if (input.action === 'release-after-authority-change') {
+          const previous = held.receipt.authentication;
+          assert(previous.roleNames.includes('admin'));
+          const candidates = [...pairs].filter(
+            (pair) =>
+              pair.connection !== held.pair.connection &&
+              pair.authentication?.principalId === previous.principalId &&
+              pair.authentication.workspaceAccess === 'farm' &&
+              pair.authentication.roleNames.includes('operator') &&
+              !pair.authentication.roleNames.includes('admin') &&
+              pair.client.readyState === WebSocket.OPEN,
+          );
+          assert.equal(candidates.length, 1, 'Require the actual downgraded actor connection');
+          [destination] = candidates;
+          held.receipt.destinationAuthentication = structuredClone(destination.authentication);
+          held.receipt.replayedAt = Date.now();
+        }
+        assert.equal(destination.client.readyState, WebSocket.OPEN, 'Release on a live socket');
         await new Promise((resolve, reject) =>
-          held.pair.client.send(held.bytes, { binary: false }, (error) =>
+          destination.client.send(held.bytes, { binary: false }, (error) =>
             error ? reject(error) : resolve(),
           ),
         );
+        held.receipt.deliveredConnection = destination.connection;
         held.receipt.releasedAt = Date.now();
       }
       controls.push({ action: input.action, at: Date.now() });
@@ -131,7 +161,12 @@ export async function startPlanningRaceProxy({ port, upstream, directory }) {
   });
   const sockets = new WebSocketServer({ server });
   sockets.on('connection', (client) => {
-    const pair = { client, upstream: new WebSocket(upstream), connection: ++connection };
+    const pair = {
+      client,
+      upstream: new WebSocket(upstream),
+      connection: ++connection,
+      reads: new Map(),
+    };
     pairs.add(pair);
     const waiting = [];
     let buffered = 0;
@@ -150,7 +185,15 @@ export async function startPlanningRaceProxy({ port, upstream, directory }) {
           void fail('INVALID_CLIENT_FRAME');
           return;
         }
+        if (frame.type === 'req' && frame.method === 'auth.connect') pair.authRequestId = frame.id;
         if (frame.type === 'req' && frame.method === 'backlog.list') {
+          assert(pair.reads.size < 100);
+          pair.reads.set(frame.id, {
+            requestAt: Date.now(),
+            observed: frame.resourceRead?.version === 1,
+          });
+        }
+        if (frame.type === 'req' && frame.method === method) {
           assert(requests.length < 100, 'Bound planning requests');
           const receipt = {
             id: frame.id,
@@ -192,8 +235,25 @@ export async function startPlanningRaceProxy({ port, upstream, directory }) {
           void fail('INVALID_GATEWAY_FRAME');
           return;
         }
+        if (frame.type === 'res' && frame.id === pair.authRequestId && frame.ok) {
+          const principal = frame.payload?.principal;
+          assert(principal?.id && Array.isArray(principal.roles));
+          // Retain only verified identity/authority, never credentials or the auth payload.
+          pair.authentication = {
+            connection: pair.connection,
+            principalId: principal.id,
+            roleNames: principal.roles.map((binding) => binding.role).sort(),
+            workspaceAccess: frame.payload.capabilities.workspaceAccess,
+            authenticatedAt: Date.now(),
+          };
+          authentications.push(pair.authentication);
+          void persist();
+        }
+        const read = frame.type === 'res' ? pair.reads.get(frame.id) : undefined;
+        if (read) pair.reads.delete(frame.id);
         if (candidate && frame.type === 'res' && frame.id === candidate.id) {
           assert(frame.ok && frame.resourceState?.epoch && frame.payload);
+          assert(pair.authentication, 'Bind held data to the actual authenticated connection');
           held = {
             pair,
             bytes: Buffer.from(bytes),
@@ -203,15 +263,36 @@ export async function startPlanningRaceProxy({ port, upstream, directory }) {
               frameSha256: digest(bytes),
               payloadSha256: digest(JSON.stringify(frame.payload)),
               resourceState: frame.resourceState,
+              authentication: structuredClone(pair.authentication),
             },
           };
           candidate = undefined;
           void persist();
           return;
         }
+        if (
+          read?.observed &&
+          frame.ok &&
+          frame.resourceState?.epoch &&
+          held?.receipt.replayedAt &&
+          read.requestAt > held.receipt.replayedAt
+        ) {
+          assert(barrierReplies.length < 100);
+          barrierReplies.push({
+            method: 'backlog.list',
+            connection: pair.connection,
+            requestAt: read.requestAt,
+            forwardedAt: Date.now(),
+            resourceState: frame.resourceState,
+            payloadSha256: digest(JSON.stringify(frame.payload)),
+          });
+          void persist();
+        }
         if (frame.type === 'event' && frame.event === 'resource.changed') {
           const changes = frame.payload?.changes?.filter(
-            (row) => row.key.family === 'planning' && row.key.collection === 'backlog',
+            (row) =>
+              row.key.family === 'planning' &&
+              row.key.collection === (method === 'roadmap.list' ? 'roadmap' : 'backlog'),
           );
           if (changes?.length) {
             assert(events.length < 100);
@@ -245,7 +326,7 @@ export async function startPlanningRaceProxy({ port, upstream, directory }) {
   });
   await writeFile(
     path.join(artifacts, 'proxy-ready.json'),
-    JSON.stringify({ startId, owner, port, upstream, pid: process.pid }),
+    JSON.stringify({ startId, owner, port, upstream, method, pid: process.pid }),
     { flag: 'wx', mode: 0o600 },
   );
   await persist();

@@ -9,13 +9,27 @@ import { promisify } from 'node:util';
 
 import { register } from 'tsx/esm/api';
 
+import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
+
 const execute = promisify(execFile);
 const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
 assert.equal(process.cwd(), root);
 assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1');
 assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
+const heldReply = process.argv[2] === 'held-reply';
+assert(!process.argv[2] || heldReply);
+const target = await automationGatewayTarget();
+assert(['127.0.0.1', 'localhost'].includes(new URL(target.url).hostname));
+assert.equal(new URL(target.url).port, process.env.GATEWAY_PORT);
+assert.equal(process.env.GATEWAY_PORT, '7913');
+const listener = await execute('lsof', ['-nP', '-t', '-iTCP:7913', '-sTCP:LISTEN']);
+const backendPid = Number(listener.stdout.trim());
+assert(Number.isSafeInteger(backendPid) && backendPid > 0);
+const cwd = await execute('lsof', ['-a', '-p', String(backendPid), '-d', 'cwd', '-Fn']);
+assert(cwd.stdout.split('\n').includes(`n${root}/services/gateway`));
 const fixture = JSON.parse(await readFile(process.env.FARMSLOT_DOMAIN_PROOF_SETUP, 'utf8'));
 assert(fixture.setupComplete && fixture.farm !== root);
+assert.equal(fixture.farm, process.env.FARMSLOT_ROOT);
 const artifacts = path.resolve(process.env.FARMSLOT_DOMAIN_PROOF_ARTIFACTS);
 await mkdir(artifacts, { recursive: true });
 const loader = register({
@@ -54,13 +68,45 @@ let tab;
 let actor;
 let actorSecret;
 let restoreBrowser = false;
+const lateProxy = heldReply
+  ? JSON.parse(
+      await readFile(
+        path.join(process.env.FARMSLOT_PLANNING_RACE_PROXY_DIR, 'proxy-ready.json'),
+        'utf8',
+      ),
+    )
+  : undefined;
+if (lateProxy) {
+  assert.equal(lateProxy.method, 'roadmap.list');
+  assert.equal(lateProxy.port, 7915);
+}
+async function proxyStatus() {
+  const response = await fetch('http://127.0.0.1:7915/planning-race-status', {
+    signal: AbortSignal.timeout(3000),
+  });
+  assert(response.ok);
+  const state = await response.json();
+  assert.equal(state.startId, lateProxy.startId);
+  assert(!state.failure && !state.stopped);
+  return state;
+}
+async function proxyControl(action) {
+  const response = await fetch('http://127.0.0.1:7915/api/planning-race-control', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-proof-owner': lateProxy.owner },
+    body: JSON.stringify({ action }),
+    signal: AbortSignal.timeout(3000),
+  });
+  assert(response.ok, `Owned ${action} control failed`);
+  assert.equal((await response.json()).startId, lateProxy.startId);
+}
 async function navigate(hash) {
   const url = new URL(process.env.FARMSLOT_UI_URL);
   assert(['localhost', '127.0.0.1'].includes(url.hostname));
   assert.equal(url.port, process.env.VITE_PORT);
   url.searchParams.set('authority-proof', path.basename(path.dirname(artifacts)));
   url.hash = hash;
-  await cdp(['goto', url.href]);
+  await cdp(['goto', url.href, ...(!tab && heldReply ? ['--new'] : [])]);
   const tabs = (await cdp(['tabs'])).filter(
     (t) =>
       t.type === 'page' &&
@@ -93,8 +139,25 @@ const authState = () =>
 async function signOut() {
   const state = await authState();
   if (state.authForm) return;
-  await cdp(['click', tab, '[data-testid="account-menu"]']);
+  const menuOpen = () =>
+    cdp([
+      'eval',
+      tab,
+      "return Boolean(document.querySelector('[data-testid=account-menu]')?.closest('details')?.open)",
+    ]);
+  if (!(await menuOpen())) await cdp(['click', tab, '[data-testid="account-menu"]']);
+  await until(menuOpen, Boolean, 'Wait for the real account menu');
   await cdp(['click', tab, '[data-testid="account-sign-out"]']);
+  await until(
+    () =>
+      cdp([
+        'eval',
+        tab,
+        "return Boolean(document.querySelector('[data-testid=account-sign-out-confirmation]')?.open)",
+      ]),
+    Boolean,
+    'Wait for the real sign-out confirmation',
+  );
   await cdp(['click', tab, '[data-testid="account-sign-out-confirm"]']);
   await until(
     authState,
@@ -170,6 +233,130 @@ async function warm(ownerId) {
     'All five legitimately observed collections must be saved in SQLite',
   );
 }
+
+async function prepareHeldReply() {
+  await navigate(views().find(([method]) => method === 'roadmap.list')[1]);
+  const before = await until(
+    inspectView,
+    (view) => view.observations?.['roadmap.list']?.ready,
+    'Hold a reply for the actual mounted roadmap collection',
+  );
+  await proxyControl('arm');
+  const current = (await rpc('roadmap.get', { itemId: owned.roadmap.id })).item;
+  const title = `Held private roadmap ${randomUUID()}`;
+  owned.roadmap = (
+    await rpc('roadmap.save', {
+      expectedHash: current.fileHash,
+      item: { id: current.id, project: fixture.project, body: current.body, title },
+    })
+  ).item;
+  const captured = await until(
+    proxyStatus,
+    (value) => !!value.held,
+    'Capture the real admin reply',
+  );
+  assert.equal(captured.held.paramsSha256, profileHash(before.observations['roadmap.list'].params));
+  assert.equal(captured.held.authentication.principalId, actor.principalId);
+  assert(captured.held.authentication.roleNames.includes('admin'));
+  const actual = await rpc('roadmap.list', queries['roadmap.list']);
+  assert(actual.items.some((row) => row.id === owned.roadmap.id && row.title === title));
+  evidence.heldAdminReply = captured;
+  evidence.heldSource = { id: owned.roadmap.id, title };
+}
+
+async function replayAfterRoleChange(scope) {
+  const connectionBefore = (await inspectView()).connectionId;
+  const oldRequestId = evidence.heldAdminReply.held.id;
+  const retiredRequest = () =>
+    cdp([
+      'eval',
+      tab,
+      `const url=performance.getEntriesByType('resource').map(x=>x.name).filter(name=>new URL(name).pathname.endsWith('/src/gateway-client.ts')).at(-1);const {gateway}=await import(url);const pending=Reflect.get(gateway,'pending');if(!pending||typeof pending.has!=='function')throw Error('Inspect the actual transport pending map');return {oldRequestPending:pending.has(${JSON.stringify(oldRequestId)}),principalId:gateway.authenticatedPrincipalId,connectionId:gateway.resourceConnectionId};`,
+    ]);
+  const beforeDelivery = await retiredRequest();
+  await proxyControl('release-after-authority-change');
+  const replay = await proxyStatus();
+  const old = evidence.heldAdminReply.held;
+  assert.equal(replay.held.frameSha256, old.frameSha256, 'Do not modify old IDs, data or stamps');
+  assert.notEqual(replay.held.deliveredConnection, old.connection);
+  assert.equal(replay.held.destinationAuthentication.principalId, actor.principalId);
+  assert.deepEqual(replay.held.destinationAuthentication.roleNames, ['operator']);
+  evidence.lateReplay = { replay, beforeDelivery };
+  const title = `After authority boundary ${randomUUID()}`;
+  const written = await rpc('backlog.update', { itemId: owned.backlog.id, title });
+  assert.equal(written.item.title, title);
+  await navigate(views().find(([method]) => method === 'backlog.list')[1]);
+  const barrierView = await until(
+    inspectView,
+    (view) =>
+      view.observations?.['backlog.list']?.ready &&
+      view.observations['backlog.list'].rows.some(
+        (row) => row.id === owned.backlog.id && row.title === title,
+      ) &&
+      view.renderedRows.some((row) => row.id === owned.backlog.id && row.text.includes(title)),
+    'An actual permitted reply must be processed after the old frame on the new connection',
+  );
+  assert.equal(barrierView.connectionId, connectionBefore);
+  const wire = await until(
+    proxyStatus,
+    (value) =>
+      value.barrierReplies.some(
+        (row) =>
+          row.connection === replay.held.deliveredConnection &&
+          row.requestAt > replay.held.replayedAt &&
+          JSON.stringify(row.resourceState) ===
+            JSON.stringify(barrierView.observations['backlog.list'].resourceState),
+      ),
+    'Bind the browser barrier to its actual new-connection response stamp',
+  );
+  const persisted = await until(
+    () => inspectAll(scope),
+    (states) =>
+      ['roadmap.list', 'config.projects'].every(
+        (method) =>
+          !states[method].cacheHasData &&
+          states[method].storedObservedAt === undefined &&
+          !states[method].storedQueryIds.some((id) => id.startsWith(`${method}:`)),
+      ) &&
+      states['backlog.list'].storedObservedAt === states['backlog.list'].cacheObservedAt &&
+      states['backlog.list'].storedDataSha256 === states['backlog.list'].cacheDataSha256,
+    'Old private data must remain absent from actual cache and SQLite after delivery',
+  );
+  const auth = await authState();
+  assert.equal(auth.principalId, actor.principalId);
+  assert.deepEqual(
+    auth.roles.map((row) => row.role),
+    ['operator'],
+  );
+  await navigate(views().find(([method]) => method === 'roadmap.list')[1]);
+  const denied = await until(
+    inspectView,
+    (view) =>
+      !!view.observations?.['roadmap.list']?.error &&
+      !view.observations['roadmap.list'].dataPresent &&
+      !view.renderedRows.some((row) => row.id === owned.roadmap.id) &&
+      view.editorTitle !== owned.roadmap.title,
+    'The actual forbidden roadmap must not render the delivered old data',
+  );
+  assert.equal(denied.connectionId, connectionBefore);
+  const afterDelivery = await retiredRequest();
+  evidence.lateReplay = {
+    ...evidence.lateReplay,
+    wire,
+    written,
+    barrierView,
+    persisted,
+    auth,
+    denied,
+    afterDelivery,
+  };
+  assert(
+    !beforeDelivery.oldRequestPending && !afterDelivery.oldRequestPending,
+    'The old admin request must be retired from the current transport',
+  );
+  await screenshot('old-admin-reply-after-role-revocation');
+  claims.heldReplyCannotCrossAuthority = true;
+}
 const failures = [];
 try {
   const principals = (await rpc('principal.list')).principals;
@@ -212,6 +399,18 @@ try {
   await writeFile(process.env.FARMSLOT_DOMAIN_PROOF_SETUP, JSON.stringify(fixture, null, 2), {
     mode: 0o600,
   });
+  await navigate(views()[0][1]);
+  const initialLogin = await until(
+    authState,
+    (state) => state.authForm || state.connection === 'connected',
+    'Wait for the actual initial authentication state',
+  );
+  if (initialLogin.authForm) assert((await cdp(['login', tab])).authenticated);
+  evidence.initialAuthentication = await until(
+    authState,
+    (state) => state.connection === 'connected' && state.principalId === fixture.ownerId,
+    'Sign in the selected original account through its real form',
+  );
   evidence.originalSaved = await warm(fixture.ownerId);
   const originalScope = evidence.originalSaved['roadmap.list'].inspectedScope;
   const created = await rpc('principal.create', {
@@ -254,6 +453,7 @@ try {
   evidence.actorSaved = await warm(actor.principalId);
   const actorScope = evidence.actorSaved['roadmap.list'].inspectedScope;
   await screenshot('five-collections-before-revocation');
+  if (heldReply) await prepareHeldReply();
   await rpc('principal.revokeRole', {
     principalId: actor.principalId,
     role: 'admin',
@@ -270,6 +470,7 @@ try {
       s.roles[0].role === 'operator',
     'A real role downgrade keeps farm access while removing admin authority',
   );
+  if (heldReply) await replayAfterRoleChange(actorScope);
   const operatorMethods = ['backlog.list', 'workGraph.list', 'dispatch.queue.list'];
   evidence.operatorViews = [];
   for (const [method, hash, id] of views()) {
@@ -380,6 +581,14 @@ try {
   await screenshot('five-collections-authority-restored');
 } catch (error) {
   failures.push(error);
+  if (tab) {
+    try {
+      evidence.failureView = await inspectView();
+      await screenshot('first-failure');
+    } catch (captureError) {
+      failures.push(captureError);
+    }
+  }
 } finally {
   if (actor) {
     try {
@@ -481,6 +690,27 @@ try {
     }
   } catch (error) {
     failures.push(error);
+  }
+  if (heldReply && tab) {
+    try {
+      const current = await authState();
+      if (!current.authForm) {
+        assert.equal(
+          current.principalId,
+          fixture.ownerId,
+          'Restore the original account before closing',
+        );
+        await signOut();
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await cdp(['close', tab]);
+      evidence.ownedTabClosed = true;
+    } catch (error) {
+      failures.push(error);
+    }
   }
   await writeFile(
     path.join(artifacts, 'planning-authority-receipt.json'),

@@ -42,6 +42,7 @@ const ready = JSON.parse(
   ),
 );
 assert.equal(ready.port, 7915);
+assert.equal(ready.method, 'backlog.list');
 assert.equal(new URL(ready.upstream).port, '7913');
 const cdp = async (...args) =>
   JSON.parse(
