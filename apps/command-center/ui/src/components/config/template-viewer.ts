@@ -3,11 +3,12 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type { ConfigTemplatesResult, TemplatePreview } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import './template-schema.js';
 
-import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 type ViewTab = 'schema' | 'raw';
 
@@ -20,6 +21,14 @@ export class TemplateViewer extends LitElement {
   @state() private _tab: ViewTab = 'schema';
   @state() private _loading = false;
   @state() private _error = '';
+
+  private readonly _query = new ResourceQueryController<ConfigTemplatesResult>(this, (state) => {
+    this._templates = state.data?.templates ?? [];
+    this._loading = state.status === 'loading';
+    this._error = state.error?.message ?? '';
+    if (!this._templates.some((entry) => entry.flowType === this._selectedFlow))
+      this._selectedFlow = this._templates[0]?.flowType ?? '';
+  });
 
   static styles = css`
     :host {
@@ -139,24 +148,11 @@ export class TemplateViewer extends LitElement {
   }
 
   private async fetchTemplates() {
-    this._loading = true;
-    this._error = '';
-    try {
-      const result = (await gateway.request(Methods.CONFIG_TEMPLATES, {
-        project: this.project,
-      })) as ConfigTemplatesResult;
-      this._templates = result.templates;
-      if (
-        this._templates.length > 0 &&
-        !this._templates.find((t) => t.flowType === this._selectedFlow)
-      ) {
-        this._selectedFlow = this._templates[0].flowType;
-      }
-    } catch (err) {
-      this._error = (err as Error).message;
-    } finally {
-      this._loading = false;
-    }
+    this._query.setQuery(
+      this.project
+        ? resourceQuery<ConfigTemplatesResult>(Methods.CONFIG_TEMPLATES, { project: this.project })
+        : undefined,
+    );
   }
 
   private get selectedTemplate(): TemplatePreview | undefined {

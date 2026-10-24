@@ -28,6 +28,9 @@ const gateway = {
   },
 };
 mock.module('../../gateway-client.js', { namedExports: { gateway } });
+mock.module('../../configuration-resources.js', {
+  namedExports: { readConfiguration: gateway.request },
+});
 mock.module('../../resource-cache.js', {
   namedExports: { getResourceWorkspaceKey: () => owner },
 });

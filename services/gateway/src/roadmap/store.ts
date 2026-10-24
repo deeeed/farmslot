@@ -86,6 +86,13 @@ import {
 const VALID_STAGES = new Set<RoadmapItemStage>(ROADMAP_ITEM_STAGES);
 const VALID_SOURCE_KINDS = new Set<string>(ROADMAP_SOURCE_KINDS);
 const ROADMAP_ROOT = process.env.FARMSLOT_ROADMAP_DIR ?? path.join(farmslotRoot, '.roadmap');
+export { ROADMAP_ROOT as roadmapRoot };
+let assertObservationAvailable = (): void => {};
+
+/** Startup binds the actual filesystem observer; direct store callers keep their existing reads. */
+export function setRoadmapObservationGuard(assertReady: () => void): void {
+  assertObservationAvailable = assertReady;
+}
 const BACKLOG_SPEC_ROOT =
   process.env.FARMSLOT_BACKLOG_SPEC_DIR ?? path.join(farmslotRoot, '.backlog', 'specs');
 const REFINEMENT_PROMPT_ROOT =
@@ -479,11 +486,13 @@ async function collectRoadmapItemFiles(): Promise<string[]> {
 }
 
 async function loadAllItems(): Promise<RoadmapItem[]> {
+  assertObservationAvailable();
   const files = await collectRoadmapItemFiles();
   const items: RoadmapItem[] = [];
   for (const file of files) {
     items.push(await readItemFile(file));
   }
+  assertObservationAvailable();
   return items.sort(
     (a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.title.localeCompare(b.title),
   );

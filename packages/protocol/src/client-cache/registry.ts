@@ -53,6 +53,57 @@ function roadmapListObservationParams(params: unknown): Record<string, unknown> 
   return observation;
 }
 
+function configurationParams(
+  params: unknown,
+  allowed: readonly string[],
+  required: readonly string[] = [],
+): Record<string, unknown> {
+  const input = params ?? {};
+  if (typeof input !== 'object' || Array.isArray(input))
+    throw new Error('Configuration observations require an object');
+  const value = Object.fromEntries(Object.entries(input).filter(([, item]) => item !== undefined));
+  if (Object.keys(value).some((key) => !allowed.includes(key)))
+    throw new Error('Configuration observations do not accept commands, paths or credentials');
+  for (const key of required) requiredId(value, key);
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'unfiltered') {
+      if (typeof item !== 'boolean') throw new Error('unfiltered must be a boolean');
+    } else if (
+      typeof item !== 'string' ||
+      !item ||
+      /[/\\]/.test(item) ||
+      item === '.' ||
+      item === '..'
+    ) {
+      throw new Error(`Invalid configuration selector: ${key}`);
+    }
+  }
+  return value;
+}
+
+function configurationDependencies(params: unknown): ResourceKey[] {
+  const project = params && typeof params === 'object' ? Reflect.get(params, 'project') : undefined;
+  // Legacy unmarked reads are stamped too; never admit an unchecked path into a key.
+  if (project !== undefined) configurationParams({ project }, ['project'], ['project']);
+  return [
+    { family: 'configuration', scope: 'farm' },
+    ...(typeof project === 'string'
+      ? [{ family: 'configuration' as const, scope: 'farm' as const, project }]
+      : []),
+    // Source-bound project/template packs become readable through their owning source boundary.
+    { family: 'sources', scope: 'farm' },
+  ];
+}
+
+const configurationDefinition: ResourceQueryDefinition = {
+  persisted: false,
+  maxBytes: 2 * mb,
+  live: true,
+  requiresObservedRead: true,
+  normalizeParams: (params) => configurationParams(params, []),
+  dependencies: configurationDependencies,
+};
+
 function workerInventoryParams(params: unknown): Record<string, unknown> {
   if (params == null) return { includeDisconnected: true };
   if (typeof params !== 'object' || Array.isArray(params))
@@ -194,6 +245,66 @@ const workspaceDefinition: ResourceQueryDefinition = {
 
 /** Closed to runtime registration. Each migration changes its owning definition here. */
 export const RESOURCE_QUERY_DEFINITIONS = {
+  [Methods.CONFIG_PROJECTS]: {
+    ...configurationDefinition,
+    persisted: true,
+    retention: { maxEntries: 1, maxBytes: 2 * mb },
+  },
+  [Methods.CONFIG_POOLS]: configurationDefinition,
+  [Methods.CONFIG_POOL]: {
+    ...configurationDefinition,
+    normalizeParams: (params: unknown) => configurationParams(params, ['machine'], ['machine']),
+  },
+  [Methods.CONFIG_POOL_RAW]: {
+    ...configurationDefinition,
+    normalizeParams: (params: unknown) => configurationParams(params, ['machine'], ['machine']),
+  },
+  [Methods.CONFIG_PROJECT]: {
+    ...configurationDefinition,
+    normalizeParams: (params: unknown) => configurationParams(params, ['project'], ['project']),
+  },
+  [Methods.CONFIG_TEMPLATES]: {
+    ...configurationDefinition,
+    normalizeParams: (params: unknown) => configurationParams(params, ['project'], ['project']),
+  },
+  [Methods.CONFIG_TEMPLATE_OPTIONS]: {
+    ...configurationDefinition,
+    normalizeParams: (params: unknown) => {
+      const value = configurationParams(
+        params,
+        [
+          'project',
+          'flowType',
+          'platform',
+          'runMode',
+          'domain',
+          'executionTemplateId',
+          'unfiltered',
+        ],
+        ['project'],
+      );
+      if (value.unfiltered !== true) requiredId(value, 'flowType');
+      return value;
+    },
+  },
+  [Methods.CONFIG_TEMPLATE_PREVIEW]: {
+    ...configurationDefinition,
+    normalizeParams: (params: unknown) =>
+      configurationParams(
+        params,
+        [
+          'project',
+          'flowType',
+          'executionTemplateId',
+          'executionTemplateSourceId',
+          'executionTemplateSha256',
+        ],
+        ['project', 'flowType'],
+      ),
+  },
+  [Methods.LLM_CONFIG_GET]: configurationDefinition,
+  [Methods.LLM_AUTH_LIST]: configurationDefinition,
+  [Methods.LLM_TIERS]: configurationDefinition,
   [Methods.NATIVE_SESSION_READ]: {
     persisted: true,
     maxBytes: 20 * mb,

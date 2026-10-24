@@ -318,16 +318,14 @@ export class FamilyObservability extends FamilyObservabilityState {
     void this._loadImprovementModel();
   }
 
+  private readonly configurationModel = new ResourceQueryController<LLMConfigGetResult>(
+    this,
+    (state) => {
+      this._improvementModel = state.data?.improvementModel ?? '';
+    },
+  );
   private async _loadImprovementModel(): Promise<void> {
-    try {
-      const res = await gateway.request<LLMConfigGetResult>(Methods.LLM_CONFIG_GET, {});
-      this._improvementModel = res.improvementModel ?? '';
-    } catch (error) {
-      // Family observability still works without an improvement model; keep
-      // the UI usable while surfacing the optional config read failure.
-      console.warn('[family-observability] failed to load improvement model', error);
-      this._improvementModel = '';
-    }
+    this.configurationModel.setQuery(resourceQuery<LLMConfigGetResult>(Methods.LLM_CONFIG_GET));
   }
 
   disconnectedCallback(): void {

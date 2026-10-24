@@ -40,6 +40,9 @@ export function canReadResourceKey(
     case 'progress':
       method = Methods.TASK_PROGRESS;
       break;
+    case 'configuration':
+      method = Methods.CONFIG_PROJECTS;
+      break;
     case 'planning':
       switch (key.collection) {
         case 'backlog':

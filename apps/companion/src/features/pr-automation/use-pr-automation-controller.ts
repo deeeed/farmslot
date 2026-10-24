@@ -25,6 +25,8 @@ import {
 } from '@farmslot/protocol';
 import { type ReviewDispatchViewModel, reviewLineagesForPR } from '@farmslot/review-dispatch';
 
+import { useConfigurationProjects } from '../../hooks/useConfigurationProjects';
+import { readConfiguration } from '../../lib/configuration-resources';
 import type { GatewayClient, GatewayHttpAuthHeaders } from '../../lib/gateway-client';
 import {
   buildPRMonitorConfig,
@@ -86,6 +88,14 @@ export function usePRAutomationController(
   const slots = useFleetStore((state) => state.fleet?.slots ?? EMPTY_SLOTS);
   const runs = useRunStore((state) => state.runs);
   const [snapshot, setSnapshot] = useState<Snapshot>();
+  const configuration = useConfigurationProjects();
+  const configurationRef = useRef(configuration);
+  configurationRef.current = configuration;
+  useEffect(() => {
+    setSnapshot((current) =>
+      current ? { ...current, farms: configuration.data ?? { projects: [] } } : current,
+    );
+  }, [configuration.data]);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -188,7 +198,7 @@ export function usePRAutomationController(
             client.request<PRRulesListResult>(Methods.PR_RULES_LIST, {}),
             client.request<DispatchQueueListResult>(Methods.DISPATCH_QUEUE_LIST, {}),
             client.request<PRPushListResult>(Methods.PR_PUSH_LIST, {}),
-            client.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}),
+            readConfiguration<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}),
           ]);
           if (!active || client.connectionGeneration !== generation) return;
           const [watches, reviews, queue, push, farms] = results;
@@ -211,7 +221,7 @@ export function usePRAutomationController(
               reviews: reviews.value,
               queue: queue.value,
               push: push.value,
-              farms: farms.value,
+              farms: configurationRef.current.data ?? { projects: [] },
             });
             setError('');
           } else setError(failures.join('; '));

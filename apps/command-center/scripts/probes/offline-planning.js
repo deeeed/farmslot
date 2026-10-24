@@ -1,7 +1,7 @@
 // Read-only inspection of the actual mounted panels and their canonical observations.
 function findPanel(root) {
   const panel = root.querySelector(
-    'backlog-panel,roadmap-panel,work-graph-panel,dispatch-queue-panel',
+    'backlog-panel,roadmap-panel,work-graph-panel,dispatch-queue-panel,config-panel',
   );
   if (panel) return panel;
   for (const node of root.querySelectorAll('*'))
@@ -11,7 +11,7 @@ function findPanel(root) {
     }
 }
 const panel = findPanel(document);
-if (!panel?.shadowRoot) return { mounted: false, hash: location.hash };
+if (!panel) return { mounted: false, hash: location.hash };
 const moduleUrl = (pathname) =>
   performance
     .getEntriesByType('resource')
@@ -29,6 +29,7 @@ const fields = {
   'roadmap-panel': ['_listQuery', '_detailQuery'],
   'work-graph-panel': ['graphQuery', 'backlogQuery', 'queueQuery'],
   'dispatch-queue-panel': ['_queueQuery', '_backlogQuery', '_graphsQuery'],
+  'config-panel': ['_poolsQuery', '_projectsQuery', '_projectQuery'],
 };
 const observations = {};
 for (const field of fields[panel.localName]) {
@@ -39,7 +40,7 @@ for (const field of fields[panel.localName]) {
   if (controller.belongsToWorkspace && cache?.read(query) !== state)
     throw Error('Panel is not displaying its canonical planning observation');
   const data = state.data;
-  const rows = data?.items ?? data?.graphs ?? [];
+  const rows = data?.items ?? data?.graphs ?? data?.projects ?? data?.pools ?? [];
   observations[query.method] = {
     id: query.id,
     params: query.params,
@@ -50,29 +51,45 @@ for (const field of fields[panel.localName]) {
     ready: controller.ready,
     dataPresent: data !== undefined,
     rows: rows.map((row) => ({
-      id: row.id ?? row.graph?.id,
+      id: row.id ?? row.graph?.id ?? row.name ?? row.machine,
       title: row.title ?? row.graph?.title,
       status: row.status ?? row.graph?.status,
       project: row.project ?? row.graph?.project,
       priority: row.priority,
       fileHash: row.fileHash,
       nodeIds: row.nodes?.map((node) => node.id),
+      defaultBranch: row.defaultBranch,
+      autoRecoveryEnabled: row.autoRecovery?.enabled,
     })),
   };
 }
-const root = panel.shadowRoot;
+const root = panel.shadowRoot ?? panel;
 const renderedRows = [...root.querySelectorAll('[data-row-id]')]
   .filter((row) => row.getClientRects().length)
   .map((row) => ({ id: row.getAttribute('data-row-id'), text: row.textContent }));
 const selectors = {
   'backlog-panel': 'button.primary-action',
-  'roadmap-panel':
-    '[data-testid="roadmap-save"],[data-testid="roadmap-create"],[data-testid="roadmap-delete"],[data-testid="roadmap-promote"]',
+  'roadmap-panel': [
+    'save',
+    'create',
+    'delete',
+    'promote',
+    'archive',
+    'restore',
+    'prepare-prompt',
+    'refine-runner',
+  ]
+    .map((action) => `[data-testid="roadmap-${action}"]`)
+    .join(','),
   'work-graph-panel': 'button.primary-action',
   'dispatch-queue-panel': 'button',
+  'config-panel': 'button.cp-action-btn',
 };
 const mutationButtons = [...root.querySelectorAll(selectors[panel.localName])]
   .filter((button) => button.getClientRects().length && button.textContent.trim() !== 'Retry')
+  .filter(
+    (button) => panel.localName !== 'config-panel' || button.textContent.trim().startsWith('Save'),
+  )
   .map((button) => ({ text: button.textContent.trim(), disabled: button.disabled }));
 const viewportVisible = (element) => {
   if (!element?.getClientRects().length) return false;
@@ -96,6 +113,7 @@ const queueRows = [...root.querySelectorAll('.queue-shell .rows > .row')].map((e
 }));
 return {
   mounted: true,
+  timeOrigin: performance.timeOrigin,
   panel: panel.localName,
   hash: location.hash,
   connection: gateway.connectionState,
@@ -107,6 +125,18 @@ return {
   graphStatus: graphStatus?.textContent.trim(),
   queueRows,
   mutationButtons,
+  configuration:
+    panel.localName === 'config-panel'
+      ? {
+          labels: [...root.querySelectorAll('.cp-item-label')].map((node) =>
+            node.textContent.trim(),
+          ),
+          info: [...root.querySelectorAll('.cp-info-value')].map((node) => node.textContent.trim()),
+          autoRecoveryEnabled: root.querySelector(
+            '.cp-auto-recovery-section input[type="checkbox"]',
+          )?.checked,
+        }
+      : undefined,
   selectedId:
     Reflect.get(panel, '_selectedItemId') ??
     Reflect.get(panel, '_selectedId') ??
@@ -115,7 +145,7 @@ return {
   editorHash: Reflect.get(panel, '_editHash'),
   editorBody: root.querySelector('[data-testid="roadmap-edit-body"]')?.value,
   editorTitle: root.querySelector('[data-testid="roadmap-edit-title"]')?.value,
-  staleText: [...root.querySelectorAll('[data-testid$="-stale"]')]
+  staleText: [...root.querySelectorAll('[data-testid$="-stale"],[data-configuration-stale]')]
     .map((node) => node.textContent)
     .join('\n'),
   errorText: [

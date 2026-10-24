@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Planning clients observe external gateway writers without Refresh",
-  "description": "Living partial Draft7 proof. Use a running isolated development gateway/UI and browser selected by GATEWAY_PORT, VITE_PORT, FARMSLOT_CDP_PORT and an authenticated FARMSLOT_GATEWAY_PROFILE. Set FARMSLOT_HOME and a separate scratch FARMSLOT_ROOT, disable orchestration, configure a unique offline-planning-* project, and select a fresh FARMSLOT_PLANNING_PROOF_ARTIFACTS directory. The driver uses production RPC, real browser navigation and visible row assertions. This recipe covers external backlog, roadmap, graph and queue RPC writers, filtered backlog membership, and an eleven-second idle read audit. Other driver modes are separate candidates; this recipe does not claim raw file notifications, offline cold restoration, draft/error handling or permission revocation.",
+  "description": "Draft7 browser proof on an isolated gateway/UI. Independent RPC writers and raw roadmap file create/edit/atomic replacement/delete update mounted canonical panels without Refresh. A real read error preserves an unsaved draft; new offline documents restore four planning collections from SQLite with original observation times, visible ages and disabled actual actions, then recover. Configure an isolated home/farm/profile/ports, disabled orchestration, a disposable offline-planning-* project and fresh artifacts. Mobile/desktop and authority-revocation proofs remain separate. Configuration file and second-client writes update mounted policy. Real project collections below/above2MiB are checked against SQLite and new offline documents; client project replies exclude declared webhook secrets.",
   "proofTargets": [
     {
       "id": "externalRpcWriters",
@@ -10,6 +10,38 @@
     {
       "id": "filteredMembership",
       "claim": "A backlog status filter excludes its candidate while retaining the canonical collection and selected identity."
+    },
+    {
+      "id": "rawRoadmapCreate",
+      "claim": "An external roadmap file creation reaches the open canonical collection and rendered row without Refresh."
+    },
+    {
+      "id": "rawRoadmapEdit",
+      "claim": "An external roadmap file edit reaches the same mounted canonical collection and rendered row without Refresh."
+    },
+    {
+      "id": "rawRoadmapReplace",
+      "claim": "An atomic roadmap file replacement reaches the same mounted canonical collection and rendered row without Refresh."
+    },
+    {
+      "id": "rawRoadmapDelete",
+      "claim": "An external roadmap file deletion removes the canonical and rendered row without Refresh."
+    },
+    {
+      "id": "readErrorDraftAndDisconnect",
+      "claim": "A real roadmap read failure and disconnect retain the unsaved draft, selection and base hash with actions disabled."
+    },
+    {
+      "id": "coldFourCollections",
+      "claim": "Four planning collections restore exact saved observation times, visible age and disabled actions offline, then recover."
+    },
+    {
+      "id": "configurationWriters",
+      "claim": "External project edits, atomic replacement and second-client policy writes update mounted configuration without Refresh; project replies omit webhook secrets."
+    },
+    {
+      "id": "configurationProjectsBound",
+      "claim": "A real project collection persists below2MiB with exact cold rows/age/disabled writes; an oversized collection evicts and is absent offline, then recovers."
     }
   ],
   "workflow": {
@@ -17,9 +49,9 @@
     "nodes": {
       "prove": {
         "action": "command",
-        "cmd": "node apps/command-center/scripts/prove-planning-cache.mjs writers",
-        "timeout_ms": 180000,
-        "intent": "Drive external planning writers and real client navigation, verify visible row and graph replacements, audit idle reads, capture screenshots and remove owned fixtures.",
+        "cmd": "node apps/command-center/scripts/prove-planning-cache.mjs all",
+        "timeout_ms": 300000,
+        "intent": "Prove external planning writes, offline SQLite restoration and draft safety; capture evidence and clean owned fixtures.",
         "next": "externalRpcWriters"
       },
       "externalRpcWriters": {
@@ -36,13 +68,85 @@
         "source": "prove",
         "stream": "stdout",
         "match": "\"filteredMembership\":true",
-        "intent": "The real status filter excludes its candidate row without discarding stored membership or selected identity.",
+        "intent": "A status filter excludes its candidate while preserving the canonical collection and selected identity.",
         "proves": ["filteredMembership"],
-        "next": "done"
+        "next": "rawRoadmapCreate"
       },
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "rawRoadmapCreate": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"rawRoadmapCreate\":true",
+        "intent": "An external roadmap file creation reaches the open canonical collection and rendered row without Refresh.",
+        "proves": ["rawRoadmapCreate"],
+        "next": "rawRoadmapEdit"
+      },
+      "rawRoadmapEdit": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"rawRoadmapEdit\":true",
+        "intent": "An external roadmap file edit reaches the same mounted canonical collection and rendered row without Refresh.",
+        "proves": ["rawRoadmapEdit"],
+        "next": "rawRoadmapReplace"
+      },
+      "rawRoadmapReplace": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"rawRoadmapReplace\":true",
+        "intent": "An atomic roadmap file replacement reaches the same mounted canonical collection and rendered row without Refresh.",
+        "proves": ["rawRoadmapReplace"],
+        "next": "rawRoadmapDelete"
+      },
+      "rawRoadmapDelete": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"rawRoadmapDelete\":true",
+        "intent": "An external roadmap file deletion removes the canonical and rendered row without Refresh.",
+        "proves": ["rawRoadmapDelete"],
+        "next": "readErrorDraftAndDisconnect"
+      },
+      "readErrorDraftAndDisconnect": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"readErrorDraftAndDisconnect\":true",
+        "intent": "A real roadmap read failure and disconnect retain the unsaved draft, selection and base hash with actions disabled.",
+        "proves": ["readErrorDraftAndDisconnect"],
+        "next": "coldFourCollections"
+      },
+      "coldFourCollections": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"coldFourCollections\":true",
+        "intent": "Four planning collections restore exact saved observation times, visible age and disabled actions offline, then recover.",
+        "proves": ["coldFourCollections"],
+        "next": "configurationWriters"
+      },
+      "configurationWriters": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"configurationWriters\":true",
+        "intent": "Observed configuration file and second-client writes update the mounted form without Refresh.",
+        "proves": ["configurationWriters"],
+        "next": "configurationProjectsBound"
+      },
+      "configurationProjectsBound": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"configurationProjectsBound\":true",
+        "intent": "Real project collections enforce2MiB persistence and exact offline restoration with disabled writes.",
+        "proves": ["configurationProjectsBound"],
+        "next": "done"
       }
     }
   }

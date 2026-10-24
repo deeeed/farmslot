@@ -59,7 +59,6 @@ export abstract class EvalCockpitState extends LitElement {
   @state() _candidateTemplateOptions: WorkerTemplateOption[] = [];
   @state() _candidateTemplateOptionsLoading = false;
   @state() _candidateTemplateOptionsError = '';
-  _candidateTemplateOptionsKey = '';
   @state() _manualEntryOpen = false;
   @state() _advancedStrategyOpen = false;
   @state() _evalResult: EvalExperimentCreateResult | null = null;

@@ -17,6 +17,7 @@ import '../terminal/terminal-view.js';
 import '../progress-tracker/progress-tracker.js';
 import '../workspace/slot-workspace.js';
 
+import { readConfiguration } from '../../configuration-resources.js';
 import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import {
@@ -216,7 +217,7 @@ export class SlotDetail extends LitElement {
     const current = this._captureScope();
     const slotId = this.slotId;
     try {
-      const res = await gateway.request<ConfigPoolResult>(Methods.CONFIG_POOL, { machine });
+      const res = await readConfiguration<ConfigPoolResult>(Methods.CONFIG_POOL, { machine });
       if (!current()) return;
       const slotCfg = res.pool.slots.find((s) => s.id === slotId);
       if (slotCfg) this._repoPath = slotCfg.repo;

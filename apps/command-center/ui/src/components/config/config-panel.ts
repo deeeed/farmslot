@@ -13,6 +13,7 @@ import type {
   SlotStatus,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import './llm-config.js';
 import './template-viewer.js';
@@ -20,6 +21,7 @@ import './slot-toggle.js';
 import '../flow-graph/flow-graph.js';
 import '../shared/source-status-panel.js';
 
+import { readConfiguration } from '../../configuration-resources.js';
 import { gateway } from '../../gateway-client.js';
 import { providerAccountsStore } from '../../provider-accounts-store.js';
 import { getState, type GlobalFilters, subscribe } from '../../state.js';
@@ -31,6 +33,7 @@ import {
   setAttentionAlertPreferences,
 } from '../../utils/notifications.js';
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderRunnerAccountInventory } from '../shared/runner-account-inventory.js';
 
 import {
@@ -93,6 +96,60 @@ export class ConfigPanel extends LitElement {
     return this;
   }
 
+  private readonly _poolsQuery = new ResourceQueryController<ConfigPoolsResult>(this, () =>
+    this.applyConfiguration(),
+  );
+  private readonly _projectsQuery = new ResourceQueryController<ConfigProjectsResult>(this, () =>
+    this.applyConfiguration(),
+  );
+  private readonly _projectQuery = new ResourceQueryController<ConfigProjectResult>(this, () => {
+    const state = this._projectQuery.state;
+    if (!state.data) this._projectLearnings = new Map();
+    else
+      this._projectLearnings = new Map(this._projectLearnings).set(
+        state.data.project.name,
+        state.data.learnings,
+      );
+    this._projectLearningsLoading = state.status === 'loading';
+    this._projectLearningsError = state.error?.message ?? '';
+  });
+  @state() private _configurationError = '';
+
+  private applyConfiguration(): void {
+    this._pools = this._poolsQuery.belongsToWorkspace
+      ? (this._poolsQuery.state.data?.pools ?? [])
+      : [];
+    this._projects = this._projectsQuery.belongsToWorkspace
+      ? (this._projectsQuery.state.data?.projects ?? [])
+      : [];
+    this._loading =
+      !this._pools.length &&
+      !this._projects.length &&
+      [this._poolsQuery.state, this._projectsQuery.state].some(
+        (value) => value.status === 'loading',
+      );
+    this._configurationError = [
+      this._poolsQuery.state.error?.message,
+      this._projectsQuery.state.error?.message,
+    ]
+      .filter(Boolean)
+      .join('; ');
+    if (!this._selection) {
+      if (this.initialPath) this._selection = this._parseInitialPath(this.initialPath);
+      else if (this.filteredPools[0])
+        this._selection = { kind: 'pool', machine: this.filteredPools[0].machine };
+      else if (this.filteredProjects[0])
+        this._selection = { kind: 'project', name: this.filteredProjects[0].name };
+    }
+  }
+  private get configurationCurrent(): boolean {
+    return this._poolsQuery.ready && this._projectsQuery.ready;
+  }
+  private get configurationAge(): string {
+    const state = this._projectsQuery.state;
+    if (state.status !== 'stale' || !state.observedAt) return '';
+    return `Saved projects, ${Math.max(0, Math.floor((Date.now() - state.observedAt) / 1000))}s old. Actions wait for a current read.`;
+  }
   private _connUnsub?: () => void;
   private _stateUnsub?: () => void;
 
@@ -178,32 +235,9 @@ export class ConfigPanel extends LitElement {
   }
 
   private async loadData() {
-    this._loading = true;
-    try {
-      const [poolsRes, projectsRes] = await Promise.all([
-        gateway.request(Methods.CONFIG_POOLS, {}) as Promise<ConfigPoolsResult>,
-        gateway.request(Methods.CONFIG_PROJECTS, {}) as Promise<ConfigProjectsResult>,
-      ]);
-      this._pools = poolsRes.pools;
-      this._projects = projectsRes.projects;
-      // Pre-select from route param, or auto-select first visible item
-      if (this.initialPath) {
-        const sel = this._parseInitialPath(this.initialPath);
-        if (sel) this._selection = sel;
-      } else if (!this._selection) {
-        const pools = this.filteredPools;
-        const projects = this.filteredProjects;
-        if (pools.length > 0) {
-          this._selection = { kind: 'pool', machine: pools[0].machine };
-        } else if (projects.length > 0) {
-          this._selection = { kind: 'project', name: projects[0].name };
-        }
-      }
-    } catch (err) {
-      console.error('[config-panel] load error:', (err as Error).message);
-    } finally {
-      this._loading = false;
-    }
+    this._poolsQuery.setQuery(resourceQuery<ConfigPoolsResult>(Methods.CONFIG_POOLS));
+    this._projectsQuery.setQuery(resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS));
+    await Promise.all([this._poolsQuery.retry(), this._projectsQuery.retry()]);
   }
 
   private _seatsUnsub: (() => void) | null = null;
@@ -237,20 +271,10 @@ export class ConfigPanel extends LitElement {
   }
 
   private async loadProjectLearnings(projectName: string, force = false) {
-    if (!force && this._projectLearnings.has(projectName)) return;
-    this._projectLearningsLoading = true;
-    this._projectLearningsError = '';
-    try {
-      const result = (await gateway.request(Methods.CONFIG_PROJECT, {
-        project: projectName,
-      })) as ConfigProjectResult;
-      this._projects = this._projects.map((p) => (p.name === projectName ? result.project : p));
-      this._projectLearnings = new Map(this._projectLearnings).set(projectName, result.learnings);
-    } catch (err) {
-      this._projectLearningsError = err instanceof Error ? err.message : String(err);
-    } finally {
-      this._projectLearningsLoading = false;
-    }
+    this._projectQuery.setQuery(
+      resourceQuery<ConfigProjectResult>(Methods.CONFIG_PROJECT, { project: projectName }),
+    );
+    if (force) await this._projectQuery.retry();
   }
 
   private getSelectedPool(): PoolConfig | undefined {
@@ -271,7 +295,7 @@ export class ConfigPanel extends LitElement {
     const pool = this.getSelectedPool();
     if (!pool) return;
     try {
-      const res = (await gateway.request(Methods.CONFIG_POOL_RAW, { machine: pool.machine })) as {
+      const res = (await readConfiguration(Methods.CONFIG_POOL_RAW, { machine: pool.machine })) as {
         raw: string;
       };
       this._editorContent = res.raw;
@@ -300,6 +324,7 @@ export class ConfigPanel extends LitElement {
     if (!this._selection || this._selection.kind !== 'pool' || this._editorError) return;
     this._saving = true;
     try {
+      this._poolsQuery.requireReady();
       const result = (await gateway.request(Methods.CONFIG_POOL_UPDATE, {
         machine: this._selection.machine,
         content: this._editorContent,
@@ -321,7 +346,11 @@ export class ConfigPanel extends LitElement {
   }
 
   private autoRecoveryDraft(project: ProjectConfig): AutoRecoveryDraft {
-    if (!this._autoRecoveryDraft || this._autoRecoveryDraft.project !== project.name) {
+    if (
+      !this._autoRecoveryDraft ||
+      this._autoRecoveryDraft.project !== project.name ||
+      !this._autoRecoveryDirty
+    ) {
       this._autoRecoveryDraft = this.draftFromProject(project);
       this._autoRecoveryDirty = false;
       this._autoRecoveryError = '';
@@ -353,6 +382,7 @@ export class ConfigPanel extends LitElement {
     this._autoRecoverySaving = true;
     this._autoRecoveryError = '';
     try {
+      this._projectsQuery.requireReady();
       const result = (await gateway.request(Methods.CONFIG_PROJECT_AUTO_RECOVERY_UPDATE, {
         project: project.name,
         autoRecovery: autoRecoveryUpdateFromDraft(draft),
@@ -497,6 +527,7 @@ export class ConfigPanel extends LitElement {
                 <td>${slot.mode}</td>
                 <td>
                   <slot-toggle
+                    .configurationReady=${this.configurationCurrent}
                     slotId=${slot.id}
                     .enabled=${slot.enabled !== false}
                     mode=${slot.mode}
@@ -587,7 +618,10 @@ export class ConfigPanel extends LitElement {
           </button>
           <button
             class="cp-action-btn"
-            ?disabled=${!!this._editorError || this._saving || !this._editorDirty}
+            ?disabled=${!this.configurationCurrent ||
+            !!this._editorError ||
+            this._saving ||
+            !this._editorDirty}
             @click=${() => this.savePoolJson()}
           >
             ${this._saving ? 'Saving...' : 'Save'}
@@ -942,7 +976,9 @@ export class ConfigPanel extends LitElement {
               : nothing}
             <button
               class="cp-action-btn"
-              ?disabled=${!this._autoRecoveryDirty || this._autoRecoverySaving}
+              ?disabled=${!this.configurationCurrent ||
+              !this._autoRecoveryDirty ||
+              this._autoRecoverySaving}
               @click=${() => this.saveAutoRecovery(project)}
             >
               ${this._autoRecoverySaving ? 'Saving...' : 'Save Auto-Recovery'}
@@ -1112,6 +1148,12 @@ export class ConfigPanel extends LitElement {
         class="cp-content"
         style="${this._selection?.kind === 'flows' ? 'padding:0; overflow:hidden;' : ''}"
       >
+        ${this.configurationAge
+          ? html`<p data-configuration-stale>${this.configurationAge}</p>`
+          : nothing}
+        ${this._configurationError
+          ? html`<p role="alert">${this._configurationError}</p>`
+          : nothing}
         ${this._loading
           ? html`<div class="cp-empty" style=${configPanelLoadingStyle}>Loading config...</div>`
           : this.renderContent()}

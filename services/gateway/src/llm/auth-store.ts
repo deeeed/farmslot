@@ -9,6 +9,8 @@ import path from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import { publishConfigurationResources } from '../resources/configuration-changes.js';
+
 // ─── Types ───
 
 export type CredentialType = 'api_key' | 'token' | 'oauth';
@@ -90,6 +92,12 @@ export async function saveAuthProfileStore(
     await mkdir(dir, { recursive: true });
   }
   await writeFile(storePath, JSON.stringify(store, null, 2) + '\n', 'utf-8');
+  if (
+    [getFarmslotStorePath(), getOpenClawStorePath()].some(
+      (file) => path.resolve(file) === path.resolve(storePath),
+    )
+  )
+    publishConfigurationResources();
 }
 
 export async function ensureAuthStoreFile(storePath: string): Promise<AuthProfileStore> {

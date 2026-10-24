@@ -4,14 +4,21 @@
 import { html, LitElement, nothing, svg } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { ConfigTemplatesResult, FlowType, TemplatePreview } from '@farmslot/protocol';
+import type {
+  ConfigProjectsResult,
+  ConfigTemplatesResult,
+  FlowType,
+  TemplatePreview,
+} from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../config/template-schema.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState, subscribe } from '../../state.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import type { FlowGraph, FlowGraphNode, FlowMode, NodeKind } from './flow-graph-data.js';
 import { ALL_FLOW_TYPES, ALL_MODES, buildFlowGraph } from './flow-graph-data.js';
@@ -55,6 +62,34 @@ export class FlowGraphComponent extends LitElement {
   @state() private _templateCache = new Map<string, TemplatePreview>();
   @state() private _templateLoading = false;
 
+  private readonly projectsQuery = new ResourceQueryController<ConfigProjectsResult>(
+    this,
+    (state) => {
+      this._projects = state.data?.projects.map((project) => project.name) ?? [];
+      if (!this._project && this._projects.length) {
+        const selected = getState().globalFilters.projects;
+        this._project =
+          selected.length === 1 && this._projects.includes(selected[0])
+            ? selected[0]
+            : this.project && this._projects.includes(this.project)
+              ? this.project
+              : this._projects[0];
+        void this.fetchTemplates();
+      }
+    },
+  );
+  private readonly templatesQuery = new ResourceQueryController<ConfigTemplatesResult>(
+    this,
+    (state) => {
+      const next = new Map<string, TemplatePreview>();
+      for (const template of state.data?.templates ?? []) {
+        next.set(`${this._project}:${template.flowType}`, template);
+        next.set(`${this._project}:file:${template.fileName}`, template);
+      }
+      this._templateCache = next;
+      this._templateLoading = state.status === 'loading';
+    },
+  );
   private _unsubConnection?: () => void;
   private _unsubState?: () => void;
 
@@ -115,46 +150,15 @@ export class FlowGraphComponent extends LitElement {
   }
 
   private async discoverProjects() {
-    try {
-      const result = (await gateway.request(Methods.CONFIG_PROJECTS, {})) as {
-        projects: Array<{ name: string }>;
-      };
-      this._projects = result.projects.map((p) => p.name);
-      if (this._projects.length > 0 && !this._project) {
-        // Prefer global filter selection, fall back to first project
-        const gf = getState().globalFilters.projects;
-        this._project =
-          gf.length === 1 && this._projects.includes(gf[0])
-            ? gf[0]
-            : this.project && this._projects.includes(this.project)
-              ? this.project
-              : this._projects[0];
-        this.fetchTemplates();
-      }
-    } catch {
-      /* gateway not available — template panel just won't show */
-    }
+    this.projectsQuery.setQuery(resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS));
   }
 
   private async fetchTemplates() {
-    if (!this._project) return;
-    const cacheKey = this._project;
-    if (this._templateCache.has(`${cacheKey}:${this.flowType}`)) return;
-    this._templateLoading = true;
-    try {
-      const result = (await gateway.request(Methods.CONFIG_TEMPLATES, {
-        project: this._project,
-      })) as ConfigTemplatesResult;
-      for (const t of result.templates) {
-        this._templateCache.set(`${cacheKey}:${t.flowType}`, t);
-        // Also cache by fileName for review template lookups
-        this._templateCache.set(`${cacheKey}:file:${t.fileName}`, t);
-      }
-      this._templateCache = new Map(this._templateCache); // trigger reactive update
-    } catch {
-      /* ignore */
-    }
-    this._templateLoading = false;
+    this.templatesQuery.setQuery(
+      this._project
+        ? resourceQuery<ConfigTemplatesResult>(Methods.CONFIG_TEMPLATES, { project: this._project })
+        : undefined,
+    );
   }
 
   private templateForNode(node: FlowGraphNode): TemplatePreview | undefined {
@@ -178,6 +182,11 @@ export class FlowGraphComponent extends LitElement {
 
     return html`
       <div class="fg-container">
+        ${this.projectsQuery.state.error || this.templatesQuery.state.error
+          ? html`<p role="alert">
+              ${this.projectsQuery.state.error?.message ?? this.templatesQuery.state.error?.message}
+            </p>`
+          : nothing}
         ${this.showSelector ? this.renderSelector() : nothing}
         ${this.showSelector ? this.renderLegend() : nothing}
         <div class="fg-svg-wrap">

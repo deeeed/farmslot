@@ -9,13 +9,12 @@ import {
   type BacklogListResult,
   type BacklogSourceKind,
   type BacklogUpdateResult,
-  type ConfigProjectsResult,
   type ConfigTemplateOptionsResult,
   type FlowType,
   Methods,
-  type ProjectConfig,
   type TaskTemplateSelection,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import {
@@ -25,6 +24,8 @@ import {
   PlanningToggle,
 } from '../features/planning/PlanningControls';
 import { ReviewDispatchPicker } from '../features/review-dispatch/ReviewDispatchPicker';
+import { useConfigurationProjects } from '../hooks/useConfigurationProjects';
+import { useResourceQuery } from '../hooks/useResourceQuery';
 import { backlogExecutionDefaults } from '../lib/backlog-review-dispatch';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
@@ -64,7 +65,12 @@ export function BacklogCreateForm({
   const initialSelectedProject = useRef(
     item?.project ?? (selectedProjects.length === 1 ? selectedProjects[0] : ''),
   );
-  const [projects, setProjects] = useState<ProjectConfig[]>([]);
+  const projectsObservation = useConfigurationProjects();
+  const projects = useMemo(
+    () =>
+      [...(projectsObservation.data?.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
+    [projectsObservation.data],
+  );
   const fleetSlots = useFleetStore((state) => state.fleet?.slots);
   const [templateOptions, setTemplateOptions] = useState<ConfigTemplateOptionsResult['options']>(
     [],
@@ -135,54 +141,29 @@ export function BacklogCreateForm({
     [fleetSlots, project],
   );
 
+  const templateQuery = useMemo(
+    () =>
+      project
+        ? resourceQuery<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
+            project,
+            flowType,
+          })
+        : undefined,
+    [project, flowType],
+  );
+  const templateObservation = useResourceQuery(templateQuery);
   useEffect(() => {
-    let cancelled = false;
-    if (!client || status !== 'connected') return;
-    void client
-      .request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
-      .then((projectResult) => {
-        if (cancelled) return;
-        const configured = [...projectResult.projects].sort((a, b) => a.name.localeCompare(b.name));
-        setProjects(configured);
-        setProject((current) => current || configured[0]?.name || '');
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : String(loadError));
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, status]);
-
+    setProject((current) => current || projects[0]?.name || '');
+  }, [projects]);
   useEffect(() => {
-    let cancelled = false;
-    if (!client || status !== 'connected' || !project) {
-      setTemplateOptions([]);
-      return;
-    }
-    void client
-      .request<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, { project, flowType })
-      .then((result) => {
-        if (cancelled) return;
-        setTemplateOptions(result.options);
-        setTaskTemplate((current) =>
-          current && result.options.some((option) => option.fileName === current.fileName)
-            ? current
-            : undefined,
-        );
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) {
-          setTemplateOptions([]);
-          setError(loadError instanceof Error ? loadError.message : String(loadError));
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, flowType, project, status]);
+    const options = templateObservation.data?.options ?? [];
+    setTemplateOptions(options);
+    setTaskTemplate((current) =>
+      current && options.some((option) => option.fileName === current.fileName)
+        ? current
+        : undefined,
+    );
+  }, [templateObservation.data]);
 
   const submit = async () => {
     if (!project.trim() || !title.trim()) {
@@ -528,7 +509,18 @@ export function BacklogCreateForm({
         </Text>
       </PlanningSection>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {projectsObservation.status === 'stale' && projectsObservation.observedAt ? (
+        <Text>
+          Saved projects,{' '}
+          {Math.max(0, Math.floor((Date.now() - projectsObservation.observedAt) / 1000))}s old.
+          Actions wait for a current read.
+        </Text>
+      ) : null}
+      {error || projectsObservation.error || templateObservation.error ? (
+        <Text style={styles.error}>
+          {error || projectsObservation.error?.message || templateObservation.error?.message}
+        </Text>
+      ) : null}
       {createdLabel ? (
         <Text style={styles.success}>
           {editing ? 'Saved' : 'Created'} {createdLabel}.
@@ -536,9 +528,12 @@ export function BacklogCreateForm({
       ) : null}
       <Pressable
         testID="companion-backlog-submit"
-        style={[styles.submit, (submitting || Boolean(createdLabel)) && styles.disabled]}
+        style={[
+          styles.submit,
+          (submitting || Boolean(createdLabel) || status !== 'connected') && styles.disabled,
+        ]}
         onPress={() => void submit()}
-        disabled={submitting || Boolean(createdLabel)}
+        disabled={submitting || Boolean(createdLabel) || status !== 'connected'}
       >
         {submitting ? (
           <ActivityIndicator color={colors.bgBase} />

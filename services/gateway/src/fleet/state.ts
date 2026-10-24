@@ -48,8 +48,11 @@ import {
   usesRuntimeSettings,
 } from '../core/config.js';
 import { onStatusCommit } from '../core/state.js';
+import { getFarmslotStorePath, getOpenClawStorePath } from '../llm/auth-store.js';
+import { invalidateLLMConfig } from '../llm/config.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
 import { capabilityResourceChanges } from '../resources/capability-changes.js';
+import { publishConfigurationResources } from '../resources/configuration-changes.js';
 import {
   slotResourceChanges as slotResources,
   statusCheckedAt,
@@ -734,6 +737,7 @@ export function startFileWatcher() {
   });
   poolWatcher.on('all', (event, file) => {
     if (file === poolDir || !['add', 'change', 'unlink'].includes(event)) return;
+    publishConfigurationResources();
     capabilityResourceChanges.catalogChanged();
     publishWorkerResources();
     clearTimeout(poolDebounce);
@@ -759,11 +763,15 @@ export function startFileWatcher() {
   const runtimeSettingsDir = path.join(selectedHome, 'sources', 'runtime-settings');
   // Watch only each project's config and the bounded runtime settings directory.
   // Source-bound immutable packs announce their new lock through the sources key.
-  const projectWatcher = watch([projectsDir, selectedHome], {
+  const llmConfigFile = path.join(selectedHome, 'llm-config.json');
+  const registrationFiles = [llmConfigFile, getFarmslotStorePath(), getOpenClawStorePath()];
+  const registrationParent = path.dirname(getOpenClawStorePath());
+  const projectWatcher = watch([projectsDir, selectedHome, registrationParent], {
     persistent: true,
     ignoreInitial: true,
-    depth: 2,
+    depth: 4,
     ignored: (file, stats) => {
+      if (registrationFiles.includes(file) || file === registrationParent) return false;
       if (file === projectsDir || file === selectedHome || file === runtimeSettingsDir)
         return false;
       // Chokidar follows existing ancestors until a missing settings directory appears.
@@ -771,19 +779,38 @@ export function startFileWatcher() {
       const projectParts = path.relative(projectsDir, file).split(path.sep);
       if (!projectParts[0].startsWith('..') && !path.isAbsolute(projectParts[0])) {
         if (projectParts.length === 1) return stats?.isFile() ?? false;
-        return projectParts.length !== 2 || projectParts[1] !== 'project.json';
+        if (projectParts.length === 2 && projectParts[1] === 'project.json') return false;
+        if (projectParts[1] === 'templates') return stats?.isFile() ? !file.endsWith('.md') : false;
+        if (projectParts[1] === 'learnings')
+          return (
+            projectParts.length > 3 ||
+            (stats?.isFile() ? projectParts[2] !== 'LEARNINGS.md' : false)
+          );
+        return true;
       }
       return path.dirname(file) !== runtimeSettingsDir || !file.endsWith('.json');
     },
   });
   projectWatcher.on('all', (event, file) => {
     if (!['add', 'change', 'unlink'].includes(event)) return;
+    if (registrationFiles.includes(file)) {
+      if (file === llmConfigFile) invalidateLLMConfig();
+      publishConfigurationResources();
+      return;
+    }
+    const projectRelative = path.relative(projectsDir, file).split(path.sep);
+    if (projectRelative.length >= 3 && ['templates', 'learnings'].includes(projectRelative[1])) {
+      invalidateProjectVarsCache(projectRelative[0]);
+      publishConfigurationResources(projectRelative[0]);
+      return;
+    }
     const project =
       path.dirname(file) === runtimeSettingsDir
         ? path.basename(file, '.json')
         : path.basename(path.dirname(file));
     if (path.basename(file) !== 'project.json' && path.dirname(file) !== runtimeSettingsDir) return;
     invalidateProjectVarsCache(project);
+    publishConfigurationResources(project);
     capabilityResourceChanges.catalogChanged();
     publishWorkerResources();
   });

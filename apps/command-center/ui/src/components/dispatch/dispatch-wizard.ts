@@ -4,6 +4,7 @@ import { keyed } from 'lit/directives/keyed.js';
 
 import type {
   ConfigPoolsResult,
+  ConfigProjectsResult,
   ConfigTemplateOptionsResult,
   DispatchCandidatesResult,
   ExecutionTemplateCatalogOption,
@@ -98,8 +99,6 @@ import {
   requestDispatchProjectMatch,
   requestDispatchWizardCandidates,
   requestExecutionTemplatePreview,
-  requestProjectConfigs,
-  requestUnfilteredTemplateOptions,
 } from './dispatch-wizard-loaders.js';
 import { buildDispatchPreviewParams } from './dispatch-wizard-payload.js';
 import { parseDispatchWizardHash, syncReviewSequenceHash } from './dispatch-wizard-prefill.js';
@@ -273,6 +272,33 @@ export class DispatchWizard extends DispatchWizardState {
   @state() private _sourceSelections: SourceSelection[] = [];
   @state() private _sourceSelectionRefusal = '';
   private readonly _templateOptionsCache = new Map<string, ConfigTemplateOptionsResult>();
+  private readonly _configurationCatalogs = new Map<
+    string,
+    ResourceQueryController<ConfigTemplateOptionsResult>
+  >();
+  private _observeConfigurationCatalog(project: string): void {
+    if (this._configurationCatalogs.has(project)) return;
+    const query = new ResourceQueryController<ConfigTemplateOptionsResult>(this, (state) => {
+      if (state.data) this._templateOptionsCache.set(project, state.data);
+      else this._templateOptionsCache.delete(project);
+      if (this._project === project) {
+        this._templateOptionsLoading = state.status === 'loading';
+        this._templateOptionsError = state.error?.message ?? '';
+        if (state.data) this._applyVisibleCatalog();
+        else {
+          this._templateOptions = [];
+          this._executionTemplates = null;
+        }
+      }
+    });
+    this._configurationCatalogs.set(project, query);
+    query.setQuery(
+      resourceQuery<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
+        project,
+        unfiltered: true,
+      }),
+    );
+  }
 
   updated(changed: Map<string, unknown>) {
     super.updated(changed);
@@ -496,6 +522,27 @@ export class DispatchWizard extends DispatchWizardState {
     this._recomputeVariantCollision();
   }
 
+  private readonly _configurationProjects = new ResourceQueryController<ConfigProjectsResult>(
+    this,
+    (state) => {
+      if (this.mockMode) return;
+      this._projectConfigs = state.data?.projects ?? [];
+      if (state.data) {
+        this._syncSelectedAppForProject(this._project);
+        this._syncWorkflowSelection();
+        this._syncFleet(getState());
+      }
+    },
+  );
+  private readonly _configurationPools = new ResourceQueryController<ConfigPoolsResult>(
+    this,
+    (state) => {
+      if (this.mockMode) return;
+      this._reviewPools = state.data?.pools ?? [];
+      this._reviewPoolsError = state.error?.message ?? '';
+    },
+  );
+
   private async _loadProjectConfigs(): Promise<void> {
     if (this.mockMode && this.mockProjectConfigs) {
       this._projectConfigs = this.mockProjectConfigs;
@@ -504,31 +551,10 @@ export class DispatchWizard extends DispatchWizardState {
       this._syncFleet(getState());
       return;
     }
-    if (this._loadingProjectConfigs) return;
-    this._loadingProjectConfigs = true;
-    try {
-      const [projects, pools] = await Promise.allSettled([
-        requestProjectConfigs(),
-        gateway.request<ConfigPoolsResult>(Methods.CONFIG_POOLS, {}),
-      ]);
-      if (projects.status === 'rejected') throw projects.reason;
-      this._projectConfigs = projects.value;
-      this._reviewPools = pools.status === 'fulfilled' ? pools.value.pools : [];
-      this._reviewPoolsError =
-        pools.status === 'rejected'
-          ? 'Machine choices could not load. Reconnect to refresh them.'
-          : '';
-      this._syncSelectedAppForProject(this._project);
-      this._syncWorkflowSelection();
-      this._syncFleet(getState());
-    } catch (err) {
-      // Config loading is optional for single-app projects; keep the wizard usable
-      // and retry on the next reconnect/manual project selection.
-      console.warn('[dispatch-wizard] config projects failed:', err);
-      this._projectConfigs = [];
-    } finally {
-      this._loadingProjectConfigs = false;
-    }
+    this._configurationProjects.setQuery(
+      resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS),
+    );
+    this._configurationPools.setQuery(resourceQuery<ConfigPoolsResult>(Methods.CONFIG_POOLS));
   }
 
   private _syncSelectedAppForProject(projectName: string): void {
@@ -614,18 +640,7 @@ export class DispatchWizard extends DispatchWizardState {
 
   private _prefetchMissingCatalogs(projects: readonly string[]): void {
     if (this.mockMode || this._flowType === 'review-pr' || this._flowType === 'qa') return;
-    for (const project of projects) {
-      if (!project || this._templateOptionsCache.has(project)) continue;
-      void requestUnfilteredTemplateOptions(project)
-        .then((result) => {
-          this._templateOptionsCache.set(project, result);
-          if (this._project === project) this._applyVisibleCatalog();
-        })
-        .catch((err: unknown) => {
-          // Prefetch is optional; the next explicit load for this farm retries.
-          console.warn(`[dispatch-wizard] template catalog prefetch failed for ${project}:`, err);
-        });
-    }
+    for (const project of projects) if (project) this._observeConfigurationCatalog(project);
   }
 
   private async _fetchTemplateOptions(): Promise<void> {
@@ -633,34 +648,9 @@ export class DispatchWizard extends DispatchWizardState {
       this._applyVisibleCatalog();
       return;
     }
-    const project = this._project;
-    const cached = this._templateOptionsCache.get(project);
-    if (cached) {
-      this._templateOptionsLoading = false;
-      this._applyVisibleCatalog();
-      this._prefetchMissingCatalogs(this._availableProjects);
-      return;
-    }
-    this._templateOptionsKey = project;
-    this._templateOptionsError = '';
-    this._templateOptionsLoading = true;
-    try {
-      const result = await requestUnfilteredTemplateOptions(project);
-      this._templateOptionsCache.set(project, result);
-      if (this._project !== project) return;
-      this._applyVisibleCatalog();
-      this._prefetchMissingCatalogs(this._availableProjects);
-    } catch (err: unknown) {
-      if (this._project !== project) return;
-      this._templateOptions = [];
-      this._templateOptionsError =
-        err instanceof Error ? err.message : 'Template options failed to load';
-      this._selectedTaskTemplateFileName = '';
-      this._executionTemplates = null;
-      this._selectedExecutionTemplateId = '';
-    } finally {
-      if (this._project === project) this._templateOptionsLoading = false;
-    }
+    this._observeConfigurationCatalog(this._project);
+    this._applyVisibleCatalog();
+    this._prefetchMissingCatalogs(this._availableProjects);
   }
 
   private async _previewExecutionTemplate(

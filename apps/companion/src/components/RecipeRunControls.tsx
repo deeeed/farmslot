@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
-  type ConfigProjectsResult,
   Events,
   Methods,
   type RecipeCancelResult,
@@ -11,6 +10,7 @@ import {
   type ScriptActionResult,
 } from '@farmslot/protocol';
 
+import { useConfigurationProjects } from '../hooks/useConfigurationProjects';
 import type { GatewayClient } from '../lib/gateway-client';
 import {
   type RecipeRunnerUiOptions,
@@ -94,35 +94,31 @@ export function RecipeRunControls({
     [playbackSlowMs, recipeRunId, recordVideo, runId, slotId, uiOptions.showRecordVideo],
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!client || !project) {
-      const defaults = recipeRunnerUiOptions(null);
-      setUiOptions(defaults);
-      setPlaybackSlowMs(defaults.playbackSlowMs);
-      setRecordVideo(defaults.recordVideo);
-      return;
-    }
-    void (async () => {
-      try {
-        const result = await client.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
-        if (cancelled) return;
-        const options = recipeRunnerUiOptionsForProject(project, result.projects);
-        setUiOptions(options);
-        setPlaybackSlowMs(options.playbackSlowMs);
-        setRecordVideo(options.recordVideo);
-      } catch {
-        if (cancelled) return;
-        const defaults = recipeRunnerUiOptions(null);
-        setUiOptions(defaults);
-        setPlaybackSlowMs(defaults.playbackSlowMs);
-        setRecordVideo(defaults.recordVideo);
+  const configuration = useConfigurationProjects();
+  const optionsScope = useRef<
+    | {
+        client: GatewayClient | null;
+        project: string | null | undefined;
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [client, project]);
+    | undefined
+  >(undefined);
+  useEffect(() => {
+    const options =
+      project && configuration.data
+        ? recipeRunnerUiOptionsForProject(project, configuration.data.projects)
+        : recipeRunnerUiOptions(null);
+    setUiOptions(options);
+    if (
+      optionsScope.current?.client !== client ||
+      optionsScope.current?.project !== project ||
+      !configuration.data
+    ) {
+      setPlaybackSlowMs(options.playbackSlowMs);
+      setRecordVideo(options.recordVideo);
+      optionsScope.current = configuration.data ? { client, project } : undefined;
+    }
+    if (configuration.error) setError(configuration.error.message);
+  }, [client, project, configuration.data, configuration.error]);
 
   useEffect(() => {
     outputRef.current = output;

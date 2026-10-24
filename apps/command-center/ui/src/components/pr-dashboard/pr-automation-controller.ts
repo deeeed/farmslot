@@ -10,9 +10,11 @@ import {
   type PRRulesListResult,
   type PRWatchListResult,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
 import { getState, subscribe } from '../../state.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 export class PRAutomationController implements ReactiveController {
   monitors: PRWatchListResult = { monitors: [] };
@@ -32,7 +34,18 @@ export class PRAutomationController implements ReactiveController {
   private active = false;
   private unsubscribers: Array<() => void> = [];
 
+  private readonly configurationProjects: ResourceQueryController<ConfigProjectsResult>;
+  private readonly configurationPools: ResourceQueryController<ConfigPoolsResult>;
   constructor(private readonly host: ReactiveControllerHost) {
+    this.configurationProjects = new ResourceQueryController<ConfigProjectsResult>(
+      host,
+      (state) => {
+        this.projectConfigs = state.data?.projects ?? [];
+      },
+    );
+    this.configurationPools = new ResourceQueryController<ConfigPoolsResult>(host, (state) => {
+      this.pools = state.data?.pools ?? [];
+    });
     host.addController(this);
   }
   get connected(): boolean {
@@ -52,6 +65,10 @@ export class PRAutomationController implements ReactiveController {
 
   hostConnected(): void {
     this.active = true;
+    this.configurationProjects.setQuery(
+      resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS),
+    );
+    this.configurationPools.setQuery(resourceQuery<ConfigPoolsResult>(Methods.CONFIG_POOLS));
     this.unsubscribers = [
       ...[
         Events.PR_WATCH_UPDATED,
@@ -97,12 +114,10 @@ export class PRAutomationController implements ReactiveController {
       const epoch = gateway.connectionEpoch;
       if (!this.accountsLoaded) await this.refreshAccounts();
       if (!this.active || epoch !== gateway.connectionEpoch) continue;
-      const [monitors, reviews, push, projects, pools] = await Promise.allSettled([
+      const [monitors, reviews, push] = await Promise.allSettled([
         gateway.request<PRWatchListResult>(Methods.PR_WATCH_LIST, {}),
         gateway.request<PRRulesListResult>(Methods.PR_RULES_LIST, {}),
         gateway.request<PRPushListResult>(Methods.PR_PUSH_LIST, {}),
-        gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}),
-        gateway.request<ConfigPoolsResult>(Methods.CONFIG_POOLS, {}),
       ]);
       if (!this.active || epoch !== gateway.connectionEpoch) continue;
       const errors: string[] = [];
@@ -112,10 +127,6 @@ export class PRAutomationController implements ReactiveController {
       else errors.push(`Review intake: ${String(reviews.reason)}`);
       if (push.status === 'fulfilled') this.push = push.value;
       else errors.push(`Notifications: ${String(push.reason)}`);
-      if (projects.status === 'fulfilled') this.projectConfigs = projects.value.projects;
-      else errors.push(`Farm projects: ${String(projects.reason)}`);
-      if (pools.status === 'fulfilled') this.pools = pools.value.pools;
-      else errors.push(`Review machines: ${String(pools.reason)}`);
       this.error = errors.join('; ');
       this.loading = false;
       this.host.requestUpdate();

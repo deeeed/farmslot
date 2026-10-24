@@ -30,6 +30,7 @@ import type {
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
 
+import { readConfiguration } from '../../configuration-resources.js';
 import { gateway } from '../../gateway-client.js';
 import { getState, requireCurrentFleet } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
@@ -127,11 +128,12 @@ export class FleetRefreshModal extends FleetRefreshModalState {
     let projectConfigs: Record<string, FleetRefreshProjectConfig> = {};
     try {
       fleet = requireCurrentFleet();
-      const projectsResult = await gateway
-        .request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
-        .catch(() => ({
-          projects: [],
-        }));
+      const projectsResult = await readConfiguration<ConfigProjectsResult>(
+        Methods.CONFIG_PROJECTS,
+        {},
+      ).catch(() => ({
+        projects: [],
+      }));
       projectConfigs = Object.fromEntries(
         (projectsResult.projects ?? []).map((project) => [
           project.name,

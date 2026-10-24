@@ -2600,6 +2600,7 @@ export class RoadmapPanel extends LitElement {
             <button
               class="secondary"
               data-testid="roadmap-prepare-prompt"
+              ?disabled=${!this._commandsReady}
               title="Generate the refinement prompt file and mark this roadmap item as refining. This does not launch a runner."
               @click=${() => this._refineSelected(false)}
             >
@@ -2607,6 +2608,7 @@ export class RoadmapPanel extends LitElement {
             </button>
             <button
               data-testid="roadmap-refine-runner"
+              ?disabled=${!this._commandsReady}
               title="Choose a runner/model, then launch or attach the tmux refinement session for this roadmap item."
               @click=${() => this._openRunnerPicker()}
             >
@@ -2669,6 +2671,7 @@ export class RoadmapPanel extends LitElement {
               ? html`<button
                   class="secondary"
                   data-testid="roadmap-restore"
+                  ?disabled=${!this._commandsReady}
                   @click=${() =>
                     this._setSelectedStage(item.promotion?.length ? 'promoted' : 'rough')}
                 >
@@ -2677,6 +2680,7 @@ export class RoadmapPanel extends LitElement {
               : html`<button
                   class="secondary"
                   data-testid="roadmap-archive"
+                  ?disabled=${!this._commandsReady}
                   @click=${() => this._setSelectedStage('archived')}
                 >
                   Archive
@@ -2685,6 +2689,7 @@ export class RoadmapPanel extends LitElement {
               ? html`<button
                   class="danger"
                   data-testid="roadmap-delete"
+                  ?disabled=${!this._commandsReady}
                   @click=${this._deleteSelected}
                 >
                   Delete
@@ -2693,6 +2698,7 @@ export class RoadmapPanel extends LitElement {
             <button
               class="secondary"
               data-testid="roadmap-prepare-prompt"
+              ?disabled=${!this._commandsReady}
               title="Generate the refinement prompt file and mark this roadmap item as refining. This does not launch a runner."
               @click=${() => this._refineSelected(false)}
             >
@@ -2700,6 +2706,7 @@ export class RoadmapPanel extends LitElement {
             </button>
             <button
               data-testid="roadmap-refine-runner"
+              ?disabled=${!this._commandsReady}
               title="Choose a runner/model, then launch or attach the tmux refinement session for this roadmap item."
               @click=${() => this._openRunnerPicker()}
             >

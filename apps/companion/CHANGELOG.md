@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Share observed project and template choices, restore bounded saved projects offline with their age, and keep configuration commands live-only.
+
 - Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls.
 - Open saved native conversations under their retained workspace scope after an offline cold start; actions still require current authority.
 - Preserve a saved conversation's position while offline connection retries continue.

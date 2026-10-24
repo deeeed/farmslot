@@ -51,6 +51,7 @@ import {
   parseGitHubRef,
   sourceObservationAge,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   defaultModelForRunner,
   resolveReviewDispatchDefaults,
@@ -395,6 +396,16 @@ export class BacklogPanel extends LitElement {
   @state() private _dispatchConfigBusy = '';
   @state() private _dispatchConfigError = '';
   @state() private _configProjectConfigs: ProjectConfig[] = [];
+  private readonly configurationProjects = new ResourceQueryController<ConfigProjectsResult>(
+    this,
+    (state) => {
+      this._configProjectConfigs = state.data?.projects ?? [];
+    },
+  );
+  private readonly configurationTemplates = new Map<
+    string,
+    ResourceQueryController<ConfigTemplateOptionsResult>
+  >();
   @state() private _configTemplateOptions: Record<string, WorkerTemplateOption[]> = {};
   @state() private _configTemplateOptionsError: Record<string, string> = {};
   @state() private _configTemplateOptionsLoading: Record<string, boolean> = {};
@@ -1923,32 +1934,40 @@ export class BacklogPanel extends LitElement {
   }
 
   private async _ensureDispatchConfigDataFor(project: string, flowType: FlowType): Promise<void> {
-    if (this._configProjectConfigs.length === 0) {
-      const result = await gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
-      this._configProjectConfigs = result.projects;
-    }
-
+    this.configurationProjects.setQuery(
+      resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS),
+    );
     const key = templateOptionsRequestKey(project, flowType);
-    if (this._configTemplateOptions[key] || this._configTemplateOptionsLoading[key]) return;
-    this._configTemplateOptionsLoading = { ...this._configTemplateOptionsLoading, [key]: true };
-    this._configTemplateOptionsError = { ...this._configTemplateOptionsError, [key]: '' };
-    try {
-      const result = await gateway.request<ConfigTemplateOptionsResult>(
-        Methods.CONFIG_TEMPLATE_OPTIONS,
-        {
-          project,
-          flowType,
-        },
+    let query = this.configurationTemplates.get(key);
+    if (!query) {
+      query = new ResourceQueryController<ConfigTemplateOptionsResult>(this, (state) => {
+        this._configTemplateOptions = {
+          ...this._configTemplateOptions,
+          [key]: state.data?.options ?? [],
+        };
+        this._configTemplateOptionsLoading = {
+          ...this._configTemplateOptionsLoading,
+          [key]: state.status === 'loading',
+        };
+        this._configTemplateOptionsError = {
+          ...this._configTemplateOptionsError,
+          [key]: state.error?.message ?? '',
+        };
+      });
+      this.configurationTemplates.set(key, query);
+      query.setQuery(
+        resourceQuery<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
+          project: project,
+          flowType: flowType,
+        }),
       );
-      this._configTemplateOptions = { ...this._configTemplateOptions, [key]: result.options };
-    } catch (error) {
-      this._configTemplateOptionsError = {
-        ...this._configTemplateOptionsError,
-        [key]: error instanceof Error ? error.message : String(error),
-      };
-    } finally {
-      this._configTemplateOptionsLoading = { ...this._configTemplateOptionsLoading, [key]: false };
     }
+    await Promise.all([
+      this.configurationProjects.ready
+        ? Promise.resolve(this.configurationProjects.state)
+        : this.configurationProjects.retry(),
+      query.ready ? Promise.resolve(query.state) : query.retry(),
+    ]);
   }
 
   private async _updateDispatchConfig(item: BacklogItem, patch: BacklogUpdateInput): Promise<void> {

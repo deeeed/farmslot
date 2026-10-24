@@ -470,6 +470,7 @@ export const workGraphsQuery = resourceQuery<WorkGraphListResult>(Methods.WORK_G
   includeArchived: true,
 });
 export const queueQuery = resourceQuery<DispatchQueueListResult>(Methods.DISPATCH_QUEUE_LIST);
+export const projectsQuery = resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS);
 
 let collectionCache: GatewayResourceCache | undefined;
 let collectionWorkspaceKey: string | undefined;
@@ -503,6 +504,8 @@ function bindFarmCollections(): void {
   state.backlogItems = [];
   state.workGraphs = [];
   state.queueItems = [];
+  state.projectDefaultBranches = {};
+  state.projectSlotTracking = {};
   if (!cache || !farm) {
     notify();
     return;
@@ -556,6 +559,28 @@ function bindFarmCollections(): void {
       state.queueItems = result.data?.items ?? [];
       state.hydrated = { ...state.hydrated, queue: result.status !== 'loading' };
       state.bootstrapFailed = { ...state.bootstrapFailed, queue: Boolean(result.error) };
+      notify();
+    }),
+  );
+  collectionObservers.push(
+    cache.observe(projectsQuery, (result) => {
+      if (!current()) return;
+      const projects = result.data?.projects ?? [];
+      state.projectDefaultBranches = Object.fromEntries(
+        projects.map((project) => [project.name, project.defaultBranch || DEFAULT_BRANCH]),
+      );
+      state.projectSlotTracking = Object.fromEntries(
+        projects.map((project) => [
+          project.name,
+          {
+            defaultBranch: project.defaultBranch || DEFAULT_BRANCH,
+            slotTrackingBranch: project.slotTrackingBranch,
+            worktreeBase: project.worktreeBase,
+          },
+        ]),
+      );
+      state.hydrated = { ...state.hydrated, projects: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, projects: Boolean(result.error) };
       notify();
     }),
   );
@@ -1121,34 +1146,12 @@ async function runFetchInitialState(
   )
     .catch(() => markFailed('workGraphs'))
     .finally(() => markReady('workGraphs'));
-  const projectsJob = gateway
-    .request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
-    .then((r) => {
-      if (stillCurrent() && r.projects) {
-        updateProjectDefaultBranches(
-          Object.fromEntries(r.projects.map((p) => [p.name, p.defaultBranch || DEFAULT_BRANCH])),
-        );
-        updateProjectSlotTracking(
-          Object.fromEntries(
-            r.projects.map((p) => [
-              p.name,
-              {
-                defaultBranch: p.defaultBranch || DEFAULT_BRANCH,
-                slotTrackingBranch: p.slotTrackingBranch,
-                worktreeBase: p.worktreeBase,
-              },
-            ]),
-          ),
-        );
-      }
-    })
-    .catch(() => {
-      if (stillCurrent()) {
-        updateProjectDefaultBranches({});
-        updateProjectSlotTracking({});
-      }
-      markFailed('projects');
-    })
+  const projectsJob = (
+    cache
+      ? cache.retry(projectsQuery)
+      : Promise.reject(new Error('Configuration store is unavailable'))
+  )
+    .catch(() => markFailed('projects'))
     .finally(() => markReady('projects'));
 
   // PR_LIST fans out across multiple gh calls per candidate PR; cold runs

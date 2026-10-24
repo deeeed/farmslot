@@ -105,7 +105,6 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _executionTemplatePreviewError = '';
   _executionTemplatePreviewGeneration = 0;
   _executionTemplatePreviewTrigger: HTMLElement | null = null;
-  _templateOptionsKey = '';
   @state() _dispatching = false;
   @state() _error = '';
   @state() _queueItems: QueueItem[] = [];
@@ -145,7 +144,6 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _pressureOverrideConfirmed = false;
   @state() _pressureOverrideReason = '';
   @state() _loadingCandidates = false;
-  @state() _loadingProjectConfigs = false;
   @state() _allProjectSlots: SlotStatus[] = [];
   @state() _activeRunConflict: Pick<Run, 'id' | 'status'> | null = null;
   @state() _hydrating = false;

@@ -39,6 +39,8 @@ export async function inspectResourceAuthority(
   const inspectedScope = scope ?? identity?.metadata.scope;
   let persistent = false;
   let storedObservedAt: number | undefined;
+  let storedBytes: number | undefined;
+  let storedData: unknown;
   let storedQueryIds: string[] = [];
   if (inspectedScope) {
     if (
@@ -49,13 +51,24 @@ export async function inspectResourceAuthority(
     const store = await createBrowserSqliteResourceStore({ scope: inspectedScope });
     try {
       persistent = store.persistent;
-      storedObservedAt = (await store.getQuery(query.id))?.observedAt;
+      const stored = await store.getQuery(query.id);
+      storedObservedAt = stored?.observedAt;
+      storedBytes = stored?.bytes;
+      storedData = stored?.data;
       storedQueryIds = (await store.listQueries()).map((entry) => entry.id);
     } finally {
       await store.close();
     }
   }
   const state = getResourceCache()?.read(query);
+  const hashData = async (data: unknown): Promise<string | undefined> => {
+    if (data === undefined) return undefined;
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(JSON.stringify(data)),
+    );
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  };
   return {
     connection: gateway.connectionState,
     principalId: gateway.authenticatedPrincipalId,
@@ -64,10 +77,13 @@ export async function inspectResourceAuthority(
     inspectedScope,
     persistent,
     storedObservedAt,
+    storedBytes,
+    storedDataSha256: await hashData(storedData),
     storedQueryIds,
     cacheStatus: state?.status,
     cacheObservedAt: state?.observedAt,
     cacheHasData: state?.data !== undefined,
+    cacheDataSha256: await hashData(state?.data),
   };
 }
 

@@ -20,7 +20,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Show current-checklist progress beneath the pipeline in run lists and detail, fleet cards, slot workspaces and terminals. These readers and selected-step history share persisted queries, retain read errors and saved age offline, and follow changes without per-view polling.
 
-- Keep backlog, roadmap, work graphs and queue observations readable offline, preserve unsaved edits during refresh, and enable commands after a current read.
+- Keep backlog, roadmap, work graphs, queue and project observations readable offline with saved age and current-read action guards. Configuration forms and choices follow external edits while preserving unsaved drafts.
 
 - Resume the blocked worker through the gateway’s validated recovery action, including held review fixes.
 

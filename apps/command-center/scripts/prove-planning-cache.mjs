@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -57,12 +67,13 @@ const cdp = async (...args) =>
   );
 const rpc = (method, params = {}) => cdp('gateway', method, JSON.stringify(params));
 let route;
-async function navigate(hash) {
+async function navigate(hash, { freshDocument = false } = {}) {
   route = hash;
   const url = new URL(process.env.FARMSLOT_UI_URL);
   assert(['localhost', '127.0.0.1', '[::1]'].includes(url.hostname));
   assert.equal(Number(url.port), Number(process.env.VITE_PORT));
   url.searchParams.set('planning-proof', path.basename(artifacts));
+  if (freshDocument) url.searchParams.set('planning-cold-document', randomUUID());
   url.hash = route;
   await cdp('goto', url.href);
   await cdp('focus', route);
@@ -117,6 +128,12 @@ async function setup() {
       priority: 7,
     })
   ).item;
+  await rpc('workGraph.addNode', {
+    graphId: fixtures.graph.id,
+    id: 'backlog-proof',
+    kind: 'backlog',
+    backlogItemId: fixtures.backlog.id,
+  });
   await writeFile(stateFile, JSON.stringify(fixtures, null, 2), { flag: 'wx', mode: 0o600 });
 }
 async function writers() {
@@ -290,6 +307,7 @@ async function draftError() {
   receipts.readErrorDraftAndDisconnect = true;
 }
 async function cold() {
+  const observations = {};
   const views = [
     ['backlog', 'backlog.list', fixtures.backlog.id],
     ['roadmap', 'roadmap.list', fixtures.roadmap.id],
@@ -297,7 +315,8 @@ async function cold() {
     ['dispatch', 'dispatch.queue.list', fixtures.queue.id],
   ];
   for (const [name, method, id] of views) {
-    await navigate(`${name}?projects=${project}`);
+    const hash = `${name}?projects=${project}${name === 'backlog' || name === 'roadmap' ? `&item=${id}` : name === 'work-graphs' ? `&graph=${id}&node=backlog-proof` : ''}`;
+    await navigate(hash);
     await ready(method);
     const stored = await cdp(
       'eval',
@@ -308,21 +327,31 @@ async function cold() {
       stored.persistent && stored.storedObservedAt === stored.cacheObservedAt,
       'A real SQLite row must be durable before cold proof',
     );
+    observations[name] = { stored, before: await snapshot() };
+    await writeFile(
+      path.join(artifacts, 'planning-cold-observations.json'),
+      JSON.stringify(observations, null, 2),
+    );
     await withOwnedGatewayOffline(async () => {
-      await navigate(
-        `${name}?projects=${project}${name === 'backlog' || name === 'roadmap' ? `&item=${id}` : name === 'work-graphs' ? `&graph=${id}` : ''}`,
-      );
-      await until(
+      await navigate(hash, { freshDocument: true });
+      observations[name].cold = await until(
         (value) =>
+          value.timeOrigin !== observations[name].before.timeOrigin &&
           observation(value, method)?.status === 'stale' &&
+          observation(value, method)?.observedAt === stored.storedObservedAt &&
           row(value, method, id) &&
           value.staleText.includes('Saved') &&
+          value.mutationButtons.length > 0 &&
           value.mutationButtons.every((button) => button.disabled),
         'Cold offline planning must render saved rows and age with commands disabled',
       );
       await screenshot(`${name}-cold-offline`);
     });
-    await ready(method);
+    observations[name].recovered = await ready(method);
+    await writeFile(
+      path.join(artifacts, 'planning-cold-observations.json'),
+      JSON.stringify(observations, null, 2),
+    );
   }
   receipts.coldFourCollections = true;
 }
@@ -330,26 +359,322 @@ async function rawFile() {
   await navigate(`roadmap?projects=${project}&item=${fixtures.roadmap.id}`);
   await ready('roadmap.list');
   const file = path.resolve(farmRoot, fixtures.roadmap.filePath);
-  const bytes = await readFile(file);
-  const replacement = `External filesystem ${randomUUID()}`;
+  const bytes = await readFile(file, 'utf8');
+  const id = `ri_${randomUUID().replaceAll('-', '')}`;
+  const external = path.join(path.dirname(file), `${id}.md`);
+  const temporary = `${external}.tmp`;
+  const before = await snapshot();
+  const observations = { before };
+  const document = (title) =>
+    bytes
+      .replace(/^id: .*$/m, `id: ${JSON.stringify(id)}`)
+      .replace(/^title: .*$/m, `title: ${JSON.stringify(title)}`);
+  let created = false;
+  let temporaryCreated = false;
+  const rendered = (value, title) =>
+    value.connectionId === before.connectionId &&
+    observation(value, 'roadmap.list')?.ready &&
+    row(value, 'roadmap.list', id)?.title === title &&
+    value.renderedRows.some((entry) => entry.id === id && entry.text.includes(title));
   try {
-    await writeFile(
-      file,
-      bytes.toString().replace(/^title: .*$/m, `title: ${JSON.stringify(replacement)}`),
-    );
-    // No RPC, restart, retry, navigation, or other invalidation may help this assertion.
-    await until(
-      (value) => row(value, 'roadmap.list', fixtures.roadmap.id)?.title === replacement,
-      'A raw external roadmap file edit must invalidate the open collection without Refresh',
+    const title = `Raw source create ${id}`;
+    await writeFile(external, document(title), { flag: 'wx' });
+    created = true;
+    // No RPC, restart, retry, navigation or other invalidation may help these assertions.
+    observations.created = await until(
+      (value) => rendered(value, title),
+      'A raw roadmap file create must reach the open collection and rendered row',
       5000,
     );
-    receipts.rawRoadmapWriter = true;
+    await screenshot('roadmap-raw-create');
+    receipts.rawRoadmapCreate = true;
+    const edited = `Raw source edit ${id}`;
+    await writeFile(external, document(edited));
+    observations.edited = await until(
+      (value) => rendered(value, edited),
+      'A raw roadmap file edit must reach the same mounted collection and rendered row',
+      5000,
+    );
+    await screenshot('roadmap-raw-edit');
+    receipts.rawRoadmapEdit = true;
+    const replaced = `Raw atomic replacement ${id}`;
+    await writeFile(temporary, document(replaced), { flag: 'wx' });
+    temporaryCreated = true;
+    await rename(temporary, external);
+    temporaryCreated = false;
+    observations.replaced = await until(
+      (value) => rendered(value, replaced),
+      'An atomic roadmap file replacement must reach the same mounted collection and rendered row',
+      5000,
+    );
+    await screenshot('roadmap-raw-replace');
+    receipts.rawRoadmapReplace = true;
+    await rm(external);
+    created = false;
+    observations.deleted = await until(
+      (value) =>
+        value.connectionId === before.connectionId &&
+        observation(value, 'roadmap.list')?.ready &&
+        !row(value, 'roadmap.list', id) &&
+        !value.renderedRows.some((entry) => entry.id === id),
+      'A raw roadmap file deletion must remove the canonical and rendered row without Refresh',
+      5000,
+    );
+    await screenshot('roadmap-raw-delete');
+    receipts.rawRoadmapDelete = true;
   } finally {
-    await writeFile(file, bytes);
-    await rpc('backlog.update', {
-      itemId: fixtures.backlog.id,
-      notes: `Restore owned source ${randomUUID()}`,
+    if (temporaryCreated) await rm(temporary);
+    if (created) await rm(external);
+    await writeFile(
+      path.join(artifacts, 'raw-file-observations.json'),
+      JSON.stringify(observations, null, 2),
+    );
+  }
+}
+async function configuration() {
+  const directory = await realpath(process.env.FARMSLOT_PROJECTS_DIR);
+  const file = path.join(directory, project, 'project.json');
+  const original = await readFile(file, 'utf8');
+  const source = JSON.parse(original);
+  assert.equal(source.name, project, "Only change this case's disposable project");
+  const temporary = `${file}.tmp`;
+  const budgetProject = `${project}-budget`;
+  const budgetDirectory = path.join(directory, budgetProject);
+  const budgetFile = path.join(budgetDirectory, 'project.json');
+  const canary = randomUUID();
+  const evidence = {};
+  const backups = new Set();
+  const hash = `config/project/${project}`;
+  const inspect = () =>
+    cdp(
+      'eval',
+      route,
+      "const panel=document.querySelector('config-panel');if(!panel)throw Error('Mount actual configuration');return (await import('/src/dev/resource-authority-proof.ts')).inspectResourceAuthority(undefined,Reflect.get(Reflect.get(panel,'_projectsQuery'),'query'));",
+    );
+  const durable = async (accepts, label) => {
+    const deadline = Date.now() + 15000;
+    let value;
+    do {
+      value = await inspect();
+      if (accepts(value)) return value;
+      await delay(100);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(value)}`);
+  };
+  const renderBranch = (branch, connectionId) =>
+    until(
+      (value) =>
+        value.connectionId === connectionId &&
+        observation(value, 'config.projects')?.ready &&
+        row(value, 'config.projects', project)?.defaultBranch === branch &&
+        value.configuration?.info.includes(branch),
+      'An external project file must update the mounted configuration without Refresh',
+    );
+  let budgetCreated = false;
+  try {
+    await navigate(hash);
+    if (
+      await cdp(
+        'eval',
+        route,
+        "return Boolean(document.querySelector('global-filter-bar')?.shadowRoot?.querySelector('.clear-btn'))",
+      )
+    )
+      await cdp('click', route, 'global-filter-bar >>> .clear-btn');
+    const before = await ready('config.projects');
+    evidence.before = before;
+    const edited = {
+      ...source,
+      default_branch: `external-${randomUUID()}`,
+      webhooks: { ...source.webhooks, github_secret: canary, jira_secret: canary },
+    };
+    await writeFile(file, JSON.stringify(edited));
+    evidence.edited = await renderBranch(edited.default_branch, before.connectionId);
+    await screenshot('configuration-external-project-edit');
+    edited.default_branch = `atomic-${randomUUID()}`;
+    await writeFile(temporary, JSON.stringify(edited), { flag: 'wx' });
+    await rename(temporary, file);
+    evidence.replaced = await renderBranch(edited.default_branch, before.connectionId);
+    await screenshot('configuration-atomic-project-replace');
+    const mutation = await rpc('config.project.autoRecovery.update', {
+      project,
+      autoRecovery: { enabled: true },
     });
+    assert.equal(path.dirname(mutation.backup), path.dirname(file));
+    assert(path.basename(mutation.backup).startsWith('project.json.bak.'));
+    backups.add(mutation.backup);
+    for (const reply of [
+      mutation,
+      await rpc('config.projects'),
+      await rpc('config.project', { project }),
+    ])
+      assert(
+        !JSON.stringify(reply).includes(canary),
+        'Client project replies must omit declared webhook credentials',
+      );
+    evidence.secretExcludedFromRpc = true;
+    evidence.policy = await until(
+      (value) =>
+        value.connectionId === before.connectionId &&
+        observation(value, 'config.projects')?.ready &&
+        row(value, 'config.projects', project)?.autoRecoveryEnabled === true &&
+        value.configuration?.autoRecoveryEnabled === true,
+      'A second-client policy write must update the actual clean configuration form',
+    );
+    await screenshot('configuration-second-client-policy');
+    await cdp('click', route, '.cp-auto-recovery-section input[type="checkbox"]');
+    await until(
+      (value) =>
+        value.configuration?.autoRecoveryEnabled === false &&
+        value.mutationButtons.some(
+          (button) => button.text === 'Save Auto-Recovery' && !button.disabled,
+        ),
+      'Edit the actual policy control before testing draft retention',
+    );
+    const repeated = await rpc('config.project.autoRecovery.update', {
+      project,
+      autoRecovery: { enabled: true },
+    });
+    assert.equal(path.dirname(repeated.backup), path.dirname(file));
+    assert(path.basename(repeated.backup).startsWith('project.json.bak.'));
+    backups.add(repeated.backup);
+    evidence.draft = await until(
+      (value) =>
+        observation(value, 'config.projects')?.ready &&
+        observation(value, 'config.projects').observedAt >
+          observation(evidence.policy, 'config.projects').observedAt &&
+        row(value, 'config.projects', project)?.autoRecoveryEnabled === true &&
+        value.configuration?.autoRecoveryEnabled === false,
+      'An external configuration update must preserve an actual unsaved policy draft',
+    );
+    await screenshot('configuration-unsaved-policy-retained');
+    await cdp('click', route, '.cp-sidebar-item.active');
+    await until(
+      (value) =>
+        value.configuration?.autoRecoveryEnabled === true &&
+        value.mutationButtons.every((button) => button.disabled),
+      'Selecting the project again discards the draft through its normal UI action',
+    );
+    receipts.configurationWriters = true;
+
+    await mkdir(budgetDirectory);
+    budgetCreated = true;
+    const budget = 2 * 1024 * 1024;
+    const writeBudget = (bytes) =>
+      writeFile(
+        budgetFile,
+        JSON.stringify({
+          name: budgetProject,
+          default_branch: 'main',
+          hooks: { health_check: `# ${'x'.repeat(bytes)}` },
+        }),
+      );
+    await writeBudget(budget - 64 * 1024);
+    await until(
+      (value) =>
+        observation(value, 'config.projects')?.ready &&
+        row(value, 'config.projects', budgetProject) &&
+        value.configuration?.labels.includes(budgetProject),
+      'A newly configured project must appear in the open selector',
+    );
+    evidence.below = await durable(
+      (value) =>
+        value.persistent &&
+        value.storedBytes > budget - 64 * 1024 &&
+        value.storedBytes <= budget &&
+        value.storedDataSha256 === value.cacheDataSha256,
+      'Persist the actual complete project collection below the aggregate 2 MiB bound',
+    );
+    evidence.warm = await snapshot();
+    await withOwnedGatewayOffline(async () => {
+      await navigate(hash, { freshDocument: true });
+      evidence.cold = await until(
+        (value) =>
+          value.timeOrigin !== evidence.warm.timeOrigin &&
+          observation(value, 'config.projects')?.status === 'stale' &&
+          observation(value, 'config.projects')?.observedAt === evidence.below.storedObservedAt &&
+          row(value, 'config.projects', project) &&
+          row(value, 'config.projects', budgetProject) &&
+          value.configuration?.info.includes(edited.default_branch) &&
+          value.staleText.includes('Saved projects') &&
+          value.mutationButtons.length > 0 &&
+          value.mutationButtons.every((button) => button.disabled),
+        'A new offline document must render exact saved projects and age with actual writes disabled',
+      );
+      evidence.coldSqlite = await inspect();
+      assert.equal(evidence.coldSqlite.cacheDataSha256, evidence.below.storedDataSha256);
+      await screenshot('configuration-cold-below-bound');
+    });
+    await ready('config.projects');
+    await writeBudget(budget + 64 * 1024);
+    const online = await rpc('config.projects');
+    assert(
+      Buffer.byteLength(JSON.stringify(online)) > budget,
+      'Use an actual oversized configuration collection',
+    );
+    evidence.above = await durable(
+      (value) =>
+        value.cacheStatus === 'ready' &&
+        value.cacheHasData &&
+        value.cacheDataSha256 !== evidence.below.cacheDataSha256 &&
+        value.storedObservedAt === undefined,
+      'An oversized online project result must evict its previous SQLite collection',
+    );
+    const aboveWarm = await snapshot();
+    await withOwnedGatewayOffline(async () => {
+      await navigate(hash, { freshDocument: true });
+      evidence.aboveCold = await until(
+        (value) =>
+          value.timeOrigin !== aboveWarm.timeOrigin &&
+          observation(value, 'config.projects') &&
+          !observation(value, 'config.projects').dataPresent &&
+          !row(value, 'config.projects', project) &&
+          !value.configuration?.labels.includes(budgetProject),
+        'The evicted oversized collection must be absent from a new offline document',
+      );
+      assert.equal((await inspect()).storedObservedAt, undefined);
+      await screenshot('configuration-cold-above-bound');
+    });
+    await ready('config.projects');
+    await rm(budgetFile);
+    await rmdir(budgetDirectory);
+    budgetCreated = false;
+    await until(
+      (value) =>
+        observation(value, 'config.projects')?.ready &&
+        !row(value, 'config.projects', budgetProject) &&
+        !value.configuration?.labels.includes(budgetProject),
+      'Deleted project registration must leave the same mounted selector',
+    );
+    evidence.restored = await durable(
+      (value) =>
+        value.storedObservedAt !== undefined &&
+        value.storedBytes < budget &&
+        value.storedDataSha256 === value.cacheDataSha256,
+      'Normal configuration persistence must recover after the collection shrinks',
+    );
+    receipts.configurationProjectsBound = true;
+  } finally {
+    await rm(temporary, { force: true });
+    if (budgetCreated) await rm(budgetDirectory, { recursive: true });
+    await writeFile(file, original);
+    evidence.backupCleanup = [];
+    for (const backup of backups) {
+      const bytes = await readFile(backup);
+      const saved = JSON.parse(bytes);
+      assert.equal(saved.name, project);
+      assert.equal(saved.webhooks?.github_secret, canary);
+      evidence.backupCleanup.push({
+        file: path.basename(backup),
+        bytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      });
+      await rm(backup);
+    }
+    await writeFile(
+      path.join(artifacts, 'configuration-observations.json'),
+      JSON.stringify(evidence, null, 2),
+    );
   }
 }
 async function authority() {
@@ -445,6 +770,20 @@ async function authority() {
 }
 async function cleanup() {
   if (fixtures.queue) await rpc('dispatch.queue.remove', { itemId: fixtures.queue.id });
+  if (fixtures.graph && fixtures.backlog) {
+    const { graph } = await rpc('workGraph.get', { graphId: fixtures.graph.id });
+    const node = graph.nodes.find((entry) => entry.backlogItemId === fixtures.backlog.id);
+    if (node) {
+      assert.equal(node.id, 'backlog-proof', 'Only detach the owned proof node');
+      assert(['planning', 'paused'].includes(graph.graph.status));
+      if (graph.graph.status === 'paused')
+        await rpc('workGraph.retry', {
+          graphId: fixtures.graph.id,
+          reason: 'Remove owned offline planning proof fixtures without dispatch',
+        });
+      await rpc('workGraph.removeNode', { graphId: fixtures.graph.id, nodeId: node.id });
+    }
+  }
   if (fixtures.backlog) await rpc('backlog.delete', { itemId: fixtures.backlog.id });
   if (fixtures.roadmap) {
     const item = (await rpc('roadmap.get', { itemId: fixtures.roadmap.id })).item;
@@ -459,20 +798,32 @@ async function cleanup() {
     });
 }
 const mode = process.argv[2] ?? 'writers';
-assert(['writers', 'all', 'raw-file', 'authority'].includes(mode));
+assert(
+  [
+    'writers',
+    'writers-and-raw',
+    'all',
+    'raw-file',
+    'raw-file-only',
+    'authority',
+    'configuration',
+  ].includes(mode),
+);
 let failure;
 const failures = [];
 try {
   await setup();
-  if (mode === 'authority') await authority();
-  else {
+  if (mode === 'configuration') await configuration();
+  else if (mode === 'authority') await authority();
+  else if (mode !== 'raw-file-only') {
     await writers();
-    if (mode !== 'writers') {
+    if (!['writers', 'writers-and-raw'].includes(mode)) {
       await draftError();
       await cold();
     }
   }
-  if (mode === 'raw-file') await rawFile();
+  if (['all', 'raw-file', 'raw-file-only', 'writers-and-raw'].includes(mode)) await rawFile();
+  if (mode === 'all') await configuration();
 } catch (error) {
   failure = error;
   failures.push(error);

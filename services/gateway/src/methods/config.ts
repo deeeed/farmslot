@@ -28,6 +28,7 @@ import type {
   ConfigTemplatesParams,
   ConfigTemplatesResult,
   FlowType,
+  ProjectConfig,
   TemplatePreview,
 } from '@farmslot/protocol';
 import {
@@ -48,6 +49,7 @@ import {
   validateBacklogConfig,
 } from '../core/config.js';
 import { type RawPoolSlot, updateSlotStatus } from '../core/index.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import {
   loadFleetStatus,
   loadPoolConfig,
@@ -56,6 +58,7 @@ import {
   loadProjectConfigs,
 } from '../fleet/state.js';
 import { gatewayGitHubAccounts } from '../integrations/github-accounts.js';
+import { publishConfigurationResources } from '../resources/configuration-changes.js';
 import {
   configuredExecutionTemplateOptions,
   projectUsesExecutionTemplateCatalog,
@@ -63,6 +66,15 @@ import {
 } from '../tasks/execution-template-catalog.js';
 import { listWorkerTemplateOptions } from '../tasks/worker-template-options.js';
 import { FLOW_TO_TEMPLATE, generateTaskSchema } from '../tasks/writer.js';
+
+/** Only client-facing configuration replies omit credentials; webhook owners keep the source config. */
+function clientProjectConfig(project: ProjectConfig): ProjectConfig {
+  if (!project.webhooks) return project;
+  const webhooks = { ...project.webhooks };
+  delete webhooks.github_secret;
+  delete webhooks.jira_secret;
+  return { ...project, webhooks };
+}
 
 function extractPlaceholders(content: string): string[] {
   const matches = content.match(/\{\{(\w+)\}\}/g);
@@ -200,8 +212,9 @@ export async function configProjectBacklogUpdate(
   invalidateProjectVarsCache(params.project);
   const project = await loadProjectConfig(params.project);
   if (!project) throw new Error(`Project not found after update: ${params.project}`);
+  publishConfigurationResources(params.project);
   console.log(`[config] project ${params.project} backlog updated, backup: ${backupPath}`);
-  return { ok: true, backup: backupPath, project };
+  return { ok: true, backup: backupPath, project: clientProjectConfig(project) };
 }
 
 export async function configPools(): Promise<ConfigPoolsResult> {
@@ -211,19 +224,22 @@ export async function configPools(): Promise<ConfigPoolsResult> {
 
 export async function configPool(params: ConfigPoolParams): Promise<ConfigPoolResult> {
   const pool = await loadPoolConfig(params.machine);
-  if (!pool) throw new Error(`Pool not found: ${params.machine}`);
+  if (!pool) throw new GatewayMethodError('NOT_FOUND', `Pool not found: ${params.machine}`);
   return { pool };
 }
 
 export async function configProjects(): Promise<ConfigProjectsResult> {
   const projects = await loadProjectConfigs();
-  return { projects };
+  return { projects: projects.map(clientProjectConfig) };
 }
 
 export async function configProject(params: ConfigProjectParams): Promise<ConfigProjectResult> {
   const project = await loadProjectConfig(params.project);
-  if (!project) throw new Error(`Project not found: ${params.project}`);
-  return { project, learnings: await readProjectLearnings(params.project) };
+  if (!project) throw new GatewayMethodError('NOT_FOUND', `Project not found: ${params.project}`);
+  return {
+    project: clientProjectConfig(project),
+    learnings: await readProjectLearnings(params.project),
+  };
 }
 
 // ─── Raw pool JSON for editor ───
@@ -243,7 +259,7 @@ export async function configPoolRaw(params: ConfigPoolParams): Promise<ConfigPoo
       /* skip */
     }
   }
-  throw new Error(`Pool file not found for machine: ${params.machine}`);
+  throw new GatewayMethodError('NOT_FOUND', `Pool file not found for machine: ${params.machine}`);
 }
 
 // ─── Template viewer (Phase 1) ───
@@ -404,6 +420,7 @@ export async function configSlotUpdate(
     await loadFleetStatus(true);
   }
 
+  publishConfigurationResources();
   console.log(`[config] slot ${slotId} updated: ${JSON.stringify(update)}, backup: ${backupPath}`);
   return { ok: true };
 }
@@ -484,6 +501,7 @@ export async function configPoolUpdate(
   }
   await loadFleetStatus(true);
 
+  publishConfigurationResources();
   console.log(`[config] pool ${machine} updated, backup: ${backupPath}`);
   return { ok: true, backup: backupPath };
 }
@@ -570,8 +588,9 @@ export async function configProjectAutoRecoveryUpdate(
   invalidateProjectVarsCache(params.project);
   const project = await loadProjectConfig(params.project);
   if (!project) throw new Error(`Project not found after update: ${params.project}`);
+  publishConfigurationResources(params.project);
   console.log(`[config] project ${params.project} auto_recovery updated, backup: ${backupPath}`);
-  return { ok: true, backup: backupPath, project };
+  return { ok: true, backup: backupPath, project: clientProjectConfig(project) };
 }
 
 export async function configGitHubAccounts(params: unknown): Promise<ConfigGitHubAccountsResult> {

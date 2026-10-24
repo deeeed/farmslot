@@ -8,6 +8,7 @@ import { Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { type ChecklistProgressStep, checklistProgressView } from '@farmslot/review-dispatch';
 
+import { readConfiguration } from '../../configuration-resources.js';
 import { gateway } from '../../gateway-client.js';
 import { getState } from '../../state.js';
 
@@ -38,7 +39,7 @@ export function loadSlotViewSlot(view: SlotView): void {
 
 export async function fetchSlotViewRepoPath(view: SlotView, machine: string): Promise<void> {
   try {
-    const res = await gateway.request<ConfigPoolResult>(Methods.CONFIG_POOL, { machine });
+    const res = await readConfiguration<ConfigPoolResult>(Methods.CONFIG_POOL, { machine });
     const slotCfg = res.pool.slots.find((slot) => slot.id === view.slotId);
     if (slotCfg) view._repoPath = slotCfg.repo;
   } catch (err) {
