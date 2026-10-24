@@ -2,7 +2,7 @@ import { isRecord } from '@farmslot/protocol';
 
 import { execOnSlot } from '../core/exec.js';
 
-import { readClaudeProcessState } from './claude-process-observability.js';
+import { readClaudeProcessBinding } from './claude-process-observability.js';
 import type { ObservabilityReading, SlotVars } from './observability-types.js';
 
 /** Read native tool calls/results, never the rendered question menu. */
@@ -95,7 +95,7 @@ PY`;
 }
 
 interface QuestionReaders {
-  process: typeof readClaudeProcessState;
+  process: typeof readClaudeProcessBinding;
   exec: typeof execOnSlot;
 }
 
@@ -104,7 +104,7 @@ export async function readClaudePendingQuestion(
   target: string,
   overrides: Partial<QuestionReaders> = {},
 ): Promise<ObservabilityReading<string | null> | null> {
-  const source = { process: readClaudeProcessState, exec: execOnSlot, ...overrides };
+  const source = { process: readClaudeProcessBinding, exec: execOnSlot, ...overrides };
   const native = await source.process(vars, target);
   if (!native) return null;
   const result = await source.exec(

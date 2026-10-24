@@ -137,7 +137,7 @@ test('question reader refuses a replaced native process and preserves unknown ve
     sessionId,
     processPid: '42',
     sessionPath: `/tmp/${sessionId}.jsonl`,
-    status: 'busy' as const,
+    status: 'waiting' as const,
     observedAt: 1000,
   };
   for (const state of ['open', 'answered', 'unknown', 'replaced', 'foreign'] as const) {

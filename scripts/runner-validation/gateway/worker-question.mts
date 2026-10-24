@@ -130,19 +130,36 @@ mock.module(pathToFileURL(path.join(code, 'services/gateway/src/core/exec.ts')).
   },
 });
 const processReader = await load('services/gateway/src/runners/claude-process-observability.ts');
+let registrationStatus: 'waiting' | 'busy' = 'waiting';
+const registrationReaders = {
+  pane: async () => ({ paneId: '%fixture', panePid: 'fixture-parent' }),
+  process: async () => ({ state: 'present' as const, pid: '424242' }),
+  exec: async () => ({
+    stdout: JSON.stringify({
+      record: {
+        pid: 424242,
+        sessionId,
+        startedAt: 1000,
+        status: registrationStatus,
+        statusUpdatedAt: 2000,
+      },
+      processStartedAt: 900,
+      sessionPath: transcript,
+    }),
+    stderr: '',
+    exitCode: 0,
+  }),
+};
 mock.module(
   pathToFileURL(path.join(code, 'services/gateway/src/runners/claude-process-observability.ts'))
     .href,
   {
     namedExports: {
       ...processReader,
-      readClaudeProcessState: async () => ({
-        sessionId,
-        sessionPath: transcript,
-        processPid: 'fixture-pid',
-        status: 'busy',
-        observedAt: Date.now(),
-      }),
+      readClaudeProcessBinding: async (vars: unknown, target: string) =>
+        processReader.readClaudeProcessBinding(vars, target, registrationReaders),
+      readClaudeProcessState: async (vars: unknown, target: string) =>
+        processReader.readClaudeProcessState(vars, target, registrationReaders),
     },
   },
 );
@@ -275,6 +292,7 @@ try {
       'no AskUserQuestion must not close an open permission handoff',
     );
     permissionOpen = false;
+    registrationStatus = 'busy';
   } else {
     assert.match(decision.description, /Which network should the proof use\?/);
     assert.match(decision.description, /Testnet: Use the fixture/);
@@ -299,6 +317,7 @@ try {
     assert.equal(held.decisions[0].id, decision.id);
     assert.equal(held.decisions[0].resolvedAt, undefined);
     await writeTranscript([question, answer]);
+    registrationStatus = 'busy';
   }
   const resumed = await until(
     read,
@@ -317,6 +336,8 @@ try {
   const result = {
     pass: true,
     method: 'run.get',
+    questionBindingStatus: 'waiting',
+    productionRegistrationGuard: true,
     question: decision.description,
     cases: permission
       ? [
