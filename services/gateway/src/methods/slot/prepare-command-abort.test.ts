@@ -31,7 +31,11 @@ mock.module('../../core/tmux.js', {
   namedExports: { ...realTmux, resolveTmuxSession: async () => 'mm-1' },
 });
 
-const { runPrepareCommand } = await import('./prepare-command.js');
+const {
+  runPrepareCommand,
+  buildPreparePreLaunchSweepCommand,
+  buildPrepareKillWindowsByNameCommand,
+} = await import('./prepare-command.js');
 
 const vars = {
   slotId: 'macpro-mm-1',
@@ -92,4 +96,31 @@ test('a cancel after launch reaps this prepare scope once the window is killed',
   assert.equal(result.exitCode, 130);
   assert.equal(reaps().length, 1, 'the nohup holder survives the window kill');
   assert.match(reaps()[0]!, new RegExp(`!= '${prepareScope.token}'`), 'only this prepare scope');
+});
+
+test('a signing probe preserves retained preflight panes and cleans only its own window', async () => {
+  const controller = new AbortController();
+  onLaunch = () => controller.abort();
+  const result = await runPrepareCommand(vars, await logPath(), 'true', {
+    signal: controller.signal,
+    windowLabel: 'probe123',
+    phase: 'signing',
+    preserveOtherPrepareWindows: true,
+    tailPollIntervalMs: 10,
+  });
+  assert.equal(result.exitCode, 130);
+  assert.ok(
+    !commands.includes(buildPreparePreLaunchSweepCommand('mm-1', 'probe123')),
+    'a retained prior preflight pane must not be swept',
+  );
+  assert.ok(
+    commands.includes(buildPrepareKillWindowsByNameCommand('mm-1', 'prepare-probe123-signing')),
+    'same-phase cleanup stays scoped to this probe',
+  );
+  assert.ok(
+    commands.some(
+      (command) => command.includes('kill-window') && command.includes('prepare-probe123-signing'),
+    ),
+    'the probe still cleans up its own window',
+  );
 });
