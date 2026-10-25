@@ -101,6 +101,7 @@ test('one shared projection counts original plus derived rows and keeps exclusio
   const registry = registration();
   const presentation = acceptancePanelPresentation(ledger(), [], undefined, registry);
   assert.equal(presentation.counts, '1/2 assessed · 1 proven');
+  assert.equal(presentation.unassessed, 1);
   assert.equal(presentation.registration?.exclusions.length, 1);
   assert.equal(presentation.registration?.exclusions[0].url, 'https://example.test/comments/2');
   const rows = acceptanceClaimRows({ claims: [], registration: registry, ledger: ledger() });

@@ -184,7 +184,9 @@ function TaskAcceptanceContent({
             accessibilityRole="button"
             style={styles.row}
           >
-            <Text>Excluded sources ({view.registration.exclusions.length})</Text>
+            <Text style={baseStyles.textMuted}>
+              Excluded sources ({view.registration.exclusions.length})
+            </Text>
           </Pressable>
           {showExclusions
             ? view.registration.exclusions.map((source) => (
@@ -200,9 +202,9 @@ function TaskAcceptanceContent({
                         );
                     }}
                   >
-                    <Text>{source.label}</Text>
+                    <Text style={styles.evidence}>{source.label}</Text>
                   </Pressable>
-                  <Text>{source.reason}</Text>
+                  <Text style={baseStyles.textMuted}>{source.reason}</Text>
                 </View>
               ))
             : null}

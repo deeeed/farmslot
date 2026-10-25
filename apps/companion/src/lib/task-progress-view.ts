@@ -132,7 +132,6 @@ export function acceptanceLedgerView(
   model: EvidenceReviewModel = createEvidenceReviewModel({ criteria, ledger, evidenceLinks }),
   registration?: AcceptanceRegistration,
 ): AcceptanceLedgerView {
-  const summary = model.summary;
   // Command Center renders the same tally from the same view model.
   const presentation = acceptancePanelPresentation(ledger, criteria, model, registration);
   return {
@@ -140,8 +139,8 @@ export function acceptanceLedgerView(
     counts: presentation.counts,
     countsLabel: presentation.countsTooltip,
     // An unjudged criterion blocks a publish decision, so the tally must not read as neutral.
-    countsColor: summary.unrecorded > 0 ? colors.statusFail : colors.textSecondary,
-    unassessed: summary.unrecorded,
+    countsColor: presentation.unassessed > 0 ? colors.statusFail : colors.textSecondary,
+    unassessed: presentation.unassessed,
     defaultOpen: presentation.defaultOpen,
     model,
     rows: model.claims.map((criterion) => ({

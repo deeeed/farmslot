@@ -39,6 +39,7 @@ export interface AcceptanceRegistrationPresentation {
 
 export interface AcceptancePanelPresentation {
   registration?: AcceptanceRegistrationPresentation;
+  unassessed: number;
   /** Assessment progress stays distinct from how many criteria are proven. */
   counts: string;
   /** Long-form tally for the header tooltip or accessibility label, including the zero buckets. */
@@ -60,6 +61,7 @@ export function acceptancePanelPresentation(
   const assessed = summary.total - summary.unrecorded;
   const pending = registration?.units.filter(({ result }) => !result) ?? [];
   return {
+    unassessed: summary.unrecorded,
     counts: `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}${pending.length ? ' · acceptance update pending' : ''}`,
     countsTooltip:
       `proven ${summary.proven} · weak ${summary.weak} · missing ${summary.missing} · ` +

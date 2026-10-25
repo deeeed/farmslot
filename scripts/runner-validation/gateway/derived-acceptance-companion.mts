@@ -9,6 +9,8 @@ import { promisify } from 'node:util';
 
 import { centerOfRect } from 'agent-device';
 
+import { matchesProcess } from '../../../packages/agent-runtime/src/native/storage.js';
+
 const exec = promisify(execFile);
 interface UiNode {
   AXLabel?: string;
@@ -200,6 +202,15 @@ export async function proveCompanionAcceptance(input: {
       simulator,
       `farmslot-development:///run/${input.runId}`,
     ]);
+    await wait(async () => {
+      const nodes = await tree();
+      if (await dismiss(nodes)) return false;
+      const timeline = nodes.find(({ AXLabel }) => AXLabel === 'Run Detail: Timeline tab');
+      if (!timeline) return false;
+      await tap(timeline);
+      return true;
+    }, 'run timeline tab');
+    let expanded = false;
     let last: UiNode[] = [];
     const seen = new Set<string>();
     await wait(async () => {
@@ -212,7 +223,11 @@ export async function proveCompanionAcceptance(input: {
       for (const node of last)
         for (const text of input.criteria) if (node.AXLabel?.includes(text)) seen.add(text);
       const panel = last.find(({ AXLabel }) => AXLabel?.startsWith('Acceptance criteria:'));
-      if (panel) await tap(panel);
+      if (panel && !expanded) {
+        await tap(panel);
+        expanded = true;
+        return false;
+      }
       if (input.criteria.every((text) => seen.has(text))) return true;
       await command('idb', [
         'ui',
@@ -239,6 +254,23 @@ export async function proveCompanionAcceptance(input: {
       'screenshot',
       path.join(input.output, 'companion-acceptance.png'),
     ]);
+    const excluded = last.find(({ AXLabel }) => AXLabel?.startsWith('Excluded sources'));
+    if (excluded) {
+      await tap(excluded);
+      const disclosed = await tree();
+      assert.ok(disclosed.some(({ AXLabel }) => AXLabel === 'Review comment'));
+      await writeFile(
+        path.join(input.output, 'companion-exclusions-tree.json'),
+        JSON.stringify(disclosed, null, 2),
+      );
+      await command('xcrun', [
+        'simctl',
+        'io',
+        simulator,
+        'screenshot',
+        path.join(input.output, 'companion-exclusions.png'),
+      ]);
+    }
     return {
       surface: 'Native Companion',
       criterionCount: seen.size,
@@ -262,6 +294,14 @@ export async function proveCompanionAcceptance(input: {
       try {
         await command('xcrun', ['simctl', 'shutdown', simulator]);
         await command('xcrun', ['simctl', 'delete', simulator]);
+        const processes = await command('ps', ['-A', '-o', 'pid=,command=']);
+        for (const line of processes.split('\n')) {
+          if (!line.includes(`/idb_companion --udid ${simulator} `)) continue;
+          const pid = Number(line.trim().split(/\s+/, 1)[0]);
+          if (!matchesProcess(pid, simulator)) continue;
+          process.kill(pid, 'SIGTERM');
+          await wait(async () => !matchesProcess(pid, simulator!), 'owned idb helper stops', 5_000);
+        }
       } catch (error) {
         errors.push(error);
       }
